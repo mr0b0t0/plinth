@@ -33,6 +33,11 @@ export type Principal =
       connectionLabel: string;
       clientType: ClientType;
       scopes: ReadonlySet<Scope>;
+      /**
+       * The one artifact a personal access token is limited to (docs/spec.md "Publishing from
+       * CI"), or null for an account-wide token, an OAuth connection and the ADMIN_TOKEN.
+       */
+      boundArtifactId: string | null;
     };
 
 export type ArtifactAction =
@@ -65,9 +70,21 @@ export type ArtifactAction =
    * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.
    * Agents never (they push versions), and a viewer confirmed by code must sign in first.
    */
-  | "live_edit";
+  | "live_edit"
+  /**
+   * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
+   * token bound to one artifact never may.
+   */
+  | "comments_read"
+  /**
+   * See the page as it runs: an enter URL for the content host (the viewer gate), or a picture of
+   * it running (a thumbnail). As view, except that a token bound to one artifact never may: a pass
+   * reads the page's shared data, and a capture can draw it.
+   */
+  | "enter";
 
 export interface ArtifactFacts {
+  id: string;
   ownerId: string;
   visibility: Visibility;
   hasPassword: boolean;
@@ -95,7 +112,9 @@ export type DenyReason =
   | "taken_down"
   | "scope"
   /** The principal has the role but no account session (a viewer confirmed by code). */
-  | "account_required";
+  | "account_required"
+  /** A token limited to this artifact asked for more than viewing it and publishing versions. */
+  | "token_bound";
 
 export type Decision =
   | { allow: true; role: EffectiveRole | null }
@@ -116,6 +135,8 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   data_clear: "artifacts:write",
   views: "artifacts:read",
   live_edit: "artifacts:write",
+  comments_read: "artifacts:read",
+  enter: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -155,6 +176,18 @@ export function decide(
   access: AccessFacts,
 ): Decision {
   if (artifact.deleted) return deny("not_found");
+  const bound = boundArtifactOf(p);
+  if (bound !== null) {
+    // Any other artifact does not exist for this token, whatever the action or the token's
+    // scopes, so a bound token cannot probe which ids or slugs exist (a missing one is 404 too).
+    if (artifact.id !== bound) return deny("not_found");
+    if (!BOUND_ACTIONS.has(action)) {
+      // token_bound only where the token may view the artifact now, so the 403 tells it nothing
+      // that viewing would not; otherwise (its person lost access, a takedown) the view answer.
+      const v = decide(p, "view", artifact, access);
+      return v.allow ? deny("token_bound", v.role) : v;
+    }
+  }
   if (p.kind === "agent" && !p.scopes.has(scopeFor(action))) return deny("scope");
 
   const role = roleOf(p, artifact, access);
@@ -164,13 +197,15 @@ export function decide(
     // Only the owner may still manage or delete it; an admin may look at it to review a report.
     if (role === "owner" && (action === "manage" || action === "delete"))
       return { allow: true, role };
-    if (isAdmin && action === "view") return { allow: true, role };
+    if (isAdmin && (action === "view" || action === "enter")) return { allow: true, role };
     return deny("taken_down", role);
   }
 
   switch (action) {
     case "view":
     case "report":
+    case "comments_read":
+    case "enter":
       return canView(p, artifact, access, role, isAdmin);
     case "comment":
     case "mention": {
@@ -249,18 +284,28 @@ export interface PageClaim {
   account?: boolean;
 }
 
+/** The kind of content pass a page runs under, as far as shared data cares. */
+export interface PagePassFacts {
+  /** An in-chat preview pass (any framer, one look at the page). */
+  preview?: boolean;
+  /** A thumbnail capture whose version's writer may not read the data (captureReadsData). */
+  noData?: boolean;
+}
+
 /**
  * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config).
- * Anyone with a content pass may read once the current version declares `data`; only identified
- * viewers write; authors and the viewer's email are visible only to identified viewers on a page
- * that also declares `viewer`.
+ * Anyone with a content pass may read once the current version declares `data`, except an in-chat
+ * preview and a capture of a version whose writer may not read the data (captureReadsData); only
+ * identified viewers write; authors and the viewer's email are visible only to identified viewers
+ * on a page that also declares `viewer`.
  */
 export function pageDataAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   enabled: boolean,
+  pass: PagePassFacts = {},
 ): { read: boolean; write: boolean; seeIdentity: boolean } {
-  const read = enabled && caps?.data === true;
+  const read = enabled && caps?.data === true && !pass.preview && !pass.noData;
   const write = read && claim !== null;
   return { read, write, seeIdentity: write && caps?.viewer === true };
 }
@@ -362,6 +407,8 @@ export function canActOnMention(
   artifactOwnerId: string,
 ): boolean {
   if (p.kind !== "agent" || !p.scopes.has("mentions")) return false;
+  // Bound tokens never hold `mentions`; refused here too, in case a row ever says otherwise.
+  if (boundArtifactOf(p) !== null) return false;
   if (p.userId !== artifactOwnerId) return false;
   if (task.targetConnection) return p.connectionId === task.targetConnection;
   return task.targetClientType === p.clientType;
@@ -369,10 +416,11 @@ export function canActOnMention(
 
 /**
  * Owner-only metadata (the category) is the owner's own organisation: hidden from every other role,
- * including editors and an admin reviewing a report.
+ * including editors and an admin reviewing a report, and from a token limited to one artifact,
+ * even the owner's.
  */
-export function seesOwnerMetadata(role: EffectiveRole | null): boolean {
-  return role === "owner";
+export function seesOwnerMetadata(p: Principal, role: EffectiveRole | null): boolean {
+  return role === "owner" && boundArtifactOf(p) === null;
 }
 
 /**
@@ -404,4 +452,62 @@ export function canMakePublic(opts: {
 /** Admin pages (reports, takedown). */
 export function isAdmin(p: Principal): boolean {
   return p.kind === "user" && p.isAdmin;
+}
+
+// ---------- publishing from CI: tokens bound to one artifact (issue #51) ----------
+
+/** What a token bound to one artifact may do there: what a viewer may, plus new versions. */
+const BOUND_ACTIONS: ReadonlySet<ArtifactAction> = new Set<ArtifactAction>(["view", "edit"]);
+
+/** The one artifact a bound token may touch, or null for every other principal. */
+export function boundArtifactOf(p: Principal): string | null {
+  return p.kind === "agent" ? p.boundArtifactId : null;
+}
+
+/**
+ * Does this principal learn who the people on an artifact are: the owner's id and email, and the
+ * ids and full emails of the people and connections that published its versions? Role holders do;
+ * a link viewer and a token bound to one artifact (even the owner's) see them as a link viewer does,
+ * by name or the address's local part. A leaked CI token then gives away no email address.
+ */
+export function seesPeople(p: Principal, role: EffectiveRole | null): boolean {
+  return role !== null && boundArtifactOf(p) === null;
+}
+
+/** May this principal create artifacts? Not a token bound to one artifact. */
+export function mayCreateArtifacts(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
+
+/**
+ * May this principal read the stats summary across its person's artifacts (every artifact they
+ * own, with ids, slugs, titles and opens)? Not a token bound to one artifact: the summary would list
+ * the artifacts the binding hides. One artifact's stats go through decide(views) as usual.
+ */
+export function mayReadStatsSummary(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
+
+/**
+ * Does the thumbnail capture of a version read the page's shared data, as a signed-out link viewer
+ * would? Only when a person, or an agent acting for them account-wide, wrote that version: they can
+ * read the data already, so the page they wrote learns nothing new by running with it. Never for a
+ * version written by a token limited to one artifact: that token may not read the data, and its
+ * page would run with it unattended in Plinth's own browser. Nor for a version whose writer is gone
+ * (an erased account), since nobody can say who wrote it.
+ */
+export function captureReadsData(writer: {
+  userId: string | null;
+  boundArtifactId: string | null;
+}): boolean {
+  return writer.userId !== null && writer.boundArtifactId === null;
+}
+
+/**
+ * Does a summary built for this principal (one that may view the artifact) carry `thumbnail_url`?
+ * Not for a token bound to one artifact, which decide(enter) refuses the thumbnail itself, so the
+ * link would only answer 403. Wherever decide(view) allows, this equals decide(enter).allow.
+ */
+export function seesThumbnails(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
 }

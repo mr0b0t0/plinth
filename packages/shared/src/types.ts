@@ -39,7 +39,10 @@ export interface ArtifactSummary {
   url: string;
   /** Artifact origin on the content host. Needs a viewer token unless already exchanged. */
   content_url: string;
-  /** Email and id are only shown to people with a role on the artifact (not to link viewers). */
+  /**
+   * Email and id are only shown to people with a role on the artifact (not to link viewers, nor to
+   * a token limited to one artifact).
+   */
   owner: { id: string | null; email: string | null; name: string | null };
   /** The caller's role on this artifact. */
   role: EffectiveRole;
@@ -320,6 +323,18 @@ export interface ConnectionInfo {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  /**
+   * The one artifact a personal access token is limited to (docs/spec.md "Publishing from CI"),
+   * or null for an account-wide token or connection. Slug and title are null once the person may
+   * no longer view it (deleted, taken down, or no longer shared with them).
+   */
+  artifact: BoundArtifactInfo | null;
+}
+
+export interface BoundArtifactInfo {
+  id: string;
+  slug: string | null;
+  title: string | null;
 }
 
 export interface CreatedToken {
@@ -336,6 +351,27 @@ export interface Me {
   artifact_limit: number;
   artifact_count: number;
   is_admin: boolean;
+  /** The bearer connection making the call; null for a signed-in person. */
+  connection: MeConnection | null;
+}
+
+/**
+ * GET /me for a token limited to one artifact: the person's id and the connection only, none of
+ * the account fields of Me.
+ */
+export interface BoundMe {
+  id: string;
+  connection: MeConnection;
+}
+
+export interface MeConnection {
+  /** null for the single-user ADMIN_TOKEN. */
+  id: string | null;
+  label: string;
+  /** The token is limited to one artifact. */
+  bound: boolean;
+  /** That artifact, while the token's person may view it; null otherwise or when not bound. */
+  artifact: { id: string; slug: string; title: string } | null;
 }
 
 export interface AppConfig {

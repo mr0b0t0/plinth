@@ -45,6 +45,7 @@ export const ME: Me = {
   artifact_limit: 100,
   artifact_count: 1,
   is_admin: false,
+  connection: null,
 };
 
 export function json(body: unknown, status = 200): Response {

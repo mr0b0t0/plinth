@@ -339,7 +339,9 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 3. **Fetch what the content host serves.** With a bearer token (scope `artifacts:read`),
    `GET /api/v1/view/<id>` (the id or the slug; `?version=<n>` for an older version) already
    answers `{"status": "ok", "artifact": {...}, "enter_url": "..."}` when the token's user may view
-   the artifact. `enter_url` works once, within 60 seconds. Fetched by a client that keeps cookies,
+   the artifact (a token limited to one artifact gets 403 `token_bound` instead, since a content
+   pass reads the page's shared data; it relies on step 2). `enter_url` works once, within 60
+   seconds. Fetched by a client that keeps cookies,
    it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
    page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
    with their headers and Content Security Policy. An agent's gate never counts as an open of the

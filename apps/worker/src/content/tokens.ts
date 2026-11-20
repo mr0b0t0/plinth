@@ -57,6 +57,11 @@ export interface EnterPayload {
    */
   c?: 1;
   /**
+   * With `c` only: the captured version's writer may not read the page's shared data
+   * (policy.captureReadsData), so the pass it becomes reads none.
+   */
+  d?: 1;
+  /**
    * An in-chat preview (mcp/preview.ts): the cookie it becomes lets an MCP host's frame show the
    * page (no frame-ancestors) and is read-only. Never with `x` or `c`; always with `v`.
    */
@@ -90,6 +95,8 @@ export interface ContentPayload {
   x?: string;
   /** a capture pass (copied from the enter token): top-level loads allowed */
   c?: 1;
+  /** a capture pass that reads no shared data (copied from the enter token, with `c` only) */
+  d?: 1;
   /** a preview pass (copied from the enter token): any framer, read-only, no identity */
   p?: 1;
   /** the one version a preview pass opens (copied from the enter token) */
@@ -136,7 +143,14 @@ export async function issueEnterUrl(
   artifact: { id: string; accessEpoch: number },
   next = "/",
   identity?: ViewerIdentity,
-  opts: { capture?: boolean; previewVersion?: number; countView?: boolean; opener?: Opener } = {},
+  opts: {
+    capture?: boolean;
+    /** With `capture` only: the pass reads no shared data. */
+    noData?: boolean;
+    previewVersion?: number;
+    countView?: boolean;
+    opener?: Opener;
+  } = {},
 ): Promise<string> {
   const payload: EnterPayload = {
     k: "enter",
@@ -148,6 +162,9 @@ export async function issueEnterUrl(
   if (opts.capture) {
     if (identity) throw new Error("A capture never carries an identity");
     payload.c = 1;
+    if (opts.noData) payload.d = 1;
+  } else if (opts.noData) {
+    throw new Error("Only a capture is minted without shared data");
   }
   if (opts.previewVersion !== undefined) {
     if (identity || opts.capture) throw new Error("A preview is never identified or a capture");
@@ -231,7 +248,9 @@ export async function signContentCookie(
   previewVersion?: number,
   counted = false,
   visitor?: string,
+  noData = false,
 ): Promise<string> {
+  if (noData && kind !== "capture") throw new Error("Only a capture pass is minted without data");
   if (kind !== "view" && x !== undefined)
     throw new Error(`A ${kind} pass never carries an identity`);
   if (kind !== "view" && counted) throw new Error(`A ${kind} pass never counts as an open`);
@@ -248,6 +267,7 @@ export async function signContentCookie(
   };
   if (x !== undefined) payload.x = x;
   if (kind === "capture") payload.c = 1;
+  if (noData) payload.d = 1;
   if (kind === "preview") {
     payload.p = 1;
     payload.v = previewVersion;

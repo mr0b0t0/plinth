@@ -12,11 +12,17 @@
 // versions published before thumbnails existed) and answers 404 until it lands.
 //
 // The browser sees the page as a signed-out link viewer would: the enter token carries no identity
-// claim, so a page with shared data shows it read-only and never learns who is viewing.
+// claim, so a page with shared data shows it read-only and never learns who is viewing. A version
+// whose writer may not read the data (policy.captureReadsData: a token limited to one artifact
+// wrote it) is captured with a pass that reads none. Whatever the version, the browser lets the
+// page reach only its own origin and the hosts its CSP allows, and no navigation leaves the
+// artifact (docs/security.md#thumbnails).
 import puppeteer from "@cloudflare/puppeteer";
 import { CONTENT_RESERVED_PREFIX } from "@plinth/shared";
-import { type Bindings, type Config, thumbnailsActive } from "../config.ts";
+import { type Bindings, type Config, contentOrigin, thumbnailsActive } from "../config.ts";
+import { contentSources } from "../content/csp.ts";
 import { issueEnterUrl } from "../content/tokens.ts";
+import { captureReadsData } from "../policy.ts";
 import { artifactRoot } from "./storage.ts";
 
 export const THUMB = {
@@ -45,13 +51,108 @@ export function thumbnailKey(artifactId: string, n: number): string {
   return `${artifactRoot(artifactId)}thumbs/v${n}.jpg`;
 }
 
-/** Opens `url` in a browser and returns a JPEG of the first screen. */
-export type Shooter = (browser: Fetcher, url: string) => Promise<Uint8Array>;
+/**
+ * Where the capture browser lets a page go: the artifact's own content origin (and, under the path
+ * fallback, only its own path there), and the hosts the content CSP lets any page load from (the
+ * CDN allowlist and Google Fonts), never as a navigation.
+ */
+export interface CaptureScope {
+  /** contentOrigin(config, id): an origin, or an origin and path under the path fallback. */
+  artifact: string;
+  /** Hosts reached over https on their default port, for subresources only. */
+  hosts: readonly string[];
+}
 
-async function browserShot(binding: Fetcher, url: string): Promise<Uint8Array> {
+export function captureScope(config: Config, artifactId: string): CaptureScope {
+  const s = contentSources(config);
+  const hosts = new Set([
+    ...s.script,
+    ...s.style,
+    ...s.font,
+    ...s.img,
+    ...s.media,
+    ...s.connect,
+    ...s.frame,
+    ...s.worker,
+    ...s.manifest,
+  ]);
+  return { artifact: contentOrigin(config, artifactId), hosts: [...hosts] };
+}
+
+/** Schemes that never leave the browser: inline data, the page's own blobs, blank frames. */
+const LOCAL_SCHEMES: ReadonlySet<string> = new Set(["data:", "blob:", "about:"]);
+
+/**
+ * May the capture browser make this request? Requests to the artifact itself, those that never
+ * leave the browser, and subresources from the CSP's hosts; everything else is aborted, above all
+ * a navigation (top-level or a frame's) anywhere but the artifact, which the CSP cannot stop.
+ */
+export function captureRequestAllowed(
+  scope: CaptureScope,
+  url: string,
+  navigation: boolean,
+): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (LOCAL_SCHEMES.has(u.protocol)) return true;
+  if (u.username || u.password) return false;
+  const own = new URL(scope.artifact);
+  if (u.origin === own.origin) {
+    const base = own.pathname.endsWith("/") ? own.pathname.slice(0, -1) : own.pathname;
+    return base === "" || u.pathname === base || u.pathname.startsWith(`${base}/`);
+  }
+  if (navigation) return false;
+  return u.protocol === "https:" && u.port === "" && scope.hosts.includes(u.hostname);
+}
+
+/** The parts of a puppeteer page the capture's guard uses. */
+export interface GuardedPage {
+  setRequestInterception(on: boolean): Promise<void>;
+  on(event: "request", handler: (req: GuardedRequest) => void): unknown;
+  on(event: "popup", handler: (popup: { close(): Promise<void> } | null) => void): unknown;
+}
+
+export interface GuardedRequest {
+  url(): string;
+  isNavigationRequest(): boolean;
+  isInterceptResolutionHandled(): boolean;
+  continue(): Promise<void>;
+  abort(errorCode?: "blockedbyclient"): Promise<void>;
+}
+
+/**
+ * Hold every request the page makes to captureRequestAllowed, and close any window it opens. A
+ * popup is a page of its own that this interception does not cover, and closing it on sight is the
+ * best a page-level guard can do, which is why policy.captureReadsData does not rely on it.
+ */
+export async function guardCapturePage(page: GuardedPage, scope: CaptureScope): Promise<void> {
+  await page.setRequestInterception(true);
+  page.on("request", (req) => {
+    if (req.isInterceptResolutionHandled()) return;
+    const ok = captureRequestAllowed(scope, req.url(), req.isNavigationRequest());
+    (ok ? req.continue() : req.abort("blockedbyclient")).catch(() => undefined);
+  });
+  page.on("popup", (popup) => {
+    popup?.close().catch(() => undefined);
+  });
+}
+
+/** Opens `url` in a browser, held to `scope`, and returns a JPEG of the first screen. */
+export type Shooter = (browser: Fetcher, url: string, scope: CaptureScope) => Promise<Uint8Array>;
+
+async function browserShot(
+  binding: Fetcher,
+  url: string,
+  scope: CaptureScope,
+): Promise<Uint8Array> {
   const browser = await puppeteer.launch(binding);
   try {
     const page = await browser.newPage();
+    await guardCapturePage(page as unknown as GuardedPage, scope);
     await page.setViewport({ width: THUMB.width, height: THUMB.height, deviceScaleFactor: 1 });
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     const res = await page.goto(url, {
@@ -80,6 +181,8 @@ interface CaptureTarget {
   accessEpoch: number;
   versionId: string;
   number: number;
+  /** policy.captureReadsData for the version's writer. */
+  readsData: boolean;
 }
 
 /**
@@ -126,18 +229,31 @@ async function captureTarget(
 ): Promise<CaptureTarget | null> {
   const row = await db
     .prepare(
-      `SELECT a.id AS artifact_id, a.access_epoch, v.id AS version_id, v.number
+      `SELECT a.id AS artifact_id, a.access_epoch, v.id AS version_id, v.number,
+              v.created_by_user, c.artifact_id AS bound_artifact_id
        FROM artifacts a JOIN versions v ON v.artifact_id = a.id
+       LEFT JOIN agent_connections c ON c.id = v.created_by_connection
        WHERE a.id = ?1 AND v.number = ?2 AND a.deleted_at IS NULL AND a.taken_down_at IS NULL`,
     )
     .bind(artifactId, n)
-    .first<{ artifact_id: string; access_epoch: number; version_id: string; number: number }>();
+    .first<{
+      artifact_id: string;
+      access_epoch: number;
+      version_id: string;
+      number: number;
+      created_by_user: string | null;
+      bound_artifact_id: string | null;
+    }>();
   return row
     ? {
         artifactId: row.artifact_id,
         accessEpoch: row.access_epoch,
         versionId: row.version_id,
         number: row.number,
+        readsData: captureReadsData({
+          userId: row.created_by_user,
+          boundArtifactId: row.bound_artifact_id,
+        }),
       }
     : null;
 }
@@ -158,15 +274,17 @@ export async function captureThumbnail(
   if (!(await claimThumbnail(env.DB, target.versionId).catch(() => false))) return "skipped";
   try {
     // The exact version, even if a newer one lands while the browser loads, entered with a
-    // capture pass: no identity, and the one pass the content host serves top-level.
+    // capture pass: no identity, and the one pass the content host serves top-level. It reads no
+    // shared data when the version's writer may not (policy.captureReadsData).
     const url = await issueEnterUrl(
       config,
       { id: target.artifactId, accessEpoch: target.accessEpoch },
       `${CONTENT_RESERVED_PREFIX}v/${target.number}/`,
       undefined,
-      { capture: true },
+      { capture: true, noData: !target.readsData },
     );
-    const jpeg = await withBudget(shooter(env.BROWSER, url), THUMB.budgetMs);
+    const scope = captureScope(config, target.artifactId);
+    const jpeg = await withBudget(shooter(env.BROWSER, url, scope), THUMB.budgetMs);
     if (jpeg.byteLength === 0) throw new Error("empty screenshot");
     const key = thumbnailKey(target.artifactId, target.number);
     await env.FILES.put(key, jpeg, { httpMetadata: { contentType: "image/jpeg" } });

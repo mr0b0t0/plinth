@@ -10,6 +10,21 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
+  or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
+  the version note and the links in the job summary. A token can now be limited to one artifact
+  (**Limit to one artifact** in the New token dialog): it reads that artifact and publishes new versions
+  of it, nothing else (not even the owner's or other people's email addresses, nor an enter URL
+  or a thumbnail, which would show the page's shared data), and deleting the
+  artifact revokes it. Thumbnails of the versions such a token publishes are taken without the
+  page's shared data, and the thumbnail browser now aborts anything a page loads or opens off its
+  own artifact and the CDN allowlist. `plinth publish` takes a single
+  `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
+  a JSON object on failure and for `--dry-run` too, and prints `live_draft` as a note that needs no
+  action. GitLab CI and cron: `docs/ci.md` (#51). **Deploying:** release v0.6.0 first, right
+  after merging (`pnpm release 0.6.0 --push`), then apply migration `0012_bound_tokens.sql` and
+  deploy. The New token dialog, the README and `docs/ci.md` pin `mr0b0t0/plinth/publish@v0.6.0`
+  and `@mr0b0t0/plinth@0.6.0`, which exist only once that release is out. Plugin 0.21.0.
 - **Comments from the page.** A page that declares `comments` can open the comment composer on a
   spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
   its own markers for the threads and tell Plinth where to put its pins. The person still writes

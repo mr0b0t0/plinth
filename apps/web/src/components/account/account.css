@@ -41,6 +41,17 @@
 .pl-acct-note__body {
   min-width: 0;
 }
+/* The New token dialog's artifact choice: the search box (when the list is full), the select, and
+   Try again after a failed load. */
+.pl-acct-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.pl-acct-picker > .pl-button {
+  align-self: flex-start;
+  margin-top: calc(var(--space-2) - var(--space-4));
+}
 
 .pl-acct-error {
   display: flex;
@@ -441,13 +452,35 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
-.pl-acct-block .pl-acct-copy {
+.pl-acct-block .pl-acct-copy,
+.pl-acct-copy--box {
   align-items: flex-start;
   gap: var(--space-2);
   padding: 6px 6px 6px var(--space-3);
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+}
+/* A token in the same box, the copy button inside it, in the corner. */
+.pl-acct-copy--box {
+  justify-content: space-between;
+}
+.pl-acct-copy--box:focus-within {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 1px var(--color-focus);
+}
+.pl-acct-copy--box .pl-acct-copy__value {
+  padding: 3px 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--line-ui);
+  letter-spacing: 0;
+  /* Two even lines for a token rather than a full line and a stray character. */
+  max-width: 28ch;
 }
 .pl-acct-block__code {
   flex: 1;
@@ -459,6 +492,27 @@
   line-height: var(--line-ui);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.pl-acct-block__code--nowrap {
+  /* No min-content width of its own, so a long line scrolls here instead of widening the dialog. */
+  width: 0;
+  overflow-x: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.pl-acct-block__code--nowrap:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+/* A line still runs past the edge (a long self-hosted url): fade it, so the cut reads as scroll. */
+.pl-acct-block__code--more {
+  mask-image: linear-gradient(to left, transparent, #000 var(--space-6));
+}
+/* Phone width: a step's lines (`token: ${{ secrets.PLINTH_TOKEN }}`) fit beside the copy button. */
+@media (max-width: 40rem) {
+  .pl-acct-block__code--nowrap {
+    font-size: var(--text-2xs);
+  }
 }
 
 /* Advanced: personal access tokens, collapsed by default. */
@@ -480,6 +534,10 @@
 .pl-acct-advanced > summary:hover,
 .pl-acct-advanced[open] > summary {
   color: var(--color-ink);
+}
+/* Tokens limited to one artifact, under the New token button. */
+.pl-acct-advanced__list {
+  margin-top: var(--space-4);
 }
 .pl-acct-advanced__body {
   display: flex;

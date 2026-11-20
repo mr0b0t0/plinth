@@ -834,12 +834,19 @@ async function ticketCtx(w: BundleEnv, t: TicketRow): Promise<Ctx> {
   let principal: Principal;
   if (t.credential === "connection") {
     const row = await w.env.DB.prepare(
-      `SELECT c.id, c.label, c.client_type, c.scopes, u.email FROM agent_connections c
+      `SELECT c.id, c.label, c.client_type, c.scopes, c.artifact_id, u.email FROM agent_connections c
          JOIN users u ON u.id = c.user_id
         WHERE c.id = ?1 AND c.user_id = ?2 AND c.revoked_at IS NULL`,
     )
       .bind(t.connection_id, t.user_id)
-      .first<{ id: string; label: string; client_type: string; scopes: string; email: string }>();
+      .first<{
+        id: string;
+        label: string;
+        client_type: string;
+        scopes: string;
+        artifact_id: string | null;
+        email: string;
+      }>();
     if (!row) throw unauthorized("The connection that started this upload was revoked");
     const current = parseScopes(row.scopes);
     principal = {
@@ -850,6 +857,8 @@ async function ticketCtx(w: BundleEnv, t: TicketRow): Promise<Ctx> {
       connectionLabel: row.label,
       clientType: row.client_type as "claude" | "codex" | "other",
       scopes: new Set([...minted].filter((s) => current.has(s))),
+      // From the live row, so a ticket never carries more than its token (issue #51).
+      boundArtifactId: row.artifact_id,
     };
   } else {
     const c = w.config;
@@ -874,6 +883,7 @@ async function ticketCtx(w: BundleEnv, t: TicketRow): Promise<Ctx> {
       connectionLabel: "Admin token",
       clientType: "other",
       scopes: new Set<Scope>([...minted].filter((s) => (SCOPES as readonly string[]).includes(s))),
+      boundArtifactId: null,
     };
   }
   return {

@@ -106,11 +106,14 @@ images) as a deck.
 npx @mr0b0t0/plinth login                 # once: approve "Plinth CLI" in the browser
 npx @mr0b0t0/plinth publish dist          # a new private artifact; prints its link
 npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of that artifact
+npx @mr0b0t0/plinth publish report.html   # one page (sent as index.html); notes.md makes a document
 ```
 
 - **What is sent.** Every file under the folder, as one compressed upload. Dotfiles are left out,
   and so are source maps (`*.map`) unless you add `--include-maps`. Symbolic links are refused:
-  copy the files the page needs into the folder instead. Paths may use letters, digits, `.`, `_`,
+  copy the files the page needs into the folder instead. One `.html` (or `.htm`) file is sent as
+  `index.html`, one `.md` file as a document's `content.md`; any other single file is a usage
+  error (exit 2), and so is a file given through a symbolic link. Paths may use letters, digits, `.`, `_`,
   `-` and `/`; the command suggests a new name for any other.
 - **Limits.** It checks the instance's limits (from `/api/v1/config`) before sending anything:
   files per version, the size of one file and of the whole version.
@@ -128,10 +131,16 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   later even when its files equal the folder, since then someone else published too.
 - **Checks.** It reads the new version back and compares every file's SHA-256 with the folder,
   then prints the link, how many files were written and reused, and any warnings (for example a
-  file the page refers to that is not in the folder). `--json` prints `id`, `slug`, `version`,
-  `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents (and
+  file the page refers to that is not in the folder). `not_scanned` (some files were not checked)
+  and `live_draft` (people have unsaved edits on a doc's page) are printed as notes that need no
+  action. `--json` prints `id`, `slug`, `version`,
+  `url`, `content_url`, `stored`, `warnings`, `verified` and `title` for scripts and agents (and
   `category` when you passed `--category`; after a lost answer it is read back from the artifact,
-  and left out only when that read fails too).
+  and left out only when that read fails too). With `--json`, a failure prints one object too:
+  `{"ok": false, "exit_code", "outcome", "message"}`, where `outcome` is `conflict`, `usage` or
+  `error`, plus `current_version` on a conflict. `--dry-run --json` prints what would be sent as
+  one object, `{"outcome": "dry_run", "type", "files", "bytes", "send"}` (with `id`, `slug`,
+  `base_version`, `next_version`, `changed` and `reused` for an update), and sends nothing.
 - **A lost answer.** If the connection drops, or a proxy answers instead of Plinth, after the
   whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
   update, reads the artifact, and again a moment later) whether it was published, and prints that
@@ -162,6 +171,12 @@ instance in `PLINTH_URL` (or the hosted one when that is unset) and never saved.
 `--url`, `--name` or `--home` for another instance stops with exit code 2, and a local instance
 picked without a flag is used without it.
 
+**CI.** A `PLINTH_TOKEN` limited to one artifact (**Limit to one artifact** in the New token
+dialog on the Connections page) can only read that artifact and publish new versions of it. Without `--id`,
+`publish` updates that artifact (`--title` and `--category` are ignored, and the command says so),
+and `whoami` prints `limited to <slug> ("<title>")`. GitHub Actions, GitLab CI and cron:
+[docs/ci.md](https://github.com/mr0b0t0/plinth/blob/main/docs/ci.md).
+
 Agents that have only their MCP connection call `start_upload` and run the command it returns;
 `plinth upload <dir> --to <upload_url>` is that step, with the upload token in
 `PLINTH_UPLOAD_TOKEN` (never on the command line).
@@ -182,8 +197,8 @@ Client commands (they work with any instance, need no Cloudflare account and no 
 | --- | --- |
 | `plinth login` | Sign in to an instance in the browser (`--no-browser` prints the address) |
 | `plinth logout` | Revoke and forget that sign-in |
-| `plinth whoami` | The account you are signed in as, and on which instance |
-| `plinth publish <dir>` | Publish a build folder; `--id`, `--title`, `--category`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
+| `plinth whoami` | The account you are signed in as, and on which instance (and the artifact a token is limited to) |
+| `plinth publish <dir\|file.html\|file.md>` | Publish a build folder or one file; `--id`, `--title`, `--category`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
 | `plinth upload <dir> --to <upload_url>` | Send a folder with a `start_upload` ticket (token in `PLINTH_UPLOAD_TOKEN`) |
 
 Exit codes: 0 done, 1 error, 2 wrong usage, 3 the artifact changed since the version you read.

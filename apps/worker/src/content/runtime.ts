@@ -9,7 +9,7 @@
 // window.plinth:
 //   ready      Promise<Session>, never rejects: { available, reason, viewer, canWrite,
 //              capabilities, shared, limits, usage }; reason null | "opaque_isolation" | "disabled"
-//              | "not_declared" | "preview" | "expired" | "network"
+//              | "not_declared" | "preview" | "capture" | "expired" | "network"
 //   available, viewer ({ id, email | null, role } | null), canWrite: set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),

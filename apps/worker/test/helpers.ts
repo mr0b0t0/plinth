@@ -46,7 +46,13 @@ export async function createUser(email = uniqueEmail()) {
 /** Create a personal access token directly in the database. */
 export async function createToken(
   userId: string,
-  opts: { label?: string; clientType?: "claude" | "codex" | "other"; scopes?: string } = {},
+  opts: {
+    label?: string;
+    clientType?: "claude" | "codex" | "other";
+    scopes?: string;
+    /** Limit the token to one artifact (0012_bound_tokens). */
+    artifactId?: string;
+  } = {},
 ) {
   const token = newToken(TOKEN_PREFIX.pat);
   const id = newId();
@@ -61,6 +67,7 @@ export async function createToken(
       tokenHash: await hashToken(token),
       scopes: opts.scopes ?? "artifacts:read artifacts:write mentions",
       createdAt: nowIso(),
+      artifactId: opts.artifactId ?? null,
     })
     .run();
   return { token, connectionId: id };
@@ -254,6 +261,7 @@ export function spy<T extends object>(
 export function agentPrincipal(
   a: { user: { id: string; email: string }; connectionId: string },
   scopes: string[] = ["artifacts:read", "artifacts:write", "mentions"],
+  boundArtifactId: string | null = null,
 ): Principal {
   return {
     kind: "agent",
@@ -263,7 +271,14 @@ export function agentPrincipal(
     connectionLabel: "Test token",
     clientType: "other",
     scopes: new Set(scopes) as Set<never>,
+    boundArtifactId,
   };
+}
+
+/** A service Ctx for a signed-in person (the connections service takes one). */
+export function personCtxFor(user: { id: string; email: string }) {
+  const principal = { kind: "user" as const, userId: user.id, email: user.email, isAdmin: false };
+  return { ...serviceCtxFor(principal), principal };
 }
 
 /** A service Ctx for direct calls, with optional bindings (spies) and config over the test's. */

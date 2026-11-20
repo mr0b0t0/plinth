@@ -1,7 +1,7 @@
 import { CSRF_HEADER } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { agentConnections } from "../src/db/schema.ts";
+import { agentConnections, artifacts } from "../src/db/schema.ts";
 import { hashToken } from "../src/lib/crypto.ts";
 import {
   agent,
@@ -202,5 +202,97 @@ describe("personal access tokens", () => {
       .run();
     const list = await json(await call("/api/v1/connections", { headers: h }));
     expect(list.items.map((x: { kind: string }) => x.kind).sort()).toEqual(["oauth", "token"]);
+  });
+});
+
+describe("ConnectionInfo.artifact (tokens limited to one artifact)", () => {
+  async function bound(h: Record<string, string>, artifact: string) {
+    const { res, body } = await createPat(h, { label: "CI", artifact });
+    expect(res.status).toBe(201);
+    return body.connection;
+  }
+  const list = async (h: Record<string, string>) =>
+    (await json(await call("/api/v1/connections", { headers: h }))).items as {
+      id: string;
+      artifact: unknown;
+    }[];
+  const find = async (h: Record<string, string>, id: string) =>
+    (await list(h)).find((c) => c.id === id)?.artifact;
+  /** An owner with an account-wide token and a signed-in session. */
+  async function owner() {
+    const a = await agent();
+    const s = await browserSession(a.user.id);
+    return { ...a, h: { ...s.headers, "Content-Type": "application/json" } };
+  }
+  const share = (h: Record<string, string>, id: string, grants: unknown[]) =>
+    call(`/api/v1/artifacts/${id}/sharing`, {
+      method: "PUT",
+      headers: h,
+      body: JSON.stringify({ grants }),
+    });
+
+  it("names an owned artifact and a shared one; null for an unbound token", async () => {
+    const a = await owner();
+    const own = await publish(a.auth, { title: "Mine" });
+    const mine = await bound(a.h, own.body.id);
+    expect(mine.artifact).toEqual({ id: own.body.id, slug: own.body.slug, title: "Mine" });
+    expect(await find(a.h, mine.id)).toEqual(mine.artifact);
+    const editor = await signedIn();
+    await share(a.h, own.body.id, [{ email: editor.user.email, role: "editor" }]);
+    const shared = await bound(editor.h, own.body.id);
+    expect(shared.artifact).toEqual({ id: own.body.id, slug: own.body.slug, title: "Mine" });
+    const wide = await createPat(editor.h, { label: "Wide" });
+    expect(wide.body.connection.artifact).toBeNull();
+    expect(await find(editor.h, wide.body.connection.id)).toBeNull();
+  });
+
+  it("hides slug and title once the person may not view it: unshared, soft-deleted, taken down", async () => {
+    const a = await owner();
+    const editor = await signedIn();
+    const pub = await publish(a.auth, { title: "Private", visibility: "allowlist" });
+    await share(a.h, pub.body.id, [{ email: editor.user.email, role: "editor" }]);
+    const c = await bound(editor.h, pub.body.id);
+    await share(a.h, pub.body.id, []);
+    expect(await find(editor.h, c.id)).toEqual({ id: pub.body.id, slug: null, title: null });
+
+    const deleted = await publish(a.auth, { title: "Deleted" });
+    const d = await bound(a.h, deleted.body.id);
+    // Set directly, so the token row stays as it was.
+    await db()
+      .update(artifacts)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(artifacts.id, deleted.body.id))
+      .run();
+    expect(await find(a.h, d.id)).toEqual({ id: deleted.body.id, slug: null, title: null });
+
+    const down = await publish(a.auth, { title: "Down" });
+    const t = await bound(a.h, down.body.id);
+    await db()
+      .update(artifacts)
+      .set({ takenDownAt: new Date().toISOString() })
+      .where(eq(artifacts.id, down.body.id))
+      .run();
+    expect(await find(a.h, t.id)).toEqual({ id: down.body.id, slug: null, title: null });
+  });
+
+  it("create, rename and revoke answer with the same artifact as the list", async () => {
+    const a = await owner();
+    const pub = await publish(a.auth, { title: "Report" });
+    const c = await bound(a.h, pub.body.slug);
+    const listed = await find(a.h, c.id);
+    expect(c.artifact).toEqual(listed);
+    const renamed = await json(
+      await call(`/api/v1/connections/${c.id}`, {
+        method: "PATCH",
+        headers: a.h,
+        body: JSON.stringify({ label: "CI 2" }),
+      }),
+    );
+    expect(renamed.artifact).toEqual(listed);
+    const revoked = await json(
+      await call(`/api/v1/connections/${c.id}`, { method: "DELETE", headers: a.h }),
+    );
+    expect(revoked.artifact).toEqual(listed);
+    expect(revoked.revoked_at).toBeTruthy();
   });
 });

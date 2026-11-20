@@ -1,9 +1,12 @@
-// One agent connection: label, client, kind, permissions, dates; rename and revoke.
+// One agent connection: label, client, kind, permissions, dates; rename and revoke. A token
+// limited to one artifact shows a key instead of initials, and names the artifact before what it
+// may do there.
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
-import { API, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
+import { API, APP_ROUTES, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
 import { agentInitials } from "../../lib/agents.ts";
 import { ApiRequestError, api } from "../../lib/api.ts";
+import { Link } from "../../lib/router.tsx";
 import { Badge, Button, ConfirmDialog, Dialog, Input, useToast } from "../ui/index.ts";
 import {
   CLIENT_TYPE_LABEL,
@@ -12,6 +15,16 @@ import {
   formatRelative,
   scopeLabel,
 } from "./format.ts";
+
+/**
+ * What a token limited to one artifact may do there, in one label: it always reads it, so that is
+ * said only when it is all it may do.
+ */
+function boundScopes(scopes: string[]): { scope: string; label: string }[] {
+  return scopes.includes("artifacts:write")
+    ? [{ scope: "artifacts:write", label: "Publish new versions" }]
+    : [{ scope: "artifacts:read", label: "Read only" }];
+}
 
 export interface ConnectionItemProps {
   connection: ConnectionInfo;
@@ -46,24 +59,45 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
   return (
     <li className="pl-acct-conn" data-revoked={revoked || undefined}>
       <span className="pl-acct-conn__mark" aria-hidden="true">
-        {agentInitials(c.label)}
+        {c.artifact ? <KeyIcon size={12} /> : agentInitials(c.label)}
       </span>
       <div className="pl-acct-conn__main">
         <div className="pl-acct-conn__head">
           <h3 className="pl-acct-conn__label">{c.label}</h3>
-          <Badge icon={KindIcon} tone="neutral">
-            {c.kind === "oauth" ? "OAuth" : "Token"}
-          </Badge>
-          <Badge tone="neutral" srPrefix="Client:">
-            {CLIENT_TYPE_LABEL[c.client_type]}
-          </Badge>
+          {/* A token limited to one artifact has the key for a mark and answers no mentions, so
+              neither badge says anything there. */}
+          {!c.artifact && (
+            <>
+              <Badge icon={KindIcon} tone="neutral">
+                {c.kind === "oauth" ? "OAuth" : "Token"}
+              </Badge>
+              <Badge tone="neutral" srPrefix="Client:">
+                {CLIENT_TYPE_LABEL[c.client_type]}
+              </Badge>
+            </>
+          )}
           {revoked && <Badge tone="danger">Revoked</Badge>}
         </div>
         <p className="pl-acct-conn__scopes">
+          {c.artifact && (
+            <span className="pl-acct-conn__scope">
+              <span className="visually-hidden">Only </span>
+              {c.artifact.slug !== null && c.artifact.title !== null ? (
+                <Link to={route(APP_ROUTES.artifact, { slug: c.artifact.slug })}>
+                  {c.artifact.title}
+                </Link>
+              ) : (
+                "An artifact you can no longer open"
+              )}
+            </span>
+          )}
           <span className="visually-hidden">Permissions: </span>
-          {c.scopes.map((s) => (
-            <span key={s} className="pl-acct-conn__scope" title={s}>
-              {scopeLabel(s)}
+          {(c.artifact
+            ? boundScopes(c.scopes)
+            : c.scopes.map((s) => ({ scope: s, label: scopeLabel(s) }))
+          ).map(({ scope, label }) => (
+            <span key={scope} className="pl-acct-conn__scope" title={scope}>
+              {label}
             </span>
           ))}
         </p>
