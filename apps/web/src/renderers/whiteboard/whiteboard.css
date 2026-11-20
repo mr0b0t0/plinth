@@ -100,7 +100,9 @@ body {
   gap: 4px;
 }
 
-/* Controls that do not apply right now (nothing selected, a read-only board) are not shown. */
+/* Controls that do not apply right now (nothing selected, a read-only board) are not shown, nor
+   is the toolbar for a viewer the board cannot identify (a thumbnail capture). */
+.wb-toolbar[hidden],
 .wb-toolbar [hidden] {
   display: none;
 }
@@ -488,8 +490,8 @@ html[data-readonly="true"] .wb-block {
 }
 
 /* At phone width the bar stays one row: the tools scroll sideways, a selection's controls take
-   the add buttons' place, and the people here are coloured dots (their names on hover and for
-   screen readers). */
+   the add buttons' place, the people here are coloured dots (their names on hover and for
+   screen readers), and a read-only line says only "View only" (the reason, for screen readers). */
 @media (max-width: 560px) {
   .wb-toolbar {
     gap: 8px;
@@ -518,7 +520,8 @@ html[data-readonly="true"] .wb-block {
   .wb-people li {
     gap: 0;
   }
-  .wb-people span {
+  .wb-people span,
+  .wb-why {
     position: absolute;
     width: 1px;
     height: 1px;

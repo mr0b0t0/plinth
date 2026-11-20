@@ -184,8 +184,29 @@ export class Board {
     t.el.dataset.selection = String(edit && (id !== null || this.connecting));
   }
 
-  banner(text: string): void {
-    this.view.banner.textContent = text;
+  /**
+   * The toolbar's standing line. `why`, when given, follows it as the reason, which at phone width
+   * is left to screen readers so the line stays short.
+   */
+  banner(text: string, why = ""): void {
+    const b = this.view.banner;
+    // Empty when there is nothing to say, so the line collapses (:empty).
+    if (text) b.replaceChildren(this.doc.createTextNode(text));
+    else b.replaceChildren();
+    if (text && why) {
+      const span = this.doc.createElement("span");
+      span.className = "wb-why";
+      span.textContent = why;
+      b.append(span);
+    }
+  }
+
+  /**
+   * No toolbar at all: for a viewer the board cannot identify (a thumbnail capture, a link viewer
+   * who is not signed in), who could use only Fit, which `0` also does.
+   */
+  hideToolbar(): void {
+    this.view.toolbar.el.hidden = true;
   }
 
   say(text: string, action?: { label: string; run: () => void }): void {

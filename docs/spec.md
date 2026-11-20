@@ -1751,10 +1751,11 @@ its page without a new version each time, and agents add and move blocks with
   buttons show to people who may change the board; a selected block's colours, Connect (which
   starts from that block) and Delete show only while something is selected. On the right: the
   other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
-  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons.
+  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons
+  (": editors can change this board" follows it for a commenter on an `editors` board).
   Under 560 px a selection's controls take the add buttons' place and the row scrolls sideways
   if it must, the people here are coloured dots (the full name on hover and for screen readers),
-  and Fit zooms out no further than 75% so text stays readable, starting from the board's
+  a read-only line is "View only" alone (the reason for screen readers), and Fit zooms out no further than 75% so text stays readable, starting from the board's
   top-left.
 - **On the board.** A cursor's tag and the people list show a person's name, or their email's local
   part, with the full one on hover. A tag near the viewport's right edge sits on the pointer's
@@ -1771,7 +1772,7 @@ its page without a new version each time, and agents add and move blocks with
 - **Thumbnails.** A board's card shows its thumbnail as the version was captured, the blocks of
   that moment included. Board edits are not versions, so the thumbnail changes only with a new
   settings version. A capture, like a link viewer who is not signed in, sees the board with no
-  "View only" or live-cursor status and no notice.
+  toolbar (no "View only", live-cursor status or Fit; `0` still fits) and no notice.
 - **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
   otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
   `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms

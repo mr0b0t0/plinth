@@ -5,7 +5,7 @@
 // before anything else, so an element the page adds later cannot stand in for it.
 import { BOARD_LIMITS, boardDocError, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boot, EDITORS_ONLY_TEXT } from "./boot.ts";
+import { boot, EDITORS_ONLY_TEXT, EDITORS_ONLY_WHY } from "./boot.ts";
 import { READ_ONLY_TEXT } from "./sync.ts";
 
 const APP = "https://plinth.example";
@@ -180,10 +180,12 @@ describe("whiteboard boot", () => {
     await flush();
     await flush();
     expect(banner()).toBe(EDITORS_ONLY_TEXT);
+    // The reason is its own part, which phone widths leave to screen readers.
+    expect(document.querySelector(".wb-banner .wb-why")?.textContent).toBe(EDITORS_ONLY_WHY);
     expect(shown("Add note")).toBe(false);
   });
 
-  it("captures and link viewers: the board as it is, with no status, notice or room", async () => {
+  it("captures and link viewers: the board as it is, with no toolbar, status, notice or room", async () => {
     vi.useFakeTimers();
     try {
       // A thumbnail capture's pass, like a link viewer's, carries no identity: viewer is null.
@@ -202,6 +204,8 @@ describe("whiteboard boot", () => {
       expect(document.querySelector(".wb-msg")?.textContent ?? "").toBe("");
       expect(document.documentElement.dataset.readonly).toBe("true");
       expect(shown("Add note")).toBe(false);
+      // No toolbar at all: Fit was all it could offer, and `0` still fits.
+      expect(document.querySelector<HTMLElement>(".wb-toolbar")?.hidden).toBe(true);
       expect(stub.roomTouched()).toBe(false);
       // Nothing turns up later either (the old notice stayed 6 s).
       await vi.advanceTimersByTimeAsync(7000);

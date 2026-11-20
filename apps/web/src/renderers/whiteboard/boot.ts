@@ -27,8 +27,10 @@ import { BoardSync, READ_ONLY_TEXT } from "./sync.ts";
 const ROOT_ID = "__plinth-whiteboard";
 const DATA_ID = "__plinth-content";
 
+/** Why a commenter's board is read-only, after "View only" (on a board only editors may change). */
+export const EDITORS_ONLY_WHY = ": editors can change this board";
 /** The standing line for a commenter on a board only editors may change. */
-export const EDITORS_ONLY_TEXT = "View only: editors can change this board";
+export const EDITORS_ONLY_TEXT = `${READ_ONLY_TEXT}${EDITORS_ONLY_WHY}`;
 
 /** Why the board's blocks are not available, after "The board is not available here: ". */
 export const DATA_WHY: Record<string, string> = {
@@ -127,6 +129,10 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     html.setAttribute("data-ready", "ok");
     return;
   }
+  // Someone the board cannot identify (a link viewer who is not signed in, or a thumbnail
+  // capture) never joins the room and cannot change the board: they see it as it is, with no
+  // toolbar, "View only" or live-cursor status and no notice about either.
+  if (session.viewer === null) board.hideToolbar();
   const blocks = runtime.db.collection("blocks");
   const arrows = runtime.db.collection("arrows");
   board.sync = new BoardSync({
@@ -178,16 +184,13 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     }
   }, onError);
 
-  // Someone the board cannot identify (a link viewer who is not signed in, or a thumbnail
-  // capture) never joins the room and cannot change the board: they see it as it is, with no
-  // "View only" or live-cursor status and no notice about either.
-  if (session.viewer === null) {
+  if (!session.viewer) {
     board.setStatus("", "unavailable");
     return;
   }
   // A commenter is read-only only because the board's settings let editors alone change it.
-  const lockedText = session.viewer.role === "commenter" ? EDITORS_ONLY_TEXT : READ_ONLY_TEXT;
-  if (!session.canWrite) board.banner(lockedText);
+  const why = session.viewer.role === "commenter" ? EDITORS_ONLY_WHY : "";
+  if (!session.canWrite) board.banner(READ_ONLY_TEXT, why);
   board.setStatus(STATUS_TEXT.connecting, "connecting");
   const live = new Live(runtime.room, session.canWrite, {
     peers: (list) => board.setPeers(list),
@@ -196,7 +199,8 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     status: (s) => board.setStatus(STATUS_TEXT[s], s),
     canWrite: (may) => {
       board.setReadOnly(!may);
-      board.banner(may ? "" : lockedText);
+      if (may) board.banner("");
+      else board.banner(READ_ONLY_TEXT, why);
     },
     recheck: () => readSessionCanWrite(win),
   });
