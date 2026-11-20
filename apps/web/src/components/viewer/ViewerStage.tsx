@@ -13,6 +13,7 @@ import {
   APP_ROUTES,
   type CommentInfo,
   route,
+  typeDef,
   type ViewGate,
   viewFrameName,
 } from "@plinth/shared";
@@ -48,6 +49,7 @@ import "./viewer.css";
 
 // The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
 const LiveConflictDialog = lazy(() => import("./LiveConflictDialog.tsx"));
+const LiveSheetReview = lazy(() => import("./LiveSheetReview.tsx"));
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -72,6 +74,11 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /**
+   * The edit bar names a version the bar's picker does not show yet (one saved from the page, or
+   * published meanwhile): the page reads its gate now, so both name the same version.
+   */
+  onVersionSeen?: () => void;
   /** The frame is in review mode (the comment-anchoring frame). */
   review?: boolean;
   /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
@@ -118,6 +125,7 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  onVersionSeen,
   review,
   onLeaveReview,
   liveData,
@@ -177,7 +185,7 @@ export function ViewerStage({
     openComments: onToggleComments,
   });
 
-  // On-page editing of a doc (#36): owners and editors on the current version only.
+  // On-page editing of a doc or a sheet (#36): owners and editors on the current version only.
   const live = useLiveEdit({
     gate,
     frame,
@@ -236,6 +244,11 @@ export function ViewerStage({
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
+  // The version the edit bar names (saved as, or published meanwhile) and the picker agree.
+  const named = Math.max(live.savedVersion ?? 0, live.status?.conflict_version ?? 0);
+  useEffect(() => {
+    if (!pinned && named > artifact.version) onVersionSeen?.();
+  }, [named, pinned, artifact.version, onVersionSeen]);
 
   // The toggle gets focus back when the panel closes.
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -421,13 +434,27 @@ export function ViewerStage({
           </nav>
         </footer>
       </div>
-      {live.reviewing && live.conflict && (
+      {live.reviewing && live.conflict && !live.merges && (
+        <Suspense fallback={null}>
+          <LiveSheetReview
+            conflict={live.conflict}
+            saving={live.saving}
+            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            onClose={live.closeReview}
+            onPublishMine={() => void live.keepMine()}
+            onDiscardMine={() => void live.takeLatest()}
+          />
+        </Suspense>
+      )}
+      {live.reviewing && live.conflict && live.merges && (
         <Suspense fallback={null}>
           <LiveConflictDialog
             conflict={live.conflict}
             artifactId={artifact.id}
             saving={live.saving}
             mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            language={typeDef(artifact.type)?.editor?.language ?? "markdown"}
+            sourceLabel={typeDef(artifact.type)?.sourceLabel ?? "Markdown"}
             onClose={live.closeReview}
             onKeepMine={() => void live.keepMine()}
             onTakeLatest={() => void live.takeLatest()}

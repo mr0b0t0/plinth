@@ -94,7 +94,8 @@ describe("read_sheet", () => {
       warnings: [],
       untrusted: true,
     });
-    // A sheet is not edited on its page, so there is never a live draft to report.
+    // read_sheet reads versions and never reports a live draft: get_artifact and the edit_sheet
+    // and update_artifact warnings say when people are editing the sheet on its page.
     expect("live_draft" in rest).toBe(false);
     expect(rest.columns[2]).toEqual({
       letter: "C",

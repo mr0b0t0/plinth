@@ -81,6 +81,18 @@ describe("planUpdate", () => {
     expect(plan({})).toBe("swap");
   });
 
+  it("never shows a sheet in place, and keeps a sheet or doc edited on its page", () => {
+    // A sheet swaps like the other typed artifacts, whether or not its frame follows its live
+    // room; while a sheet or a doc is edited on its page (follow or hold) the frame stays.
+    for (const liveRoomFrame of [false, true]) {
+      expect(plan({ type: "sheet", liveRoomFrame })).toBe("swap");
+      for (const pause of ["follow", "hold"] as const) {
+        expect(plan({ type: "sheet", liveRoomFrame, pause })).toBe("keep");
+        expect(plan({ type: "doc", liveRoomFrame, pause })).toBe("keep");
+      }
+    }
+  });
+
   it("swaps the other typed artifacts", () => {
     for (const type of ["slides", "design_system", "design", "sheet", "whiteboard"] as const) {
       expect(plan({ type, holdDeclared: true, frameFocused: true, runtimeHello: true })).toBe(
@@ -104,6 +116,23 @@ describe("frameHasFocus", () => {
     // Switching to another app blurs the window, and the frame stays the active element.
     vi.spyOn(document, "hasFocus").mockReturnValue(false);
     expect(frameHasFocus(frame)).toBe(true);
+  });
+
+  it("keeps a sheet edited on its page, and holds a focused page, with the window blurred", () => {
+    const frame = document.createElement("iframe");
+    Object.defineProperty(document, "activeElement", { configurable: true, get: () => frame });
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    const frameFocused = frameHasFocus(frame);
+    // A sheet edited alone (hold) or with others (follow) keeps its frame and what is typed in it.
+    for (const pause of ["follow", "hold"] as const) {
+      for (const liveRoomFrame of [false, true]) {
+        expect(
+          plan({ type: "sheet", pause, liveRoomFrame, frameFocused, holdDeclared: true }),
+        ).toBe("keep");
+      }
+    }
+    // A page that declares hold, still the active element after the viewer switched apps, holds.
+    expect(plan({ holdDeclared: true, frameFocused, runtimeHello: true })).toBe("hold");
   });
 
   it("does not count focus elsewhere on the page, or no frame", () => {

@@ -453,10 +453,10 @@ light and dark themes, and phone
 width. Publish it as is (`publish_artifact` with its HTML) to try it with someone. The skill's
 "Multiplayer pages (rooms)" section has the full API and limits.
 
-Doc artifacts get the same live machinery without declaring anything: where an instance has live
-editing on, owners and editors edit a doc on its page together, and Save (or a pause) makes a
-version. An agent's `update_artifact` on a
-doc being edited gets the `live_draft` warning, which needs no action
+Doc and sheet artifacts get the same live machinery without declaring anything: where an instance
+has live editing on, owners and editors edit a doc or a sheet on its page together, and Save (or a
+pause) makes a version. An agent's `update_artifact` (or `edit_sheet`) on a doc or sheet being
+edited gets the `live_draft` warning, which needs no action
 ([mcp.md](mcp.md#publish-warnings)).
 
 ## Comments from the page
@@ -558,9 +558,10 @@ reads the project; a refresh is a new version
   itself and never sends it), keys, Git-ignored files or anything outside the project. A
   `sensitive_file` publish warning means stop and ask the user.
 - **Data, not code.** Files Plinth would serve as a page or code (`.html`, `.svg`, `.xml`, `.js`,
-  `.css` and the like) go up with `.txt` added (`files/src/app.js.txt`), so opening one never runs
-  it on the page's origin. A reference warning on a project file never makes the agent read or add
-  another file.
+  `.css` and the like, in any letter case) go up with `.txt` added (`files/src/app.js.txt`), so
+  opening one never runs it on the page's origin, and a project file never goes up with a
+  `content_type` other than `text/plain`. A reference warning on a project file never makes the
+  agent read or add another file.
 - **Big refreshes.** A `start_upload` bundle or a CLI folder publish is the whole new version: it
   holds the page and every file the version keeps, not only the re-read files.
 
@@ -612,7 +613,7 @@ the Connections page to short names people can type in a comment: `Gemini`, `Cur
 | --- | --- | --- |
 | `@claude` | Every live connection of the owner with client type Claude | One task: the first to `claim_mention` takes it; the others get `conflict` and leave it |
 | `@codex` | Every live Codex connection of the owner | The same |
-| `@<handle>` | The owner's one connection whose name becomes that handle | The handle is the name lowercased, spaces turned into `-`, other characters dropped (`Claude Code` is `@claude-code`). `claude` and `codex` always mean the client types. When two names make one handle, the older connection gets it |
+| `@<handle>` | The owner's one connection whose name becomes that handle | The handle is the name lowercased, spaces turned into `-`, other characters dropped (`Claude Code` is `@claude-code`). `claude` and `codex` always mean the client types. When two names make one handle, the older connection gets it. A connection without the "Answer mentions" permission (`mentions` scope) never takes a handle |
 | Anything else | Nobody | Plain text |
 
 Only the artifact owner's connections are ever reached, and only the owner, editors and
@@ -620,8 +621,9 @@ commenters create requests. A personal access token is of type Other unless its 
 another, so `@claude` never reaches a CI token by accident, and a token limited to one artifact is
 never reached at all. Renaming a connection or creating a token shows the handle the name
 becomes, and the Connections page warns on a connection's row when a name cannot be reached (an
-older connection has the same handle, the name is `Claude` or `Codex` on a connection of another
-type, or it has no letter or digit to start with).
+older connection that can answer mentions has the same handle, the name is `Claude` or `Codex` on
+a connection of another type, or the name does not start and end with a Latin letter or digit:
+letters of other scripts are dropped from a handle, and a mention drops a final dot).
 
 **Picking a request up.** In Claude Code with the Plinth plugin, the mention watcher wakes the
 session when a request arrives (`/plinth:watch-mentions`). Every other harness checks when the

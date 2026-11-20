@@ -50,8 +50,10 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // One quiet notice: a version pushed while the last one's notice is still up replaces it, so an
   // agent publishing several versions in a row never stacks "Updated to" toasts.
   const updatedToast = useRef<number | null>(null);
-  // A held version (the hold rule) says so in that same slot, so the frame never moves under the
-  // viewer and the two notices never stack; the bar's "vN of M" stays after it is dismissed.
+  // While the frame is held (edited on the page, a deck presented) the page's own bar says what
+  // happened, so no toast repeats it. A held version (the hold rule) says so in that same slot, so
+  // the frame never moves under the viewer and the two notices never stack; the bar's "vN of M"
+  // stays after it is dismissed.
   const heldToast = useRef<number | null>(null);
   // A fresh gate for a newer version waits here until the stage has applied it: in place for a
   // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
@@ -60,7 +62,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     const moved = gate.artifact.version !== shown?.artifact.version;
     setPending(null);
     setGate(gate);
-    if (!pinned && moved && !quiet) {
+    if (!pinned && moved && !quiet && pause === null) {
       if (updatedToast.current !== null) dismissToast(updatedToast.current);
       updatedToast.current = showToast({ title: `Updated to v${gate.artifact.version}` });
     }
@@ -114,6 +116,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     pause,
   );
   checkRef.current = checkNow;
+  const onVersionSeen = useCallback(() => checkRef.current(), []);
   // A page that declares `comments` anchors its own comments: opening the panel never reloads it
   // into review mode (the gate ignores review for it too). If a new version drops the declaration
   // while the panel is open, review mode turns on then, with one reload as on a first open.
@@ -222,6 +225,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       onReload={reload}
       onEditModeChange={onEditModeChange}
       onPauseChange={setPause}
+      onVersionSeen={onVersionSeen}
       review={review}
       onLeaveReview={onLeaveReview}
       liveData={{ pushed: live === "open", tick: dataTick }}

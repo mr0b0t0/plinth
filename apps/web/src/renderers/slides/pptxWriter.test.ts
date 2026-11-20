@@ -160,6 +160,25 @@ describe("buildPptx", () => {
     expect(slide).toContain('<a:spcBef><a:spcPts val="680"/></a:spcBef>');
   });
 
+  it("gives table cells the screen's top padding as margins, and narrow sides", async () => {
+    // inch2Emu: 914400 per inch. Without padY in the model: 0.04 in above and below.
+    const narrow = (await files()).text("ppt/slides/slide1.xml");
+    expect(narrow).toContain('marL="73152" marR="73152" marT="36576" marB="36576"');
+    const padded: DeckModel = {
+      ...MODEL,
+      slides: [
+        {
+          ...(MODEL.slides[0] as DeckModel["slides"][number]),
+          items: (MODEL.slides[0]?.items ?? []).map((i) =>
+            i.kind === "table" ? { ...i, padY: 0.08 } : i,
+          ),
+        },
+      ],
+    };
+    const slide = (await files(padded)).text("ppt/slides/slide1.xml");
+    expect(slide).toContain('marL="73152" marR="73152" marT="73152" marB="73152"');
+  });
+
   it("keeps a one-line item (the footer, the number) from wrapping, and wraps the rest", async () => {
     const one: DeckModel = {
       ...MODEL,

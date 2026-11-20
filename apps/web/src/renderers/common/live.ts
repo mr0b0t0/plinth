@@ -1,6 +1,7 @@
-// The doc socket client (#36): the renderer's side of the live draft in the artifact's room
-// (apps/worker/src/rooms/doc.ts). It lives inside the renderer bundle, never in the page runtime:
-// /__plinth/runtime.js is not loaded in doc frames, where a heading id="plinth" would clobber it.
+// The live draft socket client (#36): the renderer's side of the live draft in the artifact's room
+// (apps/worker/src/rooms/doc.ts), shared by the doc and sheet renderers. It lives inside the
+// renderer bundles, never in the page runtime: /__plinth/runtime.js is not loaded in typed frames,
+// where a heading id="plinth" would clobber it.
 //
 // Rules it keeps:
 // - An op applies only when its `gen` is the room's current one and its `rev` is exactly the next;
@@ -11,6 +12,8 @@
 //   unless it holds text the room has not written to D1 yet.
 // - If the very first connection never opens, the client reports `failed` and stops, and the app
 //   falls back to editing alone (solo).
+// - A sheet's `struct` frame (rows and columns) is applied with the applier the sheet renderer
+//   passes in (applySheetStruct), exactly as the room applied it; without one (a doc) it resyncs.
 import {
   blockLines,
   joinLines,
@@ -21,6 +24,9 @@ import {
   ROOM_CLOSE,
   ROOM_PATH_PREFIX,
   ROOM_PROTOCOL,
+  SHEET_COLUMN_TYPES,
+  SHEET_NUMBER_STYLES,
+  type SheetStructOp,
   shiftRange,
   splitLines,
 } from "@plinth/shared";
@@ -55,6 +61,27 @@ export interface LiveDocListener {
   /** A version was saved, reset or merged onto. */
   version(kind: "saved" | "reset" | "rebased" | "conflict", version: number): void;
   error(code: LiveDocErrorCode): void;
+  /** This socket's struct frame was refused (a sheet's rows or columns). */
+  structDenied?(reason: LeaseDenial, by?: string): void;
+}
+
+/** What an editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
+export interface LiveBackend {
+  readonly lines: string[];
+  readonly ready: boolean;
+  readonly connected: boolean;
+  readonly settled: boolean;
+  readonly mine: ClientLease | null;
+  readonly leases: Map<string, ClientLease>;
+  readonly you: { id: string; email: string; right: "watch" | "write" } | null;
+  readonly conflictVersion: number | null;
+  /** The room's text of the held block as of the last ack, and as last written to D1. */
+  readonly ackedText: string | null;
+  readonly durableText: string | null;
+  lease(range: LineRange): boolean;
+  edit(text: string): boolean;
+  release(): void;
+  takeover(leaseId: string): boolean;
 }
 
 type Socket = Pick<WebSocket, "send" | "close" | "readyState"> & {
@@ -71,6 +98,8 @@ export interface LiveDocOptions {
   connect?: (url: string, protocols: string[]) => Socket;
   /** For tests: the random part of the backoff (0 to 1). */
   random?: () => number;
+  /** Applies a struct frame's op to the lines (a sheet's applySheetStruct); absent for a doc. */
+  applyStruct?: (lines: readonly string[], op: SheetStructOp) => string[] | null;
 }
 
 /** The doc socket's URL on this content origin. */
@@ -93,7 +122,7 @@ interface Ack {
   text: string;
 }
 
-export class LiveDocClient {
+export class LiveDocClient implements LiveBackend {
   lines: string[] = [];
   /** The text has arrived at least once. */
   ready = false;
@@ -131,12 +160,21 @@ export class LiveDocClient {
   /** The room's text of this socket's block as written to D1 (or as it was when leased). */
   private durable: string | null = null;
   private wantLease = false;
+  /** A struct frame sent and not answered yet. */
+  private structPending = false;
+  /** The latest rev made by this socket's own struct frame. */
+  private ownStructRev = 0;
 
   constructor(private readonly opts: LiveDocOptions) {}
 
   /** Text this socket sent that the room has not written to D1 yet (beforeunload, hidden tabs). */
   get unflushed(): boolean {
-    return this.unacked !== null || this.acks.some((a) => a.rev > this.flushedRev);
+    return (
+      this.unacked !== null ||
+      this.structPending ||
+      this.ownStructRev > this.flushedRev ||
+      this.acks.some((a) => a.rev > this.flushedRev)
+    );
   }
 
   /** The room's text of this socket's block as of its last ack, for re-taking it. */
@@ -217,6 +255,7 @@ export class LiveDocClient {
       this.opts.listener.lost("reconnect");
     }
     this.unacked = null;
+    this.structPending = false;
     if (code === ROOM_CLOSE.unauthorized || code === ROOM_CLOSE.gone) {
       this.ended = code === ROOM_CLOSE.gone ? "gone" : "unauthorized";
       this.stopped = true;
@@ -312,6 +351,16 @@ export class LiveDocClient {
     return this.send({ t: "takeover", lease: leaseId });
   }
 
+  /** A sheet's rows or columns: applied by the room only while nobody else holds a lease. */
+  struct(op: SheetStructOp): boolean {
+    if (this.you?.right !== "write" || this.conflictVersion !== null || !this.opts.applyStruct) {
+      return false;
+    }
+    if (!this.send({ t: "struct", rev: this.rev, op })) return false;
+    this.structPending = true;
+    return true;
+  }
+
   private sync(): void {
     if (this.syncing) return;
     this.syncing = true;
@@ -393,6 +442,16 @@ export class LiveDocClient {
         this.op(f);
         return;
       }
+      case "struct": {
+        this.struct_(f);
+        return;
+      }
+      case "struct_denied":
+        if (!this.structPending) return;
+        this.structPending = false;
+        L.structDenied?.(f.reason, f.by);
+        L.status();
+        return;
       case "released":
         this.leases.delete(f.lease);
         if (this.mine?.id === f.lease) this.mine = null;
@@ -466,6 +525,8 @@ export class LiveDocClient {
           return;
         }
       case "error": {
+        // A refused struct frame is answered with an error too (invalid, too_large).
+        this.structPending = false;
         L.error(f.code);
         return;
       }
@@ -527,6 +588,31 @@ export class LiveDocClient {
         this.opts.listener.status();
       },
     };
+  }
+
+  private struct_(f: Extract<LiveDocServerFrame, { t: "struct" }>): void {
+    const apply = this.opts.applyStruct;
+    // The room applies a struct only while no other lease is held, and ends the sender's first.
+    if (!apply || f.gen !== this.gen || f.rev !== this.rev + 1 || this.leases.size > 0) {
+      this.sync();
+      return;
+    }
+    const next = apply(this.lines, f.op);
+    if (!next) {
+      this.sync();
+      return;
+    }
+    this.lines = next;
+    this.rev = f.rev;
+    this.lastByYou = f.by === this.you?.id;
+    this.lastEditAt = new Date().toISOString();
+    this.dirty = true;
+    if (f.by === this.you?.id) {
+      this.structPending = false;
+      this.ownStructRev = f.rev;
+    }
+    this.opts.listener.changed();
+    this.opts.listener.status();
   }
 
   private op(f: Extract<LiveDocServerFrame, { t: "op" }>): void {
@@ -602,6 +688,80 @@ const isId = (v: unknown): v is string => isStr(v, 64);
 const isGen = (v: unknown): v is string => isStr(v, 64, 1);
 const isVersion = (v: unknown): v is number => isInt(v, 1);
 const LEASE_REASONS = new Set(["held", "stale", "frozen", "watch"]);
+const COLUMN_TYPES: ReadonlySet<string> = new Set(SHEET_COLUMN_TYPES);
+const NUMBER_STYLES: ReadonlySet<string> = new Set(SHEET_NUMBER_STYLES);
+const COLUMN_KEYS = new Set(["name", "type", "width", "format", "options"]);
+const FORMAT_KEYS = new Set(["style", "decimals", "currency", "grouping"]);
+const LETTERS_RE = /^[A-Z]{1,3}$/;
+const isSheetRow = (v: unknown) => isInt(v, 2, LIMITS.maxSheetRows + 2);
+const isRowCount = (v: unknown) => isInt(v, 1, LIMITS.maxSheetRows);
+const onlyKeys = (o: Record<string, unknown>, keys: ReadonlySet<string>) =>
+  Object.keys(o).every((k) => keys.has(k));
+
+/** A new column's definition, as sheetColumnInputSchema checks it. */
+function isColumnInput(c: unknown): boolean {
+  if (!isObj(c) || !onlyKeys(c, COLUMN_KEYS) || !isStr(c.name, 100, 1)) return false;
+  if (c.type !== undefined && !COLUMN_TYPES.has(c.type as string)) return false;
+  if (c.width !== undefined && !isInt(c.width, 40, 800)) return false;
+  if (c.format !== undefined) {
+    const f = c.format;
+    if (!isObj(f) || !onlyKeys(f, FORMAT_KEYS) || !NUMBER_STYLES.has(f.style as string)) {
+      return false;
+    }
+    if (f.decimals !== undefined && !isInt(f.decimals, 0, 10)) return false;
+    if (
+      f.currency !== undefined &&
+      !(typeof f.currency === "string" && /^[A-Z]{3}$/.test(f.currency))
+    ) {
+      return false;
+    }
+    if (f.grouping !== undefined && typeof f.grouping !== "boolean") return false;
+  }
+  if (c.options !== undefined) {
+    const o = c.options;
+    if (!Array.isArray(o) || o.length < 1 || o.length > 100) return false;
+    if (!o.every((x) => isStr(x, 100, 1))) return false;
+  }
+  return true;
+}
+
+/** A struct frame's op, as sheetStructOpSchema checks it. */
+function isStructOp(op: unknown): boolean {
+  if (!isObj(op)) return false;
+  switch (op.op) {
+    case "insert_rows":
+      return (
+        onlyKeys(op, new Set(["op", "before", "count"])) &&
+        isSheetRow(op.before) &&
+        isRowCount(op.count)
+      );
+    case "delete_rows":
+      return (
+        onlyKeys(op, new Set(["op", "from", "count"])) &&
+        isSheetRow(op.from) &&
+        isRowCount(op.count)
+      );
+    case "insert_columns":
+      return (
+        onlyKeys(op, new Set(["op", "before", "columns"])) &&
+        typeof op.before === "string" &&
+        LETTERS_RE.test(op.before) &&
+        Array.isArray(op.columns) &&
+        op.columns.length >= 1 &&
+        op.columns.length <= LIMITS.maxSheetColumns &&
+        op.columns.every(isColumnInput)
+      );
+    case "delete_columns":
+      return (
+        onlyKeys(op, new Set(["op", "from", "count"])) &&
+        typeof op.from === "string" &&
+        LETTERS_RE.test(op.from) &&
+        isInt(op.count, 1, LIMITS.maxSheetColumns)
+      );
+    default:
+      return false;
+  }
+}
 const LOST_REASONS = new Set(["takeover", "rebased", "closed"]);
 const ERROR_CODES = new Set([
   "invalid",
@@ -659,6 +819,10 @@ export function readServerFrame(raw: unknown): LiveDocServerFrame | null {
           isId(f.by) &&
           (f.seq === undefined || isInt(f.seq))
         );
+      case "struct":
+        return isGen(f.gen) && isInt(f.rev, 1) && isStructOp(f.op) && isId(f.by);
+      case "struct_denied":
+        return LEASE_REASONS.has(f.reason as string) && (f.by === undefined || isEmail(f.by));
       case "released":
         return isLease(f.lease);
       case "lease_lost":

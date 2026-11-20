@@ -2,6 +2,7 @@
 // the canvas scale, runs with bold, italic, code and links (only safe ones, #N as slide links),
 // list levels, a table, an image, the footer and number, notes as plain text, and the file name.
 import { parseDeck } from "@plinth/shared";
+import { strFromU8, unzipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildDeck, type SlideView } from "./deck.ts";
 import {
@@ -14,6 +15,7 @@ import {
   type Rect,
 } from "./exportModel.ts";
 import type { Item, Para } from "./pptxModel.ts";
+import { buildPptx } from "./pptxWriter.ts";
 
 const DECK = [
   "---",
@@ -236,6 +238,93 @@ describe("buildExportModel", () => {
       geometry: off,
     });
     expect(m.slides[0]?.items).toEqual([]);
+  });
+
+  it("gives a table under a list the gap the screen shows, and the cells' padding", () => {
+    const parsed = parseDeck(
+      "- a\n- b\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n---\n\n| C |\n|---|\n| 3 |",
+    );
+    const views = buildDeck(document, parsed);
+    for (const v of views) document.body.append(v.frame);
+    const g = geometry(views);
+    const padded: Geometry = {
+      rect: g.rect,
+      style: (el) => {
+        const s = g.style(el);
+        return /^t[hd]$/.test(el.localName) ? { ...s, paddingTop: "7.7px" } : s;
+      },
+    };
+    const m = buildExportModel(views, {
+      aspect: "16:9",
+      theme: "light",
+      title: "t",
+      geometry: padded,
+    });
+    const [list, table] = m.slides[0]?.items ?? [];
+    if (list?.kind !== "text" || table?.kind !== "table") throw new Error("no list and table");
+    /** Where the screen has an element's top, in inches from the slide's top. */
+    const screenY = (el: Element | null | undefined) =>
+      Math.round((((el ? g.rect(el).top : 0) - SLIDE.top) / 0.5 / 96) * 1000) / 1000;
+    // The last item's line is 40.5 px for a 30 px font: half its leading is 5.25 px (3.9 pt,
+    // 0.055 in), which the file adds above the table.
+    expect(list.paras.at(-1)).toMatchObject({ size: 22.5, lineHeight: 1.35 });
+    const tables = views.map((v) => v.body.querySelector("table"));
+    expect(table.box.y).toBeCloseTo(screenY(tables[0]) + 0.055, 3);
+    // The cells' top padding on screen, 7.7 px, as their top and bottom margin in the file.
+    expect(table.padY).toBe(0.08);
+    // A table with no text right above it stays where the screen has it.
+    const alone = m.slides[1]?.items.find((i) => i.kind === "table");
+    expect(alone?.box.y).toBe(screenY(tables[1]));
+  });
+
+  it("writes only web, mail and slide links into the file's rels", async () => {
+    const parsed = parseDeck(
+      [
+        "Go [web](https://example.com/ok) [mail](mailto:a@example.com) [two](#2) " +
+          "[js](javascript:alert(1)) [file](file:///etc/passwd) [data](data:text/html,x) " +
+          "[rel](notes.html)",
+        "",
+        "---",
+        "",
+        "Two",
+      ].join("\n"),
+    );
+    const views = buildDeck(document, parsed);
+    // The sanitizer already drops the unsafe links; a link it let through would still lose its
+    // target here: the model keeps only web and mail URLs and #N.
+    const body = views[0]?.body;
+    for (const href of [
+      "javascript:alert(2)",
+      " JavaScript:alert(3)",
+      "file:///etc/hosts",
+      "data:text/html,<script>x</script>",
+      "vbscript:x",
+      "//evil.example/x",
+      "page.html",
+    ]) {
+      const a = document.createElement("a");
+      a.setAttribute("href", href);
+      a.textContent = "planted";
+      body?.firstElementChild?.append(" ", a);
+    }
+    for (const v of views) document.body.append(v.frame);
+    const m = buildExportModel(views, {
+      aspect: "16:9",
+      theme: "light",
+      title: "t",
+      geometry: geometry(views),
+    });
+    const { blob } = await buildPptx(m, new Map());
+    const zip = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+    const rels = strFromU8(zip["ppt/slides/_rels/slide1.xml.rels"] as Uint8Array);
+    const targets = [...rels.matchAll(/<Relationship [^>]*>/g)].map((r) => r[0]);
+    const external = targets
+      .filter((r) => r.includes('TargetMode="External"'))
+      .map((r) => /Target="([^"]*)"/.exec(r)?.[1]);
+    expect(external.sort()).toEqual(["https://example.com/ok", "mailto:a@example.com"]);
+    expect(targets.filter((r) => /Target="slide2\.xml"/.test(r))).toHaveLength(1);
+    expect(rels).not.toMatch(/javascript|vbscript|file:|data:|evil\.example|\.html"/i);
+    expect(texts(m.slides[0]?.items ?? []).join(" ")).toContain("planted");
   });
 
   it("lists each image source once", () => {

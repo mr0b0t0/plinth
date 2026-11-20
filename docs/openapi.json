@@ -21,7 +21,7 @@
     { "name": "Shared data", "description": "Documents pages keep. Mirrors the MCP data tools" },
     {
       "name": "Live editing",
-      "description": "Editing a doc on its page: the unsaved draft and checkpoints. Not for agents"
+      "description": "Editing a doc or a sheet on its page: the unsaved draft and checkpoints. Not for agents"
     }
   ],
   "paths": {
@@ -2014,8 +2014,8 @@
     "/artifacts/{ref}/live": {
       "get": {
         "operationId": "getLiveInfo",
-        "summary": "On-page editing of a doc: mode, unsaved draft, editors online",
-        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead.",
+        "summary": "On-page editing of a doc or a sheet: mode, unsaved draft, editors online",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2046,7 +2046,7 @@
       "get": {
         "operationId": "getLiveDraft",
         "summary": "The unsaved draft's text, to review a conflict",
-        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead. Needs live editing with rooms on the instance.",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. Needs live editing with rooms on the instance.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2076,7 +2076,7 @@
       "delete": {
         "operationId": "discardLiveDraft",
         "summary": "Discard the unsaved draft (409 when it changed past rev)",
-        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead.",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2111,7 +2111,7 @@
       "post": {
         "operationId": "liveCheckpoint",
         "summary": "Save the unsaved draft as the next version",
-        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead. The version is published with the draft's base_version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing. resolved_text is accepted only while the draft is in conflict, with the conflict_version the editor reviewed (409 when the draft now conflicts with a newer version).",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. The version is published with the draft's base_version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing. resolved_text is accepted only while the draft is in conflict, with the conflict_version the editor reviewed (409 when the draft now conflicts with a newer version). A sheet's draft is never merged: its resolved_text must be the draft itself, saved on top of the conflicting version, or that version's text, which drops the draft (400 not_a_choice otherwise, 409 when rev is not the draft's).",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -4192,6 +4192,10 @@
               },
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
+          },
+          "live_draft": {
+            "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
+            "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
           },
           "capabilities": {
             "type": "array",

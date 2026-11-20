@@ -82,7 +82,9 @@ describe("ConnectionItem mention warning", () => {
     await user.clear(input);
     await user.type(input, "???");
     // A name no mention reaches: the warning alone, in the warning colour.
-    const warning = screen.getByText("Cannot be mentioned: start the name with a letter or digit.");
+    const warning = screen.getByText(
+      "Cannot be mentioned: start and end the name with a Latin letter or digit.",
+    );
     expect(warning.className).toBe("pl-acct-warn");
     await user.clear(input);
     await user.type(input, "claude");

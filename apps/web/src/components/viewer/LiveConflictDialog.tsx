@@ -6,6 +6,7 @@
 //
 // In room mode the draft is everyone's unsaved page edits, not just this person's, and taking the
 // new version throws them away for everyone: the words say so, and that choice asks first.
+import type { EditorLanguage } from "@plinth/shared";
 import { ConflictView, type ConflictWords } from "../editor/ConflictView.tsx";
 import { Dialog, showToast } from "../ui/index.ts";
 import type { LiveConflict } from "./useLiveEdit.ts";
@@ -17,6 +18,9 @@ export interface LiveConflictDialogProps {
   saving: boolean;
   /** "room": the shared draft of everyone editing; "solo": this tab's own edits. */
   mode: "room" | "solo";
+  /** The source as the diff shows it: Markdown for a doc, JSON lines for a sheet. */
+  language?: EditorLanguage;
+  sourceLabel?: string;
   onClose: () => void;
   onKeepMine: () => void;
   onTakeLatest: () => void;
@@ -61,6 +65,8 @@ export default function LiveConflictDialog({
   artifactId,
   saving,
   mode,
+  language = "markdown",
+  sourceLabel = "Markdown",
   onClose,
   onKeepMine,
   onTakeLatest,
@@ -79,8 +85,8 @@ export default function LiveConflictDialog({
           draft={conflict.draft}
           artifactId={artifactId}
           saving={saving}
-          language="markdown"
-          sourceLabel="Markdown"
+          language={language}
+          sourceLabel={sourceLabel}
           words={mode === "room" ? ROOM_WORDS : SOLO_WORDS}
           onCopyDraft={() => {
             navigator.clipboard
