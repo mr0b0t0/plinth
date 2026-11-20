@@ -1010,14 +1010,18 @@ source editor work as for docs. A deck is not edited on its page.
   notes. The writer (PptxGenJS 4.0.1, about
   370 kB) is a second renderer file, `/__plinth/types/slides/slides-pptx.js`, which the deck
   loads from its own origin only when someone downloads, so a first view never fetches it. Images
-  are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
-  to PNG; under opaque isolation and the path fallback the frame cannot read its own files, so
+  are the deck's own files, read by the frame from its own origin, at most four at a time, with
+  SVG, WebP and AVIF drawn to PNG (an image the browser cannot draw is left out and counted);
+  under opaque isolation and the path fallback the frame cannot read its own files, so
   file images are left out (inline `data:` images stay) and the app says so, counting each image
   file once however many slides use it. Code blocks keep their blank lines, and characters an
   XML file cannot hold (control characters other than tab and line breaks, such as a pasted
   terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
   file without repairing it. Lines are spaced in exact points, the line height on screen, so each
-  box holds its text at the height measured on screen. The browser saves the file from the frame
+  box holds its text at the height measured on screen. A table right under text keeps the gap
+  the screen shows (PowerPoint draws a line's text lower in it than a browser does, so the table
+  moves down by half that line's leading), and its cells keep the screen's top and bottom
+  padding. The browser saves the file from the frame
   and shows its own download; the app adds a toast only when images were left out or the file
   could not be made, and the frame shows no notice of its own. While the file is being made the
   menu item reads "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second

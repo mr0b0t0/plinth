@@ -48,6 +48,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
   On instances with opaque content isolation the file leaves out the deck's image files, and says
   so. Plugin 0.23.0.
+- **.pptx: images four at a time.** The download reads and draws at most four of a deck's images
+  at once, so a deck with hundreds of them no longer risks a phone's tab, and an image the browser
+  cannot draw is counted among those left out.
+- **.pptx: space above tables.** A table right under a list or a paragraph keeps the gap the slide
+  shows, instead of sitting against the last line.
+- **.pptx: an interrupted download says what to do.** When a newer version replaces the deck while
+  the file is made, the notice says to download it again if no file was saved.
 - **Open pages follow new versions at once.** An artifact page that is open picks up a version an
   agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
   vN" notice at a time, however many versions arrive in a row), and pages that keep

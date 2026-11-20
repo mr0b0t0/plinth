@@ -72,9 +72,13 @@ export interface Presentation {
 /** How long the app waits for the frame's answer to an export before it gives up. */
 export const EXPORT_TIMEOUT_MS = 90_000;
 
-/** The toast when the deck's frame is replaced while it makes the file. */
+/**
+ * The toast when the deck's frame is replaced while it makes the file. The app cannot tell whether
+ * the old frame saved it first, so it says what to do if it did not.
+ */
 export const EXPORT_INTERRUPTED_TOAST = {
   title: "The .pptx download was interrupted",
+  description: "If no file was saved, download it again.",
   tone: "warning",
 } as const;
 

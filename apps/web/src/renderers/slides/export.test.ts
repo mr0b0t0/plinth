@@ -15,6 +15,7 @@ import { boot } from "./boot.ts";
 import {
   clickDownload,
   collectImages,
+  IMAGE_CONCURRENCY,
   imageData,
   saveBlob,
   writerLoader,
@@ -157,6 +158,63 @@ describe("images", () => {
     const opaque = await collectImages(win, model, true);
     expect([...opaque.keys()]).toEqual([PNG]);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads at most IMAGE_CONCURRENCY images at once, and keeps their order", async () => {
+    expect(IMAGE_CONCURRENCY).toBe(4);
+    let open = 0;
+    let most = 0;
+    const fetch = vi.fn(async (url: string) => {
+      open++;
+      most = Math.max(most, open);
+      await new Promise((r) => setTimeout(r, 1));
+      open--;
+      const path = new URL(url).pathname;
+      return new Response(new Blob([path], { type: "image/png" }), { status: 200 });
+    });
+    const win = {
+      document: { baseURI: `${SELF}/` },
+      location: { origin: SELF },
+      fetch,
+    } as unknown as Window;
+    const srcs = Array.from({ length: 13 }, (_, i) => `img/${i}.png`);
+    const model = {
+      title: "t",
+      width: 13.333,
+      height: 7.5,
+      theme: "light" as const,
+      slides: srcs.map((src, i) => ({
+        n: i + 1,
+        notes: "",
+        background: "FFFFFF",
+        items: [{ kind: "image" as const, box: { x: 0, y: 0, w: 1, h: 1 }, src, alt: "" }],
+      })),
+    };
+    const got = await collectImages(win, model, false);
+    expect(fetch).toHaveBeenCalledTimes(13);
+    expect(most).toBe(IMAGE_CONCURRENCY);
+    expect([...got.keys()]).toEqual(srcs);
+    expect(got.get("img/12.png")).toBe(`data:image/png;base64,${btoa("/img/12.png")}`);
+  });
+
+  it("leaves out an image whose canvas the browser could not make", async () => {
+    // toDataURL gives "data:," for a canvas it could not allocate: no image, so it is counted.
+    const fake = (png: string) =>
+      ({
+        location: { origin: SELF },
+        document: {
+          baseURI: `${SELF}/`,
+          createElement: (tag: string) =>
+            tag === "img"
+              ? { decode: async () => {}, naturalWidth: 40, naturalHeight: 20 }
+              : { getContext: () => ({ drawImage() {} }), toDataURL: () => png },
+        },
+      }) as unknown as Window;
+    const svg = "data:image/svg+xml;base64,PHN2Zy8+";
+    expect(await imageData(fake("data:,"), svg, false)).toBeNull();
+    expect(await imageData(fake("data:image/png;base64,AAAA"), svg, false)).toBe(
+      "data:image/png;base64,AAAA",
+    );
   });
 });
 
