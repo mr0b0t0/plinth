@@ -4,8 +4,9 @@
 // publish warnings, restore, and what the content and app hosts serve.
 
 import { TYPE_REGISTRY } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { contentCsp } from "../src/content/csp.ts";
+import { slidesHooks } from "../src/services/artifactTypes/slides.ts";
 import { checkAsset, resolveSource } from "../src/services/artifactTypes.ts";
 import { titleFromSource } from "../src/services/stage.ts";
 import {
@@ -129,7 +130,7 @@ describe("slides over REST", () => {
       "type slides takes Markdown in content, not html",
     );
     expect(errorOf(await publish(a.auth, { content: "# x" })).message).toBe(
-      'content is for typed artifacts: pass type "doc", "slides", "design_system", "design" or "sheet", or send html',
+      'content is for typed artifacts: pass type "doc", "slides", "design_system", "design", "sheet" or "whiteboard", or send html',
     );
     expect(
       errorOf(await publishDeck(a.auth, { content: "<!doctype html><html><body>x</body></html>" }))
@@ -201,6 +202,31 @@ describe("slides over REST", () => {
     expect(body.warnings[3]).toMatchObject({ ref: "img/missing.png" });
     const clean = await publishDeck(a.auth);
     expect(clean.body.warnings).toEqual([]);
+  });
+
+  it("publishes with a not_scanned note when the deck's own checks fail", async () => {
+    const a = await agent();
+    const spy = vi.spyOn(slidesHooks, "sourceWarnings").mockImplementation(() => {
+      throw new RangeError("deck text 'secret' at line 3");
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { res, body } = await publishDeck(a.auth);
+      expect(res.status).toBe(201);
+      expect(body.version).toBe(1);
+      expect(body.warnings).toEqual([
+        {
+          code: "not_scanned",
+          file: "slides.md",
+          message: expect.stringContaining("did not run"),
+        },
+      ]);
+      expect(errors).toHaveBeenCalledWith("source warnings hook failed:", "slides", "RangeError");
+      expect(JSON.stringify(errors.mock.calls)).not.toContain("secret");
+    } finally {
+      spy.mockRestore();
+      errors.mockRestore();
+    }
   });
 
   it("quotes deck text in a warning with its control characters escaped", async () => {

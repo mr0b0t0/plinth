@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APP_MESSAGE_KINDS,
+  boardExportMessage,
   collectMessage,
   editMessage,
   exportMessage,
@@ -10,11 +11,9 @@ import {
   type FrameMessage,
   gotoMessage,
   matchFrameMessage,
-  pairedMessage,
   printMessage,
   readFrameMessage,
   sheetExportMessage,
-  versionMessage,
   viewMessage,
 } from "./rendererProtocol.ts";
 
@@ -31,17 +30,8 @@ function event(data: unknown) {
 
 describe("renderer protocol kinds", () => {
   it("lists each kind once, at version 1", () => {
-    expect([...APP_MESSAGE_KINDS]).toEqual([
-      "print",
-      "edit",
-      "collect",
-      "goto",
-      "view",
-      "export",
-      "paired",
-      "version",
-    ]);
-    expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft", "shown"]);
+    expect([...APP_MESSAGE_KINDS]).toEqual(["print", "edit", "collect", "goto", "view", "export"]);
+    expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft"]);
     expect(
       [
         printMessage(),
@@ -50,21 +40,17 @@ describe("renderer protocol kinds", () => {
         gotoMessage(2),
         viewMessage("presenter"),
         exportMessage("n".repeat(16)),
-        pairedMessage(),
-        versionMessage(2, "n".repeat(16)),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
       printMessage(),
-      printMessage(true),
       editMessage(false),
       collectMessage("x".repeat(16)),
       gotoMessage(1),
       viewMessage("deck"),
       exportMessage("x".repeat(16)),
       sheetExportMessage("csv"),
-      pairedMessage(),
-      versionMessage(1, "x".repeat(16)),
+      boardExportMessage("png"),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
@@ -83,7 +69,6 @@ describe("renderer protocol kinds", () => {
       live: vi.fn(() => "live"),
       save: vi.fn(() => "save"),
       draft: vi.fn(() => "draft"),
-      shown: vi.fn(() => "shown"),
     };
     const messages: FrameMessage[] = [
       { type: "save" },

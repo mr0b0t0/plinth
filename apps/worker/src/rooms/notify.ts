@@ -1,14 +1,13 @@
 // Telling an artifact's live room that access or the declaration changed (#36). Best effort, after
 // the response (waitUntil), with one retry: the room's 60 s alarm re-checks D1 and closes what a
 // lost call left open. Only artifacts that can have sockets are notified: with live views off, a
-// doc, a deck (its follow channel) or an HTML artifact whose current or previous version declares
-// `room`, so ordinary artifacts
+// doc or an HTML artifact whose current or previous version declares `room`, so ordinary artifacts
 // never instantiate an object; with live views on, every artifact, since anyone who opens one may
 // hold a watch socket on it. Failures are logged with the operation only, never content.
 //
 // Live views (notifyViewers): a new version, or a change to the page's shared data, reaches the
 // artifact's watch sockets the same way, as a signal made of integers and nothing else.
-import { type Capabilities, typeDef } from "@plinth/shared";
+import { type Capabilities, TYPE_REGISTRY } from "@plinth/shared";
 import {
   type Bindings,
   type Config,
@@ -16,6 +15,7 @@ import {
   liveViewsActive,
   roomsActive,
 } from "../config.ts";
+import { roomOpenTopics } from "../policy.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 
 export type RoomOp = "revoke" | "gone" | "redeclare";
@@ -29,13 +29,17 @@ interface NotifyCtx {
 /**
  * What a version declares about rooms, as one comparable value: null when it declares no room.
  * Two versions with the same value admit the same sockets with the same rights, so a new version
- * alone causes no reconnects.
+ * alone causes no reconnects. The open topics are the effective ones (policy.ts roomOpenTopics),
+ * so a whiteboard's settings version that lets only editors change it differs from the one
+ * before, and its sockets reconnect with their new rights as soon as it commits.
  */
 export function roomDeclaration(
-  caps: Pick<Capabilities, "room" | "viewer" | "roomOpen"> | null,
+  caps:
+    | (Pick<Capabilities, "room" | "viewer" | "roomOpen"> & Pick<Partial<Capabilities>, "writers">)
+    | null,
 ): string | null {
   if (caps?.room !== true) return null;
-  return JSON.stringify({ viewer: caps.viewer, open: [...new Set(caps.roomOpen)].sort() });
+  return JSON.stringify({ viewer: caps.viewer, open: [...new Set(roomOpenTopics(caps))].sort() });
 }
 
 /** The artifact's type, epoch and the declarations of its current and previous versions. */
@@ -59,17 +63,17 @@ async function loadRoomFacts(env: Bindings, artifactId: string) {
 
 /**
  * Whether the artifact's object may hold sockets: watch sockets on every artifact while live views
- * are active, room sockets on a doc, on a type with `follow` (a deck's follow channel, which has no
- * declaration to redeclare), or on a page whose current or previous version declares `room`.
+ * are active, room sockets on a doc or a page whose current or previous version declares `room`.
  */
 function mayHaveSockets(
   facts: NonNullable<Awaited<ReturnType<typeof loadRoomFacts>>>,
   ctx: NotifyCtx,
 ): boolean {
   if (liveViewsActive(ctx.config, ctx.env)) return true;
-  const def = typeDef(facts.type);
-  if (def?.liveEdit || def?.follow) return true;
-  return facts.cur?.room === true || facts.prev?.room === true;
+  const live = Object.hasOwn(TYPE_REGISTRY, facts.type)
+    ? TYPE_REGISTRY[facts.type as keyof typeof TYPE_REGISTRY].liveEdit
+    : false;
+  return live || facts.cur?.room === true || facts.prev?.room === true;
 }
 
 async function call(env: Bindings, artifactId: string, op: RoomOp, epoch: number): Promise<void> {
@@ -111,7 +115,8 @@ export function notifyRoom(ctx: NotifyCtx, artifactId: string, op: RoomOp): void
 }
 
 /**
- * After version `n` of an HTML artifact committed: page sockets reconnect only when what the
+ * After version `n` of an HTML page or a whiteboard committed (a type with page capabilities, its
+ * restores included): page sockets reconnect only when what the
  * version declares about rooms differs from version n - 1.
  */
 export function notifyVersion(

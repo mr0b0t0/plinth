@@ -22,17 +22,20 @@ import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
-import { DictationConsent } from "./DictationConsent.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
-import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
-import { useDictation } from "./useDictation.ts";
+import {
+  BAR_CONTROLS,
+  STAGE_DIALOGS,
+  STRIP_ITEMS,
+  type StageContext,
+  type StageItem,
+} from "./stageItems.tsx";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
-import { type UpdateHandlers, useViewUpdate } from "./useViewUpdate.ts";
 import "./viewer.css";
 
 // The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
@@ -61,18 +64,15 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /** The frame is in review mode (the comment-anchoring frame). */
+  review?: boolean;
+  /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
+  onLeaveReview?: () => void;
   /**
    * Live views: whether signals are pushed, and a count that moves each time the page's shared
    * data changed; the frame's runtime is told both (useLiveDataRelay).
    */
   liveData?: { pushed: boolean; tick: number };
-  /**
-   * Live views: a newer version waiting to be applied, and how to apply it (useViewUpdate). Absent:
-   * the page swaps the frame itself, as before.
-   */
-  update?: UpdateHandlers;
-  /** Review mode is on (the frame carries the comment-anchoring bridge). */
-  review?: boolean;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -105,13 +105,15 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  review,
+  onLeaveReview,
   liveData,
-  update: updateHandlers,
-  review = false,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
   const [shareOpen, setShareOpen] = useState(false);
+  // The STAGE_DIALOGS entry open now, by id (Board settings), or null.
+  const [dialog, setDialog] = useState<string | null>(null);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [openCount, setOpenCount] = useState<number | null>(null);
   // The comments, for a page that declares `comments` (its threads and pins); the panel keeps
@@ -131,6 +133,7 @@ export function ViewerStage({
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
   const settingsHref = route(APP_ROUTES.settings, { slug });
+  const statsHref = route(APP_ROUTES.artifactStats, { slug });
 
   // The open-thread count on the Comments toggle. The panel reports it while open; while closed
   // it is read once (and again after the panel closes). Failures just hide the number.
@@ -155,7 +158,7 @@ export function ViewerStage({
     contentOrigin,
     opaque: config?.content_isolation === "opaque",
     items: commentItems,
-    blocked: shareOpen,
+    blocked: shareOpen || dialog !== null,
     commentsOpen,
     openComments: onToggleComments,
   });
@@ -169,11 +172,18 @@ export function ViewerStage({
     onReload: onReload ?? (() => undefined),
   });
   const editing = live.editing;
-  // Presenting a deck: the slide, full screen, presenter view and its audience window.
-  const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
+  // Presenting a deck: the slide, full screen, presenter view and its audience window. Present in
+  // review mode leaves review mode first.
+  const present = usePresentation({
+    gate,
+    frame,
+    contentOrigin,
+    config,
+    slug,
+    review,
+    leaveReview: onLeaveReview,
+  });
   const pause: WatchPause = live.pause ?? present.pause;
-  // Dictation run by the app, for the main artifact frame only (never a preview or a compare).
-  const dictation = useDictation({ frame, contentOrigin, gate, config });
   // Live views: shared-data changes reach the page's runtime (origin isolation only).
   useLiveDataRelay({
     frame,
@@ -188,18 +198,6 @@ export function ViewerStage({
   useEffect(() => {
     onPauseChange?.(pause);
   }, [pause, onPauseChange]);
-  // Live views: a newer version is applied in place, with the page's state, or held while the
-  // viewer is using a page that declares `hold` (viewUpdate.ts).
-  const update = useViewUpdate({
-    frame,
-    contentOrigin,
-    config,
-    gate,
-    pinned,
-    pause,
-    review,
-    handlers: updateHandlers,
-  });
   // A version published while presenting waits; once presenting ends, the deck catches up.
   const presented = useRef(false);
   useEffect(() => {
@@ -267,14 +265,13 @@ export function ViewerStage({
     live,
     editing,
     present,
-    dictation,
-    update,
     hrefs: {
       current: currentHref,
       edit: editHref,
       history: historyHref,
       report: reportHref,
       settings: settingsHref,
+      stats: statsHref,
       signIn: signInHref,
     },
     comments: {
@@ -293,6 +290,7 @@ export function ViewerStage({
       finishEditing: () => void finishEditing(),
       refocusAfterNotice: () => refocusIfLost(focusEditEntry),
       reload: () => onReload?.(),
+      openDialog: setDialog,
     },
   };
 
@@ -300,7 +298,7 @@ export function ViewerStage({
     <IconProvider>
       <SkipLink />
       <div
-        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
+        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}${present.paired ? " pl-viewer--audience" : ""}`}
       >
         <header className="pl-viewer__bar" ref={headerRef}>
           <div className="pl-viewer__crumbs">
@@ -408,7 +406,12 @@ export function ViewerStage({
           />
         </Suspense>
       )}
-      <DictationConsent request={dictation.consent} />
+      {STAGE_DIALOGS.map(
+        (d) =>
+          d.id === dialog && (
+            <Fragment key={d.id}>{d.render(stage, () => setDialog(null))}</Fragment>
+          ),
+      )}
       <ShareDialog
         open={shareOpen}
         onClose={() => setShareOpen(false)}

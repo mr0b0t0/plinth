@@ -15,7 +15,7 @@ function backend(fail = false) {
       const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       calls.push({ method, body });
       if (String(input).endsWith("/api/v1/me") && method === "PATCH") {
-        if (fail) return apiError(400, "invalid_input", "A name cannot contain @");
+        if (fail) return apiError(400, "invalid_input", "A name cannot contain @.");
         const { name } = body as { name: string };
         return json({ ...ME, name: name === "" ? null : name });
       }
@@ -53,10 +53,8 @@ describe("ProfileNameDialog", () => {
     expect(screen.getByRole("dialog", { name: "Your name" })).toBeTruthy();
     expect(screen.getByText(PROFILE_NAME_HELP)).toBeTruthy();
     expect(field().maxLength).toBe(100);
-    // Nothing to clear yet.
-    expect((screen.getByRole("button", { name: "Clear" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    // One way to leave a name empty: save an empty field. No separate Clear button.
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     await user.type(field(), "  Ana   Lima ");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
@@ -64,13 +62,14 @@ describe("ProfileNameDialog", () => {
     expect(onSaved.mock.calls[0]?.[0].name).toBe("Ana Lima");
   });
 
-  it("clears the name", async () => {
+  it("clears the name when the field is saved empty", async () => {
     const { calls } = backend();
     const onSaved = vi.fn();
     const user = userEvent.setup();
     render(<ProfileNameDialog current="Ana" onClose={() => {}} onSaved={onSaved} />);
     expect(field().value).toBe("Ana");
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await user.clear(field());
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ name: "" });
   });
@@ -86,6 +85,22 @@ describe("ProfileNameDialog", () => {
     await user.clear(field());
     await user.type(field(), "Ana");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("A name cannot contain @")).toBeTruthy();
+    expect(await screen.findByText("A name cannot contain @.")).toBeTruthy();
+  });
+
+  it("refuses a name that shows nothing (fillers, blank Braille, combining marks) before sending", async () => {
+    const { calls } = backend();
+    const user = userEvent.setup();
+    render(<ProfileNameDialog current={null} onClose={() => {}} onSaved={() => {}} />);
+    for (const blank of ["\u3164", "\u115F", "\u1160", "\uFFA0", "\u2800", "\u0301\u0302"]) {
+      await user.clear(field());
+      await user.type(field(), blank);
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(
+        screen.getByText("A name needs a letter, number or symbol you can see."),
+        JSON.stringify(blank),
+      ).toBeTruthy();
+    }
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 });

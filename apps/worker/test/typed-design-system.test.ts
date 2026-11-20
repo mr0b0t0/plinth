@@ -3,9 +3,10 @@
 // served on the content host as Plinth's fixed renderer shell.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OPAQUE_SANDBOX } from "../src/content/csp.ts";
 import worker from "../src/index.ts";
+import { designSystemHooks } from "../src/services/artifactTypes/design_system.ts";
 import { tar } from "./fixtures/bundles/tar.ts";
 import acme from "./fixtures/design-systems/acme.json";
 import {
@@ -208,6 +209,65 @@ describe("publishing a design system", () => {
       ["ds_no_dark_theme", "system.json", "themes"],
       ["ds_missing_font", "system.json", "fonts[1].src"],
     ]);
+  });
+
+  it("refuses a CSS block with an off-host or escaped url() and warns about a missing one", async () => {
+    const a = await agent();
+    for (const css of [
+      'a { background: url("//evil.example/x)y") }',
+      "@\\69mport url(//evil.example/a.css);",
+      "a { background: url(https://evil.example/x.png) }",
+    ]) {
+      const content = variant((d) => {
+        d.css = css;
+      });
+      const r = await publishDs(a.auth, { content });
+      expect(r.res.status, css).toBe(400);
+      expect(
+        r.body.error.details.errors.map((e: Json) => e.path),
+        css,
+      ).toContain("css");
+    }
+    const content = variant((d) => {
+      d.css =
+        ".hero { background: url(img/logo.png), url(./img/gone.png?v=1) } .m { mask: url(#m) }";
+      d.components[0].css = ".btn { background: url(img/also-gone.webp) }";
+    });
+    const { res, body } = await publishDs(a.auth, { content });
+    expect(res.status).toBe(201);
+    expect(body.warnings.map((w: Json) => [w.code, w.file, w.path, w.ref])).toEqual([
+      ["missing_file", "system.json", "css", "./img/gone.png?v=1"],
+      ["missing_file", "system.json", "components[0].css", "img/also-gone.webp"],
+    ]);
+  });
+
+  it("publishes with a not_scanned note when a type's warnings hook fails", async () => {
+    const a = await agent();
+    const spy = vi
+      .spyOn(designSystemHooks, "publishWarnings")
+      .mockRejectedValue(new Error("D1_ERROR: database is locked"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { res, body } = await publishDs(a.auth);
+      expect(res.status).toBe(201);
+      expect(body.version).toBe(1);
+      expect(body.warnings).toEqual([
+        {
+          code: "not_scanned",
+          file: "system.json",
+          message: expect.stringContaining("did not run"),
+        },
+      ]);
+      expect(errors).toHaveBeenCalledWith(
+        "publish warnings hook failed:",
+        "design_system",
+        "Error",
+      );
+      expect(JSON.stringify(errors.mock.calls)).not.toContain("database is locked");
+    } finally {
+      spy.mockRestore();
+      errors.mockRestore();
+    }
   });
 
   it("caps per-type warnings with the publish's own: at most 50, then one 'and N more'", async () => {

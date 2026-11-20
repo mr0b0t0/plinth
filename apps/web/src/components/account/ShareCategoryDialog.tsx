@@ -1,8 +1,9 @@
 // "Share category": the owner shares one of their categories with people (docs/spec.md "Category
-// sharing and personal categories"). The people see the share's title, never the category name,
-// and only the artifacts ticked here. Filing more artifacts under the category later never shares
-// them: they wait for the owner's review. Changing the people re-confirms the artifacts in the same
-// request. Session only on the Worker (/api/v1/category-shares).
+// sharing and personal categories"). The people see the share's title (the category's name unless
+// the owner changes it here) and only the artifacts ticked here. Filing more artifacts under the category later never shares
+// them: they wait for the owner's review, which happens only in the review dialog, so an existing
+// share's list leaves waiting rows out. Changing the people re-confirms the listed artifacts in the
+// same request (waiting rows stay waiting). Session only on the Worker (/api/v1/category-shares).
 import { CopyIcon, TrashIcon } from "@phosphor-icons/react";
 import {
   API,
@@ -16,7 +17,7 @@ import {
   LIMITS,
   route,
 } from "@plinth/shared";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import {
   Button,
@@ -41,16 +42,22 @@ const ROLE_OPTIONS: { value: CategoryRole; label: string }[] = [
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** One review item per row: ticked rows are shared, the rest kept private. */
+/**
+ * The rows the dialog lists: never a taken-down artifact and, on an existing share, never one still
+ * waiting for review (the review dialog decides those).
+ */
+export function listedRows(rows: readonly CategoryShareArtifact[], existing: boolean) {
+  return rows.filter((r) => !r.taken_down && !(existing && r.state === "pending"));
+}
+
+/** One review item per listed row: ticked rows are shared, the rest kept private. */
 export function reviewItems(rows: readonly CategoryShareArtifact[], ticked: ReadonlySet<string>) {
-  return rows
-    .filter((r) => !r.taken_down)
-    .map((r) => ({
-      id: r.id,
-      version: r.current_version,
-      category_rev: r.category_rev,
-      decision: ticked.has(r.id) ? ("shared" as const) : ("private" as const),
-    }));
+  return rows.map((r) => ({
+    id: r.id,
+    version: r.current_version,
+    category_rev: r.category_rev,
+    decision: ticked.has(r.id) ? ("shared" as const) : ("private" as const),
+  }));
 }
 
 const stateOf = (rows: readonly CategoryShareArtifact[], id: string) =>
@@ -111,11 +118,19 @@ export interface ShareCategoryDialogProps {
 
 export function ShareCategoryDialog({
   category,
-  shareId,
-  onClose,
+  shareId: givenShareId,
+  onClose: givenOnClose,
   onDone,
 }: ShareCategoryDialogProps) {
   const toast = useToast();
+  /**
+   * The share this dialog created, when its review came back with skipped items: the dialog stays
+   * open on that share in edit mode (the preview of a new share would now answer already_shared),
+   * and closing it still tells the parent a share exists.
+   */
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const shareId = givenShareId ?? createdId;
+  const onClose = () => (createdId ? onDone({ id: createdId }) : givenOnClose());
   const formId = useId();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [reload, setReload] = useState(0);
@@ -131,6 +146,8 @@ export function ShareCategoryDialog({
   const [stopping, setStopping] = useState(false);
   /** The people as loaded, to tell whether they changed. */
   const [loadedPeople, setLoadedPeople] = useState<string>("[]");
+  /** The dialog opens on who it is shared with. */
+  const emailRef = useRef<HTMLInputElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` re-runs the fetch
   useEffect(() => {
@@ -162,8 +179,8 @@ export function ShareCategoryDialog({
     return () => ctrl.abort();
   }, [shareId, category, reload]);
 
-  const rows = load.status === "ready" ? load.rows : [];
   const share = load.status === "ready" ? load.share : null;
+  const rows = load.status === "ready" ? listedRows(load.rows, share !== null) : [];
   const peopleChanged = JSON.stringify(people) !== loadedPeople;
   const reviewChanged =
     share !== null && rows.some((r) => (r.state === "shared") !== ticked.has(r.id));
@@ -197,6 +214,7 @@ export function ShareCategoryDialog({
     const skipped = skippedText(review, sent);
     if (skipped) {
       setNote(skipped);
+      if (!shareId) setCreatedId(id);
       setReload((n) => n + 1);
       setBusy(false);
       return;
@@ -288,25 +306,29 @@ export function ShareCategoryDialog({
         onConfirm={() => void stop()}
         loading={busy}
         title={`Stop sharing “${category}”?`}
-        description={`${peopleText(n)} will lose access to every artifact they see through it. The artifacts stay in the category, and stay yours.`}
+        description={`${peopleText(n)} will lose access to every artifact they see through it.`}
         confirmLabel="Stop sharing"
         cancelLabel="Back"
       />
     );
   }
 
-  const shareable = rows.filter((r) => !r.taken_down);
   return (
     <Dialog
       open
       size="lg"
       onClose={onClose}
-      title={share ? `Sharing “${category}”` : `Share “${category}”`}
-      description="The people you add see the artifacts you tick, under the name below. Artifacts filed in this category later wait for your review before they can see them."
+      title={`Share “${category}”`}
+      initialFocus={emailRef}
       footer={
         <>
           {share && (
-            <Button variant="danger" onClick={() => setStopping(true)} disabled={busy}>
+            <Button
+              variant="ghost"
+              className="pl-dialog-start pl-dialog-start--danger"
+              onClick={() => setStopping(true)}
+              disabled={busy}
+            >
               Stop sharing
             </Button>
           )}
@@ -327,6 +349,7 @@ export function ShareCategoryDialog({
     >
       <form
         id={formId}
+        className="pl-share-cat"
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
@@ -334,28 +357,15 @@ export function ShareCategoryDialog({
         }}
       >
         <Stack gap={4}>
-          <Input
-            label="Name people see"
-            hint="People you share with see this name, never the category's."
-            value={title}
-            maxLength={LIMITS.maxTitleLength}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          {share && (
-            <div className="pl-share-cat__link">
-              <Input label="Link for them" value={share.portal_url} readOnly mono />
-              <Button icon={CopyIcon} onClick={() => void copyLink()}>
-                Copy
-              </Button>
-            </div>
-          )}
           <fieldset className="pl-share-cat__people">
             <legend>People</legend>
-            {people.length > 0 ? (
+            {people.length > 0 && (
               <ul className="pl-acct-people">
                 {people.map((p) => (
                   <li key={p.email} className="pl-acct-person">
-                    <span className="pl-acct-person__email">{p.email}</span>
+                    <span className="pl-acct-person__email" title={p.email}>
+                      {p.email}
+                    </span>
                     <div className="pl-acct-person__controls">
                       <Select
                         label={`Role for ${p.email}`}
@@ -383,12 +393,13 @@ export function ShareCategoryDialog({
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="pl-acct-group__empty">Nobody yet.</p>
             )}
             <div className="pl-acct-add">
               <Input
+                ref={emailRef}
                 label="Email address"
+                hideLabel
+                placeholder="Email address"
                 type="email"
                 inputMode="email"
                 autoComplete="off"
@@ -406,8 +417,10 @@ export function ShareCategoryDialog({
               />
               <Select
                 label="Role"
+                hideLabel
                 value={role}
                 options={ROLE_OPTIONS}
+                className="pl-acct-add__role"
                 onChange={(e) => setRole(e.target.value as CategoryRole)}
               />
               <Button onClick={() => addPerson()}>Add</Button>
@@ -421,19 +434,16 @@ export function ShareCategoryDialog({
               <p className="pl-field__error" role="alert">
                 {load.message}
               </p>
-            ) : shareable.length === 0 ? (
-              <p className="pl-acct-group__empty">This category has no artifacts yet.</p>
+            ) : rows.length === 0 ? (
+              <p className="pl-acct-group__empty">
+                {share ? "None yet." : "This category has no artifacts yet."}
+              </p>
             ) : (
               <ul className="pl-share-cat__list">
-                {shareable.map((r) => (
+                {rows.map((r) => (
                   <li key={r.id}>
                     <Checkbox
                       label={r.title}
-                      hint={
-                        share && r.state === "pending"
-                          ? `Waiting for your review · filed by ${r.last_author ?? "someone"}`
-                          : `Visible to these people when ticked · v${r.current_version}`
-                      }
                       checked={ticked.has(r.id)}
                       onChange={(e) => {
                         const next = new Set(ticked);
@@ -447,6 +457,20 @@ export function ShareCategoryDialog({
               </ul>
             )}
           </fieldset>
+          <Input
+            label="Name people see"
+            value={title}
+            maxLength={LIMITS.maxTitleLength}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          {share && (
+            <div className="pl-share-cat__link">
+              <Input label="Link for them" value={share.portal_url} readOnly mono />
+              <Button icon={CopyIcon} onClick={() => void copyLink()}>
+                Copy link
+              </Button>
+            </div>
+          )}
           {note && <Note tone="warning">{note}</Note>}
           {error && (
             <p className="pl-field__error" role="alert">

@@ -1,6 +1,5 @@
-// The dashboard with category sharing and personal categories: the review banner and ?review=, the
-// collections strip under Shared, the owner's share badges, and filing a shared artifact under the
-// person's own category.
+// The dashboard with category sharing and personal categories: the one review line and ?review=
+// (rows carry no review badge), and filing a shared artifact under the person's own category.
 import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -47,11 +46,16 @@ const SHARE = {
   counts: { shared: 1, pending: 2, private: 0 },
 };
 
-function backend(items: ArtifactSummary[], extra: { my?: { name: string; count: number }[] } = {}) {
+function backend(
+  items: ArtifactSummary[],
+  extra: { my?: { name: string; count: number }[]; sharing?: boolean } = {},
+) {
   return stubApi({
     me: ME,
-    config: { ...CONFIG, category_sharing: true },
+    config: { ...CONFIG, category_sharing: extra.sharing ?? true },
     handle: (c) => {
+      if (c.method === "POST" && c.path === "/categories/rename")
+        return json({ updated: 1, category: (c.body as { to: string | null }).to });
       if (c.method === "GET" && c.path.startsWith("/artifacts"))
         return json({
           items,
@@ -59,8 +63,6 @@ function backend(items: ArtifactSummary[], extra: { my?: { name: string; count: 
           my_categories: extra.my ?? [],
         });
       if (c.method === "GET" && c.path === "/category-shares") return json({ items: [SHARE] });
-      if (c.method === "GET" && c.path === "/portals")
-        return json({ items: [{ id: "p1", title: "Bo's designs", owner_name: "Bo", count: 3 }] });
       if (c.method === "GET" && c.path === `/category-shares/${SHARE.id}`)
         return json({ ...SHARE, artifacts: [] });
       if (c.method === "PUT" && c.path.endsWith("/my-category"))
@@ -93,22 +95,36 @@ const fixture = () => [
 ];
 
 describe("Dashboard: category sharing", () => {
-  it("shows the review banner and the owner's share badges", async () => {
-    backend(fixture());
+  it("shows one review line, and no review badge on the rows", async () => {
+    const api = backend(fixture());
     const Dashboard = await loadPage();
+    const user = userEvent.setup();
     render(<Dashboard />);
-    expect(
-      await screen.findByText(
-        "2 artifacts wait for your review before Acme's people can see them.",
-      ),
-    ).toBeTruthy();
+    const line = (await screen.findByText(/2 to review in Acme/)).closest("p") as HTMLElement;
+    expect(within(line).getByRole("button", { name: "Review" })).toBeTruthy();
     const region = screen.getByRole("region", { name: "Artifacts" });
     const waiting = within(region).getByText("Waiting report").closest("li") as HTMLElement;
-    expect(within(waiting).getByText("Waiting for review")).toBeTruthy();
-    // The Taken down badge stays beside it.
+    expect(within(waiting).queryByText("Needs review")).toBeNull();
     expect(within(waiting).getByText("Taken down")).toBeTruthy();
+    // A shared row carries no badge of its own: its category's share dialog lists it.
     const shared = within(region).getByText("Shared report").closest("li") as HTMLElement;
-    expect(within(shared).getByText("Shared")).toBeTruthy();
+    expect(within(shared).queryByText("Shared")).toBeNull();
+    // The dashboard does not list the categories shared with the person.
+    expect(api.calls.some((c) => c.path === "/portals")).toBe(false);
+    // Under Shared, the line is gone.
+    await user.click(screen.getByRole("radio", { name: "Shared" }));
+    expect(screen.queryByText(/to review/)).toBeNull();
+  });
+
+  it("reviewText names the category only when one has artifacts waiting", async () => {
+    const { reviewText } = await import("./Dashboard.tsx");
+    expect(reviewText([{ category: "Acme", pending: 1 }])).toBe("1 to review in Acme");
+    expect(
+      reviewText([
+        { category: "Acme", pending: 2 },
+        { category: "Internal", pending: 3 },
+      ]),
+    ).toBe("5 to review");
   });
 
   it("?review= opens the review dialog", async () => {
@@ -116,21 +132,17 @@ describe("Dashboard: category sharing", () => {
     backend(fixture());
     const Dashboard = await loadPage();
     render(<Dashboard />);
-    expect(await screen.findByRole("dialog", { name: "Review for “Acme Corp”" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Review “Acme”" })).toBeTruthy();
   });
 
-  it("lists the collections shared with the person under Shared", async () => {
-    backend(fixture());
+  it("?review= is ignored where the instance does not offer category sharing", async () => {
+    window.history.replaceState(null, "", `/dashboard?review=${SHARE.id}`);
+    const api = backend(fixture(), { sharing: false });
     const Dashboard = await loadPage();
-    const user = userEvent.setup();
     render(<Dashboard />);
-    await screen.findByText("Their page");
-    expect(screen.queryByRole("navigation", { name: "Collections shared with you" })).toBeNull();
-    await user.click(screen.getByRole("radio", { name: "Shared" }));
-    const strip = await screen.findByRole("navigation", { name: "Collections shared with you" });
-    expect(within(strip).getByRole("link", { name: "Bo's designs" }).getAttribute("href")).toBe(
-      "/p/p1",
-    );
+    await screen.findByText("Shared report");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.calls.some((c) => c.path.startsWith("/category-shares"))).toBe(false);
   });
 
   it("offers Share category for an owner category", async () => {
@@ -152,7 +164,11 @@ describe("Dashboard: personal categories", () => {
     const user = userEvent.setup();
     render(<Dashboard />);
     const row = (await screen.findByText("Their page")).closest("li") as HTMLElement;
-    expect(within(row).getByText("Clients")).toBeTruthy();
+    // The badge beside the title and the plain text a phone shows on the second line (one of them
+    // hidden by CSS), both named as the person's own category.
+    expect(within(row).getByText("Clients", { selector: ".pl-dash__category-name" })).toBeTruthy();
+    expect(within(row).getByText("Clients", { selector: ".pl-dash__category-text" })).toBeTruthy();
+    expect(within(row).getAllByText("Your category:", { exact: false })).toHaveLength(2);
     await user.click(screen.getByRole("radio", { name: "Shared" }));
     await user.click(screen.getByRole("button", { name: /^Category: / }));
     const menu = screen.getByRole("menu");
@@ -191,5 +207,54 @@ describe("Dashboard: personal categories", () => {
     );
     const put = api.calls.find((c) => c.method === "PUT");
     expect(put?.body).toEqual({ category: "Design reviews" });
+  });
+
+  it("under All, a name that is both kinds renames the owner's category, with its own count", async () => {
+    const api = backend(fixture(), { my: [{ name: "Acme", count: 1 }] });
+    const Dashboard = await loadPage();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByText("Shared report");
+    await user.click(screen.getByRole("button", { name: /^Category: / }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Acme (3)" }));
+    await user.click(screen.getByRole("button", { name: "Rename category" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename category" });
+    expect(dialog.textContent).toContain("“Acme” is on 2 artifacts of yours.");
+    expect(dialog.textContent).toContain("rename those under Shared");
+    await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
+    await user.click(await screen.findByRole("button", { name: "Remove from 2 artifacts" }));
+    await waitFor(() =>
+      expect(api.calls.some((c) => c.method === "POST" && c.path === "/categories/rename")).toBe(
+        true,
+      ),
+    );
+    const post = api.calls.find((c) => c.method === "POST" && c.path === "/categories/rename");
+    expect(post?.body).toEqual({ from: "Acme", to: null });
+    // The owner's artifacts without a category, under All.
+    expect((screen.getByRole("radio", { name: "All" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("under All, clearing the person's own category shows Shared, where those artifacts went", async () => {
+    const api = backend(fixture(), { my: [{ name: "Clients", count: 1 }] });
+    const Dashboard = await loadPage();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByText("Their page");
+    await user.click(screen.getByRole("button", { name: /^Category: / }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Clients (1)" }));
+    await user.click(screen.getByRole("button", { name: "Rename category" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename category" });
+    expect(dialog.textContent).toContain("“Clients” is on 1 artifact.");
+    await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
+    await user.click(await screen.findByRole("button", { name: "Remove from 1 artifact" }));
+    await waitFor(() =>
+      expect(api.calls.some((c) => c.method === "POST" && c.path === "/categories/rename")).toBe(
+        true,
+      ),
+    );
+    const post = api.calls.find((c) => c.method === "POST" && c.path === "/categories/rename");
+    expect(post?.body).toEqual({ from: "Clients", to: null, personal: true });
+    const shared = screen.getByRole("radio", { name: "Shared" }) as HTMLInputElement;
+    await waitFor(() => expect(shared.checked).toBe(true));
   });
 });

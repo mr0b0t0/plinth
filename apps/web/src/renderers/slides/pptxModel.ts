@@ -55,7 +55,13 @@ export interface Cell {
 }
 
 export type Item =
-  | { kind: "text"; box: Box; paras: Para[] }
+  | {
+      kind: "text";
+      box: Box;
+      paras: Para[];
+      /** One line that never wraps, as on screen (the footer and the slide number). */
+      oneLine?: true;
+    }
   | {
       kind: "table";
       box: Box;

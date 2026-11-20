@@ -130,14 +130,9 @@ export async function serveTypedEntry(
      * connects the doc socket (payload `live`). Every other shell has today's bytes.
      */
     live?: "room";
-    /**
-     * An identified viewer on the current version of a type with `follow`, with following on: the
-     * renderer opens the slides socket to present or to follow (payload `follow`).
-     */
-    follow?: "present" | "watch";
   },
 ): Promise<Response> {
-  const { artifact, version, def, base, url, framing, socket, live, follow } = o;
+  const { artifact, version, def, base, url, framing, socket, live } = o;
   const obj = await env.FILES.get(version.r2Prefix + def.sourcePath);
   if (!obj) return notFound(config);
   const review = url.searchParams.has(REVIEW_MODE_PARAM);
@@ -147,9 +142,11 @@ export async function serveTypedEntry(
     base,
     appOrigin: config.appOrigin,
     ...(live ? { live } : {}),
-    ...(follow ? { follow } : {}),
     // A deck in review mode shows every slide stacked, so comment pins anchor to a stable DOM.
     ...(review && def.present ? { view: "overview" as const } : {}),
+    // A type with opaque frames (a design) pins its boards' files to the version this shell shows:
+    // a board mounts late and again after it scrolls back, and the current version may have moved.
+    ...(def.opaqueFrames ? { version: version.number } : {}),
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
   applyContentHeaders(config, headers, { scripts: "self", framing, ...(socket ? { socket } : {}) });

@@ -17,10 +17,8 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
 | Browser Rendering | `BROWSER` binding, for thumbnails and link-preview images (0.4.1); `THUMBNAILS` uses its default (on) |
 | Live rooms (#36) | On since 2026-11-18: the `ROOMS` binding (`ArtifactRoom`, migration tag `rooms-v1`) was added to the config by hand; `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` use their defaults (on) and `LIVE_DRAFT_RETENTION_DAYS` stays at 30. The privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
-| Live views | Not deployed yet. `ALLOW_LIVE_VIEWS` is not set and the config has the `ROOMS` binding, so a release with live views turns them on (the default) unless `ALLOW_LIVE_VIEWS="false"` is set first ([deploy-checklist.md](deploy-checklist.md#live-views)) |
-| Dictation | Off: `ALLOW_DICTATION` is not set, so its default (off) applies. It is turned on only after the maintainer approves the privacy notice's Dictation paragraph and the manual browser pass in [deploy-checklist.md](deploy-checklist.md#dictation) |
+| Live views | Not deployed yet. `ALLOW_LIVE_VIEWS` is not set and the config has the `ROOMS` binding, so a release with live views turns them on (the default) unless `ALLOW_LIVE_VIEWS="false"` is set first ([deploy-checklist.md](deploy-checklist.md#live-views)). Once on, every artifact with an open, visible view wakes its Durable Object and reads D1 once a minute (the room's re-check alarm) |
 | Category sharing | `ALLOW_CATEGORY_SHARING` is not set, so its default (on) applies once a release with it is deployed (migration `0013_category_sharing.sql`). The privacy notice's "Shared categories" item is part of that release and needs the maintainer's approval before the deploy |
-| Files people add to a page | Off: `ALLOW_FILES` is not set, so its default (off) applies. It is turned on only after the maintainer approves the privacy notice's "Files people add to pages" items and the acceptable use policy's line on files, and the manual browser pass in [deploy-checklist.md](deploy-checklist.md#files-people-add-to-a-page) |
 | Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
@@ -30,9 +28,9 @@ All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0011 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
+| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002, 0004 to 0012 and 0020 applied (there is no 0003, and 0013 to 0019 are not yet used; 0012 was applied after 0020, on 2026-11-20) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `0193eab8-73d1-48e9-a9b5-ded81c2e6098`, commit `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `87a8ef95-f96a-4c62-9ca3-18f049738ed2`, commit `76a988c` (v0.6.0): design systems (#59), slides (#60), comments from the page (#58), publishing from CI with tokens limited to one artifact (#61, migration `0012_bound_tokens.sql` applied first, after the v0.6.0 release that the Action and the New token dialog pin) and thumbnails bound to the version they picture (#99); before it `190060a` (version `e4040d5e-eb3b-4d0f-81da-e8d050d620c8`): the artifact type and server extension scaffolding (#54, #55), no migrations; before it `584db84` (version `9a63798c-0566-48d1-8445-f748e51f0396`): artifact stats (#86, migration `0020_artifact_opens.sql` applied first; `VIEW_LOG_RETENTION_DAYS` uses its default, 365), without the account-wide `/stats` page (#87), and the dashboard card fix (#78); before it `7b6e438`: the review-account sign-in (#53, off: `REVIEW_LOGIN_EMAIL` and `REVIEW_LOGIN_PASSWORD_HASH` unset), the OpenAI domain challenge route (#74, off: `OPENAI_APPS_CHALLENGE` unset) and plugin 0.16.0 with the OpenAI and Cursor builds (#73, #75, #77), no migrations; before it `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -123,6 +121,37 @@ After the v0.5.0 deploy (2026-11-16, `1b094e6`):
   and says the page cannot be shown there. claude.ai leaves `https://*.plinthusercontent.com` out
   of a custom connector's `frame-src`; a listing in the Claude directory can ask for the site.
 - **Connect an agent** shows the T3 Code tab with its Claude and Codex sections.
+
+After the 2026-11-20 deploy (`76a988c`, v0.6.0, version `87a8ef95`; migration `0012` applied
+first, the only one pending):
+
+- The v0.6.0 release finished first: npm `@mr0b0t0/plinth@0.6.0`, the Docker image and the GitHub
+  release, which is immutable (immutable releases were turned on for the repository before the
+  tag), so `mr0b0t0/plinth/publish@v0.6.0` cannot be moved.
+- `/healthz` is OK, `/api/v1/config` still reports `plinthusercontent.com` with `origin`
+  isolation, the app's CSP keeps `frame-src https://*.plinthusercontent.com`, `/mcp` answers 401
+  without a token, the served app bundle is the one built from `76a988c`, and `/openapi.json`
+  lists the `slides` and `design_system` types and the `token_bound` error.
+
+After the 2026-11-19 evening deploy (`190060a`, version `e4040d5e`, no migrations): the
+scaffolding for artifact type modules and server extension lists (#54, #55), which changes no
+behaviour.
+
+After the 2026-11-19 afternoon deploys (`eefe367`, version `7495eee2`, migration `0020` applied
+first; then `584db84`, version `9a63798c`, no migrations):
+
+- Before the migration `artifact_view_days` held 3 rows, 4 opens; after it `artifact_opens` holds 4
+  `unknown` rows and `artifact_view_days` is gone.
+- `/healthz` is OK, `/api/v1/config` reports `view_log_retention_days: 365`, and
+  `GET /api/v1/stats/artifacts` answers 401 without a session. The owner's per-artifact Stats page
+  loads in the browser; `/stats` is the app's not-found page after #87.
+
+After the 2026-11-19 deploy (`7b6e438`, version `7076b41f`, no migrations):
+
+- `/healthz` returns `{"ok":true,"environment":"production"}`, and `wrangler deploy` lists
+  `env.ROOMS (ArtifactRoom)`.
+- `/.well-known/openai-apps-challenge` is 404 and `/api/v1/config` reports `review_login: false`,
+  as neither is configured yet.
 
 After the 2026-11-18 evening deploy (`3aea8c9`, migration `0011` applied first, version
 `0193eab8`):

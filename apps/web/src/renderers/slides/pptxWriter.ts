@@ -56,7 +56,10 @@ export function textRuns(paras: readonly Para[]): TextProps[] {
         options.bullet =
           p.bullet === "disc" ? true : p.bullet === "number" ? { type: "number" } : false;
         if (p.level > 0) options.indentLevel = p.level;
-        options.lineSpacingMultiple = p.lineHeight;
+        // The screen's line height in points, exactly: a multiple would scale the font's own line
+        // height (about 1.15 em for Arial), so every line would be taller than on screen and a
+        // list would run into the table under it.
+        options.lineSpacing = Math.round(p.lineHeight * p.size * 10) / 10;
         if (p.spaceBefore > 0) options.paraSpaceBefore = p.spaceBefore;
       }
       if (ri === p.runs.length - 1 && pi < paras.length - 1) options.breakLine = true;
@@ -103,7 +106,7 @@ function addItem(slide: Slide, item: Item, images: ReadonlyMap<string, string>):
       h,
       margin: 0,
       valign: "top",
-      wrap: true,
+      wrap: item.oneLine !== true,
       fontFace: SANS,
     });
     return true;

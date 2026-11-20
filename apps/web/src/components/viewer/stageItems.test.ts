@@ -7,6 +7,7 @@ import {
   BAR_CONTROLS,
   CAPABILITY_MENU_ITEMS,
   MENU_ITEMS,
+  STAGE_DIALOGS,
   STRIP_ITEMS,
   TYPE_MENU_ITEMS,
 } from "./stageItems.tsx";
@@ -20,14 +21,20 @@ describe("viewer item lists", () => {
     expect(MENU_ITEMS.length).toBeGreaterThan(0);
   });
 
+  it("give every stage dialog its own id", () => {
+    const ids = STAGE_DIALOGS.map((d) => d.id);
+    expect(ids).toContain("board-settings");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("key per-type and per-capability menu items by known values only", () => {
     for (const t of Object.keys(TYPE_MENU_ITEMS)) expect(ARTIFACT_TYPES).toContain(t);
     for (const c of Object.keys(CAPABILITY_MENU_ITEMS)) expect(DATA_CAPABILITIES).toContain(c);
   });
 
   it("builds the notice from its lines, and says nothing when no line does", () => {
-    // The data line, the people line (names and the people list), then the files line.
-    expect(DATA_NOTICE_LINES.length).toBe(3);
+    // The data line, then the people line (names and the people list).
+    expect(DATA_NOTICE_LINES.length).toBe(2);
     expect(noticeText({})).toBeNull();
     expect(
       noticeText({

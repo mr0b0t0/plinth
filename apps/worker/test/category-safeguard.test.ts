@@ -2,8 +2,9 @@
 // under a shared category never shares it, whoever files it and however. It waits as pending until
 // the signed-in owner reviews it; until then the category's people cannot open, list or find it.
 import { env } from "cloudflare:workers";
+import { LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
-import { renameCategory } from "../src/services/categories.ts";
+import { ownerCategories, renameCategory, resolveCategory } from "../src/services/categories.ts";
 import { createShare, type ReviewItem } from "../src/services/categoryShares.ts";
 import {
   categoryRow,
@@ -404,6 +405,145 @@ describe("renaming and merging around shares", () => {
     expect(await gateStatus(first.slug, c.session)).not.toBe("ok");
     const d = await json(await send("GET", `/api/v1/category-shares/${shareId}`, o.session));
     expect(d.artifacts).toEqual([]);
+  });
+});
+
+describe("renaming with ALLOW_CATEGORY_SHARING off", () => {
+  const OFF = { ALLOW_CATEGORY_SHARING: "false" };
+
+  it("a rename to a new name still moves the share, so turning sharing on finds it", async () => {
+    const { o, c, first, shareId } = await sharedAcme();
+    const r = await send(
+      "POST",
+      "/api/v1/categories/rename",
+      o.session,
+      { from: "Acme", to: "Acme Corp" },
+      OFF,
+    );
+    expect(await json(r)).toEqual({ updated: 1, category: "Acme Corp" });
+    const share = await env.DB.prepare(
+      "SELECT category_key, name FROM category_shares WHERE id = ?1",
+    )
+      .bind(shareId)
+      .first<{ category_key: string; name: string }>();
+    expect(share).toEqual({ category_key: "acme corp", name: "Acme Corp" });
+    expect((await categoryRow(first.id))?.category_review).toBe("shared");
+    // Back on: the share is on the category's new key and its review still counts.
+    expect(await gateStatus(first.slug, c.session)).toBe("ok");
+  });
+
+  it("a merge goes through and leaves the share empty, and reports nothing pending", async () => {
+    const { o, c, first, shareId } = await sharedAcme();
+    await filed(o, "Beta");
+    const r = await send(
+      "POST",
+      "/api/v1/categories/rename",
+      o.session,
+      { from: "Acme", to: "beta" },
+      OFF,
+    );
+    expect(await json(r)).toEqual({ updated: 1, category: "Beta" });
+    const share = await env.DB.prepare("SELECT category_key FROM category_shares WHERE id = ?1")
+      .bind(shareId)
+      .first<{ category_key: string }>();
+    expect(share?.category_key).toBe("acme");
+    expect((await categoryRow(first.id))?.category_review).toBeNull();
+    expect(await gateStatus(first.slug, c.session)).not.toBe("ok");
+  });
+
+  it("an unshared category merged into a shared one says nothing about pending while off", async () => {
+    const { o } = await sharedAcme();
+    await filed(o, "Loose");
+    const r = await send(
+      "POST",
+      "/api/v1/categories/rename",
+      o.session,
+      { from: "Loose", to: "acme" },
+      OFF,
+    );
+    expect(await json(r)).toEqual({ updated: 1, category: "Acme" });
+  });
+});
+
+describe("snapping a filing onto the owner's spelling", () => {
+  it("is not cut by the category list's cap", async () => {
+    const o = await owner();
+    await filed(o, "Rare Project");
+    // Made before the filler rows, which go past the account's artifact limit.
+    const second = await filed(o, "Elsewhere", "Second");
+    // More names than list_artifacts lists, each used more often than the first one.
+    const now = new Date().toISOString();
+    const stmts = [];
+    for (let i = 0; i < LIMITS.maxCategoriesListed + 5; i++) {
+      for (let n = 0; n < 2; n++) {
+        stmts.push(
+          env.DB.prepare(
+            `INSERT INTO artifacts (id, owner_id, slug, title, type, current_version, visibility,
+               category, category_key, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'Filler', 'html', 1, 'allowlist', ?4, ?5, ?6, ?6)`,
+          ).bind(
+            crypto.randomUUID(),
+            o.user.id,
+            `fill-${crypto.randomUUID()}`,
+            `Filler ${i}`,
+            `filler ${i}`,
+            now,
+          ),
+        );
+      }
+    }
+    await env.DB.batch(stmts);
+    const listed = await json(await call("/api/v1/categories", { headers: o.auth }));
+    expect(listed.items.map((c: { name: string }) => c.name)).not.toContain("Rare Project");
+    // The agent's spelling still lands on the owner's.
+    const r = await send("PATCH", `/api/v1/artifacts/${second.id}`, o.auth, {
+      category: "rare-project",
+    });
+    expect(r.status).toBe(200);
+    expect((await categoryRow(second.id))?.category).toBe("Rare Project");
+  });
+
+  it("reads the owner's shares once, for the names and for a filing's snap", async () => {
+    const { o } = await sharedAcme();
+    await filed(o, "Other");
+    const seen: string[] = [];
+    const DB = new Proxy(env.DB, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop, target);
+        if (prop === "prepare") {
+          return (query: string) => {
+            seen.push(query);
+            return target.prepare(query);
+          };
+        }
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const ctx = serviceCtxFor(
+      { kind: "user", userId: o.user.id, email: o.user.email, isAdmin: false },
+      { env: { DB } },
+    );
+    const shareReads = () => seen.filter((q) => /FROM category_shares/.test(q)).length;
+    const names = await ownerCategories(ctx, o.user.id);
+    expect(names.find((c) => c.name === "Acme")?.shared).toBe(true);
+    expect(shareReads()).toBe(1);
+    seen.length = 0;
+    // A filing under a name no artifact uses yet asks for that one key's share, once.
+    expect(await resolveCategory(ctx, o.user.id, "brand-new")).toBe("brand-new");
+    expect(shareReads()).toBe(1);
+    seen.length = 0;
+    expect(await resolveCategory(ctx, o.user.id, "acme")).toBe("Acme");
+    expect(shareReads()).toBe(0);
+  });
+
+  it("snaps onto a row written before migration 0013, which has no key yet", async () => {
+    const o = await owner();
+    const old = await filed(o, "Legacy Site");
+    await env.DB.prepare("UPDATE artifacts SET category_key = NULL WHERE id = ?1")
+      .bind(old.id)
+      .run();
+    const next = await filed(o, "legacy_site", "Next");
+    expect((await categoryRow(next.id))?.category).toBe("Legacy Site");
   });
 });
 

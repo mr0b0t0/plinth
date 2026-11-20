@@ -1,6 +1,7 @@
 // read_sheet and edit_sheet, over MCP and REST: values and ranges, who may read and write, the
 // step budget, conflicts before any storage read, atomic ops, and one version per call.
 import { env } from "cloudflare:workers";
+import { parseSheet, serializeSheet } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { editSheet, readSheet } from "../src/services/sheets.ts";
 import { SHEET } from "./fixtures/sheets.ts";
@@ -91,9 +92,10 @@ describe("read_sheet", () => {
       truncated: false,
       next_range: null,
       warnings: [],
-      live_draft: null,
       untrusted: true,
     });
+    // A sheet is not edited on its page, so there is never a live draft to report.
+    expect("live_draft" in rest).toBe(false);
     expect(rest.columns[2]).toEqual({
       letter: "C",
       name: "Unit price",
@@ -143,8 +145,7 @@ describe("read_sheet", () => {
       const r = await readRest(other, p.id);
       expect(r.status, role).toBe(200);
       const body = await json(r);
-      // live_draft is for owners and editors only, as on get_artifact.
-      expect("live_draft" in body, role).toBe(role === "editor");
+      expect(body.rows.length, role).toBe(3);
     }
     const stranger = await agent();
     // The publish helper makes the sheet unlisted: a stranger with the link may read it.
@@ -254,6 +255,24 @@ describe("edit_sheet", () => {
     expect(versions.items[0]).toMatchObject({ number: 2, note: "Plums" });
   });
 
+  it("counts the rows a set adds past the end, and stores what it checked", async () => {
+    const a = await agent();
+    const p = await publishSheet(a);
+    // Rows 5 and 6 are new: the empty row 5 and the one written.
+    const r = await editRest(a, p.id, {
+      base_version: 1,
+      ops: [{ op: "set", at: "A6", values: [["Figs", 1]] }],
+    });
+    expect(r.status).toBe(201);
+    expect((await json(r)).changed).toMatchObject({ cells: 2, rows_inserted: 2 });
+    const stored = await (await storedFile(p.id, 2, "sheet.jsonl"))?.text();
+    const lines = (stored ?? "").split("\n");
+    expect(lines.slice(-2)).toEqual(["[]", '["Figs",1]']);
+    // What the version stores is the canonical text of the sheet the ops built.
+    const back = parseSheet(stored ?? "");
+    expect(back.ok && serializeSheet(back.sheet)).toBe(stored);
+  });
+
   it("refuses a stale base before reading storage", async () => {
     const a = await agent();
     const p = await publishSheet(a);
@@ -312,6 +331,16 @@ describe("edit_sheet", () => {
     expect((await json(far)).error).toMatchObject({
       message: "ops[0]: A sheet holds at most 10000 rows (2 to 10001); this op reaches row 1048576",
       details: { op: 0 },
+    });
+    // A set far past the last row is a typo, not rows to add: refused with a reason to act on.
+    const typo = await editRest(a, p.id, {
+      base_version: 1,
+      ops: [{ op: "set", at: "B9000", values: [[1]] }],
+    });
+    expect(typo.status).toBe(400);
+    expect((await json(typo)).error).toMatchObject({
+      message: expect.stringMatching(/^ops\[0\]: a set at B9000 would add 8995 empty rows/),
+      details: { op: 0, reason: "too_far_past_end" },
     });
     const schema = await editRest(a, p.id, { base_version: 1, ops: [{ op: "explode" }] });
     expect(schema.status).toBe(400);
