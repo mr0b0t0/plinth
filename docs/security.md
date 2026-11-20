@@ -1772,7 +1772,11 @@ there is what it has to keep.
   quotes only what a person sees on the page (visible text, names, values, settings), never
   markup, scripts, styles, component code or sheet lines, so the list cannot carry an active
   construct even as text. Unit tests pin that hostile markup comes out as text and that no script,
-  style, comment or template text is quoted.
+  style, comment or template text is quoted. The collector drops bidirectional controls (U+202A to
+  U+202E, U+2066 to U+2069, LRM, RLM, ALM) from every string of an item, so a version cannot make
+  an excerpt or a name read as something else (a right-to-left override makes "Start", U+202E,
+  "gnp.exe" read as "Startexe.png"); joiners stay, since emoji sequences and scripts such as
+  Persian need them. A test pins it.
 - **No DOM for user HTML.** An HTML page or a design board is read by a string scanner
   (`changes/htmlScan.ts`), not by `DOMParser`, a `<template>` or a detached document: nothing of
   the version is parsed into nodes, loaded or run on the app origin. The scanner finds text runs,

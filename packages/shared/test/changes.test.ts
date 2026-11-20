@@ -1,12 +1,12 @@
 // Plain-language change lists (changes/*): each type's describer with its exact output, the caps,
 // the fallbacks, and the rule that the list is visible text, never source.
 import { describe, expect, it } from "vitest";
+import { CHANGE_DESCRIBERS } from "../src/changes/describers.ts";
+import { CHANGES_LAYOUT } from "../src/changes/html.ts";
 import {
   ARTIFACT_TYPES,
-  CHANGE_DESCRIBERS,
   CHANGE_LIMITS,
   CHANGES_INVISIBLE,
-  CHANGES_LAYOUT,
   CHANGES_UNREADABLE,
   ChangeCollector,
   type ChangeItem,
@@ -354,6 +354,43 @@ describe("slides", () => {
   });
 });
 
+describe("slides with one title", () => {
+  const deck = (...slides: string[]) => slides.join("\n\n---\n\n");
+
+  it("lists same-titled slides edited where they are as edits, not as moves", () => {
+    expect(
+      items(
+        "slides",
+        deck("# Same\n\nx1", "# Other", "# Same\n\nx2"),
+        deck("# Same\n\ny1", "# Other", "# Same\n\ny2"),
+      ),
+    ).toEqual([
+      { kind: "changed", where: "Slide 1", what: "Text changed", before: "x1", after: "y1" },
+      { kind: "changed", where: "Slide 3", what: "Text changed", before: "x2", after: "y2" },
+    ]);
+  });
+
+  it("still finds a moved slide among many with its title", () => {
+    // Every other slide edited: a region each, and none of them a move.
+    const many = Array.from({ length: 2000 }, (_, k) => `# Same\n\nText ${k}`);
+    const list = describeChanges(
+      "slides",
+      deck(...many),
+      deck(...many.map((s, k) => (k % 2 === 0 ? `${s}!` : s))),
+    );
+    expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
+    expect(list.items.some((i) => i.kind === "moved")).toBe(false);
+    // A slide taken from the end to the front, its text changed, among slides of the same title.
+    const slides = Array.from({ length: 50 }, (_, k) => `# Same\n\nText ${k}`);
+    expect(
+      items("slides", deck(...slides, "# Same\n\nLast"), deck("# Same\n\nFirst", ...slides)),
+    ).toEqual([
+      { kind: "moved", where: "“Same”", what: "Slide 51 moved to 1" },
+      { kind: "changed", where: "Slide 1", what: "Text changed", before: "Last", after: "First" },
+    ]);
+  });
+});
+
 describe("sheet", () => {
   const header = (qty: string) =>
     JSON.stringify({
@@ -670,6 +707,40 @@ describe("ChangeCollector", () => {
     expect(item?.before?.length).toBeLessThanOrEqual(CHANGE_LIMITS.excerptChars);
     expect(item?.before?.endsWith("…")).toBe(true);
     expect(item?.after).toBe("short");
+  });
+
+  it("drops bidirectional controls from excerpts, names and values, and keeps joiners", () => {
+    const bidi = "‪‫‬‭‮⁦⁧⁨⁩‎‏؜";
+    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+    const has = (s: string) => /[‪-‮⁦-⁩‎‏؜]/.test(s);
+    const page = (text: string) => `<title>T${bidi}</title><h1>Top</h1><p>${text}</p>`;
+    const html = items("html", page(`Pay ${bidi}rof ${family}`), page(`Pay ${bidi}now ${family}`));
+    const board = (name: string) => `<!-- artboard name="${name}" size="desktop" -->\n<p>x</p>`;
+    const design = items("design", board(`Home${bidi}`), board(`Start‮gnp.exe`));
+    const out = new ChangeCollector();
+    out.add({
+      kind: "changed",
+      where: `A${bidi}`,
+      what: `B${bidi}`,
+      before: bidi,
+      after: `C${bidi}`,
+    });
+    for (const item of [...html, ...design, ...out.list().items]) {
+      for (const s of [item.where, item.what, item.before ?? "", item.after ?? ""]) {
+        expect(has(s)).toBe(false);
+      }
+    }
+    expect(html).toEqual([
+      {
+        kind: "changed",
+        where: "Under “Top”",
+        what: "Text changed",
+        before: `Pay rof ${family}`,
+        after: `Pay now ${family}`,
+      },
+    ]);
+    expect(design[0]).toMatchObject({ before: "Home", after: "Startgnp.exe" });
+    expect(out.list().items).toEqual([{ kind: "changed", where: "A", what: "B", after: "C" }]);
   });
 });
 

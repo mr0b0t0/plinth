@@ -108,6 +108,7 @@ function listItemChanges(x: MdBlock, y: MdBlock, where: string): ChangeItem[] {
     );
     const pos = (i: MdListItem) => at.get(i) as number;
     for (const { step } of inReadingOrder(p, pos, pos, h.bStart)) {
+      if (step.x && step.y && step.x.text === step.y.text) continue;
       if (step.x && step.y) {
         out.push({
           kind: "changed",
@@ -251,6 +252,8 @@ export function describeMarkdown(
     const removedKey = (x: MdBlock) => removedKeys.get(x) as number;
     for (const { key, step } of steps) {
       const { x, y } = step;
+      // A region the diff gave up on pairs unchanged blocks too: they are not changes.
+      if (x && y && x.raw === y.raw) continue;
       if (x && y) {
         const where = whereB(y);
         if (y.kind === "heading") {
@@ -333,8 +336,11 @@ export function describeMarkdown(
         })),
       );
     events.push(...imageEvents(placed(removedBlocks, "a"), placed(addedBlocks, "b")));
-    const defs = (list: MdBlock[]) => list.some((x) => x.kind === "definition");
-    if (defs(removedBlocks) || defs(addedBlocks)) {
+    // Link definitions changed in this region, not just sitting in it (a region the diff gave up
+    // on holds unchanged ones too).
+    const defs = (list: MdBlock[]) => list.filter((x) => x.kind === "definition").map((x) => x.raw);
+    const targets = multisetChanges(defs(removedBlocks), defs(addedBlocks));
+    if (targets.added.length > 0 || targets.removed.length > 0) {
       const first = addedBlocks[0] ?? removedBlocks[0];
       push(h.bEnd, {
         kind: "changed",

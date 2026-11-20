@@ -148,6 +148,8 @@ function describeColumns(out: ChangeCollector, a: Sheet, b: Sheet): { pairs: [nu
     }
     for (const [x, y] of p.pairs) {
       pairs.push([x, y]);
+      // A region the diff gave up on pairs unchanged columns too: they were not renamed.
+      if (ac[x]?.name === bc[y]?.name) continue;
       out.add({
         kind: "changed",
         where: `Column ${colLetter(y)}`,

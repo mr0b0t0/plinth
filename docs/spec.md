@@ -1681,7 +1681,12 @@ from discovery tags) stays.
   Within a changed region, items are paired in order, preferring a heading that keeps a word of
   its old name and a row whose first cell is the same, so a heading or row added before another
   reads as added, not as the next one renamed or overwritten; the region's items are then listed
-  in the order a person reads the new version. The app holds the two source texts
+  in the order a person reads the new version. An item in a region the diff gave up on (below) whose
+  two sides are the same is left out, so only what changed is listed. A slide whose own region has
+  one of its title on the other side changed in place: two same-titled slides edited where they
+  are are not listed as trading places. Bidirectional controls (U+202A to U+202E, U+2066 to
+  U+2069, LRM, RLM and ALM) are dropped from every string of an item, so a version's text cannot
+  reorder how the list reads. The app holds the two source texts
   only as the describers' input and renders only their output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
   pass the free plan's CPU time per request, and the app has the versions already.
 
@@ -1708,7 +1713,8 @@ from discovery tags) stays.
   JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
   review a draft.
 - **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
-  the smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced. The list
+  the smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced (its
+  items still paired in order, the unchanged ones left out). The list
   says when it was cut, and the two rendered versions below it always show everything. A version
   the type's checks refuse is not described in detail ("One of the two versions cannot be read in
   detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how

@@ -52,6 +52,8 @@ function describeRuns(
     // In the order a person reads the page, so a heading added above a changed one comes first.
     for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
       const { x, y } = step;
+      // A region the diff gave up on pairs unchanged runs too: they are not changes.
+      if (x && y && key(x) === key(y)) continue;
       if (x && y) {
         out.add(
           y.heading

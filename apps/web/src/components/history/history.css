@@ -208,9 +208,6 @@
   background: var(--color-warning-soft);
   color: var(--color-ink);
 }
-.hx-loading {
-  padding-block: var(--space-4);
-}
 .hx-compare__body {
   display: flex;
   flex-direction: column;

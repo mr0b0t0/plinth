@@ -1,7 +1,9 @@
 // The HTML string scanner of change lists against hostile input, its cost, and the rule that the
 // changes modules stay pure and zod-free (so renderer bundles and the room can import them).
 import { describe, expect, it } from "vitest";
-import { describeChanges, markdownBlocks, markupSignature, scanHtml } from "../src/index.ts";
+import { markupSignature, scanHtml } from "../src/changes/htmlScan.ts";
+import { markdownBlocks } from "../src/changes/markdownText.ts";
+import { describeChanges } from "../src/index.ts";
 
 const texts = (html: string) => scanHtml(html).runs.map((r) => r.text);
 

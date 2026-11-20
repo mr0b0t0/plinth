@@ -2,7 +2,7 @@
 // describer. Pure and zod-free: the app's Compare page imports it, and so can a renderer bundle or
 // the room.
 import { CHANGE_LIMITS } from "./limits.ts";
-import { changeExcerpt } from "./text.ts";
+import { changeExcerpt, withoutBidi } from "./text.ts";
 
 /** What happened to one thing a person can see. */
 export type ChangeKind = "added" | "removed" | "changed" | "moved";
@@ -38,15 +38,17 @@ export interface ChangeList {
 
 export { CHANGE_LIMITS } from "./limits.ts";
 
-/** `s`, or an excerpt of it when it is longer than CHANGE_LIMITS.excerptChars. */
+/** `s` without bidi controls, or an excerpt of it when it is longer than CHANGE_LIMITS.excerptChars. */
 function capped(s: string): string {
-  return s.length > CHANGE_LIMITS.excerptChars ? changeExcerpt(s) : s;
+  const clean = withoutBidi(s);
+  return clean.length > CHANGE_LIMITS.excerptChars ? changeExcerpt(clean) : clean;
 }
 
 /**
  * Collects items up to the cap, in the order they are found. It also cuts every `before` and
  * `after` longer than CHANGE_LIMITS.excerptChars, so the bound holds whatever a describer passes
- * (a 256-character token value, a long board or column name).
+ * (a 256-character token value, a long board or column name), and drops bidirectional controls
+ * from every string, so no name or value can reorder how its item reads.
  */
 export class ChangeCollector {
   readonly items: ChangeItem[] = [];
@@ -64,9 +66,15 @@ export class ChangeCollector {
       this.truncated = true;
       return false;
     }
-    const clean: ChangeItem = { kind: item.kind, where: item.where, what: item.what };
-    if (item.before !== undefined && item.before !== "") clean.before = capped(item.before);
-    if (item.after !== undefined && item.after !== "") clean.after = capped(item.after);
+    const clean: ChangeItem = {
+      kind: item.kind,
+      where: withoutBidi(item.where),
+      what: withoutBidi(item.what),
+    };
+    const before = capped(item.before ?? "");
+    const after = capped(item.after ?? "");
+    if (before !== "") clean.before = before;
+    if (after !== "") clean.after = after;
     this.items.push(clean);
     return true;
   }
