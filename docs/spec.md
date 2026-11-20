@@ -1499,9 +1499,9 @@ restoring an older one.
   for everyone but its owner and editors, and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` across the
   instance, which bounds the operator's browser time however many networks ask. Past the design's
   or the instance's limit the answer is 429 `rate_limited` with `details.reason` `artifact_limit`
-  or `instance_limit` and `Retry-After`, and the app says "Too many downloads right now. Try again
-  later." A request refused by any limit, or for a bad board or scale, spends none of them. At most
-  two exports render at once across the instance, beside the thumbnails' two; a request that finds
+  or `instance_limit` and `Retry-After`, and the app says "Too many downloads. Try again later."
+  A request refused by any limit, or for a bad board or scale, spends none of them. At most two
+  exports render at once across the instance, beside the thumbnails' two; a request that finds
   both busy answers 503 `unavailable` with `Retry-After: 10` and is not counted either. The browser
   opens the exact version as a thumbnail capture does and with the
   same safety: a one-time capture pass with no identity, bound to that version and reading no

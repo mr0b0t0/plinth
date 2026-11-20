@@ -151,7 +151,7 @@ describe("the menu items", () => {
       render(<Toaster />);
       await downloadDesignPdf("launch-kit", 2);
       expect(await screen.findByText(TOO_MANY), reason).toBeTruthy();
-      expect(TOO_MANY).toBe("Too many downloads right now. Try again later.");
+      expect(TOO_MANY).toBe("Too many downloads. Try again later.");
       expect(saved).toEqual([]);
       cleanup();
       clearToasts();

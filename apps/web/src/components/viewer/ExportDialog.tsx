@@ -43,7 +43,7 @@ export function saveBlob(blob: Blob, filename: string, doc: Document = document)
 }
 
 /** The words for a refusal over the instance's or the design's hourly export limit. */
-export const TOO_MANY = "Too many downloads right now. Try again later.";
+export const TOO_MANY = "Too many downloads. Try again later.";
 
 const TOO_BIG = "Too big for a .png. Download the .pdf.";
 
