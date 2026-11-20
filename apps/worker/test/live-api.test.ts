@@ -415,30 +415,28 @@ describe("live API: checkpoints", () => {
       a.ws.close(1000);
     });
 
-    it("frozen by its own version after the next save took the lock, the finish keeps the later edit", async () => {
+    it("after the next save took the lock and gave up, its own version is still recognized", async () => {
       const { id, ownerP, a, stub, snap } = await slowSave();
       const next = await stub.docSnapshot(id);
       expect(next).toMatchObject({ state: "ready", rev: 2, text: LATER });
+      // The next save aborts before the slow one's version lands: the slow one's snapshot stays.
+      await stub.docAbort(next.lock);
       const put = await api(`/artifacts/${id}`, ownerP.session.headers, {
         method: "PUT",
         body: { content: snap.text, base_version: 1 },
       });
       expect(put.status).toBe(200);
-      // The same line changed on both sides of the merge: frozen for review.
-      expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+      // The same line changed on both sides of a merge, yet nothing is frozen: v2 is its own.
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
       expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
-        rev: 3,
+        rev: 2,
         dirty: true,
       });
-      const rebased = await a.nextOf("rebased");
-      expect(rebased).toMatchObject({ version: 2, rev: 3 });
-      expect(await readText(a, rebased.gen)).toBe(LATER);
       expect(await draft(id)).toMatchObject({
         base_version: 2,
         conflict_version: null,
         content: LATER,
       });
-      await stub.docAbort(next.lock);
       a.ws.close(1000);
     });
   });

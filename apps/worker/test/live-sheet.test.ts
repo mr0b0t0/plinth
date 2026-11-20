@@ -687,23 +687,18 @@ describe("sheet socket: versions published from outside", () => {
       a.ws.close(1000);
     });
 
-    it("frozen by its own version after the next save took the lock, the finish resumes editing with Pears", async () => {
+    it("after the next save took the lock, its own version is still recognized, and the finish keeps Pears", async () => {
       const { id, a, stub, snap, after, later, put } = await slowSave();
-      // The next save's snapshot replaces the slow one's: v2's notify is not recognized, and the
-      // sheet freezes against it.
+      // The next save's snapshot does not replace the slow one's: v2's notify is recognized, and
+      // the sheet is not frozen against its own version.
       const next = await stub.docSnapshot(id);
       expect(next).toMatchObject({ state: "ready", rev: after, text: later });
       expect((await put()).status).toBe(200);
-      expect(await notified(a)).toEqual({ t: "conflict", version: 2 });
-      // The slow save's finish: v2 holds its snapshot, so the draft goes on from v2 with the
-      // Pears edit, unfrozen, instead of going back to the snapshot.
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
       expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
-        rev: after + 1,
+        rev: after,
         dirty: true,
       });
-      const rebased = await a.nextOf("rebased");
-      expect(rebased).toMatchObject({ version: 2, rev: after + 1 });
-      expect(await readText(a, rebased.gen)).toBe(later);
       expect(await stub.docPeek(id)).toMatchObject({
         base_version: 2,
         conflict_version: null,
@@ -712,7 +707,52 @@ describe("sheet socket: versions published from outside", () => {
       // The next save's lock is its own, and still held.
       expect((await stub.docSnapshot(id)).state).toBe("busy");
       await stub.docAbort(next.lock);
-      expect(await lease(a, 2, 3, after + 1)).toMatchObject({ t: "leased" });
+      expect(await lease(a, 2, 3, after)).toMatchObject({ t: "leased" });
+      a.ws.close(1000);
+    });
+
+    it("the next save giving up leaves the slow one's snapshot: its version is not frozen against", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // The next save aborts (a stale base, too soon, a stager refusal) before v2's notify.
+      const next = await stub.docSnapshot(id);
+      await stub.docAbort(next.lock);
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a clean or busy snapshot meanwhile leaves it too: rows put back stay put back", async () => {
+      const { id, a, stub, snap, after, put } = await slowSave();
+      // Busy: another save holds the lock. It gives up.
+      const next = await stub.docSnapshot(id);
+      expect((await stub.docSnapshot(id)).state).toBe("busy");
+      await stub.docAbort(next.lock);
+      // Clean: both rows put back as v1 has them.
+      const back = await editRow(a, 1, '["Apples",3,true]', after);
+      const clean = await editRow(a, 2, '["Pears",5]', back);
+      expect(await stub.docSnapshot(id)).toMatchObject({ state: "clean", rev: clean });
+      // v2 is still the slow save's own: the draft moves onto it with the rows put back, instead
+      // of being reset to v2's rows.
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: clean });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: SHEET,
+      });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: clean,
+        dirty: true,
+      });
       a.ws.close(1000);
     });
   });

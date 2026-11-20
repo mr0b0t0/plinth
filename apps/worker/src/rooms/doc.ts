@@ -132,6 +132,8 @@ interface CheckpointLock {
   resolved: boolean;
   /** The draft's epoch when snapshotted ("" until then): its version finishes onto these lines. */
   epoch: string;
+  /** The draft's base_version when snapshotted. */
+  base: number;
 }
 
 /** LIVE_* settings as the Worker parses them; the defaults when the config cannot be read. */
@@ -148,11 +150,13 @@ export class LiveDoc {
   private loading: Promise<Loaded | null> | null = null;
   private lock: CheckpointLock | null = null;
   /**
-   * The latest checkpoint's snapshot (the same object as its lock), kept after the lock runs out
-   * until its finish or abort, a discard, or the next checkpoint's snapshot: a slow save's own
-   * version is still recognized when its notify or finish comes late.
+   * Every checkpoint snapshot still being saved (each the same object as its lock), oldest first,
+   * kept after its lock runs out until its own finish or abort, a discard, or the base moving
+   * past the version it was taken on. Another snapshot never drops one, whether it is ready,
+   * clean or busy: a slow save's own version is still recognized when its notify or finish comes
+   * late, even after a later save took the lock and gave up.
    */
-  private saving: CheckpointLock | null = null;
+  private saving: CheckpointLock[] = [];
   private needsFlush = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> | null = null;
@@ -261,7 +265,7 @@ export class LiveDoc {
     this.timer = null;
     this.loaded = null;
     this.lock = null;
-    this.saving = null;
+    this.saving = [];
     this.needsFlush = false;
   }
 
@@ -670,18 +674,33 @@ export class LiveDoc {
     if (this.loaded === doc && !this.needsFlush) this.loaded = null;
   }
 
-  /** The pending checkpoint, while the lines are still the ones it snapshotted. */
-  private pendingCheckpoint(doc: Loaded): CheckpointLock | null {
-    const own = this.saving;
-    return own && own.hash !== "" && own.epoch === doc.epoch ? own : null;
+  /** A pending checkpoint that saved `hash`, while the lines are still the ones it snapshotted. */
+  private pendingCheckpoint(doc: Loaded, hash: string): CheckpointLock | null {
+    return this.saving.find((r) => r.hash === hash && r.epoch === doc.epoch) ?? null;
+  }
+
+  /** A checkpoint's snapshot is done with (its finish, its abort, or a finish it lost to). */
+  private dropSaving(rec: CheckpointLock | null): void {
+    if (rec) this.saving = this.saving.filter((r) => r !== rec);
+  }
+
+  /**
+   * Snapshots that can no longer publish or be recognized: taken on a base the draft has moved
+   * past (the stager refuses their base as stale), or on lines replaced since whose lock ran out.
+   */
+  private pruneSaving(doc: Loaded): void {
+    const now = Date.now();
+    this.saving = this.saving.filter(
+      (r) => r.base >= doc.baseVersion && (r.epoch === doc.epoch || r.until > now),
+    );
   }
 
   private async outside(doc: Loaded, n: number, hash: string | null): Promise<void> {
     if (n <= doc.baseVersion) return;
     // Already frozen against this version (or a newer one): nothing new to merge.
     if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
-    const own = this.pendingCheckpoint(doc);
-    if (own && hash !== null && hash === own.hash) {
+    const own = hash === null ? null : this.pendingCheckpoint(doc, hash);
+    if (own) {
       // This is the pending checkpoint's own version (its finish RPC may not arrive), even when
       // its lock ran out while the stager wrote it.
       this.finish(doc, n, own.text, own, own.rev);
@@ -691,8 +710,8 @@ export class LiveDoc {
     const theirs = await this.versionText(doc, n);
     if (theirs === null || this.loaded !== doc || n <= doc.baseVersion) return;
     if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
-    const still = this.pendingCheckpoint(doc);
-    if (still && theirs === still.text) {
+    const still = this.saving.find((r) => r.text === theirs && r.epoch === doc.epoch);
+    if (still) {
       // A notify without the hash (the alarm's catch-up) of that checkpoint's text.
       this.finish(doc, n, still.text, still, still.rev);
       await this.flushNow();
@@ -705,6 +724,7 @@ export class LiveDoc {
       doc.baseVersion = n;
       doc.epoch = randomString(12);
       doc.rev += 1;
+      this.pruneSaving(doc);
       this.revokeLeases("rebased");
       this.broadcast({ t: "reset", version: n, gen: doc.gen, rev: doc.rev });
       this.broadcastText(doc);
@@ -730,6 +750,7 @@ export class LiveDoc {
       doc.conflictVersion = null;
       doc.epoch = randomString(12);
       doc.rev += 1;
+      this.pruneSaving(doc);
       this.revokeLeases("rebased");
       this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
       this.broadcastText(doc);
@@ -778,6 +799,7 @@ export class LiveDoc {
       until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
       resolved: false,
       epoch: "",
+      base: doc.baseVersion,
     };
     this.lock = lock;
     try {
@@ -805,7 +827,8 @@ export class LiveDoc {
       lock.text = text;
       lock.hash = hash;
       lock.epoch = epoch;
-      this.saving = lock;
+      lock.base = doc.baseVersion;
+      this.saving = [...this.saving, lock].slice(-LIVE_DOC.maxPendingCheckpoints);
     }
     return {
       state,
@@ -850,16 +873,16 @@ export class LiveDoc {
     const doc = await this.ensure(artifactId);
     if (!doc) return { rev: 0, dirty: false };
     const held = this.lock?.id === lockId ? this.lock : null;
-    const rec = held ?? (this.saving?.id === lockId ? this.saving : null);
+    const rec = held ?? this.saving.find((r) => r.id === lockId) ?? null;
     // A lock that ran out is still this checkpoint's while the lines are the ones it snapshotted.
     const mine = rec && (rec.until > Date.now() || rec.epoch === doc.epoch) ? rec : null;
     if (n <= doc.baseVersion) {
       if (held) this.lock = null;
-      if (rec && this.saving === rec) this.saving = null;
+      this.dropSaving(rec);
     } else if (mine || epoch === undefined || epoch === doc.epoch) {
       this.finish(doc, n, text, mine, rev ?? mine?.rev);
     } else {
-      if (rec && this.saving === rec) this.saving = null;
+      this.dropSaving(rec);
       await this.outside(doc, n, null);
     }
     await this.flushNow();
@@ -885,13 +908,15 @@ export class LiveDoc {
   ): void {
     // Another checkpoint's lock (this one's ran out and a newer save took it) stays.
     if (!this.lock || this.lock === lock || this.lock.until <= Date.now()) this.lock = null;
-    if (lock && this.saving === lock) this.saving = null;
+    this.dropSaving(lock);
     // Without the snapshot's rev, lines other than the saved text count as edits made since.
     const later = since === undefined ? this.text(doc) !== text : doc.rev !== since;
     const frozen = doc.conflictVersion;
     const newer = frozen !== null && frozen > n ? frozen : null;
     doc.baseVersion = n;
     doc.baseText = text;
+    // The other saves of the old base can no longer publish.
+    this.pruneSaving(doc);
     if (!later && (lock?.resolved === true || frozen !== null)) {
       // A resolved conflict (or a draft frozen since, unedited): the saved text is the draft now.
       doc.lines = splitLines(text);
@@ -914,10 +939,13 @@ export class LiveDoc {
     this.status(doc);
   }
 
-  /** The checkpoint holding `lockId` gave up; another checkpoint's lock is left alone. */
+  /**
+   * The checkpoint holding `lockId` gave up; another checkpoint's lock is left alone, and so is
+   * every other snapshot still being saved (a slower save's own version is still recognized).
+   */
   async abortCheckpoint(lockId: string): Promise<void> {
     if (this.lock?.id === lockId) this.lock = null;
-    if (this.saving?.id === lockId) this.saving = null;
+    this.dropSaving(this.saving.find((r) => r.id === lockId) ?? null);
     if (this.loaded) await this.releaseIfIdle(this.loaded);
   }
 
@@ -964,6 +992,7 @@ export class LiveDoc {
       until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
       resolved: false,
       epoch: "",
+      base: doc.baseVersion,
     };
     this.lock = lock;
     const release = () => {
@@ -988,7 +1017,7 @@ export class LiveDoc {
       doc.epoch = randomString(12);
       doc.rev += 1;
       doc.lastBy = null;
-      this.saving = null;
+      this.saving = [];
       this.revokeLeases("closed");
       this.broadcast({ t: "reset", version: doc.baseVersion, gen: doc.gen, rev: doc.rev });
       this.broadcastText(doc);
