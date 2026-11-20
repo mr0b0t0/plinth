@@ -650,6 +650,11 @@ several pages to share one look. Publish it with `type: "design_system"` and the
   `ds_deprecated_alias`) do not block the publish; fix them before you hand over the link.
 - **Changing it** is like a doc: `get_artifact` returns the JSON in `content`; send the whole JSON
   back as `content` with `base_version`. Assets are images and fonts; limit 1 MB of JSON.
+- **From a folder** (more than a few font or image files): put `system.json` at the folder's top
+  with no `index.html`, then call `start_upload` with `type: "design_system"` (or the `id` and
+  `base_version` to update one) and run its command, or run
+  `npx -y @mr0b0t0/plinth publish <dir> --json` (`--id <id>` to update). A CLI that answers "No
+  index.html" for such a folder is older: use `start_upload`.
 
 **Building on one.** When the person has a design system on Plinth, or names one:
 

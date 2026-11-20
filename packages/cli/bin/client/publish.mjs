@@ -238,6 +238,7 @@ const TYPE_NOUNS = {
   slides: "deck",
   design: "design",
   sheet: "sheet",
+  design_system: "design system",
 };
 const nounOf = (type) => TYPE_NOUNS[type] ?? "page";
 
@@ -245,7 +246,7 @@ function typeOfFolder(files) {
   const has = new Set(files.map((f) => f.path));
   for (const [type, source] of Object.entries(SOURCE_FILES)) if (has.has(source)) return type;
   throw new CliError(
-    "No index.html (or content.md for a document, slides.md for a deck, design.html for a design, sheet.jsonl for a sheet) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
+    "No index.html (or content.md for a document, slides.md for a deck, design.html for a design, sheet.jsonl for a sheet, system.json for a design system) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
   );
 }
 

@@ -184,6 +184,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   versions are still rendered side by side below the list, one at a time with a Before and After
   switch on a phone. Older links with `view=source` open the same page. Agents still read and write
   source as before.
+- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
+  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
+  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
+  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
+  is still a page.
 
 ## 0.6.0 (2026-11-20)
 
