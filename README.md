@@ -40,6 +40,9 @@ pages from any of them:
   or a sheet right on its page and see each other's changes as they type, saved as versions, and pages can
   show who else is there and share cursors and moves with `plinth.room`
   ([a whiteboard](docs/examples/whiteboard.html)).
+- **Pages for clients and approvers.** People outside your team confirm their email by code, with
+  no account, and sign off a proposal, answer an intake form or tick a shared checklist; the page
+  shows who did what from Plinth's own records ([examples](docs/examples/)).
 - **Design systems your agents build with.** Keep your tokens, components and guidelines on
   Plinth as a design system: a reference site with live previews in light and dark, which agents
   read with `get_design_system` so every page they make for you looks the same.
