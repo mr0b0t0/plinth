@@ -307,8 +307,13 @@ export function isPlainRelativeUrl(u: string): boolean {
 /** Raster images inline, as a preview's `src` may hold them. */
 const DATA_RASTER_RE = /^data:image\/(png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/=]*$/;
 const FRAGMENT_RE = /^#[A-Za-z][\w-]*$/;
-/** CSS functions that take a URL as a bare string, so no url() check sees it. */
-const CSS_STRING_URL_FN = /image-set\(|(?<![\w-])(?:image|src|cross-fade|element|expression)\(/i;
+/**
+ * CSS functions that take a URL as a bare string, so no url() check sees it, with or without a
+ * vendor prefix (-webkit-cross-fade(), -moz-element()). A name that only ends in one of them
+ * (my-image(), --src()) is not that function and is not matched.
+ */
+const CSS_STRING_URL_FN =
+  /image-set\(|(?<![\w-])(?:-[a-z]+-)?(?:image|src|cross-fade|element|expression)\(/i;
 
 /**
  * Why a free-form CSS block is refused, or null. Defence in depth: the CSP of the page the CSS ends

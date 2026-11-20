@@ -540,7 +540,9 @@ several pages to share one look. Publish it with `type: "design_system"` and the
   comments; write font family names without quotes (Plinth quotes them). `css` blocks may not
   contain `<`, `\` (CSS escapes), `@import` or `image-set()`, and their `url()`s take only a
   relative path to the design system's own files (`url(img/hero.png)`), a `#fragment` or a
-  `data:image` PNG, JPEG, GIF, WebP or AVIF.
+  `data:image` PNG, JPEG, GIF, WebP or AVIF. Like a font file, a `url(img/...)` works on the
+  design system's own site only: a page that copies the CSS resolves it against its own files, so
+  use a `data:image` URL for an image other pages need.
 - **Fonts other pages will use** should be Google Fonts (`https://fonts.googleapis.com/css2?...`)
   or system stacks. A font file in the design system's own assets (`"src": "fonts/x.woff2"`) works
   on its own site only: other pages cannot load another artifact's files.

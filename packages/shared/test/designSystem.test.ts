@@ -656,6 +656,12 @@ describe("the CSS injection guard", () => {
       "a { background: -webkit-image-set('https://evil.example/x.png' 1x) }",
       "a { background: image('https://evil.example/x.png') }",
       "@font-face { font-family: X; src: src('https://evil.example/x.woff2') }",
+      "a { background: cross-fade('https://evil.example/a.png', 'img/b.png', 50%) }",
+      "a { background: -webkit-cross-fade('https://evil.example/a.png', 'img/b.png', 50%) }",
+      "a { background: -WebKit-Cross-Fade('https://evil.example/a.png', 'img/b.png', 50%) }",
+      "a { background: element(#hero) }",
+      "a { background: -moz-element(#hero) }",
+      "a { width: -ms-expression(1) }",
     ]) {
       refusedAt(
         withChange((ds) => {

@@ -320,6 +320,16 @@ function safeStyle(value: string): boolean {
   return urls.every((u) => (isPlainRelativeUrl(u) || DATA_IMAGE_RE.test(u)) && isSafePreviewSrc(u));
 }
 
+/**
+ * Whether an SVG attribute's value may stay. Presentation attributes (fill, mask, clip-path...) are
+ * CSS values, so the same escapes and URL-taking functions are refused as in style, and a url()
+ * may only name a fragment of this document: url(#grad).
+ */
+function safePresentation(value: string): boolean {
+  if (STYLE_BAD_RE.test(value)) return false;
+  return !/url\(/i.test(value) || FRAGMENT_URL_RE.test(value.trim());
+}
+
 /** Whether attribute `name` with `value` may stay on `el`. href and src are rewritten by the caller. */
 function allowed(el: Element, name: string, value: string): boolean {
   if (name.startsWith("on") || name.includes(":")) return false;
@@ -331,9 +341,7 @@ function allowed(el: Element, name: string, value: string): boolean {
   if (name === "srcset") return safeSrcset(value);
   if (name === "open") return el.localName === "details";
   const svg = el.namespaceURI === SVG_NS;
-  if (svg && SVG_ATTRS.has(name)) {
-    return !value.toLowerCase().includes("url(") || FRAGMENT_URL_RE.test(value.trim());
-  }
+  if (svg && SVG_ATTRS.has(name)) return safePresentation(value);
   return GLOBAL_ATTRS.has(name);
 }
 

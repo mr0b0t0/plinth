@@ -391,7 +391,8 @@ served with `script-src 'none'`. What it adds:
   the author. The free-form `css` blocks may not hold `<` (so `</style>` can never end the element
   they are pasted into), a backslash (so no CSS escape can spell `@import` or `url(` another way),
   `@import`, or the functions that take a URL as a bare string (`image-set()`, `image()`, `src()`,
-  `cross-fade()`, `element()`, `expression()`). Every `url()` in a block is read the way a CSS
+  `cross-fade()`, `element()`, `expression()`, with or without a vendor prefix such as
+  `-webkit-`). Every `url()` in a block is read the way a CSS
   tokenizer reads it (quoted and unquoted forms; one that cannot be read plainly is refused) and
   must be a plain relative path (no scheme, no leading `/` or `//`, no `..`, no percent-encoding),
   a `#fragment` or a raster `data:image` URL. A relative `url()` to a file the version lacks is a
@@ -413,7 +414,9 @@ served with `script-src 'none'`. What it adds:
   a `#fragment`, keeps `src` only as a relative path or a raster `data:` URL, drops `style`
   values with a backslash, a URL-taking function other than `url()`, or a `url()` that is not a
   plain relative path or a raster `data:` URL (read as the CSS tokenizer reads it, so
-  `url("//evil.example/x)y")` is one URL, not a relative one), and keeps SVG `title` and `desc` as
+  `url("//evil.example/x)y")` is one URL, not a relative one), drops SVG presentation attributes
+  (`fill`, `mask`, `clip-path`...) with a backslash, a URL-taking function or any `url()` other
+  than `url(#fragment)`, and keeps SVG `title` and `desc` as
   text only (their content is parsed as HTML); and string safety (no `<` in CSS, the sanitized HTML is
   the serialization of the walked DOM, and the srcdoc is set as a DOM property). Under opaque
   isolation the frames inherit the shell's sandbox and get opaque origins. Comment pins work on

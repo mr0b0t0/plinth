@@ -49,6 +49,7 @@ import { PreviewFrame } from "./PreviewFrame.tsx";
 import { utf8Bytes } from "./previewProtocol.ts";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
 import { sourceProblems } from "./sourceChecks.ts";
+import { useLastValid } from "./useLastValid.ts";
 import "./editor.css";
 
 /** Keep the draft in sessionStorage this long after the last change. */
@@ -136,13 +137,14 @@ export default function EditorWorkspace({
   // A typed format's own problems (a design system's JSON): Save waits until there are none.
   const problems = useMemo(() => sourceProblems(def.id, html), [def, html]);
   const invalid = problems.length > 0;
-  // While the draft has problems (listed above the editor), the preview keeps its last valid
-  // render instead of repeating them.
-  const lastValid = useRef(html);
-  if (!invalid) lastValid.current = html;
-  const shown = invalid ? lastValid.current : html;
+  // While the draft has problems (listed above the editor), the preview keeps the last draft that
+  // had none instead of repeating them; it stays blank until one does.
+  const shown = useLastValid(html, !invalid);
   const preview = useMemo(
-    () => previewDocument(def, { id, title: artifact.title, text: shown, config }),
+    () =>
+      shown === null
+        ? ""
+        : previewDocument(def, { id, title: artifact.title, text: shown, config }),
     [def, id, artifact.title, shown, config],
   );
 

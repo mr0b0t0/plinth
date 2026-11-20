@@ -168,6 +168,34 @@ describe("sanitizeComponentHtml", () => {
     });
   }
 
+  describe("SVG presentation attributes are CSS values", () => {
+    const refused: [string, string][] = [
+      ["an escaped url()", 'mask="u\\72l(https://e.example/m.png)"'],
+      ["an escaped url() in paint", 'fill="u\\72l(https://e.example/p.svg#g)"'],
+      ["image-set() with a bare URL", "mask=\"image-set('https://e.example/m.png' 1x)\""],
+      ["src() with a bare URL", "mask=\"src('https://e.example/m.png')\""],
+      ["image() with a bare URL", "fill=\"image('https://e.example/p.png')\""],
+      ["cross-fade()", "mask=\"-webkit-cross-fade('https://e.example/a.png', none, 50%)\""],
+      ["element()", 'fill="-moz-element(#a)"'],
+      ["a relative url()", 'clip-path="url(img/c.svg#c)"'],
+      ["a url() after a fragment", 'fill="url(#a) url(https://e.example/p)"'],
+      ["an uppercase URL()", 'fill="URL(https://e.example/p)"'],
+    ];
+    for (const [name, attr] of refused) {
+      it(`drops ${name}`, () => {
+        expect(clean(`<svg><rect width="4" ${attr}></rect></svg>`)).toBe(
+          '<svg><rect width="4"></rect></svg>',
+        );
+      });
+    }
+
+    it("keeps plain values and url(#fragment)", () => {
+      const svg =
+        '<svg><rect fill="url(#grad)" mask="url(#m)" stroke="currentColor" clip-path="url(#c)" font-family="Inter, sans-serif"></rect></svg>';
+      expect(clean(svg)).toBe(svg);
+    });
+  });
+
   it("never lets a script element or an on* attribute through a corpus of tricks", () => {
     const corpus = [
       "<scr<script>ipt>alert(1)</script>",

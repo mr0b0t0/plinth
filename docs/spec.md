@@ -687,7 +687,7 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   line breaks; no `url(`, `expression(` or comments; at most 256 characters), font family names are
   quoted by Plinth, and the `css` blocks may not hold `<`, a backslash (so no CSS escape such as
   `@\69mport`), `@import`, `image-set()`, `image()`, `src()`, `cross-fade()`, `element()` or
-  `expression()`, and each `url()` in them, read as a browser's CSS tokenizer reads it, must be a
+  `expression()` (vendor-prefixed forms such as `-webkit-cross-fade()` included), and each `url()` in them, read as a browser's CSS tokenizer reads it, must be a
   plain relative path (letters, digits, `._~-` and `/`, no `..`, an optional query and fragment), a
   `#fragment` or a raster `data:image` URL, because the compiled CSS is copied into other pages.
   These checks are defence in depth; the content CSP of the page the CSS ends up in is what stops
@@ -746,7 +746,7 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   mentions `plinth-design-system` is not scanned at all.
 - **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
   JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
-  keeps the preview at the last draft that parsed, and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
+  keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
   link (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
   origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
