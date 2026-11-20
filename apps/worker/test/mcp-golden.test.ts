@@ -3,7 +3,8 @@
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
-// notes, and the server instructions' design system sentence) did.
+// notes, and the server instructions' design system sentence) did, and so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -52,13 +53,13 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "dc2625713c4deff4dcf592e51ad0ccd846b9863021a411044659f390caa3134f";
+const INSTRUCTIONS = "ca1a080e217664904532f73f57a349d6f22e0f6382606e142f26837a6fe153e7";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "06aa2564d0d6e2ae5a6859d3203e5b22b17c110d799e6775bb25eeafec1a6446",
+      tools: "10749deed360edb137142005490431837136d0bbe9ecde2a7b5af7e345b0fa76",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -68,7 +69,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "31abde7438fcbc8717aaf6c518b863483a6a62f08ec9c08de80e91e37ac9e226",
+      tools: "cc8c4d28a95798b636afcd8da2f0442105521c87fe442fccd91f6f7248445ad0",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -80,7 +81,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "1df416df14d197370bbe6c19d2a88e2b1efcb642d626314754bdb76e00f0376c",
+      tools: "366faf5ed673c39e789740bdec9b127be745aca27cef5f1e7ec2b05e061748ad",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

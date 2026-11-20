@@ -30,6 +30,7 @@ import {
   resolveSource,
   typeHooks,
   typePublishWarnings,
+  typeSourceWarnings,
 } from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
@@ -821,12 +822,11 @@ export class VersionStager implements Stager {
       }
       const manifestPaths = new Set(entries.map((e) => e.path));
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
-      // reference warnings.
-      const extra = await typePublishWarnings(this.ctx, {
-        def,
-        text: sourceText,
-        paths: manifestPaths,
-      });
+      // reference warnings: the type's own source checks first (sourceWarnings), the ones that
+      // read other artifacts after the reference warnings (publishWarnings).
+      // Both are advisory: a hook that throws becomes a not_scanned note, never a failed publish.
+      const typedSource = { def, text: sourceText, paths: manifestPaths };
+      const extra = await typePublishWarnings(this.ctx, typedSource);
       warnings = scanPublish({
         files,
         manifestPaths,
@@ -834,6 +834,7 @@ export class VersionStager implements Stager {
         isolation: this.ctx.config.contentIsolation,
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
+        typed: typeSourceWarnings(typedSource),
         extra,
       });
       this.scanText.clear();

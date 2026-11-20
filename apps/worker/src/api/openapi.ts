@@ -181,6 +181,19 @@ const sourceDescription = (def: ArtifactTypeDef) =>
     ? "UNTRUSTED: written by the artifact's authors"
     : `UNTRUSTED ${def.sourceLabel}, written by the artifact's authors`;
 
+/** Each type in a few words, for the ArtifactType description. One type per line. */
+const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
+  html: "a hand-written page",
+  doc: "a Markdown document",
+  slides: "a Markdown deck",
+  design_system: "design tokens, guidelines and components as JSON",
+};
+
+/** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
+const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
+  design_system: "renders as a reference site and get_design_system compiles",
+};
+
 function responseSchemas(): Record<string, Json> {
   const artifactType = ref("ArtifactType");
   const publishResult = {
@@ -246,11 +259,12 @@ function responseSchemas(): Record<string, Json> {
     }),
     ArtifactType: {
       ...enumOf(ARTIFACT_TYPES),
-      description:
-        '"html": a hand-written page (source index.html). "doc": a Markdown document (source ' +
-        'content.md) that Plinth renders. "design_system": design tokens, guidelines and ' +
-        "components as JSON (source system.json) that Plinth renders as a reference site and " +
-        "get_design_system compiles. Fixed at publish.",
+      description: `${ARTIFACT_TYPES.map((t) => {
+        const d = TYPE_REGISTRY[t];
+        return d.renderer
+          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}) that Plinth ${TYPE_RENDERS[t] ?? "renders"}.`
+          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}).`;
+      }).join(" ")} Fixed at publish.`,
     },
     ArtifactSummary: obj(artifactSummary),
     // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:

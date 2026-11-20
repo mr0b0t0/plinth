@@ -11,6 +11,7 @@
 import { designSystem } from "./artifactTypes/design_system.ts";
 import { doc } from "./artifactTypes/doc.ts";
 import { html } from "./artifactTypes/html.ts";
+import { slides } from "./artifactTypes/slides.ts";
 import { escapeHtml } from "./markdown.ts";
 
 /** Every type, in registry order. */
@@ -18,6 +19,7 @@ import { escapeHtml } from "./markdown.ts";
 export const ARTIFACT_TYPES = [
   "html",
   "doc",
+  "slides",
   "design_system",
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
@@ -52,6 +54,11 @@ export interface ArtifactTypeDef {
    * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.
    */
   liveEdit: boolean;
+  /**
+   * The viewer offers Present and Presenter view, and review mode and the editor preview show
+   * every page stacked (payload `view: "overview"`). Absent means false.
+   */
+  present?: boolean;
 }
 
 /** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
@@ -61,6 +68,7 @@ export type TypeModule<K extends ArtifactType> = ArtifactTypeDef & { readonly id
 export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
   html,
   doc,
+  slides,
   design_system: designSystem,
 };
 
@@ -114,6 +122,11 @@ export interface TypedPayload {
    * connects the doc socket (#36). Absent otherwise, so every other shell is unchanged.
    */
   live?: "room";
+  /**
+   * Set for a type with `present` in review mode (?plinth-review) and the editor preview: the
+   * renderer shows every slide stacked. Absent otherwise, so every other shell is unchanged.
+   */
+  view?: "overview";
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -150,7 +163,14 @@ export const TYPED_SHELL_SCRIPT_SRC = "script-src 'self'";
  */
 export function typedShellHtml(
   def: ArtifactTypeDef,
-  o: { title: string; text: string; base: string; appOrigin: string; live?: "room" },
+  o: {
+    title: string;
+    text: string;
+    base: string;
+    appOrigin: string;
+    live?: "room";
+    view?: "overview";
+  },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
   const dir = `${o.base}/__plinth/types/${def.id}`;
@@ -161,6 +181,7 @@ export function typedShellHtml(
     app_origin: o.appOrigin,
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
+    ...(o.view ? { view: o.view } : {}),
   };
   return (
     '<!doctype html><html lang="en"><head>' +

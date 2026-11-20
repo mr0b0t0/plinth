@@ -13,8 +13,8 @@ import {
 } from "../src/index.ts";
 
 describe("design_system type", () => {
-  it("is its own module, listed after doc", () => {
-    expect(ARTIFACT_TYPES).toEqual(["html", "doc", "design_system"]);
+  it("is its own module, listed after slides", () => {
+    expect(ARTIFACT_TYPES).toEqual(["html", "doc", "slides", "design_system"]);
     expect(TYPE_REGISTRY.design_system).toBe(designSystem);
     expect(typeDef("design_system")).toBe(designSystem);
   });

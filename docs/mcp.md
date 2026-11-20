@@ -213,9 +213,9 @@ Create an artifact. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `title` | string, 1-200 | |
-| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc` |
-| `type` | `html` \| `doc` \| `design_system`, optional | Default `html`. `doc` makes a document from Markdown in `content`, `design_system` a design system from JSON in `content` ([below](#get_design_system)); fixed at publish |
-| `content` | string, optional | For `type: "doc"`: the Markdown. For `type: "design_system"`: the design system JSON. Up to 1 MB |
+| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc`, `slides` or `design_system` |
+| `type` | `html` \| `doc` \| `slides` \| `design_system`, optional | Default `html`. `doc` makes a document and `slides` a deck from Markdown in `content`, `design_system` a design system from JSON in `content` ([below](#get_design_system)); fixed at publish |
+| `content` | string, optional | For `type: "doc"` or `"slides"`: the Markdown (up to 500 slides). For `type: "design_system"`: the design system JSON. Up to 1 MB |
 | `assets` | array, optional, up to the instance's file limit (default 511) | `{ path, content, encoding?: "utf8" \| "base64", sha256?, content_type? }`. Relative paths, no `..`, no empty segment or trailing `/`, not `index.html`, not under `__plinth/`. The content type comes from the extension; `content_type` is used only for an extension Plinth does not know |
 | `visibility` | `public` \| `unlisted` \| `password` \| `allowlist` | Default `allowlist` with nobody added: private to the owner and collaborators. `public` only where the instance allows it |
 | `password` | string, 6-200, optional | Needed for `password` |
@@ -255,6 +255,29 @@ are reserved.
 }
 ```
 
+A deck (type `slides`): send Markdown in `content` with a line `---` between slides. Optional front
+matter sets `aspect` (`16:9` or `4:3`), `theme` (`auto`, `light`, `dark`), `paginate` and a plain-text
+`footer`; a line starting `Note:` starts the slide's speaker notes; lines `|||` split a slide into
+2 or 3 columns; `[text](#3)` links to slide 3. Plinth renders fixed 16:9 or 4:3 slides with automatic
+layouts, text that shrinks to fit, paging, Present, a presenter view and printing to PDF (with or
+without notes). Speaker notes are visible to anyone who can open the deck. Assets are images;
+`slides.md` and `index.html` are reserved. A deck needs at least one slide and holds at most 500.
+
+```json
+{
+  "title": "Q4 review",
+  "type": "slides",
+  "content": "---\naspect: 16:9\nfooter: Q4 review\n---\n\n# Q4 review\n\nRevenue and hiring\n\nNote: Keep this under a minute.\n\n---\n\n## Revenue\n\n- Up 18% on Q3\n\n![Revenue by month](chart.png)\n",
+  "assets": [
+    { "path": "chart.png", "content": "iVBORw0KGgo...", "encoding": "base64", "content_type": "image/png" }
+  ]
+}
+```
+
+A deck's publish result also warns `slides_setting` (an ignored setting or column marker),
+`slide_empty`, `slide_dense` (a slide that will be shrunk to fit: split it or move detail into its
+notes) and `missing_file` for an image it shows that is not in `assets`.
+
 A design system (type `design_system`): send its JSON (format `plinth.design-system/1`) in
 `content`. Plinth renders it as a reference site with token samples and live component previews.
 Its assets are images and fonts (woff2, woff, ttf, otf); `system.json` and `index.html` are
@@ -286,7 +309,7 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 | --- | --- | --- |
 | `id` | string | |
 | `html` | string | The full new document. For an HTML page |
-| `content` | string | The full new Markdown. For a doc, instead of `html` (up to 1 MB) |
+| `content` | string | The full new Markdown. For a doc or a deck, instead of `html` (up to 1 MB) |
 | `assets` | array, optional | Omit to keep the current assets; pass `[]` to remove them all. An entry with `sha256` and no `content` reuses that file from the current version |
 | `note` | string, up to 500, optional | Shown in the version history |
 | `base_version` | integer, optional | The version you edited. If it is no longer current, the call fails with `conflict` instead of overwriting |
@@ -332,8 +355,8 @@ sends the folder as a tar. Scope `artifacts:write`.
 | --- | --- | --- |
 | `id` | string, optional | Update this artifact. Omit for a new one |
 | `base_version` | integer | **Required with `id`**: the version you read with `get_artifact` (`list_versions` gives the current number without the page's HTML and file list). Refused without `id` |
-| `title` | string, optional | New artifact only. Default: the `<title>` of `index.html` (a doc: its first `# ` line; a design system: its `name`), else "Untitled" |
-| `type` | `html` \| `doc` \| `design_system`, optional | New artifact only. Default `html`. A design system's bundle has `system.json` at its top |
+| `title` | string, optional | New artifact only. Default: the `<title>` of `index.html` (a doc or a deck: its first `# ` line; a design system: its `name`), else "Untitled" |
+| `type` | `html` \| `doc` \| `slides` \| `design_system`, optional | New artifact only. Default `html`. A deck's bundle has `slides.md` at its top, a design system's `system.json` |
 | `note` | string, optional | Update only |
 | `category` | string, 1-60, optional | Either mode; with `id`, owner only. Applied when the bundle commits, and echoed in its result |
 
@@ -357,8 +380,8 @@ commands, next }`:
 - `content_isolation` is `opaque` on instances that serve artifacts with an opaque origin, where
   module scripts fail ([below](#opaque-sandbox-instances)).
 
-Replace `<folder>` in `commands.curl` with the build folder (the one with `index.html`, or a doc's
-`content.md`, at its top) and run it with a timeout of at least 10 minutes. The command changes
+Replace `<folder>` in `commands.curl` with the build folder (the one with `index.html`, a doc's
+`content.md` or a deck's `slides.md` at its top) and run it with a timeout of at least 10 minutes. The command changes
 into that folder itself. It prints the publish result as JSON, plus
 `bundle: { entries, skipped, stripped_prefix }`. If every file sits under one top directory that
 holds the entry file, that directory is removed from the paths. Dotfiles are skipped.
@@ -387,7 +410,7 @@ the upload token works on no other route. Errors carry a `reason`:
 | `upload_exhausted` | 5 attempts used |
 | `upload_running` | Another upload of yours is in progress; wait for it. `receiving_until` and `retry_after` say when its lease ends at the latest |
 | `upload_too_slow` | The bundle took longer than its 10-minute receiving lease to arrive; send it again (the upload keeps its remaining attempts) |
-| `no_entry_file` | No `index.html` (or `content.md`) at the top: point `<folder>` at the build folder that has it at its top |
+| `no_entry_file` | No `index.html` (or `content.md`, `slides.md`) at the top: point `<folder>` at the build folder that has it at its top |
 
 A conflict (someone published after `base_version`) ends the upload; `details.next` says which
 version is current.
@@ -432,12 +455,15 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 
 | `code` | What it means |
 | --- | --- |
-| `missing_file` | A relative reference (`src`, `href`, `url()`, `import`) names a file the version does not have. For a design system, `path` says which CSS block (`css`, `components[i].css`) holds the `url()` |
+| `missing_file` | A relative reference (`src`, `href`, `url()`, `import`) names a file the version does not have. For a design system, `path` says which CSS block (`css`, `components[i].css`) holds the `url()`. For a deck, an image its Markdown shows that is not in `assets` |
 | `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`) |
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
-| `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries. It also says when a type's own checks (a page's design system reference) did not run because of a temporary error; the version is published |
+| `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries. It also says when a type's own checks (a page's design system reference, a deck's own warnings) did not run because of an error; the version is published |
+| `slides_setting` | A deck setting Plinth ignores or cuts: an unknown key, a value that is not allowed, a footer over its length; or a slide with one `\|\|\|` column marker or more than three columns |
+| `slide_empty` | A deck slide with no content, usually an extra `---` line |
+| `slide_dense` | A deck slide over 900 characters or 14 non-blank lines (notes not counted) that will be shrunk to fit: split it or move detail into its `Note:` |
 | `ds_inert_markup` | A design system's component example holds script, an event handler, a form, a frame or a meta; previews run none of them and remove them. `path` says which example |
 | `ds_missing_font` | A design system's `fonts[].src` names a file the version does not have |
 | `ds_no_dark_theme` | A design system has no `themes.dark`, so pages built on it will not follow dark mode |
@@ -452,7 +478,8 @@ At most 50 are listed, then one "and N more".
 
 Read metadata, the source and the asset list. Scope `artifacts:read`. The result has `type`
 and `source_path`, then `html` for an HTML page (`source_path: "index.html"`) or `content`, the
-Markdown, for a doc (`source_path: "content.md"`), never both. `assets` never lists those paths;
+Markdown, for a doc (`source_path: "content.md"`) or a deck (`source_path: "slides.md"`, speaker
+notes included), never both. `assets` never lists those paths;
 each asset has `path`, `size_bytes`, `content_type` and `sha256` (`null` for files stored before
 the release that added hashes). Markdown is untrusted text like HTML. A design system returns its
 JSON in `content` (`source_path: "system.json"`); [`get_design_system`](#get_design_system) returns
@@ -489,7 +516,7 @@ The user's artifacts and those shared with them, newest first. Scope `artifacts:
 | `query` | string, optional | Filters by title |
 | `category` | string, optional | Only your own artifacts in this category, matched ignoring case, spaces, `-` and `_` |
 | `limit` | integer 0-500, optional | At most this many items, newest first (default 500). `0` returns no items, only `categories`: the cheap read before you publish |
-| `type` | `html` \| `doc` \| `design_system`, optional | Only artifacts of this type: `design_system` lists the design systems you can build with |
+| `type` | `html` \| `doc` \| `slides` \| `design_system`, optional | Only artifacts of this type: `design_system` lists the design systems you can build with |
 
 ```json
 { "query": "revenue" }

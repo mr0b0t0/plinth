@@ -89,6 +89,8 @@ export function previewDocument(
     text: o.text,
     base: o.config.content_path_fallback ? `/__content/${o.id}` : "",
     appOrigin: o.config.app_origin,
+    // A deck's preview shows every slide stacked, so the author sees the whole deck.
+    ...(def.present ? { view: "overview" as const } : {}),
   });
 }
 

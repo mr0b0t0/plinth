@@ -14,4 +14,5 @@ export * from "./merge3.ts";
 export * from "./room.ts";
 export * from "./routes.ts";
 export * from "./schemas.ts";
+export * from "./slides.ts";
 export * from "./types.ts";
