@@ -27,6 +27,11 @@
 //
 // An audience window tells its frame it is paired (on every `ready`), so a deck that follows the
 // presenter over the room (follow.ts) leaves that to the presenter window and shows no note.
+//
+// Leading viewers over the room lives in the frame, and the frame is replaced for a newer version
+// or a sharing change whenever the deck is not presented. So the app remembers what the frame last
+// said (`leading`) and asks the next frame to lead again (`lead`, after its `goto`): the audience
+// keeps following through the swap. It is memory only: a reload starts without a lead.
 import { APP_ROUTES, type AppConfig, route, typeDef, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showToast } from "../ui/index.ts";
@@ -39,6 +44,7 @@ import {
 import {
   exportMessage,
   gotoMessage,
+  leadMessage,
   newNonce,
   pairedMessage,
   postToDeck,
@@ -201,6 +207,8 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const moving = useRef(false);
   /** Present chosen in review mode, done when the frame without review mode is ready. */
   const pending = useRef<Pending | null>(null);
+  /** The deck's frame said the person leads viewers over the room: the next frame leads again. */
+  const leading = useRef(false);
 
   /** Sets the mode now, so messages that arrive before the next render see it. */
   const changeMode = useCallback((next: PresentMode) => {
@@ -271,6 +279,10 @@ export function usePresentation(o: PresentationOptions): Presentation {
         if (toast) showToast(toast);
         return;
       }
+      if (m.type === "leading") {
+        if (!audience) leading.current = m.on;
+        return;
+      }
       if (m.type === "view") {
         // An audience window shows the deck view, whatever its own frame switched to.
         if (audience) {
@@ -295,6 +307,8 @@ export function usePresentation(o: PresentationOptions): Presentation {
           wanted.current = m.slide;
           tellAudience(m.slide);
         }
+        // A frame that replaced one that was leading leads again, from the slide just sent.
+        if (!audience && leading.current) postToDeck(frame, targetRef.current, leadMessage());
         // The frame that replaced a review frame: what Present asked for there happens now.
         const asked = pending.current;
         if (!audience && asked && asked.from !== frame) {

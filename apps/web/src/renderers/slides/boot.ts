@@ -141,6 +141,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           root,
           deck,
           right: payload.follow,
+          // The app remembers the lead, so a frame that replaces this one leads again (`lead`).
+          onLead: (on) => postToApp(win, appOrigin, { type: "leading", on }),
           ...(opts.connect ? { connect: opts.connect } : {}),
         })
       : null;
@@ -372,6 +374,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       // While the deck follows a presenter, the presenter's slide wins over the app's.
       if (!follow?.holding) deck.go(m.slide);
     } else if (m.type === "paired") follow?.detach();
+    else if (m.type === "lead") follow?.resumeLead();
     else if (m.type === "view") {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.

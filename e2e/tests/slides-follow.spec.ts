@@ -5,10 +5,12 @@
 // viewers and pages; the viewer's deck follows with the "Following the presenter" note; the viewer
 // pages back by hand, which pauses following, and "Back to the presenter" returns to the owner's
 // slide. A presenter's own audience window follows its presenter window, not the room, so it shows
-// no note while they lead. An anonymous viewer of an unlisted deck opens no socket and sees no note.
+// no note while they lead. A lead carries on when a new version or a sharing change replaces the
+// presenter's frame. An anonymous viewer of an unlisted deck opens no socket and sees no note.
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
 import { apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
+import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
@@ -108,6 +110,100 @@ test("viewers follow the presenter's slide, pause by paging, and go back to it",
     await lead.press("Enter");
     await expect(lead).toHaveAttribute("aria-pressed", "false");
     await expect(note).toBeHidden({ timeout: 10_000 });
+  } finally {
+    await viewer.context().close();
+  }
+});
+
+/** Counts the deck's slides sockets a page opens (one per frame that follows or leads). */
+function slidesSockets(page: Page): () => number {
+  let n = 0;
+  page.on("websocket", (ws) => {
+    if (ws.url().includes("/__plinth/room/v1/slides")) n++;
+  });
+  return () => n;
+}
+
+test("the lead carries on when a new version or a sharing change replaces the presenter's frame", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(150_000);
+  const owner = uniqueEmail("follow-swap");
+  const viewerEmail = uniqueEmail("follow-swap-viewer");
+  const { token } = await seedToken(owner, { label: "Deck agent", clientType: "claude" });
+  const art = await publishArtifact(page.request, token, {
+    title: "Kickoff",
+    html: undefined,
+    type: "slides",
+    content: DECK,
+    visibility: "allowlist",
+  });
+  const share = (emails: string[]) =>
+    apiPut(
+      page.request,
+      `/artifacts/${art.id}/sharing`,
+      { grants: emails.map((email) => ({ email, role: "viewer" })) },
+      { token },
+    );
+  const shared = await share([viewerEmail]);
+  expect(shared.status, JSON.stringify(shared.body)).toBe(200);
+
+  await seedSession(page.context(), owner);
+  const ownerSockets = slidesSockets(page);
+  await page.goto(`/a/${art.slug}`);
+  await ready(page);
+  const viewer = await listedViewer(browser, art.slug, viewerEmail);
+  const lead = deck(page).locator(".plinth-slides__controls .plinth-slides__lead");
+  const note = deck(viewer).locator(".plinth-slides__follow");
+  /** The owner pages to `n` from the deck in its current frame; the viewer's deck follows. */
+  const pageTo = async (n: number) => {
+    await root(page).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(html(page)).toHaveAttribute("data-slide", String(n));
+    await expect(html(viewer)).toHaveAttribute("data-slide", String(n), { timeout: 10_000 });
+    await expect(note).toContainText("Following the presenter");
+  };
+  try {
+    // The owner leads from the deck's own controls, outside full screen and presenter view.
+    await expect(lead).toBeEnabled({ timeout: 15_000 });
+    await lead.press("Enter");
+    await expect(lead).toHaveText("Leading · 1 following");
+    await pageTo(2);
+
+    // An agent publishes a new version: both pages load it in a new frame, and the owner's new
+    // frame leads again from slide 2.
+    const client = await mcpClient(token);
+    try {
+      const up = await tool(client, "update_artifact", {
+        id: art.id,
+        content: DECK.replace("## Two", "## Two, updated"),
+        base_version: 1,
+      });
+      expect(up.isError, up.text).toBe(false);
+    } finally {
+      await client.close();
+    }
+    await expect(page.locator('iframe[title$="version 2"]')).toHaveCount(1, { timeout: 30_000 });
+    await expect(viewer.locator('iframe[title$="version 2"]')).toHaveCount(1, { timeout: 30_000 });
+    await ready(page);
+    await expect(html(page)).toHaveAttribute("data-slide", "2");
+    await expect(lead).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
+    await expect(lead).toHaveText("Leading · 1 following", { timeout: 15_000 });
+    await pageTo(3);
+
+    // The owner shares the deck with one more person: every content pass ends, both pages load a
+    // fresh frame, and the owner still leads.
+    const before = ownerSockets();
+    const again = await share([viewerEmail, uniqueEmail("follow-swap-more")]);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    await expect.poll(ownerSockets, { timeout: 30_000 }).toBeGreaterThan(before);
+    await ready(page);
+    await expect(lead).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
+    await expect(lead).toHaveText("Leading · 1 following", { timeout: 15_000 });
+    await expect(html(page)).toHaveAttribute("data-slide", "3");
+    await pageTo(4);
+    await expect(root(viewer)).toHaveAttribute("data-follow", "on");
   } finally {
     await viewer.context().close();
   }

@@ -86,11 +86,21 @@ function setup(right: "present" | "watch", count = 5) {
   const root = document.createElement("main");
   document.body.replaceChildren(root);
   const deck = new DeckController(count);
-  const f = new Follow({ win, root, deck, right, connect, random: () => 1 });
+  /** What the deck told the app about the person's lead. */
+  const told: boolean[] = [];
+  const f = new Follow({
+    win,
+    root,
+    deck,
+    right,
+    connect,
+    random: () => 1,
+    onLead: (on) => told.push(on),
+  });
   root.append(f.pill);
   f.start();
   started.push(() => f.stop());
-  return { win, root, deck, f, s: last() };
+  return { win, root, deck, f, told, s: last() };
 }
 
 beforeEach(() => {
@@ -358,6 +368,84 @@ describe("Follow: presenting", () => {
     expect(deck.current).toBe(2);
   });
 
+  it("tells the app the person's lead: on and off, a takeover, a refusal, never a closed socket", () => {
+    const { f, s, told } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    f.toggleLead();
+    expect(told).toEqual([true, false]);
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    s.frame({ t: "at", slide: 2, by: "s_other" });
+    expect(told).toEqual([true, false, true, false]);
+    f.toggleLead();
+    s.frame({ t: "error", code: "not_leading" });
+    expect(told.at(-1)).toBe(false);
+    f.toggleLead();
+    s.frame({ t: "error", code: "forbidden" });
+    expect(told).toEqual([true, false, true, false, true, false, true, false]);
+    // A sharing change closes the socket for good: the lead is not reported off, so the frame
+    // that replaces this one can lead again.
+    f.toggleLead();
+    s.drop(4401);
+    expect(f.client.wantLead).toBe(false);
+    expect(told.at(-1)).toBe(true);
+  });
+
+  it("a resumed lead (the app's lead) takes the lead even if the room lists the old frame's socket", () => {
+    const { f, s, deck, told } = setup("present");
+    f.leadButton();
+    // The app sent the slide, then lead, before the room's welcome.
+    deck.go(4);
+    f.resumeLead();
+    expect(s.frames()).toEqual([]);
+    expect(told).toEqual([true]);
+    // The old frame's socket has not gone yet: the room still lists it as leading.
+    welcome(s, { id: "s_new", present: true, at: { slide: 4, by: "s_old" } });
+    expect(s.frames()).toEqual([{ t: "start", slide: 4 }]);
+    expect(f.client.wantLead).toBe(true);
+    expect(f.client.takenOver).toBe(false);
+    s.frame({ t: "at", slide: 4, by: "s_new" });
+    expect(f.client.leading).toBe(true);
+    deck.next();
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 5 });
+    // Only that welcome: after a later reconnect someone else leading wins, as before.
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    const again = last();
+    welcome(again, { id: "s_again", present: true, at: { slide: 2, by: "s_other" } });
+    expect(again.frames()).toEqual([]);
+    expect(f.client.wantLead).toBe(false);
+    expect(told.at(-1)).toBe(false);
+  });
+
+  it("a resumed lead starts at once when already welcomed, and a watcher ignores it", () => {
+    const { f, s, deck } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    deck.go(3);
+    f.resumeLead();
+    expect(s.frames()).toEqual([{ t: "start", slide: 3 }]);
+    // Twice is once.
+    f.resumeLead();
+    expect(s.frames()).toEqual([{ t: "start", slide: 3 }]);
+
+    const w = setup("watch");
+    welcome(w.s, { id: "s_w", present: false });
+    w.f.resumeLead();
+    expect(w.s.frames()).toEqual([]);
+    expect(w.told).toEqual([]);
+  });
+
+  it("a resumed lead without the right to present any more is dropped and reported off", () => {
+    const { f, s, told } = setup("present");
+    f.resumeLead();
+    welcome(s, { id: "s_me", present: false });
+    expect(s.frames()).toEqual([]);
+    expect(f.client.wantLead).toBe(false);
+    expect(told).toEqual([true, false]);
+  });
+
   it("labels the toggle by its audience", () => {
     expect(leadLabel(false, 4)).toBe("Lead viewers");
     expect(leadLabel(true, 0)).toBe("Leading · 0 following");
@@ -461,6 +549,49 @@ describe("boot with follow", () => {
     // Presenter view in the audience window has no Lead viewers toggle either.
     target.dispatchEvent(new KeyboardEvent("keydown", { key: "s", cancelable: true }));
     expect(document.querySelector(".plinth-slides__lead")).toBeNull();
+  });
+
+  it("tells the app when the person leads, and leads again when the app says the old frame did", () => {
+    mount("present");
+    started.push(boot(framedWin(), { measure, connect }));
+    const s = last();
+    const leading = () =>
+      parent.postMessage.mock.calls
+        .map((c) => c[0] as { type: string; on?: boolean })
+        .filter((m) => m.type === "leading")
+        .map((m) => m.on);
+    welcome(s, { id: "s_me", present: true });
+    document
+      .querySelector<HTMLButtonElement>(".plinth-slides__controls .plinth-slides__lead")
+      ?.click();
+    expect(leading()).toEqual([true]);
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "leading", on: true },
+      APP,
+    );
+
+    // The frame that replaces it: the app sends the slide, then lead.
+    mount("present");
+    started.push(boot(framedWin(), { measure, connect }));
+    const next = last();
+    app({ type: "goto", slide: 2 });
+    app({ type: "lead" });
+    welcome(next, { id: "s_next", present: true, at: { slide: 1, by: "s_me" } });
+    expect(next.frames()).toEqual([{ t: "start", slide: 2 }]);
+    next.frame({ t: "at", slide: 2, by: "s_next" });
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".plinth-slides__controls .plinth-slides__lead",
+    );
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("leading");
+
+    // A watcher's frame ignores lead.
+    mount("watch");
+    started.push(boot(framedWin(), { measure, connect }));
+    const w = last();
+    app({ type: "lead" });
+    welcome(w, { id: "s_w" });
+    expect(w.frames()).toEqual([]);
   });
 
   it("while following, the presenter's slide wins over the app's goto", () => {

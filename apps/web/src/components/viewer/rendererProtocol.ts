@@ -12,6 +12,7 @@
 //   app -> frame: export { format }        a whiteboard downloads itself as "png" or "svg"
 //   app -> frame: paired                   a deck is an audience window: it follows its presenter
 //                                          window, never the presenter in the room
+//   app -> frame: lead                     a deck's earlier frame was leading viewers: lead again
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -128,6 +129,21 @@ export function pairedMessage(): PairedMessage {
 }
 
 /**
+ * The deck's frame this one replaced (a newer version, a sharing change) was leading viewers over
+ * the room, and the person never stopped: lead again. It carries no data; the room still allows
+ * only owners and editors to lead.
+ */
+export interface LeadMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "lead";
+}
+
+export function leadMessage(): LeadMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "lead" };
+}
+
+/**
  * Post a deck message (a slide number, a view name, or an export request with the app's own
  * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
  * opaque frames. False when it cannot.
@@ -135,7 +151,7 @@ export function pairedMessage(): PairedMessage {
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage,
+  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage | LeadMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -297,6 +313,7 @@ export const APP_MESSAGE_KINDS = [
   "view",
   "export",
   "paired",
+  "lead",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -308,7 +325,8 @@ export type AppToFrameMessage =
   | GotoMessage
   | ViewMessage
   | ExportMessage
-  | PairedMessage;
+  | PairedMessage
+  | LeadMessage;
 
 /** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(

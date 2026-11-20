@@ -439,9 +439,11 @@ What is new:
   ids are prefixed per slide (`s<n>-`), and copies of a slide (presenter view, the handout) carry
   no ids at all.
 - **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`,
-  `print` and `paired` (no data: an audience window's frame stops following the presenter over the
-  room, so it can only turn following off); the frame sends `ready` and `position` (a slide and a
-  count), `view { mode }` (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
+  `print`, `paired` (no data: an audience window's frame stops following the presenter over the
+  room, so it can only turn following off) and `lead` (no data: the frame it replaced was leading
+  viewers, so it leads again; the room still lets only owners' and editors' sockets lead); the
+  frame sends `ready` and `position` (a slide and a count), `view { mode }` (the view it switched
+  to), `fullscreen` and `leading { on }` (a boolean). Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
   renderer acts only on messages whose `event.source` is its parent and whose origin is the exact
   app origin, and posts only to the app origin.
 - **Opaque frames are identified by window.** The app accepts a deck's messages only from the
@@ -515,9 +517,11 @@ What is new:
   current version's own path, outside review mode, with rooms and `ALLOW_SLIDES_FOLLOW` on; every
   other shell (anonymous link viewers, previews, captures, pinned versions, review mode, the editor
   preview) has the same bytes as before. The renderer then opens the room's `slides` channel on the
-  deck's own origin ([Live rooms](#live-rooms)), so the app is not involved and no new message
-  crosses between the app and the frame. Only Plinth's renderer runs on a deck's origin, so the
-  frames it sends are Plinth's; the room still enforces the rights on every frame.
+  deck's own origin ([Live rooms](#live-rooms)). The app learns only a boolean, whether the person
+  leads, so that a frame replacing this one (a newer version, a sharing change) can lead again
+  with `lead`; neither message carries a slide's text, a socket id or anyone's identity. Only
+  Plinth's renderer runs on a deck's origin, so the frames it sends are Plinth's; the room still
+  enforces the rights on every frame.
 
 ## Design systems
 

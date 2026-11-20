@@ -172,7 +172,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the presenter". Someone who opens the deck mid-talk lands on the presenter's slide. Only slide
   numbers travel, over the deck's live room; nobody sees who else is watching. It needs live rooms
   (origin isolation and the `ROOMS` binding) and is on by default; `ALLOW_SLIDES_FOLLOW=false`
-  turns it off. Link viewers without an identity do not follow.
+  turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
+  publishes a new version or the owner changes who the deck is shared with.
 
 ## 0.6.0 (2026-11-20)
 

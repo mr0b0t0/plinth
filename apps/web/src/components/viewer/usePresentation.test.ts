@@ -296,6 +296,76 @@ describe("usePresentation", () => {
     ).toEqual(["goto"]);
   });
 
+  it("a frame that replaces one that was leading is asked to lead again, after its slide", () => {
+    const one = fakeFrame();
+    const { rerender } = renderHook(
+      ({ frame }) =>
+        usePresentation({
+          gate: gate(),
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+        }),
+      { initialProps: { frame: one.frame } },
+    );
+    const types = (w: { postMessage: ReturnType<typeof vi.fn> }) =>
+      w.postMessage.mock.calls.map((c) => (c[0] as { type: string }).type);
+    fromFrame(one.contentWindow, { type: "ready", slide: 1, count: 6 });
+    // Nobody led yet: no lead.
+    expect(types(one.contentWindow)).toEqual(["goto"]);
+    fromFrame(one.contentWindow, { type: "position", slide: 4, count: 6 });
+    fromFrame(one.contentWindow, { type: "leading", on: true });
+
+    // A newer version or a sharing change replaces the frame: it goes to slide 4, then leads.
+    const two = fakeFrame();
+    rerender({ frame: two.frame });
+    // The old frame's word no longer counts.
+    fromFrame(one.contentWindow, { type: "leading", on: false });
+    fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(two.contentWindow.postMessage.mock.calls).toEqual([
+      [{ source: "plinth-renderer", v: 1, type: "goto", slide: 4 }, ORIGIN],
+      [{ source: "plinth-renderer", v: 1, type: "lead" }, ORIGIN],
+    ]);
+
+    // The person stopped leading (or another presenter took over): the next frame does not lead.
+    fromFrame(two.contentWindow, { type: "leading", on: false });
+    const three = fakeFrame();
+    rerender({ frame: three.frame });
+    fromFrame(three.contentWindow, { type: "ready", slide: 4, count: 6 });
+    expect(types(three.contentWindow)).not.toContain("lead");
+    // A malformed one is ignored.
+    fromFrame(three.contentWindow, { type: "leading", on: "yes" });
+    const four = fakeFrame();
+    rerender({ frame: four.frame });
+    fromFrame(four.contentWindow, { type: "ready", slide: 4, count: 6 });
+    expect(types(four.contentWindow)).not.toContain("lead");
+  });
+
+  it("an audience window never records or sends a lead", () => {
+    window.history.replaceState(null, "", `/a/talk#present=audience&pair=${"p".repeat(16)}`);
+    const one = fakeFrame();
+    const { rerender } = renderHook(
+      ({ frame }) =>
+        usePresentation({
+          gate: gate(),
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+        }),
+      { initialProps: { frame: one.frame } },
+    );
+    fromFrame(one.contentWindow, { type: "ready", slide: 1, count: 6 });
+    fromFrame(one.contentWindow, { type: "leading", on: true });
+    const two = fakeFrame();
+    rerender({ frame: two.frame });
+    fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(
+      two.contentWindow.postMessage.mock.calls.map((c) => (c[0] as { type: string }).type),
+    ).not.toContain("lead");
+  });
+
   it("posts to * under opaque isolation and accepts the frame's null origin", () => {
     const f = fakeFrame();
     renderHook(() =>

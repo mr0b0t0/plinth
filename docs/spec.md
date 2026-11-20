@@ -1051,9 +1051,13 @@ source editor work as for docs. A deck is not edited on its page.
   Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
   and no one learns who else is watching or who leads, only the slide. It runs entirely in the
   deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)), and the slide in each
-  viewer's URL fragment follows as for any paging. The app is involved only for a presenter's
+  viewer's URL fragment follows as for any paging. The app is involved for a presenter's
   audience window: it tells that window's frame it is paired (`paired`), and the frame closes its
-  socket and shows no note or toggle, since its presenter window moves it. While a deck follows,
+  socket and shows no note or toggle, since its presenter window moves it. It also keeps a lead
+  across a new frame: the deck's frame says whether the person leads (`leading { on }`), and when
+  the app replaces the frame (a newer version, a sharing change, review mode ending, all outside
+  full screen and presenter view) it asks the new one to lead again (`lead`, after the slide), so
+  the audience keeps following; it is remembered for the open page only. While a deck follows,
   the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
   room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
   thumbnail captures, review mode, the editor preview and a permanent version link never follow
@@ -1078,8 +1082,8 @@ source editor work as for docs. A deck is not edited on its page.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
   (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }` and
-  `paired` from the app; `ready`, `position`, `view`, `fullscreen` and
-  `exported { nonce, ok, images_skipped, opaque }` from the frame); see
+  `paired` and `lead` from the app; `ready`, `position`, `view`, `fullscreen`,
+  `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
   viewers only); transitions, builds, custom themes and fonts, math, diagrams and video are not
