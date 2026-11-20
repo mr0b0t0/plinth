@@ -58,8 +58,6 @@ export interface Dictation {
   /** The page declares dictation and the instance offers it: the stage's controls apply. */
   declared: boolean;
   listening: boolean;
-  /** The browser recognizes on this device (no audio leaves it). */
-  onDevice: boolean;
   /** The viewer allowed dictation on this page in this browser. */
   allowed: boolean;
   consent: DictationConsentRequest | null;
@@ -161,7 +159,6 @@ export function useDictation({
   const { mode, on } = answerMode(config, gate.voice);
   const declared = on && voice !== undefined;
   const [listening, setListening] = useState(false);
-  const [onDevice, setOnDevice] = useState(false);
   const [allowed, setAllowed] = useState(() => hasConsent(artifactId, viewerId));
   const [consent, setConsent] = useState<DictationConsentRequest | null>(null);
   const load = useRef<LoadState>({
@@ -240,7 +237,6 @@ export function useDictation({
         }
       }
       setListening(false);
-      setOnDevice(false);
       if (s.phase === "consent") setConsent(null);
       if (s.phase === "listening") {
         post({ type: "state", id: s.id, state: "idle", reason: why });
@@ -286,7 +282,6 @@ export function useDictation({
       rec.continuous = true;
       rec.interimResults = s.interim;
       rec.lang = s.lang ?? navigator.language;
-      let local = false;
       // On-device recognition where the browser offers it, never by installing a model.
       if ("processLocally" in rec && typeof Ctor.available === "function") {
         try {
@@ -296,7 +291,6 @@ export function useDictation({
           ]);
           if (r === "available") {
             rec.processLocally = true;
-            local = true;
           }
         } catch {
           // The browser's default applies.
@@ -309,7 +303,6 @@ export function useDictation({
         if (session !== s) return;
         s.phase = "listening";
         setListening(true);
-        setOnDevice(local);
         post({ type: "started", id: s.id });
         post({ type: "state", id: s.id, state: "listening" });
         s.timers.push(window.setTimeout(() => end(s, "time_limit"), VOICE_LIMITS.maxSessionMs));
@@ -494,5 +487,5 @@ export function useDictation({
     stopRef.current?.("not_granted");
   }, [artifactId]);
 
-  return { declared, listening, onDevice, allowed, consent, stop, turnOff };
+  return { declared, listening, allowed, consent, stop, turnOff };
 }

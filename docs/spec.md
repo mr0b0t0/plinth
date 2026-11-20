@@ -1016,15 +1016,17 @@ microphone.
   the last start was at least 1 s ago and the viewer's last Stop at least 10 s ago, and the viewer
   has not said "Not now", been refused by the browser's own prompt, or pressed Stop three times on
   this load.
-- **Consent.** The first start on a page opens the app's dialog "Let this page take dictation?": who
-  wrote the page (the owner's email, never the display name the owner chooses) and may save the
-  words, which company's speech service hears the audio, and how
-  to stop. It starts on "Not now", and both buttons ignore input for 500 ms after it opens. "Allow
-  on this page" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>` =
+- **Consent.** The first start on a page opens the app's dialog "Allow dictation on this page?", in
+  one sentence: the page and who wrote it (the owner's email, never the display name the owner
+  chooses) get the words and may save them for others with access, and which company's speech
+  service hears the audio. Its only controls are "Not now" and "Allow" (Escape closes it, which
+  answers `dismissed`). It starts on "Not now", and both buttons ignore input for 500 ms after it
+  opens. "Allow" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>` =
   the viewer's id on the page), so another person on the same browser is asked again, and it is
-  cleared on sign-out; "Not now" lasts for the page load. "Dictation on this page: allowed. Turn
-  off" in the ⋯ menu takes it back and stops listening.
-- **While listening.** A red "Listening" control with **Stop** sits in the viewer bar at every width.
+  cleared on sign-out; "Not now" lasts for the page load. "Turn off dictation" in the ⋯ menu, shown
+  only while the viewer has allowed it on the page, takes it back and stops listening.
+- **While listening.** A red "Listening" pill with a stop button ("Stop dictation") sits in the
+  viewer bar at every width.
   It is app chrome, so the page cannot hide or restyle it. A session ends at the page's `stop()`,
   the viewer's Stop, silence, 60 s, a hidden tab, a blurred window (while listening the app checks
   every 250 ms that its window has focus, because with focus inside the frame a switch to another

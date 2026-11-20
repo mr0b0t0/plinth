@@ -74,7 +74,7 @@ export function vendorLine(vendor: SpeechVendor): string {
     case "apple":
       return "Safari sends the audio to Apple.";
     default:
-      return "Your browser may send the audio to the company that makes it.";
+      return "Your browser may send the audio to its maker.";
   }
 }
 

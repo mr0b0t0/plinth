@@ -1070,20 +1070,21 @@ or its gate changes. With focus inside the frame, a switch to another window blu
 frame's window, which the app cannot observe, so while listening the app also checks
 `document.hasFocus()` every 250 ms and stops `blurred` when it turns false. The frame's loads are
 counted from the moment the stage creates it: the first is the page's own document finishing, so
-a start made before then is not cut off, and every later load ends the session. The "Listening" control with Stop sits in the app's bar at every width, so the
-page cannot cover, restyle or fold it away.
+a start made before then is not cut off, and every later load ends the session. The "Listening" pill with its stop button sits in the app's bar at every width, so
+the page cannot cover, restyle or fold it away.
 
-**Consent.** "Let this page take dictation?" is app chrome above the frame. It names the page and
+**Consent.** "Allow dictation on this page?" is app chrome above the frame. It names the page and
 its owner by email, never by the display name, which anyone can set to
 "Plinth Security" or a colleague's name. The app fetches that email
 (`GET /api/v1/view/:ref/dictation`) only when the dialog opens, never with the gate, and the
 endpoint answers 404 to anyone who may not dictate on the page; so the owner's email reaches only
 the owner and people the owner granted access by email, and only when they start dictating on a
-page they have not allowed yet. It says the page may save the words where others with access see them, names the company
-whose speech service hears the audio (Google for Chrome, Microsoft for Edge, Apple for Safari, or a
-generic sentence), and says Plinth never receives the audio. Focus starts on "Not now", and both
-buttons ignore input for 500 ms after it opens, so a click the page times to land where "Allow"
-appears does nothing. "Allow on this page" is stored in the app origin's `localStorage` under
+page they have not allowed yet. In one sentence it says the page may save the words for others
+with access, and names the company whose speech service hears the audio (Google for Chrome,
+Microsoft for Edge, Apple for Safari, or a generic sentence); that Plinth never receives the audio
+is in the privacy notice. Its only controls are "Not now" and "Allow", with no close button. Focus
+starts on "Not now", and both buttons ignore input for 500 ms after it opens, so a click the page
+times to land where "Allow" appears does nothing. "Allow" is stored in the app origin's `localStorage` under
 `plinth:dictation:<artifact id>`, with the viewer's id on the page as its value (the gate's
 `voice.viewer_id`); artifact frames are cross-origin and cannot read or write it. A stored consent
 counts only for the viewer it names, so the next person on a shared browser is asked again even

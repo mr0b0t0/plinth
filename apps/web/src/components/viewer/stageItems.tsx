@@ -199,7 +199,7 @@ const dictationConsent: MenuItem = (c) =>
   c.dictation.declared && c.dictation.allowed
     ? [
         {
-          label: "Dictation on this page: allowed. Turn off",
+          label: "Turn off dictation",
           icon: MicrophoneSlashIcon,
           onSelect: c.dictation.turnOff,
         },

@@ -113,9 +113,24 @@
   gap: var(--space-1-5);
 }
 .pl-viewer__listening.is-on {
-  padding: 0 0 0 var(--space-2);
+  padding: var(--space-0-5) var(--space-0-5) var(--space-0-5) var(--space-2);
   border-radius: var(--radius-full);
   background: var(--color-danger-soft);
+}
+.pl-viewer__listening-stop {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-danger);
+  cursor: pointer;
+}
+.pl-viewer__listening-stop:hover {
+  color: var(--color-danger-hover);
 }
 .pl-viewer__listening-label {
   display: inline-flex;

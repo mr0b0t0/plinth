@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "19 November 2026";
+export const LEGAL_UPDATED = "20 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);

@@ -15,7 +15,7 @@ import {
 } from "../support/voice.ts";
 
 const FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const consent = (page: Page) => page.getByRole("dialog", { name: "Let this page take dictation?" });
+const consent = (page: Page) => page.getByRole("dialog", { name: "Allow dictation on this page?" });
 const inFrame = (page: Page, id: string) => page.frameLocator(FRAME).locator(`#${id}`);
 
 async function owner(page: Page, html: string, visibility = "allowlist") {
@@ -85,17 +85,17 @@ test("dictation: ask, listen, words to the page, Stop, and no second question", 
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(VOICE_TITLE);
   // The owner by email, fetched when the dialog opens (the gate never carries it).
-  await expect(dialog).toContainText(`which ${email} wrote`);
+  await expect(dialog).toContainText(`by ${email}`);
   await expect(dialog.getByRole("button", { name: "Not now" })).toBeFocused();
   await page.waitForTimeout(600);
-  await dialog.getByRole("button", { name: "Allow on this page" }).click();
+  await dialog.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(dialog).toHaveCount(0);
 
   await expect(inFrame(page, "result")).toHaveText("started");
   await expect(inFrame(page, "final")).toHaveText("hello world");
   const listening = page.locator(".pl-viewer__listening");
   await expect(listening.getByRole("status")).toHaveText("Listening");
-  await listening.getByRole("button", { name: "Stop" }).click();
+  await listening.getByRole("button", { name: "Stop dictation" }).click();
   await expect(inFrame(page, "state")).toHaveText("idle:viewer_stopped");
   await expect(listening.getByRole("status")).toHaveText("");
 
@@ -219,7 +219,7 @@ test("a page that asks before the app has its config is answered from the gate",
     await expect(inFrame(page, "state")).toHaveText("listening");
     const listening = page.locator(".pl-viewer__listening");
     await expect(listening.getByRole("status")).toHaveText("Listening");
-    await listening.getByRole("button", { name: "Stop" }).click();
+    await listening.getByRole("button", { name: "Stop dictation" }).click();
     await expect(inFrame(page, "state")).toHaveText("idle:viewer_stopped");
   } finally {
     release();

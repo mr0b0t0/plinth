@@ -104,23 +104,23 @@ describe("dictation in the viewer", () => {
   it("asks, listens with a Stop in the bar, and offers Turn off once allowed", async () => {
     const user = userEvent.setup();
     const { fromFrame } = await open();
-    expect(await menuItems(user)).not.toContain("Dictation on this page: allowed. Turn off");
+    expect(await menuItems(user)).not.toContain("Turn off dictation");
     fromFrame({ type: "start", id: "s1", interim: true });
-    const dialog = await screen.findByRole("dialog", { name: "Let this page take dictation?" });
+    const dialog = await screen.findByRole("dialog", { name: "Allow dictation on this page?" });
     expect(dialog.textContent).toContain("Field notes");
-    expect(dialog.textContent).toContain("which ada@example.com wrote");
+    expect(dialog.textContent).toContain("by ada@example.com");
     await act(async () => {
       await new Promise((r) => setTimeout(r, VOICE_LIMITS.dialogArmMs + 50));
     });
-    await user.click(screen.getByRole("button", { name: "Allow on this page" }));
+    await user.click(screen.getByRole("button", { name: "Allow" }));
     expect(localStorage.getItem(`${CONSENT_PREFIX}art123`)).toBe("u_viewer1");
     act(() => FakeRec.last?.onstart?.());
     const bar = document.querySelector(".pl-viewer__bar") as HTMLElement;
     await waitFor(() => expect(bar.textContent).toContain("Listening"));
     expect(bar.querySelector(".pl-viewer__listening [role=status]")?.textContent).toBe("Listening");
-    await user.click(screen.getByRole("button", { name: "Stop" }));
+    await user.click(screen.getByRole("button", { name: "Stop dictation" }));
     await waitFor(() => expect(bar.textContent).not.toContain("Listening"));
-    expect(await menuItems(user)).toContain("Dictation on this page: allowed. Turn off");
+    expect(await menuItems(user)).toContain("Turn off dictation");
   });
 
   it("shows no dictation control or menu entry on a page that does not declare it", async () => {
@@ -128,6 +128,6 @@ describe("dictation in the viewer", () => {
     localStorage.setItem(`${CONSENT_PREFIX}art123`, "u_viewer1");
     await open({ ...GATE, voice: undefined });
     expect(document.querySelector(".pl-viewer__listening")).toBeNull();
-    expect(await menuItems(user)).not.toContain("Dictation on this page: allowed. Turn off");
+    expect(await menuItems(user)).not.toContain("Turn off dictation");
   });
 });

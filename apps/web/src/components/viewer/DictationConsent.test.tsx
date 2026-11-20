@@ -1,5 +1,5 @@
-// The dictation consent dialog: armed only after a moment, focus on "Not now", the speech
-// service named per browser, and the artifact's title shown as text.
+// The dictation consent dialog: armed only after a moment, focus on "Not now", no close button,
+// the speech service named per browser, and the artifact's title shown as text.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DictationConsent } from "./DictationConsent.tsx";
@@ -30,15 +30,17 @@ describe("DictationConsent", () => {
     vi.useFakeTimers();
     const r = request();
     render(<DictationConsent request={r} />);
-    const dialog = screen.getByRole("dialog", { name: "Let this page take dictation?" });
+    const dialog = screen.getByRole("dialog", { name: "Allow dictation on this page?" });
     const notNow = screen.getByRole("button", { name: "Not now" });
     expect(document.activeElement).toBe(notNow);
-    fireEvent.click(screen.getByRole("button", { name: "Allow on this page" }));
+    // Two answers only: Escape dismisses, and there is no close button.
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Not now", "Allow"]);
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     fireEvent.click(notNow);
     expect(r.allow).not.toHaveBeenCalled();
     expect(r.notNow).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(VOICE_LIMITS.dialogArmMs));
-    fireEvent.click(screen.getByRole("button", { name: "Allow on this page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     expect(r.allow).toHaveBeenCalledTimes(1);
     fireEvent.click(notNow);
     expect(r.notNow).toHaveBeenCalledTimes(1);
@@ -52,16 +54,18 @@ describe("DictationConsent", () => {
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain("<b>Notes</b>");
     expect(dialog.querySelector("b")).toBeNull();
-    expect(dialog.textContent).toContain("which ada@example.com wrote");
+    expect(dialog.textContent).toContain(
+      "<b>Notes</b>, by ada@example.com, gets the words you say",
+    );
+    expect(dialog.textContent).toContain("may save them for others with access.");
     expect(dialog.textContent).toContain("Chrome sends the audio to Google.");
-    expect(dialog.textContent).toContain("Plinth does not receive or keep the audio.");
   });
 
   it("names the speech service by browser", () => {
     expect(vendorLine("google")).toBe("Chrome sends the audio to Google.");
     expect(vendorLine("microsoft")).toBe("Edge sends the audio to Microsoft.");
     expect(vendorLine("apple")).toBe("Safari sends the audio to Apple.");
-    expect(vendorLine(null)).toBe("Your browser may send the audio to the company that makes it.");
+    expect(vendorLine(null)).toBe("Your browser may send the audio to its maker.");
     const brands = (list: string[]) =>
       Object.defineProperty(navigator, "userAgentData", {
         value: { brands: list.map((brand) => ({ brand })) },
