@@ -25,6 +25,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   a line of its own, so every card in the grid has the same height; a long name ends in "…" and
   shows in full on hover. On phones the category moves from beside the title to a row's second
   line, and on a card it takes the place of "You".
+- **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
+  PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
+  lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
+  The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
+  On instances with opaque content isolation the file leaves out the deck's image files, and says
+  so. Plugin 0.23.0.
 
 ## 0.6.0 (2026-11-20)
 

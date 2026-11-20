@@ -1,7 +1,8 @@
 // Boots a deck: reads the payload the shell embeds (typedShellHtml in @plinth/shared), splits it
 // with the shared parser, builds every slide (deck.ts), and runs the deck: paging, the overview,
-// presenter view, printing and the app's messages. It runs synchronously at the end of <body>, so
-// the comments bridge (which waits for DOMContentLoaded) sees the finished DOM.
+// presenter view, printing, the .pptx download and the app's messages. It runs synchronously at
+// the end of <body>, so the comments bridge (which waits for DOMContentLoaded) sees the finished
+// DOM.
 //
 // It finds the root and data by id and reads only window properties the platform defines, never a
 // global by name, and it never loads /__plinth/runtime.js, so heading ids cannot clobber anything
@@ -9,6 +10,7 @@
 // thumbnails.
 import {
   type DeckSettings,
+  LIMITS,
   parseDeck,
   SLIDE_ASPECTS,
   TYPED_PAYLOAD_VERSION,
@@ -16,12 +18,15 @@ import {
 } from "@plinth/shared";
 import { buildDeck, type SlideView } from "./deck.ts";
 import { el } from "./dom.ts";
+import { collectImages, saveBlob, writerLoader } from "./export.ts";
+import { buildExportModel, domGeometry, type Geometry, pptxFileName } from "./exportModel.ts";
 import { iconButton } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { bindInput, DeckController, type DeckMode } from "./nav.ts";
 import { bindOverview, revealSlide } from "./overview.ts";
+import type { DeckModel, PptxBuilder } from "./pptxModel.ts";
 import { Presenter, type PresenterClock } from "./presenter.ts";
-import { pageRule, pageStyle, printDeck } from "./print.ts";
+import { imagesReady, pageRule, pageStyle, printDeck } from "./print.ts";
 import { fromApp, postToApp, readSlidesAppMessage } from "./protocol.ts";
 import {
   CONTROLS_INSET,
@@ -56,10 +61,18 @@ export function readPayload(doc: Document): TypedPayload | null {
   return value as TypedPayload;
 }
 
-/** Test seams: layout measuring and the presenter's clock. */
+/** Test seams: layout measuring, the presenter's clock and the .pptx export. */
 export interface BootOptions {
   measure?: Measure;
   clock?: PresenterClock;
+  /** Layout reads for the export model. */
+  geometry?: Geometry;
+  /** Loads the .pptx writer (by default the lazy slides-pptx.js). */
+  loadWriter?: () => Promise<PptxBuilder>;
+  /** This document's origin is opaque (by default: window.origin is "null"). */
+  opaque?: boolean;
+  /** Saves the finished file (by default an <a download> click in the frame). */
+  save?: (blob: Blob, name: string) => void;
 }
 
 /** Renders the deck and starts listening. Returns a function that stops everything it started. */
@@ -265,6 +278,72 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     },
   });
 
+  // ---------- .pptx export (export.ts) ----------
+
+  const loadWriter = opts.loadWriter ?? writerLoader(doc);
+  const opaque = opts.opaque ?? win.origin === "null";
+  const save = opts.save ?? ((blob: Blob, name: string) => saveBlob(win, blob, name));
+  /**
+   * The nonce the running export answers, or null when none runs. A request that comes while one
+   * runs (the app gave up waiting and the person asked again) takes over its answer: the app
+   * listens only for its latest nonce, and the file is made once.
+   */
+  let answerTo: string | null = null;
+
+  /** Lays out and fits every slide, measures it, and puts the screen view back, in one task. */
+  const measureDeck = (): DeckModel => {
+    const scaleWas = root.style.getPropertyValue("--s");
+    root.setAttribute("data-export", "");
+    root.style.setProperty("--s", "1");
+    try {
+      for (const v of views) fitView(v);
+      const dark =
+        settings.theme === "dark" ||
+        (settings.theme === "auto" &&
+          win.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
+      return buildExportModel(views, {
+        aspect: settings.aspect,
+        theme: dark ? "dark" : "light",
+        title: doc.title,
+        geometry: opts.geometry ?? domGeometry(win),
+      });
+    } finally {
+      root.removeAttribute("data-export");
+      root.style.setProperty("--s", scaleWas);
+      render();
+    }
+  };
+
+  const runExport = async (nonce: string) => {
+    const busy = answerTo !== null;
+    answerTo = nonce;
+    if (busy) return;
+    const report = (ok: boolean, skipped: number) =>
+      postToApp(win, appOrigin, {
+        type: "exported",
+        nonce: answerTo ?? nonce,
+        ok,
+        // The app reads at most the version file cap; a deck of data: images could pass it.
+        images_skipped: Math.min(skipped, LIMITS.maxAssetsCeiling),
+        opaque,
+      });
+    try {
+      // The writer loads while the images decode. Its failure is handled below, after the decode.
+      const writer = loadWriter();
+      writer.catch(() => undefined);
+      await imagesReady(root);
+      const model = measureDeck();
+      const [build, images] = await Promise.all([writer, collectImages(win, model, opaque)]);
+      const { blob, imagesSkipped } = await build(model, images);
+      save(blob, pptxFileName(model.title));
+      report(true, imagesSkipped);
+    } catch {
+      report(false, 0);
+    } finally {
+      answerTo = null;
+    }
+  };
+
   const onMessage = (e: MessageEvent) => {
     if (!fromApp(e, win, appOrigin)) return;
     const m = readSlidesAppMessage(e.data);
@@ -274,7 +353,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.
       if (mode !== m.mode) reportView();
-    } else print(mode === "presenter");
+    } else if (m.type === "export") void runExport(m.nonce);
+    else print(mode === "presenter");
   };
   const onResize = () => {
     if (auto) {
