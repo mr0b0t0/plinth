@@ -3,10 +3,8 @@
 // artifact row stays in both cases (deleted_at or taken_down_at, a new access epoch), so rows that
 // only it reaches stay too, listed in ARTIFACT_KEPT, until an erase removes the row and they
 // cascade. A schema test fails when a table with an artifact column is in neither list.
-import type { Bindings } from "../config.ts";
 import { claimArtifactAttempts } from "./attempts.ts";
 import { wipeArtifactData } from "./data.ts";
-import { clearTombstonedFiles, type TombstonedFile, tombstoneArtifactFiles } from "./files.ts";
 
 export interface ArtifactWipeStep {
   /** The tables the step clears. */
@@ -17,14 +15,6 @@ export interface ArtifactWipeStep {
    * are cleared after the batch (clearClaimedAttempts).
    */
   claimsAttempts?: true;
-  /**
-   * Work after a takedown's batch, given the result of the step's first statement: objects that
-   * can go at once. A deletion needs none (the artifact's whole root is deleted).
-   */
-  afterTakedown?: (
-    env: Pick<Bindings, "DB" | "FILES">,
-    result: D1Result | undefined,
-  ) => Promise<void>;
 }
 
 /** The steps, one per line of tables, in batch order. A feature with an artifact table adds one. */
@@ -65,14 +55,6 @@ export const ARTIFACT_WIPE: readonly ArtifactWipeStep[] = [
         .bind(new Date(now).toISOString(), id),
     ],
   },
-  // Files people added to the page (0014_artifact_files) become tombstones and stop counting; a
-  // takedown deletes their ready objects right after its batch, and the hourly sweep the rest.
-  {
-    tables: ["artifact_files", "artifact_file_usage"],
-    statements: (d1, id) => tombstoneArtifactFiles(d1, id),
-    afterTakedown: (env, result) =>
-      clearTombstonedFiles(env, result?.results as TombstonedFile[] | undefined),
-  },
 ];
 
 /**
@@ -88,30 +70,21 @@ export const ARTIFACT_KEPT: Readonly<Record<string, string>> = {
   reports: "the moderation record; a takedown closes the open ones",
   login_codes: "short-lived viewer codes that expire on their own",
   upload_tickets: "single-use and short-lived; a commit to a deleted artifact is refused",
-  artifact_view_days: "a daily number of opens with no viewer data, gone with the erase",
+  artifact_opens: "who opened it, for its stats; folded after the retention, gone with the erase",
   artifact_view_totals: "the folded number of opens, gone with the erase",
 };
 
-/**
- * One artifact's wipe statements, the index of the attempts claim among them, and the work a
- * takedown runs after its batch (each with the index of the statement whose result it reads).
- */
+/** One artifact's wipe statements, and the index of the attempts claim among them. */
 export function artifactWipe(
   d1: D1Database,
   artifactId: string,
   now: number,
-): {
-  statements: D1PreparedStatement[];
-  claimAt: number;
-  afterTakedown: { at: number; run: NonNullable<ArtifactWipeStep["afterTakedown"]> }[];
-} {
+): { statements: D1PreparedStatement[]; claimAt: number } {
   const statements: D1PreparedStatement[] = [];
-  const afterTakedown: { at: number; run: NonNullable<ArtifactWipeStep["afterTakedown"]> }[] = [];
   let claimAt = -1;
   for (const step of ARTIFACT_WIPE) {
     if (step.claimsAttempts) claimAt = statements.length;
-    if (step.afterTakedown) afterTakedown.push({ at: statements.length, run: step.afterTakedown });
     statements.push(...step.statements(d1, artifactId, now));
   }
-  return { statements, claimAt, afterTakedown };
+  return { statements, claimAt };
 }

@@ -133,7 +133,6 @@ test("connects with the mentions scope, announces once, lists waiting requests, 
   expect(lines.join("\n")).not.toContain(secret);
   expect(lines.join("\n")).not.toContain("Watched");
   expect(lines[0]).toContain("1 new @mention request is waiting");
-  expect(lines[0]).toContain("never makes you read the user's files");
 
   // A new session's hook lists what still waits, announced or not.
   const pending = run("pending", env);

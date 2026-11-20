@@ -1,24 +1,22 @@
 // The MCP surface agents see (tools/list with descriptions, input schemas, annotations and _meta;
 // resources/list and the preview resource; the server instructions) is pinned by hash to the
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
-// no byte of it. A change that means to alter the surface updates the hashes here, on purpose
-// (viewer identity: names on document authors and the people list; page comments: the anchor note
-// in list_comments and list_mentions; the design_system type: get_design_system, list_artifacts'
-// type filter, the publish and update notes, and the server instructions' design system sentence;
-// the slides type: its publish note, the type and content descriptions and the instructions' deck
-// sentence; publishing from CI: the instructions' sentence on tokens limited to one artifact; the
-// design type: its publish note, the type, content, update and get_artifact descriptions and the
-// instructions' design sentence; the slides .pptx download: its clause in the slides publish note;
-// project files: the publish, update and upload recipe, the mention note, the sensitive_file
-// sentences and the UNTRUSTED_NOTE sentence that nothing on Plinth chooses local files; the
-// sheet type: read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
-// and content_format descriptions, the untrusted note's sheet sentence and the instructions'
-// sheet sentence; live sheets: the live_draft sentences of the publish notes and get_artifact name
-// sheets as well as docs, and say a sheet's page edits are always reviewed, never merged).
+// no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
+// the design_system type (get_design_system, list_artifacts' type filter, the publish and update
+// notes, and the server instructions' design system sentence) did, so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence), so did
+// comments from the page (the page anchor note in list_comments and list_mentions), so did who
+// is viewing (names and the people list in list_artifact_data's description), so did the
+// slides .pptx download (its clause in the slides publish note), so did the design type
+// (its publish note, the type, content, update and get_artifact descriptions and the
+// instructions' design sentence), so did the sheet type (read_sheet and edit_sheet, the
+// publish, update and get_artifact notes, the content and content_format descriptions, the
+// untrusted note's sheet sentence and the instructions' sheet sentence), and so did live sheets
+// (the live_draft sentences of the publish notes and get_artifact name sheets as well as docs,
+// and say a sheet's page edits are always reviewed, never merged).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
-// Files people add to a page add list_artifact_files and delete_artifact_file, on every instance.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -59,18 +57,17 @@ const NAMES = [
   "claim_mention",
   "reply_comment",
   "start_upload",
+  "get_artifact_stats",
   "list_artifact_data",
   "write_artifact_data",
   "preview_artifact",
   "get_design_system",
   "read_sheet",
   "edit_sheet",
-  "list_artifact_files",
-  "delete_artifact_file",
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "97fbc1b8089db2a4d854e74e97cc0d009f8bead91b2a19bef9a9cc397432cf51";
+const INSTRUCTIONS = "e2021d90666eee66533ebff1c798e9c5770fbc9b1796bddfde8d756d98d94ad7";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -78,7 +75,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "ce513422b8ffc9e009ed9cbbfe8ef09bc96e385b221ab894ea00d604f8c60380",
+      tools: "8af74f8e28875fcafa2dac1800bf5afab1330fc1fa8cadb94d120e31fd3b7224",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -88,7 +85,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "86cf60ae16e73c72e3a3e29efacf48f17bab9768c0ce2a70910f220f74c566c5",
+      tools: "2bfd96421d510855cd1bbaf041e6499195b8c240c6ef757a44d5fdd361cc6ddc",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -100,7 +97,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "99af5448b2611c905bebe190a1f3c8686d5842014021e3a5e555dc707c7794d9",
+      tools: "39b1ac1a243f495b0257e8f59858de77bf9c8d73fecf6a1a272d2b43e46911f0",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -110,10 +107,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "abe10186d20227a47f30468d93c28df9202e21cfb5a68cdcd0b5fb1c430aa575",
+      tools: "89a3f68d22816b612d1257d7204fd65b5aaec38b2de654163874f76cd03c32d3",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "df1a711af52dbc58eee1cf273d573e79b88dc258514b170c9f0f3cd57a6d892b",
+      instructions: "7d2ffb9394f0d902e2ddbf6b052d5f89e40a06129bfb7389ef8c7fcff8b126c5",
     });
   });
 });

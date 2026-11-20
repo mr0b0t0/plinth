@@ -1,5 +1,6 @@
-// One agent connection: label, client, kind, permissions, how a comment mentions it, dates;
-// rename and revoke.
+// One agent connection: label, client, kind, permissions, dates; rename and revoke. A token
+// limited to one artifact shows a key instead of initials, and names the artifact before what it
+// may do there.
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
@@ -12,40 +13,32 @@ import {
   formatDate,
   formatDateTime,
   formatRelative,
-  type MentionReach,
-  mentionReach,
-  mentionReachText,
   scopeLabel,
 } from "./format.ts";
+
+/**
+ * What a token limited to one artifact may do there, in one label: it always reads it, so that is
+ * said only when it is all it may do.
+ */
+function boundScopes(scopes: string[]): { scope: string; label: string }[] {
+  return scopes.includes("artifacts:write")
+    ? [{ scope: "artifacts:write", label: "Publish new versions" }]
+    : [{ scope: "artifacts:read", label: "Read only" }];
+}
 
 export interface ConnectionItemProps {
   connection: ConnectionInfo;
   now: number;
   onChanged: (next: ConnectionInfo) => void;
-  /** Every connection on the page, so the mention line can tell when an older one takes the handle. */
-  connections?: readonly ConnectionInfo[];
 }
 
-/** The reach sentences that mean "a comment will not get to this connection". */
-const unreachable = (r: MentionReach) =>
-  r.kind === "shadowed" ||
-  r.kind === "none" ||
-  r.kind === "no_mentions" ||
-  (r.kind === "agent_name" && !r.reached);
-
-export function ConnectionItem({
-  connection: c,
-  now,
-  onChanged,
-  connections = [],
-}: ConnectionItemProps) {
+export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItemProps) {
   const toast = useToast();
   const [renaming, setRenaming] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [busy, setBusy] = useState(false);
   const revoked = c.revoked_at !== null;
   const KindIcon = c.kind === "oauth" ? PlugsConnectedIcon : KeyIcon;
-  const reach = revoked ? null : mentionReach(c.label, connections, c);
 
   const revoke = async () => {
     setBusy(true);
@@ -66,52 +59,48 @@ export function ConnectionItem({
   return (
     <li className="pl-acct-conn" data-revoked={revoked || undefined}>
       <span className="pl-acct-conn__mark" aria-hidden="true">
-        {agentInitials(c.label)}
+        {c.artifact ? <KeyIcon size={12} /> : agentInitials(c.label)}
       </span>
       <div className="pl-acct-conn__main">
         <div className="pl-acct-conn__head">
           <h3 className="pl-acct-conn__label">{c.label}</h3>
-          <Badge icon={KindIcon} tone="neutral">
-            {c.kind === "oauth" ? "OAuth" : "Token"}
-          </Badge>
-          <Badge tone="neutral" srPrefix="Client:">
-            {CLIENT_TYPE_LABEL[c.client_type]}
-          </Badge>
+          {/* A token limited to one artifact has the key for a mark and answers no mentions, so
+              neither badge says anything there. */}
+          {!c.artifact && (
+            <>
+              <Badge icon={KindIcon} tone="neutral">
+                {c.kind === "oauth" ? "OAuth" : "Token"}
+              </Badge>
+              <Badge tone="neutral" srPrefix="Client:">
+                {CLIENT_TYPE_LABEL[c.client_type]}
+              </Badge>
+            </>
+          )}
           {revoked && <Badge tone="danger">Revoked</Badge>}
         </div>
-        {reach && (
-          <p className="pl-acct-conn__mention" data-warn={unreachable(reach) || undefined}>
-            {reach.kind === "handle" ? (
-              <>
-                Mention as <code>@{reach.handle}</code>
-              </>
-            ) : (
-              mentionReachText(reach)
-            )}
-          </p>
-        )}
         <p className="pl-acct-conn__scopes">
-          <span className="visually-hidden">Permissions: </span>
-          {c.scopes.map((s) => (
-            <span key={s} className="pl-acct-conn__scope" title={s}>
-              {scopeLabel(s)}
-            </span>
-          ))}
-        </p>
-        {c.artifact && (
-          <p className="pl-acct-conn__scopes">
-            {c.artifact.slug !== null && c.artifact.title !== null ? (
-              <>
-                Only{" "}
+          {c.artifact && (
+            <span className="pl-acct-conn__scope">
+              <span className="visually-hidden">Only </span>
+              {c.artifact.slug !== null && c.artifact.title !== null ? (
                 <Link to={route(APP_ROUTES.artifact, { slug: c.artifact.slug })}>
                   {c.artifact.title}
                 </Link>
-              </>
-            ) : (
-              "Only an artifact you can no longer open"
-            )}
-          </p>
-        )}
+              ) : (
+                "An artifact you can no longer open"
+              )}
+            </span>
+          )}
+          <span className="visually-hidden">Permissions: </span>
+          {(c.artifact
+            ? boundScopes(c.scopes)
+            : c.scopes.map((s) => ({ scope: s, label: scopeLabel(s) }))
+          ).map(({ scope, label }) => (
+            <span key={scope} className="pl-acct-conn__scope" title={scope}>
+              {label}
+            </span>
+          ))}
+        </p>
         <p className="pl-acct-conn__meta">
           <span title={formatDateTime(c.created_at)}>Created {formatDate(c.created_at)}</span>
           <span aria-hidden="true">·</span>
@@ -153,7 +142,6 @@ export function ConnectionItem({
       {renaming && (
         <RenameDialog
           connection={c}
-          connections={connections}
           onClose={() => setRenaming(false)}
           onRenamed={(next) => {
             onChanged(next);
@@ -168,12 +156,10 @@ export function ConnectionItem({
 
 function RenameDialog({
   connection,
-  connections,
   onClose,
   onRenamed,
 }: {
   connection: ConnectionInfo;
-  connections: readonly ConnectionInfo[];
   onClose: () => void;
   onRenamed: (c: ConnectionInfo) => void;
 }) {
@@ -223,11 +209,7 @@ function RenameDialog({
           value={label}
           maxLength={LIMITS.maxLabelLength}
           error={error ?? undefined}
-          hint={
-            label.trim()
-              ? mentionReachText(mentionReach(label, connections, connection))
-              : "Collaborators mention it by this name in comments."
-          }
+          hint="Collaborators can mention it with @ and this name in comments."
           onChange={(e) => {
             setLabel(e.target.value);
             setError(null);

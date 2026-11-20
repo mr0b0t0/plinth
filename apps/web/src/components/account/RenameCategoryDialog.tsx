@@ -83,7 +83,7 @@ export function RenameCategoryDialog({
       else if (res.pending) {
         toast.success(
           "Categories merged",
-          `${artifactsText(res.pending)} wait for your review before ${res.category}'s people can see them`,
+          `${artifactsText(res.pending)} to review in ${res.category}`,
         );
       } else
         toast.success(plan.into ? "Categories merged" : "Category renamed", res.category ?? "");

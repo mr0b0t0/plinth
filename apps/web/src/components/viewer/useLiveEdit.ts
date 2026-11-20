@@ -219,8 +219,6 @@ export function useLiveEdit({
           collecting.current = null;
           c.resolve(text);
         },
-        // A version shown in place is the live-view update's answer (useViewUpdate.ts).
-        shown() {},
       });
     };
     window.addEventListener("message", onMessage);

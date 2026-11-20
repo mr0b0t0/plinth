@@ -113,18 +113,16 @@ async function sha256(s: string): Promise<string> {
 const ADDED_USER_STEPS = new Set([
   // Category sharing (0013): the address on other people's category shares.
   "category_grants",
-  // Files people add to a page (0014): their uploads on other people's pages.
-  "artifact_files",
 ]);
 
 describe("erase statements (golden)", () => {
   it("are the same SQL as before they became step lists", async () => {
-    // sha256 of eraseUserSql and eraseArtifactSql at 94ea515, before the step lists.
+    // sha256 of eraseUserSql and eraseArtifactSql on main at 2110cc4, written as one array each.
     const before = ERASE_USER_STEPS.filter((s) => !ADDED_USER_STEPS.has(s.table))
       .map((s) => s.sql("ann@example.com"))
       .join("; ");
     expect(await sha256(before)).toBe(
-      "d1c1b5c742a92e1f3e2d5efcc84597ad150a85556ad214376634066678260c64",
+      "4415bb8fda3cd6a388c008b35fefdc579658184b3cd830226448cc43c07493a0",
     );
     // The added steps run before the users row.
     expect(eraseUserSql("ann@example.com")).toContain(

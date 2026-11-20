@@ -15,8 +15,8 @@ always shows the latest build.
 
 `k3x9mq2v7d8p4t6w1n5r` stands for your artifact's id.
 
-Make the token on the artifact's Settings page, under **Publish from CI**: it can only read that
-artifact and publish new versions of it. The Action runs the CLI client from the same release, on
+Make the token on the Connections page: **New token**, then **Limit to one artifact**. It can only
+read that artifact and publish new versions of it. The Action runs the CLI client from the same release, on
 Linux and macOS runners, with nothing to install.
 
 Inputs, outputs, GitLab CI, cron, pull requests from forks and what viewers see:

@@ -276,19 +276,30 @@ export const artifactDataUsage = sqliteTable("artifact_data_usage", {
   seq: integer("seq").notNull().default(0),
 });
 
-// Open counts (migrations/0010_view_counts.sql): one number per artifact per UTC day, and the
-// folded total of days older than the daily window. No viewer data of any kind.
-export const artifactViewDays = sqliteTable(
-  "artifact_view_days",
-  {
-    artifactId: text("artifact_id").notNull(),
-    /** UTC day, YYYY-MM-DD. */
-    day: text("day").notNull(),
-    views: integer("views").notNull().default(0),
-  },
-  (t) => [primaryKey({ columns: [t.artifactId, t.day] })],
-);
+// Artifact stats (migrations/0020_artifact_opens.sql): one row per counted open, with who opened
+// it, kept for VIEW_LOG_RETENTION_DAYS; older opens fold into artifact_view_totals (counts only).
+export const artifactOpens = sqliteTable("artifact_opens", {
+  id: integer("id").primaryKey(),
+  artifactId: text("artifact_id").notNull(),
+  /** The version shown; null for opens counted before versions were recorded. */
+  version: integer("version"),
+  /** UTC ISO 8601. */
+  openedAt: text("opened_at").notNull(),
+  viewerKind: text("viewer_kind", {
+    enum: ["user", "email", "anonymous", "unknown"],
+  }).notNull(),
+  /** Signed in (viewer_kind 'user'); cleared when the user is deleted. */
+  userId: text("user_id"),
+  /** Confirmed an allowlisted email by code, without an account (viewer_kind 'email'). */
+  email: text("email"),
+  /** A random per-browser id from the content cookie (viewer_kind 'anonymous'). */
+  visitor: text("visitor"),
+  role: text("role", {
+    enum: ["editor", "commenter", "viewer", "public", "link", "password"],
+  }),
+});
 
+// The all-time count of opens the log no longer keeps (migrations/0010_view_counts.sql).
 export const artifactViewTotals = sqliteTable("artifact_view_totals", {
   artifactId: text("artifact_id").primaryKey(),
   views: integer("views").notNull().default(0),
@@ -347,37 +358,6 @@ export const personalCategories = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.artifactId] })],
 );
-
-// Files people add to a page (migrations/0014_artifact_files.sql). Bytes live in R2 at
-// artifacts/<artifact_id>/files/<id>. artifact_file_usage is kept by triggers on artifact_files;
-// never write its files or bytes columns directly.
-export const artifactFiles = sqliteTable("artifact_files", {
-  id: text("id").primaryKey(),
-  artifactId: text("artifact_id").notNull(),
-  r2Key: text("r2_key").notNull(),
-  name: text("name").notNull(),
-  contentType: text("content_type").notNull(),
-  sizeBytes: integer("size_bytes").notNull(),
-  state: text("state", { enum: ["pending", "ready", "deleting"] }).notNull(),
-  parts: integer("parts").notNull(),
-  partsDone: integer("parts_done").notNull().default(0),
-  partEtags: text("part_etags"),
-  multipartId: text("multipart_id"),
-  createdByEmail: text("created_by_email"),
-  createdByRole: text("created_by_role", { enum: dataRole }),
-  createdVia: text("created_via", { enum: ["page"] }).notNull(),
-  createdAt: text("created_at").notNull(),
-  completedAt: text("completed_at"),
-  expiresAt: integer("expires_at").notNull(),
-  claimedAt: integer("claimed_at"),
-});
-
-export const artifactFileUsage = sqliteTable("artifact_file_usage", {
-  artifactId: text("artifact_id").primaryKey(),
-  files: integer("files").notNull().default(0),
-  bytes: integer("bytes").notNull().default(0),
-  seq: integer("seq").notNull().default(0),
-});
 
 export type CategoryShareRow = typeof categoryShares.$inferSelect;
 export type LiveDraftRow = typeof liveDrafts.$inferSelect;

@@ -17,16 +17,8 @@ import {
   writeArtifactDataInput,
 } from "../src/index.ts";
 
-/** No room, and (later tokens) no people list, no page comments, no dictation, no hold and no files. */
-const NO_ROOM = {
-  room: false,
-  roomOpen: [],
-  people: false,
-  comments: false,
-  dictation: false,
-  hold: false,
-  files: false,
-};
+// The fields a declaration without a room, page comments or a people list reads as.
+const NO_ROOM = { room: false, roomOpen: [], comments: false, people: false };
 const caps = (content: string) => `<meta name="plinth-capabilities" content="${content}">`;
 
 describe("parseCapabilities", () => {
@@ -59,13 +51,13 @@ describe("parseCapabilities", () => {
   });
 
   it("ignores unknown tokens and returns null when no known one is left", () => {
-    expect(parseCapabilities(caps("camera data  uploads"))).toEqual({
+    expect(parseCapabilities(caps("camera data  files"))).toEqual({
       data: true,
       viewer: false,
       shared: [],
       ...NO_ROOM,
     });
-    expect(parseCapabilities(caps("camera uploads"))).toBeNull();
+    expect(parseCapabilities(caps("camera files"))).toBeNull();
     expect(parseCapabilities(caps(""))).toBeNull();
   });
 
@@ -149,11 +141,8 @@ describe("parseCapabilities: rooms", () => {
       shared: [],
       room: true,
       roomOpen: [],
-      people: false,
       comments: false,
-      dictation: false,
-      hold: false,
-      files: false,
+      people: false,
     });
     expect(parseCapabilities(caps("viewer room"))).toMatchObject({ data: false, viewer: true });
     expect(parseCapabilities(caps("data viewer room"))).toMatchObject({
@@ -213,16 +202,7 @@ describe("parseCapabilities: rooms", () => {
 describe("data constants", () => {
   it("names the header, capabilities, defaults and fixed limits", () => {
     expect(CONTENT_DATA_HEADER).toBe("x-plinth-data");
-    expect(DATA_CAPABILITIES).toEqual([
-      "data",
-      "viewer",
-      "room",
-      "people",
-      "comments",
-      "dictation",
-      "hold",
-      "files",
-    ]);
+    expect(DATA_CAPABILITIES).toEqual(["data", "viewer", "room", "comments", "people"]);
     expect(DEFAULTS.data).toEqual({
       maxDocsPerArtifact: 1000,
       maxBytesPerArtifact: 1024 * 1024,

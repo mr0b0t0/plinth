@@ -8,19 +8,32 @@ import {
   createCategoryShareInput,
   updateCategoryShareInput,
 } from "@plinth/shared";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import {
   createShare,
   deleteShare,
   getShare,
   listShares,
   previewShare,
+  refuseBoundToken,
   reviewShare,
   updateShare,
 } from "../services/categoryShares.ts";
 import { type AppEnv, parseBody, serviceCtx } from "./context.ts";
 
+/**
+ * A token limited to one artifact gets 403 `token_bound` from every share, portal and
+ * personal-category route before its body is read (the services refuse it too).
+ */
+export const refuseBoundTokens: MiddlewareHandler<AppEnv> = async (c, next) => {
+  refuseBoundToken(c.get("principal"));
+  await next();
+};
+
 export const categorySharesApi = new Hono<AppEnv>();
+
+categorySharesApi.use(API.categoryShares, refuseBoundTokens);
+categorySharesApi.use(`${API.categoryShares}/*`, refuseBoundTokens);
 
 categorySharesApi.get(API.categoryShares, async (c) => {
   return c.json({ items: await listShares(serviceCtx(c)) });

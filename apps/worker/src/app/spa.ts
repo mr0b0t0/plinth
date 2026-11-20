@@ -1,6 +1,8 @@
 // Static assets and the SPA on APP_HOST only. The content host never reaches this.
+import { APP_ROUTES } from "@plinth/shared";
 import type { AppContext } from "../api/context.ts";
 import { ensureCsrfCookie } from "../api/context.ts";
+import { reviewLoginEnabled } from "../auth/review-login.ts";
 import { renderShell } from "./discovery.ts";
 import { applyAppHeaders } from "./headers.ts";
 
@@ -31,6 +33,13 @@ export async function serveSpa(c: AppContext): Promise<Response> {
   if (path.startsWith("/.well-known/")) return notFoundText(c);
   // Renderer bundles run only on an artifact's content origin (/__plinth/types/<id>/), never here.
   if (path.startsWith(RENDERERS_PREFIX) || path === RENDERERS_PREFIX.slice(0, -1)) {
+    return notFoundText(c);
+  }
+  // The review account's password page exists only where REVIEW_LOGIN_* are set.
+  if (
+    (path === APP_ROUTES.reviewLogin || path === `${APP_ROUTES.reviewLogin}/`) &&
+    !reviewLoginEnabled(c.get("config"))
+  ) {
     return notFoundText(c);
   }
 

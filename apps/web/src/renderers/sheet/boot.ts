@@ -101,8 +101,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   let ev: SheetEvaluation = evaluate(sheet);
   let shownText = payload.text;
   const download = (format: "csv" | "xlsx") => exportSheet(win, sheet, ev, title, format);
-  const build = () =>
-    buildGrid(doc, sheet, ev, { title, onDownload: download, exhausted: ev.exhausted });
+  const build = () => buildGrid(doc, sheet, ev, { title, exhausted: ev.exhausted });
   let grid: Grid = build();
   root.replaceChildren(grid.el);
   const mark = () => {

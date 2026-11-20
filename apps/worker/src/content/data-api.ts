@@ -28,13 +28,6 @@
 // GET /__plinth/api/v1/room (live rooms, #36) shares checks 1 to 4, then branches to roomInfo()
 // in content/room.ts, which has its own availability, artifact, pass and policy steps: a page
 // that declares only `room` has no shared data, and rooms may be on where shared data is off.
-//
-// /__plinth/api/v1/files... (files people add to a page) share checks 1 to 4 and 6 (each with its
-// own JSON body reader: a small create body, or a part's {"data":"<base64>"} decoded as it streams),
-// then take their own steps in content/files-api.ts: files are not shared data, and a page may
-// declare `files` alone. The dispatcher checks the JSON type before any of them; the body itself is
-// read only after their availability, artifact, pass and declaration steps, so an instance with
-// files off, or a caller without a pass, never costs a part's read and decode.
 import { waitUntil } from "cloudflare:workers";
 import {
   CONTENT_DATA_HEADER,
@@ -65,20 +58,6 @@ import {
   unavailableReason,
 } from "../services/data.ts";
 import { applyContentHeaders } from "./csp.ts";
-import {
-  filePartRoute,
-  fileRoute,
-  filesChangesRoute,
-  filesRoute,
-  filesSessionRoute,
-  matchFile,
-  matchFilePart,
-  matchFiles,
-  matchFilesChanges,
-  matchFilesSession,
-  readBase64PartBody,
-  readCreateBody,
-} from "./files-api.ts";
 import { getPersonRoute, listPeopleRoute } from "./people.ts";
 import { roomInfo } from "./room.ts";
 import type { HostRoute } from "./serve.ts";
@@ -94,12 +73,7 @@ const putBody = z.strictObject({
   if_rev: z.number().int().min(0).optional(),
 });
 
-export function respond(
-  config: Config,
-  status: number,
-  body: unknown,
-  extra?: Record<string, string>,
-) {
+function respond(config: Config, status: number, body: unknown, extra?: Record<string, string>) {
   const headers = new Headers(extra);
   applyContentHeaders(config, headers);
   headers.set("Content-Type", "application/json; charset=utf-8");
@@ -145,16 +119,8 @@ function checkCaller(request: Request, config: Config, artifactId: string): void
   }
 }
 
-/** Check 6's first half for an `own` route, before any of its steps: the JSON type, headers only. */
-function requireJsonType(request: Request): void {
-  const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
-  if (type !== "application/json") {
-    throw new ApiError("invalid_input", "Send a JSON body with Content-Type: application/json");
-  }
-}
-
 /** Check 6: a JSON body, refused past `cap` bytes whether or not a length was sent. */
-export async function readJsonBody(request: Request, cap: number): Promise<unknown> {
+async function readJsonBody(request: Request, cap: number): Promise<unknown> {
   const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
   if (type !== "application/json") {
     throw new ApiError("invalid_input", "Send a JSON body with Content-Type: application/json");
@@ -192,7 +158,7 @@ export async function readJsonBody(request: Request, cap: number): Promise<unkno
   }
 }
 
-export function parseBody<T>(schema: z.ZodType<T>, raw: unknown): T {
+function parseBody<T>(schema: z.ZodType<T>, raw: unknown): T {
   const r = schema.safeParse(raw);
   if (!r.success) {
     const issue = r.error.issues[0];
@@ -210,7 +176,7 @@ function intParam(v: string | null, name: string, min: number, max: number): num
 }
 
 /** Check 7: the artifact and its current version's declaration, in one query. */
-export async function loadTarget(env: Bindings, artifactId: string) {
+async function loadTarget(env: Bindings, artifactId: string) {
   const row = await env.DB.prepare(
     `SELECT a.id, a.owner_id, a.access_epoch, a.taken_down_at, v.capabilities
        FROM artifacts a
@@ -260,18 +226,15 @@ export interface DataRouteCtx {
   views: (rows: readonly StoredDoc[]) => Promise<PageDoc[]>;
 }
 
-/** What a handler with its own steps gets, after checks 1 to 4 (and 6's JSON type) passed. */
+/** What a handler with its own steps gets, after checks 1 to 4 (and 6) passed. */
 export interface OwnRouteCtx {
   request: Request;
   env: Bindings;
   config: Config;
   artifactId: string;
   params: Record<string, string>;
-  /**
-   * The body (check 6) for POST and PUT through the route's own reader, else undefined: read once,
-   * when the handler asks, after its own availability, artifact and pass steps.
-   */
-  readBody: () => Promise<unknown>;
+  /** The parsed JSON body (check 6) for POST and PUT, else undefined. */
+  body: unknown;
 }
 
 interface RouteBase {
@@ -283,14 +246,6 @@ interface RouteBase {
   example: string;
   /** Refuse a request without an Origin header, even a read (check 4 always refuses a wrong one). */
   requireOrigin?: boolean;
-  /**
-   * Check 6 for an `own` route's POST and PUT bodies: its own JSON reader (still JSON only and
-   * size-capped while reading), run when the handler calls `readBody`. Without one, the
-   * shared-data reader and cap.
-   */
-  readBody?: (request: Request, config: Config) => Promise<unknown>;
-  /** A body that passes check 6 for this route, for the test that serves every route. */
-  exampleBody?: string;
 }
 
 /**
@@ -379,51 +334,6 @@ export const DATA_API_ROUTES: readonly DataApiRoute[] = [
     pipeline: "data",
     handler: async (c) => respond(c.config, 200, await getPersonRoute(c)),
   },
-  // Files people add to a page (content/files-api.ts): their own steps after checks 1 to 4 and 6.
-  {
-    kind: "fileSession",
-    match: matchFilesSession,
-    methods: ["GET"],
-    example: "files/session",
-    pipeline: "own",
-    handler: filesSessionRoute,
-  },
-  {
-    kind: "fileChanges",
-    match: matchFilesChanges,
-    methods: ["GET"],
-    example: "files/changes",
-    pipeline: "own",
-    handler: filesChangesRoute,
-  },
-  {
-    kind: "files",
-    match: matchFiles,
-    methods: ["GET", "POST"],
-    example: "files",
-    pipeline: "own",
-    readBody: readCreateBody,
-    exampleBody: JSON.stringify({ name: "a.png", type: "image/png", size: 1 }),
-    handler: filesRoute,
-  },
-  {
-    kind: "file",
-    match: matchFile,
-    methods: ["GET", "DELETE"],
-    example: "files/0123456789abcdefghij",
-    pipeline: "own",
-    handler: fileRoute,
-  },
-  {
-    kind: "filePart",
-    match: matchFilePart,
-    methods: ["PUT"],
-    example: "files/0123456789abcdefghij/parts/1",
-    pipeline: "own",
-    readBody: (request) => readBase64PartBody(request),
-    exampleBody: JSON.stringify({ data: "AAAA" }),
-    handler: filePartRoute,
-  },
 ];
 
 function matchRoute(path: string): { route: DataApiRoute; params: Record<string, string> } | null {
@@ -485,7 +395,7 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
  * content host's dispatch keeps its signature. Outside a request (never in production), the
  * promise simply runs on.
  */
-export function afterResponse(p: Promise<unknown>): void {
+function afterResponse(p: Promise<unknown>): void {
   try {
     waitUntil(p);
   } catch {
@@ -532,23 +442,13 @@ async function handle(
     throw refuse("Cross-origin requests are refused");
   }
 
-  // A route with its own steps after the caller checks (the live room, content/room.ts; files,
-  // content/files-api.ts). Check 6 for its body: the JSON type here, before any handler, and the
-  // body itself only through readBody (JSON only, size-capped while reading), which the handler
-  // calls once its own availability, artifact and pass steps passed, so a caller that may not
-  // write costs no body read.
+  // A route with its own steps after the caller checks (the live room, content/room.ts).
   if (route.pipeline === "own") {
-    const hasBody = method === "POST" || method === "PUT";
-    if (hasBody) requireJsonType(request);
-    let read: Promise<unknown> | null = null;
-    const readBody = (): Promise<unknown> => {
-      if (!hasBody) return Promise.resolve(undefined);
-      read ??= route.readBody
-        ? route.readBody(request, config)
-        : readJsonBody(request, config.data.maxDocBytes + 1024);
-      return read;
-    };
-    return route.handler({ request, env, config, artifactId, params, readBody });
+    let body: unknown;
+    if (method === "POST" || method === "PUT") {
+      body = await readJsonBody(request, config.data.maxDocBytes + 1024);
+    }
+    return route.handler({ request, env, config, artifactId, params, body });
   }
 
   // 5. Availability, before any cookie: under opaque isolation there are none.
@@ -578,20 +478,27 @@ async function handle(
   }
 
   // 9. Declaration. An in-chat preview (an MCP host's frame, any framer) never reads or writes
-  // shared data: its pass carries no identity and is meant for one look at the page.
-  const reason = pass.preview ? "preview" : unavailableReason(config, target.caps);
+  // shared data: its pass carries no identity and is meant for one look at the page. Nor does the
+  // thumbnail capture of a version whose writer may not read the data (policy.captureReadsData).
+  const reason = pass.preview
+    ? "preview"
+    : pass.noData
+      ? "capture"
+      : unavailableReason(config, target.caps);
   if (reason) {
     if (route.reportsUnavailable) return respond(config, 200, { available: false, reason });
     const message =
       reason === "preview"
         ? "Shared data is not available in a preview"
-        : "This page does not use shared data";
+        : reason === "capture"
+          ? "Shared data is not available in this capture"
+          : "This page does not use shared data";
     throw new ApiError("feature_disabled", message, { reason });
   }
 
   // 10. Policy, then the service (rate limits, quotas, guarded writes).
   const { claim } = pass;
-  const access = pageDataAccess(claim, target.caps, sharedDataActive(config));
+  const access = pageDataAccess(claim, target.caps, sharedDataActive(config), pass);
   if (!access.read) throw new ApiError("feature_disabled", "Shared data is not available here");
   const writer: DataWriter | null =
     access.write && claim

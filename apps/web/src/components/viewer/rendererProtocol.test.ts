@@ -10,7 +10,6 @@ import {
   printMessage,
   readFrameMessage,
   rendererTargetOrigin,
-  versionMessage,
 } from "./rendererProtocol.ts";
 import { CONFIG } from "./test-utils.ts";
 
@@ -228,66 +227,5 @@ describe("renderer protocol: on-page editing (#36)", () => {
         opts(frame, { solo: true, nonce, maxDocBytes: 1000 }),
       ),
     ).toBeNull();
-  });
-});
-
-describe("renderer protocol: a doc shows a newer version in place (live views)", () => {
-  const nonce = "v".repeat(16);
-
-  it("sends version only to the frame's window at the exact content origin", () => {
-    const post = vi.fn();
-    const frame = { contentWindow: { postMessage: post } } as unknown as HTMLIFrameElement;
-    expect(versionMessage(4, nonce)).toEqual({
-      source: "plinth-renderer",
-      v: 1,
-      type: "version",
-      n: 4,
-      nonce,
-    });
-    expect(postToRenderer(frame, editTargetOrigin(CONFIG, ORIGIN), versionMessage(4, nonce))).toBe(
-      true,
-    );
-    expect(post).toHaveBeenCalledWith(versionMessage(4, nonce), ORIGIN);
-    // Never "*": opaque isolation and the path fallback get no in-place update.
-    const opaque = { ...CONFIG, content_isolation: "opaque" as const };
-    const fallback = { ...CONFIG, content_path_fallback: true };
-    expect(editTargetOrigin(opaque, ORIGIN)).toBeNull();
-    expect(editTargetOrigin(fallback, ORIGIN)).toBeNull();
-    expect(postToRenderer(frame, "*", versionMessage(4, nonce))).toBe(false);
-    expect(postToRenderer(frame, null, versionMessage(4, nonce))).toBe(false);
-    expect(post).toHaveBeenCalledTimes(1);
-  });
-
-  it("reads shown only from the frame at its origin, for the nonce it waits on", () => {
-    const src = {} as Window;
-    const frame = { contentWindow: src } as HTMLIFrameElement;
-    const data = { source: "plinth-renderer", v: 1, type: "shown", n: 4, nonce, ok: true };
-    const base = { frame, contentOrigin: ORIGIN, solo: false, nonce: null, shown: nonce };
-    expect(readFrameMessage({ source: src, origin: ORIGIN, data }, base)).toEqual({
-      type: "shown",
-      n: 4,
-      nonce,
-      ok: true,
-    });
-    expect(
-      readFrameMessage({ source: src, origin: ORIGIN, data: { ...data, ok: false } }, base),
-    ).toEqual({ type: "shown", n: 4, nonce, ok: false });
-    // Not waiting, another nonce, another window or origin, or a malformed answer: nothing.
-    expect(
-      readFrameMessage({ source: src, origin: ORIGIN, data }, { ...base, shown: null }),
-    ).toBeNull();
-    expect(
-      readFrameMessage({ source: src, origin: ORIGIN, data }, { ...base, shown: "w".repeat(16) }),
-    ).toBeNull();
-    expect(readFrameMessage({ source: {} as Window, origin: ORIGIN, data }, base)).toBeNull();
-    expect(readFrameMessage({ source: src, origin: "null", data }, base)).toBeNull();
-    expect(
-      readFrameMessage({ source: src, origin: "*", data }, { ...base, contentOrigin: "*" }),
-    ).toBeNull();
-    for (const bad of [{ n: 0 }, { n: 1.5 }, { n: "4" }, { ok: "yes" }]) {
-      expect(
-        readFrameMessage({ source: src, origin: ORIGIN, data: { ...data, ...bad } }, base),
-      ).toBeNull();
-    }
   });
 });
