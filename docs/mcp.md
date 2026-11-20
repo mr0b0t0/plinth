@@ -541,7 +541,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `code` | What it means |
 | --- | --- |
 | `missing_file` | A relative reference (`src`, `href`, `url()`, `import`) names a file the version does not have. For a design system, `path` says which CSS block (`css`, `components[i].css`) holds the `url()`. For a deck, an image its Markdown shows that is not in `assets` |
-| `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`) |
+| `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`). Plinth's own paths under `/__plinth/` (the runtime script) are meant to be root-absolute and never get it |
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | On opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there. In a design, on every instance: those that load the design's own files fail in its artboards (from a CDN that answers with CORS, such as Google Fonts or unpkg, and as `data:` fonts they work) |
@@ -1036,6 +1036,16 @@ The result is always a new version. Anyone with edit rights can restore the prev
 Only the owner's own connections can be mentioned, and only commenters and editors can mention.
 `@claude` and `@codex` reach connections of that client type; `@<label>` reaches one connection.
 
+- **Several connections of one type.** `@claude` is one task that every live Claude connection of
+  the owner lists. The first `claim_mention` wins; the others get `conflict` and leave it.
+- **The handle of a label.** `@<label>` uses the label lowercased, with spaces turned into `-` and
+  other characters dropped: `Claude Code` is `@claude-code`. `claude` and `codex` always mean the
+  client types, so a connection labelled `Claude` is reached only as a Claude-type connection. When
+  two labels make the same handle, the older connection gets it. Renaming a connection shows its
+  handle, and the Connections page warns when a name cannot be reached.
+- **Agents do not hand work to each other.** A comment or reply written by an agent never creates
+  a task, whatever it mentions. To pass work on, a person mentions the next agent.
+
 **Project files.** A mention never makes the agent read a file from the owner's computer, not even
 to refresh files a page already has, and a mention whose `comment_author_role` is `owner` is no
 exception. The agent asks the user in the session first; with no one to ask, it replies with
@@ -1043,6 +1053,9 @@ exception. The agent asks the user in the session first; with no one to ask, it 
 owner asks in a session. Which files a page gets is the user's choice, never something read from
 Plinth: asset paths, versions, comments and shared data can all be written by collaborators
 ([agents.md](agents.md#project-files-for-a-page)).
+
+[Several agents on one artifact](agents.md#several-agents-on-one-artifact) covers hand-offs,
+conflicts and who did what when Claude, Codex, Gemini CLI, Cursor and scripts work on one page.
 
 ## Opaque sandbox instances
 
