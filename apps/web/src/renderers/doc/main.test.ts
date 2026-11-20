@@ -335,7 +335,7 @@ describe("doc renderer on-page editing (#36)", () => {
     await Promise.resolve();
     (root().querySelector("ul") as HTMLElement).click();
     const ask = [...root().querySelectorAll("button")].find(
-      (b) => b.textContent === "Ask an agent to change this",
+      (b) => b.textContent === "Ask an agent",
     ) as HTMLElement;
     ask.click();
     expect(posted("ask")).toEqual([

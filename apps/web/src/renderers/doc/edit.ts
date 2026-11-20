@@ -9,11 +9,12 @@
 //
 // Only blocks the model can show faithfully are edited this way: the fidelity check
 // (editableBlock) runs before a lease, and a block that fails it (a construct the model lacks, say
-// a list item holding a code fence) is shown read-only, with "Ask an agent to change this", Move
-// and Delete, which move or remove its lines byte for byte. Untouched blocks keep their bytes: only
-// the leased block's lines are ever replaced, and the reference definitions that follow a block
-// stay as they are. Images are agent-only: an image block's alt text is a field, and "Add or
-// replace an image: Ask an agent" asks the app to open its Ask dialog.
+// a list item holding a code fence) is shown read-only, with "Ask an agent" and the block menu
+// (its Move and Delete move or remove its lines byte for byte). Untouched blocks keep their bytes:
+// only the leased block's lines are ever replaced, and the reference definitions that follow a
+// block stay as they are. Images are agent-only: an image block's alt text is a field and its
+// "Ask an agent" asks the app to open its Ask dialog about the image; "Insert below", "Image" asks
+// for a new one.
 //
 // Two backends: the room's doc socket (../common/live.ts, "room" mode), or a local copy of the
 // text that only this frame edits ("solo" mode, where the app saves it through its own session).
@@ -64,7 +65,7 @@ import {
   normalizeHref,
   renderInlineMarkdown,
 } from "./markdown.ts";
-import { BlockMenu, type MenuGroup } from "./menu.ts";
+import { BlockMenu, type MenuGroup, type MenuItem, type TableForm } from "./menu.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
@@ -75,8 +76,12 @@ const TOOLS = docMarkdownTools();
 /** Why a block was not kept, in the doc's words. */
 export const REFUSED_EDIT =
   "That change would make the doc start like a web page, which a doc can't publish, so it wasn't kept.";
-export const READ_ONLY_NOTE =
-  "This part can't be edited here, so it is shown as it is. An agent can change it.";
+/** Why a block opens read-only: the description of its "Ask an agent". */
+export const READ_ONLY_NOTE = "This part can't be edited here. An agent can change it.";
+/** The label of the button that asks an agent about a block (an image block: its image). */
+export const ASK_AGENT = "Ask an agent";
+/** The description of an image block's "Ask an agent". */
+export const IMAGE_NOTE = "An agent adds or replaces the image.";
 export const EMPTY_DOC = "Write something";
 /**
  * Why a Move, Delete, Turn into or Insert below was not made: the blocks around it would have
@@ -968,23 +973,20 @@ export class DocEditor {
     bar.className = "plinth-doc__blockbar";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", `Block ${index + 1}`);
-    const note = this.doc.createElement("span");
-    note.className = "plinth-doc__blockbar-note";
-    note.textContent = READ_ONLY_NOTE;
     const ask = this.doc.createElement("button");
     ask.type = "button";
     ask.className = "plinth-rich__btn plinth-doc__ask";
-    ask.textContent = "Ask an agent to change this";
+    ask.textContent = ASK_AGENT;
+    ask.title = READ_ONLY_NOTE;
+    ask.setAttribute("aria-description", READ_ONLY_NOTE);
     ask.addEventListener("click", (e) => {
       e.preventDefault();
       this.ask(block.start, false);
     });
-    const menu = new BlockMenu(
-      this.doc,
-      () => this.menuGroups({ start: block.start }, null),
-      this.tableForm(block.start),
+    const menu = new BlockMenu(this.doc, () =>
+      this.menuGroups({ start: block.start }, null, this.tableForm(block.start)),
     );
-    bar.append(note, ask, menu.button);
+    bar.append(ask, menu.button);
     this.selected = { start: block.start, bar, menu };
     this.render();
     ask.focus();
@@ -1008,39 +1010,42 @@ export class DocEditor {
 
   // ---------- the block menu ----------
 
-  private menuGroups(place: Place, model: RichBlock | null): MenuGroup[] {
+  private menuGroups(place: Place, model: RichBlock | null, table: TableForm): MenuGroup[] {
     // A new block with nothing in the doc yet acts as the block above it would: what it inserts
     // below lands where it is, and it cannot move. Delete gives it up.
     const start = "start" in place ? place.start : place.above;
     const found = "start" in place ? this.blockAt(place.start) : null;
     const index = found?.index ?? -1;
     const count = found?.blocks.length ?? 0;
-    const groups: MenuGroup[] = [];
     const own = model ? kindOf(model) : null;
+    const insert: MenuItem[] = [
+      ...KIND_LABELS.map(([k, label]) => ({ label, run: () => this.insertBelow(start, k) })),
+      { label: "Divider", run: () => this.insertDivider(start) },
+      { label: "Table", table },
+    ];
+    // An image block's own "Ask an agent" already asks about an image there.
+    if (model?.t !== "image") {
+      insert.push({
+        label: "Image",
+        disabled: start === null,
+        run: () => {
+          if (start !== null) this.ask(start, true);
+        },
+      });
+    }
+    const make: MenuItem[] = [];
     if (model && own !== null) {
-      groups.push({
+      make.push({
         label: "Turn into",
-        items: KIND_LABELS.map(([k, label]) => ({
+        sub: KIND_LABELS.map(([k, label]) => ({
           label,
           checked: k === own,
           run: () => this.turn(k),
         })),
       });
     }
-    groups.push({
-      label: "Insert below",
-      items: [
-        ...KIND_LABELS.map(([k, label]) => ({ label, run: () => this.insertBelow(start, k) })),
-        { label: "Divider", run: () => this.insertDivider(start) },
-        {
-          label: "Add or replace an image: Ask an agent",
-          disabled: start === null,
-          run: () => {
-            if (start !== null) this.ask(start, true);
-          },
-        },
-      ],
-    });
+    make.push({ label: "Insert below", sub: insert });
+    const groups: MenuGroup[] = [{ items: make }];
     groups.push({
       items: [
         {
@@ -1062,7 +1067,7 @@ export class DocEditor {
     return groups;
   }
 
-  private tableForm(start: number | null) {
+  private tableForm(start: number | null): TableForm {
     return { insert: (rows: number, cols: number) => this.insertTable(start, rows, cols) };
   }
 
@@ -1508,22 +1513,22 @@ export class DocEditor {
     const n = index === undefined ? null : index + 1;
     const label = `${n === null ? "New block" : `Block ${n}`}, ${kindName(model)}`;
     const holder: { open: Open | null } = { open: null };
-    const menu = new BlockMenu(
-      this.doc,
-      () => this.menuGroups(this.openPlace(start), holder.open?.rich.model ?? model),
-      {
+    const menu = new BlockMenu(this.doc, () =>
+      this.menuGroups(this.openPlace(start), holder.open?.rich.model ?? model, {
         insert: (rows, cols) => {
           const place = this.openPlace(start);
           this.insertTable("start" in place ? place.start : place.above, rows, cols);
         },
-      },
+      }),
     );
     const extra: HTMLElement[] = [];
     if (model.t === "image") {
       const ask = this.doc.createElement("button");
       ask.type = "button";
       ask.className = "plinth-rich__btn plinth-doc__ask";
-      ask.textContent = "Add or replace an image: Ask an agent";
+      ask.textContent = ASK_AGENT;
+      ask.title = IMAGE_NOTE;
+      ask.setAttribute("aria-description", IMAGE_NOTE);
       ask.addEventListener("mousedown", (e) => e.preventDefault());
       ask.addEventListener("click", (e) => {
         e.preventDefault();

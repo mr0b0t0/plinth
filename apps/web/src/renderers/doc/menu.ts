@@ -1,18 +1,23 @@
-// The doc's block menu (doc-blocks): one button that opens a menu of block actions (Turn into,
-// Insert below, Move up and down, Delete, Ask an agent). Built with createElement and textContent
-// only, keyboard first: arrow keys, Home and End move between items, Escape closes and gives focus
-// back to the button, and a click outside closes it.
+// The doc's block menu (doc-blocks): one button that opens a short menu of block actions (Turn
+// into, Insert below, Move up and down, Delete). "Turn into", "Insert below" and its "Table" open
+// in place of the menu, with a way back, so the menu stays short at any width. Built with
+// createElement and textContent only, keyboard first: arrow keys, Home and End move between
+// items, Enter or ArrowRight opens a sub-menu, ArrowLeft or Escape goes back (Escape at the top
+// closes and gives focus back to the button), and a click outside closes it.
 
 export interface MenuItem {
   label: string;
-  run(): void;
+  run?(): void;
   /** Shown checked (the block's own kind under "Turn into"). */
   checked?: boolean;
   disabled?: boolean;
+  /** Opens these items in place of the menu, under `label`. */
+  sub?: MenuItem[];
+  /** Opens the table size form in place of the menu. */
+  table?: TableForm;
 }
 
 export interface MenuGroup {
-  label?: string;
   items: MenuItem[];
 }
 
@@ -30,11 +35,12 @@ export class BlockMenu {
   readonly button: HTMLButtonElement;
   private panel: HTMLElement | null = null;
   private readonly doc: Document;
+  /** The items whose sub-menus were opened, the one shown last (empty at the top level). */
+  private trail: MenuItem[] = [];
 
   constructor(
     doc: Document,
     private readonly groups: () => MenuGroup[],
-    private readonly table: TableForm | null,
     label = "Block actions",
   ) {
     this.doc = doc;
@@ -67,70 +73,135 @@ export class BlockMenu {
 
   open(): void {
     this.close(false);
-    const doc = this.doc;
-    const panel = doc.createElement("div");
+    const panel = this.doc.createElement("div");
     panel.className = "plinth-doc__menu";
     panel.setAttribute("role", "menu");
     panel.id = `plinth-doc-menu-${++counter}`;
     panel.setAttribute("aria-label", this.button.getAttribute("aria-label") ?? "Block actions");
     this.button.setAttribute("aria-controls", panel.id);
-    const groups = this.groups();
-    groups.forEach((g, gi) => {
-      if (gi > 0) {
-        const sep = doc.createElement("div");
-        sep.className = "plinth-doc__menu-sep";
-        sep.setAttribute("role", "separator");
-        panel.append(sep);
-      }
-      const group = doc.createElement("div");
-      group.setAttribute("role", "group");
-      if (g.label) {
-        const id = `${panel.id}-g${gi}`;
-        const head = doc.createElement("div");
-        head.className = "plinth-doc__menu-label";
-        head.id = id;
-        head.textContent = g.label;
-        group.setAttribute("aria-labelledby", id);
-        group.append(head);
-      }
-      for (const item of g.items) {
-        const it = doc.createElement("button");
-        it.type = "button";
-        it.className = "plinth-doc__menu-item";
-        it.textContent = item.label;
-        it.tabIndex = -1;
-        if (item.checked !== undefined) {
-          it.setAttribute("role", "menuitemradio");
-          it.setAttribute("aria-checked", String(item.checked));
-        } else it.setAttribute("role", "menuitem");
-        if (item.disabled) it.setAttribute("aria-disabled", "true");
-        it.addEventListener("mousedown", (e) => e.preventDefault());
-        it.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (item.disabled) return;
-          this.close(false);
-          item.run();
-        });
-        group.append(it);
-      }
-      panel.append(group);
-    });
-    if (this.table) panel.append(this.tableForm(this.table));
     panel.addEventListener("keydown", this.onKey);
     this.button.after(panel);
     this.button.setAttribute("aria-expanded", "true");
     this.panel = panel;
-    this.items()[0]?.focus();
-    doc.addEventListener("mousedown", this.onOutside, true);
+    this.showTop();
+    this.doc.addEventListener("mousedown", this.onOutside, true);
+  }
+
+  /** Draws the top level, with focus on the item labelled `from` (else the first). */
+  private showTop(from?: string): void {
+    const panel = this.panel;
+    if (!panel) return;
+    this.trail = [];
+    panel.replaceChildren();
+    this.groups().forEach((g, gi) => {
+      if (gi > 0) panel.append(this.separator());
+      const group = this.doc.createElement("div");
+      group.setAttribute("role", "group");
+      for (const item of g.items) group.append(this.item(item));
+      panel.append(group);
+    });
+    const items = this.items();
+    (items.find((i) => i.textContent === from) ?? items[0])?.focus();
+  }
+
+  /** Goes back one level, with focus on the item that opened the level left. */
+  private back(): void {
+    const left = this.trail.pop();
+    const parent = this.trail.at(-1);
+    if (parent) this.draw(parent, left?.label);
+    else this.showTop(left?.label);
+  }
+
+  /** Opens `item`'s sub-menu (or table form) in place of the level shown. */
+  private showSub(item: MenuItem): void {
+    this.trail.push(item);
+    this.draw(item);
+  }
+
+  /** Draws `item`'s sub-menu, with focus on the item labelled `from` (else the first). */
+  private draw(item: MenuItem, from?: string): void {
+    const panel = this.panel;
+    if (!panel) return;
+    panel.replaceChildren();
+    const doc = this.doc;
+    const back = doc.createElement("button");
+    back.type = "button";
+    back.className = "plinth-doc__menu-item plinth-doc__menu-back";
+    back.textContent = item.label;
+    back.setAttribute("aria-label", `Back from ${item.label}`);
+    back.setAttribute("role", "menuitem");
+    back.tabIndex = -1;
+    back.addEventListener("mousedown", (e) => e.preventDefault());
+    back.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.back();
+    });
+    const group = doc.createElement("div");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", item.label);
+    if (item.table) group.append(this.tableForm(item.table));
+    else for (const s of item.sub ?? []) group.append(this.item(s));
+    panel.append(back, this.separator(), group);
+    const items = this.items().filter((i) => i !== back);
+    const first = item.table
+      ? group.querySelector<HTMLElement>("input")
+      : (items.find((i) => i.textContent === from) ??
+        items.find((i) => i.getAttribute("aria-checked") === "true") ??
+        items[0]);
+    first?.focus();
+  }
+
+  private separator(): HTMLElement {
+    const sep = this.doc.createElement("div");
+    sep.className = "plinth-doc__menu-sep";
+    sep.setAttribute("role", "separator");
+    return sep;
+  }
+
+  private item(item: MenuItem): HTMLElement {
+    const it = this.doc.createElement("button");
+    it.type = "button";
+    it.className = "plinth-doc__menu-item";
+    it.textContent = item.label;
+    it.tabIndex = -1;
+    const opens = item.sub !== undefined || item.table !== undefined;
+    if (item.checked !== undefined) {
+      it.setAttribute("role", "menuitemradio");
+      it.setAttribute("aria-checked", String(item.checked));
+    } else it.setAttribute("role", "menuitem");
+    if (opens) {
+      it.classList.add("plinth-doc__menu-sub");
+      it.setAttribute("aria-haspopup", "menu");
+    }
+    if (item.disabled) it.setAttribute("aria-disabled", "true");
+    it.addEventListener("mousedown", (e) => e.preventDefault());
+    it.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (item.disabled) return;
+      if (opens) {
+        this.showSub(item);
+        return;
+      }
+      this.close(false);
+      item.run?.();
+    });
+    return it;
   }
 
   private tableForm(t: TableForm): HTMLElement {
     const doc = this.doc;
     const form = doc.createElement("div");
     form.className = "plinth-doc__menu-table";
-    form.setAttribute("role", "group");
-    form.setAttribute("aria-label", "Insert a table below");
+    const go = () => {
+      const clamp = (v: string, max: number) =>
+        Math.max(1, Math.min(max, Math.trunc(Number(v)) || 1));
+      const r = clamp(rows.value, MAX_TABLE_ROWS);
+      const c = clamp(cols.value, MAX_TABLE_COLS);
+      this.close(false);
+      t.insert(r, c);
+    };
     const field = (label: string, value: number, max: number) => {
       const l = doc.createElement("label");
       const span = doc.createElement("span");
@@ -140,30 +211,35 @@ export class BlockMenu {
       input.min = "1";
       input.max = String(max);
       input.value = String(value);
-      input.addEventListener("keydown", (e) => e.stopPropagation());
+      input.addEventListener("keydown", (e) => {
+        // The field keeps its own keys; Enter inserts and Escape goes back.
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          go();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          this.back();
+        }
+      });
       l.append(span, input);
       form.append(l);
       return input;
     };
     const rows = field("Rows", 2, MAX_TABLE_ROWS);
     const cols = field("Columns", 2, MAX_TABLE_COLS);
-    const go = doc.createElement("button");
-    go.type = "button";
-    go.className = "plinth-doc__menu-item";
-    go.textContent = "Insert table";
-    go.setAttribute("role", "menuitem");
-    go.tabIndex = -1;
-    go.addEventListener("click", (e) => {
+    const insert = doc.createElement("button");
+    insert.type = "button";
+    insert.className = "plinth-doc__menu-item";
+    insert.textContent = "Insert table";
+    insert.setAttribute("role", "menuitem");
+    insert.tabIndex = -1;
+    insert.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const clamp = (v: string, max: number) =>
-        Math.max(1, Math.min(max, Math.trunc(Number(v)) || 1));
-      const r = clamp(rows.value, MAX_TABLE_ROWS);
-      const c = clamp(cols.value, MAX_TABLE_COLS);
-      this.close(false);
-      t.insert(r, c);
+      go();
     });
-    form.append(go);
+    form.append(insert);
     return form;
   }
 
@@ -175,13 +251,23 @@ export class BlockMenu {
 
   private readonly onKey = (e: KeyboardEvent) => {
     const items = this.items();
-    const i = items.indexOf(this.doc.activeElement as HTMLElement);
+    const active = this.doc.activeElement as HTMLElement;
+    const i = items.indexOf(active);
     let next = -1;
     if (e.key === "ArrowDown") next = (i + 1) % items.length;
     else if (e.key === "ArrowUp") next = (i - 1 + items.length) % items.length;
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = items.length - 1;
-    else if (e.key === "Escape") {
+    else if (e.key === "ArrowRight" && active?.classList.contains("plinth-doc__menu-sub")) {
+      e.preventDefault();
+      active.click();
+      return;
+    } else if ((e.key === "ArrowLeft" || e.key === "Escape") && this.trail.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.back();
+      return;
+    } else if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       this.close(true);
@@ -206,6 +292,7 @@ export class BlockMenu {
     if (!this.panel) return;
     this.panel.remove();
     this.panel = null;
+    this.trail = [];
     this.button.setAttribute("aria-expanded", "false");
     this.button.removeAttribute("aria-controls");
     this.doc.removeEventListener("mousedown", this.onOutside, true);

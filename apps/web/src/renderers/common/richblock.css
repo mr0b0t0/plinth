@@ -9,34 +9,34 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
-  margin: 0 0 0.375rem;
+  gap: 0.125rem;
+  margin: 0 0 0.25rem;
   padding: 0.25rem 0;
   background: inherit;
   font: 0.8125rem / 1.2 var(--doc-font, system-ui, sans-serif);
 }
+/* Plain buttons, as in the page's own menus: no box until hovered, pressed or focused. */
 .plinth-rich__btn {
   min-width: 2rem;
   min-height: 2rem;
   padding: 0.25rem 0.5rem;
-  border: 1px solid var(--doc-border, #d8dee4);
-  border-radius: 4px;
-  background: var(--doc-bg, #ffffff);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--doc-fg, #1f2328);
   font: inherit;
   cursor: pointer;
 }
 .plinth-rich__btn:hover {
-  border-color: var(--doc-live, #8f5a2a);
+  background: color-mix(in srgb, var(--doc-fg, #1f2328) 8%, transparent);
 }
 .plinth-rich__btn:focus-visible {
   outline: 2px solid var(--doc-focus, #0a58ca);
   outline-offset: 1px;
 }
 .plinth-rich__btn[aria-pressed="true"] {
-  border-color: var(--doc-live, #8f5a2a);
-  background: var(--doc-live, #8f5a2a);
-  color: var(--doc-bg, #ffffff);
+  background: color-mix(in srgb, var(--doc-fg, #1f2328) 14%, transparent);
+  color: var(--doc-fg, #1f2328);
 }
 .plinth-rich__fmt-strong {
   font-weight: 700;

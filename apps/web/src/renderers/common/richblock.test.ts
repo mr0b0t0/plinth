@@ -72,6 +72,9 @@ describe("RichBlockEditor", () => {
     key(r.editable, "k", { metaKey: true });
     const input = r.el.querySelector<HTMLInputElement>('input[aria-label="Link address"]');
     expect(input).not.toBeNull();
+    // Text with no link yet has nothing to remove.
+    const remove = r.el.querySelector('button[aria-label="Remove the link"]') as HTMLElement;
+    expect(remove.hidden).toBe(true);
     (input as HTMLInputElement).value = "javascript:alert(1)";
     key(input as HTMLInputElement, "Enter");
     expect(host.announce).toHaveBeenCalledWith(LINK_REFUSED);
@@ -81,6 +84,11 @@ describe("RichBlockEditor", () => {
     const a = r.editable.querySelector("a") as HTMLAnchorElement;
     expect(a.getAttribute("href")).toBe("https://example.com/x");
     expect(a.getAttribute("rel")).toBe("noopener noreferrer nofollow");
+    // On a link, the field offers Remove link.
+    caret(a.firstChild as Node, 1, 1);
+    key(r.editable, "k", { metaKey: true });
+    expect(remove.hidden).toBe(false);
+    key(input as HTMLInputElement, "Escape");
     // A link being edited is never followed.
     const followed = new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
     a.dispatchEvent(followed);

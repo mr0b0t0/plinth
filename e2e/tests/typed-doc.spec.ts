@@ -603,6 +603,7 @@ test.describe("editing a doc on its page as formatted text", () => {
       // Turn into: the last paragraph becomes a heading.
       await frame.locator("p", { hasText: "Last paragraph." }).click();
       await frame.getByRole("button", { name: "Block actions" }).click();
+      await frame.getByRole("menuitem", { name: "Turn into" }).click();
       await frame
         .getByRole("group", { name: "Turn into" })
         .getByRole("menuitemradio", { name: "Heading 2" })
@@ -619,8 +620,9 @@ test.describe("editing a doc on its page as formatted text", () => {
       // A block the editor cannot show faithfully is read-only, with Ask an agent.
       await frame.locator("ul", { hasText: "An item" }).click();
       const blockbar = frame.locator(".plinth-doc__blockbar");
-      await expect(blockbar).toContainText("can't be edited here");
-      await blockbar.getByRole("button", { name: "Ask an agent to change this" }).click();
+      const askAgent = blockbar.getByRole("button", { name: "Ask an agent", exact: true });
+      await expect(askAgent).toHaveAttribute("title", /can't be edited here/);
+      await askAgent.click();
       const dialog = page.getByRole("dialog", { name: "Ask an agent" });
       await expect(dialog).toContainText("Block 4");
       await dialog.getByRole("button", { name: "Cancel" }).click();
@@ -667,6 +669,7 @@ test.describe("editing a doc on its page as formatted text", () => {
       // Insert a bulleted list below the first paragraph, and type an item.
       await frame.locator("p", { hasText: "First paragraph." }).click();
       await frame.getByRole("button", { name: "Block actions" }).click();
+      await frame.getByRole("menuitem", { name: "Insert below" }).click();
       await frame
         .getByRole("group", { name: "Insert below" })
         .getByRole("menuitem", { name: "Bulleted list" })

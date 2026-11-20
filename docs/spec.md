@@ -2705,8 +2705,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   renders exactly as the original (the same markdown-it tokens with the page's own instance and
   the doc's reference definitions) and reads back into the same model, and the block defines no
   references itself. A block that fails (a code block in a list item, a quote in a list item, a
-  definition inside a quote) is shown read-only, with "Ask an agent to change this", Move and
-  Delete, which move or remove its lines byte for byte.
+  definition inside a quote) is shown read-only, with "Ask an agent" (its description says the
+  block can't be edited here) and the block menu, whose Move and Delete move or remove its lines
+  byte for byte.
 - **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
   formatting command whose result CommonMark cannot express is undone, with "That formatting can't
   be kept here.", and nothing is sent.
@@ -2715,10 +2716,12 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   address, percent-encoded with the host in punycode) and Shift+X (strikethrough). Enter ends a
   block (a new item in a list, a new paragraph in a quote), Shift+Enter is a line break, Tab and
   Shift+Tab indent and outdent list items (three levels at most) and move between table cells,
-  and Esc gives the block back. Each block's menu has "Turn into" (paragraph, heading 1 to 3,
-  bulleted or numbered list, quote, code block), "Insert below" (the same kinds, a divider, a table
-  of a chosen size, and "Add or replace an image: Ask an agent"), "Move up", "Move down" and
-  "Delete". A move takes one lease over both blocks and swaps their lines. A new list never joins
+  and Esc gives the block back. The toolbar's link field offers "Remove link" only on a link.
+  Each block's menu has five items: "Turn into" (paragraph, heading 1 to 3, bulleted or numbered
+  list, quote, code block), "Insert below" (the same kinds, "Divider", "Table", which asks for a
+  size, and "Image", which asks an agent), "Move up", "Move down" and "Delete". "Turn into",
+  "Insert below" and "Table" open in place of the menu, with a way back (ArrowLeft or Esc). A move
+  takes one lease over both blocks and swaps their lines. A new list never joins
   the list next to it. A Move or a Delete never runs the blocks around it together: a blank line
   goes wherever a block would touch the next one, a moved list that would sit next to a list of
   its own marker takes another marker, and so does the list after a deleted block, written again
@@ -2751,7 +2754,8 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   was.
 - **Images are agent-only.** An image block's alt text is a field; the image itself, and adding
   one, are left to agents through Ask an agent, whose page anchor names the place (`block-3`, or
-  `block-3:image`), never its text.
+  `block-3:image`), never its text. An open image block has its own "Ask an agent" for its image,
+  and its "Insert below" has no "Image" (it would ask the same).
 - **An empty doc** shows "Write something", which starts a new paragraph.
 - **Security.** Nothing new reaches the content host or the app: the room accepts any doc lines as
   before and checks the doc's rules, the sanitizer runs on every rendered block and every kept part,

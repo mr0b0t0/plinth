@@ -601,6 +601,8 @@ export class RichBlockEditor {
   private readonly toolbar: HTMLElement;
   private readonly linkForm: HTMLElement;
   private readonly linkInput: HTMLInputElement;
+  /** "Remove link", shown only when the text being linked already has a link. */
+  private readonly removeButton: HTMLButtonElement;
   private readonly buttons = new Map<ToggleMark | "link", HTMLButtonElement>();
   private altInput: HTMLInputElement | null = null;
   private content!: HTMLElement;
@@ -651,8 +653,13 @@ export class RichBlockEditor {
       }
     });
     const apply = this.button("Apply", "Apply the link", () => this.applyLink(), false);
-    const remove = this.button("Remove link", "Remove the link", () => this.removeLink(), false);
-    this.linkForm.append(this.linkInput, apply, remove);
+    this.removeButton = this.button(
+      "Remove link",
+      "Remove the link",
+      () => this.removeLink(),
+      false,
+    );
+    this.linkForm.append(this.linkInput, apply, this.removeButton);
     for (const x of opts.extra ?? []) this.toolbar.append(x);
     this.el.append(this.toolbar, this.linkForm);
     this.draw();
@@ -1063,7 +1070,9 @@ export class RichBlockEditor {
       };
     }
     this.linkRange = range;
-    this.linkInput.value = linkAt(c, range.from.offset)?.href ?? "";
+    const href = linkAt(c, range.from.offset)?.href ?? "";
+    this.linkInput.value = href;
+    this.removeButton.hidden = href === "";
     this.linkForm.hidden = false;
     this.linkInput.focus();
   }

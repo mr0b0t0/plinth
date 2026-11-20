@@ -77,24 +77,43 @@ function select(node: Node, from: number, to = from) {
   sel.addRange(range);
 }
 
-/**
- * Opens the block menu of the open (or selected) block and runs the item `label`, in the group
- * `group` ("Turn into", "Insert below") when one is named.
- */
-function menu(label: string, group?: string) {
-  const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
-  if (!button) throw new Error("no menu button");
-  click(button);
+/** The item labelled `label` in the open block menu (in the sub-menu `group` when named). */
+function menuItem(label: string, group?: string): HTMLElement {
   const scope = group
     ? [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu [role='group']")].find(
-        (g) => g.querySelector(".plinth-doc__menu-label")?.textContent === group,
+        (g) => g.getAttribute("aria-label") === group,
       )
     : document.querySelector<HTMLElement>(".plinth-doc__menu");
   const item = [...(scope?.querySelectorAll<HTMLElement>("[role^='menuitem']") ?? [])].find(
     (i) => i.textContent === label,
   );
   if (!item) throw new Error(`no menu item ${label}`);
-  click(item);
+  return item;
+}
+
+/**
+ * Opens the block menu of the open (or selected) block and runs the item `label`, in the
+ * sub-menu `group` ("Turn into", "Insert below") when one is named.
+ */
+function menu(label: string, group?: string) {
+  const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
+  if (!button) throw new Error("no menu button");
+  click(button);
+  if (group) click(menuItem(group));
+  click(menuItem(label, group));
+}
+
+/** Opens the block menu's "Insert below", "Table" form and inserts a `rows` by `cols` table. */
+function insertTable(rows: number, cols: number) {
+  const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
+  if (!button) throw new Error("no menu button");
+  click(button);
+  click(menuItem("Insert below"));
+  click(menuItem("Table", "Insert below"));
+  const inputs = document.querySelectorAll<HTMLInputElement>(".plinth-doc__menu-table input");
+  (inputs[0] as HTMLInputElement).value = String(rows);
+  (inputs[1] as HTMLInputElement).value = String(cols);
+  click(menuItem("Insert table", "Table"));
 }
 
 beforeEach(() => {
@@ -537,16 +556,7 @@ describe("DocEditor: the block menu", () => {
     menu("Divider", "Insert below");
     expect(local.text).toBe("one\n\n1. first\n\n---\n\ntwo");
     click(root.querySelector("p") as Element);
-    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
-    click(button as Element);
-    const inputs = document.querySelectorAll<HTMLInputElement>(".plinth-doc__menu-table input");
-    (inputs[0] as HTMLInputElement).value = "1";
-    (inputs[1] as HTMLInputElement).value = "3";
-    click(
-      [...document.querySelectorAll(".plinth-doc__menu-item")].find(
-        (b) => b.textContent === "Insert table",
-      ) as Element,
-    );
+    insertTable(1, 3);
     expect(local.text).toBe(
       "one\n\n| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |\n\n1. first\n\n---\n\ntwo",
     );
@@ -708,16 +718,7 @@ describe("DocEditor: the block menu", () => {
     const filler = "x".repeat(LIMITS.maxDocBytes - 20);
     const { local, editor } = setup(`one\n\ntwo\n\n${filler}`);
     click(root.querySelector("p") as Element);
-    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
-    click(button as Element);
-    const inputs = document.querySelectorAll<HTMLInputElement>(".plinth-doc__menu-table input");
-    (inputs[0] as HTMLInputElement).value = "1";
-    (inputs[1] as HTMLInputElement).value = "2";
-    click(
-      [...document.querySelectorAll(".plinth-doc__menu-item")].find(
-        (b) => b.textContent === "Insert table",
-      ) as Element,
-    );
+    insertTable(1, 2);
     expect(local.text).toBe(`one\n\ntwo\n\n${filler}`);
     expect(editor.openEditor).toBeNull();
     expect(document.querySelector('[role="status"]')?.textContent).toContain(DOC_FULL);
@@ -738,16 +739,7 @@ describe("DocEditor: the block menu", () => {
     const { local, editor } = setup("one\n\ntwo\n\nthree");
     vi.spyOn(local, "edit").mockReturnValue(false);
     click(root.querySelector("p") as Element);
-    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
-    click(button as Element);
-    const inputs = document.querySelectorAll<HTMLInputElement>(".plinth-doc__menu-table input");
-    (inputs[0] as HTMLInputElement).value = "1";
-    (inputs[1] as HTMLInputElement).value = "2";
-    click(
-      [...document.querySelectorAll(".plinth-doc__menu-item")].find(
-        (b) => b.textContent === "Insert table",
-      ) as Element,
-    );
+    insertTable(1, 2);
     expect(local.text).toBe("one\n\ntwo\n\nthree");
     expect(editor.openEditor).toBeNull();
     expect(local.mine).toBeNull();
@@ -920,16 +912,17 @@ describe("DocEditor: read-only blocks and images", () => {
     const md = "Intro\n\n- item\n\n  ```\n  code\n  ```\n\nEnd";
     const { local, editor } = setup(md);
     click(root.querySelector("ul") as Element);
-    // Not opened for editing: a bar says why and offers what can be done.
+    // Not opened for editing: a bar offers what can be done, and its Ask an agent says why.
     expect(editor.openEditor).toBeNull();
     const bar = root.querySelector(".plinth-doc__blockbar") as HTMLElement;
-    expect(bar.textContent).toContain(READ_ONLY_NOTE);
     expect(root.querySelector("ul")?.classList.contains("plinth-doc__selected")).toBe(true);
-    click(
-      [...bar.querySelectorAll("button")].find(
-        (b) => b.textContent === "Ask an agent to change this",
-      ) as Element,
-    );
+    const askButton = [...bar.querySelectorAll("button")].find(
+      (b) => b.textContent === "Ask an agent",
+    ) as HTMLElement;
+    expect(askButton.getAttribute("aria-description")).toBe(READ_ONLY_NOTE);
+    // Two controls only: Ask an agent and the block menu, with no paragraph of text.
+    expect(bar.children).toHaveLength(2);
+    click(askButton);
     expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "Block 2" });
     // Move and Delete keep its bytes.
     click(root.querySelector("ul") as Element);
@@ -951,20 +944,56 @@ describe("DocEditor: read-only blocks and images", () => {
     alt.dispatchEvent(new Event("input", { bubbles: true }));
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
     expect(local.text).toBe('![Sales \\[chart\\]](chart.png "Sales")\n\nText');
+    // An image block's Insert below has no Image of its own: its Ask an agent is the way in.
+    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
+    click(button as Element);
+    click(menuItem("Insert below"));
+    expect(() => menuItem("Image", "Insert below")).toThrow();
+    click(button as Element);
     click(
-      [...r.el.querySelectorAll("button")].find(
-        (b) => b.textContent === "Add or replace an image: Ask an agent",
-      ) as Element,
+      [...r.el.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
     );
     expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "Block 1, image" });
     expect(editor.openEditor).toBeNull();
   });
 
-  it("Insert below ends with Add or replace an image: Ask an agent", () => {
+  it("Insert below ends with Image, which asks an agent", () => {
     setup("one\n\ntwo");
     click(root.querySelectorAll("p")[1] as Element);
-    menu("Add or replace an image: Ask an agent");
+    menu("Image", "Insert below");
     expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "Block 2, image" });
+  });
+
+  it("the menu's top level is five items; Turn into and Insert below open in its place", () => {
+    setup("one\n\ntwo");
+    click(root.querySelector("p") as Element);
+    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
+    click(button as Element);
+    const top = () =>
+      [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu [role^='menuitem']")].map(
+        (i) => i.textContent,
+      );
+    expect(top()).toEqual(["Turn into", "Insert below", "Move up", "Move down", "Delete"]);
+    click(menuItem("Turn into"));
+    // The block's own kind is checked and has the focus; Escape goes back, then closes.
+    const checked = menuItem("Paragraph", "Turn into");
+    expect(checked.getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(checked);
+    key(checked, "Escape");
+    expect(top()).toEqual(["Turn into", "Insert below", "Move up", "Move down", "Delete"]);
+    expect(document.activeElement?.textContent).toBe("Turn into");
+    // The Table form opens under Insert below; going back from it returns there.
+    click(menuItem("Insert below"));
+    click(menuItem("Table", "Insert below"));
+    const rows = document.querySelector(".plinth-doc__menu-table input") as HTMLInputElement;
+    expect(document.activeElement).toBe(rows);
+    key(rows, "Escape");
+    expect(document.activeElement).toBe(menuItem("Table", "Insert below"));
+    key(document.activeElement as Element, "ArrowLeft");
+    expect(document.activeElement?.textContent).toBe("Insert below");
+    key(document.activeElement as Element, "Escape");
+    expect(document.querySelector(".plinth-doc__menu")).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
 
   it("draws images from the draft's base version, and Esc at the top level leaves", () => {
