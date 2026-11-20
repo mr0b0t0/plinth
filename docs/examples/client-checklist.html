@@ -87,9 +87,13 @@
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 16px; }
   section h2 { font-size: 17px; margin: 0 0 4px; }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+  li { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
   li:first-child { border-top: 0; }
   li input[type="checkbox"] { width: 22px; height: 22px; margin: 2px 0 0; flex: none; }
+  /* An item this viewer cannot tick: a status mark, not a disabled checkbox. */
+  .mark { width: 22px; height: 22px; margin: 2px 0 0; flex: none; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--border); color: var(--panel); font-size: 13px; font-weight: 700; }
+  li[data-done="true"] .mark { background: var(--accent); border-color: var(--accent); }
+  .mark[hidden] { display: none; }
   .body { flex: 1; min-width: 0; }
   .body label { display: block; }
   li[data-done="true"] .body label { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--muted); }
@@ -101,14 +105,18 @@
   .state { display: block; font-size: 14px; }
   .state[data-pending="true"] { color: var(--warn); }
   .note { display: block; font-size: 14px; white-space: pre-wrap; margin-top: 2px; }
-  details { margin-top: 4px; font-size: 14px; }
-  summary { cursor: pointer; color: var(--muted); }
-  .note-row { display: flex; gap: 6px; margin-top: 6px; }
+  /* "Add note" shows on hover or focus (always on touch screens); "Edit note" always does. */
+  button.note-toggle { min-height: 28px; padding: 0 4px; border: 0; background: none; color: var(--muted); text-decoration: underline; text-underline-offset: 2px; flex: none; }
+  @media (hover: hover) and (min-width: 600px) {
+    li:not(:hover):not(:focus-within) .note-toggle[data-has-note="false"] { opacity: 0; }
+  }
+  .note-row { display: flex; gap: 6px; flex-basis: 100%; padding-left: 32px; }
+  .note-row[hidden] { display: none; }
   .note-row input { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
   button { font: inherit; font-size: 14px; min-height: 36px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--fg); cursor: pointer; }
   button:disabled, input:disabled { opacity: 0.55; cursor: default; }
-  input:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  footer { color: var(--muted); font-size: 14px; margin: 16px 0 24px; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  main { padding-bottom: 24px; }
 </style>
 <script src="/__plinth/runtime.js"></script>
 <script>
@@ -128,7 +136,6 @@ const ITEMS = [
 <body>
 <div class="wrap">
   <header>
-    <p>Shared checklist</p>
     <h1>Website launch</h1>
     <p>Tick an item when it is done. Team items are confirmed by our team.</p>
   </header>
@@ -139,7 +146,6 @@ const ITEMS = [
     <div id="groups"></div>
     <p id="msg" role="alert"></p>
   </main>
-  <footer>Everyone this page is shared with can see every tick and note, and who made it.</footer>
 </div>
 <script>
 "use strict";
@@ -172,7 +178,7 @@ const msg = document.getElementById("msg");
 const progressEl = document.getElementById("progress");
 const barEl = document.getElementById("bar");
 
-const rows = new Map(); // item id -> { item, li, box, state, note, noteBy, noteInput, noteBtn }
+const rows = new Map(); // item id -> { item, li, box, mark, state, note, noteBy, toggle, noteRow, ... }
 let ticks = null;
 let notes = null;
 let canWrite = false;
@@ -191,17 +197,23 @@ function el(tag, className, text) {
 function who(a) {
   if (!a) return "Someone";
   if (a.name && a.email) return `${a.name} (${a.email})`;
-  return a.email || a.name || "Someone";
+  return a.email || "Someone";
+}
+
+/** A date with the month's name ("Nov 20", with the year when it is not this year). */
+function day(d) {
+  if (Number.isNaN(d.getTime())) return "";
+  const opts = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
 }
 
 function when(iso) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+  return day(new Date(iso));
 }
 
 function dueText(due) {
-  const d = new Date(`${due}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? due : d.toLocaleDateString();
+  return day(new Date(`${due}T00:00:00`)) || due;
 }
 
 function today() {
@@ -238,6 +250,9 @@ function build() {
     box.type = "checkbox";
     box.id = `i-${item.id}`;
     box.disabled = true;
+    box.hidden = true;
+    const mark = el("span", "mark");
+    mark.setAttribute("role", "img");
     const body = el("div", "body");
     const label = el("label", "", item.label);
     label.htmlFor = box.id;
@@ -251,9 +266,14 @@ function build() {
     const state = el("span", "state");
     const note = el("span", "note");
     const noteBy = el("span", "meta");
-    const details = document.createElement("details");
-    details.append(el("summary", "", "Note"));
+    const toggle = el("button", "note-toggle", "Add note");
+    toggle.type = "button";
+    toggle.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
     const noteRow = el("div", "note-row");
+    noteRow.id = `n-${item.id}`;
+    noteRow.hidden = true;
+    toggle.setAttribute("aria-controls", noteRow.id);
     const noteInput = document.createElement("input");
     noteInput.type = "text";
     noteInput.maxLength = NOTE_MAX;
@@ -263,13 +283,18 @@ function build() {
     noteBtn.type = "button";
     noteBtn.disabled = true;
     noteRow.append(noteInput, noteBtn);
-    details.append(noteRow);
-    body.append(label, meta, state, note, noteBy, details);
-    li.append(box, body);
+    body.append(label, meta, state, note, noteBy);
+    li.append(box, mark, body, toggle, noteRow);
     g.append(li);
-    const row = { item, li, box, overdue, state, note, noteBy, noteInput, noteBtn };
+    const row = { item, li, box, mark, overdue, state, note, noteBy, toggle, noteRow, noteInput, noteBtn };
     rows.set(item.id, row);
     box.addEventListener("change", () => save("tick", item.id, { done: box.checked }));
+    toggle.addEventListener("click", () => {
+      const open = noteRow.hidden;
+      noteRow.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      if (open) noteInput.focus();
+    });
     noteBtn.addEventListener("click", () => save("note", item.id, { text: noteInput.value.slice(0, NOTE_MAX) }));
   }
 }
@@ -310,11 +335,13 @@ function render() {
     if (done) tally[item.side][0]++;
     if (unknown) unverified++;
     row.li.dataset.done = String(done);
+    row.mark.textContent = done ? "\u2713" : "";
+    row.mark.setAttribute("aria-label", done ? "Done" : "Not done");
     if (!pending.has(`tick:${item.id}`)) row.box.checked = done;
     row.overdue.textContent = !done && !unknown && item.due && item.due < day ? "overdue" : "";
     const u = doc?.updatedBy;
     if (done) {
-      row.state.textContent = u ? `Done by ${who(u)}, ${when(doc.updatedAt)}${u.via === "agent" ? " via agent" : ""}` : "Done";
+      row.state.textContent = u ? `Done by ${who(u)} · ${when(doc.updatedAt)}${u.via === "agent" ? " · via agent" : ""}` : "Done";
     } else if (waiting) {
       row.state.textContent = `Marked done by ${who(u)}; waiting for the team to confirm`;
     } else if (unknown) {
@@ -327,8 +354,11 @@ function render() {
     const n = noteDoc ? cleanNote(noteDoc.data).text : "";
     const nu = noteDoc?.updatedBy;
     row.note.textContent = n ? `Note: ${n}` : "";
-    row.noteBy.textContent = n && nu ? `Note by ${who(nu)}, ${when(noteDoc.updatedAt)}${nu.via === "agent" ? " via agent" : ""}` : "";
+    row.noteBy.textContent = n && nu ? `Note by ${who(nu)} · ${when(noteDoc.updatedAt)}${nu.via === "agent" ? " · via agent" : ""}` : "";
     if (document.activeElement !== row.noteInput && !pending.has(`note:${item.id}`)) row.noteInput.value = n;
+    row.toggle.textContent = n ? "Edit note" : "Add note";
+    row.toggle.dataset.hasNote = String(Boolean(n));
+    row.toggle.setAttribute("aria-label", `${n ? "Edit note" : "Add note"} on ${item.label}`);
   }
   const done = tally.client[0] + tally.team[0];
   const total = tally.client[1] + tally.team[1];
@@ -337,7 +367,8 @@ function render() {
     progressEl.textContent = `Client items: ${tally.client[0]} of ${tally.client[1]} done. Only people this checklist is shared with can see the team's progress.`;
     barEl.style.width = tally.client[1] ? `${Math.round((tally.client[0] / tally.client[1]) * 100)}%` : "0";
   } else {
-    progressEl.textContent = `${done} of ${total} done (client ${tally.client[0]} of ${tally.client[1]}, team ${tally.team[0]} of ${tally.team[1]})`;
+    // The Client and Team badges already show whose items are whose: the line is the total.
+    progressEl.textContent = `${done} of ${total} done`;
     barEl.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
   }
   setControls();
@@ -347,6 +378,10 @@ function setControls() {
   for (const row of rows.values()) {
     const mayTick = canWrite && (row.item.side === "client" || isTeam);
     row.box.disabled = !mayTick || pending.has(`tick:${row.item.id}`);
+    row.box.hidden = !mayTick;
+    row.mark.hidden = mayTick;
+    row.toggle.hidden = !canWrite;
+    if (!canWrite) row.noteRow.hidden = true;
     row.noteInput.disabled = !canWrite;
     row.noteBtn.disabled = !canWrite || pending.has(`note:${row.item.id}`);
   }
@@ -377,8 +412,14 @@ async function save(kind, id, data) {
   msg.textContent = "";
   try {
     const doc = await coll.update(id, () => data);
-    if (kind === "tick") lastTicks = [...lastTicks.filter((d) => d.id !== id), doc];
-    else lastNotes = [...lastNotes.filter((d) => d.id !== id), doc];
+    if (kind === "tick") {
+      lastTicks = [...lastTicks.filter((d) => d.id !== id), doc];
+    } else {
+      lastNotes = [...lastNotes.filter((d) => d.id !== id), doc];
+      const row = rows.get(id);
+      row.noteRow.hidden = true;
+      row.toggle.setAttribute("aria-expanded", "false");
+    }
   } catch (e) {
     msg.textContent = errorText(e);
   } finally {

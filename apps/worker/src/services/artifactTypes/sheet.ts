@@ -24,8 +24,18 @@ const FORMAT_HINT =
   'content for type sheet is JSON lines: a header line {"plinth":"sheet","v":1,"columns":[...]} ' +
   `then one JSON array per row. To send CSV or an .xlsx file, pass content_format "csv" or "xlsx". ${SKILL}`;
 
-// The last source parsed: validate and canonical run on the same text in one publish.
-let last: { text: string; sheet: Sheet } | null = null;
+// The last source parsed, and its canonical text once known: validate and canonical run on the
+// same text in one publish, and edit_sheet hands over the sheet it has already checked.
+let last: { text: string; sheet: Sheet; canonical: string | null } | null = null;
+
+/**
+ * A sheet edit_sheet built and checked, as the canonical text it sends to update_artifact: the
+ * publish then neither parses nor serializes it again. `text` must be serializeSheet's output for
+ * `sheet`, parsed back by parseSheet.
+ */
+export function rememberCheckedSheet(text: string, sheet: Sheet): void {
+  last = { text, sheet, canonical: text };
+}
 
 function parsed(text: string): Sheet {
   if (last?.text === text) return last.sheet;
@@ -54,7 +64,7 @@ function parsed(text: string): Sheet {
       },
     );
   }
-  last = { text, sheet: r.sheet };
+  last = { text, sheet: r.sheet, canonical: null };
   return r.sheet;
 }
 
@@ -65,7 +75,11 @@ export const sheetHooks: TypeHooks = {
     parsed(text);
   },
   canonical(_def, text) {
-    return serializeSheet(parsed(text));
+    const sheet = parsed(text);
+    if (last?.text === text && last.canonical !== null) return last.canonical;
+    const canonical = serializeSheet(sheet);
+    if (last?.text === text) last.canonical = canonical;
+    return canonical;
   },
   importSource(_def, text, format) {
     if (format === "jsonl") return text;

@@ -12,7 +12,15 @@
 // versions published before thumbnails existed) and answers 404 until it lands.
 //
 // The browser sees the page as a signed-out link viewer would: the enter token carries no identity
-// claim, so a page with shared data shows it read-only and never learns who is viewing.
+// claim, so a page with shared data shows it read-only and never learns who is viewing. A version
+// whose writer may not read the data (policy.captureReadsData: a token limited to one artifact
+// wrote it) is captured with a pass that reads none. The pass is bound to the captured version, so
+// the content host serves that version on every path, the artifact's root included. Whatever the
+// version, the browser lets the page reach only its own origin and the hosts its CSP allows, and no
+// navigation opens another version or a Plinth helper path other than the type's framed page (a
+// design's board loader, which holds no version data). A design's boards get the same pass in
+// their own cookie partition (captureFrameCookies)
+// (docs/security.md#thumbnails-and-link-previews).
 import puppeteer from "@cloudflare/puppeteer";
 import { CONTENT_RESERVED_PREFIX, typeDef } from "@plinth/shared";
 import {
@@ -22,9 +30,12 @@ import {
   registrableDomain,
   thumbnailsActive,
 } from "../config.ts";
+import { contentSources } from "../content/csp.ts";
 import { contentCookieName } from "../content/serve.ts";
 import { issueEnterUrl, passMaxAgeS, signContentCookie } from "../content/tokens.ts";
+import { TYPE_FRAMES_PREFIX } from "../content/typed.ts";
 import { secureFlag } from "../lib/cookies.ts";
+import { captureReadsData } from "../policy.ts";
 import { artifactRoot } from "./storage.ts";
 
 export const THUMB = {
@@ -54,6 +65,150 @@ export function thumbnailKey(artifactId: string, n: number): string {
 }
 
 /**
+ * Where the capture browser lets a page go: the artifact's own content origin (and, under the path
+ * fallback, only its own path there), and the hosts the content CSP lets any page load from (the
+ * CDN allowlist and Google Fonts), never as a navigation. A navigation (top-level or a frame's)
+ * under /__plinth/ goes only to the captured version, /__plinth/v/<version>/, the enter step
+ * that leads there, and the one framed page the artifact's type renders its frames from (a
+ * design's board loader).
+ */
+export interface CaptureScope {
+  /** contentOrigin(config, id): an origin, or an origin and path under the path fallback. */
+  artifact: string;
+  /** The version being captured: the only one a navigation may open by its version path. */
+  version: number;
+  /** Hosts reached over https on their default port, for subresources only. */
+  hosts: readonly string[];
+  /**
+   * The type's framed page under the artifact's base (/__plinth/frames/<type>/<file>), for a type
+   * that renders its author HTML in opaque frames; absent for every other type. It holds no
+   * version data, so the frames may open it as a navigation.
+   */
+  frame?: string;
+}
+
+/** The framed page of a type with opaque frames (renderer.frame), or undefined. */
+function typeFramePath(type: string | undefined): string | undefined {
+  const def = type === undefined ? null : typeDef(type);
+  const file = def?.opaqueFrames ? def.renderer?.frame : undefined;
+  return def && file ? `${TYPE_FRAMES_PREFIX}${def.id}/${file}` : undefined;
+}
+
+export function captureScope(
+  config: Config,
+  artifactId: string,
+  version: number,
+  type?: string,
+): CaptureScope {
+  const s = contentSources(config);
+  const hosts = new Set([
+    ...s.script,
+    ...s.style,
+    ...s.font,
+    ...s.img,
+    ...s.media,
+    ...s.connect,
+    ...s.frame,
+    ...s.worker,
+    ...s.manifest,
+  ]);
+  const frame = typeFramePath(type);
+  return {
+    artifact: contentOrigin(config, artifactId),
+    version,
+    hosts: [...hosts],
+    ...(frame ? { frame } : {}),
+  };
+}
+
+/** The path under the artifact's base that opens version n: what the capture's enter leads to. */
+export function captureVersionPath(n: number): string {
+  return `${CONTENT_RESERVED_PREFIX}v/${n}/`;
+}
+
+/** Schemes that never leave the browser: inline data, the page's own blobs, blank frames. */
+const LOCAL_SCHEMES: ReadonlySet<string> = new Set(["data:", "blob:", "about:"]);
+
+/**
+ * May the capture browser make this request? Requests to the artifact itself, those that never
+ * leave the browser, and subresources from the CSP's hosts; everything else is aborted, above all
+ * a navigation (top-level or a frame's) anywhere but the artifact, which the CSP cannot stop.
+ *
+ * A navigation on the artifact under /__plinth/ must also stay on the captured version: its own
+ * path (/__plinth/v/<n>/ and below, or /__plinth/v/<n>, which the content host redirects to the
+ * slash), or the enter step whose `next` is exactly that path, or exactly the type's framed page
+ * (scope.frame: a design's artboards load it, and it holds no version data). Another version and
+ * every other reserved helper are aborted as navigations. The artifact's other paths (`/`, `/chart.html`) stay open:
+ * the capture pass is bound to its version, so the content host serves them from it, never from
+ * the current version. Subresources keep the origin-wide rule.
+ */
+export function captureRequestAllowed(
+  scope: CaptureScope,
+  url: string,
+  navigation: boolean,
+): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (LOCAL_SCHEMES.has(u.protocol)) return true;
+  if (u.username || u.password) return false;
+  const own = new URL(scope.artifact);
+  if (u.origin === own.origin) {
+    const base = own.pathname.endsWith("/") ? own.pathname.slice(0, -1) : own.pathname;
+    if (!navigation) {
+      return base === "" || u.pathname === base || u.pathname.startsWith(`${base}/`);
+    }
+    if (u.pathname !== base && !u.pathname.startsWith(`${base}/`)) return false;
+    const rest = u.pathname.slice(base.length);
+    if (!rest.startsWith(CONTENT_RESERVED_PREFIX)) return true;
+    const version = captureVersionPath(scope.version);
+    if (rest === `${CONTENT_RESERVED_PREFIX}enter`) {
+      const next = u.searchParams.getAll("next");
+      return next.length === 1 && next[0] === version;
+    }
+    if (scope.frame !== undefined && rest === scope.frame) return true;
+    return rest === version.slice(0, -1) || rest.startsWith(version);
+  }
+  if (navigation) return false;
+  return u.protocol === "https:" && u.port === "" && scope.hosts.includes(u.hostname);
+}
+
+/** The parts of a puppeteer page the capture's guard uses. */
+export interface GuardedPage {
+  setRequestInterception(on: boolean): Promise<void>;
+  on(event: "request", handler: (req: GuardedRequest) => void): unknown;
+  on(event: "popup", handler: (popup: { close(): Promise<void> } | null) => void): unknown;
+}
+
+export interface GuardedRequest {
+  url(): string;
+  isNavigationRequest(): boolean;
+  isInterceptResolutionHandled(): boolean;
+  continue(): Promise<void>;
+  abort(errorCode?: "blockedbyclient"): Promise<void>;
+}
+
+/**
+ * Hold every request the page makes to captureRequestAllowed, and close any window it opens. A
+ * popup is a page of its own that this interception does not cover, and closing it on sight is the
+ * best a page-level guard can do, which is why policy.captureReadsData does not rely on it.
+ */
+export async function guardCapturePage(page: GuardedPage, scope: CaptureScope): Promise<void> {
+  await page.setRequestInterception(true);
+  page.on("request", (req) => {
+    if (req.isInterceptResolutionHandled()) return;
+    const ok = captureRequestAllowed(scope, req.url(), req.isNavigationRequest());
+    (ok ? req.continue() : req.abort("blockedbyclient")).catch(() => undefined);
+  });
+  page.on("popup", (popup) => {
+    popup?.close().catch(() => undefined);
+  });
+}
+
+/**
  * A cookie the browser holds before it opens the page: the parameters of the DevTools protocol's
  * Network.setCookie, partition key included.
  */
@@ -71,12 +226,13 @@ export interface CaptureCookie {
 }
 
 /**
- * Opens `url` in a browser and returns a JPEG of the first screen. `cookies` are set before the
- * page opens.
+ * Opens `url` in a browser, held to `scope`, and returns a JPEG of the first screen. `cookies` are
+ * set before the page opens.
  */
 export type Shooter = (
   browser: Fetcher,
   url: string,
+  scope: CaptureScope,
   cookies: readonly CaptureCookie[],
 ) => Promise<Uint8Array>;
 
@@ -94,13 +250,14 @@ export type Shooter = (
  * partition at all, so there the cookie is unpartitioned: it lives only in this capture's own
  * browser, which loads this one artifact and is closed afterwards.
  *
- * The cookie is the same kind of pass the enter sets (a capture: no identity, two minutes, this
- * artifact at this epoch only), handed to Plinth's own browser and never put in a URL. Empty where
- * a Secure cookie cannot be set (a plain-http instance on a name other than localhost).
+ * The cookie is the same pass the enter sets (a capture: no identity, two minutes, this artifact
+ * at this epoch only, bound to the captured version, and reading no shared data when the enter's
+ * pass reads none), handed to Plinth's own browser and never put in a URL. Empty where a Secure
+ * cookie cannot be set (a plain-http instance on a name other than localhost).
  */
 export async function captureFrameCookies(
   config: Config,
-  target: { artifactId: string; accessEpoch: number },
+  target: { artifactId: string; accessEpoch: number; number: number; readsData: boolean },
   nowMs = Date.now(),
 ): Promise<CaptureCookie[]> {
   const origin = new URL(contentOrigin(config, target.artifactId));
@@ -116,6 +273,10 @@ export async function captureFrameCookies(
         target.accessEpoch,
         undefined,
         "capture",
+        target.number,
+        false,
+        undefined,
+        !target.readsData,
       ),
       url: `${origin.origin}${path}`,
       path,
@@ -138,19 +299,26 @@ export async function captureFrameCookies(
 /**
  * What the capture's browser opens for version `number`, and the cookies it holds first. The
  * exact version, even if a newer one lands while the browser loads, entered with a capture pass:
- * no identity, and the one pass the content host serves top-level. A type whose author HTML
- * renders in opaque frames gets the pass in their partition too (captureFrameCookies).
+ * no identity, and the one pass the content host serves top-level. It reads no shared data when
+ * the version's writer may not (policy.captureReadsData). A type whose author HTML renders in
+ * opaque frames gets the same pass in their partition too (captureFrameCookies).
  */
 export async function captureLoad(
   config: Config,
-  target: { artifactId: string; accessEpoch: number; type: string; number: number },
+  target: {
+    artifactId: string;
+    accessEpoch: number;
+    type: string;
+    number: number;
+    readsData: boolean;
+  },
 ): Promise<{ url: string; cookies: CaptureCookie[] }> {
   const url = await issueEnterUrl(
     config,
     { id: target.artifactId, accessEpoch: target.accessEpoch },
-    `${CONTENT_RESERVED_PREFIX}v/${target.number}/`,
+    captureVersionPath(target.number),
     undefined,
-    { capture: true },
+    { capture: true, captureVersion: target.number, noData: !target.readsData },
   );
   const cookies = typeDef(target.type)?.opaqueFrames
     ? await captureFrameCookies(config, target)
@@ -161,17 +329,21 @@ export async function captureLoad(
 async function browserShot(
   binding: Fetcher,
   url: string,
+  scope: CaptureScope,
   cookies: readonly CaptureCookie[],
 ): Promise<Uint8Array> {
   const browser = await puppeteer.launch(binding);
   try {
     const page = await browser.newPage();
+    await guardCapturePage(page as unknown as GuardedPage, scope);
     if (cookies.length > 0) {
       const cdp = await page.createCDPSession();
       for (const cookie of cookies) {
         // Without it the capture still runs, as before: boards without their own files.
         await cdp.send("Network.setCookie", cookie).catch((e: unknown) => {
-          console.warn(`capture cookie not set: ${e instanceof Error ? e.message : e}`);
+          console.warn(
+            `capture cookie not set: ${redactUrls(e instanceof Error ? e.message : String(e))}`,
+          );
         });
       }
     }
@@ -198,12 +370,14 @@ export function setThumbnailShooter(s: Shooter | null): void {
   shooter = s ?? browserShot;
 }
 
-interface CaptureTarget {
+export interface CaptureTarget {
   artifactId: string;
   accessEpoch: number;
   type: string;
   versionId: string;
   number: number;
+  /** policy.captureReadsData for the version's writer. */
+  readsData: boolean;
 }
 
 /**
@@ -243,15 +417,17 @@ async function setState(db: D1Database, versionId: string, state: "ok" | "failed
 }
 
 /** The live (not deleted, not taken down) artifact and its version n, or null. */
-async function captureTarget(
+export async function captureTarget(
   db: D1Database,
   artifactId: string,
   n: number,
 ): Promise<CaptureTarget | null> {
   const row = await db
     .prepare(
-      `SELECT a.id AS artifact_id, a.access_epoch, a.type, v.id AS version_id, v.number
+      `SELECT a.id AS artifact_id, a.access_epoch, a.type, v.id AS version_id, v.number,
+              v.created_by_user, c.artifact_id AS bound_artifact_id
        FROM artifacts a JOIN versions v ON v.artifact_id = a.id
+       LEFT JOIN agent_connections c ON c.id = v.created_by_connection
        WHERE a.id = ?1 AND v.number = ?2 AND a.deleted_at IS NULL AND a.taken_down_at IS NULL`,
     )
     .bind(artifactId, n)
@@ -261,6 +437,8 @@ async function captureTarget(
       type: string;
       version_id: string;
       number: number;
+      created_by_user: string | null;
+      bound_artifact_id: string | null;
     }>();
   return row
     ? {
@@ -269,6 +447,10 @@ async function captureTarget(
         type: row.type,
         versionId: row.version_id,
         number: row.number,
+        readsData: captureReadsData({
+          userId: row.created_by_user,
+          boundArtifactId: row.bound_artifact_id,
+        }),
       }
     : null;
 }
@@ -289,7 +471,8 @@ export async function captureThumbnail(
   if (!(await claimThumbnail(env.DB, target.versionId).catch(() => false))) return "skipped";
   try {
     const { url, cookies } = await captureLoad(config, target);
-    const jpeg = await withBudget(shooter(env.BROWSER, url, cookies), THUMB.budgetMs);
+    const scope = captureScope(config, target.artifactId, target.number, target.type);
+    const jpeg = await withBudget(shooter(env.BROWSER, url, scope, cookies), THUMB.budgetMs);
     if (jpeg.byteLength === 0) throw new Error("empty screenshot");
     const key = thumbnailKey(target.artifactId, target.number);
     await env.FILES.put(key, jpeg, { httpMetadata: { contentType: "image/jpeg" } });
@@ -303,11 +486,19 @@ export async function captureThumbnail(
     return "ok";
   } catch (e) {
     console.warn(
-      `thumbnail capture failed for ${artifactId} v${n}: ${e instanceof Error ? e.message : e}`,
+      `thumbnail capture failed for ${artifactId} v${n}: ${redactUrls(e instanceof Error ? e.message : String(e))}`,
     );
     await setState(env.DB, target.versionId, "failed").catch(() => undefined);
     return "failed";
   }
+}
+
+/**
+ * An error message without any URL in it, so no enter token reaches a log: puppeteer's
+ * navigation errors quote the URL they failed on, and a capture's URL holds a one-time pass.
+ */
+export function redactUrls(message: string): string {
+  return message.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
 }
 
 /** `p`, or a rejection once `ms` have passed. */

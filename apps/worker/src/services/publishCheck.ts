@@ -71,15 +71,7 @@ interface ScanFlags {
    * works, and a data: URL needs none. What a design's artboards are checked for.
    */
   opaqueLocal: boolean;
-  /** Uses of the microphone APIs a frame can never have (MICROPHONE_WORDS), in scripts. */
-  microphone: number;
 }
-
-/**
- * Identifiers that reach the microphone from page script. Plinth frames never get the microphone
- * (the app's and the content host's Permissions-Policy), so these calls fail for every viewer.
- */
-const MICROPHONE_WORDS = new Set(["getUserMedia", "SpeechRecognition", "webkitSpeechRecognition"]);
 
 interface Ref {
   url: string;
@@ -88,8 +80,6 @@ interface Ref {
 
 const ROOT_ABSOLUTE =
   "loads the current version's file even when an older version is viewed, and fails under the path fallback. Build with relative URLs (Vite base: './')";
-const BLOCKED_MICROPHONE =
-  "Plinth frames never get the microphone, so this call fails for every viewer. For speech to text, declare dictation and use plinth.dictation (when the instance offers it); otherwise let people type";
 const OPAQUE =
   "This instance runs opaque isolation: module scripts, crossorigin links and web fonts load with Origin: null and fail. Build a classic bundle (Vite: build.modulePreload false and an iife/legacy output)";
 const OPAQUE_ARTBOARD =
@@ -122,6 +112,24 @@ function segmentMatches(seg: string, last: boolean): boolean {
       case "folder":
         if (!last && seg === r.value) return true;
         break;
+      case "path":
+        // Matched on the whole path, in isSensitivePath.
+        break;
+    }
+  }
+  return false;
+}
+
+/** Whether the path's last segments are one of the `path` rules' segments. */
+function tailMatches(segs: string[]): boolean {
+  for (const r of SENSITIVE_PATH_RULES) {
+    if (r.kind !== "path") continue;
+    const want = r.value.split("/");
+    if (
+      want.length <= segs.length &&
+      want.every((w, i) => segs[segs.length - want.length + i] === w)
+    ) {
+      return true;
     }
   }
   return false;
@@ -133,7 +141,7 @@ function segmentMatches(seg: string, last: boolean): boolean {
  */
 export function isSensitivePath(path: string): boolean {
   const segs = path.toLowerCase().split("/");
-  return segs.some((seg, i) => segmentMatches(seg, i === segs.length - 1));
+  return segs.some((seg, i) => segmentMatches(seg, i === segs.length - 1)) || tailMatches(segs);
 }
 
 /** Whether a path names the local project files record (PROJECT_FILES_RECORD) in any segment. */
@@ -191,7 +199,7 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
     budget -= f.bytes.byteLength;
     const text = decoder.decode(f.bytes);
     const found: Ref[] = [];
-    const flags: ScanFlags = { opaque: false, opaqueLocal: false, microphone: 0 };
+    const flags: ScanFlags = { opaque: false, opaqueLocal: false };
     if (kind === "html") scanHtml(text, found, flags);
     else if (kind === "css") scanCss(text, found, flags, "img");
     else scanJs(text, found, flags);
@@ -204,14 +212,6 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
         code: "opaque_module",
         file: f.path,
         message: input.opaqueReason === "artboard" ? OPAQUE_ARTBOARD : OPAQUE,
-      });
-    }
-    if (flags.microphone > 0) {
-      out.push({
-        code: "blocked_feature",
-        file: f.path,
-        count: flags.microphone,
-        message: BLOCKED_MICROPHONE,
       });
     }
   }
@@ -907,7 +907,6 @@ function scanJs(s: string, refs: Ref[], flags: ScanFlags): void {
   let prev: JsToken | null = null;
   let pendingUrl = "";
   for (const t of jsTokens(s)) {
-    if (t.kind === "word" && MICROPHONE_WORDS.has(t.value)) flags.microphone++;
     const afterDot = prev?.kind === "punct" && prev.value === ".";
     switch (state) {
       case "import":

@@ -1,6 +1,6 @@
 // The whole-draft review on the server (docs/spec.md "Editing"): a draft's files are its base
 // version's, so every page Publish stages the source plus that version's files
-// (files_from_version, never the current version's), and "Publish mine" publishes the room's frozen
+// (files_from_version, never the current version's), and "Publish your changes" publishes the room's frozen
 // draft with the files it was made with, never the files of the version it replaces. Also the
 // doc's HTML-document rule on the socket, the files part of the conflict frame and its cap, the
 // stager parity of the live rules, and AppConfig.inline_editing.
@@ -92,7 +92,7 @@ async function files(id: string, n: number) {
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-describe("Publish mine stages the draft's files", () => {
+describe("Publish your changes stages the draft's files", () => {
   it("v3 holds v1's files (the draft's base), never v2's, and the conflict frame lists v2's", async () => {
     const { id, owner, ownerP } = await docWithFiles();
     const h = ownerP.session.headers;

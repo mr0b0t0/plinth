@@ -33,8 +33,8 @@ describe("viewer item lists", () => {
   });
 
   it("builds the notice from its lines, and says nothing when no line does", () => {
-    // The data line, the people line (names and the people list), then the files line.
-    expect(DATA_NOTICE_LINES.length).toBe(4);
+    // The data line, then the people line (names and the people list).
+    expect(DATA_NOTICE_LINES.length).toBe(2);
     expect(noticeText({})).toBeNull();
     expect(
       noticeText({

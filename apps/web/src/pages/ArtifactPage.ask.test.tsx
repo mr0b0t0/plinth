@@ -51,12 +51,9 @@ const created = (body: Record<string, unknown>) => ({
   anchor: body.anchor ?? null,
   status: "open",
   created_at: new Date().toISOString(),
-  resolved_at: null,
   mentions: body.request_to
     ? [{ task_id: "t1", target: "@claude", state: "pending", result_version: null }]
     : [],
-  kind: "comment",
-  request_data: null,
 });
 
 /** A stub API that answers the gate and the comments, and records every comment posted. */

@@ -145,7 +145,7 @@ describe("helpers", () => {
 
   it("CSV export guards formulas and starts with a BOM", () => {
     const csv = exportBytes(SHEET, evaluateSheet(SHEET, { budget: 10_000 }), "t", "csv") as string;
-    expect(csv.startsWith("﻿Item,Qty,Price,When,Paid,Note\r\n")).toBe(true);
-    expect(csv).toContain("Apples,3,1.25,2026-01-02,TRUE,'=1+1\r\n");
+    expect(csv.startsWith('﻿"Item","Qty","Price","When","Paid","Note"\r\n')).toBe(true);
+    expect(csv).toContain(`"Apples",3,1.25,2026-01-02,TRUE,"'=1+1"\r\n`);
   });
 });

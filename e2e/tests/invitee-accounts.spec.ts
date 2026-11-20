@@ -5,14 +5,14 @@
 import { expect, test } from "@playwright/test";
 import { publishArtifact, uniqueEmail } from "../support/api.ts";
 import { latestCode } from "../support/mail.ts";
+import { CURRENT_FRAME } from "../support/poll.ts";
 import { seedToken } from "../support/tokens.ts";
-import { CURRENT_FRAME } from "../support/viewer.ts";
 
 test("an invitee confirms the code at the gate, is signed in, and finds the artifact on the dashboard", async ({
   page,
 }) => {
   // One project is enough: every viewing code in the suite counts against one per-IP limit (the
-  // e2e Worker ignores client IPs), so code flows run once, as outsider-templates.spec.ts does.
+  // e2e Worker ignores client IPs), so code flows run in one project only.
   test.skip(test.info().project.name !== "light", "code flows run in the light project only");
   test.setTimeout(60_000);
   const owner = uniqueEmail("inv-owner");
@@ -31,17 +31,14 @@ test("an invitee confirms the code at the gate, is signed in, and finds the arti
   await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(
-    page.getByText(
-      "Confirming it signs you in to Plinth with that address, and creates an account for it if it has none.",
-      { exact: false },
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("Sign in with a one-time code.", { exact: false })).toBeVisible();
 
   const since = new Date(Date.now() - 1000).toISOString();
   await page.getByLabel("Email").fill(invitee);
   await page.getByRole("button", { name: "Send code" }).click();
   await expect(page.getByText("If this address has access, we sent a code")).toBeVisible();
+  // On the code step the sent-code line is the only text above the field.
+  await expect(page.getByText("Sign in with a one-time code.", { exact: false })).toBeHidden();
   const code = await latestCode(page.request, invitee, { since });
   await page.getByLabel("Six-digit code").fill(code);
   await page.getByRole("button", { name: "Confirm code" }).click();

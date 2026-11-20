@@ -149,8 +149,6 @@ export function CommentsPanel({
   const [sending, setSending] = useState(false);
   const [composeError, setComposeError] = useState<string | undefined>();
   const [blocked, setBlocked] = useState<Blocked>(null);
-  /** The owner or an editor (the list says so): page requests are dismissed, not withdrawn. */
-  const [moderator, setModerator] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   // Ask an agent: the composer in request mode, the agents it can go to, and the one chosen.
   const [requesting, setRequesting] = useState(false);
@@ -195,7 +193,7 @@ export function CommentsPanel({
     if (items) onItemsRef.current?.(items);
   }, [items]);
   const anchors = useMemo(() => highlightAnchors(threads), [threads]);
-  const anchorsKey = JSON.stringify(anchors);
+  const anchorsKey = useMemo(() => JSON.stringify(anchors), [anchors]);
   const anchorsRef = useRef(anchors);
   anchorsRef.current = anchors;
 
@@ -213,15 +211,11 @@ export function CommentsPanel({
       loadingRef.current = true;
       if (opts.manual) setRefreshing(true);
       try {
-        const res = await api<{
-          items: CommentInfo[];
-          can_comment?: boolean;
-          signed_in?: boolean;
-          can_moderate?: boolean;
-        }>(commentsPath);
+        const res = await api<{ items: CommentInfo[]; can_comment?: boolean; signed_in?: boolean }>(
+          commentsPath,
+        );
         // Say up front when this person cannot comment, instead of after they typed something.
         if (res.can_comment === false) setBlocked(res.signed_in ? "forbidden" : "signin");
-        setModerator(res.can_moderate === true);
         const seen = seenRef.current;
         if (seen) {
           const fresh = res.items.filter((c) => !seen.has(c.id));
@@ -406,6 +400,26 @@ export function CommentsPanel({
   }, []);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+
+  // Another version is shown now (a live update, or the person picked one), or the page started or
+  // stopped anchoring its own comments. A pin placed on the old page may mean nothing on this one,
+  // so it is removed (the draft stays) and a page request it answered ends `closed`. Picking ends
+  // too when the page now anchors its own comments: it has no bridge to pick with. This runs
+  // before a new page request is taken (the effect below), so it never clears a fresh one.
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
+  const shownRef = useRef({ version, pageOwnsAnchors });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per version or declaration
+  useEffect(() => {
+    const prev = shownRef.current;
+    shownRef.current = { version, pageOwnsAnchors };
+    if (prev.version === version && prev.pageOwnsAnchors === pageOwnsAnchors) return;
+    if (pageOwnsAnchors) setPicking(false);
+    if (!anchorRef.current && !pageReqRef.current) return;
+    if (anchorRef.current) announce("The pin was removed: the page changed.");
+    setAnchor(null);
+    settlePage({ status: "closed" });
+  }, [version, pageOwnsAnchors]);
   // Whether this person can comment is never told to the page, not even by timing: a request
   // from someone who cannot comment (the panel says "Sign in to comment") is held like any other,
   // and ends `closed` when the panel closes or a later request replaces it, as for a commenter
@@ -660,7 +674,6 @@ export function CommentsPanel({
                     version={version}
                     active={t.root.id === activeId}
                     readOnly={blocked !== null}
-                    moderator={moderator}
                     onActivate={activate}
                     onReply={reply}
                     onSetStatus={setStatus}

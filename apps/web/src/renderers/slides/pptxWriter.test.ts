@@ -151,6 +151,57 @@ describe("buildPptx", () => {
     expect(slide).toContain('algn="r"');
   });
 
+  it("spaces lines in exact points, as on screen, and keeps the gap above an item", async () => {
+    const { text } = await files();
+    const slide = text("ppt/slides/slide1.xml");
+    // 22.5 pt at line height 1.35 is 30.4 pt (30.375 rounded), never a multiple of the font's own.
+    expect(slide).toContain('<a:lnSpc><a:spcPts val="3040"/></a:lnSpc>');
+    expect(slide).not.toContain("<a:spcPct");
+    expect(slide).toContain('<a:spcBef><a:spcPts val="680"/></a:spcBef>');
+  });
+
+  it("gives table cells the screen's top padding as margins, and narrow sides", async () => {
+    // inch2Emu: 914400 per inch. Without padY in the model: 0.04 in above and below.
+    const narrow = (await files()).text("ppt/slides/slide1.xml");
+    expect(narrow).toContain('marL="73152" marR="73152" marT="36576" marB="36576"');
+    const padded: DeckModel = {
+      ...MODEL,
+      slides: [
+        {
+          ...(MODEL.slides[0] as DeckModel["slides"][number]),
+          items: (MODEL.slides[0]?.items ?? []).map((i) =>
+            i.kind === "table" ? { ...i, padY: 0.08 } : i,
+          ),
+        },
+      ],
+    };
+    const slide = (await files(padded)).text("ppt/slides/slide1.xml");
+    expect(slide).toContain('marL="73152" marR="73152" marT="73152" marB="73152"');
+  });
+
+  it("keeps a one-line item (the footer, the number) from wrapping, and wraps the rest", async () => {
+    const one: DeckModel = {
+      ...MODEL,
+      slides: [
+        {
+          n: 1,
+          notes: "",
+          background: "FFFFFF",
+          items: [
+            {
+              kind: "text",
+              box: { x: 0.833, y: 7, w: 2, h: 0.3 },
+              paras: [para({ size: 13.5, runs: [{ text: "Acme review" }] })],
+              oneLine: true,
+            },
+          ],
+        },
+      ],
+    };
+    expect((await files(one)).text("ppt/slides/slide1.xml")).toMatch(/<a:bodyPr[^>]* wrap="none"/);
+    expect((await files()).text("ppt/slides/slide1.xml")).not.toContain('wrap="none"');
+  });
+
   it("adds the image, the notes and the background, and counts a missing image", async () => {
     const { zip, text, imagesSkipped } = await files();
     expect(imagesSkipped).toBe(1);

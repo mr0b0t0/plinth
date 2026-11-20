@@ -1,7 +1,8 @@
 // Page: /a/:slug/compare?from=&to=. Two versions of an artifact: a plain-language list of what
 // changed (worked out in the browser by the shared describers, files included), then the two
-// versions rendered side by side, one at a time at phone width. No source is shown: older links
-// with view=source or view=rendered land here too.
+// versions rendered side by side, one at a time at phone width. Every type compares the same way,
+// a design included, and no source is shown: older links with view=source or view=rendered land
+// here too.
 import { ArrowsLeftRightIcon, ClockCounterClockwiseIcon } from "@phosphor-icons/react";
 import type { VersionInfo } from "@plinth/shared";
 import { ChangeList } from "../components/history/ChangeList.tsx";
@@ -113,12 +114,14 @@ export default function Compare({ params }: { params: Record<string, string> }) 
 
         {ready && (
           <div className="hx-compare__body">
-            <ChangeList
-              key={`${from}-${to}`}
-              heading={`What changed from v${from} to v${to}`}
-              changes={changes?.changes ?? null}
-              files={changes?.files ?? null}
-            />
+            {/* One version on both sides: the note above says so, and there is nothing to list. */}
+            {from !== to && (
+              <ChangeList
+                key={`${from}-${to}`}
+                changes={changes?.changes ?? null}
+                files={changes?.files ?? null}
+              />
+            )}
             <RenderedCompare slug={slug} title={title ?? slug} from={from} to={to} />
           </div>
         )}

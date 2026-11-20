@@ -6,7 +6,7 @@
 // - in-place: a doc under origin isolation, outside review mode and outside a live-editing room:
 //   the doc renderer fetches the new version's Markdown and re-renders where the reader is.
 // - hold: an HTML page that declares `hold` while focus is inside its frame (the hold rule): the
-//   bar offers "v5 is available · Update" instead of replacing the page. It comes before ask: a
+//   page offers a "v5 is available" toast with Update instead of replacing the page. It comes before ask: a
 //   runtime answering update:ok records scroll and handed-over state, not what is being typed, so
 //   a page that declared `hold` is not replaced under the viewer even when it loads the runtime.
 // - ask: an HTML page whose frame runtime said hello (origin isolation): it records scroll, place
@@ -66,9 +66,13 @@ export function planUpdate(s: UpdateSituation): UpdatePlan {
   return { kind: "swap" };
 }
 
-/** Whether the viewer is using the page in `frame`: focus is inside it and the tab has focus. */
+/**
+ * Whether the viewer is using the page in `frame`: focus is inside it. Not whether the window has
+ * focus too: a viewer who switches to another app or tab mid-sentence still has the frame as the
+ * document's active element, and the input they typed is just as unsaved.
+ */
 export function frameHasFocus(frame: HTMLIFrameElement | null): boolean {
-  return frame !== null && document.activeElement === frame && document.hasFocus();
+  return frame !== null && document.activeElement === frame;
 }
 
 /** The `update` message for the frame's runtime (posted at the exact content origin only). */

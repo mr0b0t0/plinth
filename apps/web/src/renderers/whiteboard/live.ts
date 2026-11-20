@@ -7,7 +7,9 @@
 // floor), and the renderer follows it: a viewer may write when the session says so and, while the
 // room is up, when the room lets them emit block.move. That is recomputed every time the room
 // opens, so a version that lets only editors change the board turns a commenter's board read-only
-// as soon as their socket reconnects.
+// as soon as their socket reconnects. A reconnect also reads the session again (`recheck`), so a
+// version that opens the board to commenters lets a commenter's open board change it, and a
+// version that closes it takes the session's answer away too.
 import { isBoardId } from "@plinth/shared";
 import type { RoomStatus, RuntimePeer, RuntimeRoom, RuntimeRoomReady } from "./runtime.ts";
 
@@ -23,6 +25,11 @@ export interface LiveHooks {
   status(s: RoomStatus): void;
   /** Whether this viewer may change the board now. */
   canWrite(may: boolean): void;
+  /**
+   * The session's can_write as it is now (after a settings version), or null when it could not
+   * be read: then the last answer stands.
+   */
+  recheck?(): Promise<boolean | null>;
 }
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -66,9 +73,14 @@ export class Live {
     this.room.emit("block.move", m);
   });
 
+  /** Whether the room went away since it last opened: its next open is a reconnect. */
+  private dropped = false;
+  /** The session reads after reconnects, chained. */
+  private rechecks: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly room: RuntimeRoom,
-    private readonly sessionCanWrite: boolean,
+    private sessionCanWrite: boolean,
     private readonly hooks: LiveHooks,
   ) {}
 
@@ -81,8 +93,16 @@ export class Live {
     if (!ready.available) return ready;
     r.onStatus((s) => {
       this.hooks.status(s);
+      if (s !== "open") {
+        if (s === "reconnecting" || s === "closed") this.dropped = true;
+        return;
+      }
       // A reconnect after the room's declaration changed carries the new rights.
-      if (s === "open") this.hooks.canWrite(this.mayWrite());
+      this.hooks.canWrite(this.mayWrite());
+      if (this.dropped) {
+        this.dropped = false;
+        void this.recheck();
+      }
     });
     r.onPeers((list) => this.hooks.peers(list));
     r.on("block.move", (d) => {
@@ -99,6 +119,20 @@ export class Live {
   private onSaved(collection: "blocks" | "arrows", d: unknown) {
     const id = typeof d === "object" && d !== null ? (d as { id?: unknown }).id : undefined;
     if (isBoardId(id)) this.hooks.saved(collection, id);
+  }
+
+  /** Read the session again and, when its answer changed, say what this viewer may do now. */
+  private recheck(): Promise<void> {
+    const read = this.hooks.recheck;
+    if (!read) return Promise.resolve();
+    // One at a time, in order, so a later reconnect's answer is never overtaken by an earlier one.
+    this.rechecks = this.rechecks.then(async () => {
+      const may = await read().catch(() => null);
+      if (may === null || may === this.sessionCanWrite) return;
+      this.sessionCanWrite = may;
+      this.hooks.canWrite(this.mayWrite());
+    });
+    return this.rechecks;
   }
 
   /** The session's answer, narrowed by the room's while the room is up. */

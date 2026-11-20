@@ -35,7 +35,6 @@ interface MentionItem {
   comment_body: string;
   comment_author_role: string | null;
   anchor: Record<string, unknown> | null;
-  source: string;
 }
 
 /** Ask an agent: the bar's button where it is shown, else the ⋯ item (commenters, phone width). */
@@ -115,7 +114,6 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
       target: "@claude",
       comment_body: "Make the heading red",
       comment_author_role: "commenter",
-      source: "comment",
     });
     expect(task.anchor).toMatchObject({ selector: expect.any(String), text: "Launch plan" });
     expect((await tool(client, "claim_mention", { task_id: task.id })).isError).toBe(false);

@@ -70,9 +70,11 @@ import {
   pairColors,
 } from "../styles/contrast.ts";
 import "../styles/design-page.css";
+import { useMediaQuery } from "../components/editor/useMediaQuery.ts";
 import { EditBar, type EditBarProps } from "../components/viewer/EditBar.tsx";
 import { LiveDraftNotice } from "../components/viewer/LiveDraftNotice.tsx";
 import type { LiveFrameStatus } from "../components/viewer/rendererProtocol.ts";
+import { VIEWER_COMPACT_QUERY } from "../components/viewer/ViewerStage.tsx";
 import "../components/viewer/viewer.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
 
@@ -1079,13 +1081,7 @@ function ComponentSpecimens() {
             {
               id: "changes",
               label: "Changes",
-              content: (
-                <ChangeList
-                  heading="What changed from v6 to v7"
-                  changes={SAMPLE_CHANGES}
-                  files={SAMPLE_FILES}
-                />
-              ),
+              content: <ChangeList changes={SAMPLE_CHANGES} files={SAMPLE_FILES} />,
             },
             {
               id: "history",
@@ -1317,13 +1313,14 @@ const EDIT_STATES: [string, Partial<EditBarProps>][] = [
   ["Not connected", { dirty: true, connected: false }],
   ["A version to review", { dirty: true, phase: "conflict", conflictVersion: 5 }],
   ["Versions to review", { dirty: true, phase: "conflict", conflictVersion: 6 }],
+  ["Reviewing", { dirty: true, phase: "conflict", conflictVersion: 5, reviewing: true }],
   [
     "Cannot be published yet",
     {
       dirty: true,
       phase: "dirty",
       publishable: false,
-      unpublishableReason: "These page changes can't be published yet.",
+      unpublishableReason: "These changes can't be published yet.",
     },
   ],
   [
@@ -1350,6 +1347,8 @@ const LIVE_STATUS: LiveFrameStatus = {
 
 /** On-page editing (#36): the edit strip and the unpublished-changes line in every state. */
 function LiveEditSpecimens() {
+  // Done is on the strip only where the bar's Edit toggle folds into the ⋯ menu.
+  const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const bar: EditBarProps = {
     phase: "editing",
     mode: "room",
@@ -1361,18 +1360,14 @@ function LiveEditSpecimens() {
     rebasedVersion: null,
     editors: [],
     onPublish: noop,
-    onDiscard: noop,
     onDone: noop,
     onReview: noop,
+    compact,
   };
-  const notice = { onSave: noop, onContinue: noop, onDiscard: noop, onReview: noop };
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
     <>
-      <Specimen
-        title="Edit bar"
-        note="Under the artifact bar while a doc or a sheet is edited on its page. Publish is the one ink primary; bronze marks the live state. While a version waits for review, Review changes takes its place and opens the review in the page itself."
-      >
+      <Specimen title="Edit bar" note="Under the artifact bar while editing on the page.">
         <div className="ds-stack">
           {EDIT_STATES.map(([label, over]) => (
             <div key={label}>
@@ -1396,17 +1391,14 @@ function LiveEditSpecimens() {
               updated_by_email: "bo@example.org",
             }}
             status={null}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
             status={{ ...LIVE_STATUS, editors: [{ email: "bo@example.org", block: true }] }}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
             status={{ ...LIVE_STATUS, dirty: true, conflict_version: 5 }}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
@@ -1414,19 +1406,6 @@ function LiveEditSpecimens() {
             restore={{ text: "", base: 4, saved_at: hoursAgo }}
             onSaveRestore={noop}
             onDropRestore={noop}
-            {...notice}
-          />
-          <LiveDraftNotice
-            draft={{
-              base_version: 4,
-              dirty: true,
-              conflict_version: null,
-              updated_at: hoursAgo,
-              updated_by_email: "bo@example.org",
-            }}
-            status={null}
-            signIn
-            {...notice}
           />
         </div>
       </Specimen>

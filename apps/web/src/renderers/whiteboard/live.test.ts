@@ -1,9 +1,10 @@
 // The live room: may this viewer change the board, recomputed each time the room opens (a
 // commenter on a board that just became editors-only reconnects without the right to emit, and
-// their board turns read-only); and what peers send is checked before it is used.
+// their board turns read-only), with the session read again on each reconnect (a board opened to
+// commenters becomes editable for them); and what peers send is checked before it is used.
 import { describe, expect, it, vi } from "vitest";
 import { Live } from "./live.ts";
-import type { RoomStatus, RuntimeRoom } from "./runtime.ts";
+import { type RoomStatus, type RuntimeRoom, readSessionCanWrite } from "./runtime.ts";
 
 function room(canEmit: { value: boolean }) {
   const statusSubs: ((s: RoomStatus) => void)[] = [];
@@ -66,6 +67,64 @@ describe("Live", () => {
     const live = new Live(room({ value: true }).r, false, h);
     await live.start();
     expect(h.canWrite).toHaveBeenLastCalledWith(false);
+  });
+
+  it("reads the session again on a reconnect: a board opened to commenters lets them change it", async () => {
+    const can = { value: false };
+    const rm = room(can);
+    const session = { value: false as boolean | null };
+    const recheck = vi.fn(async () => session.value);
+    const h = { ...hooks(), recheck };
+    const live = new Live(rm.r, false, h);
+    await live.start();
+    expect(h.canWrite).toHaveBeenLastCalledWith(false);
+    // The first open is not a reconnect: the session just loaded.
+    expect(recheck).not.toHaveBeenCalled();
+    // A settings version opens the board to commenters: 4410, /room again, then the session.
+    can.value = true;
+    session.value = true;
+    rm.status("reconnecting");
+    rm.status("open");
+    await vi.waitFor(() => expect(h.canWrite).toHaveBeenLastCalledWith(true));
+    expect(recheck).toHaveBeenCalledOnce();
+    expect(live.mayWrite()).toBe(true);
+    // And back: editors only again. The room and the session both say no.
+    can.value = false;
+    session.value = false;
+    rm.status("reconnecting");
+    rm.status("open");
+    await vi.waitFor(() => expect(recheck).toHaveBeenCalledTimes(2));
+    expect(h.canWrite).toHaveBeenLastCalledWith(false);
+    expect(live.mayWrite()).toBe(false);
+    // A session that cannot be read keeps the last answer; the room still narrows it.
+    session.value = null;
+    can.value = true;
+    rm.status("reconnecting");
+    rm.status("open");
+    await vi.waitFor(() => expect(recheck).toHaveBeenCalledTimes(3));
+    expect(live.mayWrite()).toBe(false);
+  });
+
+  it("reads can_write the way the runtime does, and null when it cannot", async () => {
+    const answer = (status: number, body: unknown) =>
+      vi.fn(async () => new Response(JSON.stringify(body), { status }));
+    const win = (fetch: unknown) => ({ fetch }) as unknown as Window;
+    const ok = answer(200, { available: true, can_write: true });
+    expect(await readSessionCanWrite(win(ok))).toBe(true);
+    expect(ok).toHaveBeenCalledWith("/__plinth/api/v1/session", {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "x-plinth-data": "1" },
+    });
+    expect(await readSessionCanWrite(win(answer(200, { available: true, can_write: false })))).toBe(
+      false,
+    );
+    expect(await readSessionCanWrite(win(answer(200, { available: false })))).toBeNull();
+    expect(await readSessionCanWrite(win(answer(401, {})))).toBeNull();
+    const down = vi.fn(async () => {
+      throw new TypeError("offline");
+    });
+    expect(await readSessionCanWrite(win(down))).toBeNull();
   });
 
   it("follows the session alone when the room is unavailable", async () => {

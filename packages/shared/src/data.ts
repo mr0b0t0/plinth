@@ -8,13 +8,10 @@ import {
   type DataCapability,
   type EffectiveRole,
   LIMITS,
-  PAGE_REQUEST_TO_RE,
-  REQUESTS_TO_META,
 } from "./constants.ts";
-import type { DataSourceInfo, SummarySource } from "./dataSources.ts";
-import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
+import { utf8Length } from "./utf8.ts";
 
 // ---------- capabilities ----------
 
@@ -30,53 +27,25 @@ export interface Capabilities {
   room: boolean;
   /** Topics commenters may emit too (plinth-room-open); `*` opens all. Viewers never emit. */
   roomOpen: string[];
+  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
+  comments: boolean;
   /**
    * The owner and editors may list everyone with access from the page (/__plinth/api/v1/people).
    * Counts only with `data` and `viewer`.
    */
   people: boolean;
-  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
-  comments: boolean;
   /**
-   * The page may receive words the viewer dictates (`plinth.dictation`, run by the app). Not shared
-   * data, not a room, and never the microphone.
+   * Set by the server for a type whose capabilities are fixed (a whiteboard's, from its settings),
+   * never read from HTML: the lowest role that may write shared data and emit open topics from the
+   * page. Policy (policy.ts pageWriteFloor) treats a missing or unknown value on such a type as
+   * "editor", never as "any viewer". Absent on every HTML declaration.
    */
-  dictation: boolean;
+  writers?: PageWriters;
   /**
    * While the viewer is using the page (focus inside its frame), a newer version waits behind an
    * Update button instead of replacing it (docs/spec.md "Live views"). Not shared data, no API.
    */
   hold: boolean;
-  /**
-   * Files people add from the page (`plinth.files`): raster images, PDFs, video and audio kept in
-   * the artifact's own store. Not shared data; `viewer` adds who uploaded each file.
-   */
-  files: boolean;
-  /**
-   * Set by the server for a type whose capabilities are fixed (a whiteboard's, from its settings),
-   * never read from HTML: the lowest role that may write shared data and emit open topics from the
-   * page. Policy (policy.ts pageWriteFloor) treats a missing or unknown value on such a type as
-   * "commenter", never as "any viewer". Absent on every HTML declaration.
-   */
-  writers?: PageWriters;
-  /**
-   * Collections whose figures come from the owner's agents (plinth-data-sourced, docs/spec.md
-   * "Live data from the owner's agents"): only the owner and editors write there, from any channel;
-   * commenter- and viewer-role writers are refused. Counts only with `data`. Present only when
-   * non-empty, so a declaration without it is parsed and stored exactly as before.
-   */
-  sourced?: string[];
-  /**
-   * The page may hand work to the owner's agent (`plinth.requests`, docs/spec.md "Page requests"):
-   * identified viewers with the mention right file requests that land in the mention queue. Not
-   * shared data and not a room.
-   */
-  requests: boolean;
-  /**
-   * The page's default request target (plinth-requests-to): at most one name, `claude`, `codex` or
-   * a connection handle, kept only with `requests`. Empty when the page names none.
-   */
-  requestsTo: string[];
 }
 
 /** The roles a server-set write floor may name (Capabilities.writers). */
@@ -85,13 +54,12 @@ export type PageWriters = (typeof PAGE_WRITERS)[number];
 
 export const CAPABILITIES_META = "plinth-capabilities";
 export const DATA_SHARED_META = "plinth-data-shared";
-export const DATA_SOURCED_META = "plinth-data-sourced";
 
 type TokenKey = {
   [K in keyof Capabilities]-?: Capabilities[K] extends boolean ? K : never;
 }[keyof Capabilities];
 type ListKey = {
-  [K in keyof Capabilities]-?: NonNullable<Capabilities[K]> extends string[] ? K : never;
+  [K in keyof Capabilities]-?: Capabilities[K] extends string[] ? K : never;
 }[keyof Capabilities];
 type ServerKey = Exclude<keyof Capabilities, TokenKey | ListKey>;
 
@@ -104,9 +72,7 @@ interface TokenField {
 /**
  * An auxiliary meta: a list that refines one token's declaration. It counts only when `needs` is
  * declared. `stored`: `always`, or only when that token is declared. `checkOnRead`: entries of a
- * stored row are checked against `accept` again when read. `omitEmpty`: the key is in a parsed,
- * stored or read declaration only when its list is not empty (Capabilities marks it optional), so
- * a declaration without the meta is parsed and stored exactly as before the meta existed.
+ * stored row are checked against `accept` again when read.
  */
 interface ListField {
   kind: "list";
@@ -117,7 +83,6 @@ interface ListField {
   max: number;
   accept: (entry: string) => boolean;
   checkOnRead: boolean;
-  omitEmpty?: true;
 }
 
 /**
@@ -163,38 +128,14 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
     accept: (t) => t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t),
     checkOnRead: true,
   },
-  { kind: "token", key: "people" },
   { kind: "token", key: "comments" },
-  { kind: "token", key: "dictation" },
-  { kind: "token", key: "hold" },
-  { kind: "token", key: "files" },
+  { kind: "token", key: "people" },
   {
     kind: "server",
     key: "writers",
     accept: (v) => (PAGE_WRITERS as readonly unknown[]).includes(v),
   },
-  {
-    kind: "list",
-    key: "sourced",
-    meta: DATA_SOURCED_META,
-    needs: "data",
-    stored: "data",
-    max: LIMITS.maxDataSourced,
-    accept: (n) => DATA_COLLECTION_RE.test(n),
-    checkOnRead: true,
-    omitEmpty: true,
-  },
-  { kind: "token", key: "requests" },
-  {
-    kind: "list",
-    key: "requestsTo",
-    meta: REQUESTS_TO_META,
-    needs: "requests",
-    stored: "requests",
-    max: 1,
-    accept: (t) => PAGE_REQUEST_TO_RE.test(t),
-    checkOnRead: true,
-  },
+  { kind: "token", key: "hold" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -209,7 +150,6 @@ function tokenInfo(token: DataCapability): (typeof CAPABILITY_TOKENS)[number] {
 function isStored(f: DeclarationField, c: Capabilities): boolean {
   if (f.kind === "server") return c[f.key] !== undefined;
   if (f.kind === "token") return tokenInfo(f.key).stored === "always" || c[f.key] === true;
-  if (f.omitEmpty && (c[f.key]?.length ?? 0) === 0) return false;
   return f.stored === "always" || c[f.stored] === true;
 }
 
@@ -255,18 +195,15 @@ function tokens(content: string): string[] {
 
 /**
  * Read a page's declaration from its HTML: the first <meta name="plinth-capabilities"> and the
- * first of each registered list meta (plinth-data-shared, plinth-room-open, plinth-data-sourced,
- * plinth-requests-to), in any attribute order and quote style, names compared case-insensitively,
- * tags inside HTML comments ignored. Every meta tag is read, so a registered meta after the others
- * is never missed. Unknown tokens are ignored, and so are list entries that break their rule; at
- * most each list's `max` are kept (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics,
- * LIMITS.maxDataSourced, one request target); sourced names count only with `data`, and the key is
- * absent when none count. Returns null unless `data`, `room`, `comments`, `dictation`, `hold`,
- * `files` or `requests` is declared: the viewer is learned through the data API or the room, so
+ * first of each registered list meta (plinth-data-shared, plinth-room-open), in any attribute
+ * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
+ * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
+ * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
+ * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room`,
+ * `comments` or `hold` is declared: the viewer is learned through the data API or the room, so
  * `viewer` alone declares nothing, and neither does a list alone. Shared names count only with
- * `data`, open topics only with `room`, the request target only with `requests`. A page that
- * declares only `comments`, `dictation`, `hold`, `files` or `requests` has no document store and no
- * room.
+ * `data`, open topics only with `room`. A page that declares only `comments` or `hold` has no store
+ * and no room.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
@@ -296,7 +233,6 @@ export function parseCapabilities(html: string): Capabilities | null {
       if (list.length >= f.max) break;
       if (f.accept(e) && !list.includes(e)) list.push(e);
     }
-    if (f.omitEmpty && list.length === 0) continue;
     out[f.key] = list;
   }
   return out as unknown as Capabilities;
@@ -350,12 +286,10 @@ export function readStoredCapabilities(json: string): Capabilities | null {
     }
     const value = row[f.key];
     const readable = f.stored === "always" || counted.has(f.stored);
-    const list =
+    out[f.key] =
       readable && Array.isArray(value)
         ? value.filter((e): e is string => typeof e === "string" && (!f.checkOnRead || f.accept(e)))
         : [];
-    if (f.omitEmpty && list.length === 0) continue;
-    out[f.key] = list;
   }
   return out as unknown as Capabilities;
 }
@@ -392,10 +326,7 @@ export const dataDocIdSchema = z
   )
   .describe("Document id, or ~me for your own personal document");
 
-/** UTF-8 length of a string, without TextEncoder (this package targets plain ES2023). */
-export function utf8Length(s: string): number {
-  return utf8Bytes(s);
-}
+export { utf8Length };
 
 /** UTF-8 bytes of a document's JSON, as stored. */
 export function dataByteSize(data: unknown): number {
@@ -465,44 +396,6 @@ export const listArtifactDataInput = z
     path: ["doc_id"],
   });
 
-/** A data source id (data_sources.source_id): the same rule as a collection name. */
-export const DATA_SOURCE_ID_RE = DATA_COLLECTION_RE;
-
-/** An ISO 8601 time with a zone, as fetched_at takes it. */
-export const SOURCE_TIME_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
-
-/**
- * The provenance an owner's agent attaches to a set (docs/spec.md "Live data from the owner's
- * agents"): which of the artifact's data sources it fetched the figures from, when, and an
- * optional pointer to the records. The server checks the source, the collection, the time bounds
- * and the ref (services/dataSources.ts), and stamps the connection itself.
- */
-export const docSourceInput = z
-  .strictObject({
-    id: z
-      .string()
-      .regex(DATA_SOURCE_ID_RE, "Source id: lowercase letter, then up to 39 of a-z 0-9 _ -")
-      .describe("The id of one of this artifact's data sources (set_data_sources)"),
-    ref: z
-      .string()
-      .max(2000)
-      .optional()
-      .describe(
-        "Where the figures come from: a record id, a query name or a URL without credentials " +
-          "(query, fragment and user info are dropped; at most 300 characters after that)",
-      ),
-    fetched_at: z
-      .string()
-      .regex(SOURCE_TIME_RE, "fetched_at: an ISO 8601 time with a zone")
-      .describe("When you fetched the figures (ISO 8601): not in the future, at most 30 days old"),
-  })
-  .describe(
-    "Owner's agent only: stamps the document with the data source it was fetched from. A set " +
-      "without source clears an earlier stamp",
-  );
-export type DocSourceInput = z.infer<typeof docSourceInput>;
-
 const setOpSchema = z.object({
   op: z.literal("set"),
   collection: dataCollectionSchema,
@@ -513,7 +406,6 @@ const setOpSchema = z.object({
     .int()
     .min(0)
     .describe("0 creates (fails if the document exists); n replaces only at rev n"),
-  source: docSourceInput.optional(),
 });
 
 const deleteOpSchema = z.object({
@@ -538,9 +430,16 @@ export type DataVia = "page" | "agent" | "app";
 
 /**
  * Why shared data is unavailable to a page. `preview`: the page is shown in an agent's thread
- * (an MCP App), through a read-only pass that carries no identity.
+ * (an MCP App), through a read-only pass that carries no identity. `capture`: Plinth's thumbnail
+ * browser is taking a picture of a version whose writer may not read the data (a token limited to
+ * one artifact wrote it).
  */
-export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared" | "preview";
+export type DataUnavailableReason =
+  | "opaque_isolation"
+  | "disabled"
+  | "not_declared"
+  | "preview"
+  | "capture";
 
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {
@@ -564,34 +463,6 @@ export interface PageDoc {
   updated_at: string;
   created_by?: PageDocAuthor;
   updated_by?: PageDocAuthor;
-  /** Present only on a document an owner's agent stamped with a data source. */
-  source?: PageDocSource;
-}
-
-/**
- * Where a document's figures came from, as the server stamped it: copied from the data source when
- * an owner's agent wrote it with `source`, and cleared by any later write without one. Agent-
- * asserted: it says which source the owner's agent claimed to fetch from, not that it is true.
- */
-export interface DocSourceStamp {
-  id: string;
-  /** Display text the owner's agent chose for the source: untrusted. */
-  label: string;
-  /** Display text naming the system ("Linear"): untrusted. */
-  connector: string;
-  /** A sanitised pointer to the records, or null. */
-  ref: string | null;
-  fetched_at: string;
-}
-
-/** The stamp as a page sees it; `agent` (the connection's label) only with `viewer`. */
-export interface PageDocSource extends DocSourceStamp {
-  agent?: string | null;
-}
-
-/** The stamp as owners' and editors' agents see it. */
-export interface AgentDocSource extends DocSourceStamp {
-  connection_label: string | null;
 }
 
 /** Server-derived author of a write, as owners' and editors' agents see it. */
@@ -616,8 +487,6 @@ export interface AgentDoc {
   updated_at: string;
   created_by: AgentDocAuthor;
   updated_by: AgentDocAuthor;
-  /** Present only on a document an owner's agent stamped with a data source. */
-  source?: AgentDocSource;
 }
 
 /** GET /__plinth/api/v1/session. Always 200; `available: false` says why. */
@@ -646,11 +515,6 @@ export interface ArtifactDataInfo {
   capabilities: DataCapability[];
   /** Totals of the artifact's shared data; null when there is none or the caller cannot read it. */
   data_usage: { docs: number; bytes: number } | null;
-  /**
-   * The artifact's data sources, for the owner and editors (the recipe for the owner only).
-   * Absent, not empty, when it has none.
-   */
-  data_sources?: DataSourceInfo[];
 }
 
 /** Limits as list_artifact_data and the page session report them. */
@@ -674,8 +538,6 @@ export interface DataSummary {
    * editors can list, under the same notice to viewers.
    */
   people?: AgentPerson[];
-  /** The artifact's data sources (never the recipe). Absent when it has none. */
-  sources?: SummarySource[];
   untrusted: string;
 }
 
@@ -711,8 +573,16 @@ export interface AgentPerson {
 /** GET /api/v1/artifacts/:ref/people */
 export interface PeopleResult {
   people: AgentPerson[];
+  /** How many matched `q` in all, before `limit`. */
+  total: number;
   untrusted: string;
 }
+
+/**
+ * The most people one list returns: the owner and every direct grant (LIMITS.maxAllowlistEmails).
+ * With a shared category's people the list can be longer; `total` counts them all.
+ */
+export const MAX_PEOPLE_LISTED = LIMITS.maxAllowlistEmails + 1;
 
 /** A people search: every whitespace-separated term must match a name or an email. */
 export const peopleQuerySchema = z
@@ -725,6 +595,7 @@ export const peopleQuerySchema = z
 export const listArtifactPeopleInput = z.object({
   id: artifactRefSchema,
   q: peopleQuerySchema.optional(),
+  limit: z.number().int().min(1).max(MAX_PEOPLE_LISTED).optional(),
 });
 
 /** list_artifact_data with a collection. */

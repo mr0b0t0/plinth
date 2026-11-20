@@ -25,8 +25,6 @@ function comment(over: Partial<CommentInfo> = {}): CommentInfo {
     status: "open",
     created_at: new Date(1_700_000_000_000 + n * 1000).toISOString(),
     mentions: [{ task_id: "t", target: "@claude", state: "pending", result_version: null }],
-    kind: "comment",
-    request_data: null,
     ...over,
   };
 }
@@ -292,26 +290,116 @@ describe("usePageComments", () => {
     expect(k.sent("threads").length).toBe(2);
   });
 
-  it("keeps positions of open anchored threads only, and drops more than 20 a second", () => {
+  const pos = (id: string, left: number) => ({
+    id,
+    left,
+    top: 0,
+    width: 0,
+    height: 0,
+    visible: true,
+  });
+
+  it("keeps positions of open anchored threads only, and coalesces more than 20 a second", () => {
+    vi.useFakeTimers();
+    try {
+      const page = comment({ anchor: { kind: "page", key: "a" } });
+      const resolved = comment({ status: "resolved", anchor: { kind: "page", key: "b" } });
+      const k = kit({ items: [page, resolved] });
+      k.send({ type: "hello" });
+      k.send({
+        type: "positions",
+        items: [pos(page.id, 5), pos(resolved.id, 6), pos("forged", 7)],
+      });
+      expect([...k.result.current.positions.keys()]).toEqual([page.id]);
+      for (let i = 0; i < 25; i++) k.send({ type: "positions", items: [pos(page.id, 100 + i)] });
+      // 20 in the window; the rest wait, and the page never sends its last position again.
+      expect(k.result.current.positions.get(page.id)?.left).toBe(118);
+      act(() => {
+        k.tick(999);
+        vi.advanceTimersByTime(999);
+      });
+      expect(k.result.current.positions.get(page.id)?.left).toBe(118);
+      act(() => {
+        k.tick(1);
+        vi.advanceTimersByTime(1);
+      });
+      // The window ended: the latest report is applied, and only that one.
+      expect(k.result.current.positions.get(page.id)?.left).toBe(124);
+      act(() => {
+        k.tick(1000);
+        vi.advanceTimersByTime(1000);
+      });
+      k.send({ type: "positions", items: [pos(page.id, 1)] });
+      expect(k.result.current.positions.get(page.id)?.left).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not parse reports over the rate until their turn", () => {
+    vi.useFakeTimers();
+    try {
+      const page = comment({ anchor: { kind: "page", key: "a" } });
+      const k = kit({ items: [page] });
+      k.send({ type: "hello" });
+      for (let i = 0; i < 20; i++) k.send({ type: "positions", items: [pos(page.id, i)] });
+      let reads = 0;
+      const items = new Proxy([pos(page.id, 50)], {
+        get(target, key, receiver) {
+          if (key === "length") reads += 1;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      k.send({ type: "positions", items });
+      expect(reads).toBe(0);
+      act(() => {
+        k.tick(1000);
+        vi.advanceTimersByTime(1000);
+      });
+      expect(reads).toBeGreaterThan(0);
+      expect(k.result.current.positions.get(page.id)?.left).toBe(50);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps positions aside while the pins are hidden, and shows the latest when they show", () => {
     const page = comment({ anchor: { kind: "page", key: "a" } });
-    const resolved = comment({ status: "resolved", anchor: { kind: "page", key: "b" } });
-    const k = kit({ items: [page, resolved] });
+    const k = kit({ items: [page], showPins: false });
     k.send({ type: "hello" });
-    const pos = (id: string, left: number) => ({
-      id,
-      left,
-      top: 0,
-      width: 0,
-      height: 0,
-      visible: true,
-    });
-    k.send({ type: "positions", items: [pos(page.id, 5), pos(resolved.id, 6), pos("forged", 7)] });
-    expect([...k.result.current.positions.keys()]).toEqual([page.id]);
-    for (let i = 0; i < 25; i++) k.send({ type: "positions", items: [pos(page.id, 100 + i)] });
-    expect(k.result.current.positions.get(page.id)?.left).toBe(118);
-    k.tick(1000);
-    k.send({ type: "positions", items: [pos(page.id, 1)] });
-    expect(k.result.current.positions.get(page.id)?.left).toBe(1);
+    const before = k.result.current.positions;
+    k.send({ type: "positions", items: [pos(page.id, 7)] });
+    k.send({ type: "positions", items: [pos(page.id, 8)] });
+    // No state change, so the stage does not re-render for pins nobody sees.
+    expect(k.result.current.positions).toBe(before);
+    expect(k.result.current.positions.size).toBe(0);
+    k.rerenderWith({ items: [page], showPins: true });
+    expect(k.result.current.positions.get(page.id)?.left).toBe(8);
+    k.send({ type: "positions", items: [pos(page.id, 9)] });
+    expect(k.result.current.positions.get(page.id)?.left).toBe(9);
+  });
+
+  it("answers hello at most once a second", () => {
+    const page = comment({ anchor: { kind: "page", key: "a" } });
+    const k = kit({ items: [page] });
+    for (let i = 0; i < 200; i++) k.send({ type: "hello" });
+    expect(k.sent("welcome").length).toBe(1);
+    expect(k.sent("threads").length).toBe(1);
+    k.tick(999);
+    k.send({ type: "hello" });
+    expect(k.sent("welcome").length).toBe(1);
+    k.tick(1);
+    // The runtime's own retry comes a second after an unanswered hello: it is answered.
+    k.send({ type: "hello" });
+    expect(k.sent("welcome").length).toBe(2);
+    expect(k.sent("threads").length).toBe(2);
+    // A new frame starts afresh.
+    const next = document.createElement("iframe");
+    const nextWin = { postMessage: vi.fn() };
+    Object.defineProperty(next, "contentWindow", { configurable: true, value: nextWin });
+    k.rerenderWith({ items: [page], frame: next });
+    k.send({ type: "hello" }, nextWin);
+    expect(nextWin.postMessage.mock.calls.filter(([m]) => m.type === "welcome").length).toBe(1);
   });
 
   it("sends focus for page-anchored threads after hello", () => {

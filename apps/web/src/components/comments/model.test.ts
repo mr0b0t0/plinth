@@ -25,8 +25,6 @@ function comment(over: Partial<CommentInfo> = {}): CommentInfo {
     status: "open",
     created_at: `2026-11-13T10:00:${String(n).padStart(2, "0")}.000Z`,
     mentions: [],
-    kind: "comment",
-    request_data: null,
     ...over,
   };
 }

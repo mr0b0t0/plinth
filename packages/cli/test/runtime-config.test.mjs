@@ -118,19 +118,20 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.deepEqual(repoCfg.durable_objects, ROOMS_DO);
     assert.deepEqual(repoCfg.migrations, ROOMS_MIGRATIONS);
     for (const k of ROOM_VARS) assert.ok(k in repoCfg.vars, `wrangler.jsonc vars.${k}`);
-    // Dictation ships off.
-    assert.equal(repoCfg.vars.ALLOW_DICTATION, "false");
-    // Category sharing ships on.
-    assert.equal(repoCfg.vars.ALLOW_CATEGORY_SHARING, "true");
     // The sheet formula budget ships at its documented default, and the CLI's base copies it.
     assert.equal(repoCfg.vars.SHEET_EVAL_BUDGET, "200000");
     assert.equal(runtimeBase(repoCfg).vars.SHEET_EVAL_BUDGET, "200000");
-    // Files people add to a page ship off.
-    assert.equal(repoCfg.vars.ALLOW_FILES, "false");
-    // Page requests ship off, and the CLI's base copies the switch and its limits.
-    assert.equal(repoCfg.vars.ALLOW_PAGE_REQUESTS, "false");
-    assert.equal(runtimeBase(repoCfg).vars.ALLOW_PAGE_REQUESTS, "false");
-    assert.equal(runtimeBase(repoCfg).vars.PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT, "25");
+    // Category sharing ships on.
+    assert.equal(repoCfg.vars.ALLOW_CATEGORY_SHARING, "true");
+    // Design export's instance and per-artifact caps ship at their documented defaults, and the
+    // CLI's base copies them.
+    for (const [k, v] of [
+      ["DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR", "120"],
+      ["DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR", "20"],
+    ]) {
+      assert.equal(repoCfg.vars[k], v, k);
+      assert.equal(runtimeBase(repoCfg).vars[k], v, k);
+    }
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
@@ -347,10 +348,9 @@ await setupInstance(raw, {
         PLINTH_PORT: "9823",
         PLINTH_ALLOW_ROOMS: "false",
         PLINTH_ALLOW_LIVE_EDITING: "false",
-        PLINTH_ALLOW_DICTATION: "true",
         PLINTH_ALLOW_CATEGORY_SHARING: "false",
-        PLINTH_ALLOW_FILES: "true",
-        PLINTH_ALLOW_PAGE_REQUESTS: "true",
+        PLINTH_DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "40",
+        PLINTH_DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "5",
       },
       encoding: "utf8",
     });
@@ -358,10 +358,9 @@ await setupInstance(raw, {
     const offCfg = parseJsonc(readFileSync(path.join(data, "plinth", "wrangler.jsonc"), "utf8"));
     assert.equal(offCfg.vars.ALLOW_ROOMS, "false");
     assert.equal(offCfg.vars.ALLOW_LIVE_EDITING, "false");
-    assert.equal(offCfg.vars.ALLOW_DICTATION, "true");
     assert.equal(offCfg.vars.ALLOW_CATEGORY_SHARING, "false");
-    assert.equal(offCfg.vars.ALLOW_FILES, "true");
-    assert.equal(offCfg.vars.ALLOW_PAGE_REQUESTS, "true");
+    assert.equal(offCfg.vars.DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR, "40");
+    assert.equal(offCfg.vars.DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR, "5");
     assertRooms(offCfg, "docker (rooms off)", { vars: false });
   });
 

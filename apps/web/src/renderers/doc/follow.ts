@@ -9,6 +9,13 @@
 // block index, plus its distance from the viewport's top. After the re-render the same heading is
 // found again (or, when it is gone, the block at the same index), and the window scrolls by the
 // difference.
+//
+// Images: at boot a relative image resolves against the frame's own path (`/`), which serves the
+// current version's files. A browser reuses an image it already loaded in a document for the same
+// URL without asking the server again (the HTML "list of available images", which Cache-Control
+// does not reach), so in place `chart.png` would keep showing the old version's chart next to the
+// new text. A version shown in place points each of its own images at that version's path,
+// /__plinth/v/<n>/, whose files never change: a new version is a new URL, which the browser loads.
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
@@ -62,6 +69,43 @@ export function restorePlace(win: Window, root: HTMLElement, place: ReadingPlace
   if (delta !== 0) win.scrollBy(0, delta);
 }
 
+/** A version directory at the start of a path: `/__plinth/v/<n>`, followed by a `/`. */
+const VERSION_DIR_RE = /^\/__plinth\/v\/\d{1,9}(?=\/)/;
+
+/**
+ * Where image `src`, which a document at `docUrl` shows, is in version `n`: the same file under
+ * /__plinth/v/<n>/ (an absolute path on this origin), or null to leave it as it is (an inline
+ * data: image, another origin, or one of Plinth's own paths the author named).
+ */
+export function versionImageSrc(src: string, docUrl: string, n: number): string | null {
+  let abs: URL;
+  let here: URL;
+  try {
+    here = new URL(docUrl);
+    abs = new URL(src, here);
+  } catch {
+    return null;
+  }
+  if (abs.origin !== here.origin || (abs.protocol !== "http:" && abs.protocol !== "https:")) {
+    return null;
+  }
+  // A frame on a version path (/__plinth/v/<m>/) resolved the image inside that version: the
+  // same file in version n. Otherwise anything under /__plinth/ is Plinth's, not the artifact's.
+  const dir = VERSION_DIR_RE.exec(here.pathname)?.[0];
+  let path = abs.pathname;
+  if (dir && path.startsWith(`${dir}/`)) path = path.slice(dir.length);
+  else if (path.startsWith("/__plinth/")) return null;
+  return `/__plinth/v/${n}${path}${abs.search}`;
+}
+
+/** Point the images in `root` at version `n`'s own files (see versionImageSrc). */
+export function pinImages(root: ParentNode, docUrl: string, n: number): void {
+  for (const img of Array.from(root.querySelectorAll("img[src]"))) {
+    const next = versionImageSrc(img.getAttribute("src") ?? "", docUrl, n);
+    if (next !== null) img.setAttribute("src", next);
+  }
+}
+
 const SOURCE_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
@@ -93,7 +137,9 @@ export async function showVersion(
   // Checked again here, after the await: the screen may have become someone's draft meanwhile.
   if (!mayShow()) return null;
   const place = readingPlace(win, root);
-  root.replaceChildren(sanitizeHtml(renderMarkdown(text), win.document));
+  const fragment = sanitizeHtml(renderMarkdown(text), win.document);
+  pinImages(fragment, win.document.baseURI, n);
+  root.replaceChildren(fragment);
   if (place) restorePlace(win, root, place);
   return text;
 }

@@ -141,6 +141,9 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
     const notice = await screen.findByText(/is available/);
     expect(notice.textContent).toContain("v4 is available");
+    // It is a toast, in the slot of "Updated to vN": nothing is added above the frame.
+    expect(notice.closest(".pl-toast")).not.toBeNull();
+    expect(document.querySelector(".pl-viewer__notice")).toBeNull();
     // The page on view stays, with its enter URL; the bar knows v4 exists.
     expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
     expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
@@ -154,7 +157,48 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     const next = await screen.findByTitle("Garden plan, version 4");
     fireEvent.load(next);
     expect(next.getAttribute("src")).toBe(ENTER(s.reads.length));
-    expect(await screen.findByText("Updated to v4")).toBeTruthy();
+    // The viewer chose it: the new version on screen is the only sign, no "Updated" toast.
+    expect(screen.queryByText(/is available/)).toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(screen.queryByText("Updated to v4")).toBeNull();
+  });
+
+  it("holds a page that declares hold after the window lost focus while the viewer typed", async () => {
+    const s = server({ hold: true });
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+    focusInto(frame);
+    // The viewer switches to another app mid-sentence: the window blurs, the frame stays active.
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect((await screen.findByText(/is available/)).textContent).toContain("v4 is available");
+    expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
+    expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
+  });
+
+  it("shows one notice: a held version's toast gives way to the next update's", async () => {
+    const s = server({ hold: true });
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+    focusInto(frame);
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect((await screen.findByText(/is available/)).textContent).toContain("v4 is available");
+
+    // Focus leaves the page; v5 replaces it, and its toast takes the held one's place.
+    vi.restoreAllMocks();
+    delete (document as unknown as { activeElement?: unknown }).activeElement;
+    s.current = 5;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect(await screen.findByTitle("Garden plan, version 5")).toBeTruthy();
+    expect(await screen.findByText("Updated to v5")).toBeTruthy();
     expect(screen.queryByText(/is available/)).toBeNull();
   });
 
@@ -305,7 +349,11 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
       nonce,
       path: "/guide.html?tab=2#q=salary%20of%20Jane",
     });
-    expect(await screen.findByTitle("Garden plan, version 4")).toBeTruthy();
+    expect(frame.getAttribute("name")).toBe("plinth-v3");
+    const next = (await screen.findByTitle("Garden plan, version 4")) as HTMLIFrameElement;
+    // Named for its version: the new page's runtime takes the carry record written for v4 there,
+    // and the old frame (and any reload of it) never does.
+    expect(next.getAttribute("name")).toBe("plinth-v4");
     // One more gate read, with the page's place as `next`, never its hash: the request URL (and
     // the enter URL the server builds from it) must not carry what the page keeps in its fragment.
     // `carried=1`: the server lands it on the root if version 4 has no file there.

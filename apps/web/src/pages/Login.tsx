@@ -1,7 +1,7 @@
 // Page: /login. Email, then the six-digit code from the email (the email's link works too).
 // Contract with e2e/support/auth.ts signIn(): an input labelled "Email", a button "Send sign-in
 // link", then an input labelled "Six-digit code" and a button "Sign in".
-import { API, emailSchema, TTL } from "@plinth/shared";
+import { API, APP_ROUTES, emailSchema, TTL } from "@plinth/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import "../components/account/account.css";
 import { useDocumentTitle } from "../components/account/hooks.tsx";
@@ -10,7 +10,7 @@ import { safeNext } from "../components/account/nav.ts";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, Input, Stack, useToast } from "../components/ui/index.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
-import { navigate, Redirect, useLocation } from "../lib/router.tsx";
+import { Link, navigate, Redirect, useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 
 const MINUTES = Math.round(TTL.loginCodeMs / 60_000);
@@ -124,6 +124,11 @@ export default function Login() {
   };
 
   const singleUser = config?.single_user_mode === true;
+  // Keeps `next`, so an OAuth consent request carries on after the review account signs in.
+  const reviewHref =
+    next === APP_ROUTES.dashboard
+      ? APP_ROUTES.reviewLogin
+      : `${APP_ROUTES.reviewLogin}?next=${encodeURIComponent(next)}`;
 
   return (
     <PublicShell centered>
@@ -167,6 +172,12 @@ export default function Login() {
             {!singleUser && (
               <p className="type-small text-muted">
                 New to Plinth? Signing in for the first time creates your account.
+              </p>
+            )}
+            {config?.review_login === true && (
+              <p className="type-small text-muted">
+                Reviewing Plinth for a directory?{" "}
+                <Link to={reviewHref}>Sign in to the review account</Link>.
               </p>
             )}
           </Stack>

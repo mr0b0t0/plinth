@@ -198,7 +198,7 @@ export class ReviewSession {
     if (c) {
       if (c.conflictVersion === null || !c.ready) {
         this.host.post({ type: "resolved", nonce: m.nonce, outcome: "cancelled" });
-        this.review.announce("Nothing to review: the page changes are not waiting on a version.");
+        this.review.announce("Nothing to review: your changes are not waiting on a version.");
         return;
       }
       this.nonce = m.nonce;
@@ -208,7 +208,6 @@ export class ReviewSession {
         n: c.conflictVersion,
         files: c.conflictFiles,
         draft: c.text,
-        editors: c.editors.filter((e) => e !== c.you?.email),
       });
       return;
     }
@@ -231,7 +230,6 @@ export class ReviewSession {
       n: m.n,
       files: m.files ?? null,
       draft: text,
-      editors: [],
     });
   }
 
@@ -258,7 +256,6 @@ export class ReviewSession {
         n,
         files: c.conflictFiles,
         draft: c.text,
-        editors: c.editors.filter((e) => e !== c.you?.email),
       });
       return;
     }
@@ -268,21 +265,21 @@ export class ReviewSession {
     if (info.why === "published") {
       message =
         mine === "publish"
-          ? `Your page changes were published as v${n}.`
-          : `Another editor published the page changes as v${n}.`;
+          ? `Your changes were published as v${n}.`
+          : `Another editor published these changes as v${n}.`;
     } else if (info.why === "discarded") {
       message =
         mine === "discard"
-          ? `The page changes were discarded. The page shows v${n}.`
-          : "Another editor discarded the page changes.";
+          ? `Your changes were discarded. The page shows v${n}.`
+          : "Another editor discarded these changes.";
     } else if (kind === "rebased") {
       const was = info.was;
       message =
         this.host.rules.merge === "lines"
-          ? `v${n} was published, and your page changes were kept on top of it.`
-          : `v${n} undid the changes of ${was !== null && this.review.range ? versionRange(this.review.range.from, was) : "the version you reviewed"}. Your page changes are kept.`;
+          ? `v${n} was published, and your changes were kept on top of it.`
+          : `v${n} undid the changes of ${was !== null && this.review.range ? versionRange(this.review.range.from, was) : "the version you reviewed"}. Your changes are kept.`;
     } else {
-      message = `v${n} is the same as your page changes, so nothing is left to publish.`;
+      message = `v${n} is the same as your changes, so nothing is left to publish.`;
     }
     const nonce = this.nonce;
     this.nonce = null;

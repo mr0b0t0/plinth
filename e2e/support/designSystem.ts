@@ -12,12 +12,12 @@ export const ACME = JSON.parse(
   ),
 ) as Record<string, any>;
 
-/** A 1x1 PNG: the Card example shows it as img/logo.png. */
-const PIXEL_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+/** A 32x32 PNG logo (a blue rounded square): the Card example shows it as img/logo.png. */
+const LOGO_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAWklEQVR42mNgwAKMQ///pwVmIARoZTFRDqGX5VgdQW/LMRwxoA4YKMvhjhh1wKgDRh0w6gBiFJELRh0wfBwwmgtGHTDqgFEHDNuW8eDpmAx412xQdE4HqnsOANAF8TibygkfAAAAAElFTkSuQmCC";
 
 export const ACME_ASSETS = [
-  { path: "img/logo.png", content: PIXEL_PNG, encoding: "base64", content_type: "image/png" },
+  { path: "img/logo.png", content: LOGO_PNG, encoding: "base64", content_type: "image/png" },
   // Not a real font: enough for the file to exist, which is all these tests need.
   { path: "fonts/acme-mono.woff2", content: "d09GMgABAAAAAA==", encoding: "base64" },
 ];

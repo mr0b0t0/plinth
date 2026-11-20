@@ -20,6 +20,12 @@ export interface MdImage {
   alt: string;
 }
 
+/** One item of a list: its lines as written, and its visible text. */
+export interface MdListItem {
+  raw: string;
+  text: string;
+}
+
 export interface MdBlock {
   kind: MdBlockKind;
   /** The block's lines as written, with trailing spaces dropped: its identity in a diff. */
@@ -28,6 +34,8 @@ export interface MdBlock {
   text: string;
   /** Heading level, 1 to 6. */
   level?: number;
+  /** A list's items, in order. */
+  items?: MdListItem[];
   images: MdImage[];
 }
 
@@ -179,16 +187,31 @@ export function inlineText(text: string): string {
   );
 }
 
+/** A list line's text with its marker and task box stripped. */
+function listLineText(l: string): string {
+  return inlineText(
+    l.replace(/^\s*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/, "").replace(/^\[[ xX]\][ \t]+/, ""),
+  );
+}
+
+/** A list's items: each line with a marker starts one, and the lines after it continue it. */
+function listItems(lines: string[]): MdListItem[] {
+  const out: { raw: string[]; text: string[] }[] = [];
+  for (const l of lines) {
+    const last = out[out.length - 1];
+    if (LIST_RE.test(l) || !last) out.push({ raw: [l.trimEnd()], text: [listLineText(l)] });
+    else {
+      last.raw.push(l.trimEnd());
+      last.text.push(listLineText(l));
+    }
+  }
+  return out.map((x) => ({ raw: x.raw.join("\n"), text: x.text.join(" ") }));
+}
+
 function blockText(kind: MdBlockKind, lines: string[]): string {
   switch (kind) {
     case "list":
-      return lines
-        .map((l) =>
-          inlineText(
-            l.replace(/^\s*(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/, "").replace(/^\[[ xX]\][ \t]+/, ""),
-          ),
-        )
-        .join(" ");
+      return lines.map(listLineText).join(" ");
     case "quote":
       return lines.map((l) => inlineText(l.replace(/^(?:\s{0,3}>[ \t]?)+/, ""))).join(" ");
     case "table":
@@ -298,7 +321,8 @@ export function markdownBlocks(src: string): MdBlock[] {
           .join(" "),
       });
     } else {
-      push(classify(group), group);
+      const kind = classify(group);
+      push(kind, group, kind === "list" ? { items: listItems(group) } : {});
     }
   }
   return out;

@@ -283,7 +283,7 @@ describe("REST inputs", () => {
     expect(
       liveCheckpointInput.safeParse({ base_version: 4, rev: 9, reason: "idle", note: "n" }).success,
     ).toBe(true);
-    // Publish mine names the version reviewed; the room publishes its own draft.
+    // Publish your changes names the version reviewed; the room publishes its own draft.
     expect(
       liveCheckpointInput.safeParse({
         base_version: 4,

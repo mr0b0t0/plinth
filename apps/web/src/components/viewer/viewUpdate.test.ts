@@ -1,7 +1,13 @@
 // How an open view applies a newer version (docs/spec.md "Live views"): the plan for each
 // situation, and the checks on what a frame's runtime answers.
-import { describe, expect, it } from "vitest";
-import { carryPath, planUpdate, readViewMessage, type UpdateSituation } from "./viewUpdate.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  carryPath,
+  frameHasFocus,
+  planUpdate,
+  readViewMessage,
+  type UpdateSituation,
+} from "./viewUpdate.ts";
 
 const BASE: UpdateSituation = {
   enabled: true,
@@ -24,6 +30,9 @@ describe("planUpdate", () => {
     for (const pause of ["follow", "hold", "present"] as const) {
       expect(plan({ pause, type: "doc" })).toBe("keep");
       expect(plan({ pause, runtimeHello: true })).toBe("keep");
+      // A sheet or a board edited on its page keeps its frame the same way.
+      expect(plan({ pause, type: "sheet" })).toBe("keep");
+      expect(plan({ pause, type: "whiteboard" })).toBe("keep");
     }
     expect(plan({ pinned: true, enabled: false })).toBe("keep");
   });
@@ -72,12 +81,66 @@ describe("planUpdate", () => {
     expect(plan({})).toBe("swap");
   });
 
+  it("never shows a sheet in place, and keeps a sheet or doc edited on its page", () => {
+    // A sheet swaps like the other typed artifacts, whether or not its frame follows its live
+    // room; while a sheet or a doc is edited on its page (follow or hold) the frame stays.
+    for (const liveRoomFrame of [false, true]) {
+      expect(plan({ type: "sheet", liveRoomFrame })).toBe("swap");
+      for (const pause of ["follow", "hold"] as const) {
+        expect(plan({ type: "sheet", liveRoomFrame, pause })).toBe("keep");
+        expect(plan({ type: "doc", liveRoomFrame, pause })).toBe("keep");
+      }
+    }
+  });
+
   it("swaps the other typed artifacts", () => {
-    for (const type of ["slides", "design_system", "design"] as const) {
+    for (const type of ["slides", "design_system", "design", "sheet", "whiteboard"] as const) {
       expect(plan({ type, holdDeclared: true, frameFocused: true, runtimeHello: true })).toBe(
         "swap",
       );
     }
+  });
+});
+
+describe("frameHasFocus", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (document as unknown as { activeElement?: unknown }).activeElement;
+  });
+
+  it("counts focus in the frame after the window lost focus (the viewer switched apps)", () => {
+    const frame = document.createElement("iframe");
+    Object.defineProperty(document, "activeElement", { configurable: true, get: () => frame });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    expect(frameHasFocus(frame)).toBe(true);
+    // Switching to another app blurs the window, and the frame stays the active element.
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    expect(frameHasFocus(frame)).toBe(true);
+  });
+
+  it("keeps a sheet edited on its page, and holds a focused page, with the window blurred", () => {
+    const frame = document.createElement("iframe");
+    Object.defineProperty(document, "activeElement", { configurable: true, get: () => frame });
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    const frameFocused = frameHasFocus(frame);
+    // A sheet edited alone (hold) or with others (follow) keeps its frame and what is typed in it.
+    for (const pause of ["follow", "hold"] as const) {
+      for (const liveRoomFrame of [false, true]) {
+        expect(
+          plan({ type: "sheet", pause, liveRoomFrame, frameFocused, holdDeclared: true }),
+        ).toBe("keep");
+      }
+    }
+    // A page that declares hold, still the active element after the viewer switched apps, holds.
+    expect(plan({ holdDeclared: true, frameFocused, runtimeHello: true })).toBe("hold");
+  });
+
+  it("does not count focus elsewhere on the page, or no frame", () => {
+    const frame = document.createElement("iframe");
+    const other = document.createElement("input");
+    Object.defineProperty(document, "activeElement", { configurable: true, get: () => other });
+    expect(frameHasFocus(frame)).toBe(false);
+    expect(frameHasFocus(null)).toBe(false);
   });
 });
 

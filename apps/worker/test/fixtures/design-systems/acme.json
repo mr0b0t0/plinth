@@ -70,16 +70,17 @@
       "status": "stable",
       "description": "Triggers an action.",
       "usage": "- Do: one primary per view\n- Don't: use for navigation",
-      "css": ".acme-btn--primary { background: var(--acme-color-accent); color: #fff; }",
+      "css": ".acme-btn--primary { background: var(--acme-color-accent); color: #fff; } .acme-btn:disabled { opacity: 0.45; cursor: not-allowed; }",
       "examples": [
         {
           "name": "Primary",
           "html": "<button class=\"acme-btn acme-btn--primary\">Save</button>",
-          "height": 96
+          "height": 72
         },
         {
           "name": "Disabled",
-          "html": "<button class=\"acme-btn acme-btn--primary\" disabled>Save</button>"
+          "html": "<button class=\"acme-btn acme-btn--primary\" disabled>Save</button>",
+          "height": 72
         }
       ]
     },
@@ -87,11 +88,12 @@
       "id": "card",
       "name": "Card",
       "status": "beta",
-      "css": ".acme-card { background: var(--acme-color-bg); color: var(--acme-color-fg); box-shadow: var(--acme-shadow-card); border-radius: var(--acme-radius-md); padding: 16px; }",
+      "css": ".acme-card { background: var(--acme-color-bg); color: var(--acme-color-fg); box-shadow: var(--acme-shadow-card); border-radius: var(--acme-radius-md); padding: 16px; display: flex; align-items: center; gap: 12px; }",
       "examples": [
         {
           "name": "With logo",
-          "html": "<div class=\"acme-card\"><img src=\"img/logo.png\" alt=\"Acme\" width=\"32\" height=\"32\"> Hello</div>"
+          "html": "<div class=\"acme-card\"><img src=\"img/logo.png\" alt=\"Acme\" width=\"32\" height=\"32\">Hello</div>",
+          "height": 104
         }
       ]
     }

@@ -4,7 +4,9 @@
 // - in-place (docs): asks the doc renderer to show the version (`version`), and on its `shown`
 //   answer keeps the frame and its enter URL, so nothing reloads; otherwise, or after 5 s, swaps.
 // - hold (HTML that declares `hold`, focus in the frame, with or without the runtime): only the
-//   count of versions moves on and the stage offers "vN is available · Update".
+//   count of versions moves on and the page raises the "vN is available" toast with Update, in the
+//   slot of "Updated to vN" and never beside it (`offer`); Update loads the version without an
+//   "Updated" toast (the viewer chose it).
 // - ask (HTML with the runtime): posts `update` at the exact content origin; on `update:ok` the new
 //   version lands where the page was (one more gate read with `next`), on `update:hold` it waits;
 //   a page that declares `hold` and got focus while the app waited is held either way; with no
@@ -38,14 +40,22 @@ type OkGate = Extract<ViewGate, { status: "ok" }>;
 export interface UpdateHandlers {
   /** A fresh gate for a newer version, waiting to be applied; null when none. */
   pending: OkGate | null;
-  /** Show this gate (it replaces the frame unless its enter URL is the shown one) and say so. */
-  apply: (gate: OkGate) => void;
+  /**
+   * Show this gate (it replaces the frame unless its enter URL is the shown one) and say so, unless
+   * `quiet`: the viewer chose Update, and the new version on screen says it.
+   */
+  apply: (gate: OkGate, quiet?: boolean) => void;
   /** Show this gate without saying "Updated" (only the count of versions moved). */
   count: (gate: OkGate) => void;
   /** Forget `pending` (it is no newer than what is on view). */
   drop: () => void;
   /** A fresh gate for the current version, landing on `next` inside the artifact (null: root). */
   fetchGate: (next: string | null) => Promise<OkGate | null>;
+  /**
+   * Say that `version` waits behind `update` (the "vN is available" toast), or, with null, take
+   * that notice away.
+   */
+  offer: (version: number | null, update: () => void) => void;
 }
 
 export interface ViewUpdate {
@@ -53,8 +63,6 @@ export interface ViewUpdate {
   held: number | null;
   /** The viewer chose Update: apply the newest version now. */
   update: () => void;
-  /** Update is under way. */
-  updating: boolean;
 }
 
 interface Waiting {
@@ -74,7 +82,8 @@ export function useViewUpdate(o: {
   handlers: UpdateHandlers | undefined;
 }): ViewUpdate {
   const [held, setHeld] = useState<number | null>(null);
-  const [updating, setUpdating] = useState(false);
+  /** Bumped when Update could not read the version: its notice comes back. */
+  const [reoffer, setReoffer] = useState(0);
   const latest = useRef(o);
   latest.current = o;
   /** The frame window whose runtime said hello. */
@@ -275,7 +284,6 @@ export function useViewUpdate(o: {
     const s = latest.current;
     if (!s.handlers) return;
     busy.current = true;
-    setUpdating(true);
     const from = s.gate.artifact.version;
     const to = s.gate.artifact.current_version;
     void (async () => {
@@ -286,14 +294,22 @@ export function useViewUpdate(o: {
         const g = await latest.current.handlers?.fetchGate(path).catch(() => null);
         if (g) {
           setHeld(null);
-          latest.current.handlers?.apply(g);
-        }
+          latest.current.handlers?.apply(g, true);
+        } else setReoffer((n) => n + 1);
       } finally {
         busy.current = false;
-        setUpdating(false);
       }
     })();
   }, [askRuntime]);
 
-  return { held, update, updating };
+  // The held version's notice: raised while one waits, taken away once it is shown or the stage
+  // goes. Pressing Update closes the toast; if the version could not be read, it comes back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reoffer` raises the notice again
+  useEffect(() => {
+    if (held === null) return;
+    latest.current.handlers?.offer(held, update);
+    return () => latest.current.handlers?.offer(null, update);
+  }, [held, update, reoffer]);
+
+  return { held, update };
 }

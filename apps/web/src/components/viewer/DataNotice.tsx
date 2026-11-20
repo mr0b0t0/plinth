@@ -42,62 +42,51 @@ export type NoticeGate = Partial<Omit<Extract<ViewGate, { status: "ok" }>, "stat
 export type NoticeLine = (gate: NoticeGate) => string | null;
 
 /** The people list (`people`), told to every identified viewer: their own address is on it. */
-export const PEOPLE_LIST_NOTICE =
-  "The owner and editors can see everyone this page is shared with.";
+export const PEOPLE_LIST_NOTICE = "The owner and editors see who has access.";
 
 /**
- * Who is viewing: the display name the page sees beside the email the data line names, and
- * whether the page lists everyone it is shared with. Null when neither applies.
+ * Who is viewing. With a `people` block in the gate, this line says what the data line says, with
+ * the viewer's name folded into who the page sees them as, in two sentences, and the data line
+ * yields to it: "This page sees you as {name} ({email}) and saves what you enter. People with
+ * access see entries and who wrote them; the owner and editors see who has access." Without a
+ * name the email stands alone. Null without a `people` block, so other pages read as before.
  */
 export function peopleNoticeText(gate: NoticeGate): string | null {
   const p = gate.people;
-  if (!p) return null;
-  const parts: string[] = [];
-  if (p.name) {
-    parts.push(
-      `The page also sees your name, ${p.name}, and shows it wherever it shows your email.`,
-    );
+  if (!p || (!p.name && !p.list)) return null;
+  const d = gate.data;
+  const saves = d?.capabilities.includes("data") === true && d.available;
+  const email = saves && d?.capabilities.includes("viewer") && d.identified ? d.email : undefined;
+  const room = d?.room_email;
+  const address = email ?? room;
+  if (!address) {
+    // Nothing to fold a name into: the data line as it reads, then the people sentence.
+    if (!p.list) return null;
+    const data = dataNoticeText(d);
+    return data ? `${data} ${PEOPLE_LIST_NOTICE}` : PEOPLE_LIST_NOTICE;
   }
-  if (p.list) parts.push(PEOPLE_LIST_NOTICE);
-  return parts.length > 0 ? parts.join(" ") : null;
-}
-
-/** Told to everyone who may add a file: files are stored as they are, details inside included. */
-export const FILES_METADATA_NOTE =
-  "Files are kept as added, with any details saved inside them, such as where and when a photo was taken.";
-
-/**
- * Files people add to the page (`files`): that it keeps them, who sees them, who sees who added
- * them, and that the details saved inside a file go with it. A viewer who cannot add files is told
- * the page only shows them.
- */
-export function filesNoticeText(gate: NoticeGate): string | null {
-  const f = gate.files;
-  if (!f) return null;
-  if (!f.available) return "Files people add are not available on this server.";
-  if (!f.can_upload) return "This page shows files added by people it is shared with.";
-  const who = f.uploaders_shown
-    ? "This page keeps files people add. People with access can see them and who added them."
-    : "This page keeps files people add. People with access can see them; the owner and editors can see who added them.";
-  return `${who} ${FILES_METADATA_NOTE}`;
-}
-
-/**
- * Page requests (`requests`): the page can send requests to the owner's agent in this viewer's
- * name, under the email the gate sealed, and who sees them. Nothing for a viewer who cannot file.
- */
-export function requestsNoticeText(gate: NoticeGate): string | null {
-  const r = gate.requests;
-  if (!r?.can_file) return null;
-  return `This page can send requests to the owner's agent as ${r.email}. The owner and editors see them, and so do you, under Comments.`;
+  const you = p.name ? `${p.name} (${address})` : address;
+  const shows = "shows it to the other people who have it open";
+  if (email) {
+    const first = room
+      ? `This page sees you as ${you}, ${shows}, and saves what you enter.`
+      : `This page sees you as ${you} and saves what you enter.`;
+    const list = p.list ? "; the owner and editors see who has access." : ".";
+    return `${first} People with access see entries and who wrote them${list}`;
+  }
+  // A live room without shared data to save into.
+  const rest = [
+    d?.capabilities.includes("data") && !d.available ? UNAVAILABLE : null,
+    p.list ? PEOPLE_LIST_NOTICE : null,
+  ].filter((t) => t !== null);
+  return [`This page sees you as ${you} and ${shows}.`, ...rest].join(" ");
 }
 
 /** The notice's lines, in the order they are read out. One line function per line. */
 export const DATA_NOTICE_LINES: readonly NoticeLine[] = [
-  (gate) => dataNoticeText(gate.data),
+  // The people line, when it speaks, restates this one with the viewer's name in it.
+  (gate) => (peopleNoticeText(gate) === null ? dataNoticeText(gate.data) : null),
   peopleNoticeText,
-  filesNoticeText,
-  requestsNoticeText,
 ];
 
 /** The whole notice for a gate, or null when no line has anything to say. */

@@ -34,13 +34,27 @@ export function panBy(c: Camera, dx: number, dy: number): Camera {
   return { ...c, x: c.x - dx / c.zoom, y: c.y - dy / c.zoom };
 }
 
-/** A camera that shows `b` whole in a viewport of `w` by `h`, with a margin, at most 100%. */
-export function fitCamera(b: Bounds | null, w: number, h: number, margin = 48): Camera {
+/**
+ * A camera that shows `b` whole in a viewport of `w` by `h`, with a margin, at most 100%, and at
+ * least `minZoom`. A side that does not fit at that floor starts at the board's edge (top or left)
+ * instead of its middle, so the viewer pans from the beginning.
+ */
+export function fitCamera(
+  b: Bounds | null,
+  w: number,
+  h: number,
+  margin = 48,
+  minZoom = MIN_ZOOM,
+): Camera {
   if (!b || w <= 0 || h <= 0) return { x: -margin, y: -margin, zoom: 1 };
-  const zoom = clampZoom(Math.min(1, (w - margin * 2) / b.w, (h - margin * 2) / b.h));
+  const fitW = (w - margin * 2) / b.w;
+  const fitH = (h - margin * 2) / b.h;
+  const zoom = clampZoom(Math.min(1, Math.max(minZoom, Math.min(fitW, fitH))));
+  // Only a raised floor starts a side at the edge; a board too big for MIN_ZOOM stays centred.
+  const edge = (fit: number) => minZoom > MIN_ZOOM && zoom > fit;
   return {
-    x: b.x + b.w / 2 - w / 2 / zoom,
-    y: b.y + b.h / 2 - h / 2 / zoom,
+    x: edge(fitW) ? b.x - margin / zoom : b.x + b.w / 2 - w / 2 / zoom,
+    y: edge(fitH) ? b.y - margin / zoom : b.y + b.h / 2 - h / 2 / zoom,
     zoom,
   };
 }
