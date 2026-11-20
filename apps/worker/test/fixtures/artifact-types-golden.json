@@ -9,7 +9,7 @@
     "publish html with content": {
       "error": {
         "code": "invalid_input",
-        "message": "content is for typed artifacts: pass type \"doc\", \"slides\", \"design_system\" or \"sheet\", or send html",
+        "message": "content is for typed artifacts: pass type \"doc\", \"slides\", \"design_system\", \"design\" or \"sheet\", or send html",
         "details": {
           "type": "html",
           "field": "content"
@@ -171,6 +171,91 @@
         "type": "doc",
         "text": "# y"
       }
+    },
+    "publish design": {
+      "ok": {
+        "type": "design",
+        "text": "<!-- artboard name=\"Home\" size=\"iphone\" -->\n<p>x</p>"
+      }
+    },
+    "publish design with html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "type design takes design HTML in content, not html",
+        "details": {
+          "type": "design",
+          "field": "html"
+        }
+      }
+    },
+    "publish design without a board": {
+      "error": {
+        "code": "invalid_input",
+        "message": "A design needs artboards: start each one with a line <!-- artboard name=\"Home\" size=\"iphone\" --> followed by its HTML.",
+        "details": {
+          "type": "design",
+          "field": "content",
+          "issues": [
+            {
+              "line": 0,
+              "message": "A design needs artboards: start each one with a line <!-- artboard name=\"Home\" size=\"iphone\" --> followed by its HTML."
+            }
+          ]
+        }
+      }
+    },
+    "publish design with a whole document": {
+      "error": {
+        "code": "invalid_input",
+        "message": "A design is shared <head> tags followed by artboards, not a whole HTML document. Start each artboard with a line <!-- artboard name=\"Home\" size=\"iphone\" -->, or publish type \"html\" for one page.",
+        "details": {
+          "type": "design",
+          "field": "content",
+          "issues": [
+            {
+              "line": 1,
+              "message": "A design is shared <head> tags followed by artboards, not a whole HTML document. Start each artboard with a line <!-- artboard name=\"Home\" size=\"iphone\" -->, or publish type \"html\" for one page."
+            }
+          ]
+        }
+      }
+    },
+    "publish design with two problems": {
+      "error": {
+        "code": "invalid_input",
+        "message": "Line 1: the artboard needs a name=\"...\". (and 1 more problem)",
+        "details": {
+          "type": "design",
+          "field": "content",
+          "issues": [
+            {
+              "line": 1,
+              "message": "Line 1: the artboard needs a name=\"...\"."
+            },
+            {
+              "line": 2,
+              "board": "B",
+              "message": "Line 2: give the artboard size=\"iphone\" (a preset), size=\"1080x1080\", or width and height, only one of them."
+            }
+          ]
+        }
+      }
+    },
+    "update design": {
+      "ok": {
+        "type": "design",
+        "text": "<!-- artboard name=\"Home\" size=\"iphone\" -->\n<p>x</p>"
+      }
+    },
+    "update design with html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "This artifact is a design: send its design HTML as content. The type cannot change.",
+        "details": {
+          "type": "design",
+          "field": "html"
+        }
+      }
     }
   },
   "checkAsset": {
@@ -242,6 +327,76 @@
           "content_type": "text/css"
         }
       }
+    },
+    "design design.html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "design.html and index.html belong to the design, not its assets",
+        "details": {
+          "type": "design",
+          "field": "assets",
+          "path": "design.html"
+        }
+      }
+    },
+    "design index.html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "design.html and index.html belong to the design, not its assets",
+        "details": {
+          "type": "design",
+          "field": "assets",
+          "path": "index.html"
+        }
+      }
+    },
+    "design image": {
+      "ok": null
+    },
+    "design css": {
+      "ok": null
+    },
+    "design script": {
+      "ok": null
+    },
+    "design video": {
+      "ok": null
+    },
+    "design font": {
+      "error": {
+        "code": "invalid_input",
+        "message": "Artboards cannot load font files from the artifact: each artboard has an opaque origin and font loads need CORS, which Plinth never sends. Use Google Fonts or a data: URL in @font-face.",
+        "details": {
+          "type": "design",
+          "field": "assets",
+          "path": "brand.woff2",
+          "content_type": "font/woff2"
+        }
+      }
+    },
+    "design json": {
+      "error": {
+        "code": "invalid_input",
+        "message": "Artboards cannot fetch files: put data inline in a <script>.",
+        "details": {
+          "type": "design",
+          "field": "assets",
+          "path": "data.json",
+          "content_type": "application/json"
+        }
+      }
+    },
+    "design html page": {
+      "error": {
+        "code": "invalid_input",
+        "message": "A design's assets are images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4/webm video.",
+        "details": {
+          "type": "design",
+          "field": "assets",
+          "path": "page.html",
+          "content_type": "text/html"
+        }
+      }
     }
   },
   "titleFromSource": {
@@ -282,6 +437,15 @@
       "ok": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     },
     "doc late heading": {
+      "ok": null
+    },
+    "design shared title": {
+      "ok": "Launch kit"
+    },
+    "design first board": {
+      "ok": "Home"
+    },
+    "design unparsed": {
       "ok": null
     }
   }

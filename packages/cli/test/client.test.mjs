@@ -596,6 +596,47 @@ describe("plinth publish", () => {
     assert.match(wrong.stderr, /is a deck; the folder needs slides\.md at its top/);
   });
 
+  it("publishes a folder with design.html as a design, and updates it inline with content", async () => {
+    const design = {
+      "design.html": '<!-- artboard name="Home" size="iphone" -->\n<img src="img/c.png" alt="">\n',
+      "img/c.png": "png",
+    };
+    const dir = build(design);
+    const dry = await plinth(["publish", dir, "--dry-run"], { extraEnv: asPat() });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /as a new design/);
+    const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(first.code, 0, first.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "design" });
+    const out = JSON.parse(first.stdout);
+    assert.equal(out.verified, true);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    assert.deepEqual([...stored.keys()].sort(), ["design.html", "img/c.png"]);
+
+    const next = '<!-- artboard name="Home" size="iphone" -->\n<h1>Two</h1>\n';
+    writeFileSync(path.join(dir, "design.html"), next);
+    const r = await plinth(["publish", dir, "--id", out.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    const put = fake.state.lastPut;
+    assert.equal(put.content, next);
+    assert.equal(put.html, undefined);
+
+    const wrong = await plinth(["publish", build(site(1)), "--id", out.id, "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /is a design; the folder needs design\.html at its top/);
+  });
+
+  it("checks a design's design.html against the fixed 2 MB design limit", () => {
+    const limits = { ...fake.state.limits, max_html_bytes: 10 };
+    const files = [{ path: "design.html", size: 3 * 1024 * 1024 }];
+    assert.throws(() => checkLimits(files, "design.html", "design", limits), /limit is 2\.0 MB/);
+    assert.doesNotThrow(() =>
+      checkLimits([{ path: "design.html", size: 20 }], "design.html", "design", limits),
+    );
+  });
+
   it("checks a deck's slides.md against the Markdown limit, not the HTML one", () => {
     const limits = { ...fake.state.limits, max_html_bytes: 10 };
     const files = [{ path: "slides.md", size: 2 * 1024 * 1024 }];

@@ -32,6 +32,7 @@ export const TYPE_USES: Partial<Record<ArtifactType, string>> = {
   doc: "a document that is mostly prose (memo, plan, spec, report, notes)",
   slides: "a presentation (talk, pitch, review, lesson)",
   design_system: "a design system, style guide or token set",
+  design: "a visual design at fixed sizes (app screens, posters, social posts, ads, banners)",
   sheet:
     "a table people sort, filter, calculate with or download (budget, tracker, list of records, price comparison)",
 };
@@ -39,6 +40,7 @@ export const TYPE_USES: Partial<Record<ArtifactType, string>> = {
 /** What Plinth makes of each typed artifact, for TYPES_NOTE; "a finished page" when absent. */
 export const TYPE_RESULTS: Partial<Record<ArtifactType, string>> = {
   slides: "a deck",
+  design: "artboards on a canvas",
   sheet: "a spreadsheet",
 };
 
@@ -92,6 +94,15 @@ export const DESIGN_SYSTEM_PUBLISH_NOTE =
   "reference site with live previews, which run no scripts. Its assets are images (png, jpg, gif, " +
   "webp, avif, svg) and fonts (woff2, woff, ttf, otf); limit 1 MB of JSON. A refusal lists every " +
   "problem with its path in errors. ";
+
+/** What publish_artifact says about the design type. */
+export const DESIGN_PUBLISH_NOTE =
+  'Pass type "design" with content for visual designs: shared <head> tags (fonts, Tailwind, styles), ' +
+  'then artboards, each starting with a line <!-- artboard id="home" name="Home" size="iphone" --> ' +
+  '(a preset, "WxH", or width and height) followed by its HTML fragment. Each artboard renders alone ' +
+  "at its exact size with an opaque origin: inline scripts and allowlisted CDN scripts run, but no " +
+  "fetch of the artifact's files, no storage, and no font files from assets (use Google Fonts or " +
+  "data: URLs). Assets: images, CSS, JS, mp4/webm by relative path. Up to 60 artboards, 2 MB. ";
 
 /** What publish_artifact says about the sheet type. */
 export const SHEET_PUBLISH_NOTE =
@@ -173,6 +184,7 @@ export const CATEGORY_INSTRUCTION =
 export const TYPE_UPDATE_NOTE =
   "Send the source field that matches the artifact's type (get_artifact says which): html for an " +
   "HTML page, content (Markdown) for a doc or a deck (slides), content (JSON) for a design_system, " +
+  "content (artboard HTML) for a design, " +
   "content (JSON lines, or content_format csv or xlsx) for a sheet; prefer edit_sheet to change a " +
   "sheet's cells. The type cannot change. ";
 

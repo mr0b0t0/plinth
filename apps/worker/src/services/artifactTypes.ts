@@ -20,6 +20,7 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
+import { designHooks } from "./artifactTypes/design.ts";
 import { designSystemHooks } from "./artifactTypes/design_system.ts";
 import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
@@ -64,6 +65,11 @@ export interface TypeHooks {
   validate?(def: ArtifactTypeDef, text: string): void;
   /** Said to the agent when an asset is of a content type the type does not take. */
   assetRule?: string;
+  /**
+   * A more specific message than assetRule for an asset the type does not take (a design's font
+   * files), or null for the general one. Called only for content types assetTypes refuses.
+   */
+  assetRefusal?(path: string, contentType: string): string | null;
   /**
    * Advisory publish warnings about the source itself, given every path of the version's final
    * manifest. Runs where the reference scan runs (never on a restore), and its warnings share the
@@ -111,6 +117,7 @@ const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   doc: docHooks,
   slides: slidesHooks,
   design_system: designSystemHooks,
+  design: designHooks,
   sheet: sheetHooks,
 };
 
@@ -119,7 +126,7 @@ export function typeHooks(def: ArtifactTypeDef): TypeHooks {
   return TYPE_HOOKS[def.id];
 }
 
-/** `pass type "doc", "slides" or "design_system"`: every type that takes content, from the registry. */
+/** `pass type "doc", "slides", "design_system" or "design"`: every type that takes content, from the registry. */
 const TYPED_CHOICES = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].sourceField === "content")
   .map((t) => `"${t}"`)
   .join(", ")
@@ -272,9 +279,12 @@ export function checkAsset(def: ArtifactTypeDef, path: string, contentType: stri
     );
   }
   if (def.assetTypes && !def.assetTypes.test(contentType)) {
+    const hooks = typeHooks(def);
     throw new ApiError(
       "invalid_input",
-      typeHooks(def).assetRule ?? `Asset ${path} is not a file type a ${def.id} takes`,
+      hooks.assetRefusal?.(path, contentType) ??
+        hooks.assetRule ??
+        `Asset ${path} is not a file type a ${def.id} takes`,
       { type: def.id, field: "assets", path, content_type: contentType },
     );
   }

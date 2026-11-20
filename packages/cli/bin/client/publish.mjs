@@ -232,14 +232,20 @@ export function collect(dir, { includeMaps }) {
 }
 
 /** What each artifact type is called in messages. */
-const TYPE_NOUNS = { html: "page", doc: "document", slides: "deck", sheet: "sheet" };
+const TYPE_NOUNS = {
+  html: "page",
+  doc: "document",
+  slides: "deck",
+  design: "design",
+  sheet: "sheet",
+};
 const nounOf = (type) => TYPE_NOUNS[type] ?? "page";
 
 function typeOfFolder(files) {
   const has = new Set(files.map((f) => f.path));
   for (const [type, source] of Object.entries(SOURCE_FILES)) if (has.has(source)) return type;
   throw new CliError(
-    "No index.html (or content.md for a document, slides.md for a deck, sheet.jsonl for a sheet) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
+    "No index.html (or content.md for a document, slides.md for a deck, design.html for a design, sheet.jsonl for a sheet) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
   );
 }
 
@@ -897,7 +903,8 @@ export async function publish(dir, givenOpts, ctx) {
     const type = detail.type;
     const sourcePath = detail.source_path ?? SOURCE_FILES[type] ?? "index.html";
     if (!files.some((f) => f.path === sourcePath)) {
-      // One file can stand in for a page's index.html or a document's content.md, not a deck's.
+      // One file can stand in for a page's index.html or a document's content.md, not for the
+      // source of a deck or a design.
       const fileExt = { html: ".html", doc: ".md" }[type];
       throw new CliError(
         source.kind !== "file"

@@ -22,6 +22,7 @@ const SOURCES = {
   html: "index.html",
   doc: "content.md",
   slides: "slides.md",
+  design: "design.html",
   sheet: "sheet.jsonl",
 };
 

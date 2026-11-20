@@ -32,7 +32,7 @@ type Load =
   | { kind: "not_found" }
   | { kind: "forbidden"; artifact: ArtifactDetail | null }
   | { kind: "error"; message: string }
-  /** A type with no source editor (a sheet): the page sends people to the artifact. */
+  /** A type with no source editor (a sheet or a design): the page sends people to the artifact. */
   | { kind: "no_editor" }
   | {
       kind: "ready";

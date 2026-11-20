@@ -23,7 +23,9 @@ function outcome(f: () => unknown): unknown {
 }
 
 const DOC = "<!doctype html><html><body>x</body></html>";
-const sourceCases: [string, Record<string, unknown>, "html" | "doc" | null][] = [
+const BOARD = '<!-- artboard name="Home" size="iphone" -->\n<p>x</p>';
+type Golden = "html" | "doc" | "design";
+const sourceCases: [string, Record<string, unknown>, Golden | null][] = [
   ["publish default html", { html: "<p>x</p>" }, null],
   ["publish html with content", { content: "# x" }, null],
   ["publish html without html", {}, null],
@@ -44,9 +46,21 @@ const sourceCases: [string, Record<string, unknown>, "html" | "doc" | null][] = 
   ["update doc without content", {}, "doc"],
   ["update doc with a whole document", { content: DOC }, "doc"],
   ["update doc ignores type", { type: "html", content: "# y" }, "doc"],
+  // The design type (type-design): artboards in design.html.
+  ["publish design", { type: "design", content: BOARD }, null],
+  ["publish design with html", { type: "design", html: BOARD }, null],
+  ["publish design without a board", { type: "design", content: "<p>x</p>" }, null],
+  ["publish design with a whole document", { type: "design", content: DOC }, null],
+  [
+    "publish design with two problems",
+    { type: "design", content: '<!-- artboard size="iphone" -->\n<!-- artboard name="B" -->' },
+    null,
+  ],
+  ["update design", { content: BOARD }, "design"],
+  ["update design with html", { html: BOARD }, "design"],
 ];
 
-const assetCases: [string, "html" | "doc", string, string][] = [
+const assetCases: [string, Golden, string, string][] = [
   ["html index.html", "html", "index.html", "text/html"],
   ["html script", "html", "app.js", "text/javascript"],
   ["html image", "html", "img/a.png", "image/png"],
@@ -56,9 +70,18 @@ const assetCases: [string, "html" | "doc", string, string][] = [
   ["doc svg", "doc", "a.svg", "image/svg+xml"],
   ["doc script", "doc", "app.js", "text/javascript"],
   ["doc css", "doc", "a.css", "text/css"],
+  ["design design.html", "design", "design.html", "text/html"],
+  ["design index.html", "design", "index.html", "text/html"],
+  ["design image", "design", "img/a.png", "image/png"],
+  ["design css", "design", "a.css", "text/css"],
+  ["design script", "design", "app.js", "text/javascript"],
+  ["design video", "design", "intro.mp4", "video/mp4"],
+  ["design font", "design", "brand.woff2", "font/woff2"],
+  ["design json", "design", "data.json", "application/json"],
+  ["design html page", "design", "page.html", "text/html"],
 ];
 
-const titleCases: [string, "html" | "doc", string][] = [
+const titleCases: [string, Golden, string][] = [
   ["html title", "html", "<html><head><title> My  &amp; page </title></head></html>"],
   ["html entities", "html", "<TITLE>&lt;a&gt; &quot;b&quot; &#39;c&#39;</TITLE>"],
   ["html empty title", "html", "<title>   </title>"],
@@ -72,6 +95,9 @@ const titleCases: [string, "html" | "doc", string][] = [
   ["doc hash without space", "doc", "#Plan"],
   ["doc long", "doc", `# ${"d".repeat(400)}`],
   ["doc late heading", "doc", `${"x\n".repeat(250)}# Late`],
+  ["design shared title", "design", `<title>Launch kit</title>\n${BOARD}`],
+  ["design first board", "design", `<link rel="stylesheet" href="a.css">\n${BOARD}`],
+  ["design unparsed", "design", "<p>no boards</p>"],
 ];
 
 function record() {

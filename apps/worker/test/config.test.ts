@@ -308,6 +308,16 @@ describe("development-only switches", () => {
     expect(res.status).toBe(404);
   });
 
+  it("POST /__dev/capture-url is not served unless DEV_SEED is on in development", async () => {
+    const { call } = await import("./helpers.ts");
+    const res = await call("/__dev/capture-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifact_id: "aaaaaaaaaaaaaaaaaaaa", version: 1 }),
+    });
+    expect(res.status).toBe(404);
+  });
+
   it("GET /__dev/data/:id answers counts only with DEV_SEED on in development", async () => {
     const { call, agent, publish, json } = await import("./helpers.ts");
     const { createExecutionContext, waitOnExecutionContext } = await import("cloudflare:test");

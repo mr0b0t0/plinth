@@ -73,6 +73,8 @@ export const contentSchema = z
     'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md); ' +
       'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md); ' +
       'for type "design_system", the design system JSON (stored as system.json); ' +
+      'for type "design", shared <head> tags then artboards, each starting with a line ' +
+      '<!-- artboard name="Home" size="iphone" --> (stored as design.html); ' +
       'for type "sheet", the sheet\'s JSON lines (stored as sheet.jsonl), or a CSV or a base64 ' +
       ".xlsx with content_format. Not for html artifacts, which send html.",
   );
@@ -92,6 +94,8 @@ export const artifactTypeSchema = z
       "which Plinth renders as a presentation. " +
       '"design_system": design tokens, guidelines and components as JSON in content ' +
       "(format plinth.design-system/1), which Plinth renders as a reference site. " +
+      '"design": artboards (app screens, posters, social posts, ads) as HTML in content, which ' +
+      "Plinth renders on a canvas, each artboard alone at its exact size. " +
       '"sheet": a table as JSON lines in content, which Plinth renders as a spreadsheet with ' +
       "formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish.",
   );

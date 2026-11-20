@@ -11,6 +11,7 @@ export const SOURCE_FILES = {
   html: "index.html",
   doc: "content.md",
   slides: "slides.md",
+  design: "design.html",
   sheet: "sheet.jsonl",
 };
 
@@ -78,13 +79,14 @@ export function canonicalSheet(text) {
   return out.join("\n");
 }
 
-/** The field a type's source goes in on PUT /artifacts: html for a page, content for Markdown. */
+/** The field a type's source goes in on PUT /artifacts: html for a page, content for every typed one. */
 export const sourceField = (type) => (type === "html" ? "html" : "content");
 
-/** The most bytes a type's source may hold: the instance's limit, or the fixed type limit. */
+/** The most bytes a type's source may hold: the instance's limit, or the type's fixed limit. */
 export function sourceMaxBytes(type, limits) {
   if (type === "doc") return limits.max_doc_bytes;
   if (type === "slides") return LIMITS.maxSlidesBytes;
+  if (type === "design") return LIMITS.maxDesignBytes;
   if (type === "sheet") return limits.max_sheet_bytes ?? LIMITS.maxSheetBytes;
   return limits.max_html_bytes;
 }

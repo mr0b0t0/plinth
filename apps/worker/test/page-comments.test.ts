@@ -323,6 +323,8 @@ describe("a page that declares only comments", () => {
       "/__plinth/runtime.js",
       "/__plinth/preview",
       "/__plinth/types/",
+      // A design's board loader (type-design), behind the content pass.
+      "/__plinth/frames/",
     ]);
     const { p } = await owned();
     const { p: other } = await owned(PLAIN);

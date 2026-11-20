@@ -445,7 +445,7 @@
             "name": "type",
             "schema": {
               "type": "string",
-              "enum": ["html", "doc", "slides", "design_system", "sheet"]
+              "enum": ["html", "doc", "slides", "design_system", "design", "sheet"]
             },
             "description": "Only artifacts of this type (design_system: the design systems you can use)"
           }
@@ -2144,14 +2144,14 @@
           "type": {
             "default": "html",
             "type": "string",
-            "enum": ["html", "doc", "slides", "design_system", "sheet"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
+            "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
           },
           "html": { "type": "string", "minLength": 1, "description": "Complete HTML document" },
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
           },
           "content_format": {
             "type": "string",
@@ -2212,7 +2212,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
           },
           "content_format": {
             "type": "string",
@@ -2510,8 +2510,8 @@
           },
           "type": {
             "type": "string",
-            "enum": ["html", "doc", "slides", "design_system", "sheet"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
+            "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
           },
           "title": { "type": "string", "minLength": 1, "maxLength": 200 },
           "base_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
@@ -2802,8 +2802,8 @@
       },
       "ArtifactType": {
         "type": "string",
-        "enum": ["html", "doc", "slides", "design_system", "sheet"],
-        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish."
+        "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
+        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish."
       },
       "ArtifactSummary": {
         "type": "object",
@@ -2882,6 +2882,7 @@
           { "$ref": "#/components/schemas/DocArtifactDetail" },
           { "$ref": "#/components/schemas/SlidesArtifactDetail" },
           { "$ref": "#/components/schemas/DesignSystemArtifactDetail" },
+          { "$ref": "#/components/schemas/DesignArtifactDetail" },
           { "$ref": "#/components/schemas/SheetArtifactDetail" }
         ],
         "discriminator": {
@@ -2891,6 +2892,7 @@
             "doc": "#/components/schemas/DocArtifactDetail",
             "slides": "#/components/schemas/SlidesArtifactDetail",
             "design_system": "#/components/schemas/DesignSystemArtifactDetail",
+            "design": "#/components/schemas/DesignArtifactDetail",
             "sheet": "#/components/schemas/SheetArtifactDetail"
           }
         }
@@ -2961,7 +2963,7 @@
           },
           "assets": {
             "type": "array",
-            "description": "The version's other files; never index.html or content.md",
+            "description": "The version's other files; never index.html",
             "items": {
               "type": "object",
               "properties": {
@@ -3213,7 +3215,7 @@
           },
           "assets": {
             "type": "array",
-            "description": "The version's other files; never index.html or content.md",
+            "description": "The version's other files; never index.html or slides.md",
             "items": {
               "type": "object",
               "properties": {
@@ -3337,7 +3339,131 @@
           },
           "assets": {
             "type": "array",
-            "description": "The version's other files; never index.html or content.md",
+            "description": "The version's other files; never index.html or system.json",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" },
+                "size_bytes": { "type": "integer" },
+                "content_type": { "type": "string" },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash"
+                }
+              },
+              "required": ["path", "size_bytes", "content_type", "sha256"]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments"] },
+            "description": "What the returned version declares (shared data, viewer identity)"
+          },
+          "data_usage": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": { "docs": { "type": "integer" }, "bytes": { "type": "integer" } },
+                "required": ["docs", "bytes"]
+              },
+              { "type": "null" }
+            ],
+            "description": "Shared data totals; null when there is none or the caller cannot read it"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "type",
+          "visibility",
+          "current_version",
+          "version_count",
+          "created_at",
+          "updated_at",
+          "url",
+          "content_url",
+          "owner",
+          "role",
+          "taken_down",
+          "thumbnail_url",
+          "category",
+          "version",
+          "source_path",
+          "content",
+          "assets",
+          "capabilities",
+          "data_usage"
+        ]
+      },
+      "DesignArtifactDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{20}$",
+            "description": "Also the artifact's content subdomain"
+          },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["design"],
+            "description": "Design: always \"design\""
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "current_version": { "type": "integer", "minimum": 1 },
+          "version_count": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "App page: <APP_HOST>/a/<slug>"
+          },
+          "content_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Artifact origin on the content host. Needs a viewer token unless entered"
+          },
+          "owner": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "email": { "type": "string", "format": "email" },
+              "name": { "type": ["string", "null"] }
+            },
+            "required": ["id", "email", "name"]
+          },
+          "role": { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
+          "taken_down": { "type": "boolean" },
+          "thumbnail_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none, and for a token limited to one artifact. May answer 404 until the first capture lands"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
+          "source_path": {
+            "type": "string",
+            "enum": ["design.html"],
+            "description": "The version file holding the source"
+          },
+          "content": {
+            "type": "string",
+            "description": "UNTRUSTED design HTML, written by the artifact's authors"
+          },
+          "assets": {
+            "type": "array",
+            "description": "The version's other files; never index.html or design.html",
             "items": {
               "type": "object",
               "properties": {
@@ -3457,7 +3583,7 @@
           },
           "assets": {
             "type": "array",
-            "description": "The version's other files; never index.html or content.md",
+            "description": "The version's other files; never index.html or sheet.jsonl",
             "items": {
               "type": "object",
               "properties": {
@@ -4718,7 +4844,7 @@
                 "title": { "type": "string", "description": "UNTRUSTED" },
                 "type": {
                   "type": "string",
-                  "enum": ["html", "doc", "slides", "design_system", "sheet"]
+                  "enum": ["html", "doc", "slides", "design_system", "design", "sheet"]
                 },
                 "visibility": {
                   "type": "string",
