@@ -47,6 +47,9 @@ const NEW_SIZE: Record<ToolKind, { w: number; h: number }> = {
   ellipse: { w: 180, h: 120 },
 };
 const GRID = 240;
+/** Below this viewport width (px) Fit keeps text readable: it zooms out no further than this. */
+const NARROW = 560;
+const NARROW_MIN_FIT = 0.75;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const coord = (v: number) => clamp(Math.round(v), -BOARD_LIMITS.maxCoord, BOARD_LIMITS.maxCoord);
 const size = (v: number) => clamp(Math.round(v), BOARD_LIMITS.minSize, BOARD_LIMITS.maxSize);
@@ -177,6 +180,8 @@ export class Board {
     t.connect.hidden = !edit || (!block && !this.connecting);
     t.connect.disabled = this.model.blocks.size < 2;
     t.remove.hidden = !edit || id === null;
+    // At phone width the selection's controls take the add buttons' place, so the bar stays one row.
+    t.el.dataset.selection = String(edit && (id !== null || this.connecting));
   }
 
   banner(text: string): void {
@@ -202,7 +207,7 @@ export class Board {
 
   setPeers(list: RuntimePeer[]): void {
     this.peers = list;
-    drawPeers(this.doc, this.view, list, this.camera.zoom);
+    drawPeers(this.doc, this.view, list, this.camera);
     this.redraw();
   }
 
@@ -218,10 +223,23 @@ export class Board {
     this.cameraTimer = setTimeout(() => saveCamera(this.win, this.camera), 300);
   }
 
-  /** Show every block, at most at 100%. */
+  /**
+   * Show every block, at most at 100%. At phone width, never below a zoom whose text stays
+   * readable: the board then starts at its top-left and pans.
+   */
   fitBoard(): void {
     const vp = this.view.viewport;
-    this.setCamera(fitCamera(this.model.bounds(), vp.clientWidth || 800, vp.clientHeight || 600));
+    const w = vp.clientWidth || 800;
+    const narrow = w < NARROW;
+    this.setCamera(
+      fitCamera(
+        this.model.bounds(),
+        w,
+        vp.clientHeight || 600,
+        narrow ? 24 : 48,
+        narrow ? NARROW_MIN_FIT : undefined,
+      ),
+    );
   }
 
   private select(id: string | null): void {
@@ -461,7 +479,11 @@ export class Board {
     vp.addEventListener("pointercancel", (e) => this.onPointerUp(e));
     vp.addEventListener("pointerleave", () => this.live?.pointer(null, null));
     vp.addEventListener("dblclick", (e) => {
-      const id = this.blockIdOf(e.target);
+      // The viewport captures the pointer on a block's pointerdown, so the double click is aimed
+      // at the viewport: find the block under the pointer.
+      const id =
+        this.blockIdOf(e.target) ??
+        this.blockIdOf(this.doc.elementFromPoint?.(e.clientX, e.clientY) ?? null);
       if (id) this.startEditing(id);
     });
     vp.addEventListener(

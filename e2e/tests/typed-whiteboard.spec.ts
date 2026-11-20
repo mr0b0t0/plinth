@@ -70,6 +70,9 @@ const write = (frame: Frame, method: string, path: string, body?: unknown) =>
     [method, path, body] as const,
   );
 
+/** A cursor's tag shows the email's local part, as the people list does at phone width. */
+const tag = (email: string) => email.split("@")[0] ?? email;
+
 const leftOf = (frame: Frame, label: RegExp) =>
   frame
     .getByRole("group", { name: label })
@@ -123,16 +126,22 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     if (!area) throw new Error("no frame");
     await o.page.mouse.move(area.x + area.width - 40, area.y + area.height - 40);
     await o.page.mouse.move(area.x + area.width - 30, area.y + area.height - 30, { steps: 3 });
-    await expect(c.frame.locator(".wb-cursor span").filter({ hasText: owner })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(c.frame.locator(".wb-cursor span").filter({ hasText: tag(owner) })).toHaveCount(
+      1,
+      {
+        timeout: 10_000,
+      },
+    );
     const vArea = await v.page.locator(CURRENT_FRAME).boundingBox();
     if (!vArea) throw new Error("no frame");
     await v.page.mouse.move(vArea.x + vArea.width - 50, vArea.y + vArea.height - 50);
     await v.page.mouse.move(vArea.x + vArea.width - 40, vArea.y + vArea.height - 40, { steps: 3 });
-    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: watcher })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: tag(watcher) })).toHaveCount(
+      1,
+      {
+        timeout: 10_000,
+      },
+    );
 
     // The commenter drags the note: the owner sees it move before the drop, and it is saved.
     const note = c.frame.getByRole("group", { name: /^Note: Ship v2/ });
@@ -212,9 +221,12 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
       await c.page.mouse.move(cArea.x + cArea.width - 50 - nudge, cArea.y + cArea.height - 50, {
         steps: 3,
       });
-      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: guest })).toHaveCount(1, {
-        timeout: 2_000,
-      });
+      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: tag(guest) })).toHaveCount(
+        1,
+        {
+          timeout: 2_000,
+        },
+      );
     }).toPass({ timeout: 20_000 });
     // The owner still edits.
     await expect(oBoard.getByRole("button", { name: "Add note" })).toBeEnabled();
@@ -300,20 +312,30 @@ test("export from the menu, the keyboard, zoom, phone width and axe", async ({ p
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
 
-    // At 390 px, with a block selected (its colours, Connect and Delete showing): the toolbar
-    // wraps inside the frame and nothing scrolls sideways.
+    // At 390 px, with a block selected: its controls take the add buttons' place, the bar stays
+    // one row (the colours scroll inside it), Delete and Fit are in view, and the page itself
+    // never scrolls sideways.
     await page.setViewportSize({ width: 390, height: 800 });
     await frame.getByRole("group", { name: /^Note: Ship v2/ }).focus();
     await expect(frame.getByRole("button", { name: "Delete" })).toBeVisible();
+    await expect(frame.getByRole("button", { name: "Add note" })).toBeHidden();
     await expect
       .poll(() =>
         frame.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
       )
       .toBe(true);
-    const fits = await frame
-      .locator(".wb-toolbar button:visible")
-      .evaluateAll((els) => els.every((el) => el.getBoundingClientRect().right <= innerWidth));
-    expect(fits).toBe(true);
+    const row = await frame.locator(".wb-toolbar").evaluate((bar) => {
+      const box = bar.getBoundingClientRect();
+      const fit = bar.querySelector('[aria-label="Fit the board"]')?.getBoundingClientRect();
+      const del = [...bar.querySelectorAll("button")]
+        .find((b) => b.textContent === "Delete")
+        ?.getBoundingClientRect();
+      return {
+        oneRow: box.height <= 48,
+        inView: !!fit && !!del && fit.right <= innerWidth && del.right <= innerWidth,
+      };
+    });
+    expect(row).toEqual({ oneRow: true, inView: true });
   } finally {
     await client.close();
   }

@@ -3,7 +3,9 @@
 // checks every whiteboard write goes through, the renderer's lenient readers, and the shell.
 import { describe, expect, it } from "vitest";
 import {
+  ARROW_LABEL_OFFSET,
   arrowEndpoints,
+  arrowLabelAt,
   BOARD_LIMITS,
   BOARD_TOPICS,
   BoardContentError,
@@ -310,6 +312,22 @@ describe("the renderer's readers", () => {
     const below = { x: 0, y: 300, w: 100, h: 100 };
     expect(arrowEndpoints(a, below, 4)).toEqual({ x1: 50, y1: 104, x2: 50, y2: 296 });
   });
+
+  it("puts an arrow's label beside its line, clear of the arrowhead", () => {
+    // Horizontal, either way round: centred above the line, past the head's 8 units.
+    for (const p of [
+      { x1: 0, y1: 50, x2: 80, y2: 50 },
+      { x1: 80, y1: 50, x2: 0, y2: 50 },
+    ]) {
+      const at = arrowLabelAt(p);
+      expect(at.anchor).toBe("middle");
+      expect(at.x).toBeCloseTo(40, 6);
+      expect(50 - at.y).toBeGreaterThanOrEqual(ARROW_LABEL_OFFSET + 6);
+    }
+    // Vertical: to the left, growing away from the line.
+    const down = arrowLabelAt({ x1: 50, y1: 0, x2: 50, y2: 200 });
+    expect(down).toEqual({ x: 50 - ARROW_LABEL_OFFSET, y: 100, anchor: "end" });
+  });
 });
 
 describe("the whiteboard type", () => {
@@ -353,7 +371,13 @@ describe("the whiteboard type", () => {
   it("has no source editor, and its payload carries no preview flag", () => {
     // People change a board on its page; agents change its settings with update_artifact.
     expect(TYPE_REGISTRY.whiteboard.editor).toBeNull();
-    expect(Object.keys(payload(shell())).sort()).toEqual(["app_origin", "path", "text", "type", "v"]);
+    expect(Object.keys(payload(shell())).sort()).toEqual([
+      "app_origin",
+      "path",
+      "text",
+      "type",
+      "v",
+    ]);
   });
 
   it("leaves the doc shell without the runtime", () => {

@@ -1742,11 +1742,19 @@ its page without a new version each time, and agents add and move blocks with
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
   and follows on the shared-data poll. Block text is only ever drawn as text.
-- **The toolbar shows only what applies.** The add buttons show to people who may change the
-  board; a selected block's colours, Connect (which starts from that block) and Delete show only
-  while something is selected. On the right: the other people here (not the viewer), the room's
-  state only when it is not live, and Fit. Zoom is the wheel, a pinch or the keys. A read-only
-  board shows "View only" in place of the add buttons.
+- **The toolbar shows only what applies**, in one row on the board's own background. The add
+  buttons show to people who may change the board; a selected block's colours, Connect (which
+  starts from that block) and Delete show only while something is selected. On the right: the
+  other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
+  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons.
+  Under 560 px a selection's controls take the add buttons' place and the row scrolls sideways
+  if it must, the people here are coloured dots (the full name on hover and for screen readers),
+  and Fit zooms out no further than 75% so text stays readable, starting from the board's
+  top-left.
+- **On the board.** A cursor's tag and the people list show a person's name, or their email's local
+  part, with the full one on hover. A tag near the viewport's right edge sits on the pointer's
+  left. An arrow's label sits beside its line with a halo in the board's colour, on the board and
+  in both exports. A block being written in has a ring inside its edge.
 - **Export.** Download as PNG and Download as SVG in the artifact's ⋯ menu, for everyone who can
   view the board. The app asks the frame with a renderer message that names only the format (the
   frame acts only on its parent at the app origin); the frame draws the whole board, PNG on a

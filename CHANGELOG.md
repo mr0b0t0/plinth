@@ -84,8 +84,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   fields they changed; where both changed the same one, the first save stands and the other person
   is told (for text, with a button to put theirs back). Pan and zoom with the mouse, a trackpad,
   touch or the keyboard, and download the board as PNG or SVG from the ⋯ menu. The toolbar shows
-  only what applies: the add buttons for people who may edit, a block's colours, Connect and
-  Delete while it is selected, and who else is here. A version holds only the board's
+  only what applies, in one row: the add buttons for people who may edit, a block's colours,
+  Connect and Delete while it is selected, and who else is here. A version holds only the board's
   settings (`board.json`), and a new board can start with a list of blocks and arrows, written
   once into its shared data. Agents read the board with `list_artifact_data` and add or move
   blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
