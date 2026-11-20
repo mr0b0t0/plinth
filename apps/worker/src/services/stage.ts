@@ -587,6 +587,18 @@ export class VersionStager implements Stager {
     await this.put(path, bytes, contentType);
   }
 
+  /** Put the canonical form of a source candidate in place of the bytes that arrived. */
+  private async replacePending(e: Entry, text: string): Promise<void> {
+    const bytes = encoder.encode(text);
+    if (bytes.byteLength > this.def.maxSourceBytes) {
+      throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
+    }
+    this.logicalBytes += bytes.byteLength - e.size_bytes;
+    e.size_bytes = bytes.byteLength;
+    e.sha256 = await sha256Hex(bytes);
+    e.pending = bytes;
+  }
+
   /** The type's source text (inline publish, update and restore). */
   async addSource(text: string | Uint8Array): Promise<void> {
     const bytes = typeof text === "string" ? encoder.encode(text) : text;
@@ -773,9 +785,11 @@ export class VersionStager implements Stager {
     if (source.size_bytes > def.maxSourceBytes) {
       throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, source.size_bytes);
     }
-    const sourceText = decoder.decode(source.pending);
-    // A doc's source must be Markdown, never a whole HTML document (the bundle path included).
-    resolveSource({ type: def.id, [def.sourceField]: sourceText }, null);
+    const sentText = decoder.decode(source.pending);
+    // A doc's source must be Markdown, never a whole HTML document (the bundle path included). A
+    // type that stores one canonical spelling (a sheet) stores that, here as inline.
+    const sourceText = resolveSource({ type: def.id, [def.sourceField]: sentText }, null).text;
+    if (sourceText !== sentText) await this.replacePending(source, sourceText);
 
     // The source under its own prefix; other source candidates under their final path.
     source.content_type = def.contentType;

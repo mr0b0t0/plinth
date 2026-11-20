@@ -177,6 +177,49 @@ export const LIMITS = {
   },
   /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
   maxStatsPeople: 500,
+  // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
+  /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
+  maxSheetBytes: 1 * MB,
+  /** Data rows (lines after the header). */
+  maxSheetRows: 10_000,
+  /** Columns, A to CV. */
+  maxSheetColumns: 100,
+  /** Bytes of one row line. */
+  maxSheetRowBytes: 32 * KB,
+  /** Characters in one cell. */
+  maxSheetCellChars: 4_000,
+  /** Characters in one formula, its = included. */
+  maxSheetFormulaChars: 2_000,
+  /** Formula cells in one sheet. */
+  maxSheetFormulaCells: 50_000,
+  /** Parentheses, calls and signs nested in one formula. */
+  maxSheetFormulaDepth: 32,
+  /** Ops in one edit_sheet call. */
+  maxSheetOps: 200,
+  /** Cells one edit_sheet call writes. */
+  maxSheetOpCells: 10_000,
+  /**
+   * Empty rows one edit_sheet set may add between the sheet's last row and the row it writes
+   * (a set at B5000 on a sheet of 10 data rows would add 4,988). Past it the op is refused with
+   * reason "too_far_past_end": append_rows or insert_rows add rows on purpose.
+   */
+  maxSheetSetGapRows: 1_000,
+  /**
+   * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
+   * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
+   * four passes over a sheet that is all formulas.
+   */
+  maxSheetOpShiftChars: 4 * MB,
+  /** Cells one read_sheet call returns, at most. */
+  maxSheetReadCells: 10_000,
+  /** Cells read_sheet returns when the call names no limit. */
+  defaultSheetReadCells: 2_000,
+  /** Formula steps the renderer spends on one sheet (the Worker uses SHEET_EVAL_BUDGET). */
+  sheetEvalBrowserBudget: 20_000_000,
+  /** Bytes of a CSV or .xlsx file a publish or update imports. */
+  maxSheetImportBytes: 2 * MB,
+  /** Bytes an .xlsx import may decompress in all (its parts' XML). */
+  maxSheetImportInflatedBytes: 24 * MB,
 } as const;
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */
@@ -285,6 +328,8 @@ export const DEFAULTS = {
     writesPerViewerPerHour: 300,
     writesPerArtifactPerHour: 2000,
   },
+  /** Formula steps one read_sheet call may spend (SHEET_EVAL_BUDGET, 10,000 to 20,000,000). */
+  sheetEvalBudget: 200_000,
 } as const;
 
 /**
@@ -361,6 +406,10 @@ export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 /** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
 export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
 export const RENDERER_PROTOCOL_VERSION = 1;
+
+/** The files a sheet's frame builds when the app asks it to (the renderer message `export`). */
+export const SHEET_EXPORT_FORMATS = ["csv", "xlsx"] as const;
+export type SheetExportFormat = (typeof SHEET_EXPORT_FORMATS)[number];
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an

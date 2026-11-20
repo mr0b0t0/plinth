@@ -16,6 +16,7 @@ import { liveApi } from "./live.ts";
 import { meApi } from "./me.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
+import { sheetsApi } from "./sheets.ts";
 import { statsApi } from "./stats.ts";
 import { bundleHandler, requireBearerHeader, uploadStatusHandler, uploadsApi } from "./uploads.ts";
 import { viewApi } from "./view.ts";
@@ -67,6 +68,7 @@ api.route("/", dataApi);
 api.route("/", liveApi);
 api.route("/", uploadsApi);
 api.route("/", designSystemsApi);
+api.route("/", sheetsApi);
 
 api.all("*", () => {
   throw new ApiError("not_found", "No such API endpoint");

@@ -47,6 +47,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
   a folder with `design.html` at its top as a design. Thumbnails show each board
   with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.25.0.
+- **Sheets.** Agents can publish a table people sort, filter, calculate with or download (`type:
+  "sheet"`): JSON lines with typed columns (text, number with currency or percent formats, date,
+  checkbox, select, link) and Excel formulas (SUM, IF, VLOOKUP, XLOOKUP and 67 more) that Plinth
+  computes itself. The page has a frozen header, sort, a filter, a formula bar, print, light and
+  dark, and phone width, and anyone who can view it downloads it as CSV or Excel (.xlsx) built in
+  the browser. Agents read computed values with `read_sheet` and change cells, rows and columns
+  with `edit_sheet`, one version per call; people never see the JSON lines (no source editor or
+  source diff: Compare shows the versions rendered). A CSV or .xlsx file can be published as a
+  sheet (`content_format` or `plinth publish data.csv`); ids, phone numbers and leading zeros stay
+  text, and a semicolon-separated file reads decimal commas. A downloaded CSV quotes every text
+  value, so Excel in a semicolon locale never splits a cell into a formula.
+  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.26.0.
 
 ## 0.6.0 (2026-11-20)
 

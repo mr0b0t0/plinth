@@ -445,7 +445,7 @@
             "name": "type",
             "schema": {
               "type": "string",
-              "enum": ["html", "doc", "slides", "design_system", "design"]
+              "enum": ["html", "doc", "slides", "design_system", "design", "sheet"]
             },
             "description": "Only artifacts of this type (design_system: the design systems you can use)"
           }
@@ -989,6 +989,109 @@
         },
         "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }],
         "x-mcp-tool": "get_design_system"
+      }
+    },
+    "/artifacts/{ref}/sheet": {
+      "get": {
+        "operationId": "readSheet",
+        "summary": "Read a sheet's columns and cells, formulas with their values",
+        "description": "For an artifact of type sheet the caller may view. A formula cell is {f, v}; any other cell is its value. Rows are A1 row numbers (the header is row 1). Formulas are evaluated within SHEET_EVAL_BUDGET steps; an eval_budget warning means some are #LIMIT!. Every cell and column name is untrusted. An artifact of another type is refused with invalid_input.\n\nMirrors the MCP tool `read_sheet`.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "version",
+            "schema": { "type": "integer", "minimum": 1 },
+            "description": "Version number. Defaults to the current version"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "range",
+            "schema": { "type": "string" },
+            "description": "A1 range: \"A1:F200\", \"B:D\" or \"2:50\" (default every data row)"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "values",
+            "schema": { "type": "boolean" },
+            "description": "Evaluate formulas (default true)"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "limit_cells",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "description": "At most this many cells (default 2000)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/SheetRead" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }],
+        "x-mcp-tool": "read_sheet"
+      }
+    },
+    "/artifacts/{ref}/sheet/edits": {
+      "post": {
+        "operationId": "editSheet",
+        "summary": "Change cells, rows and columns of a sheet as one new version",
+        "description": "Owner or editor. The ops apply in order to base_version (a stale one is a conflict) and publish one new version, or nothing when an op or the result is invalid (invalid_input with details.op or details.issues). Inserted and deleted rows and columns move formula references. Counts toward MAX_PUBLISHES_PER_HOUR like any update.\n\nMirrors the MCP tool `edit_sheet`.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EditSheetInput" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/SheetEditResult" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "bearerAuth": ["artifacts:write"] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ],
+        "x-mcp-tool": "edit_sheet"
       }
     },
     "/artifacts/{ref}/visibility": {
@@ -2041,14 +2144,19 @@
           "type": {
             "default": "html",
             "type": "string",
-            "enum": ["html", "doc", "slides", "design_system", "design"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish."
+            "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
           },
           "html": { "type": "string", "minLength": 1, "description": "Complete HTML document" },
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html). Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
+          },
+          "content_format": {
+            "type": "string",
+            "enum": ["jsonl", "csv", "xlsx"],
+            "description": "Type \"sheet\" only: \"jsonl\" (default) for the sheet's JSON lines; \"csv\" to import CSV text (the first row names the columns, types are inferred, = stays text); \"xlsx\" to import the first worksheet of an .xlsx file sent as base64 (at most 2 MB). The stored sheet is JSON lines either way."
           },
           "assets": {
             "maxItems": 900,
@@ -2104,7 +2212,12 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html). Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
+          },
+          "content_format": {
+            "type": "string",
+            "enum": ["jsonl", "csv", "xlsx"],
+            "description": "Type \"sheet\" only: \"jsonl\" (default) for the sheet's JSON lines; \"csv\" to import CSV text (the first row names the columns, types are inferred, = stays text); \"xlsx\" to import the first worksheet of an .xlsx file sent as base64 (at most 2 MB). The stored sheet is JSON lines either way."
           },
           "assets": {
             "maxItems": 900,
@@ -2397,8 +2510,8 @@
           },
           "type": {
             "type": "string",
-            "enum": ["html", "doc", "slides", "design_system", "design"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish."
+            "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
           },
           "title": { "type": "string", "minLength": 1, "maxLength": 200 },
           "base_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
@@ -2410,6 +2523,237 @@
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
           }
         }
+      },
+      "EditSheetInput": {
+        "type": "object",
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "The version you read; a stale one is a conflict"
+          },
+          "ops": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "set" },
+                    "at": {
+                      "type": "string",
+                      "maxLength": 10,
+                      "description": "Top-left cell of the block, row 2 or below, e.g. \"B2\""
+                    },
+                    "values": {
+                      "type": "array",
+                      "items": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            { "type": "null" },
+                            { "type": "number" },
+                            { "type": "boolean" },
+                            { "type": "string", "maxLength": 4000 }
+                          ]
+                        }
+                      },
+                      "description": "Rows of raw cells, written from at"
+                    }
+                  },
+                  "required": ["op", "at", "values"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "append_rows" },
+                    "values": {
+                      "type": "array",
+                      "items": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            { "type": "null" },
+                            { "type": "number" },
+                            { "type": "boolean" },
+                            { "type": "string", "maxLength": 4000 }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "required": ["op", "values"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "insert_rows" },
+                    "before": {
+                      "type": "integer",
+                      "minimum": 2,
+                      "maximum": 10002,
+                      "description": "The new rows take this row number; rows from it move down"
+                    },
+                    "count": { "type": "integer", "minimum": 1, "maximum": 10000 },
+                    "values": {
+                      "type": "array",
+                      "items": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            { "type": "null" },
+                            { "type": "number" },
+                            { "type": "boolean" },
+                            { "type": "string", "maxLength": 4000 }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "required": ["op", "before"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "delete_rows" },
+                    "from": { "type": "integer", "minimum": 2, "maximum": 10002 },
+                    "count": { "type": "integer", "minimum": 1, "maximum": 10000 }
+                  },
+                  "required": ["op", "from"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "set_column" },
+                    "column": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z]{1,3}$",
+                      "description": "A column letter, e.g. C"
+                    },
+                    "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                    "type": {
+                      "type": "string",
+                      "enum": ["text", "number", "date", "checkbox", "select", "url"]
+                    },
+                    "format": {
+                      "description": "null clears it",
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "style": { "type": "string", "enum": ["plain", "percent", "currency"] },
+                            "decimals": { "type": "integer", "minimum": 0, "maximum": 10 },
+                            "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+                            "grouping": { "type": "boolean" }
+                          },
+                          "required": ["style"],
+                          "additionalProperties": false
+                        },
+                        { "type": "null" }
+                      ]
+                    },
+                    "options": {
+                      "anyOf": [
+                        {
+                          "minItems": 1,
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+                        },
+                        { "type": "null" }
+                      ]
+                    },
+                    "width": {
+                      "anyOf": [
+                        { "type": "integer", "minimum": 40, "maximum": 800 },
+                        { "type": "null" }
+                      ]
+                    }
+                  },
+                  "required": ["op", "column"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "insert_columns" },
+                    "before": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z]{1,3}$",
+                      "description": "The new columns take this letter; one past the last adds them at the end"
+                    },
+                    "columns": {
+                      "minItems": 1,
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                          "type": {
+                            "type": "string",
+                            "enum": ["text", "number", "date", "checkbox", "select", "url"]
+                          },
+                          "width": { "type": "integer", "minimum": 40, "maximum": 800 },
+                          "format": {
+                            "type": "object",
+                            "properties": {
+                              "style": {
+                                "type": "string",
+                                "enum": ["plain", "percent", "currency"]
+                              },
+                              "decimals": { "type": "integer", "minimum": 0, "maximum": 10 },
+                              "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+                              "grouping": { "type": "boolean" }
+                            },
+                            "required": ["style"],
+                            "additionalProperties": false
+                          },
+                          "options": {
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+                          }
+                        },
+                        "required": ["name"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["op", "before", "columns"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "delete_columns" },
+                    "from": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z]{1,3}$",
+                      "description": "A column letter, e.g. C"
+                    },
+                    "count": { "type": "integer", "minimum": 1, "maximum": 100 }
+                  },
+                  "required": ["op", "from"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "note": { "type": "string", "maxLength": 500 }
+        },
+        "required": ["base_version", "ops"]
       },
       "Error": {
         "type": "object",
@@ -2458,8 +2802,8 @@
       },
       "ArtifactType": {
         "type": "string",
-        "enum": ["html", "doc", "slides", "design_system", "design"],
-        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish."
+        "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
+        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish."
       },
       "ArtifactSummary": {
         "type": "object",
@@ -2538,7 +2882,8 @@
           { "$ref": "#/components/schemas/DocArtifactDetail" },
           { "$ref": "#/components/schemas/SlidesArtifactDetail" },
           { "$ref": "#/components/schemas/DesignSystemArtifactDetail" },
-          { "$ref": "#/components/schemas/DesignArtifactDetail" }
+          { "$ref": "#/components/schemas/DesignArtifactDetail" },
+          { "$ref": "#/components/schemas/SheetArtifactDetail" }
         ],
         "discriminator": {
           "propertyName": "type",
@@ -2547,7 +2892,8 @@
             "doc": "#/components/schemas/DocArtifactDetail",
             "slides": "#/components/schemas/SlidesArtifactDetail",
             "design_system": "#/components/schemas/DesignSystemArtifactDetail",
-            "design": "#/components/schemas/DesignArtifactDetail"
+            "design": "#/components/schemas/DesignArtifactDetail",
+            "sheet": "#/components/schemas/SheetArtifactDetail"
           }
         }
       },
@@ -3175,6 +3521,126 @@
           "data_usage"
         ]
       },
+      "SheetArtifactDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{20}$",
+            "description": "Also the artifact's content subdomain"
+          },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "type": { "type": "string", "enum": ["sheet"], "description": "Sheet: always \"sheet\"" },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "current_version": { "type": "integer", "minimum": 1 },
+          "version_count": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "App page: <APP_HOST>/a/<slug>"
+          },
+          "content_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Artifact origin on the content host. Needs a viewer token unless entered"
+          },
+          "owner": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "email": { "type": "string", "format": "email" },
+              "name": { "type": ["string", "null"] }
+            },
+            "required": ["id", "email", "name"]
+          },
+          "role": { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
+          "taken_down": { "type": "boolean" },
+          "thumbnail_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none, and for a token limited to one artifact. May answer 404 until the first capture lands"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
+          "source_path": {
+            "type": "string",
+            "enum": ["sheet.jsonl"],
+            "description": "The version file holding the source"
+          },
+          "content": {
+            "type": "string",
+            "description": "UNTRUSTED sheet JSON lines, written by the artifact's authors"
+          },
+          "assets": {
+            "type": "array",
+            "description": "The version's other files; never index.html or sheet.jsonl",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" },
+                "size_bytes": { "type": "integer" },
+                "content_type": { "type": "string" },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash"
+                }
+              },
+              "required": ["path", "size_bytes", "content_type", "sha256"]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments"] },
+            "description": "What the returned version declares (shared data, viewer identity)"
+          },
+          "data_usage": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": { "docs": { "type": "integer" }, "bytes": { "type": "integer" } },
+                "required": ["docs", "bytes"]
+              },
+              { "type": "null" }
+            ],
+            "description": "Shared data totals; null when there is none or the caller cannot read it"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "type",
+          "visibility",
+          "current_version",
+          "version_count",
+          "created_at",
+          "updated_at",
+          "url",
+          "content_url",
+          "owner",
+          "role",
+          "taken_down",
+          "thumbnail_url",
+          "category",
+          "version",
+          "source_path",
+          "content",
+          "assets",
+          "capabilities",
+          "data_usage"
+        ]
+      },
       "ArtifactList": {
         "type": "object",
         "properties": {
@@ -3345,7 +3811,16 @@
             "type": "integer",
             "description": "Bytes on the wire of one bundle"
           },
-          "max_bundle_file_bytes": { "type": "integer", "description": "One file in a bundle" }
+          "max_bundle_file_bytes": { "type": "integer", "description": "One file in a bundle" },
+          "max_sheet_bytes": {
+            "type": "integer",
+            "description": "A sheet's JSON lines (sheet.jsonl)"
+          },
+          "max_sheet_rows": {
+            "type": "integer",
+            "description": "Data rows in a sheet, under its header"
+          },
+          "max_sheet_columns": { "type": "integer", "description": "Columns in a sheet" }
         },
         "required": [
           "max_html_bytes",
@@ -3355,7 +3830,10 @@
           "max_asset_path_length",
           "max_request_bytes",
           "max_bundle_bytes",
-          "max_bundle_file_bytes"
+          "max_bundle_file_bytes",
+          "max_sheet_bytes",
+          "max_sheet_rows",
+          "max_sheet_columns"
         ]
       },
       "StartUploadResult": {
@@ -4366,7 +4844,7 @@
                 "title": { "type": "string", "description": "UNTRUSTED" },
                 "type": {
                   "type": "string",
-                  "enum": ["html", "doc", "slides", "design_system", "design"]
+                  "enum": ["html", "doc", "slides", "design_system", "design", "sheet"]
                 },
                 "visibility": {
                   "type": "string",
@@ -5021,6 +5499,128 @@
           "prefix",
           "problems",
           "untrusted"
+        ]
+      },
+      "SheetRead": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "slug": { "type": "string" },
+          "type": { "const": "sheet" },
+          "title": { "type": "string", "description": "Untrusted text" },
+          "version": { "type": "integer", "minimum": 1 },
+          "current_version": { "type": "integer", "minimum": 1 },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "letter": { "type": "string", "description": "A1 letter, \"A\" to \"CV\"" },
+                "name": {
+                  "type": "string",
+                  "description": "UNTRUSTED: written by the sheet's authors"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["text", "number", "date", "checkbox", "select", "url"]
+                },
+                "format": {
+                  "type": "object",
+                  "description": "Number columns: style plain, percent or currency, decimals, currency, grouping"
+                },
+                "options": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["letter", "name", "type"]
+            }
+          },
+          "row_count": {
+            "type": "integer",
+            "description": "Data rows (the header, row 1, is not counted)"
+          },
+          "range": { "type": ["string", "null"], "description": "The A1 range the rows cover" },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "row": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "A1 row number; data starts at 2"
+                },
+                "cells": {
+                  "type": "array",
+                  "description": "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
+                  "items": {}
+                }
+              },
+              "required": ["row", "cells"]
+            }
+          },
+          "truncated": { "type": "boolean" },
+          "next_range": {
+            "type": ["string", "null"],
+            "description": "The range to read next when truncated"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string", "enum": ["eval_budget"] },
+                "message": { "type": "string" }
+              },
+              "required": ["code", "message"]
+            }
+          },
+          "untrusted": { "const": true }
+        },
+        "required": [
+          "id",
+          "slug",
+          "type",
+          "title",
+          "version",
+          "current_version",
+          "columns",
+          "row_count",
+          "range",
+          "rows",
+          "truncated",
+          "next_range",
+          "warnings",
+          "untrusted"
+        ]
+      },
+      "SheetValue": {
+        "description": "A computed value: a number, text, a boolean, null, or {\"error\": \"#DIV/0!\"} and the like"
+      },
+      "SheetEditResult": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PublishResult" },
+          {
+            "type": "object",
+            "properties": {
+              "changed": {
+                "type": "object",
+                "properties": {
+                  "cells": { "type": "integer" },
+                  "rows_inserted": { "type": "integer" },
+                  "rows_deleted": { "type": "integer" },
+                  "columns_inserted": { "type": "integer" },
+                  "columns_deleted": { "type": "integer" }
+                },
+                "required": [
+                  "cells",
+                  "rows_inserted",
+                  "rows_deleted",
+                  "columns_inserted",
+                  "columns_deleted"
+                ]
+              }
+            },
+            "required": ["changed"]
+          }
         ]
       }
     },

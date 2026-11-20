@@ -233,6 +233,7 @@ it starts the instance as it is.
 | `PLINTH_MAX_ARTIFACTS_PER_USER`, `PLINTH_MAX_PUBLISHES_PER_HOUR`, `PLINTH_MAX_VERSION_BYTES`, `PLINTH_MAX_ASSETS_PER_VERSION`, `PLINTH_MAX_STORAGE_BYTES_PER_USER`, `PLINTH_CDN_ALLOWLIST`, `PLINTH_ALLOW_PUBLIC_VISIBILITY`, `PLINTH_PUBLIC_MIN_ACCOUNT_AGE_HOURS` | as in self-hosting.md | Limits and the script allowlist. `PLINTH_MAX_VERSION_BYTES` (default 50 MB) and `PLINTH_MAX_ASSETS_PER_VERSION` (default 511) size one version |
 | `PLINTH_ALLOW_ROOMS`, `PLINTH_ALLOW_LIVE_EDITING` | `true` | Live rooms and on-page doc editing. The instance's config always carries the `ROOMS` binding they need; `"false"` turns them off |
 | `PLINTH_ALLOW_LIVE_VIEWS` | `true` | Live views: open pages follow new versions and shared-data changes over a WebSocket on the app host, through the same `ROOMS` binding; `"false"` turns them off and pages poll |
+| `PLINTH_SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000` ([self-hosting.md](self-hosting.md#settings)) |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |
 
 Each `PLINTH_OPERATOR_*`, limit and `PLINTH_ALLOW_*` variable sets the Worker setting of the same
