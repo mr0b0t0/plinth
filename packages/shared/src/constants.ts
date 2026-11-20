@@ -436,8 +436,17 @@ export const DESIGN_EXPORT = {
   formats: ["png", "pdf"],
   /** PNG pixel scales: each CSS px becomes this many device pixels per side. */
   scales: [1, 2],
-  /** The largest PNG, in device pixels: width x height x scale^2 (8192 x 4096). */
-  maxPixels: 33_554_432,
+  /**
+   * The largest file one export makes, in bytes (24 MiB). The Worker holds the whole file in its
+   * 128 MB isolate (the browser sends it as base64), so a PDF is read in pieces and refused once
+   * it passes this, and a PNG is checked before it is decoded.
+   */
+  maxBytes: 25_165_824,
+  /**
+   * The largest PNG, in device pixels: width x height x scale^2. A PNG takes at most about 4 bytes
+   * a pixel (RGBA that does not compress, such as noise), so any PNG within it fits in maxBytes.
+   */
+  maxPixels: 6_000_000,
   /** DESIGN_EXPORTS_PER_HOUR's default and bounds. */
   perHour: 30,
   perHourBounds: [1, 1000],

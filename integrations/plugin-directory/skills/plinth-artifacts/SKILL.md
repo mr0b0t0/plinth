@@ -1167,7 +1167,9 @@ browser.
   `?format=pdf` (every board; add `&board=<id>` for one). It downloads for anyone who may view the
   design. Never build images or PDFs of a design yourself.
 - Set an `id` on every artboard you want people to export: the file name and the `board` parameter
-  use it. A 2x PNG must stay within 33,554,432 pixels, so a 4096 px board exports at 1x only.
+  use it. A PNG must stay within 6,000,000 pixels (width x height x scale²), so a 1920x1080 board
+  exports at 1x only and a 4096x4096 one only as a PDF. No file is over 24 MB:
+  `payload_too_large` means export fewer boards (`board=<id>`) or at 1x, not try again.
 - Exports are rendered on request and limited per person per hour (`rate_limited` past it). Only
   two render at once on an instance: `unavailable` with `Retry-After` means try again after that
   many seconds, and it does not count against the hour. There is no MCP tool for them, and an

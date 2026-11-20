@@ -26,7 +26,13 @@
 // page before they load. It then waits for the boards and takes a PNG of the board's box (in
 // screen media again) or prints a PDF with the renderer's named @page per board size. The enter URL
 // is minted and used inside the Worker; it is never returned or logged.
+//
+// Size: the Worker holds the whole file in its 128 MB isolate, so no file passes
+// DESIGN_EXPORT.maxBytes (413 payload_too_large). A PDF is read from the browser in 1 MiB pieces
+// and refused as soon as it passes the cap. A PNG arrives whole, as base64, so the pixel cap keeps
+// even one that does not compress under it; its length is checked before it is decoded, once.
 import puppeteer from "@cloudflare/puppeteer";
+import type { CDPSession } from "@cloudflare/puppeteer-types";
 import {
   DESIGN_EXPORT,
   DESIGN_EXPORT_LAYOUT_SCRIPT,
@@ -84,6 +90,8 @@ export const EXPORT_RUN = {
   slotStaleS: 60,
   /** Retry-After, in seconds, when every slot is taken. */
   busyRetryAfterS: 10,
+  /** How much of a PDF one DevTools read takes (IO.read's size). */
+  readChunkBytes: 1_048_576,
 } as const;
 
 /**
@@ -108,6 +116,8 @@ export interface ExportJob {
   boards: number;
   /** The one board exported (always for png), or null for every board. */
   board: string | null;
+  /** The largest file the shooter may return (DESIGN_EXPORT.maxBytes); past it, ExportTooLarge. */
+  maxBytes: number;
 }
 
 /**
@@ -134,6 +144,72 @@ export function redactUrls(message: string): string {
   return message.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
 }
 
+/** A render whose file would pass the job's byte cap (DESIGN_EXPORT.maxBytes): refused, not sent. */
+export class ExportTooLarge extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`the file is over ${maxBytes} bytes`);
+    this.name = "ExportTooLarge";
+  }
+}
+
+/** The bytes a base64 string decodes to, from its length alone. */
+export function base64Size(b64: string): number {
+  const pad = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - pad;
+}
+
+type FromBase64 = { fromBase64?: (s: string) => Uint8Array };
+
+/** Decode base64 once, into one array (the runtime's own decoder where it has one). */
+export function decodeBase64(b64: string): Uint8Array {
+  const native = (Uint8Array as unknown as FromBase64).fromBase64?.(b64);
+  if (native) return native;
+  const out = new Uint8Array(base64Size(b64));
+  let at = 0;
+  // In pieces of whole 4-character groups, so no binary string as long as the file is built.
+  for (let i = 0; i < b64.length; i += 65_536) {
+    const bin = atob(b64.slice(i, i + 65_536));
+    for (let j = 0; j < bin.length; j++) out[at++] = bin.charCodeAt(j);
+  }
+  return out;
+}
+
+/**
+ * Read a DevTools stream (a PDF) in EXPORT_RUN.readChunkBytes pieces, and give up with
+ * ExportTooLarge as soon as it passes `maxBytes`, so the Worker never holds more than the cap
+ * and one piece. The pieces are copied once, into the file, at the end.
+ */
+export async function readCapped(
+  cdp: CDPSession,
+  handle: string,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const pieces: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      if (signal.aborted) throw new Error("the render ran out of time");
+      const r = await cdp.send("IO.read", { handle, size: EXPORT_RUN.readChunkBytes });
+      const piece = r.base64Encoded ? decodeBase64(r.data) : new TextEncoder().encode(r.data);
+      total += piece.byteLength;
+      if (total > maxBytes) throw new ExportTooLarge(maxBytes);
+      if (piece.byteLength > 0) pieces.push(piece);
+      if (r.eof) break;
+    }
+  } finally {
+    await cdp.send("IO.close", { handle }).catch(() => undefined);
+  }
+  if (pieces.length === 1 && pieces[0]) return pieces[0];
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of pieces) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
+
 /** The real shooter: Browser Rendering through @cloudflare/puppeteer. */
 export async function browserExport(
   binding: Fetcher,
@@ -152,11 +228,17 @@ export async function browserExport(
     // Before anything loads: the page reaches only its own version, the board loader and the
     // CSP's hosts, and any window it opens is closed (as for a thumbnail).
     await guardCapturePage(page as unknown as GuardedPage, job.scope);
+    // One DevTools session for the cookies and the PDF stream.
+    let cdp: CDPSession | null = null;
+    const session = async (): Promise<CDPSession> => {
+      cdp ??= await page.createCDPSession();
+      return cdp;
+    };
     if (job.cookies.length > 0) {
-      const cdp = await page.createCDPSession();
+      const s = await session();
       for (const cookie of job.cookies) {
         // Without it boards still render, without their own files (as for thumbnails).
-        await cdp.send("Network.setCookie", cookie).catch((e: unknown) => {
+        await s.send("Network.setCookie", cookie).catch((e: unknown) => {
           console.warn(
             `export cookie not set: ${redactUrls(e instanceof Error ? e.message : String(e))}`,
           );
@@ -202,19 +284,45 @@ export async function browserExport(
     if (job.format === "png") await page.emulateMediaType("screen");
     await new Promise((r) => setTimeout(r, EXPORT_RUN.settleMs));
     if (job.format === "pdf") {
-      const pdf = await page.pdf({ printBackground: true, preferCSSPageSize: true });
-      return new Uint8Array(pdf);
+      // A stream read in pieces, so a PDF past the cap is refused before it is ever whole in the
+      // Worker. The options are puppeteer's page.pdf() defaults plus the two the export sets.
+      const s = await session();
+      const { stream } = await s.send("Page.printToPDF", {
+        transferMode: "ReturnAsStream",
+        printBackground: true,
+        preferCSSPageSize: true,
+        landscape: false,
+        displayHeaderFooter: false,
+        headerTemplate: "",
+        footerTemplate: "",
+        scale: 1,
+        paperWidth: 8.5,
+        paperHeight: 11,
+        marginTop: 0,
+        marginBottom: 0,
+        marginLeft: 0,
+        marginRight: 0,
+        pageRanges: "",
+        generateTaggedPDF: true,
+        generateDocumentOutline: false,
+      });
+      if (!stream) throw new Error("the browser gave no PDF stream");
+      return await readCapped(s, stream, job.maxBytes, signal);
     }
     if (job.board === null) throw new Error("a PNG is one board");
     const el = await page.$(designExportBoardSelector(job.board));
     const box = el ? await el.boundingBox() : null;
     if (!box) throw new Error("the board is not on the page");
+    // The browser's base64 as it came: its size is checked before anything is decoded, and it is
+    // decoded once, into the bytes that are sent.
     const shot = await page.screenshot({
       type: "png",
       omitBackground: true,
       clip: { x: box.x, y: box.y, width: box.width, height: box.height },
+      encoding: "base64",
     });
-    return new Uint8Array(shot);
+    if (base64Size(shot) > job.maxBytes) throw new ExportTooLarge(job.maxBytes);
+    return decodeBase64(shot);
   } finally {
     signal.removeEventListener("abort", close);
     await browser.close().catch(() => undefined);
@@ -396,8 +504,9 @@ function pickBoard(design: DesignSource, input: DesignExportInput): DesignBoard 
     const scale = input.scale ?? 1;
     const pixels = board.width * board.height * scale * scale;
     if (pixels > DESIGN_EXPORT.maxPixels) {
+      const fix = board.width * board.height <= DESIGN_EXPORT.maxPixels ? "scale=1" : "format=pdf";
       throw invalid(
-        `At scale=${scale} this board is ${board.width * scale}x${board.height * scale} px, over the ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} pixel limit: use scale=1`,
+        `At scale=${scale} this board is ${board.width * scale}x${board.height * scale} px, over the ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} pixel limit: use ${fix}`,
         "scale",
         { max_pixels: DESIGN_EXPORT.maxPixels },
       );
@@ -485,6 +594,7 @@ export async function exportDesign(
       },
       boards: boards.length,
       board: board?.id ?? null,
+      maxBytes: DESIGN_EXPORT.maxBytes,
     };
   } catch (e) {
     await releaseExportSlot(ctx.env.DB, slot).catch(() => undefined);
@@ -498,7 +608,19 @@ export async function exportDesign(
   try {
     bytes = await result;
     if (bytes.byteLength === 0) throw new Error("empty file");
+    if (bytes.byteLength > job.maxBytes) throw new ExportTooLarge(job.maxBytes);
   } catch (e) {
+    // The file, not the moment: trying again gives the same answer, so say what to change.
+    if (e instanceof ExportTooLarge) {
+      const mb = Math.floor(e.maxBytes / 1_048_576);
+      throw new ApiError(
+        "payload_too_large",
+        input.format === "pdf" && !board
+          ? `This PDF would be over ${mb} MB, the largest export: download the boards one at a time (board=<id>)`
+          : `This ${input.format.toUpperCase()} would be over ${mb} MB, the largest export${input.format === "png" && scale > 1 ? ": use scale=1" : ""}`,
+        { max_bytes: e.maxBytes },
+      );
+    }
     console.warn(
       `design export failed for ${artifact.id} v${version}: ${redactUrls(e instanceof Error ? e.message : String(e))}`,
     );

@@ -20,10 +20,13 @@ import { ConfigError, designExportActive, getConfig, parseConfig } from "../src/
 import { verifyContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import {
+  base64Size,
   browserExport,
   claimExportSlot,
+  decodeBase64,
   EXPORT_RUN,
   type ExportJob,
+  ExportTooLarge,
   exportFileName,
   exportRateKey,
   redactUrls,
@@ -37,6 +40,27 @@ import { captureRequestAllowed, captureScope } from "../src/services/thumbnails.
 import { APP, agent, browserSession, createToken, createUser, json, publish } from "./helpers.ts";
 
 const ON = { BROWSER: {} as Fetcher };
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return btoa(bin);
+}
+
+/** `n` bytes that do not repeat in any short pattern. */
+function bytesOf(n: number): Uint8Array {
+  const out = new Uint8Array(n);
+  let x = 2463534242;
+  for (let i = 0; i < n; i++) {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    out[i] = x & 0xff;
+  }
+  return out;
+}
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n%%EOF\n");
 
@@ -384,21 +408,80 @@ describe("export", () => {
     expect(jobs).toHaveLength(0);
   });
 
-  it("caps a PNG at the pixel limit: a 4096 px board at 1x, not at 2x", async () => {
+  it("caps a PNG at the pixel limit, so even one that does not compress fits the byte cap", async () => {
+    // A PNG is at most about 4 bytes a pixel (RGBA noise), plus a filter byte a row.
+    const worst = (px: number, rows: number) => px * 4 + rows + 65_536;
+    expect(worst(DESIGN_EXPORT.maxPixels, 8192)).toBeLessThan(DESIGN_EXPORT.maxBytes);
     const a = await agent();
-    const d = await publishDesign(a.auth, { content: BIG });
-    const twice = await run(exportUrl(d.id, "format=png&board=poster&scale=2"), {
-      headers: a.auth,
+    const d = await publishDesign(a.auth, {
+      content: ['<!-- artboard id="hd" name="HD" size="desktop-hd" -->', "<div>HD</div>", BIG].join(
+        "\n",
+      ),
     });
+    // 1920x1080 at 2x is 8,294,400 device pixels: 1x only.
+    const twice = await run(exportUrl(d.id, "format=png&board=hd&scale=2"), { headers: a.auth });
     expect(twice.status).toBe(400);
     const body = await json(twice);
-    expect(body.error.message).toMatch(
-      /8192x8192 px, over the 33,554,432 pixel limit: use scale=1/,
-    );
+    expect(body.error.message).toMatch(/3840x2160 px, over the 6,000,000 pixel limit: use scale=1/);
     expect(body.error.details.max_pixels).toBe(DESIGN_EXPORT.maxPixels);
-    const once = await run(exportUrl(d.id, "format=png&board=poster"), { headers: a.auth });
+    const once = await run(exportUrl(d.id, "format=png&board=hd"), { headers: a.auth });
     expect(once.status).toBe(200);
-    expect(jobs[0]?.viewport).toEqual({ width: 4096, height: 4096, deviceScaleFactor: 1 });
+    expect(jobs[0]?.viewport).toEqual({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+    expect(jobs[0]?.maxBytes).toBe(DESIGN_EXPORT.maxBytes);
+    // A 4096 px board is over the limit at 1x too: it downloads as a PDF.
+    const poster = await run(exportUrl(d.id, "format=png&board=poster"), { headers: a.auth });
+    expect(poster.status).toBe(400);
+    expect((await json(poster)).error.message).toMatch(
+      /4096x4096 px, over the 6,000,000 pixel limit: use format=pdf/,
+    );
+    const pdf = await run(exportUrl(d.id, "format=pdf&board=poster"), { headers: a.auth });
+    expect(pdf.status).toBe(200);
+    expect(jobs).toHaveLength(2);
+  });
+
+  it("refuses a file over the byte cap with 413, and says what to change", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const a = await agent();
+      const d = await publishDesign(a.auth);
+      // The browser's file passed the cap while it was read.
+      setDesignExportShooter(async (_b, job) => {
+        jobs.push(job);
+        throw new ExportTooLarge(job.maxBytes);
+      });
+      const all = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth });
+      expect(all.status).toBe(413);
+      const body = await json(all);
+      expect(body.error.code).toBe("payload_too_large");
+      expect(body.error.message).toBe(
+        "This PDF would be over 24 MB, the largest export: download the boards one at a time (board=<id>)",
+      );
+      expect(body.error.details.max_bytes).toBe(DESIGN_EXPORT.maxBytes);
+      const png = await run(exportUrl(d.id, "format=png&board=home&scale=2"), {
+        headers: a.auth,
+      });
+      expect(png.status).toBe(413);
+      expect((await json(png)).error.message).toBe(
+        "This PNG would be over 24 MB, the largest export: use scale=1",
+      );
+      // A shooter that hands back more than the cap is refused as well, never sent.
+      setDesignExportShooter(async (_b, job) => new Uint8Array(job.maxBytes + 1));
+      const big = await run(exportUrl(d.id, "format=pdf&board=post"), { headers: a.auth });
+      expect(big.status).toBe(413);
+      expect((await json(big)).error.message).toBe(
+        "This PDF would be over 24 MB, the largest export",
+      );
+      // Every slot was given back.
+      setDesignExportShooter(async () => PDF_BYTES);
+      const keys: (string | null)[] = [];
+      for (let i = 0; i < DESIGN_EXPORT.maxConcurrent; i++)
+        keys.push(await claimExportSlot(env.DB));
+      expect(keys.every((k) => k !== null)).toBe(true);
+      for (const k of keys) if (k) await releaseExportSlot(env.DB, k);
+      expect((await run(exportUrl(d.id, "format=pdf"), { headers: a.auth })).status).toBe(200);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("limits exports per person per hour (DESIGN_EXPORTS_PER_HOUR), refused ones not counted", async () => {
@@ -597,6 +680,12 @@ describe("the browser's steps", () => {
     waitUntil?: string;
     closed: number;
     pdf: number;
+    /** The printToPDF options, and each IO.read's size; IO.close calls by handle. */
+    printOptions?: Record<string, unknown>;
+    reads: number[];
+    ioClosed: string[];
+    /** The screenshot's options. */
+    shotOptions?: Record<string, unknown>;
     /** Every page call in order, by name (media types as media:<type>). */
     steps: string[];
     evaluated: string[];
@@ -612,21 +701,26 @@ describe("the browser's steps", () => {
 
   /**
    * A fake puppeteer browser on a fake clock: launch 3 s, the document 9 s, boards never load.
-   * `layout` is whether the page took the export layout; `board` whether the one board is there.
+   * `layout` is whether the page took the export layout; `board` whether the one board is there;
+   * `pdf` and `png` the files the browser makes (a PDF is read from a DevTools stream in pieces).
    */
   function fakeBrowser(
     clock: { t: number },
     hangGoto = false,
-    page$: { layout?: boolean; board?: boolean } = {},
+    page$: { layout?: boolean; board?: boolean; pdf?: Uint8Array; png?: Uint8Array } = {},
   ) {
     const calls: Calls = {
       timeouts: {},
       closed: 0,
       pdf: 0,
+      reads: [],
+      ioClosed: [],
       steps: [],
       evaluated: [],
       waitedFor: [],
     };
+    const pdfFile = page$.pdf ?? PDF_BYTES;
+    let pdfAt = 0;
     let rejectGoto: (e: Error) => void = () => undefined;
     const page = {
       setRequestInterception: async (on: boolean) => {
@@ -637,8 +731,31 @@ describe("the browser's steps", () => {
         if (event === "request") calls.requestHandler = handler;
       },
       createCDPSession: async () => ({
-        send: async () => {
-          calls.steps.push("cookie");
+        send: async (method: string, params: Record<string, unknown>) => {
+          if (method === "Network.setCookie") {
+            calls.steps.push("cookie");
+            return {};
+          }
+          if (method === "Page.printToPDF") {
+            calls.steps.push("pdf");
+            calls.pdf += 1;
+            calls.printOptions = params;
+            calls.timeouts.printAt = clock.t;
+            return { stream: "pdf-stream" };
+          }
+          if (method === "IO.read") {
+            expect(params.handle).toBe("pdf-stream");
+            const size = params.size as number;
+            calls.reads.push(size);
+            const piece = pdfFile.subarray(pdfAt, pdfAt + size);
+            pdfAt += piece.byteLength;
+            return { data: toBase64(piece), base64Encoded: true, eof: pdfAt >= pdfFile.byteLength };
+          }
+          if (method === "IO.close") {
+            calls.ioClosed.push(params.handle as string);
+            return {};
+          }
+          throw new Error(`unexpected ${method}`);
         },
       }),
       setViewport: async () => undefined,
@@ -674,16 +791,13 @@ describe("the browser's steps", () => {
         if (expression.includes("el.remove()")) return page$.board ?? true;
         return "ok";
       },
-      pdf: async () => {
-        calls.steps.push("pdf");
-        calls.pdf += 1;
-        calls.timeouts.printAt = clock.t;
-        return PDF_BYTES;
-      },
       $: async () => ({ boundingBox: async () => ({ x: 0, y: 0, width: 300, height: 250 }) }),
-      screenshot: async () => {
+      // Puppeteer's screenshot: base64 when asked for it, else decoded.
+      screenshot: async (o: Record<string, unknown>) => {
         calls.steps.push("screenshot");
-        return PNG_BYTES;
+        calls.shotOptions = o;
+        const png = page$.png ?? PNG_BYTES;
+        return o.encoding === "base64" ? toBase64(png) : png;
       },
     };
     const browser = {
@@ -711,6 +825,7 @@ describe("the browser's steps", () => {
     viewport: { width: 300, height: 250, deviceScaleFactor: 1 },
     boards: 3,
     board: null,
+    maxBytes: DESIGN_EXPORT.maxBytes,
   };
 
   afterEach(() => {
@@ -828,6 +943,79 @@ describe("the browser's steps", () => {
       ).rejects.toThrow(message);
       expect(fake.calls.steps).not.toContain("screenshot");
       expect(fake.calls.closed).toBe(1);
+    }
+  });
+
+  it("read a PDF from the browser's stream in 1 MiB pieces, and close the stream", async () => {
+    const file = bytesOf(2 * EXPORT_RUN.readChunkBytes + 12_345);
+    const fake = fakeBrowser({ t: 0 }, false, { pdf: file });
+    setDesignExportLauncher(fake.launch);
+    const bytes = await browserExport(ON.BROWSER, JOB, new AbortController().signal);
+    expect(bytes).toEqual(file);
+    expect(fake.calls.reads).toEqual(Array(3).fill(EXPORT_RUN.readChunkBytes));
+    expect(fake.calls.ioClosed).toEqual(["pdf-stream"]);
+    expect(fake.calls.printOptions).toMatchObject({
+      transferMode: "ReturnAsStream",
+      printBackground: true,
+      preferCSSPageSize: true,
+      marginTop: 0,
+      scale: 1,
+    });
+    expect(fake.calls.closed).toBe(1);
+  });
+
+  it("stop reading a PDF as soon as it passes the byte cap, and close the stream", async () => {
+    const piece = EXPORT_RUN.readChunkBytes;
+    const fake = fakeBrowser({ t: 0 }, false, { pdf: bytesOf(10 * piece) });
+    setDesignExportLauncher(fake.launch);
+    const shot = browserExport(
+      ON.BROWSER,
+      { ...JOB, maxBytes: 2 * piece + 1 },
+      new AbortController().signal,
+    );
+    await expect(shot).rejects.toBeInstanceOf(ExportTooLarge);
+    // Three pieces passed the cap; the other seven were never read.
+    expect(fake.calls.reads).toHaveLength(3);
+    expect(fake.calls.ioClosed).toEqual(["pdf-stream"]);
+    expect(fake.calls.closed).toBe(1);
+  });
+
+  it("check a PNG's size from its base64 before decoding it, and decode it once", async () => {
+    const png = bytesOf(1000);
+    const board = { ...JOB, format: "png" as const, board: "mrec", boards: 1 };
+    const over = fakeBrowser({ t: 0 }, false, { png });
+    setDesignExportLauncher(over.launch);
+    await expect(
+      browserExport(ON.BROWSER, { ...board, maxBytes: 999 }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(ExportTooLarge);
+    expect(over.calls.shotOptions?.encoding).toBe("base64");
+    expect(over.calls.closed).toBe(1);
+    const fits = fakeBrowser({ t: 0 }, false, { png });
+    setDesignExportLauncher(fits.launch);
+    const bytes = await browserExport(
+      ON.BROWSER,
+      { ...board, maxBytes: 1000 },
+      new AbortController().signal,
+    );
+    expect(bytes).toEqual(png);
+  });
+
+  it("size and decode base64, with the runtime's decoder or without it", () => {
+    for (const n of [0, 1, 2, 3, 4, 200_001]) {
+      const b = bytesOf(n);
+      const b64 = toBase64(b);
+      expect(base64Size(b64)).toBe(n);
+      expect(decodeBase64(b64)).toEqual(b);
+    }
+    const own = Object.getOwnPropertyDescriptor(Uint8Array, "fromBase64");
+    try {
+      if (own) Reflect.deleteProperty(Uint8Array, "fromBase64");
+      for (const n of [0, 1, 2, 65_536 * 3 + 7, 200_001]) {
+        const b = bytesOf(n);
+        expect(decodeBase64(toBase64(b))).toEqual(b);
+      }
+    } finally {
+      if (own) Object.defineProperty(Uint8Array, "fromBase64", own);
     }
   });
 

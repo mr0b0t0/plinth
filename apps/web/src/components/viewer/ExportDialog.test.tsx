@@ -2,7 +2,7 @@
 // it lists the version's boards (names as text), asks for one board for a PNG (1x or 2x, 2x only
 // within the pixel cap) or every board or one for a PDF, fetches the file from the app host and
 // saves it, and shows the server's message when the export is refused.
-import type { DesignExportOptions } from "@plinth/shared";
+import { DESIGN_EXPORT, type DesignExportOptions } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,11 +18,11 @@ const OPTIONS: DesignExportOptions = {
   version: 2,
   boards: [
     { id: "home", name: 'Home <img src=x onerror="window.__pwned=1">', width: 393, height: 852 },
-    { id: "poster", name: "Poster", width: 4096, height: 4096 },
+    { id: "poster", name: "Poster", width: 2400, height: 2400 },
   ],
   formats: ["png", "pdf"],
   scales: [1, 2],
-  max_pixels: 33_554_432,
+  max_pixels: DESIGN_EXPORT.maxPixels,
   available: true,
 };
 
@@ -107,7 +107,7 @@ describe("ExportDialog", () => {
     // A PNG is one board: no "All boards"; names are text, never markup.
     expect([...select.options].map((o) => o.textContent)).toEqual([
       'Home <img src=x onerror="window.__pwned=1"> (393 × 852)',
-      "Poster (4096 × 4096)",
+      "Poster (2400 × 2400)",
     ]);
     expect(document.querySelector("img")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Download PNG" }));
@@ -293,6 +293,26 @@ describe("ExportDialog", () => {
     expect(download.disabled).toBe(false);
   });
 
+  it("offers a PDF for a board over the pixel cap at 1x", async () => {
+    const big: DesignExportOptions = {
+      ...OPTIONS,
+      boards: [{ id: "poster", name: "Poster", width: 4096, height: 4096 }],
+    };
+    stubApi({ handle: (c) => (c.path.includes("/export/options") ? json(big) : undefined) });
+    renderDialog();
+    const select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    await userEvent.click(screen.getByRole("radio", { name: "1x" }));
+    expect(
+      await screen.findByText("This board is too big for a PNG. Download it as a PDF."),
+    ).toBeTruthy();
+    const download = screen.getByRole("button", { name: "Download PNG" }) as HTMLButtonElement;
+    expect(download.disabled).toBe(true);
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    const pdf = screen.getByRole("button", { name: "Download PDF" }) as HTMLButtonElement;
+    expect(pdf.disabled).toBe(false);
+  });
+
   it("shows the server's message when the export is refused, and saves nothing", async () => {
     stubApi({
       handle: (c) => {
@@ -339,8 +359,11 @@ describe("helpers", () => {
   });
 
   it("check the pixel cap", () => {
-    expect(fitsPixels({ width: 4096, height: 4096 }, 1)).toBe(true);
-    expect(fitsPixels({ width: 4096, height: 4096 }, 2)).toBe(false);
-    expect(fitsPixels({ width: 4096, height: 2048 }, 2)).toBe(true);
+    // DESIGN_EXPORT.maxPixels (6,000,000): a PNG that does not compress still fits maxBytes.
+    expect(fitsPixels({ width: 1440, height: 900 }, 2)).toBe(true);
+    expect(fitsPixels({ width: 1920, height: 1080 }, 2)).toBe(false);
+    expect(fitsPixels({ width: 1920, height: 1080 }, 1)).toBe(true);
+    expect(fitsPixels({ width: 4096, height: 4096 }, 1)).toBe(false);
+    expect(fitsPixels({ width: 2000, height: 3000 }, 1)).toBe(true);
   });
 });

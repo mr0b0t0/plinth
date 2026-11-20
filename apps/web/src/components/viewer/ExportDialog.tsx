@@ -84,10 +84,11 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
   // A PNG is one board: "All boards" is a PDF choice only, so a PNG without a pick takes the first.
   const chosen = boards.find((b) => b.id === board) ?? (format === "png" ? boards[0] : undefined);
   const scaleNumber = Number(scale) as 1 | 2;
+  const maxPixels = options?.max_pixels ?? DESIGN_EXPORT.maxPixels;
   const tooBig =
-    format === "png" &&
-    chosen !== undefined &&
-    !fitsPixels(chosen, scaleNumber, options?.max_pixels ?? DESIGN_EXPORT.maxPixels);
+    format === "png" && chosen !== undefined && !fitsPixels(chosen, scaleNumber, maxPixels);
+  // Over the cap even at 1x: only a PDF holds it.
+  const pdfOnly = tooBig && chosen !== undefined && !fitsPixels(chosen, 1, maxPixels);
 
   const boardOptions = [
     ...(format === "pdf" ? [{ value: ALL, label: "All boards" }] : []),
@@ -187,7 +188,9 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
         )}
         {tooBig && (
           <p className="pl-field__error" role="alert">
-            This board is too big for a 2x PNG. Choose 1x.
+            {pdfOnly
+              ? "This board is too big for a PNG. Download it as a PDF."
+              : "This board is too big for a 2x PNG. Choose 1x."}
           </p>
         )}
         {error && (

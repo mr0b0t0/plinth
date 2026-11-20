@@ -3044,7 +3044,9 @@ function designExportOperations(): Operation[] {
         "For an artifact of type design the caller may view, rendered on the server by Browser " +
         "Rendering: a PNG of one board at 1x or 2x, or a PDF with one page per board at its own " +
         "size (every board, or the one named). An attachment named `<slug>[-<board>].png` or " +
-        `\`.pdf\`. At most ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} PNG pixels, and ` +
+        `\`.pdf\`. At most ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} PNG pixels (400), ` +
+        `files of at most ${DESIGN_EXPORT.maxBytes / 1_048_576} MB (413 payload_too_large, ` +
+        "with max_bytes: export fewer boards or at 1x), and " +
         "DESIGN_EXPORTS_PER_HOUR exports per person, or per client network signed out (an IPv6 " +
         "/64 as one; 429). 403 feature_disabled where the instance has no Browser Rendering " +
         "binding or DESIGN_EXPORT is off; 503 unavailable when the render fails, or with " +
@@ -3069,7 +3071,7 @@ function designExportOperations(): Operation[] {
       ],
       ok: [200, null],
       okMedia: ["image/png", "application/pdf"],
-      errors: [400, 401, 403, 404, 429, 503],
+      errors: [400, 401, 403, 404, 413, 429, 503],
     },
   ];
 }

@@ -17,6 +17,13 @@ declare module "@cloudflare/puppeteer-types" {
       clip?: { x: number; y: number; width: number; height: number };
       omitBackground?: boolean;
     }): Promise<Uint8Array>;
+    /** services/designExport.ts: the browser's base64 as it came, so its size is checked first. */
+    screenshot(opts: {
+      type: "png";
+      clip: { x: number; y: number; width: number; height: number };
+      omitBackground: boolean;
+      encoding: "base64";
+    }): Promise<string>;
     createCDPSession(): Promise<CDPSession>;
     // services/designExport.ts
     /** "print" puts the design renderer in its export layout as the page boots. */
@@ -25,15 +32,24 @@ declare module "@cloudflare/puppeteer-types" {
     waitForFunction(expression: string, opts?: { timeout?: number }): Promise<unknown>;
     /** The expression's value in the page. */
     evaluate(expression: string): Promise<unknown>;
-    pdf(opts?: { printBackground?: boolean; preferCSSPageSize?: boolean }): Promise<Uint8Array>;
     $(selector: string): Promise<ElementHandle | null>;
   }
   export interface ElementHandle {
     boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null>;
   }
-  /** A DevTools protocol session (only the call services/thumbnails.ts makes). */
+  /** A DevTools protocol session (only the calls services/thumbnails.ts and designExport.ts make). */
   export interface CDPSession {
     send(method: "Network.setCookie", params: object): Promise<unknown>;
+    /** services/designExport.ts: the PDF as a stream the Worker reads in pieces. */
+    send(
+      method: "Page.printToPDF",
+      params: { transferMode: "ReturnAsStream"; [option: string]: unknown },
+    ): Promise<{ stream?: string }>;
+    send(
+      method: "IO.read",
+      params: { handle: string; size: number },
+    ): Promise<{ data: string; base64Encoded?: boolean; eof: boolean }>;
+    send(method: "IO.close", params: { handle: string }): Promise<unknown>;
   }
   export interface Browser {
     newPage(): Promise<Page>;

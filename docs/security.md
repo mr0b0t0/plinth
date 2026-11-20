@@ -1306,7 +1306,17 @@ with `DESIGN_EXPORT` on and the `BROWSER` binding; elsewhere the endpoint answer
   network from `lib/ip.ts` (an IPv4 address, or an IPv6 address's /64), so a line that may pick
   any address in its /64 is still one client. A render has 25 seconds and waits at most 10 for
   boards to load, every wait ending 7 seconds before the budget so the print still runs; a PNG is
-  at most 33,554,432 device pixels.
+  at most 6,000,000 device pixels.
+- **Memory.** The Worker holds the whole file in its 128 MB isolate, beside every other request
+  that isolate serves, and a board's scripts decide how well the file compresses (a canvas of
+  noise does not), so the cap is on bytes, not on what the design declares. No export is over
+  24 MB (`DESIGN_EXPORT.maxBytes`). A PDF comes from the browser as a DevTools stream that the
+  Worker reads 1 MiB at a time and stops reading, with 413 `payload_too_large`, as soon as it
+  passes the cap, so 60 boards of rasterised canvas never arrive whole. A PNG arrives in one
+  DevTools message as base64; the pixel cap keeps even one at about 4 bytes a pixel under 24 MB,
+  its size is checked from the base64 length before it is decoded, and it is decoded once,
+  straight into the bytes sent. A file over the cap is refused, never cut short, and still counts
+  toward the hourly limit, since the browser ran.
 - **Concurrency.** Browser Rendering limits the browsers an account runs at once, and thumbnails
   already take up to two. At most two exports render at once across the instance: a lease row in
   `rate_limits` (`design-export:running:<random id>`, no person in it), taken in one guarded

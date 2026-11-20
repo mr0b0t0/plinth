@@ -172,9 +172,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the server from the version on screen with the same safety as thumbnails. Anyone who may view
   the design can export it, up to 30 times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed
   out, per network), and at most two render at once across the instance; `DESIGN_EXPORT=false`
-  turns it off. Scripts and agents use `GET /api/v1/artifacts/<id>/export?format=png&board=<id>`
-  or `?format=pdf`, with `/export/options` listing the boards. Without the binding nothing
-  changes: Print or save as PDF stays.
+  turns it off. A PNG is at most 6,000,000 pixels (a 1920x1080 board at 1x only) and any file at
+  most 24 MB, so one export cannot run the Worker out of memory. Scripts and agents use
+  `GET /api/v1/artifacts/<id>/export?format=png&board=<id>` or `?format=pdf`, with
+  `/export/options` listing the boards. Without the binding nothing changes: Print or save as PDF
+  stays.
 
 ## 0.6.0 (2026-11-20)
 

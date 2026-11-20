@@ -234,9 +234,10 @@ counts toward the `DATA_*` limits like any page's shared data.
 **Design export** ([Designs](#designs-decided-2026-11-19), no migration) stores nothing: every
 file is rendered on request and never kept. It adds two settings, `DESIGN_EXPORT` (on, in effect
 only with a `BROWSER` binding) and `DESIGN_EXPORTS_PER_HOUR` (30, from 1 to 1000), counted in
-`rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most 33,554,432 device pixels; 25
-seconds per render, of which at most 10 waiting for the boards to load; two exports at once per
-instance, each holding a lease row in `rate_limits` that names no person until its browser closes.
+`rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most 6,000,000 device pixels;
+files of at most 24 MB (`DESIGN_EXPORT.maxBytes`, 413 `payload_too_large` past it); 25 seconds per
+render, of which at most 10 waiting for the boards to load; two exports at once per instance, each
+holding a lease row in `rate_limits` that names no person until its browser closes.
 
 ## Auth and permissions
 
@@ -1470,9 +1471,12 @@ restoring an older one.
 - **Download PNG or PDF** (decided 2026-11-19), where the instance has a Browser Rendering
   binding (`BROWSER`) and `DESIGN_EXPORT` is on (the default): the artifact menu's "Download PNG or
   PDF…" picks a board and a format, and the server renders the version on screen in Cloudflare
-  Browser Rendering. A PNG is one board at 1x or 2x (at most 33,554,432 device pixels, so a
-  4096 px board only at 1x), transparent where the board is; a PDF is every board, or one, each on
-  a page of exactly its size. REST: `GET /api/v1/artifacts/:ref/export/options?version=` lists the
+  Browser Rendering. A PNG is one board at 1x or 2x (at most 6,000,000 device pixels, so a
+  1920x1080 board only at 1x and a 4096x4096 one only as a PDF), transparent where the board is; a
+  PDF is every board, or one, each on a page of exactly its size. No file is over 24 MB: the Worker
+  holds the whole file while it sends it, so it reads a PDF from the browser in 1 MiB pieces and
+  answers 413 `payload_too_large` (with `max_bytes`) once it passes that, and the pixel cap keeps
+  even a PNG that does not compress (about 4 bytes a pixel) under it. REST: `GET /api/v1/artifacts/:ref/export/options?version=` lists the
   version's boards, and `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=`
   returns the file as an attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view
   the artifact may export it (the `view` action; strangers get 404), at most
