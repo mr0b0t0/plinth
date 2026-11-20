@@ -212,7 +212,7 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     expect(moderated).toBe("ok");
     await reopen(page);
     const rowA = fo.locator("#list li", { hasText: a });
-    await expect(rowA).toContainText(`changed by ${owner} (owner)`);
+    await expect(rowA.locator(".meta").first()).toContainText(` · Changed by ${owner} (owner)`);
     await expect(rowA).toHaveAttribute("data-counted", "false");
     await expect(fo.locator("#status")).toHaveText("0 of 2 approvals on revision 2");
 

@@ -55,7 +55,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `constructor` or another built-in name no longer shows a stray answer.
 - **The approval example keeps your own decision current.** "You approved · Withdraw" follows the
   shared data, so it updates when the owner or an editor changes or deletes your sign-off, without
-  a reload.
+  a reload. Who changed a sign-off now joins its decision and date line ("· Changed by" with the
+  email, and the role when there is one), as on the intake page.
 - **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
   (shared data, rooms, page comments) no longer gets a publish warning it could not fix.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a

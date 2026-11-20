@@ -96,12 +96,12 @@ sign for someone else):
 - The status line counts only current-revision sign-offs made by their own person from the page,
   one personal document per person: "Approved: 2 of 2 on revision 3", "1 of 2 approvals on
   revision 3", or "Changes requested by 1 person" (any current request for changes blocks
-  approval). A sign-off the owner or an editor changed shows "changed by" with their email and
-  role, and one written by an agent shows "via agent"; neither counts. The owner's and editors'
-  own sign-offs, made from the page, count like anyone's: `data-required` counts people who
-  approved, whatever their role. Any invited person can also add documents that are not their
-  personal one (with `add` or `set` through the runtime); those show "not a personal sign-off" and
-  never count.
+  approval). A sign-off the owner or an editor changed adds "Changed by" with their email (and
+  role) to its decision and date line, and one written by an agent adds "via agent"; neither
+  counts. The owner's and editors' own sign-offs, made from the page, count like anyone's:
+  `data-required` counts people who approved, whatever their role. Any invited person can also
+  add documents that are not their personal one (with `add` or `set` through the runtime); those
+  show "not a personal sign-off" and never count.
 - A link viewer sees the decisions and notes without names, and the status line says only people
   the page was shared with can see whether it is approved.
 - A sign-off the owner or an editor deletes, or one its person withdraws, is simply gone.

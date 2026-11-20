@@ -297,14 +297,16 @@ function row(doc, s, counted) {
   const time = el("time", "", when(doc.updatedAt));
   time.dateTime = doc.updatedAt;
   meta.append(" · ", time);
-  li.append(meta);
+  // The owner or an editor changed this sign-off (moderation): say who, from the stamps.
   const u = doc.updatedBy;
   const c = doc.createdBy;
+  const agent = u && u.via === "agent" ? " via agent" : "";
   if (u && c && u.email !== c.email) {
-    li.append(el("span", "meta", `changed by ${who(u)} (${u.role || "no role"})${u.via === "agent" ? " via agent" : ""}`));
-  } else if (u && u.via === "agent") {
-    li.append(el("span", "meta", "changed via agent"));
+    meta.append(` · Changed by ${who(u)}${u.role ? ` (${u.role})` : ""}${agent}`);
+  } else if (agent) {
+    meta.append(" · Changed via agent");
   }
+  li.append(meta);
   if (stamped(doc) && doc.personal !== true) li.append(el("span", "meta", "not a personal sign-off"));
   if (!counted && stamped(doc)) li.append(el("span", "tag", "not counted"));
   if (s.note) li.append(el("p", "note", s.note));
