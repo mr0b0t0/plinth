@@ -60,14 +60,7 @@ async function epochOf(id: string): Promise<number> {
 
 /** A content cookie of another kind, signed as Plinth signs one (plain name: http in tests). */
 async function passCookie(id: string, kind: "preview" | "capture"): Promise<string> {
-  const value = await signContentCookie(
-    config(),
-    id,
-    await epochOf(id),
-    undefined,
-    kind,
-    kind === "preview" ? 1 : undefined,
-  );
+  const value = await signContentCookie(config(), id, await epochOf(id), undefined, kind, 1);
   return `${contentCookieName(config(), new URL(contentOrigin(id)))}=${value}`;
 }
 

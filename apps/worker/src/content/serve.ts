@@ -180,7 +180,10 @@ type ContentPass = {
    */
   noData?: true;
   preview: boolean;
-  /** The one version a preview pass opens; null for every other pass. */
+  /**
+   * The one version a preview or capture pass opens; null for a view pass. A capture pass is
+   * served that version on every path, the artifact's root included.
+   */
   version: number | null;
   /** This browser's open was already counted at this epoch (a view pass carrying `w`). */
   counted: boolean;
@@ -199,13 +202,13 @@ async function openPass(
   const capture = pass.c === 1;
   const preview = pass.p === 1;
   if (capture && preview) return null;
-  if (preview !== isVersion(pass.v)) return null;
+  if ((preview || capture) !== isVersion(pass.v)) return null;
   if (pass.d !== undefined && (pass.d !== 1 || !capture)) return null;
   const noData = pass.d === 1 ? ({ noData: true } as const) : {};
   // Only a view pass is ever marked counted (signContentCookie refuses the others).
   if (pass.w !== undefined && (pass.w !== 1 || capture || preview)) return null;
   const counted = pass.w === 1;
-  const version = preview ? (pass.v as number) : null;
+  const version = preview || capture ? (pass.v as number) : null;
   const exp = pass.exp;
   if (pass.x === undefined)
     return { claim: null, capture, ...noData, preview, version, counted, exp };
@@ -494,7 +497,7 @@ async function serve(
     const preview = payload.p === 1;
     if ((capture || preview) && x !== undefined) return expired();
     if (capture && preview) return expired();
-    if (preview !== isVersion(payload.v)) return expired();
+    if ((preview || capture) !== isVersion(payload.v)) return expired();
     if (payload.d !== undefined && (payload.d !== 1 || !capture)) return expired();
     // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
     if (preview && base) return expired();
@@ -522,7 +525,7 @@ async function serve(
       payload.e,
       x,
       kind,
-      preview ? (payload.v as number) : undefined,
+      preview || capture ? (payload.v as number) : undefined,
       seen || countNow,
       visitor,
       payload.d === 1,
@@ -605,6 +608,14 @@ async function serve(
   }
   // A preview pass opens its one version's URLs and nothing else, not even the current path.
   if (pass.preview && (!vm || versionNumber !== pass.version)) return fail(404, "Not found");
+  // A capture pass is bound to the version it pictures: another version's path answers 404, and
+  // every other path (the root, a root-relative script, a frame, a redirect's target) is served
+  // from the captured version, never the current one, whose code another writer may own (a token
+  // limited to the artifact) and would run under this pass, which may read the shared data.
+  if (pass.capture && pass.version !== null) {
+    if (vm && versionNumber !== pass.version) return fail(404, "Not found");
+    versionNumber = pass.version;
+  }
   if (versionNumber < 1 || versionNumber > artifact.currentVersion)
     return fail(404, "No such version");
 

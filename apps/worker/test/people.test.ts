@@ -57,7 +57,7 @@ async function passCookie(
     await epochOf(id),
     undefined,
     kind,
-    kind === "preview" ? 1 : undefined,
+    1,
     false,
     undefined,
     opts.noData === true,
