@@ -1,6 +1,6 @@
 // Following the presenter, in the deck: the slides socket client (backoff, the hidden-tab close,
 // 4401 and 4404 stop it, reconnecting leads again) and the deck's side (following, pausing by hand,
-// "Back to the presenter", Lead viewers sending start, goto and stop, a takeover), with a fake
+// "Back to slide N", Lead viewers sending start, goto and stop, a takeover), with a fake
 // socket.
 import {
   RENDERER_MESSAGE_SOURCE,
@@ -174,7 +174,7 @@ describe("FollowClient", () => {
     s.drop(4401);
     expect(f.client.ended).toBe("unauthorized");
     expect(f.pill.hidden).toBe(false);
-    expect(f.pill.textContent).toContain("Your access changed. Reload to keep following.");
+    expect(f.pill.textContent).toContain("Your access changed. Reload the page.");
     expect(root.hasAttribute("data-follow")).toBe(false);
     vi.advanceTimersByTime(120_000);
     expect(FakeSocket.all.length).toBe(1);
@@ -243,6 +243,8 @@ describe("Follow: watching", () => {
     expect(deck.current).toBe(3);
     expect(f.pill.hidden).toBe(false);
     expect(f.pill.textContent).toContain("Following the presenter");
+    // Following is a status, with nothing to press: paging by hand is how to stop.
+    expect(f.pill.querySelector("button")?.hidden).toBe(true);
     expect(root.getAttribute("data-follow")).toBe("on");
     s.frame({ t: "at", slide: 4, by: "s_lead" });
     expect(deck.current).toBe(4);
@@ -253,12 +255,12 @@ describe("Follow: watching", () => {
     s.frame({ t: "at", slide: 5, by: "s_lead" });
     expect(deck.current).toBe(3);
     const back = f.pill.querySelector("button");
-    expect(back?.textContent).toBe("Back to the presenter (slide 5)");
+    expect(back?.textContent).toBe("Back to slide 5");
     back?.click();
     expect(deck.current).toBe(5);
     expect(f.following).toBe(true);
-    // Stop pauses too.
-    f.pill.querySelector("button")?.click();
+    expect(f.pill.querySelector("button")?.hidden).toBe(true);
+    deck.prev();
     expect(f.following).toBe(false);
     // Nobody leads: the pill goes, and the next presenter is followed again.
     s.frame({ t: "stopped" });
@@ -301,7 +303,7 @@ describe("Follow: presenting", () => {
     s.frame({ t: "at", slide: 2, by: "s_me" });
     s.frame({ t: "audience", n: 3 });
     expect(button.getAttribute("aria-pressed")).toBe("true");
-    expect(button.textContent).toBe("Leading · 3 following");
+    expect(button.textContent).toBe("3 following");
     expect(root.getAttribute("data-follow")).toBe("leading");
     expect(f.pill.hidden).toBe(true);
     deck.next();
@@ -448,8 +450,8 @@ describe("Follow: presenting", () => {
 
   it("labels the toggle by its audience", () => {
     expect(leadLabel(false, 4)).toBe("Lead viewers");
-    expect(leadLabel(true, 0)).toBe("Leading · 0 following");
-    expect(leadLabel(true, 1)).toBe("Leading · 1 following");
+    expect(leadLabel(true, 0)).toBe("0 following");
+    expect(leadLabel(true, 1)).toBe("1 following");
   });
 });
 
@@ -602,9 +604,11 @@ describe("boot with follow", () => {
     expect(document.documentElement.getAttribute("data-slide")).toBe("3");
     expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("on");
     // Paused by hand, the app's goto applies again.
-    document.querySelector<HTMLButtonElement>(".plinth-slides__follow button")?.click();
-    app({ type: "goto", slide: 2 });
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", cancelable: true }));
     expect(document.documentElement.getAttribute("data-slide")).toBe("2");
+    expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("paused");
+    app({ type: "goto", slide: 1 });
+    expect(document.documentElement.getAttribute("data-slide")).toBe("1");
   });
 
   it("refuses a payload with an unknown follow value", () => {

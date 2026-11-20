@@ -146,10 +146,12 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           ...(opts.connect ? { connect: opts.connect } : {}),
         })
       : null;
-  // A presenter's Lead viewers toggle, in the controls and in presenter view.
+  // A presenter's Lead viewers toggle, in the controls and in presenter view; a follower's status
+  // is the controls' last item.
   const presenterLead = follow && payload.follow === "present" ? follow.leadButton() : null;
   if (follow && payload.follow === "present") controls.append(follow.leadButton());
-  root.replaceChildren(deckEl, controls, announcer, ...(follow ? [follow.pill] : []));
+  if (follow) controls.append(follow.pill);
+  root.replaceChildren(deckEl, controls, announcer);
   pageStyle(doc).textContent = pageRule(canvas, false);
 
   let idle: ReturnType<typeof setTimeout> | undefined;

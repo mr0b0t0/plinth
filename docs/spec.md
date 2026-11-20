@@ -1041,13 +1041,14 @@ source editor work as for docs. A deck is not edited on its page.
   type, and costs the instance nothing.
 - **Following the presenter (decided 2026-11-19).** Where live rooms run (origin isolation,
   `ALLOW_ROOMS`, the `ROOMS` binding) and `ALLOW_SLIDES_FOLLOW` is on (the default), an owner or
-  editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view, sends
-  each slide they show to the identified viewers who have the deck open (the owner and people it
-  is shared with, signed in or confirmed by code), whose decks follow it, with a "Following the
-  presenter" note and Stop. Paging by hand pauses following ("Back to the presenter (slide 7)"
-  returns to it), and someone who opens the deck mid-talk lands on the presenter's slide. The
-  toggle shows how many other people have the deck open ("Leading · 3 following": people, not
-  tabs). The last presenter to turn it on leads; an earlier one stops leading and follows.
+  editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view (where,
+  at phone width, it takes the wall clock's place), sends each slide they show to the identified
+  viewers who have the deck open (the owner and people it is shared with, signed in or confirmed
+  by code), whose decks follow it, with "Following the presenter" at the end of the deck's
+  controls. Paging by hand pauses following ("Back to slide 7" in its place returns to it), and
+  someone who opens the deck mid-talk lands on the presenter's slide. While on, the toggle shows
+  how many other people have the deck open ("3 following": people, not tabs). The last presenter
+  to turn it on leads; an earlier one stops leading and follows.
   Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
   and no one learns who else is watching or who leads, only the slide. It runs entirely in the
   deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)), and the slide in each
@@ -1062,8 +1063,8 @@ source editor work as for docs. A deck is not edited on its page.
   room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
   thumbnail captures, review mode, the editor preview and a permanent version link never follow
   or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
-  closes every socket on the deck (followers see "Your access changed. Reload to keep
-  following."), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
+  closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
+  other pages), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
   between reconnects, stops retrying) and catches up when shown, while a leader's stays
   connected. Nothing is stored: the presenter's slide lives only in the room's memory of the
   presenter's socket.

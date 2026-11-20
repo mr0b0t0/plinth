@@ -559,6 +559,11 @@ body {
   .plinth-slides__count {
     min-width: 3.5em;
   }
+
+  /* A presenter's Lead viewers toggle takes the wall clock's place; the timer stays. */
+  .plinth-slides__group--end:has(.plinth-slides__lead) .plinth-slides__clock {
+    display: none;
+  }
 }
 
 /* ---------- the overview: a grid of thumbnails, or one column when narrow ---------- */
@@ -643,6 +648,8 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  /* Its own width, not the half of the frame that `left: 50%` leaves it, up to the frame's. */
+  width: max-content;
   max-width: calc(100% - 24px);
   gap: 2px;
   align-items: center;
@@ -772,22 +779,21 @@ body {
   transform: none;
 }
 
-/* Following the presenter (follow.ts): the follower's status, and a presenter's toggle. */
+/* Following the presenter (follow.ts): a follower's status, the controls' last item. A presenter's
+   Lead viewers toggle is a plain button there and in presenter view. */
 .plinth-slides__follow {
-  position: fixed;
-  z-index: 1;
-  top: 12px;
-  right: 12px;
   display: flex;
-  gap: 8px;
+  gap: 2px;
   align-items: center;
-  max-width: calc(100% - 24px);
-  padding: 4px 4px 4px 12px;
-  border-radius: 10px;
-  background: var(--slides-ctl-bg);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
-  color: var(--slides-ctl-fg);
-  font-size: 0.875rem;
+  min-width: 0;
+}
+
+.plinth-slides__follow::before {
+  content: "";
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--slides-rule);
 }
 
 .plinth-slides__follow[hidden],
@@ -795,15 +801,15 @@ body {
   display: none;
 }
 
-.plinth-slides__follow-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.plinth-slides__lead {
   white-space: nowrap;
 }
 
-.plinth-slides__lead[aria-pressed="true"] {
-  background: var(--slides-accent);
-  color: var(--slides-bg);
+.plinth-slides__follow-text {
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plinth-slides__btn:disabled {
@@ -850,7 +856,6 @@ body {
   }
 
   html .plinth-slides[data-mode] .plinth-slides__controls,
-  html .plinth-slides[data-mode] .plinth-slides__follow,
   html .plinth-slides[data-mode] .plinth-slides__presenter,
   html .plinth-slides[data-mode] .plinth-slides__live {
     display: none;

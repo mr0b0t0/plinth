@@ -3,7 +3,7 @@
 // budget across the whole suite (DEV_IGNORE_CLIENT_IP), and a viewer confirmed by code follows the
 // same way (apps/worker/test/slides-room.test.ts). The owner turns on Lead
 // viewers and pages; the viewer's deck follows with the "Following the presenter" note; the viewer
-// pages back by hand, which pauses following, and "Back to the presenter" returns to the owner's
+// pages back by hand, which pauses following, and "Back to slide N" returns to the owner's
 // slide. A presenter's own audience window follows its presenter window, not the room, so it shows
 // no note while they lead. A lead carries on when a new version or a sharing change replaces the
 // presenter's frame. An anonymous viewer of an unlisted deck opens no socket and sees no note.
@@ -78,7 +78,7 @@ test("viewers follow the presenter's slide, pause by paging, and go back to it",
     await expect(lead).toBeEnabled({ timeout: 15_000 });
     await lead.press("Enter");
     await expect(lead).toHaveAttribute("aria-pressed", "true");
-    await expect(lead).toHaveText("Leading · 1 following");
+    await expect(lead).toHaveText("1 following");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
     await expect(html(page)).toHaveAttribute("data-slide", "3");
@@ -99,7 +99,7 @@ test("viewers follow the presenter's slide, pause by paging, and go back to it",
     await expect(root(viewer)).toHaveAttribute("data-follow", "paused");
     await page.keyboard.press("ArrowRight");
     await expect(html(page)).toHaveAttribute("data-slide", "4");
-    const back = note.getByRole("button", { name: "Back to the presenter (slide 4)" });
+    const back = note.getByRole("button", { name: "Back to slide 4" });
     await expect(back).toBeVisible({ timeout: 10_000 });
     await expect(html(viewer)).toHaveAttribute("data-slide", "2");
     await back.click();
@@ -168,7 +168,7 @@ test("the lead carries on when a new version or a sharing change replaces the pr
     // The owner leads from the deck's own controls, outside full screen and presenter view.
     await expect(lead).toBeEnabled({ timeout: 15_000 });
     await lead.press("Enter");
-    await expect(lead).toHaveText("Leading · 1 following");
+    await expect(lead).toHaveText("1 following");
     await pageTo(2);
 
     // An agent publishes a new version: both pages load it in a new frame, and the owner's new
@@ -189,7 +189,7 @@ test("the lead carries on when a new version or a sharing change replaces the pr
     await ready(page);
     await expect(html(page)).toHaveAttribute("data-slide", "2");
     await expect(lead).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
-    await expect(lead).toHaveText("Leading · 1 following", { timeout: 15_000 });
+    await expect(lead).toHaveText("1 following", { timeout: 15_000 });
     await pageTo(3);
 
     // The owner shares the deck with one more person: every content pass ends, both pages load a
@@ -200,7 +200,7 @@ test("the lead carries on when a new version or a sharing change replaces the pr
     await expect.poll(ownerSockets, { timeout: 30_000 }).toBeGreaterThan(before);
     await ready(page);
     await expect(lead).toHaveAttribute("aria-pressed", "true", { timeout: 15_000 });
-    await expect(lead).toHaveText("Leading · 1 following", { timeout: 15_000 });
+    await expect(lead).toHaveText("1 following", { timeout: 15_000 });
     await expect(html(page)).toHaveAttribute("data-slide", "3");
     await pageTo(4);
     await expect(root(viewer)).toHaveAttribute("data-follow", "on");

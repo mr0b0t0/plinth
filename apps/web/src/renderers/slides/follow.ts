@@ -17,7 +17,7 @@
 // frame leads again; one that the person stopped, or another presenter took over, is.
 //
 // Follow is the deck's side: it moves the deck to the leader's slide while following, pauses when
-// the person pages by hand ("Back to the presenter (slide 7)"), and, for a presenter, sends `start`,
+// the person pages by hand ("Back to slide 7"), and, for a presenter, sends `start`,
 // `goto` on every change and `stop`. An audience window (the app's `paired`) detaches it: its
 // presenter window moves it instead. Only slide numbers go in and out; every element is made with
 // createElement and textContent.
@@ -343,16 +343,15 @@ export interface FollowOptions {
   random?: () => number;
 }
 
-/** The text of a presenter's Lead viewers toggle. */
+/** The text of a presenter's Lead viewers toggle: pressed, it shows how many follow. */
 export function leadLabel(leading: boolean, audience: number): string {
-  if (!leading) return "Lead viewers";
-  return audience === 1 ? "Leading · 1 following" : `Leading · ${audience} following`;
+  return leading ? `${audience} following` : "Lead viewers";
 }
 
 /**
- * Following and leading for one deck. `pill` is the follower's status (shown while someone else
- * leads, or after access changed); `leadButton()` makes a Lead viewers toggle for the controls and
- * one for presenter view, kept in step.
+ * Following and leading for one deck. `pill` is the follower's status, one item at the end of the
+ * deck's controls (shown while someone else leads, or after access changed); `leadButton()` makes a
+ * Lead viewers toggle for the controls and one for presenter view, kept in step.
  */
 export class Follow {
   readonly client: FollowClient;
@@ -370,14 +369,13 @@ export class Follow {
 
   constructor(private readonly o: FollowOptions) {
     const doc = o.win.document;
-    this.pill = el(doc, "div", "plinth-slides__follow");
+    this.pill = el(doc, "span", "plinth-slides__follow");
     this.pill.setAttribute("role", "status");
-    this.pill.dataset.plinthControl = "";
     this.pill.hidden = true;
     this.pillText = el(doc, "span", "plinth-slides__follow-text");
     this.pillButton = el(doc, "button", "plinth-slides__btn");
     this.pillButton.type = "button";
-    this.pillButton.addEventListener("click", () => this.togglePause());
+    this.pillButton.addEventListener("click", () => this.resume());
     this.pill.append(this.pillText, this.pillButton);
     this.client = new FollowClient({
       win: o.win,
@@ -450,8 +448,9 @@ export class Follow {
     this.client.lead(this.o.deck.current, true);
   }
 
-  private togglePause(): void {
-    this.following = !this.following;
+  /** Back to the leader's slide after paging by hand. */
+  private resume(): void {
+    this.following = true;
     this.sync();
   }
 
@@ -485,10 +484,10 @@ export class Follow {
     }
     const root = this.o.root;
     if (c.ended === "unauthorized") {
-      this.showPill("Your access changed. Reload to keep following.", null);
+      this.showPill("Your access changed. Reload the page.", null);
     } else if (leader && !c.wantLead) {
-      if (this.following) this.showPill("Following the presenter", "Stop");
-      else this.showPill("", `Back to the presenter (slide ${leader.slide})`);
+      if (this.following) this.showPill("Following the presenter", null);
+      else this.showPill("", `Back to slide ${leader.slide}`);
     } else {
       this.pill.hidden = true;
     }
