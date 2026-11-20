@@ -1134,8 +1134,8 @@ not edited on its page yet.
   text is matched by a pattern with one way to read each character, so a conversion is linear in
   its length. A publish
   parses formulas and never evaluates them.
-- **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
-  formula bar with the selected cell's address and its raw text, and the grid: column letters and
+- **Viewing.** The page shows one bar (the selected cell's address and its raw text, and a filter
+  field with the shown row count beside it while a filter is set) and the grid: column letters and
   the header row stay at the top, frozen columns at the left, numbers right-aligned in their
   format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
   a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
@@ -1143,12 +1143,12 @@ not edited on its page yet.
   are the viewer's only and never saved. Arrow keys move between cells. Rows are in chunks of 200
   that the browser lays out only on screen, so 10,000 rows stay usable while find in page, comment
   pins (cell ids `__plinth-cell-B7`), print and screen readers see every cell. Light and dark,
-  phone width (the grid scrolls in its own box), and print (no toolbar, the header row repeats on
-  every page). The browser spends at most 20,000,000 steps; a sheet past that shows `#LIMIT!` in
-  the cells it did not compute, with a note.
-- **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx, from the artifact
-  menu or the frame's own toolbar. The frame builds the file and hands it to the browser from a
-  `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
+  phone width (the grid scrolls in its own box), and print (the title instead of the bar, the
+  header row repeats on every page). The browser spends at most 20,000,000 steps; a sheet past
+  that shows `#LIMIT!` in the cells it did not compute, with a one-line note.
+- **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx from the artifact
+  menu (Download as CSV, Download as Excel (.xlsx)), which also has Print; the frame has no
+  buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
   UTF-8 with a BOM, CRLF, RFC 4180 quoting, and text starting with `=`, `+`, `-`, `@`, tab or
   carriage return written with a leading `'` (numbers never are). The .xlsx is SpreadsheetML
   written by Plinth and zipped with fflate 0.8.3: one worksheet named after the title, the header
@@ -1174,9 +1174,7 @@ not edited on its page yet.
   100 `<col>` ranges and only for columns A to CV, a number format code longer than Excel's 255
   characters reads as General, and XML whose tag, comment, CDATA section or processing
   instruction never ends is refused as damaged.
-  The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
-  .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
-  until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
+  The import is checked like any sheet and stored as JSON lines. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
   `--id`.
 - **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
   their letters, types and formats) and the cells of an A1 range (default every data row), a

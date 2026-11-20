@@ -159,6 +159,9 @@ describe("the grid", () => {
     expect(cell("B1").getAttribute("aria-sort")).toBe("none");
     expect(order()).toEqual(["2", "3", "4", "5"]);
     const input = document.querySelector(".plinth-sheet__filter-input") as HTMLInputElement;
+    expect(input.getAttribute("aria-label")).toBe("Filter rows");
+    // The count shows only while a filter is set.
+    expect(document.querySelector(".plinth-sheet__count")?.textContent).toBe("");
     input.value = "pear";
     input.dispatchEvent(new Event("input"));
     const shown = [...document.querySelectorAll("tbody tr")].filter(

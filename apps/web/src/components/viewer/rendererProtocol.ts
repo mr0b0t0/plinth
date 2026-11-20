@@ -119,9 +119,8 @@ export function exportMessage(format: SheetExportFormat): ExportMessage {
 }
 
 /**
- * Ask a sheet's frame to download itself. The message names only a format, which the frame's
- * own toolbar offers anyway, so it may go to "*" for opaque frames, like print. False when it
- * cannot be sent.
+ * Ask a sheet's frame to download itself. The message names only a format and carries no data,
+ * so it may go to "*" for opaque frames, like print. False when it cannot be sent.
  */
 export function postExport(
   frame: HTMLIFrameElement | null,

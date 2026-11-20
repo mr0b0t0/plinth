@@ -1,8 +1,10 @@
-// The sheet's DOM: a toolbar (title, row count, filter, downloads), a formula bar, then the grid,
-// a <table> with the column letters and the header row in a sticky <thead>, frozen columns kept
-// in view by left offsets, and the data rows in <tbody> chunks of 200 that the browser skips
-// laying out while they are off screen (content-visibility), so comment pins, find in page, print
-// and screen readers still see every cell.
+// The sheet's DOM: the title (for print and screen readers; the app's bar shows it on screen), one
+// bar with the selected cell's address and raw text on the left and the filter on the right, then
+// the grid, a <table> with the column letters and the header row in a sticky <thead>, frozen
+// columns kept in view by left offsets, and the data rows in <tbody> chunks of 200 that the
+// browser skips laying out while they are off screen (content-visibility), so comment pins, find
+// in page, print and screen readers still see every cell. Downloads and print are in the app's
+// artifact menu, which asks the frame (boot.ts).
 //
 // Built with createElement and textContent only: no data string is ever parsed as HTML. The only
 // attributes taken from data are href (a link that passes isSheetLinkUrl again here), title (an
@@ -19,7 +21,6 @@ import {
   type Value,
 } from "@plinth/shared";
 import { type Display, displayValue } from "./format.ts";
-import type { SheetExportFormat } from "./protocol.ts";
 import { nextSort, rowMatches, type SortState, sortedOrder } from "./view.ts";
 
 export const CHUNK_ROWS = 200;
@@ -30,7 +31,6 @@ const MAX_WIDTH = 800;
 
 export interface GridOptions {
   title: string;
-  onDownload: (format: SheetExportFormat) => void;
   /** Some formulas were not computed within the browser's budget. */
   exhausted: boolean;
 }
@@ -126,52 +126,33 @@ export function buildGrid(
   const lefts = frozenOffsets(cols, freeze);
   const root = el(doc, "div", "plinth-sheet__page");
 
-  // ---------- toolbar ----------
-  const bar = el(doc, "div", "plinth-sheet__bar");
+  // ---------- title and bar ----------
   const heading = el(doc, "h1", "plinth-sheet__title", opts.title || "Sheet");
-  const count = el(doc, "span", "plinth-sheet__count");
-  count.setAttribute("aria-live", "polite");
-  const filterLabel = el(doc, "label", "plinth-sheet__filter");
-  const filterText = el(doc, "span", "plinth-sheet__filter-label", "Filter");
-  const filterInput = el(doc, "input", "plinth-sheet__filter-input");
-  filterInput.type = "search";
-  filterInput.autocomplete = "off";
-  filterInput.spellcheck = false;
-  filterLabel.append(filterText, filterInput);
-  const downloads = el(doc, "div", "plinth-sheet__downloads");
-  downloads.setAttribute("role", "group");
-  downloads.setAttribute("aria-label", "Download");
-  downloads.append(el(doc, "span", "plinth-sheet__downloads-label", "Download"));
-  for (const [format, label, name] of [
-    ["csv", "CSV", "Download as CSV"],
-    ["xlsx", "Excel", "Download as Excel (.xlsx)"],
-  ] as const) {
-    const b = el(doc, "button", "plinth-sheet__btn", label);
-    b.type = "button";
-    b.setAttribute("aria-label", name);
-    b.dataset.format = format;
-    b.addEventListener("click", () => opts.onDownload(format));
-    downloads.append(b);
-  }
-  bar.append(heading, count, filterLabel, downloads);
-  if (opts.exhausted) {
-    bar.append(
-      el(
-        doc,
-        "p",
-        "plinth-sheet__note",
-        "Some formulas were not calculated in the browser (#LIMIT!): this sheet needs more steps than a page may spend. A download opened in a spreadsheet app calculates them.",
-      ),
-    );
-  }
-
-  // ---------- formula bar ----------
+  const bar = el(doc, "div", "plinth-sheet__bar");
   const fx = el(doc, "div", "plinth-sheet__fx");
   fx.setAttribute("role", "group");
   fx.setAttribute("aria-label", "Selected cell");
   const fxAddr = el(doc, "span", "plinth-sheet__fx-addr");
   const fxRaw = el(doc, "span", "plinth-sheet__fx-raw");
   fx.append(fxAddr, fxRaw);
+  // Shown only while a filter is set: "3 of 40 rows".
+  const count = el(doc, "span", "plinth-sheet__count");
+  count.setAttribute("aria-live", "polite");
+  const filterInput = el(doc, "input", "plinth-sheet__filter-input");
+  filterInput.type = "search";
+  filterInput.placeholder = "Filter";
+  filterInput.setAttribute("aria-label", "Filter rows");
+  filterInput.autocomplete = "off";
+  filterInput.spellcheck = false;
+  bar.append(fx, count, filterInput);
+  const note = opts.exhausted
+    ? el(
+        doc,
+        "p",
+        "plinth-sheet__note",
+        "Some formulas were not calculated here (#LIMIT!). A download calculates them.",
+      )
+    : null;
 
   // ---------- grid ----------
   const scroll = el(doc, "div", "plinth-sheet__scroll");
@@ -289,7 +270,7 @@ export function buildGrid(
     const shown = rows.filter((tr) => !tr.hidden).length;
     const all = rows.length;
     const noun = all === 1 ? "row" : "rows";
-    count.textContent = filterValue.trim() ? `${shown} of ${all} ${noun}` : `${all} ${noun}`;
+    count.textContent = filterValue.trim() ? `${shown} of ${all} ${noun}` : "";
   };
   updateCount();
 
@@ -365,7 +346,9 @@ export function buildGrid(
   const first = rows[0]?.cells[1];
   if (first) first.tabIndex = 0;
 
-  root.append(bar, fx, scroll);
+  root.append(heading, bar);
+  if (note) root.append(note);
+  root.append(scroll);
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;

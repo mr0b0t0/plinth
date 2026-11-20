@@ -15,8 +15,6 @@
   --sheet-accent: #0a58ca;
   --sheet-select: rgb(10 88 202 / 0.12);
   --sheet-error: #b42318;
-  --sheet-btn-bg: #ffffff;
-  --sheet-btn-hover: #eef1f4;
   --sheet-note-bg: #fff7e6;
   --sheet-note-fg: #7a4b00;
   --sheet-font:
@@ -41,8 +39,6 @@
     --sheet-accent: #6cb2ff;
     --sheet-select: rgb(108 178 255 / 0.16);
     --sheet-error: #ff8a80;
-    --sheet-btn-bg: #1e2228;
-    --sheet-btn-hover: #2a3038;
     --sheet-note-bg: #3a2a0a;
     --sheet-note-fg: #ffd58a;
   }
@@ -87,46 +83,66 @@ body {
   color: var(--sheet-muted);
 }
 
-/* ---------- toolbar ---------- */
+/* ---------- title and bar ---------- */
+
+/* The app's bar shows the title on screen; print shows it here. */
+.plinth-sheet__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 .plinth-sheet__bar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  padding: 10px 16px;
+  gap: 12px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--sheet-rule);
+  min-height: 44px;
 }
 
-.plinth-sheet__title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.plinth-sheet__fx {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 12px;
+  align-items: baseline;
   min-width: 0;
+  font-family: var(--sheet-mono);
+  font-size: 13px;
+}
+
+.plinth-sheet__fx-addr {
+  flex: none;
+  min-width: 32px;
+  color: var(--sheet-muted);
+}
+
+.plinth-sheet__fx-raw {
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
 }
 
 .plinth-sheet__count {
+  flex: none;
   color: var(--sheet-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.plinth-sheet__filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  min-width: 0;
-}
-
-.plinth-sheet__filter-label,
-.plinth-sheet__downloads-label {
-  color: var(--sheet-muted);
+.plinth-sheet__count:empty {
+  display: none;
 }
 
 .plinth-sheet__filter-input {
-  width: 180px;
-  max-width: 50vw;
+  flex: 0 1 200px;
+  min-width: 96px;
   padding: 5px 8px;
   border: 1px solid var(--sheet-rule-strong);
   border-radius: 6px;
@@ -135,27 +151,10 @@ body {
   font: inherit;
 }
 
-.plinth-sheet__downloads {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.plinth-sheet__filter-input::placeholder {
+  color: var(--sheet-muted);
 }
 
-.plinth-sheet__btn {
-  padding: 5px 10px;
-  border: 1px solid var(--sheet-rule-strong);
-  border-radius: 6px;
-  background: var(--sheet-btn-bg);
-  color: var(--sheet-fg);
-  font: inherit;
-  cursor: pointer;
-}
-
-.plinth-sheet__btn:hover {
-  background: var(--sheet-btn-hover);
-}
-
-.plinth-sheet__btn:focus-visible,
 .plinth-sheet__filter-input:focus-visible,
 .plinth-sheet__sort:focus-visible,
 .plinth-sheet__scroll:focus-visible,
@@ -165,38 +164,11 @@ body {
 }
 
 .plinth-sheet__note {
-  flex-basis: 100%;
   margin: 0;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--sheet-note-bg);
-  color: var(--sheet-note-fg);
-}
-
-/* ---------- formula bar ---------- */
-
-.plinth-sheet__fx {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
   padding: 6px 16px;
   border-bottom: 1px solid var(--sheet-rule);
-  font-family: var(--sheet-mono);
-  font-size: 13px;
-  min-height: 32px;
-}
-
-.plinth-sheet__fx-addr {
-  flex: none;
-  min-width: 48px;
-  color: var(--sheet-muted);
-}
-
-.plinth-sheet__fx-raw {
-  min-width: 0;
-  overflow: hidden;
-  white-space: pre;
-  text-overflow: ellipsis;
+  background: var(--sheet-note-bg);
+  color: var(--sheet-note-fg);
 }
 
 /* ---------- grid ---------- */
@@ -361,19 +333,8 @@ body {
 }
 
 @media (max-width: 480px) {
-  .plinth-sheet__bar {
-    padding: 8px 16px;
-  }
-
-  .plinth-sheet__filter {
-    margin-left: 0;
-    flex: 1 1 100%;
-  }
-
   .plinth-sheet__filter-input {
-    flex: 1 1 auto;
-    width: auto;
-    max-width: none;
+    flex-basis: 128px;
   }
 }
 
@@ -386,14 +347,20 @@ body {
     height: auto;
   }
 
-  .plinth-sheet__bar > :not(.plinth-sheet__title),
-  .plinth-sheet__fx {
+  .plinth-sheet__bar {
     display: none;
   }
 
-  .plinth-sheet__bar {
-    border: 0;
-    padding: 0 0 8px;
+  .plinth-sheet__title {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0 0 8px;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    font-size: 16px;
+    font-weight: 600;
   }
 
   .plinth-sheet__scroll {

@@ -17,7 +17,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   dark, and phone width, and anyone who can view it downloads it as CSV or Excel (.xlsx) built in
   the browser. Agents read computed values with `read_sheet` and change cells, rows and columns
   with `edit_sheet`, one version per call. A CSV or .xlsx file can be published as a sheet
-  (`content_format`, `plinth publish data.csv`, or "Import CSV or .xlsx" in the editor).
+  (`content_format` or `plinth publish data.csv`).
   `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.25.0.
 
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a

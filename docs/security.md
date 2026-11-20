@@ -581,8 +581,8 @@ What else is new:
   `event.origin` is the app origin, and answers nothing. Under opaque isolation the app posts them
   to `"*"`, as print, since they reveal nothing the frame does not have.
 - **Imports are bounded and never run anything.** `content_format: "csv"` or `"xlsx"` converts a
-  file into JSON lines (`packages/shared/src/sheet/import.ts`), in the Worker for MCP and REST and in
-  the browser for the editor's import. An .xlsx is at most 2 MB; its ZIP is read from the central
+  file into JSON lines (`packages/shared/src/sheet/import.ts`) in the Worker, for MCP, REST and
+  `plinth publish`. An .xlsx is at most 2 MB; its ZIP is read from the central
   directory, encrypted and ZIP64 archives are refused, and its parts are inflated with fflate up to
   24 MB in all, 2 KB of compressed input at a time (at most about 2 MB out per step, since DEFLATE
   expands at most 1,032 times), so a ZIP bomb stops at the cap instead of after it has inflated.
