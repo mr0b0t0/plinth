@@ -36,6 +36,7 @@ make a test pass.
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
 | A CI token reads shared data through a content pass | A token limited to one artifact (refused `data_read`) asks the viewer gate for an enter URL, redeems it and reads `/__plinth/api/` with a script, or reads a thumbnail of a version that draws the data | The gate and thumbnails ask the policy for `enter`, which is `view` for everyone else and `token_bound` for a bound token, so it never gets an enter URL or a thumbnail; its in-chat preview pass reads no shared data and joins no room ([Authorization](#authorization)) |
 | A CI token's page leaks shared data from the thumbnail capture | A token limited to one artifact publishes a version that declares `data`, reads `/__plinth/api/` and sets `location.href` to an outside URL carrying the documents; the capture after the commit runs it with no viewer involved | The capture of a version a bound token wrote (or whose writer's account is gone) gets a pass that reads no shared data (`reason: "capture"`, `policy.captureReadsData`); every capture's browser aborts any request or navigation outside the artifact's own origin and the CSP's hosts, and closes any window the page opens ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
+| A person's version hands its capture to the current code | A person's version, captured with a pass that reads the data, loads a root-relative script or worker (`/assets/index.js`), frames a root-relative page, or navigates itself to `/`, where the artifact's current version, which a bound token may have written, would run under that pass | The capture pass is bound to its version (`v`): under it the content host serves every path that is not a version path (the root, `/assets/index.js`, `/chart.html`) from the captured version, never the current one, and answers 404 for another version's path; the capture's browser also aborts a navigation to another version or a Plinth helper path ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 
@@ -799,15 +800,30 @@ file.
   version, not the artifact's current one.
 - **The capture browser goes nowhere else.** The CSP cannot stop a top-level navigation, and the
   capture is the one place a page runs top-level, unattended. So every capture turns on request
-  interception and aborts any request or navigation outside the artifact's own origin (its own
-  path under the path fallback), the hosts the content CSP allows (subresources only, over https
-  on their default port) and `data:`, `blob:` and `about:` URLs. A window the page opens is a
-  page of its own that this interception does not cover; the capture closes it on sight, which
+  interception and aborts any request or navigation outside the artifact's own origin (its own path
+  under the path fallback), the hosts the content CSP allows (subresources only, over https on their
+  default port) and `data:`, `blob:` and `about:` URLs. A navigation, top-level or a frame's, under
+  `/__plinth/` must also stay on the captured version: its own path, `/__plinth/v/<n>/` and below
+  (and `/__plinth/v/<n>`, which the host redirects to the slash), or the enter step whose one
+  `next` is exactly that path, all under the artifact's own path in the path fallback. Another
+  version and Plinth's helper paths are never a page the capture opens. A window the page opens is
+  a page of its own that this interception does not cover; the capture closes it on sight, which
   may still let its first request out, so the no-data rule above does not depend on it.
+- **A capture runs only the version it pictures.** The artifact's root serves its current version,
+  whose code may come from another writer (a token limited to the artifact may have published it),
+  and a person's version reaches it with any root-relative URL: a script or worker
+  (`/assets/index.js` from a build with base `/`), a frame, a redirect or a link. So the capture's
+  enter token and content cookie name the captured version (`v`, required with `c`; a capture
+  token or cookie without it is refused), and under that pass the content host serves every path
+  that is not a version path from that version, never the current one, and answers 404 for
+  another version's path (`/__plinth/v/<m>/`). Whatever the page loads, frames or opens on its own
+  origin, only its own writer's code runs under its pass, and a root-relative page pictures the
+  same files a viewer of that version saw when it was current. Two passes that name different
+  versions count as none.
 - **The one top-level exception.** The content host sends every top-level visit to the app's page,
   so artifacts render only in the app's sandboxed frame. The capture browser must load the
-  version top-level, so its enter token carries a capture flag (`c`), which becomes a content
-  cookie that lasts 120 seconds. Only a request with that pass, for the live artifact at its
+  version top-level, so its enter token carries a capture flag (`c`) and its version (`v`), which
+  become a content cookie that lasts 120 seconds. Only a request with that pass, for the live artifact at its
   current access epoch, is served top-level. Plinth mints the flag only for its own captures,
   never with an identity claim, and the enter token is single-use.
 - **No pictures of error pages.** A capture whose page answers anything but 2xx (an expired link

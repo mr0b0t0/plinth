@@ -451,7 +451,7 @@ describe("captures and previews", () => {
       { id: p.id, accessEpoch: await epochOf(p.id) },
       "/__plinth/v/1/",
       undefined,
-      { capture: true },
+      { capture: true, captureVersion: 1 },
     );
     const captured = await redeem(capture);
     expect(await viewsOf(p.id)).toBe(0);
