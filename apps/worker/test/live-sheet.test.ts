@@ -732,6 +732,32 @@ describe("sheet socket: versions published from outside", () => {
       a.ws.close(1000);
     });
 
+    it("with no record of it (a room that stored none), the freeze against its own version ends at the finish, Pears kept", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // As a room that ran code which stored nothing: the wake knows neither the save nor the epoch.
+      await runInDurableObject(stub, async (_room, state) => {
+        await state.storage.delete("live-doc");
+      });
+      await evictDurableObject(stub);
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "conflict", version: 2 });
+      // v2 holds exactly the text the finish saved, and the draft is past its rev: editing goes
+      // on from v2 with the Pears edit, so "Discard mine" is never offered against its own save.
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after + 1,
+        dirty: true,
+      });
+      const rebased = await a.nextOf("rebased");
+      expect(rebased).toMatchObject({ version: 2, rev: after + 1 });
+      expect(await readText(a, rebased.gen)).toBe(later);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      a.ws.close(1000);
+    });
+
     it("a discard and an edit while it saves, then an eviction: the late finish is not finished onto those lines", async () => {
       const { id, owner, ownerP, a, stub, snap, after } = await slowSave();
       const res = await call(id, ownerP.session.headers, `/live/draft?rev=${after}`, {

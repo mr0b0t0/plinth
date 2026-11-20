@@ -963,6 +963,8 @@ export class LiveDoc {
       this.dropSaving(rec);
     } else if (mine || epoch === undefined || epoch === doc.epoch) {
       this.finish(doc, n, text, mine, rev ?? mine?.rev);
+    } else if (!rec && (await this.unrecordedOwn(doc, n, text, rev))) {
+      this.finish(doc, n, text, null, rev);
     } else {
       this.dropSaving(rec);
       await this.outside(doc, n, null);
@@ -971,6 +973,27 @@ export class LiveDoc {
     const out = { rev: doc.rev, dirty: this.text(doc) !== doc.baseText };
     await this.releaseIfIdle(doc);
     return out;
+  }
+
+  /**
+   * Defence in depth for a finish whose snapshot the room has no record of, on lines of another
+   * epoch: the room never stored anything (its first load since the record existed, or the record
+   * was lost), so the new epoch is a reload's, not a discard's or a reset's (those write theirs).
+   * It is still this checkpoint's when version `n` holds exactly the text it saved and the draft
+   * is at or past the snapshot's rev: the draft goes on from `n` (a freeze against `n` ends as
+   * `rebased`, with the lines and the edits since kept).
+   */
+  private async unrecordedOwn(
+    doc: Loaded,
+    n: number,
+    text: string,
+    rev: number | undefined,
+  ): Promise<boolean> {
+    if (this.kept || rev === undefined || rev > doc.rev) return false;
+    const saved = await this.versionText(doc, n);
+    return (
+      saved === text && !this.kept && this.loaded === doc && n > doc.baseVersion && rev <= doc.rev
+    );
   }
 
   /**
