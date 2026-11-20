@@ -22,19 +22,11 @@
 // Bodies and document contents are never logged. Routes are entries of DATA_API_ROUTES, and the
 // dispatcher runs these checks before any handler, so a route cannot skip them.
 //
-// GET /__plinth/api/v1/people and /people/<u_id> (who has access, owners and editors on a page that
-// declares `data viewer people`) run checks 1 to 10, then their own steps in content/people.ts.
-//
 // GET /__plinth/api/v1/room (live rooms, #36) shares checks 1 to 4, then branches to roomInfo()
 // in content/room.ts, which has its own availability, artifact, pass and policy steps: a page
 // that declares only `room` has no shared data, and rooms may be on where shared data is off.
 import { waitUntil } from "cloudflare:workers";
-import {
-  CONTENT_DATA_HEADER,
-  CONTENT_RESERVED_PREFIX,
-  dataObjectSchema,
-  type PageDoc,
-} from "@plinth/shared";
+import { CONTENT_DATA_HEADER, CONTENT_RESERVED_PREFIX, dataObjectSchema } from "@plinth/shared";
 import { z } from "zod";
 import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -49,16 +41,13 @@ import {
   deleteDoc,
   getDoc,
   listDocs,
-  pageNames,
   putDoc,
   resolveDocId,
-  type StoredDoc,
   session,
   toPageDoc,
   unavailableReason,
 } from "../services/data.ts";
 import { applyContentHeaders } from "./csp.ts";
-import { getPersonRoute, listPeopleRoute } from "./people.ts";
 import { roomInfo } from "./room.ts";
 import type { HostRoute } from "./serve.ts";
 import { readContentPass } from "./serve.ts";
@@ -220,10 +209,7 @@ export interface DataRouteCtx {
   access: ReturnType<typeof pageDataAccess>;
   /** The page writer, or null for a read-only caller. */
   writer: DataWriter | null;
-  /** A document as this reader sees it, with its authors' names when it may see authors. */
-  view: (row: StoredDoc) => Promise<PageDoc>;
-  /** Documents as this reader sees them, with one names read for all of them. */
-  views: (rows: readonly StoredDoc[]) => Promise<PageDoc[]>;
+  view: (row: Parameters<typeof toPageDoc>[0]) => ReturnType<typeof toPageDoc>;
 }
 
 /** What a handler with its own steps gets, after checks 1 to 4 (and 6) passed. */
@@ -318,22 +304,6 @@ export const DATA_API_ROUTES: readonly DataApiRoute[] = [
     pipeline: "data",
     handler: docRoute,
   },
-  {
-    kind: "people",
-    match: one("people"),
-    methods: ["GET"],
-    example: "people",
-    pipeline: "data",
-    handler: async (c) => respond(c.config, 200, await listPeopleRoute(c)),
-  },
-  {
-    kind: "person",
-    match: (seg) => (seg[0] === "people" && seg.length === 2 && seg[1] ? { id: seg[1] } : null),
-    methods: ["GET"],
-    example: "people/u_0123456789abcdef01234567",
-    pipeline: "data",
-    handler: async (c) => respond(c.config, 200, await getPersonRoute(c)),
-  },
 ];
 
 function matchRoute(path: string): { route: DataApiRoute; params: Record<string, string> } | null {
@@ -353,7 +323,7 @@ async function collectionRoute(c: DataRouteCtx): Promise<Response> {
     return respond(
       c.config,
       201,
-      await c.view(await createDoc(c.env.DB, c.config, c.target, c.writer, collection, data)),
+      c.view(await createDoc(c.env.DB, c.config, c.target, c.writer, collection, data)),
     );
   }
   const cursor = c.url.searchParams.get("cursor");
@@ -362,10 +332,7 @@ async function collectionRoute(c: DataRouteCtx): Promise<Response> {
     limit: intParam(c.url.searchParams.get("limit"), "limit", 1, 200) ?? 50,
     cursor,
   });
-  return respond(c.config, 200, {
-    docs: await c.views(page.docs),
-    next_cursor: page.next_cursor,
-  });
+  return respond(c.config, 200, { docs: page.docs.map(c.view), next_cursor: page.next_cursor });
 }
 
 async function docRoute(c: DataRouteCtx): Promise<Response> {
@@ -376,12 +343,12 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
     const docId = resolveDocId(rawId, c.claim?.viewerId ?? null);
     const row = docId ? await getDoc(d1, c.target.id, collection, docId) : null;
     if (!row) throw new ApiError("not_found", "Document not found");
-    return respond(c.config, 200, await c.view(row));
+    return respond(c.config, 200, c.view(row));
   }
   if (c.method === "PUT") {
     const { data, if_rev } = parseBody(putBody, c.body);
     const r = await putDoc(d1, c.config, c.target, c.writer, collection, rawId, data, if_rev);
-    return respond(c.config, r.created ? 201 : 200, await c.view(r.doc));
+    return respond(c.config, r.created ? 201 : 200, c.view(r.doc));
   }
   const ifRev = intParam(c.url.searchParams.get("if_rev"), "if_rev", 1, 999_999_999);
   await deleteDoc(d1, c.config, c.target, c.writer, collection, rawId, ifRev);
@@ -478,20 +445,27 @@ async function handle(
   }
 
   // 9. Declaration. An in-chat preview (an MCP host's frame, any framer) never reads or writes
-  // shared data: its pass carries no identity and is meant for one look at the page.
-  const reason = pass.preview ? "preview" : unavailableReason(config, target.caps);
+  // shared data: its pass carries no identity and is meant for one look at the page. Nor does the
+  // thumbnail capture of a version whose writer may not read the data (policy.captureReadsData).
+  const reason = pass.preview
+    ? "preview"
+    : pass.noData
+      ? "capture"
+      : unavailableReason(config, target.caps);
   if (reason) {
     if (route.reportsUnavailable) return respond(config, 200, { available: false, reason });
     const message =
       reason === "preview"
         ? "Shared data is not available in a preview"
-        : "This page does not use shared data";
+        : reason === "capture"
+          ? "Shared data is not available in this capture"
+          : "This page does not use shared data";
     throw new ApiError("feature_disabled", message, { reason });
   }
 
   // 10. Policy, then the service (rate limits, quotas, guarded writes).
   const { claim } = pass;
-  const access = pageDataAccess(claim, target.caps, sharedDataActive(config));
+  const access = pageDataAccess(claim, target.caps, sharedDataActive(config), pass);
   if (!access.read) throw new ApiError("feature_disabled", "Shared data is not available here");
   const writer: DataWriter | null =
     access.write && claim
@@ -509,8 +483,7 @@ async function handle(
     claim,
     access,
     writer,
-    view: async (row) => (await views([row]))[0] as PageDoc,
-    views,
+    view: (row) => toPageDoc(row, claim, access.seeIdentity),
   });
   // A write that landed: the page's other open views re-read their data (live views). Only the
   // signal travels; each view reads the data again through this API, with all of its checks.
@@ -518,9 +491,4 @@ async function handle(
     notifyViewers({ env, config, waitUntil: afterResponse }, target.id, "data");
   }
   return res;
-
-  async function views(rows: readonly StoredDoc[]): Promise<PageDoc[]> {
-    const names = await pageNames(env.DB, rows, access.seeIdentity);
-    return rows.map((row) => toPageDoc(row, claim, access.seeIdentity, names));
-  }
 }

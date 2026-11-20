@@ -34,8 +34,8 @@ describe("/__plinth/runtime.js", () => {
 
   it("contains no secret, and no configuration value but the app origin", () => {
     const c = config();
-    // Page comments and dictation post to the app that frames the page: its public origin, as a
-    // JSON string, once. Nothing else from the configuration is in the script.
+    // Page comments post to the app that frames the page: its public origin, as a JSON string,
+    // once. Nothing else from the configuration is in the script.
     const origin = `var APP_ORIGIN = ${JSON.stringify(c.appOrigin)};`;
     expect(RUNTIME_SCRIPT.split(origin).length).toBe(2);
     expect(RUNTIME_SCRIPT.split(c.appOrigin).length).toBe(2);
@@ -43,14 +43,17 @@ describe("/__plinth/runtime.js", () => {
     const values = [
       c.tokenSigningKey,
       c.sessionSecret,
+      c.appOrigin,
+      c.appHost,
+      c.contentHost,
+      "localhost",
       "test-session-secret",
       "test-token-signing-key",
     ].filter((v): v is string => typeof v === "string" && v.length > 0);
     for (const v of values) expect(rest, v).not.toContain(v);
     expect(rest).not.toMatch(/https?:\/\//);
-    // Shared data, the live room, page comments and dictation together; still one small static
-    // file.
-    expect(RUNTIME_SCRIPT.length).toBeLessThan(48 * 1024);
+    // Shared data, the live room and page comments together; still one small static file.
+    expect(RUNTIME_SCRIPT.length).toBeLessThan(40 * 1024);
   });
 
   it("speaks the API it is served next to", () => {

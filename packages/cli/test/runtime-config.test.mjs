@@ -117,8 +117,6 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.deepEqual(repoCfg.durable_objects, ROOMS_DO);
     assert.deepEqual(repoCfg.migrations, ROOMS_MIGRATIONS);
     for (const k of ROOM_VARS) assert.ok(k in repoCfg.vars, `wrangler.jsonc vars.${k}`);
-    // Dictation ships off.
-    assert.equal(repoCfg.vars.ALLOW_DICTATION, "false");
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
@@ -335,7 +333,6 @@ await setupInstance(raw, {
         PLINTH_PORT: "9823",
         PLINTH_ALLOW_ROOMS: "false",
         PLINTH_ALLOW_LIVE_EDITING: "false",
-        PLINTH_ALLOW_DICTATION: "true",
       },
       encoding: "utf8",
     });
@@ -343,7 +340,6 @@ await setupInstance(raw, {
     const offCfg = parseJsonc(readFileSync(path.join(data, "plinth", "wrangler.jsonc"), "utf8"));
     assert.equal(offCfg.vars.ALLOW_ROOMS, "false");
     assert.equal(offCfg.vars.ALLOW_LIVE_EDITING, "false");
-    assert.equal(offCfg.vars.ALLOW_DICTATION, "true");
     assertRooms(offCfg, "docker (rooms off)", { vars: false });
   });
 

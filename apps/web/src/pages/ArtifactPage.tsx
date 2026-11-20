@@ -27,7 +27,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const [commentsOpen, setCommentsOpen] = useState(() => search.has("comments"));
   // Review mode (the comment-anchoring bridge) needs a fresh gate and a frame reload. It turns on
   // when comments first open and then stays on, so closing and reopening the panel does not reload
-  // the artifact.
+  // the artifact. Editing on the page and presenting a deck turn it off.
   const [review, setReview] = useState(commentsOpen);
   // A page inside the artifact (from a direct content link): opened inside the frame.
   const rawPath = search.get("path");
@@ -106,6 +106,12 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     setCommentsOpen(false);
     setReview(false);
   }, []);
+  // Presenting a deck and review mode exclude each other too: review mode shows every slide
+  // stacked, so Present leaves it (and closes the panel) before it presents.
+  const onLeaveReview = useCallback(() => {
+    setCommentsOpen(false);
+    setReview(false);
+  }, []);
 
   // Direct links arrive by artifact id; show the readable slug address once the gate knows it.
   useEffect(() => {
@@ -164,6 +170,8 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       onReload={reload}
       onEditModeChange={onEditModeChange}
       onPauseChange={setPause}
+      review={review}
+      onLeaveReview={onLeaveReview}
       liveData={{ pushed: live === "open", tick: dataTick }}
     />
   );

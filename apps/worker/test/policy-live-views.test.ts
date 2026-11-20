@@ -11,9 +11,7 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   shared: [],
   room: false,
   roomOpen: [],
-  people: false,
   comments: false,
-  dictation: false,
   ...over,
 });
 

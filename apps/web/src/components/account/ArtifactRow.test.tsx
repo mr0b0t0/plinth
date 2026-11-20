@@ -113,6 +113,17 @@ describe("categories", () => {
       expect(labels(role).some((e) => e.label === "Move to category…")).toBe(false);
     }
   });
+
+  it("offers Stats to owners only, linking to the artifact's stats", () => {
+    const labels = (role: ArtifactSummary["role"]) =>
+      artifactMenu(summary({ role }), () => undefined).flatMap((e) =>
+        e.type === "separator" ? [] : [e],
+      );
+    expect(labels("owner").find((e) => e.label === "Stats")?.href).toBe("/a/plan/stats");
+    for (const role of ["editor", "commenter", "viewer"] as const) {
+      expect(labels(role).some((e) => e.label === "Stats")).toBe(false);
+    }
+  });
 });
 
 describe("ArtifactCard thumbnail", () => {

@@ -16,6 +16,9 @@ export const TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 /** packages/shared SLUG_RE: an artifact slug as the server makes them (a test keeps them equal). */
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
 
+/** packages/shared ARTIFACT_ID_RE: an artifact id as the server makes them (a test keeps them equal). */
+export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
+
 /** A usage problem with the step's inputs: the step fails with exit code 2. */
 export class InputError extends Error {}
 
@@ -140,20 +143,20 @@ export const BASE_VERSION_NEEDS_ID =
   "The base-version input applies to an update: set the id input (or use a token limited to the artifact). Nothing was sent.";
 
 /**
- * The CLI's arguments for this step. `id` is the artifact to update, or "" for a new one.
- * base-version is passed even without an id, so the CLI refuses it (exit 2) rather than creating
- * an artifact the step said to publish only at that version.
+ * The CLI's arguments for this step. `id` is the artifact to update, or "" for a new one. The step
+ * refuses base-version without an id before it gets here (BASE_VERSION_NEEDS_ID), so base-version
+ * goes with an update only.
  */
 export function buildArgv(inputs, id, note) {
   const argv = ["publish", inputs.path, "--json"];
   if (id) {
     argv.push("--id", id);
     if (note !== null) argv.push("--note", note);
+    if (inputs.baseVersion) argv.push("--base-version", inputs.baseVersion);
   } else {
     if (inputs.title) argv.push("--title", inputs.title);
     if (inputs.category) argv.push("--category", inputs.category);
   }
-  if (inputs.baseVersion) argv.push("--base-version", inputs.baseVersion);
   if (inputs.includeMaps) argv.push("--include-maps");
   if (inputs.dryRun) argv.push("--dry-run");
   return argv;
@@ -195,13 +198,20 @@ export function conflictAdvice(current, baseStated) {
   return `Someone published ${now} while this run was sending, so nothing was published. Re-run the job to publish this build as the next version.`;
 }
 
-/** The outcome for a CLI exit code and its --json object. */
+/**
+ * The outcome for a CLI exit code and its --json object. The CLI prints one object for every
+ * outcome; an exit 0 without one this reads is `unknown` (it may have published), never a success.
+ */
 export function outcomeOf(code, json) {
   if (json?.published === "unknown") return "unknown";
   if (code === 0) {
-    if (json?.outcome === "nothing_to_publish" || json?.outcome === "already_published")
+    if (
+      json?.outcome === "nothing_to_publish" ||
+      json?.outcome === "already_published" ||
+      json?.outcome === "dry_run"
+    )
       return json.outcome;
-    return json && typeof json.version === "number" ? "published" : "dry_run";
+    return json && typeof json.version === "number" ? "published" : "unknown";
   }
   if (code === 3 || json?.outcome === "conflict") return "conflict";
   return "error";
@@ -214,19 +224,23 @@ export function outcomeOf(code, json) {
 export function formatOutputs({ code, json, raw, origin }) {
   const outcome = outcomeOf(code, json);
   const pairs = [["outcome", outcome]];
-  const ok = code === 0 && json && typeof json.version === "number";
-  if (json && typeof json.id === "string") pairs.push(["id", json.id]);
+  const ok = outcome !== "dry_run" && code === 0 && json && typeof json.version === "number";
+  // Only an id the server could have made: it is printed into the summary as code.
+  if (typeof json?.id === "string" && ARTIFACT_ID_RE.test(json.id)) pairs.push(["id", json.id]);
   const slug = typeof json?.slug === "string" && SLUG_RE.test(json.slug) ? json.slug : null;
   if (slug) pairs.push(["slug", slug]);
   if (ok) {
     const v = json.version;
     const page = slug ? `${origin}/a/${slug}` : "";
+    // The comparison shows what this build changed: none when the current version was already
+    // there before it (nothing_to_publish). already_published: an earlier run sent this build.
+    const changedIt = outcome === "published" || outcome === "already_published";
     pairs.push(["version", String(v)]);
     pairs.push(["url", page]);
     pairs.push(["version-url", slug ? `${page}/v/${v}` : ""]);
     pairs.push([
       "compare-url",
-      slug && v > 1 ? `${page}/compare?from=${v - 1}&to=${v}&view=rendered` : "",
+      changedIt && slug && v > 1 ? `${page}/compare?from=${v - 1}&to=${v}&view=rendered` : "",
     ]);
     pairs.push(["verified", json.verified === true ? "true" : "false"]);
     pairs.push(["warnings", String(actionableWarnings(json).length)]);
@@ -245,11 +259,6 @@ export function stopToken() {
 /** A workflow command's message: one line, with % escaped first. */
 export function escapeData(s) {
   return String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-}
-
-/** A workflow command's property value (title=, file=): as escapeData, plus : and ,. */
-export function escapeProperty(s) {
-  return escapeData(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
 }
 
 /**
@@ -289,6 +298,21 @@ function size(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** What a dry run would have sent, from the CLI's dry-run object (numbers only). */
+function dryRunLine(json) {
+  const n = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+  const files = n(json?.files);
+  if (files === null) return "Checked the build; nothing was sent.";
+  const what = `${files} files (${size(json.bytes)})`;
+  const next = n(json.next_version);
+  if (next !== null) {
+    const changed = n(json.changed) ?? 0;
+    const reused = n(json.reused) ?? 0;
+    return `Checked the build; nothing was sent. It would publish v${next} from ${what}: ${changed} changed asset files, ${reused} reused.`;
+  }
+  return `Checked the build; nothing was sent. It would publish ${what} as a new private artifact.`;
+}
+
 /**
  * The job summary, in Markdown. Every string from the server or the artifact goes through
  * escapeMarkdown; URLs are only the ones formatOutputs built. No token, email or connection label
@@ -319,7 +343,7 @@ export function renderSummary({ code, json, outputs, created, message, baseState
         .join("; ");
       lines.push(`| Warnings | ${warnings.length}: ${first}${warnings.length > 5 ? "; …" : ""} |`);
     }
-    if (created && out.id) {
+    if (created && typeof out.id === "string" && ARTIFACT_ID_RE.test(out.id)) {
       lines.push(
         "",
         `This run created a new private artifact. Add \`id: ${out.id}\` to this step (or use a token limited to it) so later runs update it.`,
@@ -334,7 +358,7 @@ export function renderSummary({ code, json, outputs, created, message, baseState
         : `v${escapeMarkdown(json?.version ?? "")} already matches this build.`,
     );
   } else if (outcome === "dry_run") {
-    lines.push("### Plinth: dry run", "", "Checked the build; nothing was sent.");
+    lines.push("### Plinth: dry run", "", dryRunLine(json));
   } else if (outcome === "conflict") {
     lines.push("### Plinth: not published", "", conflictAdvice(out["current-version"], baseStated));
   } else if (outcome === "unknown") {

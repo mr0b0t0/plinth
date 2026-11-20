@@ -17,7 +17,17 @@ interface Rect {
   height: number;
 }
 
-function boot(opts: { framed?: boolean } = {}) {
+interface BootOptions {
+  framed?: boolean;
+  /** The page's <meta name="plinth-capabilities"> content, if it has one. */
+  declares?: string;
+  /** The meta is parsed only after the script ran (the script sits above it in <head>). */
+  metaLater?: boolean;
+  /** The window has ResizeObserver. */
+  resizeObserver?: boolean;
+}
+
+function boot(opts: BootOptions = {}) {
   let now = 1_000_000;
   let nextId = 1;
   const timers = new Map<number, { at: number; fn: () => void }>();
@@ -25,6 +35,15 @@ function boot(opts: { framed?: boolean } = {}) {
   const listeners = new Map<string, ((e: unknown) => void)[]>();
   const posted: [Json, string][] = [];
   const elements = new Map<string, Rect>();
+  const docListeners = new Map<string, (() => void)[]>();
+  const observed: unknown[] = [];
+  const observers: (() => void)[] = [];
+  const meta = (content: string) => ({
+    getAttribute: (n: string) =>
+      n === "name" ? " Plinth-Capabilities " : n === "content" ? content : null,
+  });
+  let metas: ReturnType<typeof meta>[] =
+    opts.declares !== undefined && !opts.metaLater ? [meta(opts.declares)] : [];
   const parent = {
     postMessage(msg: Json, target: string) {
       posted.push([JSON.parse(JSON.stringify(msg)), target]);
@@ -42,10 +61,26 @@ function boot(opts: { framed?: boolean } = {}) {
       return frames.length;
     },
   };
+  if (opts.resizeObserver) {
+    win.ResizeObserver = class {
+      constructor(fn: () => void) {
+        observers.push(fn);
+      }
+      observe(target: unknown) {
+        observed.push(target);
+      }
+    };
+  }
   win.parent = opts.framed === false ? win : parent;
+  const documentElement = { tagName: "HTML" };
   const doc = {
     visibilityState: "visible",
-    addEventListener() {},
+    readyState: opts.metaLater ? "loading" : "interactive",
+    documentElement,
+    getElementsByTagName: (tag: string) => (tag === "meta" ? metas : []),
+    addEventListener(type: string, fn: () => void) {
+      docListeners.set(type, [...(docListeners.get(type) ?? []), fn]);
+    },
     querySelector(sel: string) {
       if (sel === "[bad") throw new Error("SyntaxError");
       const r = elements.get(sel);
@@ -110,7 +145,19 @@ function boot(opts: { framed?: boolean } = {}) {
   };
   const sent = (type?: string) =>
     posted.filter(([m]) => type === undefined || m.type === type).map(([m]) => m);
+  /** The parser reached the meta, then the document finished parsing. */
+  const parsed = () => {
+    if (opts.declares !== undefined) metas = [meta(opts.declares)];
+    for (const fn of docListeners.get("DOMContentLoaded") ?? []) fn();
+  };
+  const resized = () => {
+    for (const fn of observers) fn();
+  };
   return {
+    parsed,
+    resized,
+    observed,
+    documentElement,
     win,
     plinth: win.plinth as Json,
     comments: win.plinth.comments as Json,
@@ -421,6 +468,90 @@ describe("plinth.comments", () => {
     t.advance(100);
     t.runFrames();
     expect(t.sent("positions").length).toBe(4);
+  });
+
+  it("measures again on load and when the document resizes", async () => {
+    const t = boot({ resizeObserver: true });
+    const ready = t.comments.ready;
+    t.fromApp({ type: "welcome", available: true });
+    await ready;
+    expect(t.observed).toEqual([t.documentElement]);
+    let top = 6;
+    t.elements.set("h1", { left: 5, top, width: 100, height: 20 });
+    t.fromApp({ type: "threads", items: [ELEMENT_THREAD] });
+    t.runFrames();
+    expect(t.sent("positions").length).toBe(1);
+    // An image above the heading loaded: the page fires load, and the heading moved.
+    top = 206;
+    t.elements.set("h1", { left: 5, top, width: 100, height: 20 });
+    t.advance(100);
+    t.fire("load");
+    t.advance(100);
+    t.runFrames();
+    expect(t.sent("positions").length).toBe(2);
+    expect(t.sent("positions").at(-1)?.items[0].top).toBe(206);
+    // A layout change with no scroll, resize or load (content grew above it).
+    t.elements.set("h1", { left: 5, top: 306, width: 100, height: 20 });
+    t.advance(100);
+    t.resized();
+    t.advance(100);
+    t.runFrames();
+    expect(t.sent("positions").length).toBe(3);
+    expect(t.sent("positions").at(-1)?.items[0].top).toBe(306);
+    // Nothing moved: nothing posted.
+    t.advance(100);
+    t.resized();
+    t.advance(100);
+    t.runFrames();
+    expect(t.sent("positions").length).toBe(3);
+  });
+
+  it("starts at once on a page that declares comments, so pins work without any call", async () => {
+    const t = boot({ declares: "data Comments" });
+    // Hello before the page touched plinth.comments.
+    expect(t.sent("hello").length).toBe(1);
+    t.elements.set("h1", { left: 5, top: 6, width: 100, height: 20 });
+    t.fromApp({ type: "welcome", available: true });
+    t.fromApp({ type: "threads", items: [ELEMENT_THREAD, PAGE_THREAD] });
+    t.runFrames();
+    const hidden = { left: 0, top: 0, width: 0, height: 0, visible: false };
+    expect(t.sent("positions").at(-1)?.items).toEqual([
+      { id: "c2", left: 5, top: 6, width: 100, height: 20, visible: true },
+      { id: "c1", ...hidden },
+    ]);
+    // Using the API later starts nothing twice, and a late locate places the page anchor.
+    expect(await t.comments.ready).toEqual({ available: true, reason: null });
+    t.comments.onThreads(() => undefined);
+    t.comments.locate((a: Json) => ({ x: a.x, y: a.y }));
+    t.advance(50);
+    t.runFrames();
+    expect(t.sent("hello").length).toBe(1);
+    expect(t.sent("positions").at(-1)?.items[1]).toEqual({
+      id: "c1",
+      left: 10,
+      top: 20,
+      width: 0,
+      height: 0,
+      visible: true,
+    });
+  });
+
+  it("starts once the meta is parsed when the script runs above it", () => {
+    const t = boot({ declares: "comments", metaLater: true });
+    expect(t.posted).toEqual([]);
+    t.parsed();
+    expect(t.sent("hello").length).toBe(1);
+  });
+
+  it("does not start on its own for a page that does not declare comments", () => {
+    for (const declares of [undefined, "data room", "commentsx", ""]) {
+      const t = boot({ declares });
+      t.parsed();
+      expect(t.posted, String(declares)).toEqual([]);
+    }
+    // Nor at the top level, where it settles not_framed without a post.
+    const top = boot({ framed: false, declares: "comments" });
+    expect(top.posted).toEqual([]);
   });
 
   it("sends focus to onFocus, and open(id) only for a thread the app listed", async () => {

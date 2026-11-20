@@ -25,9 +25,7 @@ describe("the comments declaration", () => {
       shared: [],
       room: false,
       roomOpen: [],
-      people: false,
       comments: true,
-      dictation: false,
     });
     expect(parseCapabilities(caps("data comments"))).toMatchObject({ data: true, comments: true });
     expect(parseCapabilities(caps("room comments"))).toMatchObject({ room: true, comments: true });
@@ -50,11 +48,6 @@ describe("the comments declaration", () => {
     expect(serializeCapabilities(all as NonNullable<typeof all>)).toBe(
       '{"data":true,"viewer":true,"shared":[],"room":true,"roomOpen":[],"comments":true}',
     );
-    // With `people` (who is viewing), each optional key in registry order.
-    const people = parseCapabilities(caps("data viewer people comments"));
-    expect(serializeCapabilities(people as NonNullable<typeof people>)).toBe(
-      '{"data":true,"viewer":true,"shared":[],"people":true,"comments":true}',
-    );
     const data = parseCapabilities(caps("data viewer"));
     expect(serializeCapabilities(data as NonNullable<typeof data>)).toBe(
       '{"data":true,"viewer":true,"shared":[]}',
@@ -70,9 +63,7 @@ describe("the comments declaration", () => {
       shared: [],
       room: false,
       roomOpen: [],
-      people: false,
       comments: true,
-      dictation: false,
     });
     expect(readStoredCapabilities('{"data":true,"viewer":true,"shared":[]}')?.comments).toBe(false);
     // Only `true` counts.
@@ -138,6 +129,22 @@ describe("page anchors", () => {
     // Unknown fields of an element anchor are dropped, as before.
     expect(anchorSchema.parse({ selector: "h1", extra: 1 })).toEqual({ selector: "h1" });
     expect(anchorSchema.safeParse({ selector: "h1", x: 2 }).success).toBe(false);
+  });
+
+  it("drop control and format characters from an element's text, and refuse them on a page's", () => {
+    // An element's text comes from the page's DOM (soft hyphens, emoji joiners): cleaned, kept.
+    const picked = { selector: "h1", text: "co­op ‮evil‬​\tdone 👩‍💻" };
+    expect(anchorSchema.parse(picked)).toEqual({ selector: "h1", text: "coop evildone 👩💻" });
+    expect(createCommentInput.parse({ body: "hi", anchor: picked }).anchor).toEqual({
+      selector: "h1",
+      text: "coop evildone 👩💻",
+    });
+    // A page chooses its label and data: refused, so the page learns at once.
+    for (const bad of ["a‮b", "a​b", "a⁨b", "a\u0007b"]) {
+      expect(pageAnchorSchema.safeParse({ kind: "page", key: "a", text: bad }).success).toBe(false);
+      const data = { kind: "page", key: "a", data: { s: bad } };
+      expect(pageAnchorSchema.safeParse(data).success).toBe(false);
+    }
   });
 
   it("are told apart by isPageAnchor", () => {

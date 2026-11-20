@@ -74,7 +74,6 @@ describe("room: joining and peers", () => {
         viewer: a.welcome.you.viewer,
         role: "owner",
         email: ownerP.email,
-        name: null,
         presence: {},
       },
     ]);
@@ -90,7 +89,6 @@ describe("room: joining and peers", () => {
         viewer: b.welcome.you.viewer,
         role: "editor",
         email: ed.email,
-        name: null,
         presence: {},
       },
     });
@@ -203,7 +201,6 @@ describe("room: emitting", () => {
         viewer: o.welcome.you.viewer,
         role: "owner",
         email: ownerP.email,
-        name: null,
       },
     });
     c.send({ t: "emit", room: "main", topic: "note.move", data: 1 });

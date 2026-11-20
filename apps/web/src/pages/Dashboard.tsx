@@ -59,8 +59,7 @@ type ListState =
   | { status: "error"; message: string }
   | { status: "ready"; items: ArtifactSummary[]; categories: CategoryCount[]; query: string };
 
-/** "design_system": the design systems the person can build with (shown when there is one). */
-type Filter = "all" | "mine" | "shared" | "design_system";
+type Filter = "all" | "mine" | "shared";
 type Sort = "updated" | "created" | "title";
 /** The category filter: null shows every category, "" the owner's artifacts with none. */
 export type CategoryFilter = string | null;
@@ -235,7 +234,6 @@ export default function Dashboard() {
   const items = list.status === "ready" ? list.items : [];
   const categories = list.status === "ready" ? list.categories : [];
   const hasShared = items.some((a) => a.role !== "owner");
-  const hasDesignSystems = items.some((a) => a.type === "design_system");
   // Shared artifacts carry no category, so the category filter is off (and its menu hidden) there.
   const byCategory = filter !== "shared" && category !== null;
   const shown = useMemo(() => {
@@ -244,9 +242,7 @@ export default function Dashboard() {
         ? items.filter((a) => a.role === "owner")
         : filter === "shared"
           ? items.filter((a) => a.role !== "owner")
-          : filter === "design_system"
-            ? items.filter((a) => a.type === "design_system")
-            : items;
+          : items;
     return sortArtifacts(filterByCategory(picked, byCategory ? category : null), sort);
   }, [items, filter, sort, category, byCategory]);
   // The listed category a name filter points at (none for an unknown ?category=).
@@ -293,9 +289,6 @@ export default function Dashboard() {
     { value: "all", label: "All" },
     { value: "mine", label: "Mine" },
     ...(hasShared || filter === "shared" ? [{ value: "shared" as const, label: "Shared" }] : []),
-    ...(hasDesignSystems || filter === "design_system"
-      ? [{ value: "design_system" as const, label: "Design systems" }]
-      : []),
   ];
 
   const emptyFilter =
@@ -312,11 +305,7 @@ export default function Dashboard() {
           ? searching
             ? "None of your artifacts match."
             : "You have not published anything yet."
-          : filter === "design_system"
-            ? searching
-              ? "No design systems match."
-              : "No design systems yet."
-            : "Nothing has been shared with you."
+          : "Nothing has been shared with you."
       : null;
 
   const categoryLabel =

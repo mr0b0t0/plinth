@@ -12,6 +12,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  ARTIFACT_ID_RE,
   actionableWarnings,
   buildArgv,
   conflictAdvice,
@@ -19,13 +20,17 @@ import {
   defaultNote,
   escapeData,
   escapeMarkdown,
-  escapeProperty,
   formatOutputs,
+  outcomeOf,
   readInputs,
+  renderSummary,
   SLUG_RE,
   writeOutputFile,
 } from "../../../publish/lib.mjs";
-import { SLUG_RE as SERVER_SLUG_RE } from "../../shared/src/schemas.ts";
+import {
+  ARTIFACT_ID_RE as SERVER_ARTIFACT_ID_RE,
+  SLUG_RE as SERVER_SLUG_RE,
+} from "../../shared/src/schemas.ts";
 import { PAT, startFakePlinth } from "./helpers/fake-plinth.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -250,6 +255,63 @@ describe("the GitHub Action", () => {
     assert.match(r.summary, /The artifact is at v2, past the base-version this step states/);
     assert.match(r.summary, /set base-version to 2/);
     assert.doesNotMatch(r.summary, /while this run was sending/);
+  });
+
+  it("dry-run: one JSON object in the json output, outcome dry_run, and nothing sent", async () => {
+    const from = fake.state.requests.length;
+    const fresh = await action({
+      path: build({ "index.html": "<p>1</p>", "a.css": "p{}" }),
+      "dry-run": "true",
+    });
+    assert.equal(fresh.code, 0, fresh.stdout);
+    assert.equal(fresh.outputs.outcome, "dry_run");
+    const json = JSON.parse(fresh.outputs.json);
+    assert.equal(json.outcome, "dry_run");
+    assert.equal(json.type, "html");
+    assert.equal(json.files, 2);
+    assert.equal(fresh.outputs.version, undefined);
+    assert.match(fresh.summary, /### Plinth: dry run/);
+    assert.match(fresh.summary, /would publish 2 files \(\d+ B\) as a new private artifact/);
+    assert.doesNotMatch(fresh.summary, /Add `id:/);
+
+    const a = fake.seed({ "index.html": "<p>1</p>", "a.css": "p{}" });
+    const upd = await action({
+      path: build({ "index.html": "<p>2</p>", "a.css": "p{}" }),
+      id: a.id,
+      "dry-run": "true",
+    });
+    assert.equal(upd.code, 0, upd.stdout);
+    assert.equal(upd.outputs.outcome, "dry_run");
+    assert.equal(upd.outputs.id, a.id);
+    assert.equal(upd.outputs["compare-url"], undefined);
+    const u = JSON.parse(upd.outputs.json);
+    assert.deepEqual(
+      { base: u.base_version, next: u.next_version, changed: u.changed, reused: u.reused },
+      { base: 1, next: 2, changed: 0, reused: 1 },
+    );
+    assert.match(upd.summary, /would publish v2 from 2 files .*: 0 changed asset files, 1 reused/);
+    assert.equal(a.versions.length, 1);
+    assert.deepEqual(
+      fake.state.requests
+        .slice(from)
+        .filter((q) => q.method !== "GET")
+        .map((q) => `${q.method} ${q.path}`),
+      [],
+    );
+  });
+
+  it("nothing to publish: no compare link, since this run changed nothing", async () => {
+    const a = fake.seed({ "index.html": "<p>0</p>" });
+    fake.commitFiles(a, { "index.html": "<p>1</p>" });
+    const r = await action({
+      path: build({ "index.html": "<p>1</p>" }),
+      id: a.id,
+      "base-version": "2",
+    });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.outputs.outcome, "nothing_to_publish");
+    assert.equal(r.outputs.version, "2");
+    assert.equal(r.outputs["compare-url"], "");
   });
 
   it("a conflict without base-version: someone published while it was sending, so re-run", async () => {
@@ -554,7 +616,6 @@ describe("the Action's helpers", () => {
 
   it("escape workflow command data and properties", () => {
     assert.equal(escapeData("a%b\r\nc"), "a%25b%0D%0Ac");
-    assert.equal(escapeProperty("t: a, b%\n"), "t%3A a%2C b%25%0A");
     assert.equal(escapeData("::set-output name=x::y"), "::set-output name=x::y");
   });
 
@@ -598,13 +659,11 @@ describe("the Action's helpers", () => {
       "--title",
       "T",
     ]);
-    // Without an id, base-version still reaches the CLI, which refuses it (exit 2).
+    // base-version goes with an update only (the step refuses it without an id before this).
     assert.deepEqual(buildArgv({ ...i, baseVersion: "7" }, "", null), [
       "publish",
       "dist",
       "--json",
-      "--base-version",
-      "7",
     ]);
     assert.deepEqual(buildArgv({ ...i, baseVersion: "3", includeMaps: true }, "abc", "n"), [
       "publish",
@@ -647,6 +706,27 @@ describe("the Action's helpers", () => {
     );
   });
 
+  it("reads the outcome from the CLI's object, never guessing dry_run from output it cannot read", () => {
+    assert.equal(outcomeOf(0, { outcome: "dry_run", files: 1 }), "dry_run");
+    assert.equal(outcomeOf(0, { id: "a", version: 2 }), "published");
+    assert.equal(outcomeOf(0, { outcome: "nothing_to_publish", version: 2 }), "nothing_to_publish");
+    assert.equal(outcomeOf(0, null), "unknown");
+    assert.equal(outcomeOf(0, { ok: true }), "unknown");
+    assert.equal(outcomeOf(3, { ok: false, outcome: "conflict" }), "conflict");
+    assert.equal(outcomeOf(2, null), "error");
+    const dry = Object.fromEntries(
+      formatOutputs({
+        code: 0,
+        json: { outcome: "dry_run", id: "a", slug: "s", version: 4, files: 1 },
+        raw: "{}",
+        origin: "https://p.example",
+      }),
+    );
+    assert.equal(dry.outcome, "dry_run");
+    assert.equal(dry.version, undefined);
+    assert.equal(dry["compare-url"], undefined);
+  });
+
   it("builds URLs only from a slug the server could have made", () => {
     assert.equal(SLUG_RE.source, SERVER_SLUG_RE.source);
     const o = Object.fromEntries(
@@ -660,5 +740,45 @@ describe("the Action's helpers", () => {
     assert.equal(o.slug, undefined);
     assert.equal(o.url, "");
     assert.equal(o["compare-url"], "");
+  });
+
+  it("puts only an id the server could have made into the outputs and the summary", () => {
+    assert.equal(ARTIFACT_ID_RE.source, SERVER_ARTIFACT_ID_RE.source);
+    const good = "0123456789abcdefghij";
+    const summaryFor = (id) => {
+      const json = { id, slug: "report-1sxs6tzyab", version: 1, verified: true, warnings: [] };
+      const outputs = formatOutputs({ code: 0, json, raw: "{}", origin: "https://p.example" });
+      return {
+        outputs: Object.fromEntries(outputs),
+        summary: renderSummary({ code: 0, json, outputs, created: true }),
+      };
+    };
+    const ok = summaryFor(good);
+    assert.equal(ok.outputs.id, good);
+    assert.match(ok.summary, new RegExp(`Add \`id: ${good}\` to this step`));
+    for (const id of [
+      "a",
+      "x` [click](https://evil.example) `",
+      "0123456789abcdefghij\n### Injected",
+      "0123456789ABCDEFGHIJ",
+      `${good}0`,
+    ]) {
+      const r = summaryFor(id);
+      assert.equal(r.outputs.id, undefined, id);
+      assert.doesNotMatch(r.summary, /Add `id:/, id);
+      assert.doesNotMatch(r.summary, /evil|Injected/, id);
+    }
+    // Even outputs handed in directly: the summary checks the id itself.
+    const direct = renderSummary({
+      code: 0,
+      json: { version: 1 },
+      outputs: [
+        ["outcome", "published"],
+        ["version", "1"],
+        ["id", "x` [click](https://evil.example) `"],
+      ],
+      created: true,
+    });
+    assert.doesNotMatch(direct, /evil/);
   });
 });

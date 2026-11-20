@@ -110,5 +110,7 @@ describe("AppShell", () => {
     const plain = await screen.findByRole("navigation", { name: "Primary" });
     expect(plain.querySelector('a[href="/admin/stats"]')).toBeNull();
     expect(plain.querySelector('a[href="/admin/reports"]')).toBeNull();
+    // Artifact stats live on each artifact (its Stats page), not in the sidebar.
+    expect(plain.querySelector('a[href="/stats"]')).toBeNull();
   });
 });

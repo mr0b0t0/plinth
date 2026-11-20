@@ -2,6 +2,7 @@
 // (ArtifactCard). Both share the access label, the owner cell and the actions menu.
 import {
   ArrowSquareOutIcon,
+  ChartLineUpIcon,
   ClockCounterClockwiseIcon,
   DotsThreeIcon,
   FolderSimpleIcon,
@@ -42,6 +43,11 @@ export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void):
   });
   if (a.role === "owner") {
     items.push({ label: "Settings", icon: GearIcon, href: route(APP_ROUTES.settings, slug) });
+    items.push({
+      label: "Stats",
+      icon: ChartLineUpIcon,
+      href: route(APP_ROUTES.artifactStats, slug),
+    });
     items.push({
       label: "Move to category…",
       icon: FolderSimpleIcon,
@@ -297,13 +303,17 @@ export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
           <span className="pl-dash__version" title={versionsText(a.version_count)}>
             <span className="visually-hidden">Version </span>v{a.current_version}
           </span>
-          {a.category && <CategoryBadge name={a.category} />}
           <span className="pl-dash__dot" aria-hidden="true">
             ·
           </span>
           <Owner artifact={a} you={you} />
           <Updated iso={a.updated_at} now={now} />
         </span>
+        {a.category && (
+          <span className="pl-dash__card-category">
+            <CategoryBadge name={a.category} />
+          </span>
+        )}
       </div>
       <RowMenu artifact={a} />
     </li>

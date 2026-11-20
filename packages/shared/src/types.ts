@@ -15,7 +15,6 @@ import type {
 } from "./constants.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
-import type { DictationAccess } from "./voice.ts";
 
 export interface Author {
   kind: "user" | "connection";
@@ -252,8 +251,6 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
-  /** The display name of the account with this email, if it has one (shown to the owner). */
-  name: string | null;
 }
 
 export interface SharingSettings {
@@ -414,10 +411,15 @@ export interface AppConfig {
   /** How long an upload ticket from start_upload stays valid, in seconds. */
   upload_ticket_ttl_s: number;
   /**
-   * Dictation is offered on this instance (ALLOW_DICTATION, with origin isolation): pages that
-   * declare `dictation` may receive words the viewer speaks, recognized by the app.
+   * The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is
+   * on: the sign-in page links to /login/review. Off on almost every instance.
    */
-  dictation: boolean;
+  review_login: boolean;
+  /**
+   * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, for the privacy
+   * notice and the owner's stats (docs/spec.md "Artifact stats").
+   */
+  view_log_retention_days: number;
 }
 
 export interface OperatorInfo {
@@ -447,17 +449,10 @@ export type ViewGate =
        */
       live?: ViewGateLive;
       /**
-       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
-       * the people it is shared with. Absent when there is nothing to tell.
-       */
-      people?: ViewGatePeople;
-      /**
-       * The current version declares `comments` (HTML only): the page may open the comment
+       * The version being shown declares `comments` (HTML only): the page may open the comment
        * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
        */
       page_comments?: true;
-      /** Dictation for this page: present only when the current version declares `dictation`. */
-      voice?: ViewGateVoice;
       /**
        * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
        * and of shared-data changes, as they happen. Absent: poll as before.
@@ -468,19 +463,6 @@ export type ViewGate =
   | { status: "email_required"; artifact: ViewArtifactStub }
   | { status: "not_found" }
   | { status: "taken_down"; artifact: ViewArtifactStub };
-
-/**
- * Dictation on this page (GET /view/:ref), decided by policy.ts dictationAccess. The app enforces
- * it: it runs the recognizer and posts only words to the frame, which never gets the microphone.
- */
-export interface ViewGateVoice {
-  dictation: DictationAccess;
-  /**
-   * The owner's email, only when this viewer may dictate (the owner or a grant holder): the
-   * consent dialog names who wrote the page by it, never by the owner's chosen display name.
-   */
-  owner_email?: string;
-}
 
 /** How an owner or editor may edit this doc on its page (GET /view/:ref). */
 export interface ViewGateLive {
@@ -541,17 +523,6 @@ export interface ViewGateData {
    * declares `room` and `viewer`, rooms are active and the viewer is identified.
    */
   room_email?: string;
-}
-
-/** What the viewer is told about names and the people list (docs/spec.md "Who is viewing"). */
-export interface ViewGatePeople {
-  /**
-   * The viewer's display name, which the page sees and shows wherever it sees their email (the
-   * `email` or `room_email` of the data block). Absent without a name.
-   */
-  name?: string;
-  /** The page declares `people`: its owner and editors can list everyone it is shared with. */
-  list?: true;
 }
 
 export interface ViewArtifactStub {
@@ -624,15 +595,111 @@ export interface AdminStats {
   series: StatsDay[];
 }
 
-/** GET /api/v1/artifacts/:ref/views: the owner's open counts. No viewer data. */
-export interface ArtifactViews {
+/** The windows an owner's artifact stats cover, in UTC days (GET /api/v1/artifacts/:ref/stats). */
+export type StatsRange = 7 | 30 | 90 | 365;
+
+/**
+ * How a counted open's viewer is known (artifact_opens.viewer_kind). `user`: signed in to an
+ * account. `email`: confirmed an allowlisted email by code, without an account. `anonymous`: a link,
+ * public or password visitor. `unknown`: counted before viewers were recorded, or the person was
+ * erased since.
+ */
+export type OpenViewerKind = "user" | "email" | "anonymous" | "unknown";
+
+/** The role an open was made with: a grant's role, or how the page was reached without one. */
+export type OpenRole = "editor" | "commenter" | "viewer" | "public" | "link" | "password";
+
+/** One identified person in an artifact's stats, over the window. */
+export interface ArtifactStatsPerson {
+  /** The account's display name; null for an email viewer or an account without one. */
+  name: string | null;
+  email: string;
+  /** `user` when their last open was signed in, `email` when by an emailed code. */
+  kind: "user" | "email";
+  /** The role of their last open in the window. */
+  role: OpenRole | null;
+  /** Their first and last open in the window (UTC ISO). */
+  first_opened_at: string;
+  last_opened_at: string;
+  opens: number;
+  /** The version their last open showed; null for opens counted before versions were recorded. */
+  last_version_seen: number | null;
+}
+
+/** One UTC day of an artifact's opens. `viewers` counts people and anonymous visitors. */
+export interface ArtifactStatsDay {
+  day: string;
+  opens: number;
+  viewers: number;
+}
+
+/** Opens of one version over the window. */
+export interface ArtifactStatsVersion {
+  version: number;
+  opens: number;
+  viewers: number;
+}
+
+/**
+ * GET /api/v1/artifacts/:ref/stats and get_artifact_stats with an id: one artifact's opens, for its
+ * owner only. "Viewers" are the distinct people plus the distinct anonymous visitors.
+ */
+export interface ArtifactStats {
+  /** Whether this instance records opens (VIEW_COUNTS). */
   enabled: boolean;
-  total: number;
-  /** The first UTC day with a counted open (`total` counts from it), or null when there is none. */
-  since: string | null;
-  last_7: number;
-  last_30: number;
-  days: { day: string; views: number }[];
+  days: StatsRange;
+  /** VIEW_LOG_RETENTION_DAYS: opens older than this keep only their count. */
+  retention_days: number;
+  current_version: number;
+  totals: {
+    opens: number;
+    viewers: number;
+    /** Distinct identified people (accounts and confirmed emails). */
+    people: number;
+    /** Distinct anonymous visitors: browsers, approximate (docs/spec.md "Artifact stats"). */
+    anonymous_visitors: number;
+    anonymous_opens: number;
+    /** Every counted open, including those older than the log keeps. */
+    all_time_opens: number;
+    /** The first UTC day with a counted open (`all_time_opens` counts from it), or null. */
+    since: string | null;
+  };
+  /** One entry per UTC day of the window, oldest first, zero-filled. */
+  series: ArtifactStatsDay[];
+  /** People who opened it in the window, last opened first, at most LIMITS.maxStatsPeople. */
+  people: ArtifactStatsPerson[];
+  /** How many people opened it in the window (`people` may be cut to the limit). */
+  people_total: number;
+  /** Versions opened in the window, newest first. */
+  versions: ArtifactStatsVersion[];
+}
+
+/** One of the caller's artifacts in their stats summary. */
+export interface ArtifactStatsSummaryItem {
+  id: string;
+  slug: string;
+  title: string;
+  type: ArtifactType;
+  visibility: Visibility;
+  current_version: number;
+  opens_7d: number;
+  opens_30d: number;
+  viewers_7d: number;
+  viewers_30d: number;
+  all_time_opens: number;
+  /** The last counted open the log still holds (UTC ISO), or null. */
+  last_opened_at: string | null;
+}
+
+/**
+ * GET /api/v1/stats/artifacts and get_artifact_stats without an id: the caller's own live artifacts
+ * (not deleted, not taken down), most recently opened first.
+ */
+export interface ArtifactStatsSummary {
+  enabled: boolean;
+  retention_days: number;
+  generated_at: string;
+  items: ArtifactStatsSummaryItem[];
 }
 
 export interface Paged<T> {

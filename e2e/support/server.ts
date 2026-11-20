@@ -42,9 +42,6 @@ export const DEV_VARS: Record<string, string> = {
   // origin isolation.
   ALLOW_ROOMS: "true",
   ALLOW_LIVE_EDITING: "true",
-  // Dictation run by the app (docs/spec.md "Voice: dictation and text to speech"), off by default
-  // on real instances. On the opaque server it has no effect: dictation needs origin isolation.
-  ALLOW_DICTATION: "true",
   // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
   // socket, on both servers (it needs only the ROOMS binding, not origin isolation).
   ALLOW_LIVE_VIEWS: "true",
