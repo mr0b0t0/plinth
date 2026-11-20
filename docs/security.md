@@ -1367,8 +1367,9 @@ the app host's REST API.
 
 **Caps.** Per artifact, per viewer and per connection, with a connect throttle (see
 [Rate limits and quotas](#rate-limits-and-quotas)); a socket's hibernation attachment stays under
-1,900 bytes, so an update that would pass it is refused. A room stores nothing; it keeps only its
-alarm.
+1,900 bytes, so an update that would pass it is refused. A room stores almost nothing: its alarm
+and, for a doc or sheet edited on its page, one record of the saves in progress (their hashes, revs
+and lock ids, never text), removed when the artifact is deleted or taken down.
 
 **Availability check.** `GET /__plinth/api/v1/room` runs the data API's caller checks 1 to 4, then
 reports `{ available, reason, you, can_emit, open_topics, limits }`, where `can_emit` is `all`,

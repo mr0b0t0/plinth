@@ -92,7 +92,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   people change rows at once, each change lands on the row it was made on, or is dropped with a
   note when that row is gone. While one editor publishes or discards, a second choice or a Discard
   from someone else waits with a note instead of undoing it, for docs too. A save that takes longer
-  than 30 seconds keeps the edits made while it ran, for docs too. While a doc or sheet is
+  than 30 seconds keeps the edits made while it ran, for docs too, and never sends them to review
+  against its own version. While a doc or sheet is
   edited on its page, a version published meanwhile no longer shows an "Updated to" notice (the
   strip says it, and the version picker follows), and at phone width the edit strip keeps to one
   line. Numbers are typed in your locale. Follows `ALLOW_LIVE_EDITING`. Plugin 0.29.0: the agent's sheet rules say a

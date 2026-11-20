@@ -182,9 +182,9 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   forward the upgrade ([docker.md](docker.md#what-the-proxy-must-do)).
 - **Rolling back past live rooms.** A Worker that does not export `ArtifactRoom` cannot be deployed
   over one whose migration created it unless a further migration deletes the class
-  (`{ "tag": "rooms-v1-removed", "deleted_classes": ["ArtifactRoom"] }`; the class stores nothing,
-  so nothing is lost, but turning rooms on again then needs yet another tag). Prefer
-  `ALLOW_ROOMS=false` on the current release.
+  (`{ "tag": "rooms-v1-removed", "deleted_classes": ["ArtifactRoom"] }`; the class stores only a
+  record of the page saves in progress, so nothing that outlives a save is lost, but turning rooms
+  on again then needs yet another tag). Prefer `ALLOW_ROOMS=false` on the current release.
 
 ### Live views
 

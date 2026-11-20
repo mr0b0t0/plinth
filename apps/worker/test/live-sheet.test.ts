@@ -5,7 +5,7 @@
 // holds a lease; a version published meanwhile (edit_sheet, PUT, a restore) never merged: the
 // draft freezes, and the review's two choices publish it as it is or discard it, each under the
 // room's checkpoint lock, so the two never interleave.
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { applySheetStruct, splitLines } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
@@ -620,9 +620,12 @@ describe("sheet socket: versions published from outside", () => {
   // A save that outlives the room's 30 s checkpoint lock: its version and its finish come after
   // the lock ran out, and the rows edited meanwhile are never replaced by the saved snapshot.
   describe("a save that outlives its checkpoint lock", () => {
+    // The lock runs out, in memory and in the room's stored record.
     const expire = (id: string) =>
       runInDurableObject(stubFor(id), async (room) => {
-        (room as unknown as { doc: { lock: { until: number } } }).doc.lock.until = 0;
+        const doc = (room as unknown as { doc: { lock: { until: number }; persist(): void } }).doc;
+        doc.lock.until = 0;
+        doc.persist();
       });
     /** The room's answer to a version notify: its own checkpoint saved, or a freeze. */
     const notified = async (c: Socket) => {
@@ -683,6 +686,126 @@ describe("sheet socket: versions published from outside", () => {
         base_version: 2,
         conflict_version: null,
         text: later,
+      });
+      a.ws.close(1000);
+    });
+
+    // An idle room is evicted while the stager writes (its sockets hibernate): the wake on the
+    // version notify reloads the draft from D1 and the save's record from the room's storage.
+    it("evicted while it saves, its own version is still recognized on the wake, and the finish keeps Pears", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // A second save took the lock and gave up: its record does not come back with the wake.
+      const next = await stub.docSnapshot(id);
+      await stub.docAbort(next.lock);
+      await evictDurableObject(stub);
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      await evictDurableObject(stub);
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      // No lock came back with the wakes: the next save takes one.
+      expect(await stub.docSnapshot(id)).toMatchObject({ state: "ready", text: later });
+      a.ws.close(1000);
+    });
+
+    it("evicted while it saves, its finish arriving first on the wake keeps Pears, and the notify is a no-op", async () => {
+      const { id, a, stub, snap, after, later } = await slowSave();
+      await evictDurableObject(stub);
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      expect((await a.nextOf("saved")).version).toBe(2);
+      await stub.docVersion(id, 2, snap.hash);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a discard and an edit while it saves, then an eviction: the late finish is not finished onto those lines", async () => {
+      const { id, owner, ownerP, a, stub, snap, after } = await slowSave();
+      const res = await call(id, ownerP.session.headers, `/live/draft?rev=${after}`, {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(204);
+      const reset = await a.nextOf("reset");
+      expect(reset.version).toBe(1);
+      // Plums edited on v1's rows, then the room is evicted and woken, at base v1, before v2 lands.
+      const plums = await editRow(a, 3, '["Plums",2]', reset.rev);
+      const mine = SHEET.replace('["Plums"]', '["Plums",2]');
+      await evictDurableObject(stub);
+      expect(await stub.docPeek(id)).toMatchObject({ base_version: 1, rev: plums, text: mine });
+      // v2 lands with no notify (rooms off for that request), then its finish.
+      const put = await run(
+        `${APP}/api/v1/artifacts/${id}`,
+        {
+          method: "PUT",
+          headers: { ...owner.auth, "Content-Type": "application/json" },
+          body: JSON.stringify({ content: snap.text, base_version: 1 }),
+        },
+        { ALLOW_ROOMS: "false" },
+      );
+      expect(put.status).toBe(200);
+      // The discard's epoch came back with the wake, so v2 is a version published meanwhile and
+      // the sheet is frozen for review, rather than v2 becoming the base under v1's rows.
+      await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 1,
+        conflict_version: 2,
+        text: mine,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a wake after the draft went back to its base never reuses a snapshot's rev: the finish keeps the edit made since", async () => {
+      const { id, owner, a, stub, snap } = await (async () => {
+        const s = await sheetSetup(SHEET);
+        const a = await connectDoc(s.id, s.ownerP.cookie);
+        const rev = await editRow(a, 1, '["Apples",4,true]', 0);
+        const stub = stubFor(s.id);
+        const snap = await stub.docSnapshot(s.id);
+        await expire(s.id);
+        // Apples put back: the draft is its base again, and its D1 row is deleted.
+        await editRow(a, 1, '["Apples",3,true]', rev);
+        return { ...s, a, stub, snap };
+      })();
+      await evictDurableObject(stub);
+      const woke = await stub.docPeek(id);
+      expect(woke).toMatchObject({ base_version: 1, text: SHEET });
+      expect(woke?.rev).toBeGreaterThan(snap.rev);
+      await editRow(a, 2, '["Pears",9]', woke?.rev ?? 0);
+      const pears = SHEET.replace('["Pears",5]', '["Pears",9]');
+      // The snapshot lands as v2 unnotified, and v3 on top of it is notified first: frozen.
+      const write = (content: string, base: number, vars: Record<string, unknown> = {}) =>
+        run(
+          `${APP}/api/v1/artifacts/${id}`,
+          {
+            method: "PUT",
+            headers: { ...owner.auth, "Content-Type": "application/json" },
+            body: JSON.stringify({ content, base_version: base }),
+          },
+          vars,
+        );
+      expect((await write(snap.text, 1, { ALLOW_ROOMS: "false" })).status).toBe(200);
+      const v3 = snap.text.replace('["Plums"]', '["Plums",1]');
+      expect((await write(v3, 2)).status).toBe(200);
+      expect((await a.nextOf("conflict")).version).toBe(3);
+      // The finish moves the base to v2 under the Pears edit, never back to the snapshot's rows.
+      await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: 3,
+        text: pears,
       });
       a.ws.close(1000);
     });

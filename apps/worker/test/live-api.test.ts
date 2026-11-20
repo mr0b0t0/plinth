@@ -4,6 +4,7 @@
 // freeze), discard, and every path that clears a draft (delete, takedown, retention).
 import {
   createExecutionContext,
+  evictDurableObject,
   runInDurableObject,
   waitOnExecutionContext,
 } from "cloudflare:test";
@@ -358,9 +359,11 @@ describe("live API: checkpoints", () => {
   // its own version would conflict, so a doc reaches the same freeze as a sheet when the version
   // is not recognized. Edits made after the snapshot are never replaced by it.
   describe("a save that outlives its checkpoint lock", () => {
+    // The lock runs out, in memory and in the room's stored record.
     const expire = (id: string) =>
       runInDurableObject(stubFor(id), async (room) => {
         (room as any).doc.lock.until = 0;
+        (room as any).doc.persist();
       });
     const LATER = "# Plan\n\nFirst, edited twice.\n\nSecond.\n";
 
@@ -384,6 +387,30 @@ describe("live API: checkpoints", () => {
       });
       expect(put.status).toBe(200);
       expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: 2,
+        dirty: true,
+      });
+      expect(await draft(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        content: LATER,
+      });
+      a.ws.close(1000);
+    });
+
+    it("the room evicted while it saves still knows its own version on the wake, and keeps the later edit", async () => {
+      const { id, ownerP, a, stub, snap } = await slowSave();
+      // Idle while the stager writes: the object leaves memory, its sockets hibernate.
+      await evictDurableObject(stub);
+      const put = await api(`/artifacts/${id}`, ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+      });
+      expect(put.status).toBe(200);
+      // A merge of v2 would conflict on the line edited twice; it is recognized, so nothing freezes.
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      await evictDurableObject(stub);
       expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
         rev: 2,
         dirty: true,

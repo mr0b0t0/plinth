@@ -312,7 +312,7 @@ to turn them on or off. See [ci.md](ci.md).
   removes a person's documents on other people's artifacts too.
 - **Live rooms.** Pages and docs reach their room over a WebSocket on the artifact's own content
   host (`/__plinth/room/`), served by one Durable Object per artifact (`ArtifactRoom`, binding
-  `ROOMS`) that stores nothing; unsaved page edits of a doc live in D1 (`live_drafts`) until
+  `ROOMS`) that stores only a small record of the page saves in progress; unsaved page edits of a doc live in D1 (`live_drafts`) until
   someone saves or discards them. To turn rooms off, set `ALLOW_ROOMS` (and, for on-page doc
   editing, `ALLOW_LIVE_EDITING`) to `"false"` and keep the binding. A config without the binding
   also runs, with rooms off, and `check-config` prints a note. Usage is billed as Durable Objects:
