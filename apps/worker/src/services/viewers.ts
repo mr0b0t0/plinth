@@ -28,7 +28,9 @@ import {
 import { ApiError, notFound } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
-import { findArtifact } from "./artifacts.ts";
+import { grantedRole } from "../policy.ts";
+import { factsOf, findArtifact } from "./artifacts.ts";
+import { categoryGrantFor } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 import { createUserSession } from "./sessions.ts";
 
@@ -55,14 +57,29 @@ async function allowlistArtifact(ctx: Ctx, ref: string): Promise<ArtifactRow> {
   return a;
 }
 
-/** Does this email hold any grant (viewer, commenter or editor) on the artifact? */
-export async function isListed(ctx: Ctx, artifactId: string, email: string): Promise<boolean> {
-  const g = await ctx.db
-    .select({ role: accessGrants.role })
-    .from(accessGrants)
-    .where(and(eq(accessGrants.artifactId, artifactId), eq(accessGrants.email, email)))
-    .get();
-  return !!g;
+/**
+ * Does this email hold a grant that counts on the artifact: a direct one (viewer, commenter or
+ * editor), or a category grant policy lets count here (docs/spec.md "Category sharing and personal
+ * categories")? Both lookups always run, so the answer takes the same time either way. A category
+ * grantee can confirm their email on an allowlist artifact that is shared with them, and only there.
+ */
+export async function holdsGrant(ctx: Ctx, a: ArtifactRow, email: string): Promise<boolean> {
+  const [g, category] = await Promise.all([
+    ctx.db
+      .select({ role: accessGrants.role })
+      .from(accessGrants)
+      .where(and(eq(accessGrants.artifactId, a.id), eq(accessGrants.email, email)))
+      .get(),
+    categoryGrantFor(ctx, a, [email], email),
+  ]);
+  return (
+    grantedRole(factsOf(a), {
+      grantRole: g?.role ?? null,
+      categoryGrant: category,
+      categorySharing: ctx.config.allowCategorySharing,
+      passwordPassed: false,
+    }) !== null
+  );
 }
 
 /**
@@ -76,7 +93,7 @@ async function codeHolder(
 ): Promise<{ kind: "owner"; user: UserRow } | { kind: "listed" } | null> {
   const [owner, listed] = await Promise.all([
     ctx.db.select().from(users).where(eq(users.id, a.ownerId)).get(),
-    isListed(ctx, a.id, email),
+    holdsGrant(ctx, a, email),
   ]);
   if (owner && owner.email === email && maySignIn(ctx.config, email)) {
     return { kind: "owner", user: owner };
@@ -244,6 +261,14 @@ export async function verifyViewerCode(
     };
   }
 
+  return { kind: "viewer", value: await createViewerSession(ctx, email) };
+}
+
+/**
+ * A viewer session for a confirmed email (no account): the cookie value, shown once; only its hash
+ * is stored. It names no artifact: policy checks the email's grants on every artifact.
+ */
+export async function createViewerSession(ctx: Ctx, email: string): Promise<string> {
   const value = newToken(VIEWER_SESSION_PREFIX);
   await ctx.db
     .insert(sessions)
@@ -256,5 +281,5 @@ export async function verifyViewerCode(
       createdAt: nowIso(),
     })
     .run();
-  return { kind: "viewer", value };
+  return value;
 }

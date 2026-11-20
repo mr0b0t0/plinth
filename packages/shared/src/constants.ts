@@ -129,6 +129,10 @@ export const LIMITS = {
   maxCategoryLength: 60,
   /** Category names list_artifacts and GET /categories return, most-used first. */
   maxCategoriesListed: 500,
+  /** Categories one owner may share (docs/spec.md "Category sharing and personal categories"). */
+  maxCategorySharesPerOwner: 100,
+  /** Artifacts a portal lists, most recently updated first. */
+  maxPortalItems: 500,
   maxNoteLength: 500,
   maxCommentLength: 10_000,
   maxLabelLength: 80,

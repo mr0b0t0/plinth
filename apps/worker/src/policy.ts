@@ -4,6 +4,7 @@
 import {
   type ArtifactType,
   type Capabilities,
+  type CategoryRole,
   type ClientType,
   type EffectiveRole,
   isPersonalDocId,
@@ -93,11 +94,23 @@ export interface ArtifactFacts {
   hasPassword: boolean;
   deleted: boolean;
   takenDown: boolean;
+  /**
+   * The artifact's category key and the owner's review against a category share (docs/spec.md
+   * "Category sharing and personal categories"). Optional; absent or null gives no category access.
+   */
+  categoryShare?: ArtifactCategoryFacts | null;
 }
 
 export interface AccessFacts {
   /** The principal's grant on this artifact (by email), if any. */
   grantRole: Role | null;
+  /**
+   * The principal's grant on the current share of this artifact's owner and category key, with
+   * that share's id and key. Optional; absent or null gives no category access.
+   */
+  categoryGrant?: CategoryGrantFacts | null;
+  /** ALLOW_CATEGORY_SHARING. Optional; only `true` lets a category grant count. */
+  categorySharing?: boolean;
   /** The principal passed this artifact's password (app-host password cookie). */
   passwordPassed: boolean;
   /** ALLOW_PUBLIC_VISIBILITY; when off, public behaves like unlisted. */
@@ -164,7 +177,10 @@ export function roleOf(
 ): EffectiveRole | null {
   const uid = principalUserId(p);
   if (uid && uid === artifact.ownerId) return "owner";
-  return principalEmail(p) ? access.grantRole : null;
+  if (!principalEmail(p)) return null;
+  // The direct grant, or a category grant that counts for this artifact (the filing safeguard). A
+  // token limited to one artifact holds the direct grant only (seesCategorySharing).
+  return seesCategorySharing(p) ? grantedRole(artifact, access) : access.grantRole;
 }
 
 const deny = (reason: DenyReason, role: EffectiveRole | null = null): Decision => ({
@@ -632,4 +648,114 @@ export function liveViewAccess(
  */
 export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
   return d.role === null ? "open" : "member";
+}
+
+// ---------- category sharing (docs/spec.md "Category sharing and personal categories") ----------
+
+/** The artifact's category review, as stored. */
+export interface ArtifactCategoryFacts {
+  /** artifacts.category_key; null when uncategorised or not yet backfilled. */
+  key: string | null;
+  /** artifacts.category_review. */
+  review: "shared" | "private" | null;
+  /** artifacts.category_review_share: the share the review was made against. */
+  reviewShareId: string | null;
+}
+
+/**
+ * The artifact facts the category rules read: its owner and its category review. Every
+ * ArtifactFacts is one; the people list (services/people.ts) reads just these from its own query.
+ */
+export type CategoryArtifactFacts = Pick<ArtifactFacts, "ownerId" | "categoryShare">;
+
+/** A person's grant on the share of an owner's category key, as the loader found it. */
+export interface CategoryGrantFacts {
+  shareId: string;
+  /** category_shares.owner_id: the grant counts only on that owner's artifacts. */
+  shareOwnerId: string;
+  shareKey: string;
+  role: CategoryRole;
+}
+
+const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3 };
+
+/** The stronger of two roles (viewer < commenter < editor). */
+export function strongerRole(a: Role | null, b: Role | null): Role | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return ROLE_RANK[b] > ROLE_RANK[a] ? b : a;
+}
+
+/**
+ * The role a category grant gives on this artifact, or null. This is the filing safeguard: it
+ * counts only for an artifact the owner reviewed as `shared`, against this very share, while that
+ * share is the one on the artifact's current key and the feature is on. Pending, private, moved,
+ * stale or unbackfilled artifacts give the category's people nothing. Never more than commenter.
+ */
+export function categoryRoleOf(
+  artifact: CategoryArtifactFacts,
+  access: AccessFacts,
+): CategoryRole | null {
+  const c = artifact.categoryShare;
+  const g = access.categoryGrant;
+  if (access.categorySharing !== true || !c || !g) return null;
+  if (c.review !== "shared" || c.key === null) return null;
+  if (c.reviewShareId !== g.shareId || c.key !== g.shareKey) return null;
+  // The share is the artifact owner's own: another owner's share never reaches this artifact.
+  if (g.shareOwnerId !== artifact.ownerId) return null;
+  // A stray value (a hand-edited row) clamps to the weakest role.
+  return g.role === "commenter" ? "commenter" : "viewer";
+}
+
+/** The grant role that counts: the stronger of the direct grant and categoryRoleOf. */
+export function grantedRole(artifact: CategoryArtifactFacts, access: AccessFacts): Role | null {
+  return strongerRole(access.grantRole, categoryRoleOf(artifact, access));
+}
+
+/**
+ * Category shares, portals and personal categories are the app's, and a token limited to one
+ * artifact never sees or manages them: their endpoints refuse it with 403 `token_bound` before
+ * anything else (the switch, the id), and roleOf gives it no role through a category grant, so it
+ * opens its artifact with its person's direct rights only.
+ */
+export function seesCategorySharing(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
+
+/**
+ * Create, change or delete a category share, or review artifacts into it: the signed-in owner
+ * only, never an agent, a bearer token, the ADMIN_TOKEN or a viewer confirmed by code (as
+ * data_clear and the bulk category rename). Services scope every statement to the caller's rows.
+ */
+export function mayManageCategoryShares(p: Principal): p is Extract<Principal, { kind: "user" }> {
+  return p.kind === "user";
+}
+
+/**
+ * May this principal open a portal (the list of a share's artifacts)? People only, never agents:
+ * the owner (a preview), or an email holding a grant on the share (`grantRole`). Admins get nothing
+ * extra. A share that exists answers `email_required` to everyone else, so a portal id names
+ * nothing a code would not.
+ */
+export function decidePortal(
+  p: Principal,
+  share: { ownerId: string },
+  grantRole: CategoryRole | null,
+  enabled: boolean,
+):
+  | { allow: true; role: "owner" | CategoryRole }
+  | { allow: false; reason: "not_found" | "email_required" } {
+  if (!enabled || p.kind === "agent") return { allow: false, reason: "not_found" };
+  if (p.kind === "user" && p.userId === share.ownerId) return { allow: true, role: "owner" };
+  if (p.kind !== "anonymous" && grantRole !== null) return { allow: true, role: grantRole };
+  return { allow: false, reason: "email_required" };
+}
+
+/**
+ * Does this principal see (and may it set) its own personal category on an artifact? A signed-in
+ * person with a role on it other than owner (the owner files with the owner's category). Never an
+ * agent or a viewer confirmed by code: a collaborator's category is set and read in the app only.
+ */
+export function seesPersonalCategory(p: Principal, role: EffectiveRole | null): boolean {
+  return p.kind === "user" && role !== null && role !== "owner";
 }

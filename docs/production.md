@@ -18,6 +18,7 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | Browser Rendering | `BROWSER` binding, for thumbnails and link-preview images (0.4.1); `THUMBNAILS` uses its default (on) |
 | Live rooms (#36) | On since 2026-11-18: the `ROOMS` binding (`ArtifactRoom`, migration tag `rooms-v1`) was added to the config by hand; `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` use their defaults (on) and `LIVE_DRAFT_RETENTION_DAYS` stays at 30. The privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
 | Live views | Not deployed yet. `ALLOW_LIVE_VIEWS` is not set and the config has the `ROOMS` binding, so a release with live views turns them on (the default) unless `ALLOW_LIVE_VIEWS="false"` is set first ([deploy-checklist.md](deploy-checklist.md#live-views)). Once on, every artifact with an open, visible view wakes its Durable Object and reads D1 once a minute (the room's re-check alarm) |
+| Category sharing | `ALLOW_CATEGORY_SHARING` is not set, so its default (on) applies once a release with it is deployed (migration `0013_category_sharing.sql`). The privacy notice's "Shared categories" item is part of that release and needs the maintainer's approval before the deploy |
 | Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 

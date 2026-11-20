@@ -60,6 +60,8 @@ const WORKER_VARS = [
   "ALLOW_LIVE_VIEWS",
   // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
   "SHEET_EVAL_BUDGET",
+  // Owners may share a category with people (docs/docker.md#settings); on unless set to "false".
+  "ALLOW_CATEGORY_SHARING",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

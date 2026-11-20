@@ -10,6 +10,7 @@ import type { Ctx } from "../services/context.ts";
 import {
   BOUND_TOKEN_NOTE,
   CATEGORY_INSTRUCTION,
+  CATEGORY_SHARE_INSTRUCTION,
   contentNote,
   PLUGIN_NOTE,
   TYPES_NOTE,
@@ -57,6 +58,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "visualization to look at or pass on, write one self-contained HTML document and publish it with " +
         "publish_artifact. New artifacts are private (only the user and people they add), so publish " +
         `without asking, then give the user the returned url. ${CATEGORY_INSTRUCTION} ` +
+        (ctx.config.allowCategorySharing ? `${CATEGORY_SHARE_INSTRUCTION} ` : "") +
         "Make it a finished page: a short real " +
         "<title>, light and dark color schemes, readable at phone width, scripts only from the CDN " +
         "allowlist at pinned versions, no requests to other hosts. To change an artifact, read it with " +

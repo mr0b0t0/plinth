@@ -21,6 +21,8 @@ import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
 import {
   BUILD_NOTE,
   CATEGORY_NOTE,
+  categoryShareListNote,
+  categoryShareNote,
   DATA_PAGE_NOTE,
   DESIGN_PUBLISH_NOTE,
   DESIGN_SYSTEM_PUBLISH_NOTE,
@@ -55,6 +57,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         DESIGN_PUBLISH_NOTE +
         SHEET_PUBLISH_NOTE +
         CATEGORY_NOTE +
+        categoryShareNote(ctx.config) +
         opaque +
         DATA_PAGE_NOTE +
         ROOM_PAGE_NOTE +
@@ -75,6 +78,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "version, the update is rejected with a conflict instead of overwriting. If assets are omitted, the " +
         "current version's assets are kept. Versions are immutable; every update is a new version anyone can revert. " +
         "category: owner only (refused for editors); leave it out to keep the current one. " +
+        categoryShareNote(ctx.config) +
         REUSE_NOTE +
         BUILD_NOTE +
         TYPE_UPDATE_NOTE +
@@ -119,7 +123,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "by title; optional category filters the user's own artifacts; limit 0 returns only the " +
         "categories, the cheap read before publishing. Optional type filters by artifact type " +
         "(design_system lists the design systems the user can build with). category is null on artifacts " +
-        `shared with the user. ${UNTRUSTED_NOTE}`,
+        `shared with the user. ${categoryShareListNote(ctx.config)}${UNTRUSTED_NOTE}`,
       inputSchema: listArtifactsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_artifacts,
     },

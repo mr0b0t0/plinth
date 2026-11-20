@@ -7,6 +7,7 @@ import { ApiError } from "../lib/errors.ts";
 import { artifactsApi } from "./artifacts.ts";
 import { authApi } from "./auth.ts";
 import { categoriesApi } from "./categories.ts";
+import { categorySharesApi } from "./categoryShares.ts";
 import { commentsApi } from "./comments.ts";
 import { connectionsApi } from "./connections.ts";
 import { type AppEnv, authenticate } from "./context.ts";
@@ -14,6 +15,7 @@ import { dataApi } from "./data.ts";
 import { designSystemsApi } from "./designSystems.ts";
 import { liveApi } from "./live.ts";
 import { meApi } from "./me.ts";
+import { portalsApi } from "./portals.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
 import { sheetsApi } from "./sheets.ts";
@@ -68,6 +70,8 @@ api.route("/", dataApi);
 api.route("/", liveApi);
 api.route("/", uploadsApi);
 api.route("/", designSystemsApi);
+api.route("/", categorySharesApi);
+api.route("/", portalsApi);
 api.route("/", sheetsApi);
 
 api.all("*", () => {

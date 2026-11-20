@@ -106,11 +106,27 @@ async function sha256(s: string): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Steps added after the step lists, each with the feature that added it. The golden hash covers
+ * every other step, so an addition changes no statement that was there before.
+ */
+const ADDED_USER_STEPS = new Set([
+  // Category sharing (0013): the address on other people's category shares.
+  "category_grants",
+]);
+
 describe("erase statements (golden)", () => {
   it("are the same SQL as before they became step lists", async () => {
     // sha256 of eraseUserSql and eraseArtifactSql on main at 2110cc4, written as one array each.
-    expect(await sha256(eraseUserSql("ann@example.com"))).toBe(
+    const before = ERASE_USER_STEPS.filter((s) => !ADDED_USER_STEPS.has(s.table))
+      .map((s) => s.sql("ann@example.com"))
+      .join("; ");
+    expect(await sha256(before)).toBe(
       "4415bb8fda3cd6a388c008b35fefdc579658184b3cd830226448cc43c07493a0",
+    );
+    // The added steps run before the users row.
+    expect(eraseUserSql("ann@example.com")).toContain(
+      "DELETE FROM category_grants WHERE email = 'ann@example.com'; DELETE FROM login_codes",
     );
     expect(await sha256(eraseArtifactSql("my-slug"))).toBe(
       "5b613326da8856a70c08b9768528910074b204f4fdd64bd11d8ddeab391a9ed4",

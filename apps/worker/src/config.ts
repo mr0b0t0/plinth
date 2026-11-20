@@ -175,6 +175,12 @@ export interface Config {
    * may spend. Never affects the browser, which has its own fixed budget.
    */
   sheetEvalBudget: number;
+  /**
+   * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
+   * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
+   * Off, category grants count for nothing and the share and portal endpoints are closed.
+   */
+  allowCategorySharing: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -464,6 +470,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
       SHEET_EVAL_BUDGET_BOUNDS[0],
       SHEET_EVAL_BUDGET_BOUNDS[1],
     ),
+    allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
     operator: parseOperator(env),
     openaiAppsChallenge: parseChallenge(env),
   };

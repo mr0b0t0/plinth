@@ -270,6 +270,16 @@ async function main() {
   }
 
   if (parsed.command === "sweep-orphans") return sweep(parsed);
+  if (parsed.command === "bump-epochs") {
+    const r = wrangler(parsed.wranglerArgs);
+    const f = failed(r);
+    if (f) return f;
+    const n = changesFromOutput(r.stdout);
+    console.log(
+      `Ended the passes of ${n ?? "every"} artifact${n === 1 ? "" : "s"} shared through a category (${parsed.target}).`,
+    );
+    return 0;
+  }
   if (parsed.command !== "set-limit") return erase(parsed);
   const r = wrangler(parsed.wranglerArgs);
   const f = failed(r);

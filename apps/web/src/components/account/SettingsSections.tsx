@@ -20,7 +20,7 @@ import {
 } from "@plinth/shared";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
-import { navigate } from "../../lib/router.tsx";
+import { Link, navigate } from "../../lib/router.tsx";
 import {
   Button,
   Dialog,
@@ -186,14 +186,20 @@ export function CategorySection({
   const typed = normalizeCategory(value);
   const target = typed ? snapCategory(typed, snapTargets(artifact, names ?? [])) : "";
   const dirty = target !== "" && target !== artifact.category;
+  // Filing under a shared category never shares: say so before the owner saves.
+  const sharedTarget =
+    dirty &&
+    (names ?? []).some((c) => c.shared === true && categoryKey(c.name) === categoryKey(target));
   // A respelling that snaps back onto the current name, which other artifacts share: Save stays
   // off, so say why and where a respelling for all of them happens.
   const sameAsCurrent = typed !== "" && typed !== artifact.category && target === artifact.category;
-  const hint = dirty
-    ? `Will be filed under “${target}”.`
-    : sameAsCurrent
-      ? `Matches “${target}”, its current category. To respell it on every artifact, use Rename category on your dashboard.`
-      : undefined;
+  const hint = sharedTarget
+    ? `“${target}” is shared: this waits for your review before its people see it.`
+    : dirty
+      ? `Will be filed under “${target}”.`
+      : sameAsCurrent
+        ? `Matches “${target}”, its current category. To respell it on every artifact, use Rename category on your dashboard.`
+        : undefined;
 
   const patch = async (category: string | null) => {
     setBusy(category === null ? "remove" : "save");
@@ -230,7 +236,7 @@ export function CategorySection({
     <Section
       id={CATEGORY_SECTION_ID}
       title="Category"
-      description="Group this artifact with others on your dashboard. Only you see it; people you share it with do not."
+      description="Group this artifact on your dashboard."
     >
       <form
         className="pl-acct-form"
@@ -241,6 +247,7 @@ export function CategorySection({
         <Input
           label="Category"
           hideLabel
+          className="pl-category-field"
           value={value}
           list={listId}
           maxLength={LIMITS.maxCategoryLength}
@@ -401,9 +408,11 @@ export function AccessSection({
             }}
           />
         )}
-        {visibility === "allowlist" && people === 0 && (
-          <Note>Only you can open it for now. Add people below to share it with them.</Note>
-        )}
+        {visibility === "allowlist" &&
+          people === 0 &&
+          sharing.category_share?.state !== "shared" && (
+            <Note>Only you can open it for now. Add people below to share it with them.</Note>
+          )}
         {error && visibility !== "password" && (
           <p className="pl-field__error" role="alert">
             {error}
@@ -499,6 +508,9 @@ export function PeopleSection({
     }
   };
 
+  // People who see it through its shared category: one line, managed from the dashboard.
+  const via = sharing.category_share ?? null;
+  const viaShare = via?.state === "shared" && artifact.category ? via : null;
   return (
     <Section
       id="settings-people"
@@ -540,8 +552,19 @@ export function PeopleSection({
             </li>
           ))}
         </ul>
-      ) : (
+      ) : viaShare ? null : (
         <p className="pl-acct-group__empty">Nobody else has access yet.</p>
+      )}
+      {viaShare && (
+        <p className="pl-acct-via">
+          {viaShare.people.length} {viaShare.people.length === 1 ? "person" : "people"} via{" "}
+          {artifact.category} ·{" "}
+          <Link
+            to={`${APP_ROUTES.dashboard}?category=${encodeURIComponent(artifact.category ?? "")}`}
+          >
+            Manage
+          </Link>
+        </p>
       )}
       <form className="pl-acct-add" onSubmit={add} noValidate>
         <Input

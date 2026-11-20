@@ -17,7 +17,7 @@ import {
   type VersionInfo,
   type Visibility,
 } from "@plinth/shared";
-import { and, desc, eq, inArray, isNull, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, or, type SQL, sql } from "drizzle-orm";
 import { appUrl, contentOrigin, thumbnailsActive } from "../config.ts";
 import {
   type ArtifactRow,
@@ -37,13 +37,17 @@ import {
   type ArtifactAction,
   type ArtifactFacts,
   boundArtifactOf,
+  type CategoryGrantFacts,
   canMakePublic,
+  categoryRoleOf,
   type Decision,
   decide,
+  grantedRole,
   principalEmail,
   principalUserId,
   seesOwnerMetadata,
   seesPeople,
+  seesPersonalCategory,
   seesThumbnails,
   type VersionWriter,
 } from "../policy.ts";
@@ -53,9 +57,19 @@ import {
   matchingSpellings,
   ownerCategories,
   patchArtifact,
+  personalCategoriesOf,
+  personalCategoryMap,
+  prunePersonalCategories,
   requireCategoryRight,
   resolveCategory,
 } from "./categories.ts";
+import {
+  callerCategoryGrants,
+  categoryGrantFor,
+  categoryShareResult,
+  ownerShareIdsByKey,
+  shareIdForKey,
+} from "./categoryShares.ts";
 import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
 import { readLiveDraftMeta } from "./live.ts";
@@ -103,29 +117,49 @@ export function factsOf(a: ArtifactRow): ArtifactFacts {
     hasPassword: !!a.passwordHash,
     deleted: !!a.deletedAt,
     takenDown: !!a.takenDownAt,
+    // The filing safeguard reads these: policy.ts categoryRoleOf.
+    categoryShare: {
+      key: a.categoryKey,
+      review: a.categoryReview,
+      reviewShareId: a.categoryReviewShare,
+    },
   };
 }
 
 const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3 };
 
-/**
- * The strongest grant for the principal's email and, for browsers, a confirmed viewer email, with
- * the email that holds it (the principal's own on a tie). Agents never use the viewer email.
- */
-export async function grantFor(
-  ctx: Ctx,
-  artifactId: string,
-): Promise<{ role: Role; email: string } | null> {
+/** The emails grants are looked up by: the principal's and, for browsers, a confirmed viewer email. */
+export function grantEmails(ctx: Ctx): { own: string | null; emails: string[] } {
   const emails = new Set<string>();
   const own = principalEmail(ctx.principal);
   if (own) emails.add(own);
   if (ctx.viewerEmail && ctx.principal.kind !== "agent") emails.add(ctx.viewerEmail);
-  if (emails.size === 0) return null;
-  const rows = await ctx.db
-    .select({ role: accessGrants.role, email: accessGrants.email })
-    .from(accessGrants)
-    .where(and(eq(accessGrants.artifactId, artifactId), inArray(accessGrants.email, [...emails])))
-    .all();
+  return { own, emails: [...emails] };
+}
+
+/** The principal's direct grant (access_grants) and its grant on the artifact's category share. */
+export interface LoadedGrants {
+  direct: { role: Role; email: string } | null;
+  category: (CategoryGrantFacts & { email: string }) | null;
+}
+
+/**
+ * Both kinds of grant for the principal's emails, each the strongest with the email that holds it
+ * (the principal's own on a tie). The category grant is the one on the current share of the
+ * artifact's owner and key; whether it counts for this artifact is policy's call (categoryRoleOf),
+ * never this loader's.
+ */
+export async function loadGrants(ctx: Ctx, a: ArtifactRow): Promise<LoadedGrants> {
+  const { own, emails } = grantEmails(ctx);
+  if (emails.length === 0) return { direct: null, category: null };
+  const [rows, category] = await Promise.all([
+    ctx.db
+      .select({ role: accessGrants.role, email: accessGrants.email })
+      .from(accessGrants)
+      .where(and(eq(accessGrants.artifactId, a.id), inArray(accessGrants.email, emails)))
+      .all(),
+    categoryGrantFor(ctx, a, emails, own),
+  ]);
   let best: { role: Role; email: string } | null = null;
   for (const r of rows) {
     if (
@@ -135,17 +169,50 @@ export async function grantFor(
     )
       best = { role: r.role, email: r.email };
   }
-  return best;
+  return { direct: best, category };
 }
 
-/** The strongest grant role for the principal (see grantFor). */
-export async function grantRoleFor(ctx: Ctx, artifactId: string): Promise<Role | null> {
-  return (await grantFor(ctx, artifactId))?.role ?? null;
+/**
+ * The grant that counts for the principal, with the email that holds it: the direct grant, or a
+ * category grant when policy lets it count here and it is stronger. That email is the identity
+ * sealed into the enter token and stamped on shared-data writes.
+ */
+export async function grantFor(
+  ctx: Ctx,
+  a: ArtifactRow,
+): Promise<{ role: Role; email: string } | null> {
+  const g = await loadGrants(ctx, a);
+  const viaCategory = g.category
+    ? categoryRoleOf(factsOf(a), {
+        grantRole: null,
+        categoryGrant: g.category,
+        categorySharing: ctx.config.allowCategorySharing,
+        passwordPassed: false,
+      })
+    : null;
+  if (viaCategory && g.category && (!g.direct || ROLE_RANK[viaCategory] > ROLE_RANK[g.direct.role]))
+    return { role: viaCategory, email: g.category.email };
+  return g.direct;
+}
+
+/** The grant role that counts for the principal (see grantFor). */
+export async function grantRoleFor(ctx: Ctx, a: ArtifactRow): Promise<Role | null> {
+  return (await grantFor(ctx, a))?.role ?? null;
 }
 
 export async function accessFactsFor(ctx: Ctx, a: ArtifactRow): Promise<AccessFacts> {
+  const g = await loadGrants(ctx, a);
   return {
-    grantRole: await grantRoleFor(ctx, a.id),
+    grantRole: g.direct?.role ?? null,
+    categoryGrant: g.category
+      ? {
+          shareId: g.category.shareId,
+          shareOwnerId: g.category.shareOwnerId,
+          shareKey: g.category.shareKey,
+          role: g.category.role,
+        }
+      : null,
+    categorySharing: ctx.config.allowCategorySharing,
     passwordPassed: ctx.passwordPasses.get(a.id) === a.accessEpoch,
     publicEnabled: ctx.config.allowPublicVisibility,
     // Admins may look at an artifact only when someone reported it (to decide on the report).
@@ -227,13 +294,35 @@ export async function requireArtifact(
 
 // ---------- shaping ----------
 
+/** What a summary needs beyond the row, loaded once per list by its caller. */
+export interface SummaryExtra {
+  /** The id of the owner's share on the artifact's category key, or null when none. */
+  shareId?: string | null;
+  /** The caller's own personal category for this artifact, or null. */
+  myCategory?: string | null;
+}
+
+/**
+ * The owner's view of an artifact's place in its category's share (null: not shared). A taken-down
+ * artifact has none: no review applies to it and no grantee can open it, so it never waits.
+ */
+export function shareStateOf(
+  a: Pick<ArtifactRow, "categoryKey" | "categoryReview" | "categoryReviewShare" | "takenDownAt">,
+  shareId: string | null | undefined,
+): "shared" | "pending" | "private" | null {
+  if (!shareId || a.categoryKey === null || a.takenDownAt) return null;
+  return a.categoryReviewShare === shareId && a.categoryReview ? a.categoryReview : "pending";
+}
+
 export function toSummary(
   ctx: Ctx,
   a: ArtifactRow,
   owner: Pick<UserRow, "id" | "email" | "name">,
   versionCount: number,
   role: EffectiveRole | null,
+  extra: SummaryExtra = {},
 ): ArtifactSummary {
+  const ownerView = seesOwnerMetadata(ctx.principal, role);
   return {
     id: a.id,
     slug: a.slug,
@@ -260,7 +349,12 @@ export function toSummary(
         ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
         : null,
     // The read gate for owner-only metadata: every summary path goes through here.
-    category: seesOwnerMetadata(ctx.principal, role) ? (a.category ?? null) : null,
+    category: ownerView ? (a.category ?? null) : null,
+    // The owner's share state is owner-only metadata too: editors and their agents get null.
+    category_share:
+      ownerView && ctx.config.allowCategorySharing ? shareStateOf(a, extra.shareId) : null,
+    // A collaborator's own category: the signed-in person only, never an agent.
+    my_category: seesPersonalCategory(ctx.principal, role) ? (extra.myCategory ?? null) : null,
   };
 }
 
@@ -284,7 +378,15 @@ export async function summaryFor(
   a: ArtifactRow,
   role: EffectiveRole | null,
 ): Promise<ArtifactSummary> {
-  return toSummary(ctx, a, await ownerOf(ctx, a), await versionCount(ctx, a.id), role);
+  const extra: SummaryExtra = {};
+  if (seesOwnerMetadata(ctx.principal, role) && ctx.config.allowCategorySharing) {
+    extra.shareId = await shareIdForKey(ctx.env.DB, a.ownerId, a.categoryKey);
+  }
+  const uid = principalUserId(ctx.principal);
+  if (uid && seesPersonalCategory(ctx.principal, role)) {
+    extra.myCategory = (await personalCategoryMap(ctx, uid, [a.id])).get(a.id) ?? null;
+  }
+  return toSummary(ctx, a, await ownerOf(ctx, a), await versionCount(ctx, a.id), role, extra);
 }
 
 // ---------- versions ----------
@@ -391,6 +493,24 @@ function withCategory(result: PublishResult, target: VersionTarget): PublishResu
 }
 
 /**
+ * The owner's own result carries where the artifact stands in its shared category (pending until
+ * the owner reviews it); anyone else's (an editor's) carries nothing about the owner's sharing.
+ */
+async function withCategoryShare(
+  ctx: Ctx,
+  result: PublishResult,
+  role: EffectiveRole | null | undefined,
+): Promise<PublishResult> {
+  const share = await categoryShareResult(
+    ctx.env.DB,
+    ctx.config,
+    result.id,
+    seesOwnerMetadata(ctx.principal, role ?? null),
+  );
+  return share ? { ...result, category_share: share } : result;
+}
+
+/**
  * Stage a version's inline source and assets: content is hashed and put (or reused when the
  * current version has the same bytes), `{path, sha256}` reuses the current version's file.
  * Cheap checks run before any rate hit or R2 operation.
@@ -477,7 +597,7 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     passwordHash,
   });
   if (input.emails?.length) await replaceViewerGrants(ctx, result.id, input.emails);
-  return withCategory(result, target);
+  return withCategoryShare(ctx, withCategory(result, target), "owner");
 }
 
 export interface UpdateInput {
@@ -524,7 +644,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     (s) => stageInline(s, text, input.assets),
     input.checkpoint ? { liveCheckpoint: true } : {},
   );
-  return withCategory(result, target);
+  return withCategoryShare(ctx, withCategory(result, target), target.role);
 }
 
 export async function getArtifact(
@@ -593,40 +713,21 @@ export async function listArtifacts(
   // A token limited to one artifact lists that one at most, and never the owner's categories.
   const bound = boundArtifactOf(ctx.principal);
   if (bound !== null) return listBound(ctx, bound, filter);
-  const shared = ctx.db
-    .select({ id: accessGrants.artifactId })
-    .from(accessGrants)
-    .where(eq(accessGrants.email, email));
   const categories = await ownerCategories(ctx, uid);
+  // The signed-in person's own categories for artifacts shared with them (never for agents).
+  const mine =
+    ctx.principal.kind === "user" ? { my_categories: await personalCategoriesOf(ctx, uid) } : {};
   // limit 0: the names only, the cheap read agents make before they publish.
-  if (filter.limit === 0) return { items: [], categories };
-  let inCategory: ReturnType<typeof and> | undefined;
+  if (filter.limit === 0) return { items: [], categories, ...mine };
+  let inCategory: SQL | undefined;
   // An empty filter is no filter.
   if (filter.category?.trim()) {
     const spellings = await matchingSpellings(ctx, uid, filter.category);
-    if (spellings.length === 0) return { items: [], categories };
+    if (spellings.length === 0) return { items: [], categories, ...mine };
     inCategory = and(eq(artifacts.ownerId, uid), inArray(artifacts.category, spellings));
   }
-  const q = filter.query?.trim().toLowerCase();
-  const rows = await ctx.db
-    .select({ a: artifacts, owner: users })
-    .from(artifacts)
-    .innerJoin(users, eq(users.id, artifacts.ownerId))
-    .where(
-      and(
-        isNull(artifacts.deletedAt),
-        or(eq(artifacts.ownerId, uid), inArray(artifacts.id, shared)),
-        q
-          ? or(like(sql`lower(${artifacts.title})`, `%${q}%`), like(artifacts.slug, `%${q}%`))
-          : undefined,
-        inCategory,
-        filter.type ? eq(artifacts.type, filter.type) : undefined,
-      ),
-    )
-    .orderBy(desc(artifacts.updatedAt))
-    .limit(filter.limit ?? 500)
-    .all();
-  if (rows.length === 0) return { items: [], categories };
+  const rows = await listQuery(ctx, uid, email, filter, inCategory).all();
+  if (rows.length === 0) return { items: [], categories, ...mine };
   const ids = rows.map((r) => r.a.id);
   const counts = await ctx.db
     .select({ id: versions.artifactId, n: sql<number>`count(*)` })
@@ -641,16 +742,98 @@ export async function listArtifacts(
     .all();
   const countBy = new Map(counts.map((c) => [c.id, c.n]));
   const grantBy = new Map(grants.map((g) => [g.artifactId, g.role]));
-  const items = rows.map((r) =>
-    toSummary(
-      ctx,
-      r.a,
-      r.owner,
-      countBy.get(r.a.id) ?? 0,
-      r.a.ownerId === uid ? "owner" : (grantBy.get(r.a.id) ?? "viewer"),
-    ),
-  );
-  return { items, categories };
+  const others = rows.filter((r) => r.a.ownerId !== uid);
+  // The caller's category grants (keyed by owner and key), loaded once and only when a row is not
+  // the caller's own; the owner's share ids, for the share state on the caller's own rows.
+  const byShare = others.length > 0 ? await callerCategoryGrants(ctx, email) : new Map();
+  const shareIds =
+    ctx.config.allowCategorySharing && others.length < rows.length
+      ? await ownerShareIdsByKey(ctx.env.DB, uid)
+      : new Map<string, string>();
+  const personal =
+    ctx.principal.kind === "user" && others.length > 0
+      ? await personalCategoryMap(
+          ctx,
+          uid,
+          others.map((r) => r.a.id),
+        )
+      : new Map<string, string>();
+  const items: ArtifactSummary[] = [];
+  for (const r of rows) {
+    if (r.a.ownerId === uid) {
+      // The caller's own rows, as before: taken-down ones included (the dashboard's badge).
+      items.push(
+        toSummary(ctx, r.a, r.owner, countBy.get(r.a.id) ?? 0, "owner", {
+          shareId: r.a.categoryKey ? (shareIds.get(r.a.categoryKey) ?? null) : null,
+        }),
+      );
+      continue;
+    }
+    const direct = grantBy.get(r.a.id) ?? null;
+    const categoryGrant =
+      r.a.categoryKey !== null ? (byShare.get(`${r.a.ownerId}\n${r.a.categoryKey}`) ?? null) : null;
+    const role = grantedRole(factsOf(r.a), {
+      grantRole: direct,
+      categoryGrant,
+      categorySharing: ctx.config.allowCategorySharing,
+      passwordPassed: false,
+    });
+    // A direct grant keeps the row as before, taken down included; a row that came in through the
+    // category arm only stays while policy lets the grant count, and never once taken down.
+    if (direct === null && (role === null || r.a.takenDownAt)) continue;
+    items.push(
+      toSummary(ctx, r.a, r.owner, countBy.get(r.a.id) ?? 0, role ?? direct ?? "viewer", {
+        myCategory: personal.get(r.a.id) ?? null,
+      }),
+    );
+  }
+  return { items, categories, ...mine };
+}
+
+/**
+ * The rows list_artifacts reads: the caller's own, those granted to their email, and (the third
+ * arm, docs/spec.md "Category sharing and personal categories") those the owner reviewed as shared
+ * into a share whose grants hold the caller's email, never taken down. The third arm mirrors
+ * policy.ts categoryRoleOf; the per-row check in listArtifacts has the final word. Every arm is
+ * an `id IN (...)` or an indexed equality, so SQLite answers the OR from indexes instead of
+ * scanning artifacts (a correlated EXISTS in the OR made it scan the whole table).
+ */
+export function listQuery(
+  ctx: Ctx,
+  uid: string,
+  email: string,
+  filter: { query?: string; limit?: number; type?: ArtifactType },
+  inCategory?: SQL,
+) {
+  const shared = ctx.db
+    .select({ id: accessGrants.artifactId })
+    .from(accessGrants)
+    .where(eq(accessGrants.email, email));
+  const viaCategory = ctx.config.allowCategorySharing
+    ? sql`${artifacts.id} IN (SELECT a2.id FROM category_grants g
+          JOIN category_shares s ON s.id = g.share_id
+          JOIN artifacts a2 ON a2.category_review_share = s.id AND a2.owner_id = s.owner_id
+           AND a2.category_key = s.category_key
+         WHERE g.email = ${email} AND a2.category_review = 'shared' AND a2.taken_down_at IS NULL)`
+    : undefined;
+  const q = filter.query?.trim().toLowerCase();
+  return ctx.db
+    .select({ a: artifacts, owner: users })
+    .from(artifacts)
+    .innerJoin(users, eq(users.id, artifacts.ownerId))
+    .where(
+      and(
+        isNull(artifacts.deletedAt),
+        or(eq(artifacts.ownerId, uid), inArray(artifacts.id, shared), viaCategory),
+        q
+          ? or(like(sql`lower(${artifacts.title})`, `%${q}%`), like(artifacts.slug, `%${q}%`))
+          : undefined,
+        inCategory,
+        filter.type ? eq(artifacts.type, filter.type) : undefined,
+      ),
+    )
+    .orderBy(desc(artifacts.updatedAt))
+    .limit(filter.limit ?? 500);
 }
 
 /**
@@ -798,6 +981,7 @@ export async function replaceViewerGrants(
       )
       .run();
   }
+  if (toDelete.length) await prunePersonalCategories(ctx.env.DB, { artifactId }).run();
   await bumpAccessEpoch(ctx, artifactId);
 }
 

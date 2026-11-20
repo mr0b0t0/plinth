@@ -7,6 +7,8 @@ import { ApiError } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
 import { canMakePublic } from "../policy.ts";
 import { bumpAccessEpoch, requireArtifact } from "../services/artifacts.ts";
+import { prunePersonalCategories } from "../services/categories.ts";
+import { sharingCategoryShare } from "../services/categoryShares.ts";
 import type { Ctx } from "../services/context.ts";
 import { grantNames } from "../services/people.ts";
 import { getUserById } from "../services/users.ts";
@@ -43,6 +45,8 @@ async function settings(ctx: Ctx, a: ArtifactRow): Promise<SharingSettings> {
         createdAt: owner.createdAt,
         minAccountAgeHours: ctx.config.publicMinAccountAgeHours,
       }),
+    // Who else sees it through its shared category (the owner only: this route is `manage`).
+    category_share: await sharingCategoryShare(ctx, a),
   };
 }
 
@@ -73,6 +77,8 @@ sharingApi.put("/artifacts/:ref/sharing", async (c) => {
   ];
   // biome-ignore lint/suspicious/noExplicitAny: drizzle batch takes a non-empty tuple of queries
   await ctx.db.batch(stmts as any);
+  // People removed here lose their own category for it (unless the category still shares it).
+  await prunePersonalCategories(ctx.env.DB, { artifactId: artifact.id }).run();
   await bumpAccessEpoch(ctx, artifact.id);
   const fresh = (await requireArtifact(ctx, artifact.id, "manage")).artifact;
   return c.json(await settings(ctx, fresh));
