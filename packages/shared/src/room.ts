@@ -96,6 +96,8 @@ export interface RoomIdentity {
   viewer: string;
   role?: EffectiveRole;
   email?: string;
+  /** Present exactly when `email` is: the display name read at connect, or null without one. */
+  name?: string | null;
 }
 
 export interface RoomPeer extends RoomIdentity {
@@ -108,7 +110,7 @@ export type RoomInfo =
   | {
       available: true;
       reason: null;
-      you: { viewer: string; role: EffectiveRole; email: string | null };
+      you: { viewer: string; role: EffectiveRole; email: string | null; name: string | null };
       can_emit: RoomEmitRight;
       open_topics: string[];
       limits: {

@@ -33,15 +33,15 @@ export const SKILL_SOURCE = `integrations/skill/${SKILL_NAME}/SKILL.md`;
 /** Plugin metadata, shared by the Claude Code and portable (Codex, ChatGPT) manifests. */
 export const PLUGIN = {
   name: "plinth",
-  version: "0.21.0",
+  version: "0.22.0",
   /**
    * SHA-256 of the sources the plugin ships (the skill and the mention watcher; see
    * scripts/plugin-sources.mjs), and the `version` it was recorded under. When they change, bump
    * `version` (one minor above main, so installed plugins update), then run `pnpm integrations`,
    * which records both here; it refuses while `version` still equals `skillHashVersion`.
    */
-  skillHash: "cb3a57e8111a8af90cba9fa05cc0d68a09b2264aa490064721615b0d00f41c90",
-  skillHashVersion: "0.21.0",
+  skillHash: "8827b70dd3da98b377a488b3ae2300b1ef73648c7816936bb147759ae5f3efc4",
+  skillHashVersion: "0.22.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },

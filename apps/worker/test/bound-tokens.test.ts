@@ -29,7 +29,8 @@ import {
   serviceCtxFor,
   tool,
 } from "./helpers.ts";
-import { upgrade } from "./room-helpers.ts";
+import { api, errOf, peoplePage, setName } from "./people-helpers.ts";
+import { grant, upgrade } from "./room-helpers.ts";
 
 const DATA_PAGE = `<!doctype html><title>Report</title>
 <meta name="plinth-capabilities" content="data">
@@ -632,6 +633,115 @@ describe("a token limited to one artifact never sees the page run with its data"
     expect(ws.status).toBe(403);
     expect(ws.webSocket).toBeFalsy();
     expect(await ws.text()).toContain("preview");
+  });
+});
+
+describe("a token limited to one artifact never learns who has access", () => {
+  /** A page that lists its people, the owner named, an editor with a grant, and a bound token. */
+  async function peopleSetup() {
+    const owner = await agent();
+    expect((await setName(owner.user.id, "Olive Owner")).status).toBe(200);
+    const h = await signedIn(owner.user.id);
+    const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
+    expect(page.res.status).toBe(201);
+    const id = page.body.id as string;
+    const other = await publish(owner.auth, { title: "Other team", html: peoplePage() });
+    expect(other.res.status).toBe(201);
+    const editor = await createUser();
+    await grant(id, editor.email, "editor");
+    await grant(other.body.id, editor.email, "editor");
+    // A named entry, so documents carry the owner's name to anyone who may read them.
+    const w = await req("POST", `/artifacts/${id}/data`, owner.auth, {
+      ops: [{ op: "set", collection: "votes", doc_id: "a", data: { n: 1 }, if_rev: 0 }],
+    });
+    expect(w.status).toBe(200);
+    return { owner, h, id, otherId: other.body.id as string, editor, t: await boundToken(h, id) };
+  }
+
+  /** Nothing in a refusal names a person on the artifact. */
+  function namesNobody(body: unknown, s: Awaited<ReturnType<typeof peopleSetup>>, what: string) {
+    const text = JSON.stringify(body);
+    for (const leak of [s.owner.user.email, s.editor.email, "Olive Owner"]) {
+      expect(text, `${what}: ${leak}`).not.toContain(leak);
+    }
+  }
+
+  it("GET /people is token_bound on its artifact and a 404 elsewhere; the owner's own token reads it", async () => {
+    const s = await peopleSetup();
+    const mine = await req("GET", `/artifacts/${s.id}/people`, s.owner.auth);
+    expect(mine.status).toBe(200);
+    expect(JSON.stringify(mine.body)).toContain(s.editor.email);
+    const its = await req("GET", `/artifacts/${s.id}/people`, s.t.auth);
+    expect(its.status).toBe(403);
+    expect(its.body.error.details.reason).toBe("token_bound");
+    namesNobody(its.body, s, "people");
+    const searched = await req("GET", `/artifacts/${s.id}/people?q=olive`, s.t.auth);
+    expect(searched.status).toBe(403);
+    namesNobody(searched.body, s, "people search");
+    const elsewhere = await req("GET", `/artifacts/${s.otherId}/people`, s.t.auth);
+    expect(elsewhere.status).toBe(404);
+    namesNobody(elsewhere.body, s, "other people");
+  });
+
+  it("list_artifact_data (summary, collection, document) and the viewer gate refuse it", async () => {
+    const s = await peopleSetup();
+    const c = await mcpClient(s.t.token);
+    for (const args of [
+      { id: s.id },
+      { id: s.id, collection: "votes" },
+      { id: s.id, collection: "votes", doc_id: "a" },
+    ]) {
+      const r = await tool(c, "list_artifact_data", args);
+      expect(r.isError, r.text).toBe(true);
+      expect(r.data.error.details.reason, r.text).toBe("token_bound");
+      namesNobody(r.data, s, `list_artifact_data ${JSON.stringify(args)}`);
+    }
+    const elsewhere = await tool(c, "list_artifact_data", { id: s.otherId });
+    expect(elsewhere.data.error.code).toBe("not_found");
+    await c.close();
+    // REST: the same refusals, and the gate (which would carry `people`) gives no pass.
+    for (const path of [`/artifacts/${s.id}/data`, `/artifacts/${s.id}/data/votes/a`]) {
+      const r = await req("GET", path, s.t.auth);
+      expect(r.status, path).toBe(403);
+      expect(r.body.error.details.reason, path).toBe("token_bound");
+      namesNobody(r.body, s, path);
+    }
+    const gate = await req("GET", `/view/${s.id}`, s.t.auth);
+    expect(gate.status).toBe(403);
+    expect(gate.body.error.details.reason).toBe("token_bound");
+    expect(gate.body.people).toBeUndefined();
+    namesNobody(gate.body, s, "gate");
+    // The owner's own gate in a browser does carry the block, so the refusal is the binding's.
+    const own = await req("GET", `/view/${s.id}`, s.h);
+    expect(own.body.status).toBe("ok");
+    expect(own.body.people).toMatchObject({ list: true });
+  });
+
+  it("its in-chat preview lists nobody and names nobody in a room", async () => {
+    const s = await peopleSetup();
+    const c = await mcpClient(s.t.token);
+    const up = await tool(c, "update_artifact", {
+      id: s.id,
+      html: peoplePage({ room: true }),
+      base_version: 1,
+    });
+    expect(up.isError, up.text).toBe(false);
+    const link = await tool(c, "preview_artifact", { id: s.id });
+    expect(link.isError, link.text).toBe(false);
+    await c.close();
+    const enter = await call(link.data.preview_url, { headers: { "sec-fetch-dest": "iframe" } });
+    const cookie = (enter.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    expect(cookie).toContain("=");
+    for (const path of ["/people", "/people/u_0123456789abcdef01234567", "/data/votes"]) {
+      const res = await api(s.id, path, { cookie });
+      expect(res.status, path).toBe(403);
+      const e = await errOf(res);
+      expect(e.details?.reason, path).toBe("preview");
+      namesNobody(e, s, path);
+    }
+    const ws = await upgrade(s.id, cookie);
+    expect(ws.status).toBe(403);
+    expect(ws.webSocket).toBeFalsy();
   });
 });
 

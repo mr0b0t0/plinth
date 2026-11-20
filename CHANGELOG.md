@@ -10,6 +10,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
+  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
+  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
+  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
+  line under the bar tells every invited viewer. On such a page their agents get the same list in
+  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
+  page. The list and the owner's sharing settings name a person once they have commented, entered
+  something or published a version there, so adding an address never reveals whether it has an
+  account. Names are display text: no `@`, no invisible characters, never a role. Plugin 0.22.0.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
   small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
   thumbnail exists). A card shows its category as plain text on its info line instead of a chip on

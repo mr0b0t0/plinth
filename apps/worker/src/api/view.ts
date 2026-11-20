@@ -10,6 +10,7 @@ import {
   type ViewGate,
   type ViewGateData,
   type ViewGateLive,
+  type ViewGatePeople,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
@@ -30,7 +31,7 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import { type Decision, type Principal, pageDataAccess } from "../policy.ts";
+import { type Decision, type Principal, pageDataAccess, peopleListOffered } from "../policy.ts";
 import {
   decideFor,
   denialError,
@@ -41,6 +42,7 @@ import {
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
+import { namesByEmail } from "../services/users.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import { countsAsView, openerFor } from "../services/views.ts";
 import {
@@ -180,6 +182,10 @@ export const GATE_PARTS: readonly GatePart[] = [
   },
   async ({ ctx, a, version }) =>
     (await pageCommentsDeclared(ctx, a, version)) ? { page_comments: true } : undefined,
+  async ({ ctx, a, identity }) => {
+    const people = await gatePeople(ctx, a, identity);
+    return people ? { people } : undefined;
+  },
 ];
 
 // ---------- version declarations, read once per gate ----------
@@ -317,6 +323,34 @@ async function gateData(
     ...(claim && caps?.viewer && caps.data ? { email: claim.email } : {}),
     ...(roomEmail ? { room_email: roomEmail } : {}),
   };
+}
+
+/**
+ * What the live viewer tells an identified viewer about names and the people list (docs/spec.md
+ * "Who is viewing"): the display name the page sees beside their email (exactly where the data
+ * block names that email: `email` with shared data, `room_email` in a live room), and whether the
+ * page lets its owner and editors list everyone it is shared with, the viewer's own address
+ * included. Link viewers get nothing, and cause no read.
+ */
+async function gatePeople(
+  ctx: Ctx,
+  a: ArtifactRow,
+  identity: ViewerIdentity | undefined,
+): Promise<ViewGatePeople | undefined> {
+  if (!identity) return undefined;
+  // The current version's declaration governs, as for the data part (read once per gate).
+  const caps = await versionCaps(ctx, a, a.currentVersion);
+  if (caps?.viewer !== true) return undefined;
+  const data = sharedDataActive(ctx.config) && caps.data;
+  const room = caps.room && a.type === "html" && roomsActive(ctx.config, ctx.env);
+  if (!data && !room) return undefined;
+  const name = (await namesByEmail(ctx.env.DB, [identity.email])).get(identity.email) ?? null;
+  const out: ViewGatePeople = {
+    ...(name ? { name } : {}),
+    // Exactly when anyone (the page, agents, REST) can read the list: policy.ts peopleListOffered.
+    ...(peopleListOffered(caps, sharedDataActive(ctx.config)) ? { list: true as const } : {}),
+  };
+  return out.name || out.list ? out : undefined;
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {

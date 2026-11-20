@@ -29,6 +29,11 @@ export interface Capabilities {
   roomOpen: string[];
   /** The page may open the comment composer with its own anchors (`plinth.comments`). */
   comments: boolean;
+  /**
+   * The owner and editors may list everyone with access from the page (/__plinth/api/v1/people).
+   * Counts only with `data` and `viewer`.
+   */
+  people: boolean;
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -96,6 +101,7 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
     checkOnRead: true,
   },
   { kind: "token", key: "comments" },
+  { kind: "token", key: "people" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -395,6 +401,8 @@ export type DataUnavailableReason =
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {
   email: string | null;
+  /** The writer's display name, read live (displayName.ts pageDisplayName); null without one. */
+  name: string | null;
   role: EffectiveRole | null;
   via: DataVia;
 }
@@ -417,6 +425,8 @@ export interface PageDoc {
 /** Server-derived author of a write, as owners' and editors' agents see it. */
 export interface AgentDocAuthor {
   email: string | null;
+  /** Display text chosen by the writer: untrusted, never proof of role. */
+  name: string | null;
   role: EffectiveRole | null;
   via: DataVia;
   connection_label: string | null;
@@ -441,9 +451,14 @@ export type DataSession =
   | { available: false; reason: DataUnavailableReason }
   | {
       available: true;
-      /** null for anonymous link viewers. `email` only when the page declares `viewer`. */
-      viewer: { id: string; email: string | null; role: EffectiveRole } | null;
+      /**
+       * null for anonymous link viewers. `email` and `name` only when the page declares `viewer`;
+       * `name` is null without an account name.
+       */
+      viewer: { id: string; email: string | null; name: string | null; role: EffectiveRole } | null;
       can_write: boolean;
+      /** The reader may list the page's people (owner or editor, the page declares `people`). */
+      can_list_people: boolean;
       capabilities: DataCapability[];
       shared: string[];
       limits: { max_doc_bytes: number; max_docs: number; max_bytes: number };
@@ -474,8 +489,62 @@ export interface DataSummary {
   usage: { docs: number; bytes: number };
   limits: DataLimits;
   collections: { name: string; docs: number; bytes: number; updated_at: string }[];
+  /**
+   * Everyone with access (the owner, then grants by email). Present only when the current version
+   * declares `data viewer people` and shared data is on: the same people a page's owner and
+   * editors can list, under the same notice to viewers.
+   */
+  people?: AgentPerson[];
   untrusted: string;
 }
+
+// ---------- people (docs/spec.md "Who is viewing: names and the people list") ----------
+
+/** One person with access to an artifact, as an owner's or editor's page sees them. */
+export interface PagePerson {
+  /** The per-artifact `u_` viewer id: what a personal document of theirs is called. */
+  id: string;
+  email: string;
+  /** Display text chosen by the person, or null. Never authority. */
+  name: string | null;
+  role: EffectiveRole;
+  /** This is the reader. */
+  you: boolean;
+}
+
+/** GET /__plinth/api/v1/people */
+export interface PagePeopleList {
+  people: PagePerson[];
+  /** How many matched before `limit`. */
+  total: number;
+}
+
+/** One person with access, as owners' and editors' agents see them. Untrusted input for agents. */
+export interface AgentPerson {
+  viewer_id: string;
+  email: string;
+  name: string | null;
+  role: EffectiveRole;
+}
+
+/** GET /api/v1/artifacts/:ref/people */
+export interface PeopleResult {
+  people: AgentPerson[];
+  untrusted: string;
+}
+
+/** A people search: every whitespace-separated term must match a name or an email. */
+export const peopleQuerySchema = z
+  .string()
+  .trim()
+  .max(LIMITS.maxPeopleQueryLength)
+  .describe("Search terms, matched against names and emails");
+
+/** GET /api/v1/artifacts/:ref/people */
+export const listArtifactPeopleInput = z.object({
+  id: artifactRefSchema,
+  q: peopleQuerySchema.optional(),
+});
 
 /** list_artifact_data with a collection. */
 export interface DataPage {

@@ -315,6 +315,13 @@ to turn them on or off. See [ci.md](ci.md).
   see [deploy-checklist.md](deploy-checklist.md#live-rooms) for the Free plan, costs and rollback.
   A reverse proxy in front of a container must pass WebSocket upgrades
   ([docker.md](docker.md#what-the-proxy-must-do)).
+- **Names and the people list.** Pages that declare `viewer` see each person's display name
+  (`users.name`, read live) wherever they see their email, and pages that declare `data viewer
+  people` let their owner and editors list everyone the artifact is shared with. Neither has a
+  setting of its own: names reach pages only while identity claims are on (`ALLOW_SHARED_DATA` or
+  `ALLOW_ROOMS`, with `CONTENT_ISOLATION=origin`), and the people list only while
+  `ALLOW_SHARED_DATA` is on, so turning those off turns them off. Nothing is stored: `erase-user`
+  removes a name with the account.
 - **Interrupted publishes.** A version's files go to R2 before its database row, so a publish
   that dies midway (a closed connection, a CPU or memory limit) leaves files no version points to,
   under that attempt's own prefix. Each attempt records that prefix in the `staging_attempts`

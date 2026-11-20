@@ -4,8 +4,9 @@
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
-// publish note, the type and content descriptions and the instructions' deck sentence), and so did
-// comments from the page (the page anchor note in list_comments and list_mentions).
+// publish note, the type and content descriptions and the instructions' deck sentence), so did
+// comments from the page (the page anchor note in list_comments and list_mentions), and so did who
+// is viewing (names and the people list in list_artifact_data's description).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -60,7 +61,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "8dea298e5057a85fafd2779917de9949c74a4759f29992cf186947b081b1269c",
+      tools: "ad9f7cb97195d332293c2ffbe2d0d41a28057788fa5e5f4221b1cf6122224e18",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -70,7 +71,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "3956cefbccd8069c268ce59c29e3c7e7093a97c9fa37144fbe8d1c5fb1c23471",
+      tools: "0818806adc11042871a591e818fd26bdfe4156b09ae3bf85850ad4bfaa575b5a",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -82,7 +83,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "28e908154676e2fe47fe39500677f871aca5092fc2854ef457291d574a0b4f33",
+      tools: "d277431f9bd7a9bc75b93c0a542ce5f1e517fe59f563f3a636ddaf48b3c9dcd3",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

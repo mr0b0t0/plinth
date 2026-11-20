@@ -3,6 +3,7 @@ import {
   type BoundMe,
   type Me,
   type MeConnection,
+  normalizeDisplayName,
   REPO_URL,
   TTL,
   updateProfileInput,
@@ -51,7 +52,10 @@ meApi.get("/config", (c) => {
   return res;
 });
 
-/** Update the signed-in person's display name. People only (not agents). */
+/**
+ * Update the signed-in person's display name (displayName.ts rules: stored normalised, "" clears
+ * it). People only (not agents).
+ */
 meApi.patch("/me", async (c) => {
   const p = c.get("principal");
   if (p.kind === "agent") throw new ApiError("forbidden", "Agents cannot change the profile");
@@ -60,7 +64,7 @@ meApi.patch("/me", async (c) => {
   await c
     .get("db")
     .update(users)
-    .set({ name: name || null })
+    .set({ name: normalizeDisplayName(name) || null })
     .where(eq(users.id, p.userId))
     .run();
   return meResponse(c);

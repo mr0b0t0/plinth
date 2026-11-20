@@ -13,6 +13,7 @@ import {
   PlusIcon,
   SignOutIcon,
   SunIcon,
+  UserCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { API, APP_ROUTES } from "@plinth/shared";
@@ -31,6 +32,7 @@ import { Link, navigate, useLocation } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useThemePreference } from "../../lib/theme.ts";
 import { CONNECT_AGENT_HREF } from "../account/nav.ts";
+import { ProfileNameDialog } from "../account/ProfileNameDialog.tsx";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { focusElement, getFocusable } from "../ui/focus.ts";
@@ -138,6 +140,7 @@ export function AppShell({
   const [preference, setPreference] = useThemePreference();
   const compact = useMediaQuery(SIDEBAR_COMPACT_QUERY);
   const [navOpen, setNavOpen] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
   const sidebarId = useId();
   const agentsHeadingId = useId();
   const sidebarRef = useRef<HTMLElement>(null);
@@ -165,6 +168,16 @@ export function AppShell({
   const menuItems: MenuEntry[] = [
     ...userMenuItems,
     ...(userMenuItems.length > 0 ? [{ type: "separator" as const }] : []),
+    {
+      label: "Your name…",
+      icon: UserCircleIcon,
+      onSelect: () => {
+        // On a phone the menu sits in the slide-over: close it so the dialog is the only layer.
+        setNavOpen(false);
+        setNameOpen(true);
+      },
+    },
+    { type: "separator" as const },
     {
       label: `${THEME_NAMES.light} (light)`,
       icon: SunIcon,
@@ -352,12 +365,13 @@ export function AppShell({
 
               {me && (
                 <div className="pl-sidebar__foot">
-                  {/* Beside the trigger, not in it: the button's name is its visible email. */}
+                  {/* Beside the trigger, not in it: the button's name is its visible label. */}
                   <span className="pl-avatar pl-account__avatar" aria-hidden="true">
                     {initials(me.email, me.name)}
                   </span>
+                  {/* The name once set; the menu's header keeps the email. */}
                   <Menu
-                    label={`Account: ${me.email}`}
+                    label={`Account: ${me.name ?? me.email}`}
                     variant="ghost"
                     align="start"
                     placement="up"
@@ -370,7 +384,9 @@ export function AppShell({
                         <span className="pl-account__email">{me.email}</span>
                       </>
                     }
-                    triggerContent={<span className="pl-account__label">{me.email}</span>}
+                    triggerContent={
+                      <span className="pl-account__label">{me.name ?? me.email}</span>
+                    }
                   />
                 </div>
               )}
@@ -442,6 +458,16 @@ export function AppShell({
           </main>
         </div>
       </div>
+      {me && nameOpen && (
+        <ProfileNameDialog
+          current={me.name}
+          onClose={() => setNameOpen(false)}
+          onSaved={() => {
+            setNameOpen(false);
+            void refresh().catch(() => undefined);
+          }}
+        />
+      )}
       <Toaster />
     </IconProvider>
   );

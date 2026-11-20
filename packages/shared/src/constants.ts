@@ -175,6 +175,13 @@ export const LIMITS = {
   },
   /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
   maxStatsPeople: 500,
+  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
+  /** A display name as stored (users.name, PATCH /api/v1/me). */
+  maxDisplayNameLength: 100,
+  /** Code points of a display name as pages, rooms and agents see it. */
+  maxPageDisplayNameLength: 64,
+  /** The `q` of a people search. */
+  maxPeopleQueryLength: 100,
 } as const;
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */
@@ -253,6 +260,8 @@ export const RATE_LIMITS = {
    * a revoked credential). Real clients miss rarely; this bounds the D1 reads guessing costs.
    */
   uploadMissesPerIpPerHour: 60,
+  /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
+  peopleReadsPerViewerPerHour: 600,
 } as const;
 
 export const DEFAULTS = {
@@ -335,12 +344,14 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
+ * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
+  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;

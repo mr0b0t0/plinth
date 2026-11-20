@@ -10,16 +10,21 @@
 //   ready      Promise<Session>, never rejects: { available, reason, viewer, canWrite,
 //              capabilities, shared, limits, usage }; reason null | "opaque_isolation" | "disabled"
 //              | "not_declared" | "preview" | "capture" | "expired" | "network"
-//   available, viewer ({ id, email | null, role } | null), canWrite: set once ready resolves
+//   available, viewer ({ id, email | null, name | null, role } | null), canWrite, canListPeople:
+//              set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
-//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs })
+//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs });
+//              a Doc's createdBy and updatedBy are { email, name | null, role, via }
+//   people     who has access (owners and editors, pages that declare `data viewer people`):
+//              list({ q, limit }) -> [{ id, email, name | null, role, you }], get(id) -> that or
+//              null; others get forbidden or unavailable
 //   PlinthError: .code unavailable | read_only | forbidden | not_found | conflict |
 //              quota_exceeded | too_large | rate_limited | expired | invalid | network;
 //              .retryAfter, .currentRev, .limit
 //
 //   room       the live room (docs/spec.md "Live rooms"); nothing connects until first use:
-//              ready Promise<{ available, reason, you: { id, viewer, role, email | null } | null,
+//              ready Promise<{ available, reason, you: { id, viewer, role, email | null, name | null } | null,
 //              canEmit(topic) }>, never rejects; presence(patch | null) -> bool (coalesced to
 //              10 Hz, 400 bytes); onPeers(fn) -> off; emit(topic, data) -> bool (never echoed);
 //              on(topic | "*", fn(data, from, topic)) -> off; onStatus(fn) -> off ("connecting",
@@ -42,6 +47,7 @@ import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
+import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
 
 /**
@@ -53,6 +59,7 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
   COMMENTS_FRAGMENT,
+  PEOPLE_FRAGMENT,
 ];
 
 /** Assemble the script from `fragments`, with the app channel when one of them uses it. */
