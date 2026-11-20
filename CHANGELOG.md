@@ -13,8 +13,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Your own categories for artifacts shared with you, and sharing a whole category.** On the
   dashboard, "Move to category…" now files an artifact someone shared with you under a category of
   your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
-  one of their categories with people (viewer or commenter) under a name they choose: the people
-  get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
+  one of their categories with people (viewer or commenter) under a title, the category's name
+  unless they change it: the people get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
   once. Filing an artifact under a shared category never shares it: it waits for the owner's review
   (one "to review" line on the dashboard), and the owner's agent is told so
   (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from

@@ -581,7 +581,8 @@ Owners publish many artifacts for different projects, so each artifact can carry
 short name for the project, repo or client it belongs to. It is the owner's private organisation:
 `category` is null for every caller but the owner, and no anonymous surface, upload status, email
 or log carries it, nor any share state, except to the owner. A shared category's people see the
-share's title, never the name. A collaborator files artifacts shared with them under categories of
+share's title, which is the category's name unless the owner changes it (a later rename leaves the
+title as it was). A collaborator files artifacts shared with them under categories of
 their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)).
 
 - **Agents set it.** `publish_artifact`, `start_upload`, `POST /api/v1/artifacts` and
@@ -1122,7 +1123,9 @@ and artifact (`personal_categories`), validated and normalised as the owner's ca
 snapped onto the person's own names (their personal ones and their own artifacts' categories, one
 vocabulary). It is seen by that person only: summaries carry `my_category`, null for everyone else,
 and `GET /api/v1/artifacts` returns `my_categories` (their names with counts) to a signed-in
-session only. Agents never read or set it (403 `app_only`, and `token_bound` for a token limited
+session only. The counts cover only the artifacts the person can open now, as the list does: with
+`ALLOW_CATEGORY_SHARING` off, one they reach only through a category is not counted, and its row
+is kept for when the switch is back on. Agents never read or set it (403 `app_only`, and `token_bound` for a token limited
 to one artifact; `my_category` is null and `my_categories` absent for bearer callers), and the
 owner, who files with the artifact's own category, gets 400.
 `POST /api/v1/categories/rename` with `personal: true` renames, merges or clears one of them. The
@@ -1131,8 +1134,9 @@ removed in the same request that takes the person's last grant away (the sharing
 allowlist, a category share's people, a review kept private, a move out of the share).
 
 **Sharing a category.** The signed-in owner shares one of their categories (by key) with people,
-each a viewer or a commenter (never an editor), under a title the people see instead of the
-category's name: `POST /api/v1/category-shares` with `{ category, title?, people, review }`. The
+each a viewer or a commenter (never an editor), under a title the people see (the category's name
+when `title` is left out; renaming the category later leaves it): `POST /api/v1/category-shares`
+with `{ category, title?, people, review }`. The
 share's id is the portal link (`/p/<id>`) and never changes. `PATCH` changes the title or the
 people (a people change always carries a `review`: 400 `review_required` without one), `DELETE`
 stops sharing, and `GET /api/v1/category-shares/:id` lists every artifact of the category with its
@@ -1185,7 +1189,9 @@ key moves it with its people, link and reviews, and clearing the category leaves
 another existing category (409 `category_shared`), and artifacts merged into a shared category
 arrive pending (`pending: n`). The rename's batch is guarded on the owner's `category_share_rev`, so
 a share created, deleted or moved after the rename read its decision makes the rename change
-nothing (409 `sharing_changed`).
+nothing (409 `sharing_changed`). With `ALLOW_CATEGORY_SHARING` off a share still follows its
+category, so turning the switch on finds it on the current key; a merge then goes through (the owner
+cannot stop sharing first) and leaves the share empty, as clearing does, and `pending` is left out.
 
 **Portals.** `GET /api/v1/portals/:id` answers `ok` with the share's title, the owner's name, the
 caller's role and the artifacts they may open (live, published, not taken down, reviewed as shared

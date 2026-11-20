@@ -59,7 +59,7 @@ describe("GET /portals and /portals/:id", () => {
     );
     expect(ids).toEqual([shared.id]);
     expect(ids).not.toContain(kept.id);
-    // Grantees never see the category name or the owner's share state.
+    // The items carry no category field and no share state for grantees.
     expect(gate.items[0].category).toBeNull();
     expect(gate.items[0].category_share).toBeNull();
   });

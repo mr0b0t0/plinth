@@ -190,7 +190,12 @@ export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
     const v = decide(as, "view", factsOf(a), {
       grantRole: direct.get(a.id) ?? null,
       categoryGrant: grant
-        ? { shareId: share.id, shareKey: share.category_key, role: grant.role }
+        ? {
+            shareId: share.id,
+            shareOwnerId: share.owner_id,
+            shareKey: share.category_key,
+            role: grant.role,
+          }
         : null,
       categorySharing: ctx.config.allowCategorySharing,
       passwordPassed: false,

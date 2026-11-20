@@ -12,7 +12,9 @@ const withSharing = (category_sharing: boolean) =>
 describe("privacy notice: shared categories", () => {
   it("are described only when the instance offers category sharing", () => {
     expect(withSharing(true)).toContain("Shared categories");
-    expect(withSharing(true)).toContain("never the category's own name");
+    expect(withSharing(true)).toContain("The title is the category's name unless you change it.");
+    expect(withSharing(true)).toContain("your name and email address");
+    expect(withSharing(true)).not.toContain("never the category");
     expect(withSharing(false)).not.toContain("Shared categories");
   });
 

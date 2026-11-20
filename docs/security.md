@@ -541,8 +541,9 @@ so is its place in a shared category (`category_share`).
 grant on the share of the artifact's owner and category key (`grantedRole`), and the category grant
 counts only through `categoryRoleOf`: the artifact's review is `shared`, made against the very share
 the grant is on, that share is on the artifact's current key, and `ALLOW_CATEGORY_SHARING` is on.
-The loaders hand policy the share's id and key and the artifact's stored review; the binding is
-checked in `policy.ts`, never in a loader. `roleOf` uses `grantedRole`, so every `decideFor` path
+The loaders hand policy the share's id, owner and key and the artifact's stored review; the
+binding (same share, same key, the share's owner is the artifact's owner) is checked in `policy.ts`,
+never in a loader. `roleOf` uses `grantedRole`, so every `decideFor` path
 (REST, MCP, the gate, thumbnails, comments, data, live editing, and the room through the sealed
 claim) applies it. The paths that compute roles in bulk (`list_artifacts`, portals, mention tasks,
 the allowlist code flow) mirror it in SQL and then run `grantedRole` or `decide` on every row. A
@@ -1295,9 +1296,10 @@ and a hash that binds the share, so a portal code never opens an artifact's code
 reverse. The viewer session it starts names no artifact. `GET /api/v1/portals` lists a share only
 when `decidePortal` lets the caller open it, the same decision `GET /api/v1/portals/:id` makes.
 Portal pages are `no-store` and
-`noindex`. Grantees see the share's title and the artifacts' titles, never the category name, the
-owner's share state or other people on the share. Category names and share titles are never
-logged.
+`noindex`. Grantees see the share's title, the artifacts' titles and the owner's name and email
+address. The title is the category's name unless the owner changes it, and a later rename of the
+category does not change it. Grantees never see the category field on a summary, the owner's share
+state or other people on the share. Category names and share titles are never logged.
 
 **Erasure.** A person's own shares, grants on them, portal codes and personal categories cascade
 from `users`; `erase-user` also deletes their address from other people's shares

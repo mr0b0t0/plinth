@@ -543,6 +543,8 @@ export interface ArtifactCategoryFacts {
 /** A person's grant on the share of an owner's category key, as the loader found it. */
 export interface CategoryGrantFacts {
   shareId: string;
+  /** category_shares.owner_id: the grant counts only on that owner's artifacts. */
+  shareOwnerId: string;
   shareKey: string;
   role: CategoryRole;
 }
@@ -568,6 +570,8 @@ export function categoryRoleOf(artifact: ArtifactFacts, access: AccessFacts): Ca
   if (access.categorySharing !== true || !c || !g) return null;
   if (c.review !== "shared" || c.key === null) return null;
   if (c.reviewShareId !== g.shareId || c.key !== g.shareKey) return null;
+  // The share is the artifact owner's own: another owner's share never reaches this artifact.
+  if (g.shareOwnerId !== artifact.ownerId) return null;
   // A stray value (a hand-edited row) clamps to the weakest role.
   return g.role === "commenter" ? "commenter" : "viewer";
 }
