@@ -9,6 +9,7 @@
 // current pane. Everything here is made with createElement and textContent; the slides and notes
 // it shows are copies of what deck.ts already sanitized.
 import { dropIds, type SlideView } from "./deck.ts";
+import { el } from "./dom.ts";
 import { iconButton, setIcon } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { GUTTER, setScale } from "./stage.ts";
@@ -95,18 +96,6 @@ export function presenterLayout(
     column,
     row,
   };
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const e = doc.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
 }
 
 /** A copy of a slide's frame for a pane: no ids, out of the tab order and the reading order. */
@@ -246,22 +235,19 @@ export class Presenter {
     const view = this.views[n - 1];
     const following = this.views[n];
     const measure = this.o.measure ?? overflows;
-    this.current.replaceChildren();
-    this.next.replaceChildren();
-    if (view) {
-      const copy = copyOf(view);
-      this.current.append(copy);
+    /** Puts a fitted copy of `v` in `pane`; false when there is no such slide. */
+    const place = (pane: HTMLElement, v: SlideView | undefined): boolean => {
+      pane.replaceChildren();
+      if (!v) return false;
+      const copy = copyOf(v);
+      pane.append(copy);
       const slide = copy.querySelector<HTMLElement>(".plinth-slides__slide");
       const body = copy.querySelector<HTMLElement>(".plinth-slides__body");
       if (slide && body) fitSlide(slide, body, measure);
-    }
-    if (following) {
-      const copy = copyOf(following);
-      this.next.append(copy);
-      const slide = copy.querySelector<HTMLElement>(".plinth-slides__slide");
-      const body = copy.querySelector<HTMLElement>(".plinth-slides__body");
-      if (slide && body) fitSlide(slide, body, measure);
-    } else {
+      return true;
+    };
+    place(this.current, view);
+    if (!place(this.next, following)) {
       this.next.append(el(this.doc, "p", "plinth-slides__end", "End of deck"));
     }
     // A slide without notes leaves the notes pane empty.

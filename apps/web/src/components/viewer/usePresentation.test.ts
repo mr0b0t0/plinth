@@ -73,15 +73,14 @@ describe("usePresentation", () => {
       ORIGIN,
     );
     fromFrame(one.contentWindow, { type: "position", slide: 4, count: 6 });
-    expect(result.current.slide).toBe(4);
-    expect(result.current.count).toBe(6);
+    expect(window.location.hash).toBe("#slide=4");
     fromFrame(one.contentWindow, { type: "position", slide: 5, count: 6 });
     expect(window.location.hash).toBe("#slide=5");
 
     // A message from anywhere else changes nothing.
     fromFrame({} as Window, { type: "position", slide: 2, count: 6 });
     fromFrame(one.contentWindow, { type: "position", slide: 2, count: 6 }, "http://evil.example");
-    expect(result.current.slide).toBe(5);
+    expect(window.location.hash).toBe("#slide=5");
 
     const two = fakeFrame();
     rerender({ frame: two.frame });
@@ -92,7 +91,7 @@ describe("usePresentation", () => {
     );
   });
 
-  it("presenter view posts the view, pauses the version watch and exits", () => {
+  it("presenter view posts the view and pauses the version watch until the frame leaves it", () => {
     const f = fakeFrame();
     const { result } = renderHook(() =>
       usePresentation({
@@ -111,13 +110,9 @@ describe("usePresentation", () => {
       { source: "plinth-renderer", v: 1, type: "view", mode: "presenter" },
       ORIGIN,
     );
-    act(() => result.current.exit());
+    fromFrame(f.contentWindow, { type: "view", mode: "deck" });
     expect(result.current.mode).toBe("off");
     expect(result.current.pause).toBeNull();
-    expect(f.contentWindow.postMessage).toHaveBeenLastCalledWith(
-      { source: "plinth-renderer", v: 1, type: "view", mode: "deck" },
-      ORIGIN,
-    );
   });
 
   it("follows the view the frame reports: its s key in, its Escape or Exit out", () => {
@@ -264,7 +259,7 @@ describe("usePresentation", () => {
 
   it("posts to * under opaque isolation and accepts the frame's null origin", () => {
     const f = fakeFrame();
-    const { result } = renderHook(() =>
+    renderHook(() =>
       usePresentation({
         gate: gate(),
         frame: f.frame,
@@ -279,7 +274,7 @@ describe("usePresentation", () => {
       "*",
     );
     fromFrame(f.contentWindow, { type: "position", slide: 4, count: 6 }, "null");
-    expect(result.current.slide).toBe(4);
+    expect(window.location.hash).toBe("#slide=4");
   });
 
   it("an audience window shows the presenter's slide in deck view, whatever its own frame does", async () => {
@@ -294,7 +289,6 @@ describe("usePresentation", () => {
         contentOrigin: ORIGIN,
         config: CONFIG,
         slug: "talk",
-        pinned: true,
         navigate,
       }),
     );
@@ -344,7 +338,6 @@ describe("usePresentation", () => {
         contentOrigin: ORIGIN,
         config: CONFIG,
         slug: "talk",
-        pinned: true,
         navigate,
       }),
     );
@@ -358,6 +351,20 @@ describe("usePresentation", () => {
       presenter.postMessage({ v: 1, type: "slide", slide: 2, version: 2 });
       await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
       expect(navigate).toHaveBeenCalledWith(`/a/talk/v/2#present=audience&pair=${pair}&slide=2`);
+      // While that load runs the presenter keeps paging: the window does not start it again. A
+      // second listener on the pair shows when every message has been delivered.
+      const seen = new BroadcastChannel(`plinth-present:art123:${pair}`);
+      const heard = vi.fn();
+      seen.onmessage = heard;
+      try {
+        presenter.postMessage({ v: 1, type: "slide", slide: 3, version: 2 });
+        presenter.postMessage({ v: 1, type: "slide", slide: 4, version: 3 });
+        await vi.waitFor(() => expect(heard).toHaveBeenCalledTimes(2));
+        await new Promise((r) => setTimeout(r, 20));
+      } finally {
+        seen.close();
+      }
+      expect(navigate).toHaveBeenCalledTimes(1);
     } finally {
       presenter.close();
     }
@@ -402,7 +409,7 @@ describe("usePresentation", () => {
       act(() => result.current.openAudience());
       expect(String(open.mock.calls[1]?.[0])).toBe(url);
       // Presenting ended and the presenter's window caught up with version 2: the audience follows.
-      act(() => result.current.exit());
+      fromFrame(one.contentWindow, { type: "view", mode: "deck" });
       const two = fakeFrame();
       rerender({
         g: { ...behind, artifact: { ...behind.artifact, version: 2 } },
@@ -438,7 +445,6 @@ describe("usePresentation", () => {
     expect(audienceHref("talk", "p".repeat(16))).toBe(
       `/a/talk#present=audience&pair=${"p".repeat(16)}`,
     );
-    expect(result.current.pinned).toBe(false);
   });
 
   it("opens the audience window on the same version from a permanent version link", () => {
@@ -453,10 +459,8 @@ describe("usePresentation", () => {
         contentOrigin: ORIGIN,
         config: CONFIG,
         slug: "talk",
-        pinned: true,
       }),
     );
-    expect(result.current.pinned).toBe(true);
     act(() => result.current.openAudience());
     const [url] = open.mock.calls[0] ?? [];
     expect(String(url)).toMatch(/^\/a\/talk\/v\/2#present=audience&pair=[A-Za-z0-9_-]{16,64}$/);
@@ -481,5 +485,95 @@ describe("usePresentation", () => {
     act(() => result.current.presenterView());
     expect(f.contentWindow.postMessage).not.toHaveBeenCalled();
     expect(result.current.pause).toBeNull();
+  });
+});
+
+describe("usePresentation in review mode", () => {
+  /** A deck shown in review mode (its stacked overview) in `one`, which `two` will replace. */
+  function reviewing() {
+    const one = fakeFrame();
+    const two = fakeFrame();
+    const requestFullscreen = vi.fn(() => Promise.resolve());
+    for (const f of [one, two]) {
+      Object.assign(f.frame, { requestFullscreen, focus: vi.fn() });
+    }
+    const leaveReview = vi.fn();
+    const hook = renderHook(
+      ({ frame, review }) =>
+        usePresentation({
+          gate: gate(),
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+          review,
+          leaveReview,
+        }),
+      { initialProps: { frame: one.frame, review: true } },
+    );
+    fromFrame(one.contentWindow, { type: "ready", slide: 1, count: 6 });
+    one.contentWindow.postMessage.mockClear();
+    /** The page left review mode and the deck's new frame loaded. */
+    const swap = () => {
+      hook.rerender({ frame: two.frame, review: false });
+      fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+    };
+    return { one, two, requestFullscreen, leaveReview, swap, ...hook };
+  }
+
+  const presenterViewMessage = { source: "plinth-renderer", v: 1, type: "view", mode: "presenter" };
+
+  it("Presenter view leaves review mode, then opens presenter view in the new frame", () => {
+    const { one, two, leaveReview, swap, result } = reviewing();
+    act(() => result.current.presenterView());
+    expect(leaveReview).toHaveBeenCalledTimes(1);
+    // Nothing is asked of the stacked overview, which would refuse it.
+    expect(one.contentWindow.postMessage).not.toHaveBeenCalled();
+    expect(result.current.mode).toBe("off");
+    // The review frame's own ready does not count.
+    fromFrame(one.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(result.current.mode).toBe("off");
+    swap();
+    expect(result.current.mode).toBe("presenter");
+    expect(result.current.pause).toBe("present");
+    expect(two.contentWindow.postMessage).toHaveBeenCalledWith(presenterViewMessage, ORIGIN);
+    // Once only: a later ready (a newer version) follows the mode as usual.
+    fromFrame(two.contentWindow, { type: "view", mode: "deck" });
+    fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(result.current.mode).toBe("off");
+  });
+
+  it("Full screen and the f key leave review mode, then put the new frame full screen", async () => {
+    const { one, two, requestFullscreen, leaveReview, swap, result } = reviewing();
+    act(() => result.current.present());
+    expect(leaveReview).toHaveBeenCalledTimes(1);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    swap();
+    await act(async () => {});
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(requestFullscreen.mock.contexts[0]).toBe(two.frame);
+    expect(two.contentWindow.postMessage).toHaveBeenLastCalledWith(
+      { source: "plinth-renderer", v: 1, type: "view", mode: "deck" },
+      ORIGIN,
+    );
+    expect(one.contentWindow.postMessage).not.toHaveBeenCalled();
+
+    const again = reviewing();
+    fromFrame(again.one.contentWindow, { type: "fullscreen" });
+    expect(again.leaveReview).toHaveBeenCalledTimes(1);
+    expect(again.requestFullscreen).not.toHaveBeenCalled();
+    again.swap();
+    await act(async () => {});
+    expect(again.requestFullscreen).toHaveBeenCalledTimes(1);
+    again.unmount();
+  });
+
+  it("presents at once outside review mode", () => {
+    const { two, leaveReview, rerender, result } = reviewing();
+    rerender({ frame: two.frame, review: false });
+    act(() => result.current.presenterView());
+    expect(leaveReview).not.toHaveBeenCalled();
+    expect(result.current.mode).toBe("presenter");
+    expect(two.contentWindow.postMessage).toHaveBeenLastCalledWith(presenterViewMessage, ORIGIN);
   });
 });

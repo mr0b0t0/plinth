@@ -808,7 +808,9 @@ source editor work as for docs. A deck is not edited on its page.
   to, so the Present menu and the paused version swap follow the deck however presenter view was
   opened or left. While presenter view is on, the Present menu offers "Audience window" in its
   place; the ⋯ menu has no present item. Review mode keeps the overview whatever asks for another
-  view. "Audience window" opens a second app window on the permanent link of the version the
+  view, and stays on after the comments panel closes, so choosing either Present item (or `f`)
+  there first leaves review mode: the comments panel closes, the deck loads again without it, and
+  the new frame goes full screen or into presenter view. "Audience window" opens a second app window on the permanent link of the version the
   presenter's window shows (`/a/<slug>/v/<n>`), paired with it through a `BroadcastChannel` on
   the app origin in the same browser, in every isolation mode; only slide and version numbers
   cross it. The audience window shows exactly the presenter's current slide of that version,
@@ -838,7 +840,7 @@ source editor work as for docs. A deck is not edited on its page.
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names and booleans (renderer protocol
-  version 1: `goto`, `view` and `print { notes }` from the app; `ready`, `position`, `view` and
+  version 1: `goto`, `view` and `print` from the app; `ready`, `position`, `view` and
   `fullscreen` from the frame); see [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** `.pptx` export and following a presenter over a live room come later;
   transitions, builds, custom themes and fonts, math, diagrams and video are not planned for
@@ -915,7 +917,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
   by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked; and
-  when a type's own checks, such as a page's design system reference, fail on a temporary error,
+  when a type's own checks, such as a page's design system reference or a deck's own warnings,
+  fail on an error,
   which is logged and never fails the publish). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a

@@ -302,6 +302,59 @@ test.describe("a published deck", () => {
       }
     });
 
+    test("Present after the comments panel was open leaves review mode, then presents", async ({
+      page,
+    }) => {
+      test.setTimeout(60_000);
+      const { artifact, client } = await publishDeck(page);
+      const current = page.frameLocator(CURRENT_FRAME);
+      const comments = page.getByRole("button", { name: "Comments", exact: true });
+      const panel = page.getByRole("region", { name: "Comments" });
+      try {
+        await page.goto(`/a/${artifact.slug}`);
+        await deckFrame(page);
+        // Opening comments loads the review frame: every slide stacked, in a fixed overview.
+        await comments.click();
+        await expect(panel).toBeVisible();
+        await expect(current.locator("#__plinth-slides[data-fixed]")).toHaveCount(1, {
+          timeout: 15_000,
+        });
+        // Closing the panel keeps review mode (no reload); Present still works from there.
+        await comments.click();
+        await expect(panel).toBeHidden();
+        await present(page, "Presenter view");
+        await expect(current.locator('#__plinth-slides[data-mode="presenter"]')).toHaveCount(1, {
+          timeout: 15_000,
+        });
+        await expect(current.locator("#__plinth-slides[data-fixed]")).toHaveCount(0);
+        await expect(current.locator(".plinth-slides__notes")).toHaveText(
+          "Welcome everyone. Keep this under a minute.",
+        );
+        await current.getByRole("button", { name: "Exit presenter view" }).click();
+        await expect(current.locator('#__plinth-slides[data-mode="deck"]')).toHaveCount(1);
+
+        // With the panel open, Full screen closes it and puts the deck (not the overview) full
+        // screen.
+        await comments.click();
+        await expect(panel).toBeVisible();
+        await expect(current.locator("#__plinth-slides[data-fixed]")).toHaveCount(1, {
+          timeout: 15_000,
+        });
+        await present(page, "Full screen");
+        await expect(panel).toBeHidden();
+        await expect
+          .poll(() =>
+            page.evaluate(() => document.fullscreenElement?.classList.contains("pl-viewer-frame")),
+          )
+          .toBe(true);
+        await expect(current.locator('#__plinth-slides[data-mode="deck"]')).toHaveCount(1);
+        await expect(current.locator("#__plinth-slides[data-fixed]")).toHaveCount(0);
+        await page.evaluate(() => document.exitFullscreen());
+      } finally {
+        await client.close();
+      }
+    });
+
     test("presenter view shows the notes and the next slide, and an audience window follows", async ({
       page,
       context,

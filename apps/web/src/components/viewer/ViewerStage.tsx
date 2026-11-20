@@ -56,6 +56,10 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /** The frame is in review mode (the comment-anchoring frame). */
+  review?: boolean;
+  /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
+  onLeaveReview?: () => void;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -88,6 +92,8 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  review,
+  onLeaveReview,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -132,8 +138,17 @@ export function ViewerStage({
     onReload: onReload ?? (() => undefined),
   });
   const editing = live.editing;
-  // Presenting a deck: the slide, full screen, presenter view and its audience window.
-  const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
+  // Presenting a deck: the slide, full screen, presenter view and its audience window. Present in
+  // review mode leaves review mode first.
+  const present = usePresentation({
+    gate,
+    frame,
+    contentOrigin,
+    config,
+    slug,
+    review,
+    leaveReview: onLeaveReview,
+  });
   const pause: WatchPause = live.pause ?? present.pause;
   useEffect(() => {
     onPauseChange?.(pause);

@@ -59,7 +59,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "b27e3cef6d8eb3936e54617da905a9810f6e6d3da4512a99c9cf0abc6ede27c2",
+      tools: "10749deed360edb137142005490431837136d0bbe9ecde2a7b5af7e345b0fa76",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -69,7 +69,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "7978c67011bb24b1783fdab473b60e549e82f452b4e31fcf786f17017c644f13",
+      tools: "cc8c4d28a95798b636afcd8da2f0442105521c87fe442fccd91f6f7248445ad0",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -81,7 +81,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "893c2225777588517b2514c1a67b5078216feb12c420fa640d27a9bf493073d1",
+      tools: "366faf5ed673c39e789740bdec9b127be745aca27cef5f1e7ec2b05e061748ad",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

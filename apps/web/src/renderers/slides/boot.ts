@@ -15,6 +15,7 @@ import {
   type TypedPayload,
 } from "@plinth/shared";
 import { buildDeck, type SlideView } from "./deck.ts";
+import { el } from "./dom.ts";
 import { iconButton } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { bindInput, DeckController, type DeckMode } from "./nav.ts";
@@ -53,18 +54,6 @@ export function readPayload(doc: Document): TypedPayload | null {
   if (typeof p.text !== "string" || typeof p.app_origin !== "string") return null;
   if (p.view !== undefined && p.view !== "overview") return null;
   return value as TypedPayload;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const e = doc.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
 }
 
 /** Test seams: layout measuring and the presenter's clock. */

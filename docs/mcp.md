@@ -455,12 +455,15 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 
 | `code` | What it means |
 | --- | --- |
-| `missing_file` | A relative reference (`src`, `href`, `url()`, `import`) names a file the version does not have. For a design system, `path` says which CSS block (`css`, `components[i].css`) holds the `url()` |
+| `missing_file` | A relative reference (`src`, `href`, `url()`, `import`) names a file the version does not have. For a design system, `path` says which CSS block (`css`, `components[i].css`) holds the `url()`. For a deck, an image its Markdown shows that is not in `assets` |
 | `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`) |
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
-| `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries. It also says when a type's own checks (a page's design system reference) did not run because of a temporary error; the version is published |
+| `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries. It also says when a type's own checks (a page's design system reference, a deck's own warnings) did not run because of an error; the version is published |
+| `slides_setting` | A deck setting Plinth ignores or cuts: an unknown key, a value that is not allowed, a footer over its length; or a slide with one `\|\|\|` column marker or more than three columns |
+| `slide_empty` | A deck slide with no content, usually an extra `---` line |
+| `slide_dense` | A deck slide over 900 characters or 14 non-blank lines (notes not counted) that will be shrunk to fit: split it or move detail into its `Note:` |
 | `ds_inert_markup` | A design system's component example holds script, an event handler, a form, a frame or a meta; previews run none of them and remove them. `path` says which example |
 | `ds_missing_font` | A design system's `fonts[].src` names a file the version does not have |
 | `ds_no_dark_theme` | A design system has no `themes.dark`, so pages built on it will not follow dark mode |

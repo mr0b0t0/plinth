@@ -112,8 +112,12 @@ export function bindInput(
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    // Space, Enter and the arrows on a focused control act on that control.
-    if (interactive(e.target) && (e.key === " " || e.key === "Enter")) return;
+    // Space and Enter on a focused control act on that control, and end any slide number typed
+    // before them.
+    if (interactive(e.target) && (e.key === " " || e.key === "Enter")) {
+      digits = "";
+      return;
+    }
     if (/^[0-9]$/.test(e.key)) {
       digits = (digits + e.key).slice(-4);
       e.preventDefault();

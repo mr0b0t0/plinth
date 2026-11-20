@@ -15,6 +15,7 @@ import {
 } from "@plinth/shared";
 import { renderMarkdown } from "../doc/markdown.ts";
 import { sanitizeHtml } from "../doc/sanitize.ts";
+import { el } from "./dom.ts";
 import { classifySlide, type SlideLayout } from "./layout.ts";
 
 export interface SlideView {
@@ -34,16 +35,6 @@ export interface SlideView {
 
 /** A link to another slide: "#3". */
 export const SLIDE_LINK_RE = /^#(\d{1,4})$/;
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  className: string,
-): HTMLElementTagNameMap[K] {
-  const e = doc.createElement(tag);
-  e.className = className;
-  return e;
-}
 
 /** Markdown to a sanitized fragment, with the doc's heading anchors removed (a slide has none). */
 export function renderPart(doc: Document, markdown: string): DocumentFragment {

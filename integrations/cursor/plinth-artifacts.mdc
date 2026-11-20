@@ -580,8 +580,9 @@ Print or save as PDF with or without the notes. You do not write HTML, colors or
 - **One idea per slide**, at most about six bullets. Put the detail in the slide's notes.
 - **A line `---` separates slides.** Start each with a `#` (the title slide) or `##` heading. Use
   `##` rather than text over a `---` line, which is always a slide break in a deck.
-- **Front matter (optional), lines 1 to 6:** `aspect: 16:9` or `4:3`, `theme: auto`, `light` or
-  `dark`, `paginate: true` or `false`, `footer: <plain text>`, between two `---` lines.
+- **Front matter (optional), from line 1:** `aspect: 16:9` or `4:3`, `theme: auto`, `light` or
+  `dark`, `paginate: true` or `false`, `footer: <plain text>`, one per line between two `---`
+  lines, the first `---` on line 1 and at most 20 lines between them.
 - **Speaker notes:** a line starting `Note:` starts them; everything after it until the next `---`
   is the slide's notes. Write `\Note:` for a paragraph that starts with that word.
 - **Columns:** lines `|||` split a slide into 2 or 3 columns; what comes before the first `|||`
