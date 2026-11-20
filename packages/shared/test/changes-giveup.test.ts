@@ -188,6 +188,62 @@ describe("a region the diff gave up on", () => {
     expect(list.items.filter((i) => i.kind !== "changed")).toHaveLength(2);
   });
 
+  it("lists a paragraph added next to an edited one in one gap as added, on a page and a board", () => {
+    const a = ["Alpha one here", "Middle stays", "Beta two here"];
+    const b = [
+      "Brand new thing",
+      "Alpha one here, edited",
+      "Middle stays",
+      "Beta two here, edited",
+    ];
+    const expected = (where: string): ChangeItem[] => [
+      { kind: "added", where, what: "Text added", after: "Brand new thing" },
+      {
+        kind: "changed",
+        where,
+        what: "Text changed",
+        before: "Alpha one here",
+        after: "Alpha one here, edited",
+      },
+      {
+        kind: "changed",
+        where,
+        what: "Text changed",
+        before: "Beta two here",
+        after: "Beta two here, edited",
+      },
+    ];
+    const page = (list: string[]) => `<h1>T</h1>${list.map((r) => `<p>${r}</p>`).join("")}`;
+    const html = describeChanges("html", page(a), page(b));
+    expect(html.truncated).toBe(true);
+    expect(html.items).toEqual(expected("Under “T”"));
+    const board = (list: string[]) => `<!-- artboard name="Home" size="iphone" -->\n${page(list)}`;
+    expect(describeChanges("design", board(a), board(b)).items).toEqual(
+      expected("Board “Home”, under “T”"),
+    );
+  });
+
+  it("lists a slide added next to an edited one in one gap as added", () => {
+    const deck = (...slides: string[]) => slides.join("\n\n---\n\n");
+    const list = describeChanges(
+      "slides",
+      deck("# Plan\n\nStep one", "# Middle", "# End\n\nBye"),
+      deck("# Budget\n\nMoney", "# Plan\n\nStep one, then two", "# Middle", "# End\n\nBye now"),
+    );
+    expect(list.truncated).toBe(true);
+    expect(list.items).toEqual([
+      { kind: "added", where: "", what: "Slide 1 “Budget” added" },
+      {
+        kind: "changed",
+        where: "Slide 2",
+        what: "Text changed",
+        before: "Step one",
+        after: "Step one, then two",
+      },
+      { kind: "changed", where: "Slide 4", what: "Text changed", before: "Bye", after: "Bye now" },
+    ]);
+  });
+
   it("anchors on items found once on each side, and keeps a moved one out of the anchors", () => {
     const d = diffSequence(["x", "a", "m", "b", "c", "y"], ["x", "a2", "b", "c", "m", "n", "y"]);
     expect(d).toEqual({

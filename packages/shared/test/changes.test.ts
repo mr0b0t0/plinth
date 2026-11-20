@@ -336,6 +336,26 @@ describe("slides", () => {
     ]);
   });
 
+  it("lists a slide added before an edited one as added, not as the edited one changed", () => {
+    const deck = (...slides: string[]) => slides.join("\n\n---\n\n");
+    expect(
+      items(
+        "slides",
+        deck("# Intro\n\nHello", "# Plan\n\nStep one", "# End"),
+        deck("# Intro\n\nHello", "# Budget\n\nMoney", "# Plan\n\nStep one, then two", "# End"),
+      ),
+    ).toEqual([
+      { kind: "added", where: "", what: "Slide 2 “Budget” added" },
+      {
+        kind: "changed",
+        where: "Slide 3",
+        what: "Text changed",
+        before: "Step one",
+        after: "Step one, then two",
+      },
+    ]);
+  });
+
   it("names a slide removed or added by its title, and lists columns", () => {
     const deck = (...slides: string[]) => slides.join("\n\n---\n\n");
     expect(items("slides", deck("# A", "# B", "# C"), deck("# A", "# C"))).toEqual([
@@ -841,6 +861,38 @@ describe("html", () => {
       ["Heading “Plot 5” added", "After “Plot 4”"],
       ["Text added", "Under “Plot 5”"],
       ["Heading “Notes” changed", "After “Plot 5”"],
+    ]);
+  });
+
+  it("lists a paragraph added before an edited one as added, not as the edited one changed", () => {
+    const a = "<h1>T</h1><p>Alpha one here</p><p>Beta two here</p>";
+    const b = "<h1>T</h1><p>Brand new thing</p><p>Alpha one here, edited</p><p>Beta two here</p>";
+    expect(items("html", a, b)).toEqual<ChangeItem[]>([
+      { kind: "added", where: "Under “T”", what: "Text added", after: "Brand new thing" },
+      {
+        kind: "changed",
+        where: "Under “T”",
+        what: "Text changed",
+        before: "Alpha one here",
+        after: "Alpha one here, edited",
+      },
+    ]);
+    // On a board too: the same text runs.
+    const board = (html: string) => `<!-- artboard name="Home" size="iphone" -->\n${html}`;
+    expect(items("design", board(a), board(b))).toEqual<ChangeItem[]>([
+      {
+        kind: "added",
+        where: "Board “Home”, under “T”",
+        what: "Text added",
+        after: "Brand new thing",
+      },
+      {
+        kind: "changed",
+        where: "Board “Home”, under “T”",
+        what: "Text changed",
+        before: "Alpha one here",
+        after: "Alpha one here, edited",
+      },
     ]);
   });
 

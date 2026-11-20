@@ -1678,10 +1678,12 @@ from discovery tags) stays.
   “Plot 4”", "Slide 3", "Row 7, “Qty”", "Board “Home”", or nothing when the sentence says it all),
   a short sentence, and the visible text or value before and after. An item with only one side
   shows that text alone, green when added and red when removed, with no Before or After label.
-  Within a changed region, items are paired in order, preferring a heading that keeps a word of
-  its old name and a row whose first cell is the same, so a heading or row added before another
-  reads as added, not as the next one renamed or overwritten; the region's items are then listed
-  in the order a person reads the new version. An item in a region the diff gave up on (below) whose
+  Within a changed region, items are paired in order, preferring a heading, paragraph or HTML
+  text that is the same or keeps a word of four or more letters of its old text, a slide that
+  keeps its title or a word of its text, and a row whose first cell is the same, so a heading,
+  paragraph, slide or row added before another reads as added, not as the next one renamed or
+  overwritten; the region's items are then listed in the order a person reads the new version
+  (slides included). An item in a region the diff gave up on (below) whose
   two sides are the same is left out, so only what changed is listed. A slide whose own region has
   one of its title on the other side changed in place: two same-titled slides edited where they
   are are not listed as trading places. Bidirectional controls (U+202A to U+202E, U+2066 to

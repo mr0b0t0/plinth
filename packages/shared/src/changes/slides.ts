@@ -3,7 +3,7 @@
 import { type DeckSettings, parseDeck, type SlideSource } from "../slides.ts";
 import { diffSequence } from "./diff.ts";
 import { markdownBlocks } from "./markdownText.ts";
-import { multisetChanges, pairInOrder } from "./pairs.ts";
+import { inReadingOrder, multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
@@ -206,29 +206,50 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
       out.truncated = true;
       return;
     }
-    const { pairs, removed, added } = pairInOrder(
-      a.slice(h.aStart, h.aEnd).filter((s) => !moved.has(s)),
-      b.slice(h.bStart, h.bEnd).filter((s) => !moved.has(s)),
+    const removedSlides = a.slice(h.aStart, h.aEnd).filter((s) => !moved.has(s));
+    const addedSlides = b.slice(h.bStart, h.bEnd).filter((s) => !moved.has(s));
+    const index = new Map<Slide, number>();
+    for (const [k, s] of a.slice(h.aStart, h.aEnd).entries()) index.set(s, h.aStart + k);
+    for (const [k, s] of b.slice(h.bStart, h.bEnd).entries()) index.set(s, h.bStart + k);
+    const at = (s: Slide) => index.get(s) as number;
+    const paired = pairInOrder(
+      removedSlides,
+      addedSlides,
+      undefined,
+      // A slide edited in place keeps its title or a word of its text (or is the same), so a slide
+      // added before it is not taken for it.
+      (x, y) =>
+        x.key === y.key ||
+        (x.title !== "" && x.title === y.title) ||
+        sharesWord(`${x.title} ${x.text}`, `${y.title} ${y.text}`),
     );
-    for (const s of removed) {
-      out.add({
-        kind: "removed",
-        where: "",
-        what: `${label(s)} removed`,
-        before: s.title === "" ? changeExcerpt(s.text) : undefined,
-      });
-    }
-    for (const [x, y] of pairs) {
+    // In the order a person reads the deck, so a slide added before an edited one comes first.
+    for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
+      const { x, y } = step;
       // A region the diff gave up on pairs unchanged slides too: they are not changes.
-      if (x.key !== y.key) describeSlide(out, x, y);
-    }
-    for (const s of added) {
-      out.add({
-        kind: "added",
-        where: "",
-        what: `${label(s)} added`,
-        after: s.title === "" ? changeExcerpt(s.text) : undefined,
-      });
+      if (x && y && x.key === y.key) continue;
+      // Every other step lists at least one item: once the list is full, the rest is cut.
+      if (out.full) {
+        out.truncated = true;
+        return;
+      }
+      if (x && y) {
+        describeSlide(out, x, y);
+      } else if (y) {
+        out.add({
+          kind: "added",
+          where: "",
+          what: `${label(y)} added`,
+          after: y.title === "" ? changeExcerpt(y.text) : undefined,
+        });
+      } else if (x) {
+        out.add({
+          kind: "removed",
+          where: "",
+          what: `${label(x)} removed`,
+          before: x.title === "" ? changeExcerpt(x.text) : undefined,
+        });
+      }
     }
   }
 }

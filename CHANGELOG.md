@@ -81,8 +81,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
   "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
   the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
-  formatting changed". A heading or row added before another reads as added, not as the next one
-  renamed, items come in the order the page reads, a changed list names only the item that
+  formatting changed". A heading, paragraph, slide or row added before another reads as added,
+  not as the next one renamed or changed, items come in the order the page reads, a changed list names only the item that
   changed, and a sheet total that only recomputed for an added row is left out. A large edit the
   diff gives up on still lists only the blocks that changed, a block added or removed in it
   included, and two same-titled slides edited in

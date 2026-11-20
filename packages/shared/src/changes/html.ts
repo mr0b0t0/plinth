@@ -46,8 +46,9 @@ function describeRuns(
       removedRuns,
       addedRuns,
       (x, y) => x.heading === y.heading,
-      // As in a doc: a heading renamed keeps a word, so one added before it is not taken for it.
-      (x, y) => !x.heading || sharesWord(x.text, y.text),
+      // As in a doc: a heading renamed or a paragraph edited keeps a word (or is the same), so a
+      // heading or paragraph added before it is not taken for it.
+      (x, y) => key(x) === key(y) || sharesWord(x.text, y.text),
     );
     // In the order a person reads the page, so a heading added above a changed one comes first.
     for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
