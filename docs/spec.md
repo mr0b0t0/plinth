@@ -1682,20 +1682,32 @@ when the user told it to.
   /api/v1/me/invitation-emails`, `{ receive }`, signed-in people only, never agents; the address is
   always the session's). Off is kept as a hash of the address in `invitation_opt_outs` (migration
   `0021_invitation_opt_outs.sql`, the same hash the counters use), never the address, and an
-  account's erasure keeps it, since dropping it would let invitations reach the inbox again. An
+  account's erasure keeps it, since dropping it would let invitations reach the inbox again. The
+  opt-out covers the inbox, not only the address typed: the hash is of the address's mailbox
+  (`services/invitations.ts invitationMailbox`: lowercased, a `+tag` dropped from the local part,
+  and for `gmail.com` and `googlemail.com` the dots too, both read as `gmail.com`), so turning
+  them off as `bo@gmail.com` stops `bo+x@gmail.com`, `b.o@gmail.com` and `bo@googlemail.com`. An
   owner who shares with that address still gives it access; the person is reported as
-  `opted_out` ("They turned these emails off"), and no counter is used. There is no
+  `opted_out` ("They turned these emails off"). That answer costs what an email would: a place
+  in the change's `invitationsPerChange` and one of the owner's
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY`, and it is given only while those and the instance's
+  `INVITATION_EMAILS_PER_DAY` have room (otherwise the reason is the limit's); the person's own
+  counters and the instance's are not used. Since only someone signed in as the address can turn
+  them off, `opted_out` tells the owner that the address has signed in to this instance; the cost
+  bounds how many addresses an owner can learn that about, to their daily cap. There is no
   `List-Unsubscribe-Post` (RFC 8058 one-click): that request arrives with no session, so it would
   need a token in the URL saying whose address to stop.
-- **Bounds.** At most one invitation per artifact (or share) and address within a day, counted
+- **Bounds.** At most one invitation per artifact (or share) and mailbox within a day, counted
   across the previous and the current UTC day, so removing and re-adding someone does not email
-  them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change, and per UTC
+  them again; two addresses of one mailbox in one change are emailed once, and the other is
+  reported with the first one's outcome (`already_emailed` when it was emailed). At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change, and per UTC
   day `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20) per owner, `INVITATION_EMAILS_PER_DAY` (1000)
   for the whole instance, every owner together,
   `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
   `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together. Each limit is reserved before an email goes (the counter is raised, then checked, and what
   was not used is given back), so parallel changes cannot pass it. The counters sit in
-  `rate_limits` under keys holding a hash of the address, never the address, are read and written
+  `rate_limits` under keys holding the hash of the address's mailbox (the opt-out's hash), never
+  the address, so a `+tag` or Gmail's dots do not get an inbox fresh limits; they are read and written
   in a fixed number of statements whatever the number of people, and the hourly cron deletes them
   two days after their day. Nothing else is stored, apart from the opt-outs above. Sign-in and
   viewing codes have counters of their own (`login:` keys), so a used-up invitation budget never

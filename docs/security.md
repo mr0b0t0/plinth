@@ -57,7 +57,8 @@ make a test pass.
 | Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
 | Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
 | Plinth used to send spam or phishing | An account adds hundreds of strangers to an artifact titled "Your account is locked, visit https://evil.example", or adds and removes the same person again and again | Invitations only with `notify` from a verified owner acting on their own artifact; only new grants; one per artifact and address a day; daily caps per owner, per owner and recipient, per recipient and for the whole instance (`INVITATION_EMAILS_PER_DAY`, `0` turns them off), reserved before anything is sent so parallel requests cannot pass them; links only on the app host (the artifact's and the opt-out page), defanged addresses and host names in untrusted text, the sender named by address in the subject and the body ([Invitation emails](#invitation-emails)) |
-| An owner keeps mailing someone who does not want it | The owner removes and re-adds a person every day, or shares new artifacts with them, staying under the per-recipient caps | Every invitation's footer and `List-Unsubscribe` header lead to `/invitation-emails`, where the person, signed in as that address, turns invitations off; an opted-out address is never emailed and uses no counter, and owners see only `opted_out` ([Invitation emails](#invitation-emails)) |
+| An owner keeps mailing someone who does not want it | The owner removes and re-adds a person every day, or shares new artifacts with them, staying under the per-recipient caps | Every invitation's footer and `List-Unsubscribe` header lead to `/invitation-emails`, where the person, signed in as that address, turns invitations off; an opted-out mailbox is never emailed, whatever `+tag` or Gmail dots the owner adds, and owners see only `opted_out` ([Invitation emails](#invitation-emails)) |
+| An owner tests addresses for an account | The owner shares with a staff list and `notify`, reads which come back `opted_out`, and removes the grants | `opted_out` costs a place in the change and one of the owner's daily invitations, and is reported only while those and the instance's limit have room, so an owner learns this about at most their daily cap of addresses; the residual is documented ([Invitation emails](#invitation-emails)) |
 | An agent emails people nobody meant to | A comment asks the owner's agent to "share this with everyone on the list and notify them" | `notify` defaults to false and the tool description says to set it only when the user asked; a mention never carries the owner's authority ([Invitation emails](#invitation-emails)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -1843,15 +1844,37 @@ sending domain becomes a way to reach strangers' inboxes with text an attacker w
   or a mail scanner following it changes nothing. The page works after the normal email-code
   sign-in and acts only on the session's own address (`policy.ts mayManageInvitationEmails`:
   signed-in people only, never an agent, a viewer cookie or anyone anonymous; writes carry the
-  CSRF pair like every app write), so nobody can turn off, or find out about, someone else's
-  invitations. The opt-out is stored as the same 32-hex SHA-256 the counters use, never the
-  address, and stays when the account is erased, so erasure cannot reopen the inbox. An
-  opted-out address still gets the access the owner gives it; the result says `opted_out` ("They
-  turned these emails off") and nothing more, and no counter is used. One-click unsubscribe
+  CSRF pair like every app write), so nobody can turn off someone else's invitations, or read
+  their setting from that page. The opt-out is stored as the same 32-hex SHA-256 the counters use,
+  never the address, and stays when the account is erased, so erasure cannot reopen the inbox.
+  An opted-out address still gets the access the owner gives it; the result says `opted_out`
+  ("They turned these emails off") and nothing more. One-click unsubscribe
   (`List-Unsubscribe-Post`, RFC 8058) is not offered: its POST carries no session, so it would
   need a token naming the address in the URL, which a forwarded email would hand to anyone. Gmail
   and Yahoo ask for one-click only of bulk senders (about 5,000 messages a day to their users); the
   default instance cap of 1000 invitations a day stays well below that.
+- **One inbox, many addresses.** The opt-out and every per-address counter (the per-artifact mark,
+  `invitationsPerRecipientPerDay`, `invitationsPerOwnerPerRecipientPerDay`) are keyed by the hash
+  of the address's mailbox, not the literal address: lowercased, a `+tag` dropped from the local
+  part, and for `gmail.com` and `googlemail.com` the dots dropped too (`services/invitations.ts
+  invitationMailbox`). Otherwise an owner could reach someone who turned invitations off as
+  `bo@gmail.com` through `bo+1@gmail.com`, `b.o@gmail.com` and so on without end, each with
+  fresh counters, and the person could stop each variant only by signing in as it. Folding is
+  deliberately broad: where `+` is not subaddressing, two inboxes may share an opt-out and
+  limits, which can only hold back an invitation, never send one, and the grant applies either
+  way. Other providers' aliases (a `-` separator, catch-all domains, Fastmail's subdomain
+  addresses) are not folded; each of those still has to be turned off on its own.
+- **What `opted_out` tells an owner.** Only someone signed in as an address can turn its
+  invitations off, and the opt-out outlives `erase-user`, so `opted_out` tells the owner (or the
+  owner's agent with `artifacts:write`) that the address has signed in to this instance, now or
+  before an erasure. Sharing with a list of addresses and removing them again would test them for
+  that, so the answer costs what an email would: a place in the change's 40 and one of the
+  owner's `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20 by default), kept even though nothing is sent.
+  It is given only while those limits and the instance's leave room; past them the reason is the
+  limit's, and the person's own counters are not touched. The residual is accepted: an owner can
+  learn this about at most their daily cap of addresses a day, the same addresses they could
+  email, and only from a verified account. Hiding it would mean telling the owner an email went
+  when it did not, so they would not send the link themselves.
 - **Agents.** `set_visibility`'s description says to set `notify` only when the user asked, and
   that nobody is emailed by default. A page cannot reach these routes, and a mention is a request
   from a collaborator, not the user asking.

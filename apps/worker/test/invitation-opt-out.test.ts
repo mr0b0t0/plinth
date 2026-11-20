@@ -6,11 +6,11 @@
 // untrusted text are defanged. A full invitation budget never holds back sign-in codes, and
 // EMAIL_PROVIDER=console counts as off outside development.
 import { env } from "cloudflare:workers";
-import { CSRF_HEADER, INVITATION_DEFAULTS } from "@plinth/shared";
+import { CSRF_HEADER, INVITATION_DEFAULTS, RATE_LIMITS } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invitationEmailsActive, parseConfig } from "../src/config.ts";
 import { defangHosts, emailText, invitationEmail } from "../src/email/templates.ts";
-import { invitationAddressHash } from "../src/services/invitations.ts";
+import { invitationAddressHash, invitationMailbox } from "../src/services/invitations.ts";
 import {
   browser,
   filed,
@@ -75,7 +75,7 @@ async function countersFor(o: Owner, artifactId: string, email: string) {
 }
 
 describe("invitation emails: the recipient turns them off", () => {
-  it("off, an owner's share still grants access, says opted_out, and sends and counts nothing", async () => {
+  it("off, an owner's share still grants access, says opted_out, and sends nothing", async () => {
     const bo = await person(uniqueEmail("bo"));
     const off = await send("PUT", PAGE_API, bo.session, { receive: false });
     expect(off.status).toBe(200);
@@ -100,7 +100,9 @@ describe("invitation emails: the recipient turns them off", () => {
       emailed: [],
       skipped: [{ email: bo.email, reason: "opted_out" }],
     });
-    expect(await countersFor(o, a.id, bo.email)).toEqual(before);
+    // The answer costs the owner one of the day's invitations, as an email would; nothing of
+    // the person's own, the instance's or the artifact's is counted.
+    expect(await countersFor(o, a.id, bo.email)).toEqual({ ...before, owner: before.owner + 1 });
     expect((await outboxFor(bo.email)).filter((m) => m.subject.includes("shared"))).toEqual([]);
   });
 
@@ -191,6 +193,156 @@ describe("invitation emails: the recipient turns them off", () => {
       emailed: [fi],
       skipped: [{ email: ed.email, reason: "opted_out" }],
     });
+  });
+});
+
+/** A fresh Gmail address, and the same inbox with a dot in its local part. */
+const gmail = (prefix: string) => {
+  const local = (uniqueEmail(prefix).split("@")[0] ?? prefix).replaceAll("-", "");
+  return {
+    dotted: `${local.slice(0, 2)}.${local.slice(2)}@gmail.com`,
+    plain: `${local}@gmail.com`,
+  };
+};
+
+describe("invitation emails: one inbox, many addresses", () => {
+  it("folds a +tag, and Gmail's dots and googlemail.com, into one mailbox", () => {
+    expect(invitationMailbox("Bo+News@Example.org")).toBe("bo@example.org");
+    expect(invitationMailbox("b.o+1@gmail.com")).toBe("bo@gmail.com");
+    expect(invitationMailbox("B.O@googlemail.com")).toBe("bo@gmail.com");
+    // Elsewhere a dot is part of the name.
+    expect(invitationMailbox("b.o@example.org")).toBe("b.o@example.org");
+    expect(invitationMailbox("+tag@example.org")).toBe("+tag@example.org");
+  });
+
+  it("an opt-out of bo@gmail.com stops bo+x@gmail.com, b.o@gmail.com and bo@googlemail.com", async () => {
+    const { dotted, plain } = gmail("bo");
+    const bo = await person(plain);
+    expect((await send("PUT", PAGE_API, bo.session, { receive: false })).status).toBe(200);
+    const [local] = plain.split("@");
+    const o = await owner();
+    for (const variant of [
+      `${local}+x@gmail.com`,
+      dotted,
+      `${local}@googlemail.com`,
+      `${dotted.split("@")[0]}+2@googlemail.com`,
+    ]) {
+      const a = await artifactOf(o);
+      const body = await json(await share(o, a.id, [variant]));
+      expect(body.grants).toEqual([expect.objectContaining({ email: variant })]);
+      expect(body.invitations).toEqual({
+        emailed: [],
+        skipped: [{ email: variant, reason: "opted_out" }],
+      });
+      expect(await outboxFor(variant)).toEqual([]);
+    }
+  });
+
+  it("an opt-out signed in as a variant covers the plain address too", async () => {
+    const { plain } = gmail("cy");
+    const [local] = plain.split("@");
+    const variant = await person(`${local}+plinth@gmail.com`);
+    await send("PUT", PAGE_API, variant.session, { receive: false });
+    const o = await owner();
+    const a = await artifactOf(o);
+    expect((await json(await share(o, a.id, [plain]))).invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: plain, reason: "opted_out" }],
+    });
+  });
+
+  it("variants share the per-owner-and-recipient limit and the per-artifact mark", async () => {
+    const o = await owner();
+    const local = uniqueEmail("dee").split("@")[0];
+    const n = RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay;
+    const variants = Array.from({ length: n + 1 }, (_, i) => `${local}+${i}@example.org`);
+    for (const [i, v] of variants.entries()) {
+      const a = await artifactOf(o);
+      const body = await json(await share(o, a.id, [v]));
+      expect(body.invitations).toEqual(
+        i < n
+          ? { emailed: [v], skipped: [] }
+          : { emailed: [], skipped: [{ email: v, reason: "recipient_limit" }] },
+      );
+    }
+    // Two variants in one change are one inbox: one email, the other named already_emailed.
+    const o2 = await owner();
+    const a = await artifactOf(o2);
+    const ee = uniqueEmail("ee").split("@")[0];
+    const body = await json(await share(o2, a.id, [`${ee}@example.org`, `${ee}+b@example.org`]));
+    expect(body.grants).toHaveLength(2);
+    expect(body.invitations).toEqual({
+      emailed: [`${ee}@example.org`],
+      skipped: [{ email: `${ee}+b@example.org`, reason: "already_emailed" }],
+    });
+    // Another variant added later reaches the same inbox about the same artifact within a day.
+    const later = `${ee}+c@example.org`;
+    const again = await json(
+      await share(o2, a.id, [`${ee}@example.org`, `${ee}+b@example.org`, later]),
+    );
+    expect(again.invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: later, reason: "already_emailed" }],
+    });
+  });
+});
+
+describe("invitation emails: opted_out costs what an email costs", () => {
+  it("takes one of the owner's day, and once that is used up says owner_limit instead", async () => {
+    const vars = { INVITATION_EMAILS_PER_OWNER_PER_DAY: "1" };
+    const fay = await person(uniqueEmail("fay"));
+    const gil = await person(uniqueEmail("gil"));
+    for (const p of [fay, gil]) await send("PUT", PAGE_API, p.session, { receive: false });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const first = await json(await share(o, a.id, [fay.email], vars));
+    expect(first.invitations.skipped).toEqual([{ email: fay.email, reason: "opted_out" }]);
+    expect((await countersFor(o, a.id, fay.email)).owner).toBe(1);
+    // The owner's day is used up: the next answer gives nothing away about gil.
+    const b = await artifactOf(o);
+    const second = await json(await share(o, b.id, [gil.email], vars));
+    expect(second.invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: gil.email, reason: "owner_limit" }],
+    });
+    expect((await countersFor(o, b.id, gil.email)).owner).toBe(1);
+  });
+
+  it("takes a place in the change, so one change answers at most invitationsPerChange people", async () => {
+    const hal = await person(uniqueEmail("hal"));
+    await send("PUT", PAGE_API, hal.session, { receive: false });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const rest = Array.from({ length: RATE_LIMITS.invitationsPerChange }, (_, i) =>
+      uniqueEmail(`r${i}-`),
+    );
+    const body = await json(
+      await share(o, a.id, [hal.email, ...rest], { INVITATION_EMAILS_PER_OWNER_PER_DAY: "200" }),
+    );
+    expect(body.invitations.emailed).toEqual(rest.slice(0, -1));
+    expect(body.invitations.skipped).toHaveLength(2);
+    expect(body.invitations.skipped).toEqual(
+      expect.arrayContaining([
+        { email: hal.email, reason: "opted_out" },
+        { email: rest.at(-1), reason: "change_limit" },
+      ]),
+    );
+  });
+
+  it("is not given while the instance's day is used up", async () => {
+    const ivo = await person(uniqueEmail("ivo"));
+    await send("PUT", PAGE_API, ivo.session, { receive: false });
+    const used = await counterOf("invite:instance");
+    if (used === 0) {
+      await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, 1)")
+        .bind("invite:instance", windowStart())
+        .run();
+    }
+    const vars = { INVITATION_EMAILS_PER_DAY: String(Math.max(used, 1)) };
+    const o = await owner();
+    const a = await artifactOf(o);
+    const body = await json(await share(o, a.id, [ivo.email], vars));
+    expect(body.invitations.skipped).toEqual([{ email: ivo.email, reason: "instance_limit" }]);
   });
 });
 

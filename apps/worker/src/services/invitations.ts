@@ -5,21 +5,24 @@
 //
 // Bounds, in this order, per person: only a new grant (an address that held none before the
 // change), never the owner's own address, policy.ts mayEmailInvitations (asked, the owner acting,
-// a verified owner, not taken down), the operator's switch (config.ts invitationEmailsActive), the
-// person's own opt-out (`opted_out`: invitation_opt_outs, set on the app's /invitation-emails page
-// after signing in as that address; checked before any counter, so it uses none), one email per
-// artifact or share and address within a day (`already_emailed`),
+// a verified owner, not taken down), the operator's switch (config.ts invitationEmailsActive), one
+// email per artifact or share and mailbox within a day (`already_emailed`),
 // RATE_LIMITS.invitationsPerChange, INVITATION_EMAILS_PER_OWNER_PER_DAY, the instance's
 // INVITATION_EMAILS_PER_DAY (every owner together, so invitations cannot use up the provider quota
-// sign-in and viewing codes need), invitationsPerRecipientPerDay and
-// invitationsPerOwnerPerRecipientPerDay. The counters live in `rate_limits` under keys that hold a
-// hash of the address, never the address. One query reads them; then each limit is reserved before
-// anything is sent (raise the counter, check the count it returns, give back what was not used),
-// so parallel changes cannot pass a limit. The number of statements does not grow with the number
-// of people; the hourly cron removes the counters after two days (pruneInvitationMarks). Titles
-// and names are never logged. The messages go to the provider after the response, in batch
-// requests or one at a time, never all at once (deliverInvitations), and an invitation the
-// provider refused gets its mark and counters back.
+// sign-in and viewing codes need), the person's own opt-out (`opted_out`: invitation_opt_outs, set
+// on the app's /invitation-emails page after signing in as that address), then
+// invitationsPerRecipientPerDay and invitationsPerOwnerPerRecipientPerDay. An opted-out person is
+// never emailed, but the answer costs the owner what an email would (a place in the change and one
+// of the owner's day), so owners cannot test addresses for free; it is only given once those two
+// limits and the instance's leave room. Every counter and the opt-out are keyed by a hash of the
+// address's mailbox (invitationMailbox), never the address, so `bo+1@` or `b.o@gmail.com` is the
+// same inbox as `bo@`. One query reads them; then each limit is reserved before anything is sent
+// (raise the counter, check the count it returns, give back what was not used), so parallel
+// changes cannot pass a limit. The number of statements does not grow with the number of people;
+// the hourly cron removes the counters after two days (pruneInvitationMarks). Titles and names are
+// never logged. The messages go to the provider after the response, in batch requests or one at a
+// time, never all at once (deliverInvitations), and an invitation the provider refused gets its
+// mark and counters back.
 import {
   APP_ROUTES,
   type InvitationReport,
@@ -74,9 +77,37 @@ export function newInvitees(
   return out;
 }
 
-/** The hash an address's counters are keyed by. */
+/** Domains where dots in the local part are ignored, so `b.o@` and `bo@` are one inbox. */
+const DOTLESS_DOMAINS: Readonly<Record<string, string>> = {
+  "gmail.com": "gmail.com",
+  "googlemail.com": "gmail.com",
+};
+
+/**
+ * The inbox an address reaches, as far as invitations go: lowercased, a `+tag` dropped from the
+ * local part, and for Gmail the dots too (googlemail.com is gmail.com). It is only ever hashed,
+ * for the opt-out and the invitation counters, so that variants of one inbox share them. Folding
+ * two different inboxes together can only suppress an invitation, never send one.
+ */
+export function invitationMailbox(email: string): string {
+  const e = email.trim().toLowerCase();
+  const at = e.lastIndexOf("@");
+  if (at <= 0) return e;
+  let local = e.slice(0, at);
+  let domain = e.slice(at + 1).replace(/\.+$/, "");
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  const dotless = DOTLESS_DOMAINS[domain];
+  if (dotless) {
+    local = local.replaceAll(".", "") || local;
+    domain = dotless;
+  }
+  return `${local}@${domain}`;
+}
+
+/** The hash an address's opt-out and counters are keyed by: its mailbox's, never the address. */
 export const invitationAddressHash = async (email: string) =>
-  (await sha256Hex(`invite\n${email}`)).slice(0, 32);
+  (await sha256Hex(`invite\n${invitationMailbox(email)}`)).slice(0, 32);
 
 /** Add one to each key's counter in this window, creating it at 1. */
 const COUNT_EACH = `INSERT INTO rate_limits (key, window_start, count)
@@ -132,7 +163,7 @@ export async function sendInvitations(
   /** Every owner's invitations together, against INVITATION_EMAILS_PER_DAY. */
   const instanceKey = `${KEY_PREFIX}instance`;
   const scope = `${KEY_PREFIX}sent:${target.kind === "artifact" ? "a" : "s"}:${target.id}:`;
-  const people = await Promise.all(
+  const hashed = await Promise.all(
     opts.invitees.map(async (p) => {
       const h = await invitationAddressHash(p.email);
       return {
@@ -144,7 +175,26 @@ export async function sendInvitations(
       };
     }),
   );
-  type Person = (typeof people)[number];
+  type Person = (typeof hashed)[number];
+  // Two addresses of one mailbox in one change (`bo@` and `bo+1@`) are one person: the first is
+  // tried, and the others get its outcome at the end (`already_emailed` when it was emailed).
+  const firstOf = new Map<string, string>();
+  const people: Person[] = [];
+  const sameInbox: { email: string; first: string }[] = [];
+  for (const p of hashed) {
+    const first = firstOf.get(p.hash);
+    if (first === undefined) {
+      firstOf.set(p.hash, p.email);
+      people.push(p);
+    } else sameInbox.push({ email: p.email, first });
+  }
+  const finish = () => {
+    for (const d of sameInbox) {
+      const skip = report.skipped.find((s) => s.email === d.first);
+      report.skipped.push({ email: d.email, reason: skip ? skip.reason : "already_emailed" });
+    }
+    return report;
+  };
 
   // One round trip reads who turned invitations off and every counter this change may touch,
   // today's and yesterday's. It picks who to try and gives the usual reasons; the reservations
@@ -172,14 +222,15 @@ export async function sendInvitations(
     at(p.to) > RATE_LIMITS.invitationsPerRecipientPerDay ||
     at(p.pair) > RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay;
 
+  // `probe`: an opted-out person. Never emailed and never on their own counters, but the answer
+  // takes a place in the change and one of the owner's day, as an email would, and is only given
+  // when those and the instance's limit leave room: otherwise `opted_out` would tell any owner,
+  // for free, which addresses have signed in here.
   let ownerSent = count(ownerKey, today);
   let instanceSent = count(instanceKey, today);
-  const chosen: Person[] = [];
+  const chosen: (Person & { probe: boolean })[] = [];
   for (const p of people) {
-    if (optedOutHashes.has(p.hash)) {
-      // Their own choice comes first, and it uses no counter.
-      report.skipped.push({ email: p.email, reason: "opted_out" });
-    } else if (count(p.mark, today) + count(p.mark, yesterday) > 0) {
+    if (count(p.mark, today) + count(p.mark, yesterday) > 0) {
       // The mark of the previous day counts too, so "within a day" never resets at midnight UTC.
       report.skipped.push({ email: p.email, reason: "already_emailed" });
     } else if (chosen.length >= RATE_LIMITS.invitationsPerChange) {
@@ -188,61 +239,89 @@ export async function sendInvitations(
       report.skipped.push({ email: p.email, reason: "owner_limit" });
     } else if (instanceSent >= limits.perDay) {
       report.skipped.push({ email: p.email, reason: "instance_limit" });
+    } else if (optedOutHashes.has(p.hash)) {
+      ownerSent += 1;
+      chosen.push({ ...p, probe: true });
     } else if (recipientFull(p, (key) => count(key, today) + 1)) {
       report.skipped.push({ email: p.email, reason: "recipient_limit" });
     } else {
       ownerSent += 1;
       instanceSent += 1;
-      chosen.push(p);
+      chosen.push({ ...p, probe: false });
     }
   }
-  if (chosen.length === 0) return report;
+  if (chosen.length === 0) return finish();
 
   // Reserve, then check, like lib/ratelimit.ts hit(): every counter is raised in one statement
   // and the count it returns decides, so changes running at the same time can never send more
   // than a limit allows. What a person was not sent is given back at the end.
   const giveBack: string[] = [];
-  /** Reservations to give back on both day counters, the owner's and the instance's. */
-  let dayGiveBack = 0;
-  const reserved = await DB.prepare(`${COUNT_EACH} RETURNING key, count`)
-    .bind(JSON.stringify(chosen.flatMap((p) => [p.to, p.pair])), today)
-    .all<{ key: string; count: number }>();
-  const after = new Map(reserved.results.map((r) => [r.key, r.count]));
-  const recipientOk: Person[] = [];
-  for (const p of chosen) {
-    if (recipientFull(p, (key) => after.get(key) ?? Number.POSITIVE_INFINITY)) {
+  /** Reservations to give back on the owner's and on the instance's day counter. */
+  let ownerGiveBack = 0;
+  let instanceGiveBack = 0;
+  const senders = chosen.filter((p) => !p.probe);
+  const recipientFailed = new Set<Person>();
+  if (senders.length > 0) {
+    const reserved = await DB.prepare(`${COUNT_EACH} RETURNING key, count`)
+      .bind(JSON.stringify(senders.flatMap((p) => [p.to, p.pair])), today)
+      .all<{ key: string; count: number }>();
+    const after = new Map(reserved.results.map((r) => [r.key, r.count]));
+    for (const p of senders) {
+      if (!recipientFull(p, (key) => after.get(key) ?? Number.POSITIVE_INFINITY)) continue;
       report.skipped.push({ email: p.email, reason: "recipient_limit" });
       giveBack.push(p.to, p.pair);
-    } else recipientOk.push(p);
+      recipientFailed.add(p);
+    }
   }
+  const queue = chosen.filter((p) => !recipientFailed.has(p));
 
-  let marking: Person[] = [];
-  if (recipientOk.length > 0) {
-    // The owner's and the instance's day counters are raised by the number left, in one batch;
-    // the smaller room left under either limit is how many go on.
-    const n = recipientOk.length;
-    const raise = (key: string) =>
+  // The owner's day counter is raised by everyone left (an opted-out answer costs one too), the
+  // instance's by the emails among them, in one batch; the room left under each decides, in order.
+  const marking: Person[] = [];
+  if (queue.length > 0) {
+    const nOwner = queue.length;
+    const nInstance = queue.filter((p) => !p.probe).length;
+    const raise = (key: string, n: number) =>
       DB.prepare(
         `INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)
          ON CONFLICT (key, window_start) DO UPDATE SET count = count + ?3 RETURNING count`,
       ).bind(key, today, n);
     const [ownerRow, instanceRow] = await DB.batch<{ count: number }>([
-      raise(ownerKey),
-      raise(instanceKey),
+      raise(ownerKey, nOwner),
+      ...(nInstance > 0 ? [raise(instanceKey, nInstance)] : []),
     ]);
-    const roomUnder = (rows: D1Result<{ count: number }> | undefined, limit: number) => {
+    const roomUnder = (rows: D1Result<{ count: number }> | undefined, n: number, limit: number) => {
       const before = (rows?.results[0]?.count ?? Number.POSITIVE_INFINITY) - n;
       return Math.max(0, Math.min(n, limit - before));
     };
-    const ownerRoom = roomUnder(ownerRow, limits.perOwnerPerDay);
-    const instanceRoom = roomUnder(instanceRow, limits.perDay);
-    const room = Math.min(ownerRoom, instanceRoom);
-    const reason = ownerRoom <= instanceRoom ? "owner_limit" : "instance_limit";
-    marking = recipientOk.slice(0, room);
-    dayGiveBack += n - room;
-    for (const p of recipientOk.slice(room)) {
-      report.skipped.push({ email: p.email, reason });
-      giveBack.push(p.to, p.pair);
+    const ownerRoom = roomUnder(ownerRow, nOwner, limits.perOwnerPerDay);
+    const instanceRoom = nInstance > 0 ? roomUnder(instanceRow, nInstance, limits.perDay) : 0;
+    let ownerUsed = 0;
+    let instanceUsed = 0;
+    for (const p of queue) {
+      const reason =
+        ownerUsed >= ownerRoom
+          ? "owner_limit"
+          : !p.probe && instanceUsed >= instanceRoom
+            ? "instance_limit"
+            : null;
+      if (reason !== null) {
+        report.skipped.push({ email: p.email, reason });
+        ownerGiveBack += 1;
+        if (!p.probe) {
+          instanceGiveBack += 1;
+          giveBack.push(p.to, p.pair);
+        }
+        continue;
+      }
+      ownerUsed += 1;
+      if (p.probe) {
+        // Their own choice: what it cost stays used.
+        report.skipped.push({ email: p.email, reason: "opted_out" });
+      } else {
+        instanceUsed += 1;
+        marking.push(p);
+      }
     }
   }
 
@@ -259,7 +338,8 @@ export async function sendInvitations(
       if (first.has(p.mark)) continue;
       report.skipped.push({ email: p.email, reason: "already_emailed" });
       giveBack.push(p.to, p.pair);
-      dayGiveBack += 1;
+      ownerGiveBack += 1;
+      instanceGiveBack += 1;
     }
   }
 
@@ -272,16 +352,14 @@ export async function sendInvitations(
       ).bind(JSON.stringify(giveBack), today),
     );
   }
-  if (dayGiveBack > 0) {
-    returns.push(
-      DB.prepare(
-        `UPDATE rate_limits SET count = MAX(count - ?3, 0)
-          WHERE key IN (?1, ?4) AND window_start = ?2`,
-      ).bind(ownerKey, today, dayGiveBack, instanceKey),
-    );
-  }
+  const dayBack = (key: string, n: number) =>
+    DB.prepare(
+      "UPDATE rate_limits SET count = MAX(count - ?3, 0) WHERE key = ?1 AND window_start = ?2",
+    ).bind(key, today, n);
+  if (ownerGiveBack > 0) returns.push(dayBack(ownerKey, ownerGiveBack));
+  if (instanceGiveBack > 0) returns.push(dayBack(instanceKey, instanceGiveBack));
   if (returns.length > 0) await DB.batch(returns);
-  if (sending.length === 0) return report;
+  if (sending.length === 0) return finish();
 
   const link =
     target.kind === "artifact"
@@ -336,7 +414,7 @@ export async function sendInvitations(
       console.error("invitation email: the counters of unsent invitations were not given back");
     }),
   );
-  return report;
+  return finish();
 }
 
 /** How often a request the provider refused for its rate (HTTP 429) is tried again. */

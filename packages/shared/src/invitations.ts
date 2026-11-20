@@ -13,7 +13,8 @@ import { RATE_LIMITS } from "./constants.ts";
  * INVITATION_EMAILS_PER_DAY, every owner together; `invitations_off`: this instance sends no
  * invitation emails (INVITATION_EMAILS_PER_DAY=0, EMAIL_PROVIDER=console outside development, or
  * SINGLE_USER_MODE); `opted_out`: the person turned invitation emails off for their own address
- * (the app's /invitation-emails page). The result says no more than that about them.
+ * or another address of the same inbox (the app's /invitation-emails page). The result says no
+ * more than that about them, and it costs the owner what an email would.
  */
 export const INVITATION_SKIP_REASONS = [
   "owner_unverified",

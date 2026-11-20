@@ -905,14 +905,16 @@ unless asked, and you ask only when the person told you to ("share it with Bo an
   have access, so to notify people on a new artifact, publish it without `emails` and then call
   `set_visibility`.
 - Only people the call newly adds are emailed: never someone who already had access, never the
-  person themselves, at most once a day per artifact and address, and within daily limits.
+  person themselves, at most once a day per artifact and inbox (`bo+x@` is `bo@`), and within
+  daily limits.
   Without `notify` (the default), nobody is emailed.
 - The result's `invitations` says who was emailed (`emailed`) and who was not and why (`skipped`:
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit` (40 per call),
   `owner_limit`, `recipient_limit`, which also covers 3 a day from one owner to one address,
   `instance_limit` (the instance's daily total), `invitations_off` (the instance sends no
-  invitation emails) or `opted_out` (that person turned these emails off; do not try to reach
-  them another way through Plinth)). The
+  invitation emails) or `opted_out` (that person turned these emails off, which counts against
+  the daily limits like an email; do not try to reach them another way through Plinth, such as a
+  different form of their address)). The
   access was granted either way; tell the person whom to
   send the link to themselves.
 - The email names the person who shared it, the title, the role and the link, and nothing else to

@@ -2871,7 +2871,11 @@ function invitationSchemas(): Record<string, Json> {
         skipped: {
           type: "array",
           items: obj({ email: str({ format: "email" }), reason: enumOf(INVITATION_SKIP_REASONS) }),
-          description: "People the change added who were not emailed, and why",
+          description:
+            "People the change added who were not emailed, and why. `opted_out` means someone " +
+            "signed in as that inbox turned these emails off, so it says the address has signed " +
+            "in here; it costs a place in the change and one of the owner's daily invitations, " +
+            "and is given only while those limits have room",
         },
       }),
       description:
@@ -2914,7 +2918,9 @@ function invitationOperations(): Operation[] {
       summary: "Turn invitation emails to your own address off or on",
       description:
         "Signed-in people only, for their own address (never agents). Off, an owner who shares " +
-        "with this address still gives it access, and their result names it `opted_out`.",
+        "with this address, or another address of the same inbox (a +tag, or Gmail's dots), still " +
+        "gives it access, and their result names it `opted_out`, which costs the owner one of " +
+        "their daily invitations.",
       tag: "Account",
       auth: "user",
       body: "InvitationEmailsInput",

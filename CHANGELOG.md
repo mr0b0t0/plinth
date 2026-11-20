@@ -89,6 +89,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   adding the person again. Each email's footer and `List-Unsubscribe` header link
   `/invitation-emails`, where the recipient signs in and turns invitation emails to their address
   off (or back on); owners who share with them are told `opted_out`, and the access still applies.
+  The opt-out and the per-address limits cover the inbox, so `bo+x@gmail.com` and `b.o@gmail.com`
+  count as `bo@gmail.com`, and an `opted_out` answer costs the owner one of their daily
+  invitations, as an email would.
   Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
   them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
   Migration `0021_invitation_opt_outs.sql`.

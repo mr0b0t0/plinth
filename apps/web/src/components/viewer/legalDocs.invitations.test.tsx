@@ -21,6 +21,10 @@ describe("privacy notice: invitations", () => {
       // The opt-out record: kept until turned back on, and past an account's closing.
       expect(t).toContain("If you turn invitation emails off (the link at");
       expect(t).toContain("until you turn them back on");
+      // What it covers, and what an owner learns from it.
+      expect(t).toContain("the same inbox under another form of the");
+      expect(t).toContain("told only that you turned these emails off, which also tells them that");
+      expect(t).toContain("someone signed");
       expect(t).toContain("It stays when your account is closed, so that invitations do not");
     }
   });

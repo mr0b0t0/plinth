@@ -221,7 +221,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               you. So that nobody gets the same invitation twice, we keep a scrambled (hashed) form
               of the address for up to three days. If you turn invitation emails off (the link at
               the end of each one), we keep a scrambled form of your address so that none reach you,
-              until you turn them back on.
+              until you turn them back on. It also covers the same inbox under another form of the
+              address (with a +tag, or for Gmail with dots). An owner who later shares with you is
+              told only that you turned these emails off, which also tells them that someone signed
+              in to Plinth with your address.
             </li>
             <li>
               <strong>Comments</strong>: their text, who wrote them, and requests made to agents.
