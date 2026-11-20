@@ -5,16 +5,21 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getConfig } from "../src/config.ts";
-import { issueEnterUrl, verifyEnterToken } from "../src/content/tokens.ts";
+import { issueEnterUrl, signContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import {
+  type CaptureScope,
+  captureRequestAllowed,
+  captureScope,
   claimThumbnail,
+  type GuardedRequest,
+  guardCapturePage,
   setThumbnailShooter,
   THUMB,
   thumbnailKey,
   withBudget,
 } from "../src/services/thumbnails.ts";
-import { APP, agent, json } from "./helpers.ts";
+import { APP, agent, createToken, json } from "./helpers.ts";
 
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 0xff, 0xd9]);
 const ON = { BROWSER: {} as Fetcher };
@@ -414,8 +419,255 @@ describe("what the capture browser loads", () => {
     ).rejects.toThrow();
   });
 
+  it("never mints a pass without shared data for anything but a capture", async () => {
+    const config = getConfig(env as never);
+    const artifact = { id: "aaaaaaaaaaaaaaaaaaaa", accessEpoch: 1 };
+    await expect(
+      issueEnterUrl(config, artifact, "/", undefined, { noData: true }),
+    ).rejects.toThrow();
+    await expect(
+      signContentCookie(
+        config,
+        artifact.id,
+        1,
+        undefined,
+        "view",
+        undefined,
+        false,
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow();
+    const url = await issueEnterUrl(config, artifact, "/", undefined, {
+      capture: true,
+      noData: true,
+    });
+    const token = await verifyEnterToken(config, new URL(url).searchParams.get("t") as string);
+    expect(token).toMatchObject({ c: 1, d: 1 });
+  });
+
   it("gives up on a capture that outlasts its budget", async () => {
     await expect(withBudget(new Promise(() => undefined), 20)).rejects.toThrow(/longer than/);
     await expect(withBudget(Promise.resolve(7), 20)).resolves.toBe(7);
+  });
+});
+
+describe("a capture never carries shared data off the page", () => {
+  const DATA_PAGE = `<!doctype html><title>Votes</title>
+<meta name="plinth-capabilities" content="data"><p>votes</p>`;
+
+  /** A shared-data request the way the runtime makes one, with the capture browser's cookie. */
+  const dataApi = (id: string, path: string, cookie: string) =>
+    run(`http://${id}.content.localhost:8787/__plinth/api/v1/${path}`, {
+      headers: {
+        Cookie: cookie,
+        "x-plinth-data": "1",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+      },
+    });
+
+  type Seen = { version: string; collection: number; body: string; session: unknown };
+
+  /** A fake browser that enters the capture, then reads the page's shared data as its script would. */
+  const readingBrowser = (seen: Seen[]) => async (_b: Fetcher, url: string) => {
+    const enter = await run(url, { headers: { "sec-fetch-dest": "document" } });
+    const cookie = (enter.headers.get("set-cookie") ?? "").split(";")[0] as string;
+    const id = new URL(url).host.split(".")[0] as string;
+    const votes = await dataApi(id, "data/votes", cookie);
+    const session = await json(await dataApi(id, "session", cookie));
+    seen.push({
+      version: new URL(url).searchParams.get("next") as string,
+      collection: votes.status,
+      body: await votes.text(),
+      session,
+    });
+    return JPEG;
+  };
+
+  const put = (id: string, auth: Record<string, string>, base: number) =>
+    run(`/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        html: DATA_PAGE.replace("votes</p>", `v${base + 1}</p>`),
+        base_version: base,
+      }),
+    });
+
+  /** Forget version n's thumbnail and let a reader start its capture again. */
+  async function retake(id: string, n: number, auth: Record<string, string>) {
+    await env.DB.prepare(
+      "UPDATE versions SET thumbnail = NULL WHERE artifact_id = ?1 AND number = ?2",
+    )
+      .bind(id, n)
+      .run();
+    await run(`/api/v1/artifacts/${id}/thumbnail?version=${n}`, { headers: auth });
+  }
+
+  it("a version a token limited to the artifact wrote gets no data; a person's version does", async () => {
+    const owner = await agent();
+    const p = await publish(owner.auth, { html: DATA_PAGE, visibility: "unlisted" }, {});
+    const w = await run(`/api/v1/artifacts/${p.id}/data`, {
+      method: "POST",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ops: [{ op: "set", collection: "votes", doc_id: "a", data: { secret: 42 }, if_rev: 0 }],
+      }),
+    });
+    expect(w.status).toBe(200);
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: p.id,
+    });
+    const seen: Seen[] = [];
+    setThumbnailShooter(readingBrowser(seen));
+
+    // The owner's version: the capture reads what a signed-out link viewer reads.
+    expect((await put(p.id, owner.auth, 1)).status).toBe(200);
+    // The CI token's version: the capture's pass reads nothing, as an in-chat preview's does.
+    expect((await put(p.id, { Authorization: `Bearer ${ci.token}` }, 2)).status).toBe(200);
+    expect(seen.map((s) => s.version)).toEqual(["/__plinth/v/2/", "/__plinth/v/3/"]);
+    expect(seen[0]?.collection).toBe(200);
+    expect(seen[0]?.body).toContain("42");
+    expect(seen[1]?.collection).toBe(403);
+    expect(seen[1]?.body).not.toContain("42");
+    expect(JSON.parse(seen[1]?.body as string).error.details.reason).toBe("capture");
+    expect(seen[1]?.session).toEqual({ available: false, reason: "capture" });
+
+    // The pass belongs to the version, not to the artifact's current one: a person's newer
+    // version does not give the CI version's capture the data.
+    expect((await put(p.id, owner.auth, 3)).status).toBe(200);
+    expect(seen[2]?.collection).toBe(200);
+    await retake(p.id, 3, owner.auth);
+    expect(seen.map((s) => s.version)).toEqual([
+      "/__plinth/v/2/",
+      "/__plinth/v/3/",
+      "/__plinth/v/4/",
+      "/__plinth/v/3/",
+    ]);
+    expect(seen[3]?.collection).toBe(403);
+
+    // A version whose writer's account is gone is nobody's to vouch for: no data either.
+    await env.DB.prepare(
+      `UPDATE versions SET created_by_user = NULL, created_by_connection = NULL
+       WHERE artifact_id = ?1 AND number = 2`,
+    )
+      .bind(p.id)
+      .run();
+    await retake(p.id, 2, owner.auth);
+    expect(seen[4]?.version).toBe("/__plinth/v/2/");
+    expect(seen[4]?.collection).toBe(403);
+  });
+});
+
+describe("where the capture browser may go", () => {
+  const scope: CaptureScope = {
+    artifact: "https://abc.plinthusercontent.com",
+    hosts: ["cdn.jsdelivr.net", "fonts.googleapis.com"],
+  };
+  const allowed = (url: string, nav = false) => captureRequestAllowed(scope, url, nav);
+
+  it("allows the artifact itself, local schemes and the CSP's hosts for subresources", () => {
+    expect(allowed("https://abc.plinthusercontent.com/__plinth/enter?t=x", true)).toBe(true);
+    expect(allowed("https://abc.plinthusercontent.com/__plinth/v/3/", true)).toBe(true);
+    expect(allowed("https://abc.plinthusercontent.com/__plinth/api/v1/data/votes")).toBe(true);
+    expect(allowed("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js")).toBe(true);
+    expect(allowed("https://fonts.googleapis.com/css2?family=Inter")).toBe(true);
+    expect(allowed("data:image/png;base64,AAAA")).toBe(true);
+    expect(allowed("blob:https://abc.plinthusercontent.com/2f1c")).toBe(true);
+    expect(allowed("about:blank", true)).toBe(true);
+  });
+
+  it("aborts every navigation off the artifact and every other host", () => {
+    expect(allowed("https://evil.example/?d=secret", true)).toBe(false);
+    expect(allowed("https://evil.example/?d=secret")).toBe(false);
+    // A sibling artifact, another scheme or port on the artifact's host, credentials in the URL.
+    expect(allowed("https://xyz.plinthusercontent.com/", true)).toBe(false);
+    expect(allowed("https://xyz.plinthusercontent.com/__plinth/api/v1/data/votes")).toBe(false);
+    expect(allowed("http://abc.plinthusercontent.com/", true)).toBe(false);
+    expect(allowed("https://abc.plinthusercontent.com:8443/", true)).toBe(false);
+    expect(allowed("https://user:pw@abc.plinthusercontent.com/", true)).toBe(false);
+    // A CDN is for loading code, never somewhere to go, and only over https on its own port.
+    expect(allowed("https://cdn.jsdelivr.net/?d=secret", true)).toBe(false);
+    expect(allowed("http://cdn.jsdelivr.net/npm/x@1.0.0/x.js")).toBe(false);
+    expect(allowed("https://cdn.jsdelivr.net:8443/npm/x@1.0.0/x.js")).toBe(false);
+    expect(allowed("https://cdn.jsdelivr.net.evil.example/x.js")).toBe(false);
+    expect(allowed("wss://evil.example/socket")).toBe(false);
+    expect(allowed("not a url")).toBe(false);
+  });
+
+  it("under the path fallback, only the artifact's own path on the app host", () => {
+    const fallback: CaptureScope = { artifact: "http://localhost:8787/__content/abc", hosts: [] };
+    const ok = (url: string) => captureRequestAllowed(fallback, url, true);
+    expect(ok("http://localhost:8787/__content/abc/__plinth/v/1/")).toBe(true);
+    expect(ok("http://localhost:8787/__content/abc")).toBe(true);
+    expect(ok("http://localhost:8787/__content/abcd/")).toBe(false);
+    expect(ok("http://localhost:8787/api/v1/me")).toBe(false);
+  });
+
+  it("the instance's scope is the artifact's content origin and the CSP's hosts", () => {
+    const s = captureScope(getConfig(env as never), "aaaaaaaaaaaaaaaaaaaa");
+    expect(s.artifact).toBe("http://aaaaaaaaaaaaaaaaaaaa.content.localhost:8787");
+    expect(s.hosts).toEqual(expect.arrayContaining(["cdn.jsdelivr.net", "fonts.gstatic.com"]));
+  });
+
+  it("the browser page intercepts every request, aborts the ones off scope and closes popups", async () => {
+    const handlers: Record<string, (arg: never) => void> = {};
+    let intercepting = false;
+    const page = {
+      setRequestInterception: async (on: boolean) => {
+        intercepting = on;
+      },
+      on: (event: string, handler: (arg: never) => void) => {
+        handlers[event] = handler;
+        return page;
+      },
+    };
+    await guardCapturePage(page, scope);
+    expect(intercepting).toBe(true);
+    const outcomes: string[] = [];
+    const request = (url: string, nav: boolean, handled = false): GuardedRequest => ({
+      url: () => url,
+      isNavigationRequest: () => nav,
+      isInterceptResolutionHandled: () => handled,
+      continue: async () => {
+        outcomes.push(`continue ${url}`);
+      },
+      abort: async (code) => {
+        outcomes.push(`abort(${code}) ${url}`);
+      },
+    });
+    const onRequest = handlers.request as (r: GuardedRequest) => void;
+    onRequest(request("https://abc.plinthusercontent.com/__plinth/v/1/", true));
+    onRequest(request("https://evil.example/?d=secret", true));
+    onRequest(request("https://evil.example/pixel.gif", false));
+    onRequest(request("https://evil.example/already", true, true));
+    await Promise.resolve();
+    expect(outcomes).toEqual([
+      "continue https://abc.plinthusercontent.com/__plinth/v/1/",
+      "abort(blockedbyclient) https://evil.example/?d=secret",
+      "abort(blockedbyclient) https://evil.example/pixel.gif",
+    ]);
+    let closed = false;
+    (handlers.popup as (p: { close(): Promise<void> } | null) => void)({
+      close: async () => {
+        closed = true;
+      },
+    });
+    (handlers.popup as (p: null) => void)(null);
+    expect(closed).toBe(true);
+  });
+
+  it("every capture hands the browser the artifact's scope", async () => {
+    const scopes: CaptureScope[] = [];
+    setThumbnailShooter(async (_b, _url, s) => {
+      scopes.push(s);
+      return JPEG;
+    });
+    const a = await agent();
+    const p = await publish(a.auth);
+    expect(scopes).toEqual([captureScope(getConfig(env as never), p.id)]);
   });
 });

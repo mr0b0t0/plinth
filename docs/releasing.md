@@ -25,6 +25,12 @@ Maintainers only. On `main`, up to date with GitHub and with a clean working tre
 `## 0.2.0 (<date>)`, commits `Release v0.2.0`, tags `v0.2.0` and pushes both. Without `--push` it
 stops after tagging and prints the push command.
 
+The same tag releases the GitHub Action: `mr0b0t0/plinth/publish@v0.2.0` runs `publish/` and the
+CLI client from that commit ([ci.md](ci.md)). There is no moving major tag. `pnpm release` also
+moves every pin of the Action and of the CLI for CI to the new version (`ACTION_REF` in
+`packages/shared/src/ci.ts`, which the New token dialog shows, and the examples in `docs/ci.md`,
+`publish/README.md` and `README.md`; the list is `scripts/ci-pins.mjs`), in the release commit.
+
 ## What the workflow does
 
 1. **CI**: the full [`ci.yml`](../.github/workflows/ci.yml) (lint, typecheck, tests, build, the

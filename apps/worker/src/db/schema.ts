@@ -25,6 +25,8 @@ export const agentConnections = sqliteTable("agent_connections", {
   createdAt: text("created_at").notNull(),
   lastUsedAt: text("last_used_at"),
   revokedAt: text("revoked_at"),
+  /** A personal access token limited to this one artifact (0012_bound_tokens); null: account-wide. */
+  artifactId: text("artifact_id"),
 });
 
 export const artifacts = sqliteTable("artifacts", {

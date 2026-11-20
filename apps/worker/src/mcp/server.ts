@@ -8,6 +8,7 @@ import { LIMITS, PRODUCT_NAME } from "@plinth/shared";
 import { PLINTH_VERSION } from "../app/version.ts";
 import type { Ctx } from "../services/context.ts";
 import {
+  BOUND_TOKEN_NOTE,
   CATEGORY_INSTRUCTION,
   contentNote,
   PLUGIN_NOTE,
@@ -65,7 +66,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "Results list warnings; fix them before handing over the link (not_scanned and live_draft need no action). " +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
         "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
-        `claim_mention. ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
+        `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
     },
   );
 

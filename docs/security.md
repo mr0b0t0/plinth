@@ -33,6 +33,10 @@ make a test pass.
 | Design system injects into pages built from it | A design system's token value or CSS closes a `<style>` element, imports a stylesheet from another host, or carries a script that an agent copies into a page | The boundary is the content CSP of the page the CSS lands in, which blocks loads from other hosts. Defence in depth: one value grammar for every string that reaches CSS (no `;`, braces, `<`, `>`, `\`, `@`, quotes or line breaks, no `url(`), font names quoted by Plinth, and CSS blocks with no `<`, no backslash, no `@import`, no URL-taking function but `url()`, and only relative, `#fragment` or raster `data:` URLs in it; `get_design_system` marks every field untrusted and tells agents never to copy scripts or handlers ([Design systems](#design-systems)) |
 | A page steers the app through a deck's messages | A script on another frame posts look-alike `position` or `fullscreen` messages to the app page | Deck messages are accepted only from the window of the frame the app holds, at the exact content origin (or `null` under opaque isolation), only for decks, and carry only slide numbers; full screen still needs the person's activation ([Slides](#slides)) |
 | A page drives the comment composer | A page that declares `comments` opens the composer again and again, swaps the anchor under a comment someone is writing, prefills `@claude ...` for a collaborator to click through, or reads comment text through the channel | The page can only open the composer: it never posts and cannot fill in the text; at most one compose a second, none while the tab is hidden or a dialog is open, none before the page said hello; a closed panel reopened at most once a second, by compose and `open` together; `busy` and no change while someone is writing; no page request moves focus, so keystrokes meant for the page never land in the composer; the frame is told ids, pins, status and anchors only ([Comments from the page](#comments-from-the-page)) |
+| Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
+| A CI token reads shared data through a content pass | A token limited to one artifact (refused `data_read`) asks the viewer gate for an enter URL, redeems it and reads `/__plinth/api/` with a script, or reads a thumbnail of a version that draws the data | The gate and thumbnails ask the policy for `enter`, which is `view` for everyone else and `token_bound` for a bound token, so it never gets an enter URL or a thumbnail; its in-chat preview pass reads no shared data and joins no room ([Authorization](#authorization)) |
+| A CI token's page leaks shared data from the thumbnail capture | A token limited to one artifact publishes a version that declares `data`, reads `/__plinth/api/` and sets `location.href` to an outside URL carrying the documents; the capture after the commit runs it with no viewer involved | The capture of a version a bound token wrote (or whose writer's account is gone) gets a pass that reads no shared data (`reason: "capture"`, `policy.captureReadsData`); every capture's browser aborts any request or navigation outside the artifact's own origin and the CSP's hosts, and closes any window the page opens ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
+| Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
@@ -530,6 +534,67 @@ do not reveal that they exist. Agents act as their user, further limited by toke
 (`artifacts:read`, `artifacts:write`, `mentions`). An artifact's category is returned only to its
 owner (`policy.seesOwnerMetadata`, applied in the one function that builds artifact summaries).
 
+A personal access token may be **limited to one artifact** (`agent_connections.artifact_id`, for
+CI). The policy carries it on the agent principal (`boundArtifactId`, rebuilt from the live
+connection row on every request and when an upload ticket is redeemed), and `decide` checks it right
+after `deleted` and **before** the scope: any other artifact is `not_found` for every action and
+every scope set, so a bound token cannot learn which ids or slugs exist (a missing one answers the
+same 404). On its own artifact only `view` and `edit` pass, and they still need the person's current
+role and the token's scope, so a takedown, a delete or removing the person's grant stops the token
+too; every other action there is denied with `token_bound` (403) only when the token may view that
+artifact now, so it reveals nothing; otherwise the action gets the answer viewing gets (404 once the
+person's grant is gone, `taken_down` after a takedown). Reading the comment threads is its own
+action (`comments_read`, the same rule as `view` for everyone else), so a bound token never sees
+comment bodies, commenters' emails or mention tasks. The people list (`people`: `GET
+/artifacts/:ref/people`) is refused like the rest, and its other ways in need `data_read`
+(`list_artifact_data`'s summary, names on documents) or a content pass (the page's
+`/__plinth/api/v1/people`, room names, the gate's `people` block), so a bound token never learns
+who has access. Calls that are not about one artifact go
+through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
+`start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
+`mayReadStatsSummary` refuses `GET /stats/artifacts` and `get_artifact_stats` without an id with
+`token_bound`, since the summary would list every artifact the person owns (one artifact's stats
+are the `views` action, refused like the rest); `get_design_system` and a page's design-system
+reference read the other artifact through `decide(view)`, so a bound token gets the 404 for every
+design system but its own, unlisted and public ones too, the publish warning is `design_system_unavailable` and
+`get_artifact`'s `design_system` is null; `list_artifacts` returns at most the bound artifact, after `decide(view)`, with no categories (a
+category filter returns nothing); `GET /categories` returns none; the category is hidden by
+`seesOwnerMetadata(principal, role)` and `data_usage` by `decide(data_read)`; `canActOnMention`
+refuses a bound token (which never holds `mentions`), and an `@<label>` mention never targets one.
+`GET /me` answers a bound token with the person's id and the connection only: no email, name,
+artifact count or limit, or admin flag. Artifact summaries (`get_artifact`, `list_artifacts`, update
+results) and the version list show it the people as a link viewer sees them
+(`seesPeople(principal, role)`): the owner by name with no id or email, a version's author by name or
+the address's local part with no ids, even when the token is the owner's, so a leaked CI token
+gives away no email address. The Connections list and `GET /me` name the bound artifact
+only where `decide(view)` allows it for the person now. A binding only narrows: the column is never
+updated, deleting or taking down the artifact revokes its tokens, erasing it removes them by cascade
+(never `SET NULL`), and a CHECK refuses it on an OAuth connection. Only the artifact's owner or an
+editor (`edit`) can make one; strangers get 404.
+
+A bound token never holds a content pass of its own. A pass reads the page's shared data once the
+current version declares `data` (`pageDataAccess` lets any pass read, and a page's script meets the
+data API's caller checks itself), so a gate for the token would undo the `data_read` refusal: with
+publish rights it could ship a version that declares `data viewer`, have identified viewers' pages
+copy their emails into a document, and read them back through its own pass. The viewer gate
+(`GET /api/v1/view/:ref`, which the password and code routes also answer through) therefore asks
+the policy for `enter`, not `view`: the same rule as `view` for every other principal (admins on a
+takedown included), and `token_bound` (403) for a bound token on its artifact, so no enter URL, no
+identity claim, no room and no counted open is ever minted for it. Thumbnails are `enter` too
+(`GET /artifacts/:ref/thumbnail` answers 403 `token_bound`, and summaries give the token
+`thumbnail_url: null`, `policy.seesThumbnails`), since Plinth's capture of a person's version runs
+the page with a pass that reads its data and the picture could show it. The capture of a version
+the token itself wrote reads none: the pass Plinth mints for it carries a no-data flag (`d`, only
+ever with the capture flag), and the data API refuses it as it refuses a preview, with
+`reason: "capture"` (`policy.captureReadsData`, [Thumbnails and link previews](#thumbnails-and-link-previews)).
+The in-chat preview (`preview_artifact`) stays
+allowed: a preview pass carries no identity, reads and writes no shared data (`reason: "preview"`)
+and never joins a room, so it shows the version's files, which `get_artifact` already returns. The
+token's own versions still run for everyone who opens the artifact, as an editor's agent's do: page
+code can show identified viewers' emails to whoever may read the page's data, which is the
+threat table's "Page code harvests viewer emails" row (the viewer is told, and anyone with edit rights can
+revert the version), not a read the token makes.
+
 An artifact's stats ([spec](spec.md#artifact-stats)), which name the people who opened it, are
 behind their own policy action, `views`: the owner only, a read action for agents
 (`artifacts:read`). Anyone who
@@ -554,6 +619,10 @@ or title, an owner or an email, so it reveals nothing about any artifact an admi
   its own; revoking a connection kills its tokens immediately.
 - Upload tokens (`plinth_up_...`, from `start_upload`) are 32 random bytes, stored only as SHA-256
   hashes, and usable for one bundle request only ([below](#uploads-from-start_upload)).
+- A personal access token can be limited to one artifact ([Authorization](#authorization)); it is
+  an ordinary connection otherwise: hashed, shown once, listed and revoked on Connections. For CI
+  it belongs in a secret (a GitHub environment secret behind branch protection, or a masked and
+  protected GitLab variable), never in the repository or a workflow file.
 - Artifact passwords are hashed with PBKDF2-SHA256 and a per-password salt, and so is the review
   account's password ([below](#review-account-sign-in)).
 - Sign-in codes and magic links are single use and expire after 15 minutes.
@@ -643,6 +712,11 @@ can read it from that shell's arguments. Whoever holds an **update** token holds
 That version is served at the artifact's current visibility, on its origin, with its viewers'
 content cookies, so its script can read every version of a private artifact in those viewers'
 browsers and leak it through navigation. The version can be reverted; the reading cannot be undone.
+A token limited to one artifact ([Publishing from CI](#publishing-from-ci)) is in the same position
+for every version it publishes, with one more runner: Plinth's own thumbnail capture opens each new
+version with no viewer present. That capture reads no shared data for a version a bound token
+wrote, and its browser aborts every navigation off the artifact, so the token's page cannot use it
+to send the data anywhere ([Thumbnails and link previews](#thumbnails-and-link-previews)).
 A **publish** token creates one private artifact. The `stored.reused` count in the result tells the
 holder whether bytes they guessed are in the current version, which is weaker than the version
 commit the token already allows. The agent's own MCP token, in the same transcript, is far more
@@ -722,6 +796,21 @@ file.
   loads under the usual content CSP, so it can reach nothing but its own origin and the CDN
   allowlist. The enter token carries no identity claim, so a page with shared data sees a
   signed-out viewer and can neither read nor write as anyone.
+- **Only a writer who can read the data gets a capture that reads it.** A person's version is
+  captured with a link viewer's read of the data: its writer can read the data already, so the
+  page learns nothing new. A version written by a token limited to one artifact, which may not read the data, or by an
+  account that has since been erased, is captured with a pass that carries a no-data flag (`d`,
+  only with `c`; a pass with `d` and without `c` is refused, and two passes that disagree on it
+  count as none). The data API refuses that pass exactly as it refuses an in-chat preview, with
+  `reason: "capture"`; the rule is `policy.captureReadsData`, and the flag follows the captured
+  version, not the artifact's current one.
+- **The capture browser goes nowhere else.** The CSP cannot stop a top-level navigation, and the
+  capture is the one place a page runs top-level, unattended. So every capture turns on request
+  interception and aborts any request or navigation outside the artifact's own origin (its own
+  path under the path fallback), the hosts the content CSP allows (subresources only, over https
+  on their default port) and `data:`, `blob:` and `about:` URLs. A window the page opens is a
+  page of its own that this interception does not cover; the capture closes it on sight, which
+  may still let its first request out, so the no-data rule above does not depend on it.
 - **The one top-level exception.** The content host sends every top-level visit to the app's page,
   so artifacts render only in the app's sandboxed frame. The capture browser must load the
   version top-level, so its enter token carries a capture flag (`c`), which becomes a content
@@ -1144,6 +1233,35 @@ policy check and rate limit.
   declaration, and the comment is still posted through the comments API's policy.
 - **Residual risk.** No user-activation check is possible across frames (page script can post the
   protocol itself), so the controls above are the app's.
+
+## Publishing from CI
+
+The GitHub Action (`publish/`, `docs/ci.md`) runs on the user's runner and pushes; Plinth never
+pulls. What it does about text it did not write and about the token:
+
+- **No workflow commands from the server or the artifact.** Before it runs the CLI client, the
+  Action prints `::stop-commands::<token>`, with a fresh random token from `crypto.randomBytes`
+  that is never derived from input; until it prints `::<token>::` the runner reads every line as
+  plain text, so a server error, a warning's file path, a title or a slug that begins with
+  `::set-output`, `::add-mask::` or `::error` does nothing. Crash handlers print the resume line
+  first. The Action's own commands come after it: annotations escape `%`, CR and LF in their text
+  (and `:` and `,` in properties), so each stays one line.
+- **Outputs and the summary.** Outputs are written to `$GITHUB_OUTPUT` between random heredoc
+  delimiters that are checked not to occur in the value. URLs are built only from a slug matching
+  the server's slug pattern. The job summary escapes every server string for Markdown and HTML
+  and holds no token, email or connection label, since anyone who can read the repository's
+  Actions sees it. Outputs are still untrusted for the workflow (the `json` output carries the
+  title, which anyone with edit rights chose): `docs/ci.md` passes them to `run:` and
+  `actions/github-script` through `env:`, never as `${{ }}` inside a script.
+- **The token.** It is checked against the token alphabet, then masked with `::add-mask::` (in
+  case it was not passed as a secret), and reaches the client only in its environment
+  (`PLINTH_TOKEN`), with every `INPUT_*` variable removed; never in argv, outputs or the summary.
+  The client binds it to the `url` input's origin, refuses redirects and runs with an empty
+  `PLINTH_HOME`, so no local instance is ever picked.
+- **Forks.** GitHub does not give secrets to workflows from forks; `docs/ci.md` says never to use
+  `pull_request_target` to build and publish a fork's code with the token.
+- **Pinning.** The Action is used at a release tag or a commit SHA, and imports the client from
+  the same commit with no dependencies, so the pin covers everything it runs.
 
 ## Operator checklist for the content domain
 

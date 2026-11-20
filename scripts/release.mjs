@@ -3,10 +3,11 @@
 //
 //   pnpm release 0.2.0 [--push] [--dry-run]
 //
-// sets the version of the npm CLI (packages/cli/package.json), turns the "Unreleased" section of
-// CHANGELOG.md into "<version> (<date>)", commits "Release v<version>" and makes the annotated tag
-// v<version>. With --push it pushes main and the tag; the tag starts .github/workflows/release.yml,
-// which runs CI and publishes npm, the Docker image and the GitHub release.
+// sets the version of the npm CLI (packages/cli/package.json) and every pin of the GitHub Action
+// and the CLI for CI (scripts/ci-pins.mjs), turns the "Unreleased" section of CHANGELOG.md into
+// "<version> (<date>)", commits "Release v<version>" and makes the annotated tag v<version>. With
+// --push it pushes main and the tag; the tag starts .github/workflows/release.yml, which runs CI
+// and publishes npm, the Docker image and the GitHub release.
 //
 //   node scripts/release.mjs --notes 0.2.0
 //
@@ -15,11 +16,11 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CI_PINNED, VERSION_RE as SEMVER, withCiPins } from "./ci-pins.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CHANGELOG = path.join(root, "CHANGELOG.md");
 const CLI_PKG = path.join(root, "packages", "cli", "package.json");
-const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
 function fail(message) {
   console.error(`release: ${message}`);
@@ -93,7 +94,9 @@ if (dryRun) {
 pkg.version = version;
 writeFileSync(CLI_PKG, `${JSON.stringify(pkg, null, 2)}\n`);
 writeFileSync(CHANGELOG, nextChangelog);
-git(["add", CLI_PKG, CHANGELOG]);
+const pinned = CI_PINNED.map((rel) => path.join(root, rel));
+for (const file of pinned) writeFileSync(file, withCiPins(readFileSync(file, "utf8"), version));
+git(["add", CLI_PKG, CHANGELOG, ...pinned]);
 git(["commit", "--quiet", "-m", `Release v${version}`]);
 git(["tag", "-a", `v${version}`, "-m", `v${version}`]);
 console.log(`Committed and tagged v${version}.`);

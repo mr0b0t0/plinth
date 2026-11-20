@@ -384,6 +384,7 @@ describe("identity claim: nobody else gets one", () => {
         connectionLabel: "Test token",
         clientType: "other",
         scopes: new Set(["artifacts:read", "artifacts:write"]),
+        boundArtifactId: null,
       }),
       artifact.id,
     );

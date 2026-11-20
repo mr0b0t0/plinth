@@ -58,6 +58,7 @@ describe("policy: pagePeopleAccess", () => {
 
 describe("policy: the people action", () => {
   const artifact = (over: Partial<ArtifactFacts> = {}): ArtifactFacts => ({
+    id: "peopleartifact000001",
     ownerId: "u-owner",
     visibility: "unlisted",
     hasPassword: false,
@@ -79,6 +80,7 @@ describe("policy: the people action", () => {
     connectionLabel: "Work",
     clientType: "claude",
     scopes: new Set(scopes) as never,
+    boundArtifactId: null,
   });
   const access = (grantRole: "viewer" | "commenter" | "editor" | null) => ({
     grantRole,

@@ -19,6 +19,7 @@ const conn = (over: Partial<ConnectionInfo>): ConnectionInfo => ({
   created_at: "2026-11-14T09:00:00Z",
   last_used_at: null,
   revoked_at: null,
+  artifact: null,
   ...over,
 });
 
@@ -174,5 +175,66 @@ describe("Connections", () => {
     const Connections = await loadPage();
     render(<Connections />);
     expect(await screen.findByRole("heading", { name: "Connect an agent" })).toBeTruthy();
+  });
+});
+
+describe("Connections: tokens limited to one artifact", () => {
+  it("lists them with the tokens: the artifact, then what they may do, and a key", async () => {
+    backend([
+      conn({}),
+      conn({
+        id: "c2",
+        label: "CI: Coverage",
+        client_type: "other",
+        kind: "token",
+        scopes: ["artifacts:read", "artifacts:write"],
+        artifact: { id: "k3x9mq2v7d8p4t6w1n5r", slug: "coverage", title: "Coverage <b>report</b>" },
+      }),
+      conn({
+        id: "c3",
+        label: "CI: Old",
+        kind: "token",
+        scopes: ["artifacts:read"],
+        artifact: { id: "k3x9mq2v7d8p4t6w1n5s", slug: null, title: null },
+      }),
+    ]);
+    const Connections = await loadPage();
+    render(<Connections />);
+    const link = await screen.findByRole("link", { name: "Coverage <b>report</b>" });
+    expect(link.getAttribute("href")).toBe("/a/coverage");
+    // One line: the artifact first, then one short label for what it may do there.
+    const line = link.closest("p") as HTMLElement;
+    expect(line.textContent).toBe("Only Coverage <b>report</b>Permissions: Publish new versions");
+    expect(screen.getByText("Read only")).toBeTruthy();
+    const item = link.closest("li") as HTMLElement;
+    expect(item.querySelectorAll("p.pl-acct-conn__scopes")).toHaveLength(1);
+    // A key, not initials, so it does not read as another agent; and no client badge.
+    expect(item.querySelector(".pl-acct-conn__mark svg")).toBeTruthy();
+    expect(within(item).queryByText("Other client")).toBeNull();
+    expect(screen.getByText("An artifact you can no longer open")).toBeTruthy();
+    // Under the tokens, not among the connected agents, which count only the agent.
+    expect(link.closest("details")).toBeTruthy();
+    const agents = screen.getByRole("region", { name: /Connected agents/ });
+    expect(within(agents).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(agents).getByText("1")).toBeTruthy();
+  });
+
+  it("leaves them out of the sidebar's agents", async () => {
+    backend([
+      conn({}),
+      conn({
+        id: "c2",
+        label: "CI: Coverage",
+        kind: "token",
+        scopes: ["artifacts:read", "artifacts:write"],
+        artifact: { id: "k3x9mq2v7d8p4t6w1n5r", slug: "coverage", title: "Coverage" },
+      }),
+    ]);
+    const Connections = await loadPage();
+    render(<Connections />);
+    const agents = (await screen.findByRole("heading", { name: "Agents" })).closest("section");
+    expect(agents).toBeTruthy();
+    await within(agents as HTMLElement).findByRole("link", { name: /Work Claude/ });
+    expect(within(agents as HTMLElement).queryByRole("link", { name: /CI: Coverage/ })).toBeNull();
   });
 });

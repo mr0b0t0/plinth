@@ -192,6 +192,20 @@ codex mcp add plinth --url https://plinth.aconite.io/mcp --bearer-token-env-var 
 For Codex the last command writes `bearer_token_env_var = "PLINTH_TOKEN"` under
 `[mcp_servers.plinth]`; export `PLINTH_TOKEN` in the shell that starts Codex.
 
+**A token limited to one artifact** is the one to give CI: tick **Limit to one artifact** in the
+New token dialog and choose the artifact. It always
+holds `artifacts:read` and may hold `artifacts:write`, never `mentions`. It can read and update
+only that artifact: `get_artifact`, `list_versions`, `update_artifact` and `start_upload` with its
+id work as for any token; every other artifact answers `not_found`, and `publish_artifact`,
+`start_upload` without id, `set_visibility`, `restore_version`, a category, comments
+(`list_comments` too), shared data and `get_artifact_stats` (with or without id) are refused with `forbidden` and `reason: "token_bound"`.
+`get_design_system` reads only that artifact, so every other design system (unlisted and public ones too) is
+`not_found`, and a page it publishes that names one gets the `design_system_unavailable` warning.
+`list_artifacts` returns only that artifact, and no categories. Its results name the owner and
+the versions' authors as a link viewer sees them: no email addresses or ids. `GET /api/v1/me` says
+so, with no account fields: `connection.bound` is true and `connection.artifact` names it. Publishing from
+GitHub Actions, GitLab CI or cron: [ci.md](ci.md).
+
 ## Tools
 
 Input fields come from the shared schemas in `packages/shared/src/schemas.ts`. `id` is always an

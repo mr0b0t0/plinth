@@ -46,7 +46,11 @@ async function epochOf(id: string): Promise<number> {
   return row?.accessEpoch ?? 0;
 }
 
-async function passCookie(id: string, kind: "preview" | "capture"): Promise<string> {
+async function passCookie(
+  id: string,
+  kind: "preview" | "capture",
+  opts: { noData?: boolean } = {},
+): Promise<string> {
   const value = await signContentCookie(
     config(),
     id,
@@ -54,6 +58,9 @@ async function passCookie(id: string, kind: "preview" | "capture"): Promise<stri
     undefined,
     kind,
     kind === "preview" ? 1 : undefined,
+    false,
+    undefined,
+    opts.noData === true,
   );
   return `${contentCookieName(config(), new URL(contentOrigin(id)))}=${value}`;
 }
@@ -149,6 +156,12 @@ describe("people list: the checks, in order", () => {
       "feature_disabled",
       "not_identified",
     );
+    // The capture of a version a token limited to one artifact wrote (policy.captureReadsData)
+    // stops at check 9, before any claim is looked at, for the list and for one person.
+    const noData = await passCookie(id, "capture", { noData: true });
+    for (const path of ["/people", "/people/u_0123456789abcdef01234567"]) {
+      await refused(await api(id, path, { cookie: noData }), 403, "feature_disabled", "capture");
+    }
     // An unlisted copy opened by a link viewer: a pass without a claim.
     const { body } = await publish(owner.auth, { html: peoplePage(), visibility: "unlisted" });
     const anon = await cookieFor(body.id);

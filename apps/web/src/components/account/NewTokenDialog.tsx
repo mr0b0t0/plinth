@@ -1,18 +1,25 @@
-// "New token": label, client type and scopes, then the token, shown once. The token lives only in
-// this component's state and is dropped when the dialog closes.
+// "New token": label, client type, scopes and, optionally, the one artifact it is limited to; then
+// the token, shown once. The token lives only in this component's state and is dropped when the
+// dialog closes. A token limited to one artifact reads it and may publish new versions of it,
+// nothing else (the Worker enforces that; this dialog only offers the scopes it allows).
 import {
   API,
+  type ArtifactList,
+  type ArtifactType,
+  CI_DOCS_URL,
+  CI_NO_ARTIFACT_URL,
   CLIENT_TYPES,
   type ClientType,
   type CreatedToken,
+  ciWorkflowSnippet,
   LIMITS,
   SCOPES,
   type Scope,
 } from "@plinth/shared";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Button, Checkbox, Dialog, Input, Select, Stack } from "../ui/index.ts";
-import { CopyField } from "./CopyField.tsx";
+import { CopyBlock, CopyField } from "./CopyField.tsx";
 import { CLIENT_TYPE_LABEL, SCOPE_META } from "./format.ts";
 import { Note } from "./Note.tsx";
 
@@ -28,17 +35,135 @@ export function NewTokenDialog({ open, onClose, onCreated }: NewTokenDialogProps
   return open ? <TokenDialogBody onClose={onClose} onCreated={onCreated} /> : null;
 }
 
+/** GET /artifacts answers at most this many, most recent first, and has no next page. */
+const LIST_MAX = 500;
+
+/** An artifact the token can be limited to. */
+interface Pickable {
+  id: string;
+  slug: string;
+  title: string;
+  type: ArtifactType;
+}
+
+type Editable =
+  | { status: "idle" | "loading" | "error" }
+  | {
+      status: "ready";
+      items: Pickable[];
+      /** The answer for this search ("" for none). */
+      query: string;
+    };
+
+/**
+ * Artifacts the person owns or edits, for "Limit to one artifact": loaded when the person first
+ * asks for the limit, again for each search (`query`, settled), and on `retry` after an error.
+ * `full`: the unfiltered list came back at its maximum, so older artifacts are found by searching.
+ */
+function useEditableArtifacts(load: boolean, query: string) {
+  const [state, setState] = useState<Editable>({ status: "idle" });
+  const [full, setFull] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` re-runs the fetch (Try again)
+  useEffect(() => {
+    if (!load) return;
+    const ctrl = new AbortController();
+    setState({ status: "loading" });
+    const path = query ? `${API.artifacts}?query=${encodeURIComponent(query)}` : API.artifacts;
+    api<ArtifactList>(path, { signal: ctrl.signal })
+      .then((list) => {
+        // Once full, it stays full: a search's shorter answer does not hide the search box.
+        if (!query && list.items.length >= LIST_MAX) setFull(true);
+        setState({
+          status: "ready",
+          items: list.items
+            .filter((a) => a.role === "owner" || a.role === "editor")
+            .map((a) => ({ id: a.id, slug: a.slug, title: a.title, type: a.type })),
+          query,
+        });
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setState({ status: "error" });
+      });
+    return () => ctrl.abort();
+  }, [load, query, attempt]);
+  return { state, full, retry: () => setAttempt((n) => n + 1) };
+}
+
+/**
+ * The person owns or edits no artifact at all ("No artifact yet"): the unfiltered list came back
+ * empty, so there is nothing a limited token could be for.
+ */
+function nothingToPick(editable: Editable, full: boolean): boolean {
+  return editable.status === "ready" && !full && !editable.query && editable.items.length === 0;
+}
+
+/** The random end of a slug (`weekly-report-1sxs6tzyab` gives `1sxs6tzyab`), or all of it. */
+const slugEnd = (slug: string) => slug.slice(slug.lastIndexOf("-") + 1) || slug;
+
+/**
+ * Each artifact's option text: its title and, when another one has the same title, the end of its
+ * slug after a dot (short, so a narrow select still shows the part that tells them apart). The
+ * whole slug when two of them end the same way.
+ */
+function optionLabels(items: Pickable[]): Map<string, string> {
+  const key = (t: string) => t.trim().toLowerCase();
+  const endKey = (a: Pickable) => `${key(a.title)}\n${slugEnd(a.slug)}`;
+  const titles = new Map<string, number>();
+  const ends = new Map<string, number>();
+  for (const a of items) {
+    titles.set(key(a.title), (titles.get(key(a.title)) ?? 0) + 1);
+    ends.set(endKey(a), (ends.get(endKey(a)) ?? 0) + 1);
+  }
+  return new Map(
+    items.map((a) => {
+      if ((titles.get(key(a.title)) ?? 0) < 2) return [a.id, a.title || a.slug];
+      const end = (ends.get(endKey(a)) ?? 0) < 2 ? slugEnd(a.slug) : a.slug;
+      return [a.id, `${a.title} · ${end}`];
+    }),
+  );
+}
+
+/** `value` once it has stopped changing for `ms`. */
+function useSettled(value: string, ms: number): string {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
+
 function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open">) {
   const [label, setLabel] = useState("");
   const [clientType, setClientType] = useState<ClientType>("other");
   const [scopes, setScopes] = useState<Scope[]>([...SCOPES]);
+  // Limited to one artifact: it always reads it, and publishes new versions when `canPublish`.
+  const [limited, setLimited] = useState(false);
+  const [search, setSearch] = useState("");
+  const settledSearch = useSettled(search.trim(), 300);
+  const { state: editable, full, retry } = useEditableArtifacts(limited, settledSearch);
+  const [picked, setPicked] = useState<Pickable | null>(null);
+  const limitTo = picked?.id ?? "";
+  const [canPublish, setCanPublish] = useState(true);
+  const [limitError, setLimitError] = useState<string | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const [createdFor, setCreatedFor] = useState<{ id: string; type?: ArtifactType } | null>(null);
   const labelRef = useRef<HTMLInputElement>(null);
   const doneRef = useRef<HTMLButtonElement>(null);
+
+  // A limited token for someone with no artifact yet cannot be made: Create token waits.
+  const blocked = limited && nothingToPick(editable, full);
+
+  const chosen: Scope[] = limited
+    ? canPublish
+      ? ["artifacts:read", "artifacts:write"]
+      : ["artifacts:read"]
+    : scopes;
 
   const close = () => {
     setToken(null);
@@ -47,15 +172,19 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy) return;
+    if (busy || blocked) return;
     const name = label.trim();
     let bad = false;
     if (!name) {
       setLabelError("Name the token, e.g. “Codex on my laptop”.");
       bad = true;
     }
-    if (scopes.length === 0) {
+    if (chosen.length === 0) {
       setScopeError("Choose at least one permission.");
+      bad = true;
+    }
+    if (limited && !limitTo) {
+      setLimitError("Choose an artifact.");
       bad = true;
     }
     if (bad) {
@@ -67,9 +196,19 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
     try {
       const created = await api<CreatedToken>(API.connections, {
         method: "POST",
-        body: { label: name, client_type: clientType, scopes },
+        body: {
+          label: name,
+          // A limited token answers no mentions, so its client type only labels it.
+          client_type: limited ? "other" : clientType,
+          scopes: chosen,
+          ...(limited ? { artifact: limitTo } : {}),
+        },
       });
       setToken(created.token);
+      const bound = created.connection.artifact;
+      setCreatedFor(
+        bound ? { id: bound.id, type: picked?.id === bound.id ? picked.type : undefined } : null,
+      );
       onCreated(created);
       window.setTimeout(() => doneRef.current?.focus(), 0);
     } catch (err) {
@@ -102,13 +241,41 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
             copyLabel="Copy token"
             copiedMessage="Token copied"
           />
-          <Note tone="warning">
-            You won't see this token again. Copy it now and keep it somewhere safe, like your
-            agent's settings or a password manager. If you lose it, revoke it and create a new one.
-          </Note>
-          <p className="type-small text-muted">
-            Agents send it as <code>Authorization: Bearer …</code> to the MCP server URL.
-          </p>
+          {createdFor ? (
+            <>
+              <Note tone="warning">
+                Shown only once. Save it as the CI secret <code>PLINTH_TOKEN</code>.
+              </Note>
+              <CopyBlock
+                label={
+                  <>
+                    GitHub Actions step <span aria-hidden="true">·</span>{" "}
+                    <a href={CI_DOCS_URL} target="_blank" rel="noreferrer">
+                      CI guide
+                    </a>
+                  </>
+                }
+                // The app runs on its own origin, which is the instance the token belongs to.
+                value={ciWorkflowSnippet({
+                  id: createdFor.id,
+                  type: createdFor.type,
+                  appOrigin: window.location.origin,
+                })}
+                copyLabel="Copy workflow step"
+                copiedMessage="Workflow step copied"
+                wrap={false}
+              />
+            </>
+          ) : (
+            <>
+              <Note tone="warning">
+                Shown only once. Keep it in your agent's settings or a password manager.
+              </Note>
+              <p className="type-small text-muted">
+                Agents send it as <code>Authorization: Bearer …</code> to the MCP server URL.
+              </p>
+            </>
+          )}
         </Stack>
       </Dialog>
     );
@@ -119,14 +286,24 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
       open
       onClose={close}
       title="New token"
-      description="A personal access token lets an agent without OAuth, or a script, act as you."
+      description={
+        limited
+          ? "For scripts and CI: one artifact and nothing else."
+          : "A personal access token lets an agent without OAuth, or a script, act as you."
+      }
       size="md"
       footer={
         <>
           <Button variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form="new-token-form" loading={busy}>
+          <Button
+            variant="primary"
+            type="submit"
+            form="new-token-form"
+            loading={busy}
+            disabled={blocked}
+          >
             Create token
           </Button>
         </>
@@ -146,38 +323,71 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
           }}
           autoComplete="off"
         />
-        <Select
-          label="Client"
-          value={clientType}
-          onChange={(e) => setClientType(e.target.value as ClientType)}
-          options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-          hint={
-            clientType === "other"
-              ? "Collaborators can reach it by mentioning this token's name in comments."
-              : `Collaborators can reach it with @${clientType} in comments.`
-          }
+        <Checkbox
+          label="Limit to one artifact"
+          checked={limited}
+          onChange={(e) => {
+            setLimited(e.target.checked);
+            setLimitError(null);
+            setScopeError(null);
+          }}
         />
+        {limited ? (
+          <ArtifactPicker
+            editable={editable}
+            full={full}
+            retry={retry}
+            search={search}
+            onSearch={setSearch}
+            picked={picked}
+            onPick={(a) => {
+              setPicked(a);
+              setLimitError(null);
+            }}
+            error={limitError}
+          />
+        ) : (
+          <Select
+            label="Client"
+            value={clientType}
+            onChange={(e) => setClientType(e.target.value as ClientType)}
+            options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
+            hint={
+              clientType === "other"
+                ? "Collaborators can reach it by mentioning this token's name in comments."
+                : `Collaborators can reach it with @${clientType} in comments.`
+            }
+          />
+        )}
         <fieldset
           className="pl-acct-scopes"
           aria-describedby={scopeError ? "scope-error" : undefined}
         >
           <legend className="pl-acct-scopes__legend">Permissions</legend>
-          {SCOPES.map((s) => (
+          {limited ? (
             <Checkbox
-              key={s}
-              label={SCOPE_META[s].label}
-              hint={SCOPE_META[s].description}
-              checked={scopes.includes(s)}
-              onChange={(e) => {
-                setScopeError(null);
-                setScopes((cur) =>
-                  e.target.checked
-                    ? SCOPES.filter((x) => x === s || cur.includes(x))
-                    : cur.filter((x) => x !== s),
-                );
-              }}
+              label="Publish new versions"
+              checked={canPublish}
+              onChange={(e) => setCanPublish(e.target.checked)}
             />
-          ))}
+          ) : (
+            SCOPES.map((s) => (
+              <Checkbox
+                key={s}
+                label={SCOPE_META[s].label}
+                hint={SCOPE_META[s].description}
+                checked={scopes.includes(s)}
+                onChange={(e) => {
+                  setScopeError(null);
+                  setScopes((cur) =>
+                    e.target.checked
+                      ? SCOPES.filter((x) => x === s || cur.includes(x))
+                      : cur.filter((x) => x !== s),
+                  );
+                }}
+              />
+            ))
+          )}
           {scopeError && (
             <p id="scope-error" className="pl-field__error">
               {scopeError}
@@ -191,5 +401,92 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
         )}
       </form>
     </Dialog>
+  );
+}
+
+interface ArtifactPickerProps {
+  editable: Editable;
+  full: boolean;
+  retry: () => void;
+  search: string;
+  onSearch: (q: string) => void;
+  picked: Pickable | null;
+  onPick: (a: Pickable | null) => void;
+  error: string | null;
+}
+
+/**
+ * The artifact a limited token is for: one select of what the person owns or edits, in the same
+ * place whatever the state. A search box above it only when the list is full (older artifacts are
+ * found by title or slug); a link to the guide when there is nothing to choose; Try again after a
+ * failed load.
+ */
+function ArtifactPicker({
+  editable,
+  full,
+  retry,
+  search,
+  onSearch,
+  picked,
+  onPick,
+  error,
+}: ArtifactPickerProps) {
+  const failed = editable.status === "error";
+  const ready = editable.status === "ready" ? editable : null;
+  const none = nothingToPick(editable, full);
+  // The chosen artifact stays in the list while a search shows others.
+  const items = ready
+    ? picked && !ready.items.some((a) => a.id === picked.id)
+      ? [picked, ...ready.items]
+      : ready.items
+    : [];
+  const labels = optionLabels(items);
+  const placeholder = failed
+    ? "Choose an artifact"
+    : !ready
+      ? "Loading artifacts…"
+      : none
+        ? "No artifact yet"
+        : ready.items.length === 0
+          ? "No artifact matches"
+          : "Choose an artifact";
+  return (
+    <div className="pl-acct-picker">
+      {full ? (
+        <Input
+          label="Find an artifact"
+          placeholder="Title or slug"
+          value={search}
+          maxLength={200}
+          onChange={(e) => onSearch(e.target.value)}
+          autoComplete="off"
+        />
+      ) : null}
+      <Select
+        label="Artifact"
+        value={picked?.id ?? ""}
+        onChange={(e) => onPick(items.find((a) => a.id === e.target.value) ?? null)}
+        disabled={!ready || none}
+        error={
+          failed ? <span role="alert">Could not load your artifacts.</span> : (error ?? undefined)
+        }
+        hint={
+          none ? (
+            <a href={CI_NO_ARTIFACT_URL} target="_blank" rel="noreferrer">
+              Publish one first
+            </a>
+          ) : undefined
+        }
+        options={[
+          { value: "", label: placeholder },
+          ...items.map((a) => ({ value: a.id, label: labels.get(a.id) ?? a.title })),
+        ]}
+      />
+      {failed && (
+        <Button size="sm" variant="secondary" onClick={retry}>
+          Try again
+        </Button>
+      )}
+    </div>
   );
 }

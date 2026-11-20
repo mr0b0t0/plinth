@@ -179,7 +179,7 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
   const reveal = page.getByRole("dialog", { name: "Copy your new token" });
   const token = await reveal.getByRole("textbox", { name: "Token" }).inputValue();
   expect(token).toMatch(/^plinth_pat_/);
-  await expect(reveal.getByText("You won't see this token again.")).toBeVisible();
+  await expect(reveal.getByText(/^Shown only once\. Keep it in your agent/)).toBeVisible();
   await reveal.getByRole("button", { name: "Done" }).click();
   await expect(reveal).toHaveCount(0);
   expect(await page.content()).not.toContain(token);

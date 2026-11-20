@@ -15,10 +15,11 @@ import { canManageConnections, type Principal } from "../policy.ts";
 import {
   createPersonalToken,
   listConnections,
+  type PersonCtx,
   renameConnection,
   revokeConnection,
 } from "../services/connections.ts";
-import { type AppEnv, parseBody } from "./context.ts";
+import { type AppContext, type AppEnv, parseBody, serviceCtx } from "./context.ts";
 
 export const connectionsApi = new Hono<AppEnv>();
 
@@ -29,27 +30,33 @@ function person(p: Principal): Extract<Principal, { kind: "user" }> {
   throw forbidden("Only a signed-in person can manage connections");
 }
 
+/** The service context for a signed-in person (person() has checked the principal). */
+function personCtx(c: AppContext): PersonCtx {
+  const principal = person(c.get("principal"));
+  return { ...serviceCtx(c), principal };
+}
+
 connectionsApi.get(API.connections, async (c) => {
-  const p = person(c.get("principal"));
-  const body: Paged<ConnectionInfo> = { items: await listConnections(c.get("db"), p.userId) };
+  const ctx = personCtx(c);
+  const body: Paged<ConnectionInfo> = { items: await listConnections(ctx) };
   return c.json(body);
 });
 
 connectionsApi.post(API.connections, async (c) => {
-  const p = person(c.get("principal"));
+  const ctx = personCtx(c);
   const input = await parseBody(c, createTokenInput);
-  return c.json(await createPersonalToken(c.get("db"), p.userId, input), 201);
+  return c.json(await createPersonalToken(ctx, input), 201);
 });
 
 connectionsApi.patch(API.connection, async (c) => {
-  const p = person(c.get("principal"));
+  const ctx = personCtx(c);
   const { label } = await parseBody(c, renameConnectionInput);
-  return c.json(await renameConnection(c.get("db"), p.userId, c.req.param("id"), label));
+  return c.json(await renameConnection(ctx, c.req.param("id"), label));
 });
 
 connectionsApi.delete(API.connection, async (c) => {
-  const p = person(c.get("principal"));
-  return c.json(await revokeConnection(c.get("db"), p.userId, c.req.param("id")));
+  const ctx = personCtx(c);
+  return c.json(await revokeConnection(ctx, c.req.param("id")));
 });
 
 connectionsApi.get(API.oauthRequest, async (c) => {

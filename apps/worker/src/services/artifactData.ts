@@ -19,7 +19,13 @@ import type { ArtifactRow } from "../db/schema.ts";
 import { viewerIdFor } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 import { peopleListOffered, principalEmail } from "../policy.ts";
-import { getArtifact, grantFor, requireArtifact, versionCapabilities } from "./artifacts.ts";
+import {
+  decideFor,
+  grantFor,
+  loadArtifactDetail,
+  requireArtifact,
+  versionCapabilities,
+} from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import {
   applyOps,
@@ -183,18 +189,19 @@ export async function clearArtifactData(ctx: Ctx, ref: string): Promise<{ delete
 }
 
 /**
- * get_artifact plus what the returned version declares and, for owners and editors, how much
- * shared data the artifact holds, so an agent knows there is data before it edits the page.
+ * get_artifact plus what the returned version declares and, for callers that may read its shared
+ * data (owners and editors, not a token limited to the artifact), how much shared data it holds,
+ * so an agent knows there is data before it edits the page.
  */
 export async function getArtifactWithData(
   ctx: Ctx,
   ref: string,
   version?: number,
 ): Promise<ArtifactDetail & ArtifactDataInfo> {
-  const detail = await getArtifact(ctx, ref, version);
+  const { detail, row } = await loadArtifactDetail(ctx, ref, version);
   const caps = await capsAt(ctx, detail.id, detail.version);
   let usage: ArtifactDataInfo["data_usage"] = null;
-  if (detail.role === "owner" || detail.role === "editor") {
+  if ((await decideFor(ctx, row, "data_read")).allow) {
     usage =
       (await ctx.env.DB.prepare(
         "SELECT docs, bytes FROM artifact_data_usage WHERE artifact_id = ?1",

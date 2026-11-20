@@ -174,6 +174,11 @@ const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
 type ContentPass = {
   claim: PageClaim | null;
   capture: boolean;
+  /**
+   * Set only on a capture pass that reads no shared data: its version's writer may not read the
+   * data (policy.captureReadsData). Absent on every other pass.
+   */
+  noData?: true;
   preview: boolean;
   /** The one version a preview pass opens; null for every other pass. */
   version: number | null;
@@ -195,12 +200,15 @@ async function openPass(
   const preview = pass.p === 1;
   if (capture && preview) return null;
   if (preview !== isVersion(pass.v)) return null;
+  if (pass.d !== undefined && (pass.d !== 1 || !capture)) return null;
+  const noData = pass.d === 1 ? ({ noData: true } as const) : {};
   // Only a view pass is ever marked counted (signContentCookie refuses the others).
   if (pass.w !== undefined && (pass.w !== 1 || capture || preview)) return null;
   const counted = pass.w === 1;
   const version = preview ? (pass.v as number) : null;
   const exp = pass.exp;
-  if (pass.x === undefined) return { claim: null, capture, preview, version, counted, exp };
+  if (pass.x === undefined)
+    return { claim: null, capture, ...noData, preview, version, counted, exp };
   // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
   if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
@@ -250,11 +258,13 @@ export async function readContentPass(
   for (const value of cookieValues(request.headers.get("cookie"), name)) {
     const pass = await openPass(config, artifact, value);
     if (!pass) continue;
-    // A preview pass may be framed by anyone, so it never mixes with another kind.
+    // A preview pass may be framed by anyone, so it never mixes with another kind, and a capture
+    // pass that reads no shared data never mixes with one that does.
     if (
       found &&
       (!sameClaim(found.claim, pass.claim) ||
         found.preview !== pass.preview ||
+        found.noData !== pass.noData ||
         found.version !== pass.version)
     )
       return null;
@@ -485,6 +495,7 @@ async function serve(
     if ((capture || preview) && x !== undefined) return expired();
     if (capture && preview) return expired();
     if (preview !== isVersion(payload.v)) return expired();
+    if (payload.d !== undefined && (payload.d !== 1 || !capture)) return expired();
     // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
     if (preview && base) return expired();
     const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
@@ -514,6 +525,7 @@ async function serve(
       preview ? (payload.v as number) : undefined,
       seen || countNow,
       visitor,
+      payload.d === 1,
     );
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`, enterOpts);

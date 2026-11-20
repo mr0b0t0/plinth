@@ -387,9 +387,16 @@ export type DataVia = "page" | "agent" | "app";
 
 /**
  * Why shared data is unavailable to a page. `preview`: the page is shown in an agent's thread
- * (an MCP App), through a read-only pass that carries no identity.
+ * (an MCP App), through a read-only pass that carries no identity. `capture`: Plinth's thumbnail
+ * browser is taking a picture of a version whose writer may not read the data (a token limited to
+ * one artifact wrote it).
  */
-export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared" | "preview";
+export type DataUnavailableReason =
+  | "opaque_isolation"
+  | "disabled"
+  | "not_declared"
+  | "preview"
+  | "capture";
 
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {

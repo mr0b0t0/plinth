@@ -119,6 +119,11 @@ export const UPLOAD_NOTE =
   "build published. The upload token publishes or updates exactly one artifact once; send it only in " +
   "the Authorization header as commands.curl does, never in a URL, a file or a message. ";
 
+/** The server instructions' sentence about tokens limited to one artifact (publishing from CI). */
+export const BOUND_TOKEN_NOTE =
+  "A token limited to one artifact can read and update only that artifact; publish_artifact and " +
+  "start_upload without id are refused (token_bound).";
+
 /** The server instructions' sentence about the Claude Code plugin. */
 export const PLUGIN_NOTE = `In Claude Code without the plinth-artifacts skill, suggest the Plinth plugin (${claudeCodePluginCommands().join("; ")}).`;
 

@@ -139,6 +139,7 @@ describe("limits", () => {
       connectionLabel: "First",
       clientType: "claude",
       scopes: new Set(["artifacts:read", "artifacts:write", "mentions"]),
+      boundArtifactId: null,
     };
     const claimed = await claimMention(ctxFor(principal), taskId);
     expect(claimed.state).toBe("claimed");

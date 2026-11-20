@@ -238,7 +238,7 @@ function responseSchemas(): Record<string, Json> {
       ...nullable("string", {
         format: "uri",
         description:
-          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands",
+          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none, and for a token limited to one artifact. May answer 404 until the first capture lands",
       }),
     },
     category: nullable("string", {
@@ -526,6 +526,19 @@ function responseSchemas(): Record<string, Json> {
       created_at: dateTime,
       last_used_at: nullable("string", { format: "date-time" }),
       revoked_at: nullable("string", { format: "date-time" }),
+      artifact: {
+        oneOf: [ref("BoundArtifactInfo"), { type: "null" }],
+        description:
+          "The one artifact a personal access token is limited to; null for an account-wide token or an OAuth connection",
+      },
+    }),
+    BoundArtifactInfo: obj({
+      id: str(),
+      slug: nullable("string", {
+        description:
+          "null once you may no longer view the artifact (deleted, taken down, unshared)",
+      }),
+      title: nullable("string", { description: "As slug. Untrusted text." }),
     }),
     ConnectionList: paged("ConnectionInfo"),
     CreatedToken: obj({
@@ -543,6 +556,36 @@ function responseSchemas(): Record<string, Json> {
       artifact_limit: int(),
       artifact_count: int(),
       is_admin: { type: "boolean" },
+      connection: {
+        oneOf: [ref("MeConnection"), { type: "null" }],
+        description: "The bearer connection making the call; null for a signed-in person",
+      },
+    }),
+    BoundMe: obj({
+      id: str({ description: "The token's person" }),
+      connection: ref("MeConnection"),
+    }),
+    MeOrBound: {
+      oneOf: [ref("Me"), ref("BoundMe")],
+      description:
+        "The account (Me), or, for a token limited to one artifact, only the person's id and the connection (BoundMe)",
+    },
+    MeConnection: obj({
+      id: nullable("string", { description: "null for the single-user ADMIN_TOKEN" }),
+      label: str(),
+      bound: {
+        type: "boolean",
+        description:
+          "The token is limited to one artifact (it may only read it and publish new versions of it)",
+      },
+      artifact: {
+        oneOf: [
+          obj({ id: str(), slug: str(), title: str({ description: "Untrusted text" }) }),
+          { type: "null" },
+        ],
+        description:
+          "The artifact a bound token is limited to, while its person may view it; null otherwise",
+      },
     }),
     AppConfig: obj({
       app_origin: str({ format: "uri" }),
@@ -1332,7 +1375,7 @@ function operations(): Operation[] {
       summary: "The calling user",
       tag: "Account",
       auth: "agent",
-      ok: [200, "Me"],
+      ok: [200, "MeOrBound"],
       errors: [401],
     },
     {
@@ -1445,12 +1488,13 @@ function operations(): Operation[] {
       path: API.connections,
       operationId: "createToken",
       summary: "Create a personal access token",
-      description: "The token is returned once. Only its hash is stored.",
+      description:
+        "The token is returned once. Only its hash is stored. With `artifact` (an id or slug you own or edit), the token is limited to that artifact: it may read it and publish new versions of it, nothing else (every other call answers 403 with reason `token_bound`, and every other artifact 404). It holds `artifacts:read` and, by default, `artifacts:write`; never `mentions`.",
       tag: "Connections",
       auth: "user",
       body: "CreateTokenInput",
       ok: [201, "CreatedToken"],
-      errors: [400, 401, 403],
+      errors: [400, 401, 403, 404],
     },
     {
       method: "patch",
@@ -1631,14 +1675,14 @@ function operations(): Operation[] {
       operationId: "getArtifactThumbnail",
       summary: "Thumbnail image",
       description:
-        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding.",
+        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding. A token limited to one artifact gets 403 `token_bound`: a capture runs the page, which may draw its shared data.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",
       query: [{ name: "version", schema: int({ minimum: 1 }) }],
       ok: [200, null],
       okMedia: "image/jpeg",
-      errors: [401, 404],
+      errors: [401, 403, 404],
     },
     {
       method: "get",
@@ -1802,6 +1846,8 @@ function operations(): Operation[] {
       path: API.view,
       operationId: "viewGate",
       summary: "Check access and get a one-time enter URL for the content host",
+      description:
+        "A token limited to one artifact gets 403 `token_bound` for its artifact (and the usual not_found gate for every other): the URL becomes a content pass, which reads the page's shared data.",
       tag: "Viewing",
       auth: "optional",
       query: [
@@ -1816,6 +1862,7 @@ function operations(): Operation[] {
         { name: "next", schema: str(), description: "Path inside the artifact to land on" },
       ],
       ok: [200, "ViewGate"],
+      errors: [403],
     },
     {
       method: "post",

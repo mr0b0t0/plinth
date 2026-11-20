@@ -32,7 +32,13 @@ import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { type Decision, type Principal, pageDataAccess, peopleListOffered } from "../policy.ts";
-import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
+import {
+  decideFor,
+  denialError,
+  findArtifact,
+  grantFor,
+  versionCapabilities,
+} from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
@@ -69,9 +75,13 @@ export async function computeGate(
   // The content host never serves a taken-down artifact, so nobody gets a token for one (admins
   // review the source through the API instead).
   if (a.takenDownAt) return { status: "taken_down", artifact: stub(a) };
-  const d = await decideFor(ctx, a, "view");
+  // `enter`, not `view`: the URL becomes a content pass, which reads the page's shared data, so a
+  // token limited to one artifact never gets one (it reads the page through the API instead).
+  const d = await decideFor(ctx, a, "enter");
   if (!d.allow) {
     switch (d.reason) {
+      case "token_bound":
+        throw denialError(ctx, d, "enter");
       case "taken_down":
         return { status: "taken_down", artifact: stub(a) };
       case "password_required":
