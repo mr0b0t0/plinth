@@ -98,7 +98,9 @@ Everything else, from the content domain to email and the Public Suffix List, is
 ## Publish a build
 
 The `plinth` command also publishes to any Plinth instance, the hosted one included: a built site
-(Vite, Next export, anything with `index.html` at the top of its folder) or a folder of files.
+(Vite, Next export, anything with `index.html` at the top of its folder) or a folder of files. A
+folder with `content.md` at its top is published as a document, and one with `slides.md` (and its
+images) as a deck.
 
 ```sh
 npx @mr0b0t0/plinth login                 # once: approve "Plinth CLI" in the browser

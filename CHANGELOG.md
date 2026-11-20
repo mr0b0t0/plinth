@@ -18,7 +18,26 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   artifact revokes it. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
   a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
-  and cron: `docs/ci.md` (#51).
+  and cron: `docs/ci.md` (#51). The Action ships with the release tag, so `v0.6.0` must be
+  released before the docs that pin it go live. Apply migration `0012_bound_tokens.sql` before
+  deploying. Plugin 0.21.0.
+- **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
+  between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
+  slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
+  clicks or swipes, link to a slide (`#slide=4`), see every slide in a thumbnail grid, and from
+  Present in the bar go full screen or open a presenter view with the notes, the next slide and a
+  timer (and an audience window that follows it with nothing but the slide). Print or save as PDF
+  with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
+  Plugin 0.19.0.
+- **Design systems.** Publish tokens, guidelines and components as a design system (`type:
+  "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
+  spacing and shadow samples and live component previews in light and dark. Agents read one with
+  the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
+  into the pages they build, and get a `design_system_outdated` warning when a page was built on
+  an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
+  type. CSS blocks may not hold escapes or `url()`s to other hosts, and a `url()` to a file the
+  design system lacks is a `missing_file` warning. Plugin 0.18.0.
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
   linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
   the people who opened it (name and email for people signed in and allowlisted viewers, with the

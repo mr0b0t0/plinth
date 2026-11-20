@@ -11,6 +11,7 @@ import { resolveBearer } from "../src/auth/principal.ts";
 import { agentConnections, mentionTasks } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { tar } from "./fixtures/bundles/tar.ts";
+import acme from "./fixtures/design-systems/acme.json";
 import {
   agent,
   browserSession,
@@ -497,6 +498,94 @@ describe("using a token limited to one artifact", () => {
       artifact: null,
     });
     expect((await req("GET", "/me", h)).body.connection).toBeNull();
+  });
+});
+
+describe("a token limited to one artifact, on the tools that read other artifacts", () => {
+  /** A design system the same person owns, so only the binding stands in the way. */
+  async function publishDs(auth: Record<string, string>, visibility = "allowlist") {
+    const r = await publish(auth, {
+      html: undefined,
+      title: "Acme UI",
+      type: "design_system",
+      content: JSON.stringify(acme),
+      visibility,
+    });
+    expect(r.res.status, JSON.stringify(r.body)).toBe(201);
+    return r;
+  }
+  const builtOn = (ref: string) =>
+    `<!doctype html><html><head><title>Report</title><meta name="plinth-design-system" content="${ref}"></head><body><p>x</p></body></html>`;
+
+  it("get_artifact_stats on another artifact is the 404 every other artifact gets", async () => {
+    const { h, id, other } = await setup();
+    const t = await boundToken(h, id);
+    for (const ref of [other.id, other.slug, "abcdefghij0123456789"]) {
+      const r = await req("GET", `/artifacts/${ref}/stats`, t.auth);
+      expect(r.status, ref).toBe(404);
+      expect(JSON.stringify(r.body), ref).not.toContain("token_bound");
+    }
+    const c = await mcpClient(t.token);
+    const r = await tool(c, "get_artifact_stats", { id: other.id });
+    expect(r.data.error.code).toBe("not_found");
+    await c.close();
+  });
+
+  it("get_design_system on another artifact is a 404, private or unlisted, by id or slug", async () => {
+    const { owner, h, id } = await setup();
+    const t = await boundToken(h, id);
+    const c = await mcpClient(t.token);
+    const missing = await req("GET", "/artifacts/abcdefghij0123456789/design-system", t.auth);
+    for (const visibility of ["allowlist", "unlisted"]) {
+      const { body: ds } = await publishDs(owner.auth, visibility);
+      // The owner's account-wide token reads it, so the binding alone refuses it.
+      expect((await req("GET", `/artifacts/${ds.id}/design-system`, owner.auth)).status).toBe(200);
+      for (const ref of [ds.id, ds.slug]) {
+        const r = await req("GET", `/artifacts/${ref}/design-system`, t.auth);
+        expect(r.status, `${visibility} ${ref}`).toBe(404);
+        expect(r.body, `${visibility} ${ref}`).toEqual(missing.body);
+        const m = await tool(c, "get_design_system", { id: ref });
+        expect(m.isError).toBe(true);
+        expect(m.data.error.code).toBe("not_found");
+      }
+    }
+    await c.close();
+  });
+
+  it("a page it publishes that names another design system gets the unavailable warning", async () => {
+    const { owner, h, id } = await setup();
+    const { body: ds } = await publishDs(owner.auth, "unlisted");
+    const t = await boundToken(h, id);
+    const r = await req("PUT", `/artifacts/${id}`, t.auth, {
+      html: builtOn(`${ds.id}@1`),
+      base_version: 1,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.warnings.map((w: { code: string }) => w.code)).toEqual([
+      "design_system_unavailable",
+    ]);
+    expect(JSON.stringify(r.body)).not.toContain("Acme UI");
+    // get_artifact leaves the reference out for the token, and shows it to the owner.
+    expect((await req("GET", `/artifacts/${id}`, t.auth)).body.design_system).toBeNull();
+    expect((await req("GET", `/artifacts/${id}`, owner.auth)).body.design_system).toMatchObject({
+      id: ds.id,
+      version: 1,
+    });
+  });
+
+  it("a token limited to a design system reads that design system", async () => {
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const { body: ds } = await publishDs(owner.auth);
+    const t = await boundToken(h, ds.id);
+    const r = await req("GET", `/artifacts/${ds.id}/design-system`, t.auth);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ id: ds.id, version: 1, name: "Acme UI" });
+    const c = await mcpClient(t.token);
+    const m = await tool(c, "get_design_system", { id: ds.id });
+    expect(m.isError).toBe(false);
+    expect(m.data).toEqual(r.body);
+    await c.close();
   });
 });
 

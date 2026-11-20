@@ -24,6 +24,7 @@ import {
   hashFiles,
   SOURCE_FILES,
   sha256,
+  sourceField,
   walk,
 } from "./files.mjs";
 import {
@@ -216,12 +217,15 @@ export function collect(dir, { includeMaps }) {
   return { files, skipped };
 }
 
+/** What each artifact type is called in messages. */
+const TYPE_NOUNS = { html: "page", doc: "document", slides: "deck" };
+const nounOf = (type) => TYPE_NOUNS[type] ?? "page";
+
 function typeOfFolder(files) {
   const has = new Set(files.map((f) => f.path));
-  if (has.has(SOURCE_FILES.html)) return "html";
-  if (has.has(SOURCE_FILES.doc)) return "doc";
+  for (const [type, source] of Object.entries(SOURCE_FILES)) if (has.has(source)) return type;
   throw new CliError(
-    "No index.html (or content.md for a document) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
+    "No index.html (or content.md for a document, slides.md for a deck) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
   );
 }
 
@@ -679,7 +683,7 @@ export async function publish(dir, givenOpts, ctx) {
     if (opts["dry-run"]) {
       ctx.stdout(
         printable(
-          `Would publish ${files.length} files (${formatBytes(total)}) to ${ctx.origin} as a new ${type === "doc" ? "document" : "page"}${category.category !== undefined ? ` under ${category.category}` : ""}, in one bundle.`,
+          `Would publish ${files.length} files (${formatBytes(total)}) to ${ctx.origin} as a new ${nounOf(type)}${category.category !== undefined ? ` under ${category.category}` : ""}, in one bundle.`,
         ),
       );
       return EXIT.ok;
@@ -729,10 +733,14 @@ export async function publish(dir, givenOpts, ctx) {
     const type = detail.type;
     const sourcePath = detail.source_path ?? SOURCE_FILES[type] ?? "index.html";
     if (!files.some((f) => f.path === sourcePath)) {
+      // One file can stand in for a page's index.html or a document's content.md, not a deck's.
+      const fileExt = { html: ".html", doc: ".md" }[type];
       throw new CliError(
-        source.kind === "file"
-          ? `${ref} is a ${type === "doc" ? "document" : "page"}; publish a ${type === "doc" ? ".md" : ".html"} file (or a folder with ${sourcePath} at its top)`
-          : `${ref} is a ${type === "doc" ? "document" : "page"}; the folder needs ${sourcePath} at its top`,
+        source.kind !== "file"
+          ? `${ref} is a ${nounOf(type)}; the folder needs ${sourcePath} at its top`
+          : fileExt
+            ? `${ref} is a ${nounOf(type)}; publish a ${fileExt} file (or a folder with ${sourcePath} at its top)`
+            : `${ref} is a ${nounOf(type)}; publish a folder with ${sourcePath} at its top`,
       );
     }
     const stated = base !== undefined;
@@ -801,7 +809,7 @@ export async function publish(dir, givenOpts, ctx) {
         const sourceText = utf8Text(sourceFile, readFileSync(sourceFile.abs));
         const withContent = new Set(changed.map((f) => f.path));
         const body = () => ({
-          [type === "doc" ? "content" : "html"]: sourceText,
+          [sourceField(type)]: sourceText,
           assets: assets.map((f) =>
             withContent.has(f.path)
               ? {

@@ -433,3 +433,92 @@ test("an open is counted once per browser, and a reload is not", async ({ browse
     await first.ctx.close();
   }
 });
+
+const DECK_MD = [
+  "# Opaque deck",
+  "",
+  "Rendered under an opaque origin.",
+  "",
+  "Note: Speaker notes in an opaque frame.",
+  "",
+  "---",
+  "",
+  "## Picture",
+  "",
+  "![A tiny square](pixel.png)",
+  "",
+  "---",
+  "",
+  "## End",
+].join("\n");
+
+test("a deck renders, pages through * and window identity, and opens presenter view", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const problems = watchConsole(page);
+  const email = uniqueEmail("opaque-deck");
+  const { token } = await seedToken(email, {
+    label: "Opaque agent",
+    clientType: "claude",
+    origin: OPAQUE_APP_ORIGIN,
+  });
+  await seedSession(page.context(), email, OPAQUE_APP_ORIGIN);
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      title: "Opaque deck",
+      type: "slides",
+      content: DECK_MD,
+      assets: [
+        { path: "pixel.png", content: PIXEL_PNG, encoding: "base64", content_type: "image/png" },
+      ],
+    }),
+  });
+  const art = (await res.json()) as Published & { type: string };
+  expect(res.status, JSON.stringify(art)).toBe(201);
+  expect(art.type).toBe("slides");
+
+  // #slide=2 reaches the opaque frame as a goto posted to "*".
+  await page.goto(`/a/${art.slug}#slide=2`);
+  await expect(page.locator(CURRENT_FRAME)).toHaveAttribute("sandbox", OPAQUE_FRAME_SANDBOX);
+  const locator = page.frameLocator(CURRENT_FRAME);
+  await expect(locator.locator('html[data-ready="ok"]')).toHaveCount(1, { timeout: 15_000 });
+  const frame = await (await page.locator(CURRENT_FRAME).elementHandle())?.contentFrame();
+  if (!frame) throw new Error("no deck frame");
+  expect(await frame.evaluate(() => self.origin)).toBe("null");
+  const slide = () => frame.evaluate(() => document.documentElement.dataset.slide);
+  await expect.poll(slide).toBe("2");
+  await expect
+    .poll(() =>
+      locator.locator('img[alt="A tiny square"]').evaluate((i: HTMLImageElement) => i.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+
+  // The frame's position (origin "null", accepted by window) moves the app's fragment.
+  const box = await page.locator(CURRENT_FRAME).boundingBox();
+  if (!box) throw new Error("no frame box");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(slide).toBe("3");
+  await expect.poll(() => new URL(page.url()).hash).toBe("#slide=3");
+
+  await page.getByRole("button", { name: "Present" }).click();
+  await page.getByRole("menuitem", { name: "Presenter view" }).click();
+  await expect(locator.locator(".plinth-slides__presenter")).toBeVisible();
+  const box2 = await page.locator(CURRENT_FRAME).boundingBox();
+  if (!box2) throw new Error("no frame box");
+  await page.mouse.click(box2.x + box2.width / 2, box2.y + 20);
+  await page.keyboard.press("Home");
+  await expect(locator.locator(".plinth-slides__notes")).toHaveText(
+    "Speaker notes in an opaque frame.",
+  );
+  // The app took the frame's position and its presenter view: the slide is in the fragment and
+  // Present offers the audience window.
+  await expect.poll(() => new URL(page.url()).hash).toBe("#slide=1");
+  await page.getByRole("button", { name: "Present" }).click();
+  await expect(page.getByRole("menuitem", { name: "Audience window" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  expect(problems).toEqual([]);
+});

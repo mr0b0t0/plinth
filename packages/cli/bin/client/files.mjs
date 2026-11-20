@@ -6,8 +6,18 @@ import path from "node:path";
 import { CliError, formatBytes } from "./http.mjs";
 import { ASSET_PATH_RE, DEFAULTS, LIMITS } from "./vendor/constants.mjs";
 
-/** The source file of each artifact type, at the top of the folder. */
-export const SOURCE_FILES = { html: "index.html", doc: "content.md" };
+/** The source file of each artifact type, at the top of the folder (the first one found wins). */
+export const SOURCE_FILES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+
+/** The field a type's source goes in on PUT /artifacts: html for a page, content for Markdown. */
+export const sourceField = (type) => (type === "html" ? "html" : "content");
+
+/** The most bytes a type's source may hold: the instance's limit, or the fixed deck limit. */
+export function sourceMaxBytes(type, limits) {
+  if (type === "doc") return limits.max_doc_bytes;
+  if (type === "slides") return LIMITS.maxSlidesBytes;
+  return limits.max_html_bytes;
+}
 
 /** A name the server would accept for this path, or null when there is no obvious one. */
 export function suggestPath(rel) {
@@ -113,7 +123,7 @@ export function checkLimits(files, sourcePath, type, limits) {
     );
   }
   const source = files.find((f) => f.path === sourcePath);
-  const sourceMax = type === "doc" ? limits.max_doc_bytes : limits.max_html_bytes;
+  const sourceMax = sourceMaxBytes(type, limits);
   if (source && source.size > sourceMax) {
     problems.push(
       `${sourcePath} is ${formatBytes(source.size)}; the limit is ${formatBytes(sourceMax)}. Move inline scripts and data into asset files.`,

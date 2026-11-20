@@ -337,6 +337,48 @@ describe("plinth publish", () => {
     });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /No index\.html/);
+    assert.match(r.stderr, /slides\.md for a deck/);
+  });
+
+  it("publishes a folder with slides.md as a deck, and updates it inline with content", async () => {
+    const deck = {
+      "slides.md": "# Talk\n\n---\n\n## Two\n\n![c](img/c.png)\n",
+      "img/c.png": "png",
+    };
+    const dir = build(deck);
+    const dry = await plinth(["publish", dir, "--dry-run"], { extraEnv: asPat() });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /as a new deck/);
+    const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(first.code, 0, first.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "slides" });
+    const out = JSON.parse(first.stdout);
+    assert.equal(out.verified, true);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    assert.deepEqual([...stored.keys()].sort(), ["img/c.png", "slides.md"]);
+
+    writeFileSync(path.join(dir, "slides.md"), "# Talk\n\n---\n\n## Two, again\n");
+    const r = await plinth(["publish", dir, "--id", out.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).verified, true);
+    const put = fake.state.lastPut;
+    assert.equal(put.content, "# Talk\n\n---\n\n## Two, again\n");
+    assert.equal(put.html, undefined);
+
+    const wrong = await plinth(["publish", build(site(1)), "--id", out.id, "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /is a deck; the folder needs slides\.md at its top/);
+  });
+
+  it("checks a deck's slides.md against the Markdown limit, not the HTML one", () => {
+    const limits = { ...fake.state.limits, max_html_bytes: 10 };
+    const files = [{ path: "slides.md", size: 2 * 1024 * 1024 }];
+    assert.throws(() => checkLimits(files, "slides.md", "slides", limits), /limit is 1\.0 MB/);
+    assert.doesNotThrow(() =>
+      checkLimits([{ path: "slides.md", size: 20 }], "slides.md", "slides", limits),
+    );
   });
 
   it("refuses an upload_url the server returns on another origin", async () => {
@@ -540,6 +582,20 @@ describe("plinth upload", () => {
     assert.equal(out.version, 1);
     assert.equal(out.bundle.entries, 3);
     assert.match(r.stderr, /Published v1: /);
+  });
+
+  it("sends a deck's folder (slides.md at its top) for a slides ticket", async () => {
+    const t = await ticket({ type: "slides" });
+    const dir = build({ "slides.md": "# Talk\n\n---\n\n## Two\n", "img/c.png": "png" });
+    const r = await plinth(["upload", dir, "--to", t.upload_url], {
+      extraEnv: { PLINTH_UPLOAD_TOKEN: t.upload_token },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.type, "slides");
+    assert.equal(out.bundle.entries, 2);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    assert.deepEqual([...stored.keys()].sort(), ["img/c.png", "slides.md"]);
   });
 
   it("refuses an http or wrong-path --to, and a missing token", async () => {

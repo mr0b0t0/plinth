@@ -40,6 +40,9 @@ pages from any of them:
   right on its page and see each other's changes as they type, saved as versions, and pages can
   show who else is there and share cursors and moves with `plinth.room`
   ([a whiteboard](docs/examples/whiteboard.html)).
+- **Design systems your agents build with.** Keep your tokens, components and guidelines on
+  Plinth as a design system: a reference site with live previews in light and dark, which agents
+  read with `get_design_system` so every page they make for you looks the same.
 - **Built to host untrusted HTML.** Each artifact runs on its own subdomain of a separate content
   domain, sandboxed, under a strict Content Security Policy. Agent-written pages never run next to
   your login.

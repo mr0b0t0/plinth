@@ -120,12 +120,15 @@ export async function serveTypedEntry(
   const { artifact, version, def, base, url, framing, socket, live } = o;
   const obj = await env.FILES.get(version.r2Prefix + def.sourcePath);
   if (!obj) return notFound(config);
+  const review = url.searchParams.has(REVIEW_MODE_PARAM);
   const html = typedShellHtml(def, {
     title: artifact.title,
     text: await obj.text(),
     base,
     appOrigin: config.appOrigin,
     ...(live ? { live } : {}),
+    // A deck in review mode shows every slide stacked, so comment pins anchor to a stable DOM.
+    ...(review && def.present ? { view: "overview" as const } : {}),
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
   applyContentHeaders(config, headers, { scripts: "self", framing, ...(socket ? { socket } : {}) });
@@ -134,6 +137,6 @@ export async function serveTypedEntry(
     headers.delete("X-Robots-Tag");
   if (request.method === "HEAD") return new Response(null, { status: 200, headers });
   let res = new Response(html, { status: 200, headers });
-  if (url.searchParams.has(REVIEW_MODE_PARAM)) res = injectBridge(config, res, base);
+  if (review) res = injectBridge(config, res, base);
   return res;
 }
