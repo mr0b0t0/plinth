@@ -1439,9 +1439,10 @@ the app applies it so the reader keeps their place where it can:
 - **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
   content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
   it, with or without the runtime: when the new version arrives with focus inside its frame, or
-  focus moves there while the runtime answers, only the count of versions moves on and the stage
-  shows "v5 is available · Update"; the runtime is asked only when the viewer chooses Update. Update
-  reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime), with no
+  focus moves there while the runtime answers, only the count of versions moves on and the page
+  raises a "v5 is available" toast with Update, in the slot of the "Updated to vN" toast and never
+  beside it, so the frame does not move; dismissed, the bar's "v4 of 5" still says it. The runtime
+  is asked only when the viewer chooses Update. Update reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime), with no
   "Updated to vN" toast after it: one notice per update. A
   version that arrives while focus is elsewhere replaces the page as before. `hold` is not shared
   data and not a room, works under every isolation mode, and is stored only when declared. **Every

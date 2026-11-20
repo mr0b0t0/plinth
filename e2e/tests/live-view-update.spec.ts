@@ -221,10 +221,13 @@ test("a page that declares hold waits while the viewer types, and Update loads i
   await expect(current.locator("h1")).toHaveText("First");
   await current.locator("#answer").click();
   await current.locator("#answer").pressSequentially("typing");
+  const top = (await page.locator(CURRENT_FRAME).boundingBox())?.y;
 
   await update(token, art.id, { html: HOLD_PAGE("Second") }, 1);
   const notice = page.getByText(/v2 is available/);
   await expect(notice).toBeVisible({ timeout: 10_000 });
+  // The notice is a toast: the frame does not move under the viewer.
+  expect((await page.locator(CURRENT_FRAME).boundingBox())?.y).toBe(top);
   // The page on view stays, with what the viewer typed.
   await expect(page.locator('iframe[title$="version 2"]')).toHaveCount(0);
   await expect(current.locator("#answer")).toHaveValue("typing");

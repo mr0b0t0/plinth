@@ -50,6 +50,9 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // One quiet notice: a version pushed while the last one's notice is still up replaces it, so an
   // agent publishing several versions in a row never stacks "Updated to" toasts.
   const updatedToast = useRef<number | null>(null);
+  // A held version (the hold rule) says so in that same slot, so the frame never moves under the
+  // viewer and the two notices never stack; the bar's "vN of M" stays after it is dismissed.
+  const heldToast = useRef<number | null>(null);
   // A fresh gate for a newer version waits here until the stage has applied it: in place for a
   // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
   const [pending, setPending] = useState<OkGate | null>(null);
@@ -129,6 +132,21 @@ export default function ArtifactPage({ params }: { params: Record<string, string
         to ? gatePath("view", slug, { ...query, next: to, carried: true }) : latest.current.path,
       );
       return fresh.status === "ok" ? fresh : null;
+    },
+    offer: (version, update) => {
+      const offered = heldToast.current;
+      heldToast.current = null;
+      if (offered !== null) dismissToast(offered);
+      if (updatedToast.current === offered) updatedToast.current = null;
+      if (version === null) return;
+      if (updatedToast.current !== null) dismissToast(updatedToast.current);
+      const id = showToast({
+        title: `v${version} is available`,
+        duration: 0,
+        action: { label: "Update", onClick: update },
+      });
+      heldToast.current = id;
+      updatedToast.current = id;
     },
   };
   useEffect(() => {

@@ -427,6 +427,8 @@ export const BAR_CONTROLS: readonly StageItem[] = [
 
 // ---------- the strip under the bar ----------
 
+// While a version is held its toast says so (useViewUpdate.ts), so this line stays away: one
+// notice, and the frame does not move under the viewer.
 const olderVersion: StageNode = ({ gate: { artifact }, hrefs, update }) =>
   update.held === null &&
   artifact.version < artifact.current_version && (
@@ -435,23 +437,6 @@ const olderVersion: StageNode = ({ gate: { artifact }, hrefs, update }) =>
       <span aria-hidden="true"> · </span>
       <Link to={hrefs.current}>Go to current</Link>
       <span className="visually-hidden"> (v{artifact.current_version})</span>
-    </p>
-  );
-
-/** A newer version waits while the viewer uses the page (the hold rule, docs/spec.md "Live views"). */
-const heldUpdate: StageNode = ({ update }) =>
-  update.held !== null && (
-    <p className="pl-viewer__notice pl-viewer__notice--update" aria-live="polite">
-      <span className="type-num">v{update.held}</span> is available
-      <span aria-hidden="true"> · </span>
-      <button
-        type="button"
-        className="pl-viewer__notice-action"
-        onClick={update.update}
-        disabled={update.updating}
-      >
-        Update
-      </button>
     </p>
   );
 
@@ -511,7 +496,6 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
 /** The strip of notices under the bar, top to bottom. One item per line. */
 export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "older-version", render: olderVersion },
-  { id: "held-update", render: heldUpdate },
   { id: "data-notice", render: dataNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
