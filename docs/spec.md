@@ -113,7 +113,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at | One per connected agent, e.g. "Work Claude". Revocable individually |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`) or `design_system` (JSON in `system.json`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -146,15 +146,15 @@ least one live artifact uses it. It is artifact metadata, never versioned, and r
 owner (`category` is null for everyone else). The Worker validates and normalises the text
 (`packages/shared/src/categories.ts`); the columns have no CHECK constraint.
 
-**View counts** (migration `0010_view_counts.sql`) adds two tables. They hold aggregate numbers
-only: no IP address, email, user, session or user agent. Both cascade from `artifacts`, so
-erasing an artifact or its owner removes them (see
-[Admin stats and view counts](#admin-stats-and-view-counts)):
+**Artifact stats** (migrations `0010_view_counts.sql` and `0020_artifact_opens.sql`) keep one row
+per counted open with who opened it, and an all-time count per artifact. Both cascade from
+`artifacts`, so erasing an artifact or its owner removes them (see
+[Artifact stats](#artifact-stats)):
 
 | Table | Key fields | Notes |
 | --- | --- | --- |
-| `artifact_view_days` | artifact_id, day (UTC, `YYYY-MM-DD`), views | One row per artifact per UTC day it was opened. Key (artifact_id, day), `WITHOUT ROWID`, no secondary index, so a counted open writes one row |
-| `artifact_view_totals` | artifact_id, views, first_day | Opens on days older than the daily window, folded into one row per artifact; `first_day` is the earliest day folded in |
+| `artifact_opens` | id (integer), artifact_id, version, opened_at (UTC ISO), viewer_kind (`user`, `email`, `anonymous`, `unknown`), user_id, email, visitor, role | One row per counted open, kept for `VIEW_LOG_RETENTION_DAYS`. `user_id` (signed in; `ON DELETE SET NULL`), `email` (an allowlisted email confirmed by code) and `visitor` (a random id from the content cookie) each belong to their own kind only (CHECK constraints). `version` is NULL for opens migrated from daily counts. Indexes: (artifact_id, opened_at), (opened_at), and partial ones on user_id and email. No IP address or user agent |
+| `artifact_view_totals` | artifact_id, views, first_day | Opens older than the retention, folded into one count per artifact; `first_day` is the earliest day folded in |
 
 **Live rooms and on-page doc editing** (issue #36, migration `0011_live_drafts.sql`) add one table
 and two fields to the stored declaration:
@@ -173,6 +173,13 @@ idle time), `LIVE_DRAFT_FLUSH_S` (5, from 2 to 60) and `LIVE_DRAFT_RETENTION_DAY
 connects per viewer per minute; a doc-socket frame of 64 KiB; a lease idle for 60 s may be taken
 over.
 
+**Comments from the page** ([below](#comments-from-the-page-decided-2026-11-19), no migration) add
+one field to the stored declaration and a second kind of comment anchor:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `versions.capabilities` | adds `comments` | Written only when the page declares `comments`, so every other declaration is stored exactly as before. A row without it reads as no page comments. `comments` is neither shared data nor a room |
+| `comments.anchor` | JSON: an element anchor `{ selector, text?, x?, y? }`, or a page anchor `{ kind: "page", key, x?, y?, text?, data? }` | Element anchors are stored without `kind`, as before. Both kinds are read back through the anchor schema; a stored value no schema allows reads as no anchor |
 **Dictation** ([below](#voice-dictation-and-text-to-speech-decided-2026-11-19), no migration) adds one
 field to the stored declaration, `versions.capabilities.dictation`, written only when the page
 declares `dictation` (a row without it reads as no dictation), and one setting, `ALLOW_DICTATION`
@@ -212,14 +219,15 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck |
 | `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
-| `list_artifacts(query?, category?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names) |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck or a design system, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
+| `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
+| `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
 | `list_mentions(state?)` | Pending requests addressed to this agent |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
 | `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
@@ -227,6 +235,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
+| `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
@@ -272,8 +281,9 @@ and `404` from the source endpoint, identical in every case. `/a/...` pages send
 `X-Robots-Tag: noindex, nofollow` except a public artifact on an instance with public visibility
 on. The app host also serves `/llms.txt` (built from config, with every MCP tool), an MCP Server
 Card (SEP-2127) at `/mcp/server-card` (also at `/.well-known/mcp.json` and
-`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`;
-other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
+`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`,
+plus `/.well-known/openai-apps-challenge` (OpenAI's domain verification token as plain text) when
+`OPENAI_APPS_CHALLENGE` is set; other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
 `docs/agents.md#agent-discovery`; design:
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 
@@ -281,8 +291,10 @@ A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` 
 `start_upload` and takes a bearer token only; `GET /api/v1/artifacts?query=&category=` mirrors
 `list_artifacts` and returns `{ items, categories }`). Beyond the tools, `PATCH /api/v1/artifacts/:ref`
 sets the title or the category (owner), `GET /api/v1/categories` lists the caller's own category
-names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only). Size limits: 5 MB of HTML (1 MB of Markdown for a
-doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
+names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only).
+`GET /api/v1/artifacts/:ref/design-system?version=&include=&components=` mirrors `get_design_system`,
+and `GET /api/v1/artifacts?type=` filters the list by type. Size limits: 5 MB of HTML (1 MB of Markdown for a
+doc, and 1 MB and 500 slides for a deck), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
 (default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
 request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
 
@@ -299,9 +311,14 @@ only `script-src 'self'`; a doc's other files run no script. The type is fixed a
 The editor edits the Markdown with a live preview and history diffs `content.md`. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
-renderer connects the doc socket; every other shell is byte for byte as before. Decks and sheets
-join the same type registry (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx
-export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
+renderer connects the doc socket; every other shell is byte for byte as before. The second type
+is `slides` (decided 2026-11-19, [Slides](#slides-decided-2026-11-19)): Markdown with a line `---`
+between slides, stored as `slides.md`, rendered as a deck by the same kind of fixed renderer.
+The third is `design_system` (decided 2026-11-19): design tokens, guidelines and components as
+JSON, which agents read with `get_design_system` to build other pages; see
+[Design systems](#design-systems-decided-2026-11-19). Sheets join the same type registry
+(`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx export yet. Design:
+`docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
 ## Features
 
@@ -336,62 +353,102 @@ export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.
   thumbnails are never served. `THUMBNAILS=false`, or no `BROWSER` binding, turns the feature off:
   cards keep the placeholder and previews have no image.
 
-### Admin stats and view counts
+### Artifact stats
 
-Plinth counts how often each artifact is opened, as one number per artifact per UTC day. It never
-records who opened it.
+Owners see who opened their artifacts, when, how often and which version. One row per counted open
+goes into `artifact_opens`, kept with who opened it for `VIEW_LOG_RETENTION_DAYS`; after that only
+the count survives.
 
 - **Where an open is counted.** At the content host's one-time `/__plinth/enter` exchange, never
   at the gate: the app polls the gate, and previews, history and agents call it too. When the gate
   answers `ok` for a normal open of the live page, it seals a signed one-bit `w` flag into the enter
-  token. Enter records an open only after every existing check passed (signature, artifact,
-  access epoch, takedown, nonce), and only when all of these hold: the pass is a view pass, the
-  token carries `w`, `VIEW_COUNTS` is on, the request has `Sec-Fetch-Dest: iframe`, the user agent
-  does not look like a bot, and the browser's view pass for that artifact (if any) is not already
-  marked counted. The response (status, `Location`, cookie attributes, CSP) is the same whether or
-  not it counted.
+  token, and beside it `o`, the opener (below), AES-GCM sealed and bound to the artifact id like the
+  identity claim, because the enter token travels in a URL. Enter records an open only after every
+  existing check passed (signature, artifact, access epoch, takedown, nonce), and only when all of
+  these hold: the pass is a view pass, the token carries `w`, `VIEW_COUNTS` is on, the request has
+  `Sec-Fetch-Dest: iframe`, the user agent does not look like a bot, and the browser's view pass
+  for that artifact (if any) is not already marked counted. The response (status, `Location`,
+  cookie attributes, CSP) is the same whether or not it counted.
 - **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
   (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
   Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
   previews (their tokens refuse `w`), replayed or expired tokens, requests without
   `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
   token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
-  model does not count as one). Link
-  unfurlers never run the app, so they never reach the gate or enter. Editors, commenters,
-  allowlist and password viewers, link visitors and deep links to normal paths count.
+  model does not count as one). Link unfurlers never run the app, so they never reach the gate or
+  enter. Editors, commenters, allowlist and password viewers, link visitors and deep links to
+  normal paths count.
+- **Who is recorded.** The gate decides, from the principal that produced the `ok` gate. Anyone
+  signed in to an account is recorded by user id (`viewer_kind = 'user'`), whatever the
+  visibility, so a signed-in reader of a public page is named to its owner. A viewer who confirmed
+  an allowlisted email by code, without an account, is recorded by that email (`'email'`) when it
+  holds a grant on the artifact. Everyone else (link, public and password visitors) is
+  `'anonymous'`. Each row also has the role of the open (`editor`, `commenter` or `viewer` from a
+  grant; otherwise `public`, `link` or `password` from the visibility) and the version served (the
+  current one, since explicit versions never count). No IP address or user agent is stored. A
+  token with `w` but no readable opener records `'unknown'`.
+- **Anonymous visitors.** While `VIEW_COUNTS` is on, every view cookie carries `i`, a random
+  22-character visitor id, signed with the rest of the cookie. Enter takes it from any content
+  cookie the browser holds for that artifact (whatever its epoch, and up to 30 days after its pass
+  expired), or mints a new one, and the cookie is set to last 30 days (`TTL.visitorIdS`) instead of
+  12 hours; the pass inside it still expires after 12 hours, so access is unchanged. The id is
+  stored only on anonymous rows. "Anonymous visitors" counts distinct ids: approximate, because a
+  browser that drops partitioned cookies, a private window or a second browser is a new visitor,
+  and one who returns after 30 days without opening the page is too.
 - **Dedupe.** At most once per browser per artifact per content pass: a sliding 12 hours, reset by
   an access-epoch change (any grant, visibility or password change), so the same browser can count
   again sooner after one. A counted enter marks the content cookie it sets with one signed bit
   (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
   editor who moves between the editor preview, history and the live page counts once, and an
   uncounted pass (the preview, history, review mode) never stops a later live open from counting.
-  There is no new cookie, storage or identifier. Browsers that drop partitioned cookies count
-  every open, so counts are "opens", indicative, never unique people.
-- **Storage.** One D1 upsert per counted open into `artifact_view_days`, written after the
-  response (`waitUntil`). A failed write never fails the open. The hourly cron, at 03 UTC, folds
-  days older than 90 into `artifact_view_totals` in one transaction, so the daily table stays
-  bounded and all-time totals survive. Instances without a cron (local, tunnel, Docker) keep their
-  daily rows, and every total stays correct.
-- **`VIEW_COUNTS`** (default on) turns recording off. Stored counts are kept, and the fold still
-  runs.
-- **Owners see their own counts.** The Share dialog shows "Opened N times in the last 30 days · N
-  since <first counted day>" ("No opens counted yet." before the first one: opens from before the
-  instance began counting are not known), and `GET /api/v1/artifacts/:ref/views` returns the last
-  7 and 30 days, a 30-day daily series, the total and `since`, the first day with a counted open. It goes through the policy action `views`: the owner only (an
-  agent needs `artifacts:read`); editors, viewers and an admin without a role are denied, and a
-  taken-down artifact answers `taken_down`. Counts are not in `ArtifactSummary`, MCP or anything
-  the app host answers without signing in.
+  Browsers that drop partitioned cookies count every open.
+- **Storage.** One D1 insert per counted open into `artifact_opens`, written after the response
+  (`waitUntil`). A failed write never fails the open and logs a fixed string. The hourly cron, at
+  03 UTC, folds opens older than `VIEW_LOG_RETENTION_DAYS` (default 365, from 90 to 3650; whole
+  UTC days) into `artifact_view_totals` and deletes them, in one transaction, so who opened a page
+  is kept only that long and all-time counts survive. The cron reads the setting on its own and
+  folds nothing when it is set to a value the Worker refuses. Instances without a cron (local,
+  tunnel, Docker) keep every row, and every total stays correct. Migration
+  `0020_artifact_opens.sql` turned each old daily count into that many `'unknown'` opens at 00:00
+  UTC of its day (no version, viewer or role) and dropped `artifact_view_days`.
+- **Erasure.** Erasing an artifact or its owner removes its rows by cascade. `erase-user` turns the
+  person's opens of other people's artifacts into `'unknown'` rows (no user id, email, visitor or
+  role), so the owners' counts stay right; deleting a user row also clears `user_id`.
+- **`VIEW_COUNTS`** (default on) is the switch: off stops recording (no flag, no opener, no visitor
+  id, the 12-hour cookie as before). What was recorded stays, owners still see it, and the fold
+  still runs.
+- **Owners see their artifacts' stats.** `GET /api/v1/artifacts/:ref/stats?days=7|30|90|365`
+  (default 30) returns `totals` (opens, viewers, people, anonymous visitors and opens, all-time
+  opens and `since`, the first day with a counted open), a zero-filled daily series (opens and
+  viewers), `people` (per person: display name if the account has one, email, kind, the role and
+  version of their last open, first and last open in the window and opens; last opened first, at
+  most 500, with `people_total`) and per-version opens and viewers. A person is one email: an
+  account and the same email confirmed by code count once. "Viewers" are distinct people plus
+  distinct anonymous visitors; `'unknown'` opens count as opens, never as viewers, and have no
+  version. It goes through the policy action `views`: the owner only (an agent needs
+  `artifacts:read`); editors, viewers and an admin without a role are denied, and a taken-down
+  artifact answers `taken_down`. `GET /api/v1/stats/artifacts` lists the caller's own artifacts
+  that are not deleted or taken down with opens and viewers over 7 and 30 days, all-time opens and
+  `last_opened_at`, most recently opened first. The MCP tool `get_artifact_stats` returns either
+  (with or without `id`). The app shows them at `/a/:slug/stats` (range picker, opens and viewers
+  charts, people and version tables; a person whose last version seen is older than the current one
+  is marked "Not the latest version"), linked from the artifact's menu, the dashboard row menu and
+  the Share dialog ("See who opened it"). The list across artifacts is for agents (the MCP tool and
+  the API); the app has no separate page for it. Stats
+  are not in `ArtifactSummary` or anything the app host answers without signing in.
 - **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
   default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents
   included, gets the same 404. It shows people, live artifacts by visibility and taken down,
   versions and agent versions, storage, shared data, agent connections by client (and how many
   were used in the window, including any revoked since), open reports and opens, with daily series
   over the window (UTC days, zero-filled). Tiles whose figure covers the window say so in their
-  label. It names no artifact,
-  owner or viewer and has no top-N list, so it is no way around "admins view only reported
-  artifacts". Storage, artifact, version and shared-data totals count live artifacts only (as
-  the quota does); opens of deleted and taken-down artifacts stay in the view totals until a hard
-  erase, and the daily series count activity, including artifacts deleted since.
+  label. Opens come from `artifact_opens` plus the folded totals. It names no artifact, owner or
+  viewer and has no top-N list, so it is no way around "admins view only reported artifacts".
+  Storage, artifact, version and shared-data totals count live artifacts only (as the quota does);
+  opens of deleted and taken-down artifacts stay in the totals until a hard erase, and the daily
+  series count activity, including artifacts deleted since.
+- **Later.** Time on page and scroll depth are not recorded; they would need a beacon from the
+  page and are left for their own design.
 
 ### Editing
 
@@ -506,6 +563,11 @@ Comments are threaded and can be pinned to an element on the page. Mentioning an
 Rules for both modes: only the owner's connected agents can be mentioned, only commenters and
 editors can mention them, and an agent's change is always a new version that anyone can revert.
 
+A page that declares `comments` places its own anchors instead (a point on a canvas, a slide, a
+node in a diagram): it opens the composer, and the person writes and posts the comment. See
+[Comments from the page](#comments-from-the-page-decided-2026-11-19). Agents read either kind of
+anchor in `list_comments` and in mention tasks, as untrusted data like the comment text.
+
 ### Shared data and viewer identity
 
 Decided 2026-11-14 (issue #1). Design:
@@ -526,7 +588,9 @@ Decided 2026-11-14 (issue #1). Design:
   edit. `viewer` without `data` declares nothing (the viewer is learned through the data API). The
   declaration is parsed at publish into `versions.capabilities`; the current version's
   declaration governs, also for old version URLs. Dropping the tag switches the page API off and
-  keeps the data.
+  keeps the data. The same tag also takes `room` ([live rooms](#live-rooms)) and `comments`
+  ([comments from the page](#comments-from-the-page-decided-2026-11-19)), neither of which is shared
+  data.
 - **Writers.** Only identified viewers write: the owner and people with a grant on the artifact
   (viewer, commenter or editor, confirmed by sign-in or email code). Anonymous link viewers
   (unlisted, password, public) read but never write. Every write is stamped by the server with the
@@ -626,6 +690,281 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
   without a request. A page should work alone when the room is unavailable.
 
+### Design systems (decided 2026-11-19)
+
+A design system is a reference artifact that later work is built on: design tokens, components with
+live previews, and guidelines. Agents read it before they make a page, so the pages a person asks
+for look the same. It is the fourth artifact type, `design_system`, beside `html`, `doc` and
+`slides`.
+
+- **Format.** One JSON file, `system.json`, in format `plinth.design-system/1`: `name`,
+  `description` (Markdown), `prefix` (CSS variables are `--<prefix>-<path>`, default `ds`), `fonts`
+  (a Google Fonts `css2` URL, or a font file among the version's assets), `tokens` (a subset of the
+  W3C Design Tokens Community Group format, 2025.10: groups, `$value`, `$type` set on the token or
+  inherited from its group, `$description`, `$deprecated`, and aliases such as
+  `{color.brand.500}`), `themes.dark` (overrides of existing tokens, `$value` only), `guidelines`
+  (Markdown), `css` (shared by every component) and `components` (each with HTML examples and its
+  own CSS). Token types: color, dimension, fontFamily, fontWeight, duration, cubicBezier, number,
+  shadow, typography and border. Unknown keys are refused, so typos fail loudly. Limits: 1 MB of
+  JSON, 2,000 tokens nested at most 8 deep, alias chains of 16, 200 components of 1 to 20 examples
+  (20 KB of HTML each), 200 KB of guidelines, 100 KB of shared CSS. Assets are images and fonts.
+- **Validation.** One parser (`packages/shared/src/designSystem.ts`) serves the Worker, the
+  renderer and the editor. A publish, update or bundle that does not parse is refused with
+  `invalid_input` and up to 50 problems, each with its path into the JSON. Every string that
+  reaches CSS passes one value grammar (no `;`, braces, angle brackets, backslash, `@`, quotes or
+  line breaks; no `url(`, `expression(` or comments; at most 256 characters), font family names are
+  quoted by Plinth, and the `css` blocks may not hold `<`, a backslash (so no CSS escape such as
+  `@\69mport`), `@import`, `image-set()`, `image()`, `src()`, `cross-fade()`, `element()` or
+  `expression()` (vendor-prefixed forms such as `-webkit-cross-fade()` included), and each `url()` in them, read as a browser's CSS tokenizer reads it, must be a
+  plain relative path (letters, digits, `._~-` and `/`, no `..`, an optional query and fragment), a
+  `#fragment` or a raster `data:image` URL, because the compiled CSS is copied into other pages.
+  These checks are defence in depth; the content CSP of the page the CSS ends up in is what stops
+  loads from other hosts. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
+  holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme`,
+  `ds_deprecated_alias`, and `missing_file` with the block's `path` for a CSS block's `url()` that
+  names a file the version does not have. They count toward the publish's cap of 50 warnings with the reference
+  warnings. Restore copies stored files without checking them again, as for docs.
+- **Typography.** A typography token compiles to one variable per part
+  (`--<prefix>-<path>-font-size` and so on) and a `font` shorthand that reads them. When
+  `themes.dark` adds a part the light value lacks, or leaves one out, the part's variable is still
+  set in both themes, to `normal` where that theme has no value (what its shorthand resets the part
+  to), so neither theme's shorthand reads a variable the other alone defines.
+- **The site.** A fixed Plinth renderer on the artifact's own origin (`/__plinth/types/design_system/`,
+  `script-src 'self'`, like a doc) shows the guidelines, the tokens by kind (colors, typography,
+  spacing and sizes, radii, shadows, motion, others) with their samples (light and dark side by
+  side when the values differ, labelled once above the group, otherwise one sample in the reader's
+  color scheme; every sample one size, in one column, above the text on a phone), CSS variable
+  names, which copy when clicked ("Copied" shows in the name's place), and values, and every
+  component's description, usage and a live preview of each example in the reader's color scheme.
+  The site shows no source code: agents read the examples' HTML and the CSS with
+  `get_design_system`. The guidelines open the page under the name and description, with no
+  heading of their own. Guidelines, descriptions and usage follow
+  the doc type's Markdown rules, without heading anchors or heading rules, so the site's own
+  section headings stay the only ones. The site's own chrome uses Plinth's neutral
+  styles; the design system's tokens and CSS apply only to samples and previews. Navigation is by
+  hash (`#tokens/color`, `#components/button`) from a sidebar that marks the section in view: on a phone, one
+  row that scrolls sideways and fades at its edges. JSON that does not parse shows one line, "This design system
+  could not be shown."
+- **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
+  and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
+  opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
+  passes an allowlist sanitizer (no script, handlers, frames, forms, links out, or outside URLs).
+  Under opaque isolation the frames inherit the sandbox and are opaque too. Previews that need
+  script are not supported; states are shown with classes.
+- **Reading one from an agent.** `get_design_system` and its REST mirror read a design system as
+  the caller, through the policy module with the `view` action: the owner, people it is shared with,
+  and anyone with the link when it is unlisted or public (agents never pass a password). An artifact
+  of another type is refused only after the access decision, so a caller who cannot view it gets the
+  same 404 as for a missing id. The result has `css` (a `:root` block, then the dark theme for
+  `prefers-color-scheme: dark` unless the page set `data-theme="light"`, and for
+  `data-theme="dark"`), `font_links`, `fonts` (with `portable: false` for the design system's own
+  font files, which another artifact cannot load), `tokens` with resolved light and dark values,
+  `guidelines`, `component_css` and `components`; `include` and `components` trim it. A stored
+  version that no longer parses returns its `problems`. Every result says `untrusted: true`.
+- **Building on one.** Pages cannot load another artifact's files: the agent copies the CSS it uses
+  into the page it publishes, and names the design system in the page's head with
+  `<meta name="plinth-design-system" content="<id>@<version>">`. On publish the server checks that
+  reference once, as the publisher: `design_system_outdated` when a newer version exists, and one
+  `design_system_unavailable` message for every other case (missing, deleted, not viewable, taken
+  down, another type). `get_artifact` on such a page returns
+  `design_system: { id, title, version, current_version }` when the caller may view the design
+  system, or `null`; pages without the meta get no field. The meta is read from the first 256 KB
+  before `<body>` in one forward pass, as a browser would read the tag: comments are skipped (an
+  unclosed comment or tag runs to the end, so nothing after it counts), and a page that never
+  mentions `plinth-design-system` is not scanned at all.
+- **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
+  JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
+  keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
+  link (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
+- **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
+  origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
+  no themes other than `dark`, and no copying of font or image files between artifacts.
+
+### Slides (decided 2026-11-19)
+
+A presentation is a deck: the agent writes Markdown, Plinth renders fixed slides. It is the second
+[typed output](#mcp-interface), after docs, and works like one: `publish_artifact` and
+`update_artifact` take `type: "slides"` with the Markdown in `content`, a version stores
+`slides.md` and its images, and versions, `base_version` conflicts, restore, history and the
+source editor work as for docs. A deck is not edited on its page.
+
+- **Source format.** A line that is exactly `---` (outside fenced code) separates slides; the split
+  happens before Markdown, so `---` under a line of text is never a heading. Optional front matter
+  when line 1 is `---` and a closing `---` follows within 20 lines of `key: value` lines: `aspect`
+  (`16:9`, the default, or `4:3`), `theme` (`auto`, `light`, `dark`), `paginate` (`true` or
+  `false`) and `footer` (plain text, at most 120 characters). The first line of a slide starting
+  `Note:` or `Notes:` starts its speaker notes, up to the next slide (`\Note:` is a literal
+  paragraph). Lines `|||` split a slide into 2 or 3 columns under what comes before the first one.
+  `#N` links to slide N. Otherwise the doc's Markdown rules apply unchanged: raw HTML shows as text,
+  links pass the allowlist, images are the deck's own files or inline raster `data:` URLs. Limits:
+  1 MB of Markdown, at least 1 and at most 500 slides, images only as assets. The parser is one
+  module (`packages/shared/src/slides.ts`) for the Worker and the renderer.
+- **Look.** Every slide is laid out on a fixed canvas, 1280x720 or 1024x768 CSS pixels, and scaled
+  to fit, so text wraps the same everywhere. Layouts come from content: a title slide (one `#`
+  heading and up to two short lines), a section slide (one `##` heading), an image slide (one
+  image, with or without a heading), columns, and the default. Text that does not fit shrinks in
+  steps to 55%; a slide that still overflows is marked in presenter view and the overview. Light,
+  dark or `auto` (the viewer's scheme on screen, light in print), system fonts, slide numbers and
+  the footer.
+- **Viewing.** Keys (arrows, Page Up and Down, Space, Home, End, a number then Enter), clicks or
+  taps on the outer thirds, swipes, `#N` links and a control pill page the deck. The pill
+  (previous, next and an overview toggle, with a `3 / 20` count only when the deck shows no page
+  numbers of its own, so one counter is on screen) floats over the bottom centre of the slide, its
+  bottom edge 16 px above the slide's, on a translucent surface; it shows on a pointer move, a tap or a key, stays while hovered or focused,
+  hides after 2 s idle and reserves no room. The slide is centred with one 16 px gutter on every
+  side, full screen too, the same in the overview and presenter view, and has square corners in
+  every view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
+  700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
+  the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
+  and the editor preview keep it in one column, without the pill. The app keeps the slide in its
+  URL fragment (`#slide=N`, never sent to the server), so a reload or a shared link opens the same
+  slide, and a newer version's frame is sent back to it.
+- **Presenting.** Present is one control in the bar, a menu with two items. "Full screen" puts
+  the app's own frame full screen; the frame gets no fullscreen permission of its own, and
+  presenter view stays presenter view when it goes full screen. "Presenter view" (or `s`) shows,
+  inside the frame, two columns that fit the frame's height: on the left the current slide as
+  large as fits, with one bar directly under it (the elapsed timer with pause, which starts again
+  each time presenter view opens; previous and next around the same `3 / 20` count, since
+  presenter view takes no swipes or taps and touch screens page here; the clock; Exit); on the
+  right the next slide, its top level with the current slide's and its "Next" caption above it,
+  and the notes down to the bar's bottom edge, the two columns centred in the frame's height
+  together. Below 600 px wide or in portrait it is one column: current, bar, next, notes. Exit, Escape or `s` leave it. A
+  slide without notes leaves the notes pane empty. The frame tells the app each view it switches
+  to, so the Present menu and the paused version swap follow the deck however presenter view was
+  opened or left. While presenter view is on, the Present menu offers "Audience window" in its
+  place; the ⋯ menu has no present item. Review mode keeps the overview whatever asks for another
+  view, and stays on after the comments panel closes, so choosing either Present item (or `f`)
+  there first leaves review mode: the comments panel closes, the deck loads again without it, and
+  the new frame goes full screen or into presenter view. "Audience window" opens a second app window on the permanent link of the version the
+  presenter's window shows (`/a/<slug>/v/<n>`), paired with it through a `BroadcastChannel` on
+  the app origin in the same browser, in every isolation mode; only slide and version numbers
+  cross it. The audience window shows exactly the presenter's current slide of that version,
+  fitted to the window at any size (never the stacked overview), sends its own frame back to that
+  slide and to the deck view whatever paged or switched it, and loads another version only when
+  the presenter's window shows one. It follows the presenter's window, in presenter view or not,
+  until either window closes; a second audience window joins the same pair. Once it has heard
+  from its presenter it shows the deck alone, without the bar or the banner; a link with a pair id
+  and no presenter window in that browser keeps the whole page. While the deck is full screen or
+  in presenter view, a newer version does not replace the frame (the bar's version notice says an
+  older one is on view); the deck catches up on the same slide when presenting ends, and its
+  audience window with it. A permanent version link stays on its version.
+- **Printing.** "Print or save as PDF" (or Ctrl+P in the deck) prints one slide per page at the
+  deck's size (an `@page` size in inches); from presenter view it prints a handout with each slide
+  over its notes. The frame prints itself, after its images have decoded. Browsers that ignore
+  `@page` sizes print on their own paper size, one slide per page.
+- **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
+  the handout, the source). Agents treat deck text, notes included, as untrusted data.
+- **Warnings.** A publish lists `slides_setting`, `slide_empty`, `slide_dense` and `missing_file`
+  for the deck (see [Big builds](#big-builds-and-reuse-by-hash), "Publish warnings"); they never
+  block. A deck with no slide or more than 500 is refused with a fix-it message. A warning that
+  quotes deck text writes its control characters as `\uXXXX`, as every publish warning that quotes
+  a caller's file does.
+- **Uploads and the CLI.** `start_upload` with `type: "slides"` (or the `id` of a deck) takes a
+  folder with `slides.md` and its images at its top. The Plinth CLI publishes such a folder as a
+  deck (`plinth publish <dir>`), updates one with the Markdown in `content` (`--id`), and sends one
+  with `plinth upload`, the `commands.npx` that `start_upload` returns.
+- **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
+  and the frame exchange only slide numbers, counts, view names and booleans (renderer protocol
+  version 1: `goto`, `view` and `print` from the app; `ready`, `position`, `view` and
+  `fullscreen` from the frame); see [docs/security.md](security.md#typed-artifacts).
+- **Not in this slice.** `.pptx` export and following a presenter over a live room come later;
+  transitions, builds, custom themes and fonts, math, diagrams and video are not planned for
+  slides.
+
+### Comments from the page (decided 2026-11-19)
+
+A page whose things have no stable element (a point on a `<canvas>`, a WebGL scene, a slide, a node
+in a pan-and-zoom diagram) can take comments on them: its own code opens Plinth's comment composer
+with an anchor it chose, and learns which threads are anchored where, so it can draw its own
+markers and tell Plinth where to draw its pins.
+
+- **Declaration.** `comments` in `<meta name="plinth-capabilities">` (for example
+  `content="comments"`), HTML artifacts only. It is neither shared data nor a room: a page that
+  declares only `comments` has no store and no room. Unlike data and rooms, which follow the
+  current version's declaration, the declaration of the version being shown decides, because it
+  only changes what the app shows for that page; the viewer gate says so with
+  `page_comments: true`. An old version that does not declare it keeps review mode and "Pin to an
+  element".
+- **Page API.** `window.plinth.comments` in `/__plinth/runtime.js`. A page whose own
+  `<meta name="plinth-capabilities">` lists `comments` starts it as the runtime loads (or once that
+  meta is parsed), so Plinth's pins for its threads work however late the page first calls the
+  API, or if it never does; calling it again starts nothing twice. On any other page nothing is
+  sent until the page first uses it.
+  - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
+    direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
+    in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
+  - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
+    `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
+    `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). An
+    optional field set to `undefined` counts as absent. Each request settles when the app answers
+    it: a later `compose` does not end an earlier one, since the app may refuse the later one and
+    keep the earlier anchor in the composer (an accepted later request replaces an earlier one
+    that nobody wrote for, which then settles `closed`).
+  - `onThreads(fn)` gets the page-anchored threads, oldest first: `{ id, pin, status, anchor }`,
+    resolved ones included, as frozen copies, and is called at once with the latest list.
+  - `locate(fn)` says where an anchor is now, as a point `{ x, y }` or a box
+    `{ left, top, width, height }` in the frame's viewport, or null. Without it Plinth draws no pin
+    for page anchors.
+  - `refresh()` runs `locate` again after the page moved things (coalesced, at most 20 a second).
+    The runtime also measures again on window scroll and resize, on `load` and whenever the
+    document's size changes (`ResizeObserver`), and reports positions only when they changed.
+  - `open(id)` shows a thread in the panel.
+  - `onFocus(fn)` hears when the person picks a page-anchored thread in the panel or by its pin.
+- **The person posts.** A page never posts a comment and cannot fill in its text: the person writes
+  it and presses Comment, through the comments API with their own session, rate limit and role. A
+  link viewer still sees "Sign in to comment". So page code cannot turn into mention tasks under a
+  collaborator's name. The page learns `posted` only after a comment was posted and `busy` only
+  while someone writes one. A request from a viewer who cannot comment is held like any other and
+  ends `closed` only when the panel closes or a later request replaces it, as for a commenter who
+  has written nothing, so neither the answer nor its timing says whether the viewer can comment.
+  No page request moves focus: the panel opens, or shows the thread, with focus where it was, and
+  the person clicks or tabs into the composer. Keystrokes meant for the page never land in a
+  comment, and where focus goes says nothing about the viewer's role.
+- **No comment text in the frame.** Plinth tells the page thread ids, pin numbers, status and
+  anchors (a page anchor's key, coordinates and data, or an element's selector) and request ids.
+  Never comment bodies, authors, emails, roles, mention state, an anchor's label or an element's
+  text excerpt. A page anchor's key, coordinates and data are written by the page's code or by any
+  commenter (the comments API takes page anchors from anyone who may comment), so they are
+  untrusted input for the page too: render them as text, never as HTML.
+- **Page anchors.** `{ kind: "page", key, x?, y?, text?, data? }`: `key` names what the page anchors
+  to in its own terms (`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`), `x` and `y` are page coordinates
+  (finite, within ±10⁹), `text` is a label of at most 120 characters for the composer's chip, and
+  `data` holds at most 16 flat page-defined fields (keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`; strings of
+  at most 200 characters, finite numbers, booleans or null; 1 KiB as JSON). `text` and `data`
+  strings may not hold control or format characters (Unicode `Cc` and `Cf`: newlines, bidi
+  overrides and isolates, zero-width characters). An element anchor's `text` comes from the page's
+  DOM, so those characters are removed from it instead, on input and when stored anchors are read.
+  The app renders every anchor label isolated (`<bdi>`). The commenter sees only the label: the
+  page's `key`, coordinates and `data` go with the comment unseen. The schema is strict:
+  anything that says `kind: "page"` is a valid page anchor or is refused. Element anchors keep their
+  shape and are stored without `kind`. The server accepts page anchors on any comment its author may
+  post, with or without the declaration, as it accepts element anchors outside review mode; both
+  are untrusted data.
+- **No review-mode reload.** For a declaring page the app does not enter review mode: opening the
+  panel does not reload the frame, so a canvas, a zoom level or form input survives, and the gate
+  ignores `review` (so `?comments` deep links stay reload-free too). The bridge is not injected, the
+  runtime positions element anchors itself, and "Pin to an element" is hidden.
+- **Limits in the app.** At most one compose a second is accepted, only after the page said hello,
+  while the tab is visible and no dialog is open; a compose while someone is writing is `busy` and
+  leaves the draft and its anchor alone. `open` is refused while the tab is hidden or a dialog is
+  open. A request that would open a closed panel, compose or `open`, is accepted at most once a
+  second, the two together. No page request moves focus. At most 4 `open` a second and 500
+  threads. `hello` is answered at most once a second. Position reports are checked before they are
+  parsed: 20 a second, and reports over that are coalesced into the latest one, applied when the
+  second ends. They re-render the app only while the comments panel is open, where the latest one
+  is shown when it opens. A pin placed before the shown version changes (a live update, or another
+  version picked) is removed from the composer, which keeps the draft, and its page request settles
+  `closed`. A page can at worst reopen a panel the person closed, once a second; the report link
+  covers a page that abuses it.
+- **Availability.** Origin and opaque isolation alike: the app identifies the frame by its window
+  (and, under origin isolation, its exact origin) and posts to it with the exact content origin, or
+  `"*"` under opaque isolation, which is safe because the messages hold nothing the framed document
+  may not see. The runtime posts only to `window.parent` at the instance's app origin and listens
+  only to it. Not under the staging path fallback, where `/__plinth/runtime.js` does not load.
+- **Agents.** No new tool. `list_comments`, `list_mentions` and the REST comment routes return page
+  anchors with `kind: "page"`; agents read `key`, `x`, `y` and `data` to find what a thread is
+  about, and treat every anchor as untrusted.
+- **Settings.** None: the feature adds no server behaviour, cost or quota beyond the comment API's.
 ### Voice: dictation and text to speech (decided 2026-11-19)
 
 A page can take words the viewer speaks, and speak itself. What it can never have is the
@@ -771,10 +1110,18 @@ files) and big pages without merging chunks, and an update stores only what chan
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`),
   `blocked_feature` (once per file, with a count: a script calls `getUserMedia` or constructs
-  `SpeechRecognition`, which fails in every Plinth frame; use `plinth.dictation`) and
+  `SpeechRecognition`, which fails in every Plinth frame; use `plinth.dictation`),
+  `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an
+  empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
+  Markdown shows that the version does not hold, its path resolved as the browser does: before any
+  `?` or `#`, percent-decoded, `.` and `..` segments applied, an `<angle bracket>` destination read
+  whole) and
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
-  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
+  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked; and
+  when a type's own checks, such as a page's design system reference or a deck's own warnings,
+  fail on an error,
+  which is logged and never fails the publish). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
   ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user
@@ -914,6 +1261,9 @@ options.
 - **Comment text is untrusted input for agents.** A mention is a request from a collaborator, not
   an instruction with the owner's authority. The MCP tool descriptions say so, and agent tokens used
   for mentions are scoped to that one artifact.
+- **Pages never write comments.** A page that declares `comments` can open the composer with its
+  own anchor, but only the person posts, and the frame is never told comment text, authors or
+  roles. Page anchors are untrusted data like the comment text.
 - **Shared data is guarded on the content host.** The data API accepts only same-origin `fetch`
   requests from the artifact's own page (a custom `x-plinth-data` header, fetch metadata, an exact
   `Origin`, JSON bodies, no CORS), because every framed artifact shares one partitioned cookie jar.
@@ -935,7 +1285,8 @@ options.
   a "report" link and a banner naming the platform, and reported artifacts can be taken down
   quickly. The banner also links to Plinth's source repository unless the operator turns that
   off (`SHOW_SOURCE_LINK`). It sits in the app's page around the frame, so the artifact's own
-  HTML is never changed.
+  HTML is never changed. The one page without it is a deck's audience window once its presenter
+  window in the same browser has paired with it: it shows the deck that person is presenting.
 - **Hosted instance paperwork.** Terms of use, a privacy notice and an acceptable use policy:
   short, final, plain-language pages built from the instance's `OPERATOR_*` settings (operator
   name, address, registration or VAT number, one contact address), since the operator is a host
@@ -1013,17 +1364,18 @@ Shared data runs on the same Worker and D1 allowances (D1 rows are estimates fro
 | Write | 1 | about 4 + the owner's artifacts with data | about 4 (2 rate-limit rows, the document, usage by trigger) |
 | Gate with an identity claim | 0 | +1 | 0 |
 
-Open counts run on the same allowances:
+Artifact stats run on the same allowances:
 
 | Operation | Worker requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
-| Counted open (enter) | 0 extra | about 1 | 1, on top of the existing `used_nonces` row |
+| Counted open (enter) | 0 extra | about 1 | 1 row plus its index entries (2 to 3), on top of the existing `used_nonces` row |
 | Uncounted enter | 0 | 0 | 0 |
-| Daily fold (cron, 03 UTC) | 0 | the rows older than 90 days, plus the totals rows they touch | about 1 per folded row, plus deletes |
-| Owner opens the Share dialog | 1 | ≤ 92 | 0 |
-| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus view rows in the window | 0 |
+| Daily fold (cron, 03 UTC) | 0 | the opens older than the retention, plus the totals rows they touch | about 1 per artifact folded, plus the deletes |
+| Owner opens an artifact's Stats | 1 | about 6 times the opens in the window, plus 2 | 0 |
+| Owner opens the Stats list | 1 | the owner's artifacts, plus their opens in the log and in the last 30 days | 0 |
+| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus the opens in the window | 0 |
 
-At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
+At the free tier's 100k rows written a day, an instance can take roughly 25k counted opens a day,
 with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.
 
 Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Free plan). Free:
@@ -1071,7 +1423,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides and design systems done (2026-11-19); sheets later. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
    group-by-category view, and personal categories for artifacts shared with you. Server speech
    (speech to text and voices run by the instance, for browsers without a recognizer), dictation
@@ -1083,10 +1435,10 @@ for a single user.
 | --- | --- |
 | License | MIT |
 | Operator of the hosted instance | Aconite Software & Investments, Lda. |
-| Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
+| Sign-in | Email magic link (with a six-digit code), plus an optional password sign-in for one review account: `REVIEW_LOGIN_EMAIL` and the secret `REVIEW_LOGIN_PASSWORD_HASH`, off unless both are set, at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. That account is an ordinary user, never an `ADMIN_EMAIL` address and never on a single-user instance ([security.md](security.md#review-account-sign-in)). Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); sheets and decks next |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); sheets next |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

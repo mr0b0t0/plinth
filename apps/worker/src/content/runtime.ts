@@ -1,10 +1,11 @@
-// /__plinth/runtime.js: the script a page loads to use its artifact's shared data, live room and
-// dictation (docs/spec.md "Shared data and viewer identity", "Live rooms", "Voice: dictation and
-// text to speech"). It holds no secrets and no artifact data, so it is served without a content
-// cookie and is the same for every artifact on an instance. Its only configuration value is the
-// public app origin, which the app channel (runtime/app.ts) embeds for dictation. It talks only to
-// its own origin's /__plinth/api/v1/ (connect-src 'self') and, for dictation, to the app that
-// frames it, by postMessage at that exact origin. Assembled from the fragments in runtime/.
+// /__plinth/runtime.js: the script a page loads to use its artifact's shared data, live room,
+// comments from the page and dictation (docs/spec.md "Shared data and viewer identity", "Live
+// rooms", "Comments from the page", "Voice: dictation and text to speech"). It holds no secrets and
+// no artifact data, so it is served without a content cookie and is the same for every artifact on
+// an instance. Its only configuration value is the instance's public app origin, which the app
+// channel (runtime/app.ts) embeds for page comments and dictation. It talks only to its own
+// origin's /__plinth/api/v1/ (connect-src 'self') and, by postMessage at that exact origin, to the
+// app that frames it. Assembled from the fragments in runtime/.
 //
 // window.plinth:
 //   ready      Promise<Session>, never rejects: { available, reason, viewer, canWrite,
@@ -26,6 +27,8 @@
 //              "open", "reconnecting", "closed", "unavailable"); join(name) -> a sub-room with
 //              the same methods (3 at most); leave()
 //
+//   comments   comments from the page (runtime/comments.ts); nothing is posted until first use:
+//              ready, compose(anchor?), onThreads(fn), locate(fn), refresh(), open(id), onFocus(fn)
 //   dictation  words the viewer speaks, recognized by the app (never the microphone): ready
 //              Promise<{ available, reason }>, never rejects (reason null | "disabled" |
 //              "opaque_isolation" | "not_declared" | "not_identified" | "unsupported" | "no_host");
@@ -43,6 +46,7 @@
 import type { Config } from "../config.ts";
 import { applyContentHeaders } from "./csp.ts";
 import { APP_CHANNEL_FRAGMENT } from "./runtime/app.ts";
+import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import { DICTATION_FRAGMENT } from "./runtime/dictation.ts";
@@ -57,6 +61,7 @@ import { ROOM_FRAGMENT } from "./runtime/room.ts";
 export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
+  COMMENTS_FRAGMENT,
   DICTATION_FRAGMENT,
 ];
 

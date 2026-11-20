@@ -27,6 +27,15 @@ export const PUBLISH_WARNING_CODES = [
   "opaque_module",
   "not_scanned",
   "live_draft",
+  "slides_setting",
+  "slide_empty",
+  "slide_dense",
+  "ds_inert_markup",
+  "ds_missing_font",
+  "ds_no_dark_theme",
+  "ds_deprecated_alias",
+  "design_system_unavailable",
+  "design_system_outdated",
   "blocked_feature",
 ];
 
@@ -71,6 +80,10 @@ export const LIMITS = {
   maxHtmlBytes: 5 * MB,
   /** Bytes of Markdown (content.md) per version of a doc artifact. */
   maxDocBytes: 1 * MB,
+  /** Bytes of Markdown (slides.md) per version of a slides artifact. */
+  maxSlidesBytes: 1 * MB,
+  /** Slides in one deck. */
+  maxSlides: 500,
   // On-page doc editing (#36, packages/shared/src/liveDoc.ts). A live draft keeps maxDocBytes.
   /** Lines in a live doc draft. */
   maxLiveDocLines: 50_000,
@@ -128,7 +141,45 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
+  /** Bytes of JSON (system.json) per version of a design system artifact. */
+  maxDesignSystemBytes: 1 * MB,
+  /** The design system format's limits (packages/shared/src/designSystem.ts). */
+  designSystem: {
+    maxTokens: 2000,
+    /** Path segments of one token, its own name included. */
+    maxDepth: 8,
+    maxAliasChain: 16,
+    maxValueLength: 256,
+    maxNameLength: 120,
+    maxDescriptionBytes: 4 * KB,
+    maxGuidelinesBytes: 200 * KB,
+    maxCssBytes: 100 * KB,
+    maxFonts: 16,
+    maxComponents: 200,
+    maxComponentTextBytes: 8 * KB,
+    maxComponentCssBytes: 50 * KB,
+    maxExamples: 20,
+    maxExampleNameLength: 80,
+    maxExampleHtmlBytes: 20 * KB,
+    minExampleHeight: 40,
+    maxExampleHeight: 1200,
+    defaultExampleHeight: 160,
+    /** Errors parseDesignSystem reports, at most. */
+    maxErrors: 50,
+  },
+  /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
+  maxStatsPeople: 500,
 };
+
+/** The windows an owner can pick for one artifact's stats, in UTC days. */
+export const STATS_RANGES = [7, 30, 90, 365];
+
+/**
+ * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, before the cron
+ * folds it into the artifact's all-time count. The minimum keeps the 90-day trends whole.
+ */
+export const VIEW_LOG_DEFAULTS = { retentionDays: 365 };
+export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] };
 
 export const TTL = {
   /** Magic link and six-digit code. */
@@ -139,6 +190,12 @@ export const TTL = {
   viewerTokenMs: 60 * 1000,
   /** Host-only viewer cookie on one artifact's content subdomain. */
   contentCookieS: 12 * 60 * 60,
+  /**
+   * How long the content cookie stays in the browser while VIEW_COUNTS is on, so its anonymous
+   * visitor id outlives the 12-hour pass (docs/spec.md "Artifact stats"). The pass inside still
+   * expires after contentCookieS; past that the cookie only carries the visitor id.
+   */
+  visitorIdS: 30 * 24 * 60 * 60,
   /**
    * An in-chat preview's content cookie (MCP Apps, docs/spec.md "In-chat previews"): one look at
    * one version in an agent's thread. Each render mints a fresh one, so it is kept short.
@@ -170,6 +227,13 @@ export const RATE_LIMITS = {
   loginPerEmailPerHour: 5,
   loginPerIpPerHour: 20,
   codeAttemptsPerEmailPerHour: 10,
+  /** Review-account password sign-ins (REVIEW_LOGIN_*) from one address, right or wrong. */
+  reviewLoginAttemptsPerIpPerHour: 10,
+  /**
+   * Wrong review-account passwords across all addresses before that sign-in locks for the rest of
+   * the hour, so guessing cannot be spread over many IPs.
+   */
+  reviewLoginFailuresPerHour: 20,
   passwordAttemptsPerArtifactPerIpPerHour: 10,
   /** Across all addresses, so guessing cannot be spread over many IPs. */
   passwordAttemptsPerArtifactPerHour: 100,
@@ -263,6 +327,10 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
  *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
+ * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
+ * packages/shared/src/pageComments.ts). It is not shared data either.
+ * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
+ * shared data, not a room, and never the microphone.
  * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
  * shared data, not a room, and never the microphone.
  */
@@ -270,6 +338,7 @@ export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
+  { token: "comments", declares: true, needs: [], stored: "declared" },
   { token: "dictation", declares: true, needs: [], stored: "declared" },
 ];
 

@@ -165,6 +165,7 @@ describe("the dictation declaration", () => {
       shared: [],
       room: false,
       roomOpen: [],
+      comments: false,
       dictation: true,
     });
     const stored = serializeCapabilities(c as Capabilities);
@@ -215,6 +216,7 @@ describe("policy: dictationAccess", () => {
     shared: [],
     room: false,
     roomOpen: [],
+    comments: false,
     dictation,
   });
   const who = (role: EffectiveRole) => ({ email: `${role}@example.com`, role });

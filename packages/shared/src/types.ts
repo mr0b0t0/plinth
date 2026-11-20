@@ -77,6 +77,21 @@ export interface ArtifactDetailBase extends ArtifactSummary {
    * never returned to agents). Null when there are none. Absent for other types and roles.
    */
   live_draft?: LiveDraftMeta | null;
+  /**
+   * HTML pages that name a design system (`<meta name="plinth-design-system">`): that design
+   * system, when the caller may view it and it is one; null otherwise. Absent when the page names
+   * none, and for other types.
+   */
+  design_system?: DesignSystemReference | null;
+}
+
+/** The design system an HTML page says it was built on, as get_artifact returns it. */
+export interface DesignSystemReference {
+  id: string;
+  title: string;
+  /** The version the page names, or null when it names none. */
+  version: number | null;
+  current_version: number;
 }
 
 /** Unsaved page edits of a doc (#36), as metadata. */
@@ -132,6 +147,8 @@ export interface PublishWarning {
   host?: string;
   /** For a warning reported once per file: how many references it covers. */
   count?: number;
+  /** For a design system's warnings: where in system.json, like "components[0].examples[1].html". */
+  path?: string;
   message: string;
 }
 
@@ -283,7 +300,10 @@ export interface MentionTaskInfo {
    * owner wrote it. Requests from anyone else carry no owner authority.
    */
   comment_author_role: EffectiveRole | null;
-  /** Element the comment is pinned to, if any. Also untrusted. */
+  /**
+   * Element or page spot the comment is pinned to, if any (`kind: "page"`: placed by the page's
+   * own code). Also untrusted.
+   */
   anchor: Anchor | null;
   version_number: number;
   claimed_by: string | null;
@@ -356,6 +376,16 @@ export interface AppConfig {
   /** How long an upload ticket from start_upload stays valid, in seconds. */
   upload_ticket_ttl_s: number;
   /**
+   * The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is
+   * on: the sign-in page links to /login/review. Off on almost every instance.
+   */
+  review_login: boolean;
+  /**
+   * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, for the privacy
+   * notice and the owner's stats (docs/spec.md "Artifact stats").
+   */
+  view_log_retention_days: number;
+  /**
    * Dictation is offered on this instance (ALLOW_DICTATION, with origin isolation): pages that
    * declare `dictation` may receive words the viewer speaks, recognized by the app.
    */
@@ -388,6 +418,11 @@ export type ViewGate =
        * editing is on under origin isolation. Absent otherwise.
        */
       live?: ViewGateLive;
+      /**
+       * The version being shown declares `comments` (HTML only): the page may open the comment
+       * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
+       */
+      page_comments?: true;
       /** Dictation for this page: present only when the current version declares `dictation`. */
       voice?: ViewGateVoice;
     }
@@ -550,15 +585,111 @@ export interface AdminStats {
   series: StatsDay[];
 }
 
-/** GET /api/v1/artifacts/:ref/views: the owner's open counts. No viewer data. */
-export interface ArtifactViews {
+/** The windows an owner's artifact stats cover, in UTC days (GET /api/v1/artifacts/:ref/stats). */
+export type StatsRange = 7 | 30 | 90 | 365;
+
+/**
+ * How a counted open's viewer is known (artifact_opens.viewer_kind). `user`: signed in to an
+ * account. `email`: confirmed an allowlisted email by code, without an account. `anonymous`: a link,
+ * public or password visitor. `unknown`: counted before viewers were recorded, or the person was
+ * erased since.
+ */
+export type OpenViewerKind = "user" | "email" | "anonymous" | "unknown";
+
+/** The role an open was made with: a grant's role, or how the page was reached without one. */
+export type OpenRole = "editor" | "commenter" | "viewer" | "public" | "link" | "password";
+
+/** One identified person in an artifact's stats, over the window. */
+export interface ArtifactStatsPerson {
+  /** The account's display name; null for an email viewer or an account without one. */
+  name: string | null;
+  email: string;
+  /** `user` when their last open was signed in, `email` when by an emailed code. */
+  kind: "user" | "email";
+  /** The role of their last open in the window. */
+  role: OpenRole | null;
+  /** Their first and last open in the window (UTC ISO). */
+  first_opened_at: string;
+  last_opened_at: string;
+  opens: number;
+  /** The version their last open showed; null for opens counted before versions were recorded. */
+  last_version_seen: number | null;
+}
+
+/** One UTC day of an artifact's opens. `viewers` counts people and anonymous visitors. */
+export interface ArtifactStatsDay {
+  day: string;
+  opens: number;
+  viewers: number;
+}
+
+/** Opens of one version over the window. */
+export interface ArtifactStatsVersion {
+  version: number;
+  opens: number;
+  viewers: number;
+}
+
+/**
+ * GET /api/v1/artifacts/:ref/stats and get_artifact_stats with an id: one artifact's opens, for its
+ * owner only. "Viewers" are the distinct people plus the distinct anonymous visitors.
+ */
+export interface ArtifactStats {
+  /** Whether this instance records opens (VIEW_COUNTS). */
   enabled: boolean;
-  total: number;
-  /** The first UTC day with a counted open (`total` counts from it), or null when there is none. */
-  since: string | null;
-  last_7: number;
-  last_30: number;
-  days: { day: string; views: number }[];
+  days: StatsRange;
+  /** VIEW_LOG_RETENTION_DAYS: opens older than this keep only their count. */
+  retention_days: number;
+  current_version: number;
+  totals: {
+    opens: number;
+    viewers: number;
+    /** Distinct identified people (accounts and confirmed emails). */
+    people: number;
+    /** Distinct anonymous visitors: browsers, approximate (docs/spec.md "Artifact stats"). */
+    anonymous_visitors: number;
+    anonymous_opens: number;
+    /** Every counted open, including those older than the log keeps. */
+    all_time_opens: number;
+    /** The first UTC day with a counted open (`all_time_opens` counts from it), or null. */
+    since: string | null;
+  };
+  /** One entry per UTC day of the window, oldest first, zero-filled. */
+  series: ArtifactStatsDay[];
+  /** People who opened it in the window, last opened first, at most LIMITS.maxStatsPeople. */
+  people: ArtifactStatsPerson[];
+  /** How many people opened it in the window (`people` may be cut to the limit). */
+  people_total: number;
+  /** Versions opened in the window, newest first. */
+  versions: ArtifactStatsVersion[];
+}
+
+/** One of the caller's artifacts in their stats summary. */
+export interface ArtifactStatsSummaryItem {
+  id: string;
+  slug: string;
+  title: string;
+  type: ArtifactType;
+  visibility: Visibility;
+  current_version: number;
+  opens_7d: number;
+  opens_30d: number;
+  viewers_7d: number;
+  viewers_30d: number;
+  all_time_opens: number;
+  /** The last counted open the log still holds (UTC ISO), or null. */
+  last_opened_at: string | null;
+}
+
+/**
+ * GET /api/v1/stats/artifacts and get_artifact_stats without an id: the caller's own live artifacts
+ * (not deleted, not taken down), most recently opened first.
+ */
+export interface ArtifactStatsSummary {
+  enabled: boolean;
+  retention_days: number;
+  generated_at: string;
+  items: ArtifactStatsSummaryItem[];
 }
 
 export interface Paged<T> {
@@ -613,4 +744,55 @@ export interface ArtifactList {
   items: ArtifactSummary[];
   /** The caller's own categories, most-used first, whatever the query or filter. */
   categories: CategoryCount[];
+}
+
+/** One token of a design system, as get_design_system returns it. */
+export interface DesignSystemTokenRead {
+  path: string;
+  css_var: string;
+  type: string;
+  /** The resolved literal value, light. */
+  value: string;
+  /** The resolved value in the dark theme, when it differs. */
+  dark: string | null;
+  alias_of: string | null;
+  description: string | null;
+  deprecated: boolean | string;
+}
+
+export interface DesignSystemComponentRead {
+  id: string;
+  name: string;
+  status: string;
+  description: string | null;
+  usage: string | null;
+  css: string | null;
+  examples: { name: string; html: string; height: number }[];
+}
+
+/**
+ * get_design_system and GET /artifacts/:ref/design-system. Every text field is untrusted data
+ * written by the design system's authors. Parts left out by `include` are absent.
+ */
+export interface DesignSystemRead {
+  id: string;
+  slug: string;
+  title: string;
+  url: string;
+  version: number;
+  current_version: number;
+  format: string;
+  name: string | null;
+  description: string | null;
+  prefix: string | null;
+  css?: string;
+  font_links?: string[];
+  fonts?: { family: string; source: "google" | "asset"; portable: boolean }[];
+  tokens?: DesignSystemTokenRead[];
+  guidelines?: string | null;
+  component_css?: string;
+  components?: DesignSystemComponentRead[];
+  /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
+  problems: { path: string; message: string }[];
+  untrusted: true;
 }

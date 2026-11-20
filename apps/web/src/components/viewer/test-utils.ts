@@ -33,6 +33,8 @@ export const CONFIG: AppConfig = {
   },
   cdn_allowlist: ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"],
   upload_ticket_ttl_s: 1800,
+  review_login: false,
+  view_log_retention_days: 365,
   dictation: false,
 };
 

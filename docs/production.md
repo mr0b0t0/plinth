@@ -29,7 +29,7 @@ All in the operator's Cloudflare account:
 | --- | --- | --- |
 | D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0011 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `0193eab8-73d1-48e9-a9b5-ded81c2e6098`, commit `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `9a63798c-0566-48d1-8445-f748e51f0396`, commit `584db84`: artifact stats (#86, migration `0020_artifact_opens.sql` applied first; `VIEW_LOG_RETENTION_DAYS` uses its default, 365), without the account-wide `/stats` page (#87), and the dashboard card fix (#78); before it `7b6e438`: the review-account sign-in (#53, off: `REVIEW_LOGIN_EMAIL` and `REVIEW_LOGIN_PASSWORD_HASH` unset), the OpenAI domain challenge route (#74, off: `OPENAI_APPS_CHALLENGE` unset) and plugin 0.16.0 with the OpenAI and Cursor builds (#73, #75, #77), no migrations; before it `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -120,6 +120,22 @@ After the v0.5.0 deploy (2026-11-16, `1b094e6`):
   and says the page cannot be shown there. claude.ai leaves `https://*.plinthusercontent.com` out
   of a custom connector's `frame-src`; a listing in the Claude directory can ask for the site.
 - **Connect an agent** shows the T3 Code tab with its Claude and Codex sections.
+
+After the 2026-11-19 afternoon deploys (`eefe367`, version `7495eee2`, migration `0020` applied
+first; then `584db84`, version `9a63798c`, no migrations):
+
+- Before the migration `artifact_view_days` held 3 rows, 4 opens; after it `artifact_opens` holds 4
+  `unknown` rows and `artifact_view_days` is gone.
+- `/healthz` is OK, `/api/v1/config` reports `view_log_retention_days: 365`, and
+  `GET /api/v1/stats/artifacts` answers 401 without a session. The owner's per-artifact Stats page
+  loads in the browser; `/stats` is the app's not-found page after #87.
+
+After the 2026-11-19 deploy (`7b6e438`, version `7076b41f`, no migrations):
+
+- `/healthz` returns `{"ok":true,"environment":"production"}`, and `wrangler deploy` lists
+  `env.ROOMS (ArtifactRoom)`.
+- `/.well-known/openai-apps-challenge` is 404 and `/api/v1/config` reports `review_login: false`,
+  as neither is configured yet.
 
 After the 2026-11-18 evening deploy (`3aea8c9`, migration `0011` applied first, version
 `0193eab8`):

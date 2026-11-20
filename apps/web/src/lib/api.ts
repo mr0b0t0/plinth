@@ -3,7 +3,8 @@ import {
   type AdminStats,
   API,
   API_PREFIX,
-  type ArtifactViews,
+  type ArtifactStats,
+  type ArtifactStatsSummary,
   COOKIES,
   CSRF_HEADER,
   type DataSummary,
@@ -15,6 +16,7 @@ import {
   type LiveDraftText,
   type LiveInfo,
   route,
+  type StatsRange,
 } from "@plinth/shared";
 import { forgetAllConsents } from "../components/viewer/voiceProtocol.ts";
 
@@ -112,11 +114,20 @@ export function deleteAllData(ref: string): Promise<{ deleted: number }> {
   return api<{ deleted: number }>(route(API.data, { ref }), { method: "DELETE" });
 }
 
-// ---------- open counts and admin stats ----------
+// ---------- artifact stats and admin stats ----------
 
-/** How often other people opened an artifact (the owner only). */
-export function getArtifactViews(ref: string, signal?: AbortSignal): Promise<ArtifactViews> {
-  return api<ArtifactViews>(route(API.artifactViews, { ref }), { signal });
+/** Who opened an artifact over the last `days` UTC days (the owner only). */
+export function getArtifactStats(
+  ref: string,
+  days: StatsRange,
+  signal?: AbortSignal,
+): Promise<ArtifactStats> {
+  return api<ArtifactStats>(`${route(API.artifactStats, { ref })}?days=${days}`, { signal });
+}
+
+/** Opens across the caller's own artifacts (7 and 30 days, last opened). */
+export function getStatsSummary(signal?: AbortSignal): Promise<ArtifactStatsSummary> {
+  return api<ArtifactStatsSummary>(API.statsArtifacts, { signal });
 }
 
 /** Instance-wide aggregates over the last `days` UTC days (instance admins only; 404 otherwise). */

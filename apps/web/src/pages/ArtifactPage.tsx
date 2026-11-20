@@ -24,7 +24,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const [commentsOpen, setCommentsOpen] = useState(() => search.has("comments"));
   // Review mode (the comment-anchoring bridge) needs a fresh gate and a frame reload. It turns on
   // when comments first open and then stays on, so closing and reopening the panel does not reload
-  // the artifact.
+  // the artifact. Editing on the page and presenting a deck turn it off.
   const [review, setReview] = useState(commentsOpen);
   // A page inside the artifact (from a direct content link): opened inside the frame.
   const rawPath = search.get("path");
@@ -49,9 +49,22 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     VERSION_POLL_MS,
     pause,
   );
+  // A page that declares `comments` anchors its own comments: opening the panel never reloads it
+  // into review mode (the gate ignores review for it too). If a new version drops the declaration
+  // while the panel is open, review mode turns on then, with one reload as on a first open.
+  const pageComments = shown?.page_comments === true;
+  useEffect(() => {
+    if (commentsOpen && shown && !pageComments) setReview(true);
+  }, [commentsOpen, shown, pageComments]);
   // Editing on the page and review mode (the comment-anchoring frame) exclude each other.
   const onEditModeChange = useCallback((on: boolean) => {
     if (!on) return;
+    setCommentsOpen(false);
+    setReview(false);
+  }, []);
+  // Presenting a deck and review mode exclude each other too: review mode shows every slide
+  // stacked, so Present leaves it (and closes the panel) before it presents.
+  const onLeaveReview = useCallback(() => {
     setCommentsOpen(false);
     setReview(false);
   }, []);
@@ -107,12 +120,14 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       commentsOpen={commentsOpen}
       onToggleComments={() => {
         setCommentsOpen((o) => !o);
-        setReview(true);
+        if (!pageComments) setReview(true);
       }}
       currentHref={route(APP_ROUTES.artifact, { slug })}
       onReload={reload}
       onEditModeChange={onEditModeChange}
       onPauseChange={setPause}
+      review={review}
+      onLeaveReview={onLeaveReview}
     />
   );
 }

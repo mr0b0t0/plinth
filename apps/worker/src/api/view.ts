@@ -1,6 +1,7 @@
 // The viewer gate on APP_HOST. Decides whether the caller may open an artifact (policy.ts), asks
 // for a password or an email when needed, and hands out a one-time token for the content host.
 import {
+  type Capabilities,
   capabilityList,
   type DictationAccess,
   type DictationOwner,
@@ -17,7 +18,7 @@ import {
   viewerEmailInput,
   viewerPasswordInput,
 } from "@plinth/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
 import {
@@ -40,7 +41,7 @@ import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
-import { countsAsView } from "../services/views.ts";
+import { countsAsView, openerFor } from "../services/views.ts";
 import {
   type AppContext,
   type AppEnv,
@@ -98,9 +99,15 @@ export async function computeGate(
     : version === a.currentVersion && !opts.version
       ? "/"
       : `/__plinth/v/${version}/`;
-  // Decided here, recorded by the content host when the token is redeemed (services/views.ts).
-  const countView = countsAsView(ctx, d, opts, next);
-  if (opts.review) {
+  // A page that declares `comments` anchors its own comments and never loads in review mode, so
+  // the bridge is never injected next to it, whatever the app asked for. The version being shown
+  // decides, as it decides page_comments.
+  const review = opts.review === true && !(await pageCommentsDeclared(ctx, a, version));
+  // Decided here, recorded by the content host when the token is redeemed (services/views.ts),
+  // with who is opening sealed beside the flag.
+  const countView = countsAsView(ctx, d, { ...opts, review }, next);
+  const opener = countView ? openerFor(ctx.principal, d.role, a.visibility) : undefined;
+  if (review) {
     // The flag goes in the query, before any fragment.
     const hashAt = next.indexOf("#");
     const [path, hash] = hashAt < 0 ? [next, ""] : [next.slice(0, hashAt), next.slice(hashAt)];
@@ -114,7 +121,9 @@ export async function computeGate(
   const identity = await identityFor(ctx, a, d);
   // Each part adds its own optional fields, in list order, after the fields every gate has.
   const parts: GateFields = {};
-  for (const part of GATE_PARTS) Object.assign(parts, await part({ ctx, a, d, opts, identity }));
+  for (const part of GATE_PARTS) {
+    Object.assign(parts, await part({ ctx, a, d, opts, identity, version }));
+  }
   return {
     status: "ok",
     artifact: {
@@ -125,7 +134,7 @@ export async function computeGate(
       visibility: a.visibility,
       owner_name: owner?.name ?? null,
     },
-    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView }),
+    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView, opener }),
     role: d.role,
     ...parts,
   };
@@ -143,6 +152,8 @@ export interface GatePartInput {
   d: Extract<Decision, { allow: true }>;
   opts: GateOptions;
   identity: ViewerIdentity | undefined;
+  /** The version being shown: opts.version when it is valid, else the current one. */
+  version: number;
 }
 
 /** One gate part: its own optional fields of an ok gate, or nothing. */
@@ -162,11 +173,60 @@ export const GATE_PARTS: readonly GatePart[] = [
     const live = await gateLive(ctx, a, d, opts);
     return live ? { live } : undefined;
   },
+  async ({ ctx, a, version }) =>
+    (await pageCommentsDeclared(ctx, a, version)) ? { page_comments: true } : undefined,
   async ({ ctx, a, d }) => {
     const voice = await gateVoice(ctx, a, d);
     return voice ? { voice } : undefined;
   },
 ];
+
+// ---------- version declarations, read once per gate ----------
+
+const gateCaps = new WeakMap<ArtifactRow, Map<number, Promise<Capabilities | null>>>();
+
+/**
+ * The declaration of version `number`, read once per gate (the row object is the key) and shared
+ * by computeGate and the gate parts. The first read also loads the current version's, which the
+ * data part needs, so a gate makes one D1 query whichever version it shows.
+ */
+function versionCaps(ctx: Ctx, a: ArtifactRow, number: number): Promise<Capabilities | null> {
+  let cache = gateCaps.get(a);
+  if (!cache) {
+    cache = new Map();
+    gateCaps.set(a, cache);
+  }
+  const known = cache.get(number);
+  if (known) return known;
+  const loaded = cache;
+  const wanted = [...new Set([number, a.currentVersion])].filter((n) => !loaded.has(n));
+  const rows = ctx.db
+    .select({ number: versions.number, capabilities: versions.capabilities })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), inArray(versions.number, wanted)))
+    .all();
+  for (const n of wanted) {
+    loaded.set(
+      n,
+      rows.then((rs) => versionCapabilities(rs.find((r) => r.number === n))),
+    );
+  }
+  return loaded.get(number) as Promise<Capabilities | null>;
+}
+
+// ---------- comments from the page ----------
+
+/**
+ * Whether the page may open the comment composer with its own anchors (`plinth.comments`): an
+ * HTML artifact whose shown version declares `comments`. Shared data and the room follow the
+ * current version's declaration; this decides only what the app shows (no review-mode reload,
+ * the page's pins, no "Pin to an element"), so it follows the page the person is looking at, and
+ * an old version that does not declare it keeps review mode.
+ */
+async function pageCommentsDeclared(ctx: Ctx, a: ArtifactRow, version: number): Promise<boolean> {
+  if (a.type !== "html") return false;
+  return (await versionCaps(ctx, a, version))?.comments === true;
+}
 
 /**
  * The identity sealed into the enter token for shared data and rooms: only for identified viewers
@@ -225,12 +285,7 @@ async function gateData(
   identity: ViewerIdentity | undefined,
 ): Promise<ViewGateData | undefined> {
   // The current version's declaration governs, whichever version is being opened.
-  const row = await ctx.db
-    .select({ capabilities: versions.capabilities })
-    .from(versions)
-    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
-    .get();
-  const caps = versionCapabilities(row);
+  const caps = await versionCaps(ctx, a, a.currentVersion);
   const roomEmail =
     identity &&
     caps?.room === true &&
@@ -295,12 +350,8 @@ async function voiceAccess(
   | undefined
 > {
   if (!ctx.config.allowDictation || a.type !== "html") return undefined;
-  const row = await ctx.db
-    .select({ capabilities: versions.capabilities })
-    .from(versions)
-    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
-    .get();
-  const caps = versionCapabilities(row);
+  // The current version's declaration, from the gate's one read (versionCaps).
+  const caps = await versionCaps(ctx, a, a.currentVersion);
   if (caps?.dictation !== true) return undefined;
   const p = ctx.principal;
   const identity =

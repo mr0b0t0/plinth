@@ -1,7 +1,7 @@
 // The viewer gate is assembled from gate parts (api/view.ts GATE_PARTS). The wire shape is the
 // same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
-// `voice` (dictation, gate-voice in dictation.test.ts), each only when its part has something to
-// say.
+// `page_comments`, then `voice` (dictation, gate-voice in dictation.test.ts), each only when its
+// part has something to say.
 import { describe, expect, it } from "vitest";
 import { GATE_PARTS } from "../src/api/view.ts";
 import { agent, browserSession, call, json, publish } from "./helpers.ts";
@@ -28,8 +28,18 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, then the live part, then the voice part", () => {
-    expect(GATE_PARTS.length).toBe(3);
+  it("runs the data part, then the live part, then page comments, then the voice part", () => {
+    expect(GATE_PARTS.length).toBe(4);
+  });
+
+  it("a page that declares comments and data: `data`, then `page_comments`", async () => {
+    const a = await agent();
+    const html = DECLARED.replace('content="data viewer room"', 'content="data comments"');
+    const { body } = await publish(a.auth, { html, visibility: "allowlist" });
+    const gate = await gateAs(a.user.id, body.id);
+    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "data", "page_comments"]);
+    expect(gate.page_comments).toBe(true);
+    expect(gate.data.capabilities).toEqual(["data", "comments"]);
   });
 
   it("a page that declares nothing: only the fields every gate has", async () => {

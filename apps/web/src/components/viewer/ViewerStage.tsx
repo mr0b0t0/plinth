@@ -16,6 +16,7 @@ import { useSession } from "../../lib/session.ts";
 import { useTheme } from "../../lib/theme.ts";
 import { CommentsPanel } from "../artifact/CommentsPanel.tsx";
 import { VersionPicker } from "../artifact/VersionPicker.tsx";
+import { useStagePageComments } from "../comments/usePageComments.ts";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
@@ -28,6 +29,7 @@ import { StageFrame } from "./StageFrame.tsx";
 import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
 import { useDictation } from "./useDictation.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
+import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
 
@@ -57,6 +59,10 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /** The frame is in review mode (the comment-anchoring frame). */
+  review?: boolean;
+  /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
+  onLeaveReview?: () => void;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -89,12 +95,17 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  review,
+  onLeaveReview,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
   const [shareOpen, setShareOpen] = useState(false);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [openCount, setOpenCount] = useState<number | null>(null);
+  // The comments, for a page that declares `comments` (its threads and pins); the panel keeps
+  // them current while open.
+  const [commentItems, setCommentItems] = useState<CommentInfo[] | null>(null);
   const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const { artifact, role } = gate;
   const isOwner = role === "owner";
@@ -109,6 +120,7 @@ export function ViewerStage({
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
   const settingsHref = route(APP_ROUTES.settings, { slug });
+  const statsHref = route(APP_ROUTES.artifactStats, { slug });
 
   // The open-thread count on the Comments toggle. The panel reports it while open; while closed
   // it is read once (and again after the panel closes). Failures just hide the number.
@@ -118,10 +130,25 @@ export function ViewerStage({
     api<{ items: CommentInfo[] }>(route(API.comments, { ref: artifact.id || slug }), {
       signal: ctrl.signal,
     })
-      .then((res) => setOpenCount(openThreadCount(res.items)))
+      .then((res) => {
+        setOpenCount(openThreadCount(res.items));
+        setCommentItems(res.items);
+      })
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [artifact.id, slug, commentsOpen]);
+
+  // Comments from the page: it may open the composer with its own anchors (gate.page_comments).
+  const pageComments = useStagePageComments({
+    gate,
+    frame,
+    contentOrigin,
+    opaque: config?.content_isolation === "opaque",
+    items: commentItems,
+    blocked: shareOpen,
+    commentsOpen,
+    openComments: onToggleComments,
+  });
 
   // On-page editing of a doc (#36): owners and editors on the current version only.
   const live = useLiveEdit({
@@ -134,9 +161,30 @@ export function ViewerStage({
   const editing = live.editing;
   // Dictation run by the app, for the main artifact frame only (never a preview or a compare).
   const dictation = useDictation({ frame, contentOrigin, gate, config });
+  // Presenting a deck: the slide, full screen, presenter view and its audience window. Present in
+  // review mode leaves review mode first.
+  const present = usePresentation({
+    gate,
+    frame,
+    contentOrigin,
+    config,
+    slug,
+    review,
+    leaveReview: onLeaveReview,
+  });
+  const pause: WatchPause = live.pause ?? present.pause;
   useEffect(() => {
-    onPauseChange?.(live.pause);
-  }, [live.pause, onPauseChange]);
+    onPauseChange?.(pause);
+  }, [pause, onPauseChange]);
+  // A version published while presenting waits; once presenting ends, the deck catches up.
+  const presented = useRef(false);
+  useEffect(() => {
+    const was = presented.current;
+    presented.current = present.pause !== null;
+    if (was && present.pause === null && !pinned) {
+      if (artifact.version < artifact.current_version) onReload?.();
+    }
+  }, [present.pause, pinned, artifact.version, artifact.current_version, onReload]);
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
@@ -194,6 +242,7 @@ export function ViewerStage({
     contentOrigin,
     live,
     editing,
+    present,
     dictation,
     hrefs: {
       current: currentHref,
@@ -201,6 +250,7 @@ export function ViewerStage({
       history: historyHref,
       report: reportHref,
       settings: settingsHref,
+      stats: statsHref,
       signIn: signInHref,
     },
     comments: {
@@ -225,7 +275,7 @@ export function ViewerStage({
     <IconProvider>
       <SkipLink />
       <div
-        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
+        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}${present.paired ? " pl-viewer--audience" : ""}`}
       >
         <header className="pl-viewer__bar" ref={headerRef}>
           <div className="pl-viewer__crumbs">
@@ -291,6 +341,8 @@ export function ViewerStage({
                   opaque={config?.content_isolation === "opaque"}
                   onClose={closeComments}
                   onOpenCountChange={setOpenCount}
+                  onItemsChange={setCommentItems}
+                  {...pageComments}
                 />
               </div>
             )}

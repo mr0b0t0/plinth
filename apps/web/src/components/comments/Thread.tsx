@@ -7,12 +7,12 @@ import {
   MapPinIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
-import { APP_ROUTES, type CommentInfo, renderMarkdown, route } from "@plinth/shared";
+import { APP_ROUTES, type CommentInfo, isPageAnchor, renderMarkdown, route } from "@plinth/shared";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "../../lib/router.tsx";
 import { Button, ICON_SIZE } from "../ui/index.ts";
 import { MentionTextarea } from "./MentionTextarea.tsx";
-import { excerpt, fullTime, relativeTime, type Thread as ThreadData } from "./model.ts";
+import { anchorLabel, fullTime, relativeTime, type Thread as ThreadData } from "./model.ts";
 
 type Mention = CommentInfo["mentions"][number];
 
@@ -177,9 +177,14 @@ export function Thread({
               <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
               <span className="cm-anchor__text">
                 <span className="visually-hidden">Pinned to </span>
-                {root.anchor.text?.trim()
-                  ? `“${excerpt(root.anchor.text)}”`
-                  : "Pinned to an element"}
+                {root.anchor.text?.trim() || isPageAnchor(root.anchor) ? (
+                  // Isolated, so the page's text cannot reorder what is around it.
+                  <>
+                    “<bdi>{anchorLabel(root.anchor)}</bdi>”
+                  </>
+                ) : (
+                  "Pinned to an element"
+                )}
               </span>
             </span>
           )}

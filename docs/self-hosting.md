@@ -74,9 +74,11 @@ It ends with the commands that connect Claude Code, Codex and the other agents. 
 that is the Plinth plugin set to your instance
 (`claude plugin install plinth@plinth --config instance_url=https://<app host>`). For Codex, it is
 your instance's server under the name `plinth`, which replaces the plugin's hosted server
-([agents.md](agents.md#claude-code)). A plugin installed from Anthropic's plugin directory or
-OpenAI's works with your instance the same way: set the Claude Code plugin's Plinth instance option,
-or add your server as `plinth` in Codex. ChatGPT connects from OpenAI's servers to the instance its
+([agents.md](agents.md#claude-code)). A plugin installed from OpenAI's directory works with your
+instance the same way: add your server as `plinth` in Codex. The build in Anthropic's plugin
+directory connects to the hosted instance only, so add your instance next to it
+(`claude mcp add --transport http plinth https://<app host>/mcp`), or install the full plugin from
+this repository's marketplace as above. ChatGPT connects from OpenAI's servers to the instance its
 listing names, the hosted one, so add your instance there as a custom connector instead, if it is
 reachable from the internet.
 
@@ -131,7 +133,9 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ALLOW_SHARED_DATA` | `true` | Lets pages that declare it keep shared data (polls, sign-up sheets, trackers among invited people) and learn who is viewing; see [security.md](security.md#shared-data-api). Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. Off: no identity claims, pages report shared data as unavailable, and MCP and REST writes are refused while reads still work, so owners can export. Always off under `CONTENT_ISOLATION=opaque` |
 | `SHOW_SOURCE_LINK` | `true` | Adds "open source", a link to Plinth's GitHub repository, to the banner under every artifact. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. The banner belongs to the app's page around the frame: the artifact's own HTML is never changed. Off keeps the banner and its report link |
 | `THUMBNAILS` | `true` | Takes a screenshot of each version for dashboard cards and link previews (`og:image`). Only works with a Browser Rendering binding, which you add to your own wrangler config: `"browser": { "binding": "BROWSER" }`. Without it, or with any other value than `true`, `1`, `yes` or `on`, cards keep their placeholder and link previews have no image. Browser Rendering is billed by Cloudflare per browser hour; local, tunnel and Docker instances run without it |
-| `VIEW_COUNTS` | `true` | Counts how often each artifact is opened, per UTC day, for the owner's Share dialog and the admin Stats page. Stores one number per artifact per day: no IP addresses, user agents or viewer identities. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted. Counts start when the instance gets this feature (migration `0010_view_counts.sql`); earlier opens are not known. Each counted open costs one D1 row written. Any value other than `true`, `1`, `yes` or `on` turns it off; stored counts stay |
+| `VIEW_COUNTS` | `true` | Records each open of an artifact by someone other than its owner, for the owner's Stats pages and the admin Stats page: when, which version, and who (the account of people signed in, the email of allowlisted viewers who confirmed it by code; everyone else only as an approximate anonymous visitor, from a random id in the viewing cookie, which then lasts 30 days). No IP addresses or user agents. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted, and each browser counts at most once every 12 hours. Each counted open costs one D1 row written (plus its index entries). Any value other than `true`, `1`, `yes` or `on` turns recording off; what was recorded stays and owners still see it |
+| `VIEW_LOG_RETENTION_DAYS` | `365` | How long each open is kept with who made it, from 90 to 3650 days. The hourly cron, at 03 UTC, folds older opens into one count per artifact and deletes them; any other value stops the Worker from starting (and the cron then folds nothing). Instances without a cron keep every open |
+| `OPENAI_APPS_CHALLENGE` | unset | The domain verification token OpenAI's plugin portal shows when you submit this instance's MCP server. It is served as plain text at `/.well-known/openai-apps-challenge`; unset, that path is 404. The token alone, with no spaces, or the Worker refuses to start |
 | `DATA_MAX_DOCS_PER_ARTIFACT` | `1000` | Shared-data documents per artifact |
 | `DATA_MAX_BYTES_PER_ARTIFACT` | `1048576` (1 MiB) | Shared-data bytes per artifact. At least `DATA_MAX_DOC_BYTES` |
 | `DATA_MAX_BYTES_PER_USER` | `16777216` (16 MiB) | Shared-data bytes across all of one owner's artifacts (checked before each write, so concurrent writers may pass it by a request or two). At least `DATA_MAX_BYTES_PER_ARTIFACT`. D1 has a hard database size limit, so keep this modest |
@@ -147,6 +151,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `LIVE_AUTO_CHECKPOINT_MIN_S` | `600` (or the idle time, when longer) | Least seconds between the current version (saved, autosaved, or published by an agent) and an automatic one, at least `LIVE_CHECKPOINT_IDLE_S`. An autosave asked for sooner waits and is tried again then, while someone is still editing the page. Saved versions count toward `MAX_PUBLISHES_PER_HOUR` |
 | `LIVE_DRAFT_FLUSH_S` | `5` | How often, at most, the room writes unsaved page edits to D1, `2` to `60`. A Worker restart can lose up to this much typing, which editors' pages send again |
 | `LIVE_DRAFT_RETENTION_DAYS` | `30` | Unsaved page edits nobody touched for this long are deleted, `1` to `365` |
+| `REVIEW_LOGIN_EMAIL` | empty | With the secret `REVIEW_LOGIN_PASSWORD_HASH`: one account that may also sign in with a password at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. Off (404) unless both are set. Must not be an `ADMIN_EMAIL` address, and is refused on a single-user instance ([security.md](security.md#review-account-sign-in)) |
 | `ALLOW_DICTATION` | `false` | Dictation run by the app: pages that declare `dictation` receive the words an identified viewer speaks, after a click in the page and the viewer's consent, recognized by the browser's own speech service (Chrome sends the audio to Google, Edge to Microsoft, Safari to Apple). Only `true`, `1`, `yes` or `on` turns it on; only with `CONTENT_ISOLATION=origin`. On, the app's `Permissions-Policy` allows the microphone to the app's own origin; artifact frames never get it ([security.md](security.md#dictation-and-text-to-speech)). The privacy notice describes it while it is on; an operator with a notice of their own should do the same |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
@@ -158,6 +163,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ADMIN_TOKEN` | optional, single-user mode | At least 32 characters if set. Extra bearer token for the owner, for scripts |
 | `SENDGRID_API_KEY` | with `EMAIL_PROVIDER=sendgrid` | API key with Mail Send permission only |
 | `RESEND_API_KEY` | with `EMAIL_PROVIDER=resend` | Sending-access API key |
+| `REVIEW_LOGIN_PASSWORD_HASH` | optional, with `REVIEW_LOGIN_EMAIL` | The review account's password, hashed. Make it with `umask 077; openssl rand -base64 24 > review-password.txt`, then `node apps/worker/scripts/review-login-hash.mjs < review-password.txt \| wrangler secret put REVIEW_LOGIN_PASSWORD_HASH`. Give the reviewers the password file's contents. Delete the secret to turn the sign-in off |
 
 Rotating `TOKEN_SIGNING_KEY` invalidates open viewer links, content cookies and password passes;
 viewers pass the gate again. Rotating `SESSION_SECRET` may invalidate pending sign-in codes and
@@ -277,9 +283,10 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
 - **Abuse and usage.** Emails in `ADMIN_EMAIL` see the report queue at `/admin/reports` and can
   take an artifact down. They also see instance totals and 7, 30 or 90-day trends at
   `/admin/stats` (people, artifacts, publishes, storage, shared data, agent connections, open
-  reports and opens), which never name a page or a person. The hourly cron folds daily open counts
-  older than 90 days into one total per artifact at 03 UTC; instances without a cron (local,
-  tunnel, Docker) keep the daily rows instead, and every figure stays correct.
+  reports and opens), which never name a page or a person. Owners see who opened their own pages
+  at `/stats` and `/a/<slug>/stats`. The hourly cron folds opens older than
+  `VIEW_LOG_RETENTION_DAYS` into one count per artifact at 03 UTC; instances without a cron
+  (local, tunnel, Docker) keep every open instead, and every figure stays correct.
 - **Legal pages.** `/legal/terms`, `/legal/privacy` and `/legal/acceptable-use` are short, final,
   plain-language pages built from the `OPERATOR_*` settings. Set `OPERATOR_NAME` and
   `OPERATOR_EMAIL` (and in the EU your address and registration or VAT number) before letting other

@@ -114,6 +114,9 @@ describe("ArtifactPage", () => {
     expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe(
       "/a/garden-plan/settings",
     );
+    expect(screen.getByRole("menuitem", { name: "Stats" }).getAttribute("href")).toBe(
+      "/a/garden-plan/stats",
+    );
     expect(screen.queryByRole("menuitem", { name: "Report" })).toBeNull();
     await user.keyboard("{Escape}");
     expect(screen.getByText("Visibility:")).toBeTruthy();
@@ -218,6 +221,32 @@ describe("ArtifactPage", () => {
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(gates()).toBe(before);
     expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(2));
+  });
+
+  it("opens comments on a page that declares them without a review-mode reload", async () => {
+    let n = 0;
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.path.startsWith("/view/")
+          ? json(okGate({ page_comments: true }, ++n))
+          : c.path.endsWith("/comments")
+            ? json({ items: [] })
+            : undefined,
+    });
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    const toggle = screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement;
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    await screen.findByRole("region", { name: "Comments" });
+    // No pick button: the page places its own anchors.
+    expect(screen.queryByRole("button", { name: "Pin to an element" })).toBeNull();
+    await act(async () => undefined);
+    expect(calls.filter((c) => c.path.includes("review=1"))).toEqual([]);
+    expect(calls.filter((c) => c.path.startsWith("/view/")).length).toBe(1);
+    expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
   });
 
   describe("when a newer version is published", () => {

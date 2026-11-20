@@ -5,6 +5,7 @@ import {
   type ArtifactDetail,
   type ArtifactList,
   type ArtifactSummary,
+  type ArtifactType,
   type AssetInput,
   type Author,
   type Capabilities,
@@ -42,7 +43,7 @@ import {
   seesOwnerMetadata,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
-import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
+import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
 import {
   matchingSpellings,
   ownerCategories,
@@ -515,10 +516,12 @@ export async function getArtifact(
     def.liveEdit && (role === "owner" || role === "editor")
       ? { live_draft: await readLiveDraftMeta(ctx.env.DB, artifact.id) }
       : {};
+  // Per-type fields (an HTML page's design system reference), read as the caller.
+  const extra = (await typeHooks(def).detail?.(ctx, text)) ?? {};
   // html for a page, content for every typed artifact; never both.
   return def.id === "html"
-    ? { ...base, ...live, type: "html", html: text }
-    : { ...base, ...live, type: def.id, content: text };
+    ? { ...base, ...live, ...extra, type: "html", html: text }
+    : { ...base, ...live, ...extra, type: def.id, content: text };
 }
 
 /**
@@ -529,7 +532,7 @@ export async function getArtifact(
  */
 export async function listArtifacts(
   ctx: Ctx,
-  filter: { query?: string; category?: string; limit?: number } = {},
+  filter: { query?: string; category?: string; limit?: number; type?: ArtifactType } = {},
 ): Promise<ArtifactList> {
   const uid = principalUserId(ctx.principal);
   const email = principalEmail(ctx.principal);
@@ -564,6 +567,7 @@ export async function listArtifacts(
           ? or(like(sql`lower(${artifacts.title})`, `%${q}%`), like(artifacts.slug, `%${q}%`))
           : undefined,
         inCategory,
+        filter.type ? eq(artifacts.type, filter.type) : undefined,
       ),
     )
     .orderBy(desc(artifacts.updatedAt))

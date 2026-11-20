@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<!--
+  A sketch board that takes comments on a spot of the canvas, for Plinth (docs/agents.md
+  "Comments from the page"). Click the canvas to draw a dot and open Plinth's comment composer
+  pinned to that point; the person writes and posts the comment there, and the dot goes away if
+  they close the composer instead (or are writing another comment). The board draws its own
+  numbered markers from plinth.comments.onThreads and tells Plinth where each anchor is on screen
+  (locate), so Plinth's pins sit on the same spots. Picking a thread in Plinth's panel flashes its
+  marker (onFocus); clicking a marker shows the thread (open). The drawing lives only in this tab:
+  opening the comments panel does not reload the page, so nothing is lost.
+-->
+<meta name="plinth-capabilities" content="comments">
+<title>Sketch board</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --panel: #ffffff;
+    --fg: #1d1c1a;
+    --muted: #615e57;
+    --border: #d9d5cb;
+    --ink: #2f5fb3;
+    --marker: #8a5a1c;
+    --marker-fg: #ffffff;
+    --focus: #2f5fb3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614;
+      --panel: #201f1c;
+      --fg: #ecebe6;
+      --muted: #a9a59b;
+      --border: #3a3832;
+      --ink: #8fb2f0;
+      --marker: #d9a35a;
+      --marker-fg: #1d1c1a;
+      --focus: #8fb2f0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--muted); }
+  .board {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: manipulation; }
+  .marker {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    margin: -12px 0 0 -12px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--marker);
+    color: var(--marker-fg);
+    font: 600 12px/24px system-ui, sans-serif;
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
+  }
+  .marker[data-status="resolved"] { opacity: 0.45; }
+  .marker[data-focused] { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .marker:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #status { font-size: 13px; min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sketch board</h1>
+  <p>Click the board to draw a dot and comment on that spot.</p>
+  <div class="board" id="board">
+    <canvas id="canvas" width="720" height="420" aria-label="Sketch board. Click to comment on a spot."></canvas>
+  </div>
+  <p id="status" role="status" aria-live="polite"></p>
+</main>
+<script src="/__plinth/runtime.js"></script>
+<script>
+  const canvas = document.getElementById("canvas");
+  const board = document.getElementById("board");
+  const statusEl = document.getElementById("status");
+  const ctx = canvas.getContext("2d");
+  const dots = [];
+  const markers = new Map();
+  const comments = window.plinth?.comments;
+
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const say = (text) => {
+    statusEl.textContent = text;
+  };
+  // Canvas pixels to and from the board's CSS pixels (the canvas scales with the page).
+  const scale = () => canvas.getBoundingClientRect().width / canvas.width;
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = css("--ink");
+    for (const d of dots) {
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function place() {
+    const s = scale();
+    for (const m of markers.values()) {
+      m.style.left = `${Number(m.dataset.x) * s}px`;
+      m.style.top = `${Number(m.dataset.y) * s}px`;
+    }
+    comments?.refresh();
+  }
+
+  canvas.addEventListener("click", (e) => {
+    const r = canvas.getBoundingClientRect();
+    const s = scale();
+    const p = { x: Math.round((e.clientX - r.left) / s), y: Math.round((e.clientY - r.top) / s) };
+    if (!comments) {
+      say("Comments are not available here.");
+      return;
+    }
+    // The dot shows while the composer is open, and stays only if a comment was posted on it.
+    dots.push(p);
+    draw();
+    const drop = () => {
+      dots.splice(dots.indexOf(p), 1);
+      draw();
+    };
+    comments
+      .compose({ key: "canvas", x: p.x, y: p.y, text: `Point ${p.x}, ${p.y}` })
+      .then((res) => {
+        if (res.status === "posted") return say("Comment posted.");
+        drop();
+        if (res.status === "busy") say("Finish the comment you are writing first.");
+        else say("");
+      })
+      .catch(() => {
+        drop();
+        say("Comments are not available here.");
+      });
+  });
+
+  if (comments) {
+    comments.ready.then((s) => {
+      if (!s.available) say("Open this board on Plinth to comment on it.");
+    });
+
+    // Plinth's pins go where the page says each anchor is, in this frame's viewport.
+    comments.locate((a) => {
+      if (a.key !== "canvas" || typeof a.x !== "number" || typeof a.y !== "number") return null;
+      const r = canvas.getBoundingClientRect();
+      const s = scale();
+      return { x: r.left + a.x * s, y: r.top + a.y * s };
+    });
+
+    // The page's own markers: one per thread on the canvas, numbered like Plinth's pins.
+    comments.onThreads((threads) => {
+      const seen = new Set();
+      for (const t of threads) {
+        if (t.anchor.key !== "canvas" || typeof t.anchor.x !== "number") continue;
+        seen.add(t.id);
+        let m = markers.get(t.id);
+        if (!m) {
+          m = document.createElement("button");
+          m.type = "button";
+          m.className = "marker";
+          m.dataset.threadId = t.id;
+          m.addEventListener("click", () => comments.open(t.id));
+          board.appendChild(m);
+          markers.set(t.id, m);
+        }
+        m.textContent = String(t.pin);
+        m.dataset.status = t.status;
+        m.setAttribute("aria-label", `Comment ${t.pin}${t.status === "resolved" ? ", resolved" : ""}`);
+        m.dataset.x = String(t.anchor.x);
+        m.dataset.y = String(t.anchor.y);
+      }
+      for (const [id, m] of markers) {
+        if (seen.has(id)) continue;
+        m.remove();
+        markers.delete(id);
+      }
+      place();
+    });
+
+    // The person picked a thread in Plinth's panel or clicked its pin.
+    comments.onFocus((t) => {
+      for (const [id, m] of markers) m.toggleAttribute("data-focused", id === t.id);
+    });
+  }
+
+  window.addEventListener("resize", place);
+  draw();
+</script>
+</body>
+</html>

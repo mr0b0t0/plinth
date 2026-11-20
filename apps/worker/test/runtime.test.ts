@@ -1,6 +1,7 @@
 // /__plinth/runtime.js: the static script that gives pages window.plinth. It holds no artifact data
-// and no secrets, so it is served without a content cookie. Its one configuration value is the
-// public app origin, embedded once as a JSON string for dictation's app channel.
+// and no configuration but the instance's public app origin, so it is served without a content
+// cookie. The origin is embedded once as a JSON string, for the app channel (page comments and
+// dictation).
 import { describe, expect, it } from "vitest";
 import { contentCsp } from "../src/content/csp.ts";
 import { runtimeScript } from "../src/content/runtime.ts";
@@ -34,23 +35,27 @@ describe("/__plinth/runtime.js", () => {
 
   it("contains no secret, and no configuration value but the app origin", () => {
     const c = config();
-    const secrets = [
+    // Page comments and dictation post to the app that frames the page: its public origin, as a
+    // JSON string, once. Nothing else from the configuration is in the script.
+    const origin = `var APP_ORIGIN = ${JSON.stringify(c.appOrigin)};`;
+    expect(RUNTIME_SCRIPT.split(origin).length).toBe(2);
+    expect(RUNTIME_SCRIPT.split(c.appOrigin).length).toBe(2);
+    const rest = RUNTIME_SCRIPT.replace(origin, "");
+    const values = [
       c.tokenSigningKey,
       c.sessionSecret,
       "test-session-secret",
       "test-token-signing-key",
     ].filter((v): v is string => typeof v === "string" && v.length > 0);
-    for (const v of secrets) expect(RUNTIME_SCRIPT, v).not.toContain(v);
-    // The app origin, once, as a JSON string (dictation's app channel); no other host or URL.
-    const line = `var APP_ORIGIN = ${JSON.stringify(c.appOrigin)};`;
-    expect(RUNTIME_SCRIPT.split(line).length).toBe(2);
-    const rest = RUNTIME_SCRIPT.replace(line, "");
+    for (const v of values) expect(rest, v).not.toContain(v);
+    // No other host or URL.
     for (const v of [c.appOrigin, c.appHost, c.contentHost, "localhost"]) {
       expect(rest, v).not.toContain(v);
     }
     expect(rest).not.toMatch(/https?:\/\//);
-    // Shared data and the live room together; still one small static file.
-    expect(RUNTIME_SCRIPT.length).toBeLessThan(32 * 1024);
+    // Shared data, the live room, page comments and dictation together; still one small static
+    // file (about 45 KiB).
+    expect(RUNTIME_SCRIPT.length).toBeLessThan(48 * 1024);
   });
 
   it("speaks the API it is served next to", () => {
