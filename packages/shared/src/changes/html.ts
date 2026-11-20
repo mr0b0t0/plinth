@@ -1,9 +1,10 @@
 // What changed in an HTML page or a design's boards, read with the string scanner (htmlScan.ts):
 // the title, the visible text (located by the nearest heading), links, images and forms added or
-// removed (counted), and whether styles or scripts changed. Markup and code are never quoted.
+// removed (counted), and whether styles or scripts changed. A page whose markup changed in a way
+// none of these name gets one item, CHANGES_LAYOUT. Markup and code are never quoted.
 import { type DesignBoard, type DesignSource, parseDesign } from "../design.ts";
 import { diffSequence } from "./diff.ts";
-import { type HtmlScan, type HtmlTextRun, scanHtml } from "./htmlScan.ts";
+import { type HtmlScan, type HtmlTextRun, markupSignature, scanHtml } from "./htmlScan.ts";
 import { multisetChanges, pairInOrder } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
@@ -114,6 +115,12 @@ function describeScans(out: ChangeCollector, a: HtmlScan, b: HtmlScan, where: st
   }
 }
 
+/**
+ * Said for an HTML page whose markup changed in nothing the list names: a class, an attribute such
+ * as `hidden` or an image's size, <b> or <em>, a video, frame or SVG shape, <pre> spacing.
+ */
+export const CHANGES_LAYOUT = "Layout or formatting changed";
+
 /** Adds the changes from `before` to `after`, two HTML pages, to `out`. */
 export function describeHtml(out: ChangeCollector, before: string, after: string): void {
   const a = scanHtml(before);
@@ -128,6 +135,10 @@ export function describeHtml(out: ChangeCollector, before: string, after: string
     });
   }
   describeScans(out, a, b, "");
+  // Nothing named, yet the texts differ: only a change in how the markup is written is invisible.
+  if (out.items.length === 0 && markupSignature(before) !== markupSignature(after)) {
+    out.add({ kind: "changed", where: "", what: CHANGES_LAYOUT });
+  }
 }
 
 /** Adds the changes from `before` to `after`, two designs, to `out`. False when one does not parse. */

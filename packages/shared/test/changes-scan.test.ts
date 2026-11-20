@@ -1,7 +1,7 @@
 // The HTML string scanner of change lists against hostile input, its cost, and the rule that the
 // changes modules stay pure and zod-free (so renderer bundles and the room can import them).
 import { describe, expect, it } from "vitest";
-import { describeChanges, markdownBlocks, scanHtml } from "../src/index.ts";
+import { describeChanges, markdownBlocks, markupSignature, scanHtml } from "../src/index.ts";
 
 const texts = (html: string) => scanHtml(html).runs.map((r) => r.text);
 
@@ -106,6 +106,37 @@ describe("scanHtml", () => {
       expect(Date.now() - t).toBeLessThan(1500);
     }
   });
+});
+
+describe("markupSignature", () => {
+  it("ignores how markup is written and keeps what can show", () => {
+    expect(markupSignature("<P CLASS='a  b' id=x>Hi &amp; you</P><!-- n -->\n")).toBe(
+      markupSignature('<p id="x" class="a b">\n  Hi &#38; you\n</p>'),
+    );
+    expect(markupSignature("<pre>a\n  b</pre>")).not.toBe(markupSignature("<pre>a\n b</pre>"));
+    expect(markupSignature("<p>a\n  b</p>")).toBe(markupSignature("<p>a\n b</p>"));
+    expect(markupSignature("<img src=a width=1>")).not.toBe(markupSignature("<img src=a>"));
+  });
+
+  it("is linear: a megabyte of hostile input scans quickly", () => {
+    for (const input of [
+      "<".repeat(1_000_000),
+      "<a ".repeat(330_000),
+      "<a b=c>".repeat(140_000),
+      "<pre>".repeat(200_000),
+      "<!x".repeat(330_000),
+      "<?>".repeat(330_000),
+      "<!--".repeat(250_000),
+      "&#".repeat(500_000),
+      "<template>".repeat(100_000),
+      "</".repeat(500_000),
+    ]) {
+      const t = Date.now();
+      markupSignature(input);
+      // About 0.1 s on an idle machine; a scan that is quadratic here would take minutes.
+      expect(Date.now() - t).toBeLessThan(5000);
+    }
+  }, 60_000);
 });
 
 describe("markdownBlocks", () => {

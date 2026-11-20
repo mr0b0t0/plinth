@@ -251,3 +251,87 @@ export function scanHtml(src: string): HtmlScan {
   flush();
   return out;
 }
+
+/** Tags whose text keeps its whitespace as written. */
+const PREFORMATTED = new Set(["pre", "listing"]);
+
+/**
+ * The page's markup with what a person cannot see taken out: comments, whitespace between tags,
+ * how runs of whitespace in text are written (except in <pre>, <listing>, <textarea> and <xmp>),
+ * the case of tag and attribute names, the order of attributes, quotes around values, spacing
+ * inside a class list and how characters are encoded. Two pages with one signature differ only in
+ * how they are stored; two with different ones may look different even when their text, links,
+ * images, forms, styles and scripts are equal (a class, a `hidden` attribute, <b>, an image's
+ * size, a video, an SVG shape). A string scan like scanHtml: linear, never throws.
+ */
+export function markupSignature(src: string): string {
+  const out: string[] = [];
+  let text = "";
+  let pre = 0;
+  const flush = () => {
+    const t = pre > 0 ? decodeEntities(text) : foldSpace(decodeEntities(text));
+    text = "";
+    if (t !== "") out.push(`t${JSON.stringify(t)}`);
+  };
+
+  let i = 0;
+  while (i < src.length) {
+    const lt = src.indexOf("<", i);
+    if (lt < 0) {
+      text += src.slice(i);
+      break;
+    }
+    text += src.slice(i, lt);
+    const c = src[lt + 1];
+    if (src.startsWith("<!--", lt)) {
+      const close = src.indexOf("-->", lt + 4);
+      i = close < 0 ? src.length : close + 3;
+      continue;
+    }
+    if (c === "!" || c === "?") {
+      flush();
+      const close = src.indexOf(">", lt + 2);
+      const body = src.slice(lt + 1, close < 0 ? src.length : close);
+      out.push(`d${JSON.stringify(foldSpace(asciiLower(body)))}`);
+      i = close < 0 ? src.length : close + 1;
+      continue;
+    }
+    if (!(isAsciiAlpha(c) || (c === "/" && isAsciiAlpha(src[lt + 2])))) {
+      text += "<";
+      i = lt + 1;
+      continue;
+    }
+    flush();
+    const tag = readTag(src, lt);
+    if (!tag) {
+      out.push(`u${JSON.stringify(foldSpace(src.slice(lt)))}`);
+      break;
+    }
+    i = tag.next;
+    const { name } = tag;
+    const attrs = [...tag.attrs]
+      .map(([k, v]): [string, string] => [k, k === "class" ? foldSpace(v) : v])
+      .sort(([x], [y]) => (x < y ? -1 : 1));
+    out.push(`${tag.end ? "/" : "<"}${JSON.stringify([name, attrs])}`);
+    if (PREFORMATTED.has(name)) {
+      if (!tag.end) pre++;
+      else if (pre > 0) pre--;
+    }
+    if (tag.end || !(RAW_TEXT.has(name) || RCDATA.has(name))) continue;
+    const close = findEndTag(src, name, i);
+    const body = src.slice(i, close < 0 ? src.length : close);
+    const after = close < 0 ? src.length : src.indexOf(">", close);
+    i = after < 0 ? src.length : after + 1;
+    // Script and style text as written (the list compares them already); text that keeps its
+    // whitespace as shown; the rest (title, template, noscript, iframe fallback) folded.
+    const kept =
+      name === "script" || name === "style" || name === "xmp"
+        ? body
+        : name === "textarea"
+          ? decodeEntities(body)
+          : foldSpace(name === "title" ? decodeEntities(body) : body);
+    out.push(`r${JSON.stringify(kept)}`);
+  }
+  flush();
+  return out.join("\n");
+}

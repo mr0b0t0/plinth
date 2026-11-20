@@ -1686,12 +1686,15 @@ from discovery tags) stays.
 | `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell's "calculation changed", with both results when both versions evaluate within 1,000,000 steps |
 | `design_system` | Name, description, prefix, fonts; tokens added, removed and changed, light and dark ("color.brand.500 changed", #3B5BDB → #2F4AC0), their descriptions and deprecation; guidelines (as a doc); shared styles; components added, removed, renamed, their status, description and usage, and "examples or styles changed" (never the code) |
 | `design` | Shared styles or fonts; boards added, removed, renamed, resized, moved, their background and section; per board its visible text, images and styles |
-| `html` | The page title; visible text located by the nearest heading; links, images and forms added or removed (counted); styles and scripts changed (never quoted) |
+| `html` | The page title; visible text located by the nearest heading; links, images and forms added or removed (counted); styles and scripts changed (never quoted); "Layout or formatting changed" when none of these changed but the markup did (a class, an attribute such as `hidden` or an image's size, bold or italics, a video, frame or SVG shape, spacing in preformatted text) |
 
 - **HTML without a DOM.** HTML pages and design boards are read by a string scanner that finds text
   runs, tag names and a few attributes (link targets, image sources, stylesheets, scripts). It
   never builds a document (no DOM, no `DOMParser`), skips comments, scripts, styles and templates,
-  decodes character references once, and is linear in its input.
+  decodes character references once, and is linear in its input. Two HTML pages look the same to a
+  person when their markup differs only in how it is written: comments, whitespace between tags or
+  folded inside text (not in `pre`, `listing`, `textarea` or `xmp`), the case of tag and attribute
+  names, attribute order and quotes, spacing in a class list, and how characters are encoded.
 - **Files.** Every type lists its files added, removed and replaced, with their sizes. Two files at
   one path are the same when their `sha256` match, or, when either side was stored before hashes
   were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as

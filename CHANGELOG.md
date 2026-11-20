@@ -80,7 +80,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
   paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
   "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
-  the files added, removed or replaced. Every type compares this way, designs included. The two
+  the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
+  formatting changed". Every type compares this way, designs included. The two
   versions are still rendered side by side below the list, one at a time with a Before and After
   switch on a phone. Older links with `view=source` open the same page. Agents still read and write
   source as before.

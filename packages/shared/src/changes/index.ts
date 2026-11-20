@@ -14,7 +14,8 @@ import { ChangeCollector, type ChangeList } from "./types.ts";
 
 export * from "./diff.ts";
 export * from "./files.ts";
-export { type HtmlScan, type HtmlTextRun, scanHtml } from "./htmlScan.ts";
+export { CHANGES_LAYOUT } from "./html.ts";
+export { type HtmlScan, type HtmlTextRun, markupSignature, scanHtml } from "./htmlScan.ts";
 export { type MdBlock, type MdBlockKind, markdownBlocks } from "./markdownText.ts";
 export { changeExcerpt } from "./text.ts";
 export * from "./types.ts";

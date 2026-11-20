@@ -6,6 +6,7 @@ import {
   CHANGE_DESCRIBERS,
   CHANGE_LIMITS,
   CHANGES_INVISIBLE,
+  CHANGES_LAYOUT,
   CHANGES_UNREADABLE,
   ChangeCollector,
   type ChangeItem,
@@ -680,5 +681,45 @@ describe("html", () => {
     const text = JSON.stringify(list);
     for (const bad of ["<", "not text", "secret", "hidden", "content"])
       expect(text).not.toContain(bad);
+  });
+
+  it("says layout or formatting changed for a change it does not name", () => {
+    const layout = [{ kind: "changed", where: "", what: CHANGES_LAYOUT }];
+    for (const [a, b] of [
+      ['<p class="text-red-500">Hi</p>', '<p class="text-blue-500 text-4xl">Hi</p>'],
+      ["<div><p>Hi</p></div>", "<div hidden><p>Hi</p></div>"],
+      ["<img src=a.png width=10>", "<img src=a.png width=900>"],
+      ["<p>Hello <b>world</b></p>", "<p>Hello world</p>"],
+      ["<p>Hi</p>", "<p>Hi</p><iframe src=x></iframe><video src=v.mp4></video>"],
+      ["<p>Hi</p>", '<p>Hi</p><svg><circle r="4"></circle></svg>'],
+      ["<pre>a\n  b</pre>", "<pre>a\n    b</pre>"],
+      ["<pre><code>a\n  b</code></pre>", "<pre><code>a b</code></pre>"],
+      ["<textarea>a\n  b</textarea>", "<textarea>a b</textarea>"],
+      ["<div><p>x</p></div><p>y</p>", "<div><p>x</p><p>y</p></div>"],
+      ["<p>Hi</p>", "<!doctype html><p>Hi</p>"],
+    ] as const) {
+      expect(items("html", a, b), `${a} → ${b}`).toEqual(layout);
+    }
+  });
+
+  it("says nothing visible changed only for changes in how the markup is written", () => {
+    const invisible = [{ kind: "changed", where: "", what: CHANGES_INVISIBLE }];
+    for (const [a, b] of [
+      ["<div><p>Hi</p></div>", "<div>\n  <p>\n    Hi\n  </p>\n</div>\n"],
+      ['<p class="a" id="x">Hi</p>', "<P ID=x CLASS='a'>Hi</P>"],
+      ['<p class="a  b">Hi</p>', '<p class=" a b ">Hi</p>'],
+      ["<p>Hi</p>", "<p>Hi</p><!-- a note -->"],
+      ["<p>A &amp; B</p>", "<p>A &#38; B</p>"],
+      ["<input disabled>", '<input disabled="">'],
+      ["<template><p>x</p></template>", "<template>\n  <p>x</p>\n</template>"],
+    ] as const) {
+      expect(items("html", a, b), `${a} → ${b}`).toEqual(invisible);
+    }
+  });
+
+  it("names the changes it can and leaves layout to the rendered versions", () => {
+    expect(items("html", '<p class="a">Hi</p>', '<p class="b">Hello</p>')).toEqual([
+      { kind: "changed", where: "", what: "Text changed", before: "Hi", after: "Hello" },
+    ]);
   });
 });
