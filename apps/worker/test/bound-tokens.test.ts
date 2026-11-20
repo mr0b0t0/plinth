@@ -308,6 +308,14 @@ describe("using a token limited to one artifact", () => {
     bound(await req("POST", `/artifacts/${id}/versions/1/restore`, t.auth, {}), "restore");
     bound(await req("DELETE", `/artifacts/${id}`, t.auth), "delete");
     bound(await req("POST", `/artifacts/${id}/comments`, t.auth, { body: "hi" }), "comment");
+    // A page anchor (comments from the page) is a comment like any other.
+    bound(
+      await req("POST", `/artifacts/${id}/comments`, t.auth, {
+        body: "hi",
+        anchor: { kind: "page", key: "slide-1", x: 10, y: 20 },
+      }),
+      "page-anchored comment",
+    );
     // Reading the threads too: they carry every commenter's email and the mention tasks.
     const posted = await req("POST", `/artifacts/${id}/comments`, h, { body: "A note" });
     expect(posted.status).toBe(201);

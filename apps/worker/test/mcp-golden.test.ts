@@ -3,8 +3,9 @@
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
-// notes, and the server instructions' design system sentence) did, and so did the slides type (its
-// publish note, the type and content descriptions and the instructions' deck sentence).
+// notes, and the server instructions' design system sentence) did, so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence), and so did
+// comments from the page (the page anchor note in list_comments and list_mentions).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -59,7 +60,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "10749deed360edb137142005490431837136d0bbe9ecde2a7b5af7e345b0fa76",
+      tools: "8dea298e5057a85fafd2779917de9949c74a4759f29992cf186947b081b1269c",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -69,7 +70,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "cc8c4d28a95798b636afcd8da2f0442105521c87fe442fccd91f6f7248445ad0",
+      tools: "3956cefbccd8069c268ce59c29e3c7e7093a97c9fa37144fbe8d1c5fb1c23471",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -81,7 +82,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "366faf5ed673c39e789740bdec9b127be745aca27cef5f1e7ec2b05e061748ad",
+      tools: "28e908154676e2fe47fe39500677f871aca5092fc2854ef457291d574a0b4f33",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

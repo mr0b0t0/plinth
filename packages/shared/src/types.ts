@@ -302,7 +302,10 @@ export interface MentionTaskInfo {
    * owner wrote it. Requests from anyone else carry no owner authority.
    */
   comment_author_role: EffectiveRole | null;
-  /** Element the comment is pinned to, if any. Also untrusted. */
+  /**
+   * Element or page spot the comment is pinned to, if any (`kind: "page"`: placed by the page's
+   * own code). Also untrusted.
+   */
   anchor: Anchor | null;
   version_number: number;
   claimed_by: string | null;
@@ -445,6 +448,11 @@ export type ViewGate =
        * editing is on under origin isolation. Absent otherwise.
        */
       live?: ViewGateLive;
+      /**
+       * The version being shown declares `comments` (HTML only): the page may open the comment
+       * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
+       */
+      page_comments?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

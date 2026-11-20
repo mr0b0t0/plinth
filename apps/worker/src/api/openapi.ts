@@ -662,8 +662,14 @@ function responseSchemas(): Record<string, Json> {
             role: { oneOf: [effectiveRole, { type: "null" }] },
             data: ref("ViewGateData"),
             live: ref("ViewGateLive"),
+            page_comments: {
+              const: true,
+              description:
+                "The version being shown declares `comments` (HTML only): the page may open the " +
+                "comment composer with its own anchors, and `review` is ignored",
+            },
           },
-          ["data", "live"],
+          ["data", "live", "page_comments"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -1760,7 +1766,9 @@ function operations(): Operation[] {
         {
           name: "review",
           schema: enumOf(["1"]),
-          description: "Review mode: inject the comment-anchoring bridge",
+          description:
+            "Review mode: inject the comment-anchoring bridge. Ignored for a page that declares " +
+            "`comments`, which anchors its own comments",
         },
         { name: "next", schema: str(), description: "Path inside the artifact to land on" },
       ],

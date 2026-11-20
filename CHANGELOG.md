@@ -22,6 +22,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   after merging (`pnpm release 0.6.0 --push`), then apply migration `0012_bound_tokens.sql` and
   deploy. The New token dialog, the README and `docs/ci.md` pin `mr0b0t0/plinth/publish@v0.6.0`
   and `@mr0b0t0/plinth@0.6.0`, which exist only once that release is out. Plugin 0.21.0.
+- **Comments from the page.** A page that declares `comments` can open the comment composer on a
+  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
+  its own markers for the threads and tell Plinth where to put its pins. The person still writes
+  and posts every comment, and the page never sees comment text. Opening comments on such a page no
+  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
+  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0. A declaring page connects as
+  soon as it loads, so its pins show even before its code calls `plinth.comments`, and they follow
+  the layout as images load or the page resizes. Whether the page anchors its own comments follows
+  the version being viewed, so an older version without the declaration keeps "Pin to an element".
+- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
+  off its anchor; it now grows in place.
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
   between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,

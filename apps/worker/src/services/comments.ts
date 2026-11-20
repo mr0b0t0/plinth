@@ -3,8 +3,11 @@
 //
 // Comment bodies and anchors are untrusted text. They are stored exactly as given, returned as
 // data, and never rendered to HTML on the server (the web app renders them with renderMarkdown).
+// An anchor is an element (a selector) or a page anchor (`kind: "page"`, placed by the page's own
+// code through plinth.comments); both are read back through the schema that admitted them.
 import {
   type Anchor,
+  anchorSchema,
   type CommentInfo,
   type CommentStatus,
   MENTION_AGENT_NAMES,
@@ -122,13 +125,20 @@ export function authorLabel(l: LoadedComment): string {
   return l.connLabel ?? l.userName ?? l.c.authorEmail ?? l.userEmail ?? "Unknown";
 }
 
-function parseAnchor(raw: string | null): Anchor | null {
+/**
+ * A stored anchor read back: an element or a page anchor, checked against the same schema that
+ * admitted it. Anything else (junk JSON, a shape no schema allows) reads as no anchor.
+ */
+export function readAnchor(raw: string | null): Anchor | null {
   if (!raw) return null;
+  let v: unknown;
   try {
-    return JSON.parse(raw) as Anchor;
+    v = JSON.parse(raw);
   } catch {
     return null;
   }
+  const parsed = anchorSchema.safeParse(v);
+  return parsed.success ? (parsed.data as Anchor) : null;
 }
 
 /**
@@ -150,7 +160,7 @@ function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean)
       label,
     },
     body: c.body,
-    anchor: parseAnchor(c.anchor),
+    anchor: readAnchor(c.anchor),
     status: c.status,
     created_at: c.createdAt,
     mentions: tasks.map((t) => ({

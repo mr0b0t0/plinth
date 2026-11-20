@@ -1,11 +1,14 @@
 // Numbered pins drawn over the artifact frame. The layer covers the frame's box and lets every
 // pointer event through; only the pins themselves take clicks, so the artifact stays usable.
-// Positions come from the bridge (viewport coordinates inside the frame) and are untrusted:
+// Positions come from the bridge, or from the page itself for a page that declares `comments`
+// (viewport coordinates inside the frame, pageChannel.ts), and are untrusted:
 // they were validated as finite numbers and are only used to place the pins, clamped to the frame.
+
+import { isPageAnchor } from "@plinth/shared";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PinPosition } from "./bridge.ts";
-import { excerpt, type Thread } from "./model.ts";
+import { anchorLabel, type Thread } from "./model.ts";
 
 export interface PinLayerProps {
   frame: HTMLIFrameElement | null;
@@ -110,8 +113,12 @@ export function PinLayer({
   const pins = threads.flatMap((t) => {
     const p = positions.get(t.root.id);
     if (!p?.visible || t.pin === null || t.root.status !== "open") return [];
-    const ax = t.root.anchor?.x ?? 0;
-    const ay = t.root.anchor?.y ?? 0;
+    // An element anchor's x/y are fractions of its box; a page anchor's box is where the page
+    // said it is (a point has no size), so its pin sits in the middle.
+    const a = t.root.anchor;
+    const page = isPageAnchor(a);
+    const ax = page ? 0.5 : (a?.x ?? 0);
+    const ay = page ? 0.5 : (a?.y ?? 0);
     const x = clamp(p.left + p.width * ax, PIN_SIZE / 2, box.width - PIN_SIZE / 2);
     const y = clamp(p.top + p.height * ay, PIN_SIZE / 2, box.height - PIN_SIZE / 2);
     const vx = box.left + x;
@@ -135,8 +142,13 @@ export function PinLayer({
           className="cm-pin"
           data-active={thread.root.id === activeId || undefined}
           data-thread-id={thread.root.id}
-          style={{ transform: `translate(${Math.round(x)}px, ${Math.round(y)}px)` }}
-          aria-label={`Comment ${thread.pin}: ${excerpt(thread.root.anchor?.text)}`}
+          style={{
+            transform: `translate(${Math.round(x)}px, ${Math.round(y)}px)`,
+            // The hover and active `scale` composes before `transform`, around this origin: put
+            // it on the translated center, so a growing pin stays on its spot.
+            transformOrigin: `calc(50% + ${Math.round(x)}px) calc(50% + ${Math.round(y)}px)`,
+          }}
+          aria-label={`Comment ${thread.pin}: ${anchorLabel(thread.root.anchor)}`}
           title={`Comment ${thread.pin}`}
           onClick={() => onPinClick(thread.root.id)}
         >
