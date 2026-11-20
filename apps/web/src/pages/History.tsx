@@ -67,6 +67,7 @@ export default function History({ params }: { params: Record<string, string> }) 
   const canRestore = a?.role === "owner" || a?.role === "editor";
   const def = a ? typeDef(a.type) : null;
   const wording = (n: number) => restoreWording(def, n, current);
+  const restoreHint = wording(current).hint;
 
   const toggle = (n: number, on: boolean) =>
     setSelected((s) =>
@@ -127,8 +128,9 @@ export default function History({ params }: { params: Record<string, string> }) 
           </p>
         )}
         <p className="hx-hint">
-          Restoring publishes an old version&rsquo;s content as a new version. Nothing is ever
-          overwritten. <span className="hx-hint__select">Tick two versions to compare them.</span>
+          {/* Once the type is known, so a board never shows the content wording first. */}
+          {a && restoreHint ? `${restoreHint} ` : null}
+          <span className="hx-hint__select">Tick two versions to compare them.</span>
         </p>
       </div>
 

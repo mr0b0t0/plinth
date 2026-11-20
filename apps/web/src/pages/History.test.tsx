@@ -102,3 +102,25 @@ describe("History: restore", () => {
     expect(await screen.findByText("Restored v1's settings")).toBeTruthy();
   });
 });
+
+describe("History: the header line", () => {
+  const hint = () => document.querySelector(".hx-hint")?.textContent ?? "";
+
+  it("says a restore publishes the old content on an ordinary artifact", async () => {
+    handler("html");
+    const Page = await loadPage();
+    render(<Page params={{ slug: "plan" }} />);
+    await screen.findByRole("button", { name: "More actions for v1" });
+    expect(hint()).toBe(
+      "Restoring publishes an old version’s content as a new version. Nothing is ever overwritten. Tick two versions to compare them.",
+    );
+  });
+
+  it("on a whiteboard says only how to compare, so it never contradicts Restore settings", async () => {
+    handler("whiteboard");
+    const Page = await loadPage();
+    render(<Page params={{ slug: "plan" }} />);
+    await screen.findByRole("button", { name: "More actions for v1" });
+    expect(hint()).toBe("Tick two versions to compare them.");
+  });
+});

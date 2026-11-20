@@ -1757,6 +1757,8 @@ its page without a new version each time, and agents add and move blocks with
   if it must, the people here are coloured dots (the full name on hover and for screen readers),
   a read-only line is "View only" alone (the reason for screen readers), and Fit zooms out no further than 75% so text stays readable, starting from the board's
   top-left.
+- **History.** A board's versions hold only its settings, so the history's restore is "Restore
+  settings", and its header says only "Tick two versions to compare them."
 - **On the board.** A cursor's tag and the people list show a person's name, or their email's local
   part, with the full one on hover. A tag near the viewport's right edge sits on the pointer's
   left. An arrow's label sits beside its line with a halo in the board's colour, on the board and

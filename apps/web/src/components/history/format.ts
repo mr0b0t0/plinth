@@ -76,6 +76,11 @@ export interface RestoreWording {
   /** The toast once it is done. */
   done: string;
   doneDetail: (version: number) => string;
+  /**
+   * What the history's header says about restoring, before "Tick two versions to compare them";
+   * empty where the menu item ("Restore settings") and its dialog say it.
+   */
+  hint: string;
 }
 
 /**
@@ -96,6 +101,7 @@ export function restoreWording(
       description: `This publishes v${n}'s settings as v${current + 1}. What is on the ${what} stays as it is.`,
       done: `Restored v${n}'s settings`,
       doneDetail: (v) => `Its settings are now the current version, v${v}.`,
+      hint: "",
     };
   }
   return {
@@ -104,6 +110,7 @@ export function restoreWording(
     description: `This publishes v${n}'s content as v${current + 1}. Nothing is lost: v${current} and every other version stay in the history.`,
     done: `Restored v${n}`,
     doneDetail: (v) => `Its content is now the current version, v${v}.`,
+    hint: "Restoring publishes an old version’s content as a new version. Nothing is ever overwritten.",
   };
 }
 
