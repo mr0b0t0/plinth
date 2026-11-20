@@ -186,6 +186,24 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   and the version picker follows), and at phone width the edit strip keeps to one line. Numbers
   are typed in your locale. Follows `ALLOW_LIVE_EDITING`. The agent's sheet rules say a
   `live_draft` on a sheet needs no action.
+- **Compare says what changed, in words.** History's Compare page no longer shows a source diff.
+  It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
+  paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
+  "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
+  the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
+  formatting changed". A heading, paragraph, slide or row added before another reads as added,
+  not as the next one renamed or changed: blocks pair by the words they share, never by their
+  place alone, so a paragraph rewritten with none of its words kept reads as removed and added. Items come in the order the page reads, a changed list names only the item that
+  changed, and a sheet total that only recomputed for an added row is left out. A large edit the
+  diff gives up on still lists only the blocks that changed, a block added or removed in it
+  included, and two same-titled slides edited in
+  place are not listed as moved. Every type
+  compares this way, designs included, and a whiteboard lists its settings in the Board settings
+  dialog's words ("Background: Dots → Grid", "Who can change the board: Editors only → Commenters
+  and editors"), with History's "Restore settings" unchanged. The two
+  versions are still rendered side by side below the list, one at a time with a Before and After
+  switch on a phone. Older links with `view=source` open the same page. Agents still read and write
+  source as before.
 
 ## 0.6.0 (2026-11-20)
 

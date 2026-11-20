@@ -409,7 +409,8 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview and history diffs `content.md`. Owners and
+The editor edits the Markdown with a live preview, and Compare lists what changed between two
+versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
 renderer connects the doc socket; every other shell is byte for byte as before. The second type
@@ -439,8 +440,8 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
   in `versions`. Files it shares with the current version are referenced, not copied.
 - The artifact page shows the list: number, author (person or agent label), note, date.
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
-- Two versions can be compared as a source diff or side by side as rendered pages (a sheet,
-  whose source people never see, only as rendered pages).
+- Two versions can be compared side by side as rendered pages, with a plain-language list of what
+  changed ([Comparing versions](#comparing-versions-decided-2026-11-19)).
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
 - Open views follow new versions: see [Live views](#live-views-decided-2026-11-19).
 
@@ -1406,9 +1407,10 @@ fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_
 `type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
 versions, `base_version` conflicts, restore, history, comments, thumbnails and in-chat previews
 work as for every type. People see a design, never its source: the app has no editor for it (no
-Edit in any menu; its editor address opens the design) and compares two versions only as rendered
-pages. Agents change it, and each change is a new version, which owners and editors can revert by
-restoring an older one.
+Edit in any menu; its editor address opens the design), and Compare shows two versions as rendered
+pages with a list of what changed, as for every type
+([Comparing versions](#comparing-versions-decided-2026-11-19)). Agents change it, and each change
+is a new version, which owners and editors can revert by restoring an older one.
 
 - **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
   then artboards. Each artboard starts with a whole line
@@ -1497,9 +1499,10 @@ fifth [typed output](#mcp-interface) and works like the others: `publish_artifac
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
 restore and history work as for docs. People never see the JSON lines: a sheet has no source
 editor (its registry row's `editor` is null), so the app offers no source Edit, the editor's address
-goes to the sheet's page, and Compare shows two versions rendered side by side, never a source diff.
-Cells are versioned content, never shared data: every change, an agent's or a person's, is a new
-version anyone can revert. Owners and editors also edit a sheet on its page, live with each other
+goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
+added or removed) above the two versions rendered side by side, never a source diff. Cells are
+versioned content, never shared data: every change, an agent's or a person's, is a new version
+anyone can revert. Owners and editors also edit a sheet on its page, live with each other
 ([Live sheets](#live-sheets-decided-2026-11-19)); the Edit toggle there is the only way a person
 edits one.
 
@@ -1522,7 +1525,7 @@ edits one.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
   Each row therefore has one spelling, and a version's file differs from the last only in the
-  rows that changed. This
+  rows that changed, so Compare lists only those rows. This
   holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it by
   comparing the stored sheet with the folder's in that canonical spelling, never by skipping it.
 - **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
@@ -2248,6 +2251,96 @@ its review has exactly two choices (below).
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
 
+### Comparing versions (decided 2026-11-19)
+
+History's Compare page says what changed between two versions in plain language and shows both
+versions rendered. It shows no source code, following the maintainer's decision of 2026-11-19 that
+people work with artifacts as they look, not as their source. Agents, MCP, REST and the CLI still
+read and write source, and `GET /a/<slug>/source` (plain text for agents and crawlers, linked only
+from discovery tags) stays.
+
+- **The page.** `/a/:slug/compare?from=&to=` shows the From and To pickers, then the list of
+  changes with no heading of its own (the pickers say which versions; "Changes" names the region
+  for screen readers), its rows as wide as the frames below, then the two versions side by side,
+  each in its own sandboxed frame on the content host through a fresh viewer gate (as before). At phone width the frames show one at a
+  time, with a Before and After switch. There is no source view: a link that still carries
+  `view=source` or `view=rendered` lands on the same page.
+- **The list.** It is worked out in the browser, from the two version details Compare already
+  fetches (`GET /api/v1/artifacts/:ref/versions/:n`), by pure, zod-free describers in
+  `packages/shared/src/changes/` (one per type, keyed by the registry, so a new type must add one).
+  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "After
+  “Plot 4”", "Slide 3", "Row 7, “Qty”", "Board “Home”", or nothing when the sentence says it all),
+  a short sentence, and the visible text or value before and after. An item with only one side
+  shows that text alone, green when added and red when removed, with no Before or After label.
+  Within a changed region, headings, paragraphs and other blocks, list items, HTML and board
+  text, slides and boards are paired by the content words they share, never by their place
+  alone. Content words are lowercased (after NFKC), made of letters and digits, three characters
+  or longer, and not one of 50 common English function words ("the", "this", "with"); text in a
+  script written without spaces gives its pairs of characters, and two texts with no content
+  words compare all their words. Two blocks are alike by the Jaccard overlap of those words (a
+  slide by its title and text, a board by its name and text); the region's old and new blocks are
+  aligned in order so that the summed likeness is highest, a pair counting only at 0.3 or more,
+  and blocks with the same content count as fully alike. A matched pair is a change, an old block
+  left over is removed and a new one added: a paragraph inserted next to an edited one reads as
+  added, and an edit that keeps no content word reads as removed and added. A block moved on a
+  page or in a doc, unchanged, is removed at its old place and added at its new one (neither
+  lists moves); a slide or a board moved is listed once as moved. Text with no words at
+  all ("★★★", an emoji) pairs with nothing; only two slides, or two boards, with no words at all
+  (a slide of only an image) may pair, at 0.3 and below any pair that shares a word. A region of
+  more than 40,000 old×new blocks, or one whose cells and word comparisons pass what is left of
+  the 4,000,000 that one change list shares among all its regions, matches equal blocks only and
+  lists the rest as removed or added. A sheet pairs rows in order, preferring one whose
+  first cell is the same, so a row added above another reads as added. The region's items are
+  then listed in the order a person reads the new version (slides included). An item in a region the diff gave up on (below) whose
+  two sides are the same is left out, so only what changed is listed. A slide whose own region has
+  one of its title on the other side changed in place: two same-titled slides edited where they
+  are are not listed as trading places. Bidirectional controls (U+202A to U+202E, U+2066 to
+  U+2069, LRM, RLM and ALM) are dropped from every string of an item, so a version's text cannot
+  reorder how the list reads. The app holds the two source texts
+  only as the describers' input and renders only their output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
+  pass the free plan's CPU time per request, and the app has the versions already.
+
+| Type | What the list names |
+| --- | --- |
+| `doc` | Blocks located by the nearest heading above (a heading after the one before it at its own level, "After “Plot 4”", and under one of a higher level): headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped; a whole list's items set apart with " · "); a changed list's items added, removed or changed one at a time ("List item changed"), never the list as one sentence; formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
+| `slides` | Deck settings (aspect, theme, slide numbers, footer); slides added, removed and moved ("Slide 4 moved to 2"); per slide its title, text, columns, images and speaker notes |
+| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell whose calculation changed ("C7 calculation changed"), with both results when both versions evaluate within 1,000,000 steps. A total that only recomputed is left out: its formula is the same, or, when rows or columns were added or removed, it differs only in the cells it refers to (`=SUM(C2:C5)` to `=SUM(C2:C6)` with a row added) |
+| `design_system` | Name, description, prefix, fonts; tokens added, removed and changed, light and dark ("color.brand.500 changed", #3B5BDB → #2F4AC0), their descriptions and deprecation; guidelines (as a doc); shared styles; components added, removed, renamed, their status, description and usage, and "examples or styles changed" (never the code) |
+| `design` | Shared styles or fonts; boards added, removed, renamed, resized, moved, their background and section; per board its visible text, images and styles |
+| `html` | The page title; visible text located by the nearest heading (a heading after one of its own level, as in a doc); links, images and forms added or removed (counted); styles and scripts changed (never quoted); "Layout or formatting changed" when none of these changed but the markup did (a class, an attribute such as `hidden` or an image's size, bold or italics, a video, frame or SVG shape, spacing in preformatted text) |
+| `whiteboard` | A version holds only the board's settings (its blocks and arrows are shared data, not versioned), so the list names the settings that changed in the Board settings dialog's words: "Background: Dots → Grid", "Who can change the board: Editors only → Commenters and editors". A value outside its list reads as its default, as the board renders it; any other setting that changed is one item, "Other board settings changed", without its name or value; the format version is not a setting. History still offers "Restore settings" for a board's versions |
+
+- **HTML without a DOM.** HTML pages and design boards are read by a string scanner that finds text
+  runs, tag names and a few attributes (link targets, image sources, stylesheets, scripts). It
+  never builds a document (no DOM, no `DOMParser`), skips comments, scripts, styles and templates,
+  decodes character references once, and is linear in its input. Two HTML pages look the same to a
+  person when their markup differs only in how it is written: comments, whitespace between tags or
+  folded inside text (not in `pre`, `listing`, `textarea` or `xmp`), the case of tag and attribute
+  names, attribute order and quotes, spacing in a class list, and how characters are encoded.
+- **Files.** Every type lists its files added, removed and replaced as rows at the end of the same
+  list ("File “img/map.png” added", its size beside it), with no part or badge of their own. Two files at
+  one path are the same when their `sha256` match, or, when either side was stored before hashes
+  were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as
+  JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
+  review a draft.
+- **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
+  the smallest set of edits past 4,000 edits or 400 ms, or sooner when the list's one deadline
+  of 1,500 ms is nearer: a version of many changed lists or boards runs one diff for each, and
+  all of them share that deadline. Past it, or once the list holds 200 items, the describers start
+  no more lists, boards or regions (nor the next list inside a region) and the list says it was
+  cut; they stop only after the first change is found, so a cut list is never empty. A diff that
+  stops anchors the region on the blocks
+  found exactly once in each version, keeping the longest run of them in the same order as
+  unchanged (one level of a patience diff, O(n log n)), so a block added or removed does not shift
+  every later pair; what lies between two anchors is aligned as above, the unchanged items left
+  out. The list
+  says when it was cut, and the two rendered versions below it always show everything. A version
+  the type's checks refuse is not described in detail ("One of the two versions cannot be read in
+  detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how
+  the content is stored".
+- **No setting.** Compare is the same on every instance and in both isolation modes; it adds no
+  route, no table and no env var.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2685,7 +2778,7 @@ for a single user.
    the content domain, CSP, quotas.
 3. **Sharing.** Email allowlists with magic-link viewing, roles, a dashboard listing artifacts and
    connections.
-4. **Version history UI.** Version list, permanent version URLs, diff, restore.
+4. **Version history UI.** Version list, permanent version URLs, compare, restore.
 5. **Comments and pull mentions.** Threads, element pins, the mention queue and its MCP tools.
 6. **Editor.** Monaco with live preview and conflict handling.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.

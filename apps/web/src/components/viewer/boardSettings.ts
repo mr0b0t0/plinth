@@ -3,6 +3,8 @@
 // builds board.json itself from two known values (never from text a person typed), and saves it
 // as a new version against the version the dialog read, so a newer version is never overwritten.
 import {
+  BOARD_BACKGROUND_LABELS,
+  BOARD_EDIT_LABELS,
   type BoardBackground,
   type BoardEditMode,
   type BoardSettings,
@@ -10,16 +12,17 @@ import {
   type ErrorCode,
 } from "@plinth/shared";
 
+// The labels are shared with History's Compare page, which lists a settings change in them.
 export const BACKGROUND_CHOICES: readonly { value: BoardBackground; label: string }[] = [
-  { value: "dots", label: "Dots" },
-  { value: "grid", label: "Grid" },
-  { value: "plain", label: "Plain" },
+  { value: "dots", label: BOARD_BACKGROUND_LABELS.dots },
+  { value: "grid", label: BOARD_BACKGROUND_LABELS.grid },
+  { value: "plain", label: BOARD_BACKGROUND_LABELS.plain },
 ];
 
 export const EDIT_CHOICES: readonly { value: BoardEditMode; label: string }[] = [
   // The default (DEFAULT_BOARD_SETTINGS) first.
-  { value: "editors", label: "Editors only" },
-  { value: "commenters", label: "Commenters and editors" },
+  { value: "editors", label: BOARD_EDIT_LABELS.editors },
+  { value: "commenters", label: BOARD_EDIT_LABELS.commenters },
 ];
 
 const labelOf = <T extends string>(list: readonly { value: T; label: string }[], v: T) =>

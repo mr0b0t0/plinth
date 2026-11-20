@@ -72,6 +72,7 @@ make a test pass.
 | A participant forges what a page counts | An invited viewer writes another person's sign-off, adds extra approval documents that are not their personal one, or ticks a team-only checklist item through the page's runtime | A personal document can be created only by its own person, and every write is stamped by the server; what only the owner's side decides is in the versioned HTML; the example pages count only personal sign-offs, one per person, whose own person made the last change from the page, and a team item only when the owner or an editor made its tick's last change; a link viewer, who gets no stamps, is told that only invited people can see the result. Deletions are not marked: shared data keeps no history ([Example pages and server stamps](#example-pages-and-server-stamps)) |
 | A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the Connections page and the naming dialogs show each connection's handle and warn when an older one takes it; a comment written by an agent never creates a task |
 | A forged sheet edit breaks the shared draft | A modified client on the draft socket sends a row the sheet cannot hold, a header with fewer columns, or a struct that moves rows under someone else's open cell | The room checks every row line and header an edit puts in against the sheet's rules in their canonical spelling, re-checks every row when the header changes, applies a struct only from a writer at the current `rev` while nobody else holds a lease, and never merges a version published meanwhile into the draft: it freezes the draft, and a frozen draft is resolved only to itself or to that version exactly ([Live sheets](#live-sheets)) |
+| A version attacks the app through Compare | A version's HTML, Markdown, sheet cells or design-system strings hold `<img onerror>`, `</script>` or a `javascript:` link, and the change list puts them on the app host; or a hostile page makes the list take minutes | The app never renders a version's source: pure describers in `packages/shared/src/changes/` return plain text, which React renders as text nodes; HTML is read by a string scanner with no DOM; the versions render only in their sandboxed frames on the content host; item, excerpt and diff-work caps ([Comparing versions](#comparing-versions)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2248,6 +2249,56 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
 - **Agents.** Agents never join the room; they change a sheet with `edit_sheet` or
   `update_artifact`, which publish versions that freeze the draft for the editors' review, and see
   only that a draft exists (`live_draft`), never its text.
+
+## Comparing versions
+
+History's Compare page is the one app page that reads two versions' source (spec: "Comparing
+versions"), and it shows none of it. It is an app-host page, so the rule that user HTML never runs
+there is what it has to keep.
+
+- **Text only.** The change list is worked out in the browser by the describers in
+  `packages/shared/src/changes/` from the version details the page already fetches under the
+  `view` decision. Each item is a kind, a place, a sentence and short excerpts, all plain strings,
+  and the page renders them as React text nodes: never `innerHTML`, never a document. A describer
+  quotes only what a person sees on the page (visible text, names, values, settings), never
+  markup, scripts, styles, component code or sheet lines, so the list cannot carry an active
+  construct even as text. Unit tests pin that hostile markup comes out as text and that no script,
+  style, comment or template text is quoted. The collector drops bidirectional controls (U+202A to
+  U+202E, U+2066 to U+2069, LRM, RLM, ALM) from every string of an item, so a version cannot make
+  an excerpt or a name read as something else (a right-to-left override makes "Start", U+202E,
+  "gnp.exe" read as "Startexe.png"); joiners stay, since emoji sequences and scripts such as
+  Persian need them. A test pins it.
+- **No DOM for user HTML.** An HTML page or a design board is read by a string scanner
+  (`changes/htmlScan.ts`), not by `DOMParser`, a `<template>` or a detached document: nothing of
+  the version is parsed into nodes, loaded or run on the app origin. The scanner finds text runs,
+  tag names and link, image, stylesheet and script addresses, skips comments, scripts, styles and
+  templates, and decodes character references once. It matches tag names and end tags as a browser
+  does, lowercasing ASCII letters only and in the source itself, never in a lowercased copy: "İ"
+  lowercases to two code units, so a copy's indices would miss `</script>` and quote the rest of
+  the page as the script's body. A test pins it.
+- **Bounded work.** Every step is linear in its input: the scanner and the Markdown reader use no
+  regular expression that can backtrack across a line (tests feed a megabyte of `<`, `![`, `[a](`
+  and unclosed quotes). A diff stops past 4,000 edits or 400 ms and reports the region as
+  replaced. One change list has one deadline of 1,500 ms for all its diffs, since a version of
+  many changed lists or boards runs one diff per list or board: each diff gets at most the time
+  left, and every loop over lists, boards and regions (inside a region too) stops once the
+  deadline has passed or the list is full, and says the list was cut. It stops only after it has
+  found one change, so a cut list is never empty. Aligning the blocks of one changed region by their words is the one step that is not
+  linear: it runs only on a region of at most 40,000 old×new blocks whose cells and word
+  comparisons, counted before any is made from the sizes of the sets each pair compares (a text
+  without spaces has a character pair for every character, not one word per run), fit in what is
+  left of one budget of 4,000,000 that every region of the change list draws on, so a version cut
+  into many regions cannot multiply it; past either it matches equal blocks only (in linear time).
+  A list holds at most 200 items, and the collector cuts every excerpt and value to 160
+  characters whatever a describer passes it; a sheet's formulas get
+  1,000,000 steps. A hostile version can slow its own Compare page at most, in the viewer's own
+  tab, after the page has painted.
+- **Rendered versions unchanged.** The two versions render as before: each in its own sandboxed
+  frame on the artifact's content origin, entered through a fresh one-time gate, with the
+  isolation mode's sandbox flags.
+- **No source in History.** The source diff is gone: neither History nor Compare shows a version's
+  source text. The source stays readable to agents (MCP, REST, the CLI and `GET /a/<slug>/source`,
+  which is plain text and linked only from discovery tags).
 
 ## Operator checklist for the content domain
 
