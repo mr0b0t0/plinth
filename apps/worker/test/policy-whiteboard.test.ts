@@ -43,9 +43,6 @@ const html = (over: Partial<Capabilities> = {}): Capabilities => ({
   roomOpen: ["cursor"],
   people: false,
   comments: false,
-  dictation: false,
-  hold: false,
-  files: false,
   ...over,
 });
 
@@ -111,6 +108,27 @@ describe("policy: pageDataAccess on a whiteboard", () => {
     const caps = withoutWriters(board("editors"));
     expect(pageDataAccess(claimOf("viewer"), caps, true, "whiteboard").write).toBe(false);
     expect(pageDataAccess(claimOf("commenter"), caps, true, "whiteboard").write).toBe(true);
+  });
+
+  it("an in-chat preview or a capture that may not read the data gets nothing, at any role", () => {
+    for (const role of ROLES) {
+      for (const pass of [{ preview: true }, { noData: true }]) {
+        for (const type of ["whiteboard", "html"]) {
+          const caps = type === "html" ? html() : board("commenters");
+          expect(pageDataAccess(claimOf(role), caps, true, type, pass)).toEqual({
+            read: false,
+            write: false,
+            seeIdentity: false,
+          });
+        }
+      }
+    }
+    // The pass facts take nothing away from a plain pass: the floor still decides.
+    expect(pageDataAccess(claimOf("viewer"), board("commenters"), true, "whiteboard", {})).toEqual({
+      read: true,
+      write: false,
+      seeIdentity: true,
+    });
   });
 
   it("keeps HTML as it was: every identified viewer writes, seeIdentity is the old write && viewer", () => {

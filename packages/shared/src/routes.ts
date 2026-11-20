@@ -37,6 +37,8 @@ export const API = {
   loginRequest: "/auth/login",
   loginVerifyCode: "/auth/verify-code",
   loginVerifyLink: "/auth/verify-link",
+  /** The one review account's password sign-in; 404 unless REVIEW_LOGIN_* are set. */
+  loginReview: "/auth/review-login",
   logout: "/auth/logout",
   /** Development only (ENVIRONMENT=development and DEV_OUTBOX=true): emails the console sent. */
   devOutbox: "/__dev/outbox",
@@ -76,7 +78,6 @@ export const API = {
   viewPassword: "/view/:ref/password",
   viewEmail: "/view/:ref/email",
   viewCode: "/view/:ref/code",
-  viewDictation: "/view/:ref/dictation", // GET the owner's email for the dictation consent dialog
   viewWatch: "/view/:ref/watch", // GET WebSocket upgrade (plinth.view.v1): live views, the app only
   // comments and mentions
   comments: "/artifacts/:ref/comments",
@@ -89,15 +90,13 @@ export const API = {
   adminReports: "/admin/reports",
   adminReport: "/admin/reports/:id",
   adminStats: "/admin/stats", // GET instance aggregates (admins only)
-  artifactViews: "/artifacts/:ref/views", // GET open counts (the owner only)
+  artifactStats: "/artifacts/:ref/stats", // GET who opened it, ?days=7|30|90|365 (the owner only)
+  statsArtifacts: "/stats/artifacts", // GET opens across the caller's own artifacts
   // shared data (mirror list_artifact_data and write_artifact_data; DELETE clears, owner only)
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
   people: "/artifacts/:ref/people", // GET everyone with access (owner or editor), ?q=
-  // files people add to a page (mirror list_artifact_files and delete_artifact_file)
-  files: "/artifacts/:ref/files", // GET a page of files, DELETE all (signed-in owner)
-  file: "/artifacts/:ref/files/:file", // DELETE one file (owner or editor)
   // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
   live: "/artifacts/:ref/live", // GET LiveInfo
   liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards
@@ -113,8 +112,11 @@ export const APP_ROUTES = {
   home: "/",
   login: "/login",
   magic: "/login/magic",
+  /** Password sign-in for the one review account (REVIEW_LOGIN_*); a 404 when it is off. */
+  reviewLogin: "/login/review",
   dashboard: "/dashboard",
   connections: "/connections",
+  /** Stats across the owner's artifacts. */
   consent: "/oauth/consent",
   artifact: "/a/:slug",
   artifactVersion: "/a/:slug/v/:n",
@@ -122,6 +124,8 @@ export const APP_ROUTES = {
   compare: "/a/:slug/compare",
   editor: "/a/:slug/edit",
   settings: "/a/:slug/settings",
+  /** One artifact's stats, for its owner. */
+  artifactStats: "/a/:slug/stats",
   open: "/open/:id",
   portal: "/p/:id",
   report: "/a/:slug/report",

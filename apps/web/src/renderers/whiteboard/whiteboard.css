@@ -1,6 +1,6 @@
-/* The whiteboard: Plinth's own board page. Light and dark tokens; at phone width the toolbar wraps
-   inside a 16 px gutter and the page never scrolls sideways (the board pans inside its viewport).
-   Hit targets are at least 32 px. */
+/* The whiteboard: Plinth's own board page. Light and dark tokens; the toolbar sits on the board's
+   own background as one row, and at phone width its tools scroll sideways inside a 16 px gutter
+   while the page never does (the board pans inside its viewport). Hit targets are at least 32 px. */
 :root {
   --wb-bg: #f6f5f1;
   --wb-dot: #d6d2c8;
@@ -40,7 +40,7 @@
     --wb-block-fg: #f3f1ea;
     --wb-shape-border: #8d897f;
     --wb-fill-none: #26251f;
-    --wb-fill-yellow: #5a4f1c;
+    --wb-fill-yellow: #5c4a1e;
     --wb-fill-green: #2c4a2a;
     --wb-fill-blue: #233a57;
     --wb-fill-pink: #57283a;
@@ -76,20 +76,42 @@ body {
   outline: none;
 }
 
+/* On the board's background, with no band of its own: the page reads as the app's header and the
+   board. */
 .wb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--wb-bg);
+}
+
+.wb-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
-  padding: 8px 16px;
-  background: var(--wb-surface);
-  border-bottom: 1px solid var(--wb-border);
+  min-width: 0;
 }
 
 .wb-group {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* Controls that do not apply right now (nothing selected, a read-only board) are not shown. */
+.wb-toolbar [hidden] {
+  display: none;
+}
+
+/* Who else is here, the room's state when it is not live, and Fit, on the right. */
+.wb-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
 }
 
 .wb-toolbar button,
@@ -160,11 +182,16 @@ button:focus-visible,
   color: var(--wb-muted);
 }
 
+.wb-status:empty,
+.wb-people:empty {
+  display: none;
+}
+
 .wb-people {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 0 0 0 auto;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: 13px;
@@ -176,7 +203,11 @@ button:focus-visible,
   display: flex;
   align-items: center;
   gap: 5px;
-  max-width: 200px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.wb-people span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -189,7 +220,6 @@ button:focus-visible,
   border-radius: 50%;
 }
 
-.wb-banner,
 .wb-msg {
   margin: 0;
   padding: 6px 16px;
@@ -199,8 +229,12 @@ button:focus-visible,
 }
 
 .wb-banner {
-  background: var(--wb-surface);
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
   color: var(--wb-muted);
+  overflow-wrap: anywhere;
 }
 
 .wb-banner:empty,
@@ -274,10 +308,15 @@ button:focus-visible,
   fill: var(--wb-arrow);
 }
 
+/* A halo in the board's colour keeps the label clear of its line and arrowhead. */
 .wb-arrow-label {
   fill: var(--wb-fg);
   font-size: 13px;
   pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--wb-bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 
 .wb-block {
@@ -380,6 +419,17 @@ html[data-readonly="true"] .wb-block {
   line-height: 18px;
   outline: none;
   user-select: text;
+  border-radius: inherit;
+}
+
+/* A block being written in: a quiet ring inside its edge, with the caret, in place of the
+   selection's outline. */
+.wb-edit:focus {
+  box-shadow: inset 0 0 0 2px var(--wb-focus);
+}
+
+.wb-block.selected:has(> .wb-edit:focus) {
+  outline: none;
 }
 
 .wb-resize {
@@ -406,17 +456,25 @@ html[data-readonly="true"] .wb-block {
   display: block;
 }
 
+/* The name tag sits below and right of the pointer, or below and left near the viewport's right
+   edge (.flip), so it never runs off the board. */
 .wb-cursor span {
-  display: inline-block;
-  margin: 2px 0 0 12px;
+  position: absolute;
+  top: 18px;
+  left: 12px;
   padding: 1px 6px;
   border-radius: 4px;
   font-size: 12px;
   color: #fff;
   white-space: nowrap;
-  max-width: 200px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.wb-cursor.flip span {
+  left: auto;
+  right: 4px;
 }
 
 .wb-problem {
@@ -429,13 +487,44 @@ html[data-readonly="true"] .wb-block {
   }
 }
 
+/* At phone width the bar stays one row: the tools scroll sideways, a selection's controls take
+   the add buttons' place, and the people here are coloured dots (their names on hover and for
+   screen readers). */
 @media (max-width: 560px) {
   .wb-toolbar {
-    gap: 6px 8px;
+    gap: 8px;
+    padding: 5px 16px;
   }
-  .wb-people {
-    margin-left: 0;
-    width: 100%;
+  /* The padding keeps focus rings inside the scrolling row. */
+  .wb-tools {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 3px;
+    margin: 0 -3px;
+  }
+  .wb-tools > *,
+  .wb-group {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+  .wb-toolbar[data-selection="true"] .wb-adds {
+    display: none;
+  }
+  .wb-end {
+    flex: none;
+  }
+  .wb-people li {
+    gap: 0;
+  }
+  .wb-people span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 

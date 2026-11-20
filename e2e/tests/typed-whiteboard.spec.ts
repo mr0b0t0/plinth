@@ -2,10 +2,10 @@
 // blocks and an arrow, its blocks in shared data. The owner and a commenter see each other's
 // cursors, a drag shows live and is saved; a person with view access gets a read-only board whose
 // direct writes the server refuses; a settings version that makes the board editors-only turns
-// the commenter's board read-only as their socket reconnects; an agent's block shows up; export
-// downloads a PNG and an SVG; the keyboard moves a block; the page fits a phone; the editor's
-// preview draws only the draft, with no write and no room; and Board settings in the ⋯ menu saves
-// a settings version, and after a newer version shows that version's settings instead.
+// the commenter's board read-only as their socket reconnects; an agent's block shows up; the
+// artifact menu downloads a PNG and an SVG and offers no source editor; the keyboard moves a block
+// and zooms; the page fits a phone; and Board settings in the ⋯ menu saves a settings version,
+// and after a newer version shows that version's settings instead.
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Frame, type Page, test } from "@playwright/test";
@@ -14,7 +14,6 @@ import { seedSession, seedToken } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 
 const BOARD = JSON.stringify({
   v: 1,
@@ -72,6 +71,9 @@ const write = (frame: Frame, method: string, path: string, body?: unknown) =>
     [method, path, body] as const,
   );
 
+/** A cursor's tag shows the email's local part, as the people list does at phone width. */
+const tag = (email: string) => email.split("@")[0] ?? email;
+
 const leftOf = (frame: Frame, label: RegExp) =>
   frame
     .getByRole("group", { name: label })
@@ -112,8 +114,10 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     await expect(o.frame.locator(".wb-block b")).toHaveCount(0);
     await expect(c.frame.getByRole("button", { name: "Add note" })).toBeEnabled();
 
-    // The viewer: read-only, and the server refuses a direct write from their frame.
-    await expect(v.frame.getByRole("button", { name: "Add note" })).toBeDisabled();
+    // The viewer: read-only (no edit tools, one short line), and the server refuses a direct
+    // write from their frame.
+    await expect(v.frame.getByRole("button", { name: "Add note" })).toBeHidden();
+    await expect(v.frame.locator(".wb-banner")).toHaveText("View only");
     await expect(v.frame.locator("html")).toHaveAttribute("data-readonly", "true");
     const block = { kind: "note", x: 0, y: 480, w: 200, h: 140, text: "x" };
     expect(await write(v.frame, "POST", "/data/blocks", { data: block })).toBe(403);
@@ -123,16 +127,22 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     if (!area) throw new Error("no frame");
     await o.page.mouse.move(area.x + area.width - 40, area.y + area.height - 40);
     await o.page.mouse.move(area.x + area.width - 30, area.y + area.height - 30, { steps: 3 });
-    await expect(c.frame.locator(".wb-cursor span").filter({ hasText: owner })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(c.frame.locator(".wb-cursor span").filter({ hasText: tag(owner) })).toHaveCount(
+      1,
+      {
+        timeout: 10_000,
+      },
+    );
     const vArea = await v.page.locator(CURRENT_FRAME).boundingBox();
     if (!vArea) throw new Error("no frame");
     await v.page.mouse.move(vArea.x + vArea.width - 50, vArea.y + vArea.height - 50);
     await v.page.mouse.move(vArea.x + vArea.width - 40, vArea.y + vArea.height - 40, { steps: 3 });
-    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: watcher })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: tag(watcher) })).toHaveCount(
+      1,
+      {
+        timeout: 10_000,
+      },
+    );
 
     // The commenter drags the note: the owner sees it move before the drop, and it is saved.
     const note = c.frame.getByRole("group", { name: /^Note: Ship v2/ });
@@ -197,7 +207,7 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     await expect(cBoard.locator("html")).toHaveAttribute("data-room", "open", {
       timeout: 15_000,
     });
-    await expect(cBoard.getByRole("button", { name: "Add note" })).toBeDisabled();
+    await expect(cBoard.getByRole("button", { name: "Add note" })).toBeHidden();
     expect(
       await write(await boardFrame(c.page), "PUT", "/data/blocks/agent-note", { data: block }),
     ).toBe(403);
@@ -212,9 +222,12 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
       await c.page.mouse.move(cArea.x + cArea.width - 50 - nudge, cArea.y + cArea.height - 50, {
         steps: 3,
       });
-      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: guest })).toHaveCount(1, {
-        timeout: 2_000,
-      });
+      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: tag(guest) })).toHaveCount(
+        1,
+        {
+          timeout: 2_000,
+        },
+      );
     }).toPass({ timeout: 20_000 });
     // The owner still edits.
     await expect(oBoard.getByRole("button", { name: "Add note" })).toBeEnabled();
@@ -225,18 +238,36 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
   }
 });
 
-test("export, the keyboard, zoom, phone width and axe", async ({ page }) => {
+/** Pick an item in the artifact's ⋯ menu. */
+async function menuItem(page: Page, name: string) {
+  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await page.getByRole("menuitem", { name }).click();
+}
+
+test("export from the menu, the keyboard, zoom, phone width and axe", async ({ page }) => {
   test.setTimeout(90_000);
   const owner = uniqueEmail("wb-export");
   const { client, id, slug } = await publishBoard(page, owner);
   try {
     await page.goto(`/a/${slug}`);
-    const frame = await boardFrame(page);
+    let frame = await boardFrame(page);
     await expect(frame.locator(".wb-block")).toHaveCount(3);
+
+    // One way to change a board: on its page. The menu has no source editor, and the editor's
+    // address goes back to the board.
+    await page.getByRole("button", { name: "Artifact actions" }).click();
+    await expect(page.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    if (test.info().project.name !== "mobile") {
+      await page.goto(`/a/${slug}/edit`);
+      await expect(page).toHaveURL(new RegExp(`/a/${slug}$`), { timeout: 15_000 });
+      frame = await boardFrame(page);
+      await expect(frame.locator(".wb-block")).toHaveCount(3);
+    }
 
     // SVG: a file with the board's text, escaped, and nothing that runs or loads.
     const svgDownload = page.waitForEvent("download");
-    await frame.getByRole("button", { name: "Export as SVG" }).click();
+    await menuItem(page, "Download as SVG");
     const svgFile = await svgDownload;
     expect(svgFile.suggestedFilename()).toBe("launch-board.svg");
     const svg = await readFile(await svgFile.path(), "utf8");
@@ -251,7 +282,7 @@ test("export, the keyboard, zoom, phone width and axe", async ({ page }) => {
 
     // PNG: a real PNG file.
     const pngDownload = page.waitForEvent("download");
-    await frame.getByRole("button", { name: "Export as PNG" }).click();
+    await menuItem(page, "Download as PNG");
     const pngFile = await pngDownload;
     expect(pngFile.suggestedFilename()).toBe("launch-board.png");
     const png = await readFile(await pngFile.path());
@@ -270,63 +301,42 @@ test("export, the keyboard, zoom, phone width and axe", async ({ page }) => {
       )
       .toBe(10);
 
-    // Zoom in and fit: the world layer's scale follows.
+    // Zoom in with the keyboard, then fit: the world layer's scale follows.
     const scale = () =>
       frame.locator(".wb-world").evaluate((el) => (el as HTMLElement).style.transform);
     const before = await scale();
-    await frame.getByRole("button", { name: "Zoom in" }).click();
+    await frame.locator(".wb-viewport").focus();
+    await page.keyboard.press("+");
     await expect.poll(scale).not.toBe(before);
     await frame.getByRole("button", { name: "Fit the board" }).click();
 
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
 
-    // At 390 px: the toolbar wraps and nothing scrolls sideways.
+    // At 390 px, with a block selected: its controls take the add buttons' place, the bar stays
+    // one row (the colours scroll inside it), Delete and Fit are in view, and the page itself
+    // never scrolls sideways.
     await page.setViewportSize({ width: 390, height: 800 });
+    await frame.getByRole("group", { name: /^Note: Ship v2/ }).focus();
+    await expect(frame.getByRole("button", { name: "Delete" })).toBeVisible();
+    await expect(frame.getByRole("button", { name: "Add note" })).toBeHidden();
     await expect
       .poll(() =>
         frame.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
       )
       .toBe(true);
-    const toolbar = await frame.locator(".wb-toolbar").boundingBox();
-    expect(toolbar?.height ?? 0).toBeGreaterThan(48);
-  } finally {
-    await client.close();
-  }
-});
-
-test("the editor preview draws only the draft and never writes or joins the room", async ({
-  page,
-}) => {
-  test.setTimeout(90_000);
-  test.skip(test.info().project.name === "mobile", "the editor needs a wide screen");
-  const owner = uniqueEmail("wb-editor");
-  const { client, id, slug } = await publishBoard(page, owner);
-  const seen: string[] = [];
-  page.on("request", (r) => {
-    if (r.url().includes("/__plinth/api/") && r.method() !== "GET") {
-      seen.push(`${r.method()} ${r.url()}`);
-    }
-  });
-  page.on("websocket", (ws) => {
-    if (ws.url().includes("/__plinth/room/")) seen.push(`ws ${ws.url()}`);
-  });
-  try {
-    const before = await tool(client, "list_artifact_data", { id });
-    await page.goto(`/a/${slug}/edit`);
-    await expect(page.getByText("Editing v1")).toBeVisible({ timeout: 15_000 });
-    const preview = page.frameLocator(PREVIEW_FRAME);
-    await expect(preview.locator(".wb-banner")).toHaveText(
-      "Preview: the board's blocks are not shown here; settings apply.",
-      { timeout: 15_000 },
-    );
-    // The stored board.json has settings only, so the live blocks never appear here.
-    await expect(preview.locator(".wb-block")).toHaveCount(0);
-    await expect(preview.getByRole("button", { name: "Add note" })).toBeDisabled();
-    await page.waitForTimeout(1500);
-    expect(seen).toEqual([]);
-    const after = await tool(client, "list_artifact_data", { id });
-    expect(after.data.usage).toEqual(before.data.usage);
+    const row = await frame.locator(".wb-toolbar").evaluate((bar) => {
+      const box = bar.getBoundingClientRect();
+      const fit = bar.querySelector('[aria-label="Fit the board"]')?.getBoundingClientRect();
+      const del = [...bar.querySelectorAll("button")]
+        .find((b) => b.textContent === "Delete")
+        ?.getBoundingClientRect();
+      return {
+        oneRow: box.height <= 48,
+        inView: !!fit && !!del && fit.right <= innerWidth && del.right <= innerWidth,
+      };
+    });
+    expect(row).toEqual({ oneRow: true, inView: true });
   } finally {
     await client.close();
   }

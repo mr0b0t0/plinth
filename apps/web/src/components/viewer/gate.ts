@@ -9,8 +9,6 @@ export interface GateQuery {
   review?: boolean;
   /** A path inside the artifact to land on (direct content links). */
   next?: string;
-  /** `next` was carried from an older version: the gate lands on the root if it is gone. */
-  carried?: boolean;
 }
 
 /** The query string the gate endpoints read (GET and the POST steps take the same one). */
@@ -19,7 +17,6 @@ export function gateQueryString(q: GateQuery = {}): string {
   if (q.version !== undefined) p.set("version", String(q.version));
   if (q.review) p.set("review", "1");
   if (q.next) p.set("next", q.next);
-  if (q.next && q.carried) p.set("carried", "1");
   const s = p.toString();
   return s ? `?${s}` : "";
 }

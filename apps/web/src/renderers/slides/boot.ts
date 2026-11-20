@@ -7,7 +7,7 @@
 // It finds the root and data by id and reads only window properties the platform defines, never a
 // global by name, and it never loads /__plinth/runtime.js, so heading ids cannot clobber anything
 // it uses. <html> carries data-ready ("ok" or "error"), data-slide and data-count for tests and
-// thumbnails; the root carries data-follow while the deck follows or leads a presenter (follow.ts).
+// thumbnails.
 import {
   type DeckSettings,
   LIMITS,
@@ -17,9 +17,10 @@ import {
   type TypedPayload,
 } from "@plinth/shared";
 import { buildDeck, type SlideView } from "./deck.ts";
-import { clickDownload, collectImages, showReadyNotice, writerLoader } from "./export.ts";
+import { el } from "./dom.ts";
+import { collectImages, saveBlob, writerLoader } from "./export.ts";
 import { buildExportModel, domGeometry, type Geometry, pptxFileName } from "./exportModel.ts";
-import { Follow, type FollowSocket } from "./follow.ts";
+import { iconButton } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { bindInput, DeckController, type DeckMode } from "./nav.ts";
 import { bindOverview, revealSlide } from "./overview.ts";
@@ -27,13 +28,21 @@ import type { DeckModel, PptxBuilder } from "./pptxModel.ts";
 import { Presenter, type PresenterClock } from "./presenter.ts";
 import { imagesReady, pageRule, pageStyle, printDeck } from "./print.ts";
 import { fromApp, postToApp, readSlidesAppMessage } from "./protocol.ts";
-import { fitScale, overviewScale, prefersOverview, setScale } from "./stage.ts";
+import {
+  CONTROLS_INSET,
+  fitScale,
+  GUTTER,
+  overviewColumns,
+  overviewScale,
+  prefersOverview,
+  setScale,
+} from "./stage.ts";
 
 const ROOT_ID = "__plinth-slides";
 const DATA_ID = "__plinth-content";
 const FALLBACK = "This deck could not be shown.";
-/** Controls hide this long after the last input. */
-export const CONTROLS_IDLE_MS = 2500;
+/** Controls hide this long after the last input (hover and keyboard focus keep them). */
+export const CONTROLS_IDLE_MS = 2000;
 
 export function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -49,28 +58,7 @@ export function readPayload(doc: Document): TypedPayload | null {
   if (p.v !== TYPED_PAYLOAD_VERSION || p.type !== "slides") return null;
   if (typeof p.text !== "string" || typeof p.app_origin !== "string") return null;
   if (p.view !== undefined && p.view !== "overview") return null;
-  if (p.follow !== undefined && p.follow !== "present" && p.follow !== "watch") return null;
   return value as TypedPayload;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const e = doc.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
-function button(doc: Document, label: string, text: string, onClick: () => void) {
-  const b = el(doc, "button", "plinth-slides__btn", text);
-  b.type = "button";
-  b.setAttribute("aria-label", label);
-  b.addEventListener("click", onClick);
-  return b;
 }
 
 /** Test seams: layout measuring, the presenter's clock and the .pptx export. */
@@ -83,10 +71,8 @@ export interface BootOptions {
   loadWriter?: () => Promise<PptxBuilder>;
   /** This document's origin is opaque (by default: window.origin is "null"). */
   opaque?: boolean;
-  /** Saves the finished file (by default an <a download> click and the ready notice). */
+  /** Saves the finished file (by default an <a download> click in the frame). */
   save?: (blob: Blob, name: string) => void;
-  /** Makes the follow socket (by default a WebSocket). */
-  connect?: (url: string, protocols: string[]) => FollowSocket;
 }
 
 /** Renders the deck and starts listening. Returns a function that stops everything it started. */
@@ -107,6 +93,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const appOrigin = payload.app_origin;
   const fixedOverview = payload.view === "overview";
   html.setAttribute("data-theme", settings.theme);
+  // A fixed overview has no current slide to mark and no slide to open on a click.
+  if (fixedOverview) root.setAttribute("data-fixed", "");
   html.setAttribute("data-aspect", settings.aspect);
 
   const views = buildDeck(doc, parsed);
@@ -127,31 +115,20 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const controls = el(doc, "nav", "plinth-slides__controls");
   controls.setAttribute("aria-label", "Slides");
   controls.dataset.plinthControl = "";
-  controls.append(
-    button(doc, "Previous slide", "‹", () => deck.prev()),
-    counter,
-    button(doc, "Next slide", "›", () => deck.next()),
-    button(doc, "Overview", "Overview", () => pick(mode === "overview" ? "deck" : "overview")),
-    button(doc, "Presenter view", "Presenter", () =>
-      pick(mode === "presenter" ? "deck" : "presenter"),
-    ),
+  const separator = el(doc, "span", "plinth-slides__sep");
+  separator.setAttribute("aria-hidden", "true");
+  const overviewBtn = iconButton(doc, "squares-four", "Overview", () =>
+    pick(mode === "overview" ? "deck" : "overview"),
   );
-  // Following the presenter: only when the shell says so (an identified viewer, rooms on), never in
-  // review mode or the editor preview, which keep the overview.
-  const follow =
-    payload.follow && !fixedOverview
-      ? new Follow({
-          win,
-          root,
-          deck,
-          right: payload.follow,
-          ...(opts.connect ? { connect: opts.connect } : {}),
-        })
-      : null;
-  // A presenter's Lead viewers toggle, in the controls and in presenter view.
-  const presenterLead = follow && payload.follow === "present" ? follow.leadButton() : null;
-  if (follow && payload.follow === "present") controls.append(follow.leadButton());
-  root.replaceChildren(deckEl, controls, announcer, ...(follow ? [follow.pill] : []));
+  // One counter on screen: a deck that shows its own page numbers has none in the pill.
+  controls.append(
+    iconButton(doc, "caret-left", "Previous slide", () => deck.prev()),
+    ...(settings.paginate ? [] : [counter]),
+    iconButton(doc, "caret-right", "Next slide", () => deck.next()),
+    separator,
+    overviewBtn,
+  );
+  root.replaceChildren(deckEl, controls, announcer);
   pageStyle(doc).textContent = pageRule(canvas, false);
 
   let idle: ReturnType<typeof setTimeout> | undefined;
@@ -177,19 +154,32 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   }
 
   const scale = () => {
-    if (mode === "overview") setScale(root, canvas, overviewScale(win.innerWidth, canvas.width));
-    else
-      setScale(
-        root,
-        canvas,
-        fitScale(win.innerWidth, win.innerHeight, canvas.width, canvas.height),
+    if (mode === "overview") {
+      const cols = overviewColumns(win.innerWidth, fixedOverview);
+      root.style.setProperty("--cols", String(cols));
+      setScale(root, canvas, overviewScale(win.innerWidth, canvas.width, cols));
+      root.style.removeProperty("--controls-bottom");
+    } else {
+      // The slide is centred with the stage's gutter on every side, full screen too; the controls
+      // show one gutter above its bottom edge, wherever the letterbox puts it.
+      const s = fitScale(
+        win.innerWidth - 2 * GUTTER,
+        win.innerHeight - 2 * GUTTER,
+        canvas.width,
+        canvas.height,
       );
+      setScale(root, canvas, s);
+      const below = Math.max(0, (win.innerHeight - canvas.height * s) / 2);
+      root.style.setProperty("--controls-bottom", `${Math.floor(below) + CONTROLS_INSET}px`);
+    }
     presenter?.layout();
   };
 
   const render = () => {
     const n = deck.current;
     root.setAttribute("data-mode", mode);
+    // The overview marks the slide the person was on only when they chose it (not on phones).
+    root.toggleAttribute("data-mark", !fixedOverview && !auto);
     for (const v of views) {
       if (v.n === n) {
         v.frame.setAttribute("data-active", "");
@@ -206,6 +196,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     html.setAttribute("data-slide", String(n));
     html.setAttribute("data-count", String(views.length));
     counter.textContent = `${n} / ${views.length}`;
+    overviewBtn.setAttribute("aria-pressed", String(mode === "overview"));
     scale();
     if (mode === "overview") {
       for (const v of views) if (!fitted.has(v)) fitView(v);
@@ -217,9 +208,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (!presenter) {
         presenter = new Presenter(doc, views, canvas, {
           exit: () => pick("deck"),
+          prev: () => deck.prev(),
+          next: () => deck.next(),
+          viewport: () => ({ w: win.innerWidth, h: win.innerHeight }),
           clock: opts.clock,
           measure,
-          ...(presenterLead && !follow?.detached ? { bar: [presenterLead] } : {}),
         });
         root.append(presenter.el);
         presenter.open(n);
@@ -233,7 +226,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     }
   };
 
-  // The app keeps its own idea of the view (the presenter strip, the version pause), so every change
+  // The app keeps its own idea of the view (the menu, the version pause), so every change
   // is reported, whichever key, control or message made it.
   const reportView = () => postToApp(win, appOrigin, { type: "view", mode });
 
@@ -270,9 +263,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     mode: () => mode,
     setMode: pick,
     fullscreen: () => postToApp(win, appOrigin, { type: "fullscreen" }),
-    print: () => print(false),
+    // Printing from presenter view prints the handout, each slide over its notes.
+    print: () => print(mode === "presenter"),
     activity,
     fixedOverview,
+    columns: () => overviewColumns(win.innerWidth, fixedOverview),
   });
   const unbindOverview = bindOverview(root, {
     active: () => mode === "overview",
@@ -287,13 +282,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   const loadWriter = opts.loadWriter ?? writerLoader(doc);
   const opaque = opts.opaque ?? win.origin === "null";
-  const save =
-    opts.save ??
-    ((blob: Blob, name: string) => {
-      const url = URL.createObjectURL(blob);
-      clickDownload(doc, url, name);
-      showReadyNotice(doc, root, url, name);
-    });
+  const save = opts.save ?? ((blob: Blob, name: string) => saveBlob(win, blob, name));
   /**
    * The nonce the running export answers, or null when none runs. A request that comes while one
    * runs (the app gave up waiting and the person asked again) takes over its answer: the app
@@ -359,16 +348,13 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!fromApp(e, win, appOrigin)) return;
     const m = readSlidesAppMessage(e.data);
     if (!m) return;
-    if (m.type === "goto") {
-      // While the deck follows a presenter, the presenter's slide wins over the app's.
-      if (!follow?.holding) deck.go(m.slide);
-    } else if (m.type === "paired") follow?.detach();
+    if (m.type === "goto") deck.go(m.slide);
     else if (m.type === "view") {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.
       if (mode !== m.mode) reportView();
     } else if (m.type === "export") void runExport(m.nonce);
-    else print(m.notes);
+    else print(mode === "presenter");
   };
   const onResize = () => {
     if (auto) {
@@ -388,10 +374,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   render();
   html.setAttribute("data-ready", "ok");
   postToApp(win, appOrigin, { type: "ready", slide: deck.current, count: views.length });
-  follow?.start();
 
   return () => {
-    follow?.stop();
     clearTimeout(idle);
     unbindInput();
     unbindOverview();

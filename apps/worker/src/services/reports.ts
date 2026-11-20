@@ -189,7 +189,6 @@ export async function decideReport(
       ).bind(now, admin.userId, report.artifact_id),
     ]);
     await clearClaimedAttempts(ctx.env, results[1 + wipe.claimAt]);
-    for (const step of wipe.afterTakedown) await step.run(ctx.env, results[1 + step.at]);
     notifyRoom(ctx, report.artifact_id, "gone");
   }
   return { ...report, state };

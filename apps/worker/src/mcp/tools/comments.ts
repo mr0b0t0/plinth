@@ -9,7 +9,7 @@ import {
 import { listComments, setCommentStatus } from "../../services/comments.ts";
 import { claimMention, listMentions, replyComment } from "../../services/mentions.ts";
 import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
-import { MENTION_FILES_NOTE, UNTRUSTED_NOTE } from "../notes.ts";
+import { UNTRUSTED_NOTE } from "../notes.ts";
 import { run, type ToolRegistrar } from "./context.ts";
 
 /** What a comment's or mention task's `anchor` is, for list_comments and list_mentions. */
@@ -54,7 +54,7 @@ export const registerCommentTools: ToolRegistrar = ({ server, ctx }) => {
       title: "List mentions",
       description:
         "Requests addressed to this agent from comments on the owner's artifacts (@claude, @codex or this " +
-        `connection's label). Defaults to pending. ${ANCHOR_NOTE} ${MENTION_FILES_NOTE}${UNTRUSTED_NOTE}`,
+        `connection's label). Defaults to pending. ${ANCHOR_NOTE} ${UNTRUSTED_NOTE}`,
       inputSchema: listMentionsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_mentions,
     },
@@ -68,7 +68,7 @@ export const registerCommentTools: ToolRegistrar = ({ server, ctx }) => {
       annotations: MCP_TOOL_ANNOTATIONS.claim_mention,
       description:
         "Lock a pending mention task so no other agent acts on it. Exactly one caller wins; others get a conflict. " +
-        `After claiming, publish a new version with update_artifact and answer with reply_comment. ${MENTION_FILES_NOTE}${UNTRUSTED_NOTE}`,
+        `After claiming, publish a new version with update_artifact and answer with reply_comment. ${UNTRUSTED_NOTE}`,
       inputSchema: claimMentionInput,
     },
     (args) => run(() => claimMention(ctx, args.task_id)),

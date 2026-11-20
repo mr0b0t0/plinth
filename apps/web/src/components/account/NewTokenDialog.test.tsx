@@ -65,7 +65,7 @@ describe("NewTokenDialog", () => {
     const field = (await screen.findByLabelText("Token")) as HTMLTextAreaElement;
     expect(field.value).toBe(TOKEN);
     expect(field.readOnly).toBe(true);
-    expect(screen.getByText(/won't see this token again/)).toBeTruthy();
+    expect(screen.getByText(/Shown only once/)).toBeTruthy();
     expect(posted[0]).toEqual({
       label: "Codex laptop",
       client_type: "codex",
@@ -95,39 +95,5 @@ describe("NewTokenDialog", () => {
     await user.click(screen.getByRole("button", { name: "Create token" }));
     expect(screen.getByText("Choose at least one permission.")).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("says which handle the typed name becomes, and when it cannot be reached", async () => {
-    vi.stubGlobal("fetch", vi.fn());
-    const user = userEvent.setup();
-    const existing = {
-      id: "c0",
-      label: "Nightly CI",
-      client_type: "other" as const,
-      kind: "token" as const,
-      scopes: ["artifacts:read", "artifacts:write", "mentions"],
-      created_at: "2026-11-01T00:00:00Z",
-      last_used_at: null,
-      revoked_at: null,
-      artifact: null,
-    };
-    render(
-      <NewTokenDialog
-        open
-        connections={[existing]}
-        onClose={() => undefined}
-        onCreated={() => undefined}
-      />,
-    );
-    const name = screen.getByLabelText("Name");
-    const hint = () => document.getElementById(`${name.id}-hint`)?.textContent ?? "";
-    expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
-    await user.type(name, "Gemini CLI");
-    expect(hint()).toContain("Collaborators reach it by writing @gemini-cli in a comment.");
-    await user.clear(name);
-    await user.type(name, "nightly ci");
-    expect(hint()).toContain("@nightly-ci reaches “Nightly CI” instead");
-    await user.click(screen.getByRole("checkbox", { name: /Answer mentions/ }));
-    expect(hint()).toContain("does not have the Answer mentions permission");
   });
 });

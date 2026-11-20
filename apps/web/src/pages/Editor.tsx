@@ -20,7 +20,7 @@ import {
 import { AppShell } from "../components/layout/AppShell.tsx";
 import { ButtonLink, EmptyState, Row, SkeletonText, Spinner } from "../components/ui/index.ts";
 import { ApiRequestError, api, liveInfo } from "../lib/api.ts";
-import { Link } from "../lib/router.tsx";
+import { Link, navigate } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 import "../components/editor/editor-page.css";
 
@@ -32,6 +32,8 @@ type Load =
   | { kind: "not_found" }
   | { kind: "forbidden"; artifact: ArtifactDetail | null }
   | { kind: "error"; message: string }
+  /** A type with no source editor (a design): the page sends people to the artifact. */
+  | { kind: "no_editor" }
   | {
       kind: "ready";
       artifact: ArtifactDetail;
@@ -45,6 +47,7 @@ const canEdit = (a: ArtifactDetail) => (a.role === "owner" || a.role === "editor
 async function load(slug: string): Promise<Load> {
   try {
     const artifact = await api<ArtifactDetail>(route(API.artifact, { ref: slug }));
+    if (!sourceOf(artifact).def.editor) return { kind: "no_editor" };
     if (!canEdit(artifact)) return { kind: "forbidden", artifact };
     const initial = await initialState(artifact, async (n) => {
       const old = await api<ArtifactDetail>(route(API.version, { ref: artifact.id, n }));
@@ -121,7 +124,8 @@ export default function Editor({ params }: { params: Record<string, string> }) {
 
   useEffect(() => {
     document.title = titleFor(state);
-  }, [state]);
+    if (state.kind === "no_editor") navigate(viewPath, { replace: true });
+  }, [state, viewPath]);
 
   const ready = state.kind === "ready" && config;
   useEffect(() => {
@@ -169,7 +173,9 @@ export default function Editor({ params }: { params: Record<string, string> }) {
 
   return (
     <AppShell>
-      {state.kind === "loading" || (state.kind === "ready" && !config) ? (
+      {state.kind === "loading" ||
+      state.kind === "no_editor" ||
+      (state.kind === "ready" && !config) ? (
         <div className="pl-editor-page__loading" aria-busy="true">
           <span className="visually-hidden" role="status">
             Loading the editor

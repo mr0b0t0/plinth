@@ -1,5 +1,5 @@
-// Migrations 0006 (versions.stored_bytes), 0007 (upload_tickets) and 0009 (categories): they apply,
-// and the ticket table's CHECK constraints refuse rows that would break the ticket rules.
+// Migrations 0006 (versions.stored_bytes), 0007 (upload_tickets), 0009 (categories), 0010 and 0020
+// (artifact stats): they apply, and their CHECK constraints refuse rows that would break the rules.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { newId } from "../src/lib/crypto.ts";
@@ -145,54 +145,141 @@ describe("migration 0007_upload_tickets", () => {
   });
 });
 
-describe("migration 0010_view_counts", () => {
-  const day = (artifactId: string, d: string, views: number) =>
-    D1()
-      .prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?, ?, ?)")
-      .bind(artifactId, d, views)
-      .run();
+describe("migration 0010_view_counts (the all-time totals that remain)", () => {
   const total = (artifactId: string, views: number, firstDay: string) =>
     D1()
       .prepare("INSERT INTO artifact_view_totals (artifact_id, views, first_day) VALUES (?, ?, ?)")
       .bind(artifactId, views, firstDay)
       .run();
 
-  it("creates both tables WITHOUT ROWID and with no secondary index", async () => {
-    const objects = await D1()
-      .prepare(
-        "SELECT type, name, sql FROM sqlite_master WHERE tbl_name LIKE 'artifact_view_%' ORDER BY name",
-      )
-      .all<{ type: string; name: string; sql: string | null }>();
-    const tables = objects.results.filter((o) => o.type === "table");
-    expect(tables.map((t) => t.name)).toEqual(["artifact_view_days", "artifact_view_totals"]);
-    for (const t of tables) expect(t.sql).toMatch(/WITHOUT ROWID\s*$/);
-    // Only the primary keys' automatic indexes (none for WITHOUT ROWID): one write per open.
-    expect(objects.results.filter((o) => o.type === "index" && o.sql !== null)).toEqual([]);
-  });
-
-  it("accepts real counts and refuses a malformed day or a negative count", async () => {
+  it("accepts real totals and refuses a malformed day, a negative count or no artifact", async () => {
     const a = await agent();
     const { body } = await publish(a.auth);
-    await day(body.id, "2026-11-18", 3);
     await total(body.id, 10, "2026-08-01");
-    for (const bad of ["2026-1-18", "18-11-2026", "2026-11-18T00:00:00Z", "", "abcd-ef-gh"]) {
-      await expect(day(body.id, bad, 1), bad).rejects.toThrow();
-    }
-    await expect(day(body.id, "2026-11-17", -1)).rejects.toThrow();
     const b = await publish(a.auth);
     for (const bad of ["2026/08/01", "2026-08-1", ""]) {
       await expect(total(b.body.id, 1, bad), bad).rejects.toThrow();
     }
     await expect(total(b.body.id, -1, "2026-08-01")).rejects.toThrow();
+    await expect(total("no-such-artifact", 1, "2026-11-18")).rejects.toThrow();
+  });
+});
+
+describe("migration 0020_artifact_opens", () => {
+  const MIGRATION = "0020_artifact_opens.sql";
+  const insertOpen = (cols: Record<string, unknown>) => {
+    const keys = Object.keys(cols);
+    return D1()
+      .prepare(
+        `INSERT INTO artifact_opens (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`,
+      )
+      .bind(...Object.values(cols))
+      .run();
+  };
+
+  it("indexes opens by artifact and time, by time, and by person", async () => {
+    const idx = await D1()
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'artifact_opens' AND sql IS NOT NULL ORDER BY name",
+      )
+      .all<{ name: string }>();
+    expect(idx.results.map((r) => r.name)).toEqual([
+      "artifact_opens_artifact_time",
+      "artifact_opens_email",
+      "artifact_opens_time",
+      "artifact_opens_user",
+    ]);
   });
 
-  it("one row per artifact per day, and only for an artifact that exists", async () => {
+  it("keeps each kind of viewer to its own column", async () => {
     const a = await agent();
     const { body } = await publish(a.auth);
-    await day(body.id, "2026-11-18", 1);
-    await expect(day(body.id, "2026-11-18", 1)).rejects.toThrow();
-    await expect(day("no-such-artifact", "2026-11-18", 1)).rejects.toThrow();
-    await expect(total("no-such-artifact", 1, "2026-11-18")).rejects.toThrow();
+    const at = "2026-11-19T10:00:00.000Z";
+    const base = { artifact_id: body.id, opened_at: at, version: 1 };
+    await insertOpen({ ...base, viewer_kind: "user", user_id: a.user.id, role: "editor" });
+    await insertOpen({ ...base, viewer_kind: "email", email: "x@example.com", role: "viewer" });
+    await insertOpen({ ...base, viewer_kind: "anonymous", visitor: "v".repeat(22), role: "link" });
+    await insertOpen({ ...base, viewer_kind: "unknown", version: null });
+    const bad: Record<string, unknown>[] = [
+      { ...base, viewer_kind: "someone" },
+      { ...base, viewer_kind: "anonymous", user_id: a.user.id },
+      { ...base, viewer_kind: "anonymous", email: "x@example.com" },
+      { ...base, viewer_kind: "email" },
+      { ...base, viewer_kind: "user", visitor: "v".repeat(22) },
+      { ...base, viewer_kind: "unknown", role: "owner" },
+      { ...base, viewer_kind: "unknown", version: 0 },
+      { ...base, viewer_kind: "unknown", opened_at: "yesterday" },
+      { ...base, viewer_kind: "unknown", artifact_id: "no-such-artifact" },
+      { ...base, viewer_kind: "user", user_id: "no-such-user" },
+    ];
+    for (const row of bad) await expect(insertOpen(row), JSON.stringify(row)).rejects.toThrow();
+  });
+
+  it("turns each old daily count into that many unknown opens on its day, then drops the table", async () => {
+    const m = env.TEST_MIGRATIONS.find((x) => x.name === MIGRATION);
+    expect(m, "the migration is applied in tests").toBeDefined();
+    const queries = m?.queries ?? [];
+    const copy = queries.find((q) => q.includes("FROM artifact_view_days"));
+    const drop = queries.find((q) => /DROP TABLE artifact_view_days/.test(q));
+    expect(copy).toBeDefined();
+    expect(drop).toBeDefined();
+    // The old table as 0010 made it, holding counts for two artifacts (and a zero row).
+    const old = env.TEST_MIGRATIONS.find((x) => x.name === "0010_view_counts.sql");
+    const create = old?.queries.find((sql) => sql.includes("CREATE TABLE artifact_view_days"));
+    expect(create).toBeDefined();
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { body: q } = await publish(a.auth);
+    await D1()
+      .prepare(create as string)
+      .run();
+    try {
+      await D1().batch([
+        D1()
+          .prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?, ?, ?)")
+          .bind(p.id, "2026-09-01", 3),
+        D1()
+          .prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?, ?, ?)")
+          .bind(p.id, "2026-09-02", 1),
+        D1()
+          .prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?, ?, ?)")
+          .bind(q.id, "2026-10-05", 250),
+        D1()
+          .prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?, ?, ?)")
+          .bind(q.id, "2026-10-06", 0),
+      ]);
+      await D1()
+        .prepare(copy as string)
+        .run();
+      await D1()
+        .prepare(drop as string)
+        .run();
+    } finally {
+      await D1().prepare("DROP TABLE IF EXISTS artifact_view_days").run();
+    }
+    const rows = await D1()
+      .prepare(
+        `SELECT artifact_id, opened_at, count(*) AS n, max(viewer_kind) AS kind,
+                max(version) AS version, max(user_id) AS user_id, max(email) AS email,
+                max(visitor) AS visitor, max(role) AS role
+           FROM artifact_opens WHERE artifact_id IN (?, ?) GROUP BY artifact_id, opened_at
+          ORDER BY opened_at`,
+      )
+      .bind(p.id, q.id)
+      .all();
+    const none = {
+      kind: "unknown",
+      version: null,
+      user_id: null,
+      email: null,
+      visitor: null,
+      role: null,
+    };
+    expect(rows.results).toEqual([
+      { artifact_id: p.id, opened_at: "2026-09-01T00:00:00.000Z", n: 3, ...none },
+      { artifact_id: p.id, opened_at: "2026-09-02T00:00:00.000Z", n: 1, ...none },
+      { artifact_id: q.id, opened_at: "2026-10-05T00:00:00.000Z", n: 250, ...none },
+    ]);
   });
 });
 

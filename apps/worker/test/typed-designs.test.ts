@@ -535,7 +535,7 @@ describe("designs on the content host", () => {
         })
       ).status,
     ).toBe(404);
-    const capture = await signContentCookie(c, p.id, epoch, undefined, "capture");
+    const capture = await signContentCookie(c, p.id, epoch, undefined, "capture", 1);
     const cap = await call(`${contentOrigin(p.id)}${LOADER}`, {
       headers: { Cookie: `${name}=${capture}`, "sec-fetch-dest": "iframe" },
     });

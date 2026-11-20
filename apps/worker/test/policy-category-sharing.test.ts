@@ -12,6 +12,8 @@ import {
   grantedRole,
   mayManageCategoryShares,
   type Principal,
+  roleOf,
+  seesCategorySharing,
   seesPersonalCategory,
   strongerRole,
 } from "../src/policy.ts";
@@ -227,5 +229,41 @@ describe("who manages shares, opens portals and files personally", () => {
     expect(seesPersonalCategory(client, null)).toBe(false);
     expect(seesPersonalCategory(agentOf("client", "client@example.com"), "viewer")).toBe(false);
     expect(seesPersonalCategory(viewer, "viewer")).toBe(false);
+  });
+});
+
+describe("a token limited to one artifact", () => {
+  const bound = (userId: string, email: string): Principal => ({
+    kind: "agent",
+    userId,
+    email,
+    connectionId: "c-ci",
+    connectionLabel: "CI: report",
+    clientType: "other",
+    scopes: new Set(["artifacts:read", "artifacts:write"] as const),
+    boundArtifactId: "art-1",
+  });
+
+  it("never sees category sharing, even the owner's own token", () => {
+    expect(seesCategorySharing(bound(OWNER, "o@example.com"))).toBe(false);
+    expect(seesCategorySharing(bound("client", "client@example.com"))).toBe(false);
+    expect(seesCategorySharing(agentOf("client", "client@example.com"))).toBe(true);
+    expect(seesCategorySharing(client)).toBe(true);
+    expect(seesCategorySharing(viewer)).toBe(true);
+  });
+
+  it("holds the direct grant only: a category grant gives it no role", () => {
+    const t = bound("client", "client@example.com");
+    expect(roleOf(t, art(), access())).toBeNull();
+    expect(decide(t, "view", art(), access())).toMatchObject({ allow: false });
+    expect(roleOf(t, art(), access({ grantRole: "editor" }))).toBe("editor");
+    expect(decide(t, "edit", art(), access({ grantRole: "editor" }))).toMatchObject({
+      allow: true,
+      role: "editor",
+    });
+    // The same person's account-wide agent keeps the category's role.
+    expect(roleOf(agentOf("client", "client@example.com"), art(), access())).toBe("commenter");
+    // The owner's own bound token is still the owner.
+    expect(roleOf(bound(OWNER, "o@example.com"), art(), access())).toBe("owner");
   });
 });

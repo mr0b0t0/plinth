@@ -1,13 +1,12 @@
 // A design under opaque content isolation (CONTENT_ISOLATION=opaque), against the second e2e
 // Worker: the shell renders under the CSP sandbox, its board frames (opaque in every mode) still
 // load the design's image and CSS and run its script, the menu's print reaches the opaque shell
-// through "*", and the editor's preview renders the boards of the draft.
+// through "*", and comparing two versions renders both versions' boards.
 import { expect, type Frame, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, uniqueEmail } from "../support/api.ts";
 import { captureLoad, openCapture, seedSession, seedToken } from "../support/db.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 const PIXEL_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
@@ -35,7 +34,7 @@ async function boardFrame(shell: Frame, id: string): Promise<Frame> {
   return frame;
 }
 
-test("a design renders its boards with their image, prints, and previews in the editor", async ({
+test("a design renders its boards with their image, prints, and compares as rendered pages", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -91,16 +90,28 @@ test("a design renders its boards with their image, prints, and previews in the 
     .poll(() => shell.evaluate(() => (window as unknown as { __printed: number }).__printed))
     .toBe(1);
 
-  // The editor's preview renders the draft's boards with the version's image.
-  await page.goto(`/a/${art.slug}/edit`);
-  const preview = page.frameLocator(PREVIEW_FRAME);
-  await expect(preview.locator(".plinth-design__board")).toHaveCount(2, { timeout: 15_000 });
-  const pf = await (await page.locator(PREVIEW_FRAME).elementHandle())?.contentFrame();
-  if (!pf) throw new Error("no preview");
-  const previewHome = await boardFrame(pf, "home");
-  await expect
-    .poll(() => previewHome.locator("#hero").evaluate((i: HTMLImageElement) => i.naturalWidth))
-    .toBeGreaterThan(0);
+  // An agent's v2, compared as rendered pages (designs have no source view): both versions'
+  // boards render under opaque isolation with the version's image.
+  const put = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts/${art.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content: `${DESIGN}\n<p>v2</p>`, base_version: 1 }),
+  });
+  expect(put.status, await put.text()).toBe(200);
+  await page.goto(`/a/${art.slug}/compare?from=1&to=2`);
+  await expect(page.getByRole("tab", { name: "Source" })).toHaveCount(0);
+  for (const v of [1, 2]) {
+    const sel = `iframe[title="v${v} of Opaque kit"]`;
+    await expect(page.frameLocator(sel).locator(".plinth-design__board")).toHaveCount(2, {
+      timeout: 15_000,
+    });
+    const f = await (await page.locator(sel).elementHandle())?.contentFrame();
+    if (!f) throw new Error(`no v${v}`);
+    const board = await boardFrame(f, "home");
+    await expect
+      .poll(() => board.locator("#hero").evaluate((i: HTMLImageElement) => i.naturalWidth))
+      .toBeGreaterThan(0);
+  }
 });
 
 test("a thumbnail capture loads the boards' image and CSS under opaque isolation too", async ({

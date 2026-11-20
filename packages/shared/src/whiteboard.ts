@@ -337,9 +337,6 @@ export function boardCapabilities(s: BoardSettings): Capabilities {
     roomOpen: commenters ? [...BOARD_TOPICS] : [],
     people: false,
     comments: false,
-    dictation: false,
-    hold: false,
-    files: false,
     writers: commenters ? "commenter" : "editor",
   };
 }
@@ -413,4 +410,38 @@ export function arrowEndpoints(
   const [x1, y1] = exitPoint(a, b.x + b.w / 2, b.y + b.h / 2, gap);
   const [x2, y2] = exitPoint(b, a.x + a.w / 2, a.y + a.h / 2, gap);
   return { x1, y1, x2, y2 };
+}
+
+/** How far an arrow's label sits off its line: clear of the arrowhead (8 units each side). */
+export const ARROW_LABEL_OFFSET = 14;
+
+/**
+ * Where an arrow's label goes: beside the middle of the segment, `ARROW_LABEL_OFFSET` units off
+ * the line on its upper side (its left on a vertical one), anchored so the text grows away from
+ * the line. `anchor` is the SVG text-anchor; the point is the text's vertical middle.
+ */
+export function arrowLabelAt(p: { x1: number; y1: number; x2: number; y2: number }): {
+  x: number;
+  y: number;
+  anchor: "start" | "middle" | "end";
+} {
+  const dx = p.x2 - p.x1;
+  const dy = p.y2 - p.y1;
+  const len = Math.hypot(dx, dy) || 1;
+  // The unit normal on the upper side (or the left, for a vertical line).
+  let nx = dy / len;
+  let ny = -dx / len;
+  if (ny > 0 || (ny === 0 && nx > 0)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const mx = (p.x1 + p.x2) / 2;
+  const my = (p.y1 + p.y2) / 2;
+  // Mostly horizontal: centred above. Otherwise beside it, growing away from the line.
+  const anchor = Math.abs(ny) >= 0.7 ? "middle" : nx < 0 ? "end" : "start";
+  return {
+    x: mx + nx * ARROW_LABEL_OFFSET,
+    y: my + ny * ARROW_LABEL_OFFSET - (anchor === "middle" ? 6 : 0),
+    anchor,
+  };
 }

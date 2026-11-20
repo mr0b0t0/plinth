@@ -13,7 +13,7 @@ import {
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { dictationActive, filesActive, instanceLimits, sharedDataActive } from "../config.ts";
+import { instanceLimits, sharedDataActive } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -47,10 +47,9 @@ meApi.get("/config", (c) => {
     limits: instanceLimits(config),
     cdn_allowlist: [...config.cdnAllowlist],
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
-    dictation: dictationActive(config),
+    review_login: config.reviewLogin !== null,
+    view_log_retention_days: config.viewLogRetentionDays,
     category_sharing: config.allowCategorySharing,
-    live_views: config.allowLiveViews,
-    files: filesActive(config),
     // A type with fixed page capabilities (a whiteboard) keeps its board in shared data.
     artifact_types: ARTIFACT_TYPES.map((id) => ({
       id,

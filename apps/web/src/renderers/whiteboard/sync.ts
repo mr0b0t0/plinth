@@ -43,7 +43,7 @@ const ATTEMPTS = 4;
 /** The longest a rate-limited write waits before its one retry. */
 const MAX_BACKOFF_MS = 30_000;
 
-export const READ_ONLY_TEXT = "You can view this board but not change it.";
+export const READ_ONLY_TEXT = "View only";
 export const KEPT_THEIRS_TEXT =
   "Someone else changed this block at the same time. Their change was kept.";
 /** The button that writes the viewer's text over a peer's that was kept instead. */
