@@ -1121,12 +1121,13 @@ restoring an older one.
   a label that is hovered or focused), takes that board's cover off so its links, buttons and
   scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
   Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
-  they come back (a board's own state starts again then). `?plinth-board=<id>` shows one board
-  alone at 100%.
+  they come back (a board's own state starts again then).
 - **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
   at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
-  document over itself when the renderer posts it: Plinth's base URL (the version's directory),
-  viewport and reset, then the shared section, then the fragment. The loader is served only with
+  document over itself when the renderer posts it: Plinth's base URL (the shown version's own
+  path, `/__plinth/v/<n>/`, whose number the content host puts in the shell, so a board that
+  mounts after a newer version is published still loads its own version's files; a shell without
+  a valid number shows an error and no board), viewport and reset, then the shared section, then the fragment. The loader is served only with
   this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
   plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, with
   `frame-ancestors 'self' <app>` under origin isolation (none under opaque isolation or for an

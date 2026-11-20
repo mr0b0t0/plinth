@@ -383,8 +383,37 @@ describe("designs on the content host", () => {
       path: "design.html",
       app_origin: config().appOrigin,
       text: evil,
+      version: 1,
     });
     expect(p.type).toBe("design");
+  });
+
+  it("names the version it shows in the payload, so boards load that version's files", async () => {
+    const { a, p, get } = await opened();
+    await put(a.auth, p.id, { content: '<!-- artboard name="Two" size="a4" -->', base_version: 1 });
+    // The root shows the current version; a version path shows its own, also under review mode.
+    expect(payloadOf(await (await get("/")).text()).version).toBe(2);
+    expect(payloadOf(await (await get("/__plinth/v/1/")).text()).version).toBe(1);
+    expect(payloadOf(await (await get("/__plinth/v/1/?plinth-review=1")).text()).version).toBe(1);
+    expect(payloadOf(await (await get("/__plinth/v/2/")).text()).version).toBe(2);
+    // A capture pass is bound to its version: the root serves that one, and the payload says so.
+    const c = config();
+    const name = contentCookieName(c, new URL(contentOrigin(p.id)));
+    const capture = await signContentCookie(
+      c,
+      p.id,
+      await accessEpoch(p.id),
+      undefined,
+      "capture",
+      1,
+    );
+    const shot = await call(`${contentOrigin(p.id)}/`, {
+      headers: { Cookie: `${name}=${capture}` },
+    });
+    expect(shot.status).toBe(200);
+    const shown = payloadOf(await shot.text());
+    expect(shown.text).toBe(DESIGN);
+    expect(shown.version).toBe(1);
   });
 
   it("serves older versions, design.html as text and files cross-origin readable, with no script", async () => {

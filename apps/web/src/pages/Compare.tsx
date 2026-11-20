@@ -77,8 +77,9 @@ export default function Compare({ params }: { params: Record<string, string> }) 
   const options = (versions.data?.items ?? []).map((v) => versionOption(v, current));
   const ready = from !== null && to !== null;
 
-  // A type people never see the source of (a design) compares only as rendered pages.
-  const sourceShown = artifact.data ? sourceOf(artifact.data).def.editor !== null : true;
+  // A type people never see the source of (a design) compares only as rendered pages. No Source
+  // tab until the type is known, so a design never shows one while it loads.
+  const sourceShown = artifact.data ? sourceOf(artifact.data).def.editor !== null : false;
   const newer = newVersion.data ? sourceOf(newVersion.data) : null;
   const source =
     oldVersion.data && newVersion.data && newer && ready ? (

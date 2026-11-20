@@ -146,6 +146,12 @@ export interface TypedPayload {
    * renderer shows every slide stacked. Absent otherwise, so every other shell is unchanged.
    */
   view?: "overview";
+  /**
+   * The version number this shell shows, set only for a type with opaque frames (a design): its
+   * boards load their files from /__plinth/v/<version>/, never from the current version, which a
+   * later publish replaces. Absent otherwise, so every other shell is unchanged.
+   */
+  version?: number;
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -189,6 +195,7 @@ export function typedShellHtml(
     appOrigin: string;
     live?: "room";
     view?: "overview";
+    version?: number;
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
@@ -201,6 +208,7 @@ export function typedShellHtml(
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
+    ...(o.version !== undefined ? { version: o.version } : {}),
   };
   return (
     '<!doctype html><html lang="en"><head>' +

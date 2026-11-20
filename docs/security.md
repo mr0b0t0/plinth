@@ -538,8 +538,8 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   isolation is unchanged.
 - **The shell holds no author markup.** The shared section and each fragment exist in the shell
   only as strings: the renderer posts a board its whole document (Plinth's `<base>`, viewport and
-  reset first, so an author's `<base>` cannot redirect it) and builds its own labels, covers,
-  toolbar and list with `createElement` and `textContent`. Names and sections are shown as text;
+  reset first, so an author's `<base>` cannot redirect it) and builds its own labels, covers and
+  toolbar with `createElement` and `textContent`. Names and sections are shown as text;
   ids are `[a-z0-9-]`; a background is a hex color, `transparent` or a color name, so it cannot
   break out of the reset rule. On a design's origin only Plinth's renderer runs at the real origin:
   every stored file is served with `script-src 'none'`, no asset may be HTML, and `design.html` is
@@ -567,6 +567,11 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   the app like every other. Where the loader has no `frame-ancestors`, a frame on another site has
   no cookie in its partition and gets the 401 "reload" text, so nobody can paint their own content
   into a frame with this artifact's URL.
+- **A board loads only its own version's files.** A board's `<base>` is the shown version's own
+  path, `/__plinth/v/<n>/`, built from the number the content host puts in the shell's payload
+  (the version it served, which for a capture pass is the captured one), never the artifact root,
+  where the content host serves whatever version is current when a board mounts. A shell without a
+  valid number (a positive integer of at most nine digits) mounts no board and shows an error.
 - **A design's files are cross-origin readable.** Boards load the version's images, CSS and JS
   from an opaque origin, and an opaque requester passes no `same-origin` or `same-site` resource
   policy, so a design's files carry `Cross-Origin-Resource-Policy: cross-origin`, as every file
