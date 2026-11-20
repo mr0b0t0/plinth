@@ -196,9 +196,9 @@ export function AskDialog({
       }
     >
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
-        {anchor && (
+        {anchor?.text && (
           <p className="pl-ask__anchor">
-            About: <q>{excerpt(anchor.text || anchor.key, 60)}</q>
+            About: <q>{excerpt(anchor.text, 60)}</q>
           </p>
         )}
         <Textarea

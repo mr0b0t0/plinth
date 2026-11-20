@@ -2637,7 +2637,7 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
   draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
   and a page anchor (`{ kind: "page", key, text }`, a structural name such as `slide-3:image-1`,
-  shown as text); the renderer releases its own lease before it asks. While the app is in edit
+  whose `text`, when there is one, is shown as text); the renderer releases its own lease before it asks. While the app is in edit
   mode, an `ask` without the frame's key is dropped like any other editing message; only outside
   edit mode does a keyless `ask` open the comments panel in request mode. It has the description, the
   agent choice and "Publish my changes first", off by default and shown only when there are
@@ -2705,9 +2705,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   renders exactly as the original (the same markdown-it tokens with the page's own instance and
   the doc's reference definitions) and reads back into the same model, and the block defines no
   references itself. A block that fails (a code block in a list item, a quote in a list item, a
-  definition inside a quote) is shown read-only, with "Ask an agent" (its description says the
-  block can't be edited here) and the block menu, whose Move and Delete move or remove its lines
-  byte for byte.
+  definition inside a quote) is shown read-only. Selected, it is drawn like an open block, with
+  "Ask an agent" (its description says the block can't be edited here) and the block menu in the
+  toolbar's place; the menu's Move and Delete move or remove its lines byte for byte.
 - **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
   formatting command whose result CommonMark cannot express is undone, with "That formatting can't
   be kept here.", and nothing is sent.
@@ -2720,7 +2720,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   Each block's menu has five items: "Turn into" (paragraph, heading 1 to 3, bulleted or numbered
   list, quote, code block), "Insert below" (the same kinds, "Divider", "Table", which asks for a
   size, and "Image", which asks an agent), "Move up", "Move down" and "Delete". "Turn into",
-  "Insert below" and "Table" open in place of the menu, with a way back (ArrowLeft or Esc). A move
+  "Insert below" and "Table" open in place of the menu, with a way back (ArrowLeft or Esc). There
+  is no "+" between blocks: "Insert below" and Enter (at the end of a block, or at the start of one
+  for a paragraph above it) are the ways to add one. A move
   takes one lease over both blocks and swaps their lines. A new list never joins
   the list next to it. A Move or a Delete never runs the blocks around it together: a blank line
   goes wherever a block would touch the next one, a moved list that would sit next to a list of
@@ -2754,7 +2756,7 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   was.
 - **Images are agent-only.** An image block's alt text is a field; the image itself, and adding
   one, are left to agents through Ask an agent, whose page anchor names the place (`block-3`, or
-  `block-3:image`), never its text. An open image block has its own "Ask an agent" for its image,
+  `block-3:image`) with no label, never its text, so the Ask dialog shows no "About" line for it. An open image block has its own "Ask an agent" for its image,
   and its "Insert below" has no "Image" (it would ask the same).
 - **An empty doc** shows "Write something", which starts a new paragraph.
 - **Security.** Nothing new reaches the content host or the app: the room accepts any doc lines as

@@ -126,26 +126,29 @@
 .plinth-doc--editing {
   position: relative;
 }
-.plinth-doc--editing
-  > :not(.plinth-doc__insert):not(.plinth-doc__holder):not(.plinth-doc__open):not(
-    .plinth-doc__blockbar
-  ) {
+.plinth-doc--editing > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected) {
   cursor: text;
   border-radius: 4px;
 }
+/* Hover: a soft tint over the block's own box, which is where its open panel starts. */
 .plinth-doc--editing
-  > :not(.plinth-doc__insert):not(.plinth-doc__holder):not(.plinth-doc__open):not(
-    .plinth-doc__blockbar
-  ):not(.plinth-doc__held):hover {
-  outline: 1px dashed var(--doc-border);
-  outline-offset: 4px;
+  > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected):not(
+    .plinth-doc__held
+  ):hover {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--doc-fg) 4%, transparent),
+    color-mix(in srgb, var(--doc-fg) 4%, transparent)
+  );
 }
 .plinth-doc--editing > :focus-visible {
-  outline: 2px solid var(--doc-focus);
-  outline-offset: 4px;
+  outline: 2px solid var(--doc-live);
+  outline-offset: 2px;
 }
-/* The block being edited, as formatted text: the page's own look, with a bronze rule. */
-.plinth-doc__open {
+/* The block being edited, as formatted text: the page's own look, with a bronze rule. A block
+   shown as it is (it cannot be edited in place), selected, is drawn the same way, with its bar of
+   what can be done with it in the toolbar's place. */
+.plinth-doc__open,
+.plinth-doc__selected {
   position: relative;
   margin: 0.5em 0;
   padding: 0.25em 0.75em 0.25em 0.75em;
@@ -153,22 +156,18 @@
   border-radius: 4px;
   background: var(--doc-live-soft);
 }
+.plinth-doc__selected > .plinth-doc__blockbar + * {
+  margin-top: 0;
+}
+.plinth-doc__selected > :last-child {
+  margin-bottom: 0.25em;
+}
+.plinth-doc__selected > :focus-visible {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 2px;
+}
 .plinth-doc__open .plinth-rich__content {
   outline: none;
-}
-/* A block shown as it is (it cannot be edited in place), selected: what can be done with it. */
-.plinth-doc__selected {
-  outline: 2px solid var(--doc-live);
-  outline-offset: 4px;
-}
-.plinth-doc__blockbar {
-  position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.125rem;
-  margin: 0.75em 0 0.5em;
-  font: 0.8125rem / 1.2 var(--doc-font);
 }
 .plinth-doc__placeholder {
   color: var(--doc-muted);
@@ -215,7 +214,7 @@
   outline: none;
 }
 .plinth-doc__menu-item:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--doc-focus);
+  box-shadow: inset 0 0 0 2px var(--doc-live);
 }
 .plinth-doc__menu-item[aria-checked="true"]::after {
   /* Drawn only: aria-checked says it, and the glyphs stay out of the items' names. */
@@ -266,9 +265,37 @@
   background: var(--doc-bg);
   color: var(--doc-fg);
   font: inherit;
+  appearance: textfield;
 }
+/* No spinners: the two size fields look alike, and the arrow keys still step them. */
+.plinth-doc__menu-table input::-webkit-inner-spin-button,
+.plinth-doc__menu-table input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.plinth-doc__menu-table input:focus-visible {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 0;
+  border-color: var(--doc-live);
+}
+/* The form's action: a small primary button on the fields' baseline. */
 .plinth-doc__menu-table .plinth-doc__menu-item {
   width: auto;
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  background: var(--doc-live);
+  color: var(--doc-bg);
+  font-weight: 600;
+}
+.plinth-doc__menu-table .plinth-doc__menu-item:hover {
+  background: color-mix(in srgb, var(--doc-live) 85%, var(--doc-fg));
+}
+.plinth-doc__menu-table .plinth-doc__menu-item:focus-visible {
+  background: var(--doc-live);
+  outline: 2px solid var(--doc-live);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 @media (pointer: coarse) {
   /* 16px keeps mobile browsers from zooming when a size field is focused. */
@@ -295,51 +322,6 @@
   max-width: 60%;
   pointer-events: none;
   z-index: 1;
-}
-/* "+" between blocks: out of the flow, so the page keeps its spacing. */
-.plinth-doc__insert {
-  position: absolute;
-  left: -1.75rem;
-  width: 1.5rem;
-  height: 1.5rem;
-  margin-top: -0.75rem;
-  padding: 0;
-  border: 1px solid var(--doc-border);
-  border-radius: 50%;
-  background: var(--doc-bg);
-  color: var(--doc-muted);
-  font: 600 0.875rem / 1 var(--doc-font);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms;
-}
-.plinth-doc__insert:hover,
-.plinth-doc__insert:focus-visible,
-.plinth-doc--editing:hover > .plinth-doc__insert:hover {
-  opacity: 1;
-  color: var(--doc-live);
-  border-color: var(--doc-live);
-}
-.plinth-doc--editing:hover > .plinth-doc__insert {
-  opacity: 0.45;
-}
-/* In the left margin only when there is one wide enough: the doc is at most 68ch plus padding
-   (about 670 to 730px at its 17px type), and the button needs 28px beside it. Narrower windows
-   (a phone, a split screen, a tablet multitasking) get it inside the right edge instead, never
-   clipped off-screen. */
-@media (max-width: 50rem) {
-  .plinth-doc__insert {
-    left: auto;
-    right: 0;
-  }
-}
-/* Touch has no hover: always visible, with an outline of at least 3:1 against the page. */
-@media (pointer: coarse) {
-  .plinth-doc__insert {
-    opacity: 1;
-    border-color: var(--doc-muted);
-    color: var(--doc-muted);
-  }
 }
 /* The frame's own status line, for lease messages. */
 .plinth-doc__notice {
@@ -382,7 +364,6 @@
   color: var(--doc-muted);
 }
 @media print {
-  .plinth-doc__insert,
   .plinth-doc__holder,
   .plinth-doc__notice,
   .plinth-doc__blockbar,

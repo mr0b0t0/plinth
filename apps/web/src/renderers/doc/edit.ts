@@ -451,14 +451,20 @@ export class DocEditor {
   private want: Want | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private notice: HTMLElement | null = null;
-  private readonly inserts: HTMLButtonElement[] = [];
-  private readonly insertAt = new WeakMap<Node, number>();
   private readonly labels = new Map<string, HTMLElement>();
   private readonly labelLease = new WeakMap<Node, string>();
   private readonly tabbed = new WeakSet<Element>();
   private decorated = new Set<Element>();
-  /** A block that cannot be edited in place, selected: its bar of what can be done with it. */
-  private selected: { start: number; bar: HTMLElement; menu: BlockMenu } | null = null;
+  /**
+   * A block that cannot be edited in place, selected: drawn in a panel like an open block's, with
+   * a bar of what can be done with it on top.
+   */
+  private selected: {
+    start: number;
+    panel: HTMLElement;
+    bar: HTMLElement;
+    menu: BlockMenu;
+  } | null = null;
   private placeholder: HTMLElement | null = null;
   /** After an op: the line of the block to focus (and open, or select) once it is drawn. */
   private after: { line: number; open: boolean; insert?: RichBlock } | null = null;
@@ -526,7 +532,6 @@ export class DocEditor {
     const others = this.editing ? [...b.leases.values()].filter((l) => l.id !== b.mine?.id) : [];
     const desired: Node[] = [];
     let placed = false;
-    let ins = 0;
     const labelled = new Set<string>();
     const nextDecorated = new Set<Element>();
     const placeOpen = () => {
@@ -534,21 +539,6 @@ export class DocEditor {
         desired.push(openEl);
         placed = true;
       }
-    };
-    const insertButton = (at: number) => {
-      if (!this.editing || !this.canWrite) return;
-      let btn = this.inserts[ins];
-      if (!btn) {
-        btn = this.doc.createElement("button");
-        btn.type = "button";
-        btn.className = "plinth-doc__insert";
-        btn.textContent = "+";
-        btn.setAttribute("aria-label", "Add a paragraph here");
-        this.inserts.push(btn);
-      }
-      ins++;
-      this.insertAt.set(btn, at);
-      desired.push(btn);
     };
     const label = (l: ClientLease) => {
       if (labelled.has(l.id)) return;
@@ -564,7 +554,6 @@ export class DocEditor {
       desired.push(el);
     };
     let selectedSeen = false;
-    insertButton(0);
     for (const block of blocks) {
       if (mine && overlaps(block, mine)) {
         placeOpen();
@@ -576,20 +565,22 @@ export class DocEditor {
       }
       const holder = others.find((l) => overlaps(block, l));
       if (holder) label(holder);
-      const isSelected = this.editing && this.selected?.start === block.start && !holder;
-      if (isSelected && this.selected) {
-        desired.push(this.selected.bar);
-        selectedSeen = true;
-      }
-      for (const n of this.cache.nodes(block)) {
-        desired.push(n);
+      const selected = this.editing && this.selected?.start === block.start && !holder;
+      const nodes = this.cache.nodes(block);
+      for (const n of nodes) {
         if (n.nodeType === 1) {
           const el = n as Element;
-          this.decorate(el, holder !== undefined, isSelected);
+          this.decorate(el, holder !== undefined);
           if (this.editing || holder) nextDecorated.add(el);
         }
       }
-      insertButton(block.end);
+      if (selected && this.selected) {
+        // Its panel holds the bar and the block's own nodes, as an open block's holds its toolbar
+        // and text.
+        reconcile(this.selected.panel, [this.selected.bar, ...nodes]);
+        desired.push(this.selected.panel);
+        selectedSeen = true;
+      } else desired.push(...nodes);
     }
     placeOpen();
     for (const l of others) label(l);
@@ -653,9 +644,8 @@ export class DocEditor {
     if (a.open) this.open_(block, caret);
   }
 
-  private decorate(el: Element, held: boolean, selected: boolean): void {
+  private decorate(el: Element, held: boolean): void {
     el.classList.toggle("plinth-doc__held", held);
-    el.classList.toggle("plinth-doc__selected", selected);
     if (this.editing && !el.hasAttribute("tabindex")) {
       el.setAttribute("tabindex", "0");
       this.tabbed.add(el);
@@ -664,7 +654,7 @@ export class DocEditor {
   }
 
   private undecorate(el: Element): void {
-    el.classList.remove("plinth-doc__held", "plinth-doc__selected");
+    el.classList.remove("plinth-doc__held");
     if (el.getAttribute("class") === "") el.removeAttribute("class");
     this.untab(el);
   }
@@ -717,15 +707,15 @@ export class DocEditor {
 
   private readonly onClick = (e: MouseEvent) => {
     const top = this.topLevel(e.target);
-    if (!top || top === this.open?.rich.el || top === this.selected?.bar) return;
+    if (!top || top === this.open?.rich.el) return;
+    if (top === this.selected?.panel) {
+      // A link in the selected block is not followed either; the bar's buttons work as usual.
+      if (!this.selected.bar.contains(e.target as Node)) e.preventDefault();
+      return;
+    }
     if (top === this.placeholder) {
       e.preventDefault();
       return this.openInsert(0, para());
-    }
-    const at = this.insertAt.get(top);
-    if (at !== undefined) {
-      e.preventDefault();
-      return this.openInsert(at, para());
     }
     const leaseId = this.labelLease.get(top);
     if (leaseId) {
@@ -743,7 +733,7 @@ export class DocEditor {
 
   private readonly onKey = (e: KeyboardEvent) => {
     if (this.open?.rich.el.contains(e.target as Node)) return;
-    if (this.selected?.bar.contains(e.target as Node)) {
+    if (this.selected?.panel.contains(e.target as Node)) {
       if (e.key === "Escape" && !e.defaultPrevented) {
         e.preventDefault();
         this.deselect(true);
@@ -969,8 +959,11 @@ export class DocEditor {
   private select(block: Block): void {
     this.deselect();
     const index = this.blockAt(block.start)?.index ?? 0;
+    const panel = this.doc.createElement("div");
+    panel.className = "plinth-doc__selected";
+    // The open block's toolbar look, with what can be done with this one.
     const bar = this.doc.createElement("div");
-    bar.className = "plinth-doc__blockbar";
+    bar.className = "plinth-rich__toolbar plinth-doc__blockbar";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", `Block ${index + 1}`);
     const ask = this.doc.createElement("button");
@@ -987,7 +980,7 @@ export class DocEditor {
       this.menuGroups({ start: block.start }, null, this.tableForm(block.start)),
     );
     bar.append(ask, menu.button);
-    this.selected = { start: block.start, bar, menu };
+    this.selected = { start: block.start, panel, bar, menu };
     this.render();
     ask.focus();
   }
@@ -1077,11 +1070,9 @@ export class DocEditor {
     this.close(true);
     this.deselect();
     const n = index + 1;
-    this.hooks.ask?.(
-      image
-        ? { key: `block-${n}:image`, text: `Block ${n}, image` }
-        : { key: `block-${n}`, text: `Block ${n}` },
-    );
+    // A structural key and no label: the dialog opens from the place itself, a block's number
+    // would mean nothing to the person asking, and its text stays in the frame.
+    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text: "" });
   }
 
   private turn(kind: BlockKind): void {

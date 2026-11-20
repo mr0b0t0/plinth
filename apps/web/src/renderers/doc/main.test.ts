@@ -338,9 +338,7 @@ describe("doc renderer on-page editing (#36)", () => {
       (b) => b.textContent === "Ask an agent",
     ) as HTMLElement;
     ask.click();
-    expect(posted("ask")).toEqual([
-      { ...base, type: "ask", anchor: { key: "block-2", text: "Block 2" } },
-    ]);
+    expect(posted("ask")).toEqual([{ ...base, type: "ask", anchor: { key: "block-2", text: "" } }]);
     expect(JSON.stringify(posted("ask"))).not.toContain("secret");
   });
 

@@ -624,7 +624,7 @@ test.describe("editing a doc on its page as formatted text", () => {
       await expect(askAgent).toHaveAttribute("title", /can't be edited here/);
       await askAgent.click();
       const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-      await expect(dialog).toContainText("Block 4");
+      await expect(dialog).not.toContainText("About");
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await expect(dialog).toHaveCount(0);
 

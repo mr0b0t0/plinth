@@ -283,12 +283,12 @@ describe("DocEditor: formatted text", () => {
     expect(save).toHaveBeenCalledTimes(2);
   });
 
-  it("adds a paragraph between two with +, keeping blank lines around it", () => {
+  it("adds a paragraph between two with Insert below, keeping blank lines around it", () => {
     const { local, editor } = setup("one\n\ntwo");
-    const plus = root.querySelectorAll(".plinth-doc__insert");
-    // One before the first block and one after each.
-    expect(plus.length).toBe(3);
-    click(plus[1] as Element);
+    // No "+" between blocks: Insert below and Enter at a block's end are the ways in.
+    expect(root.querySelector("button")).toBeNull();
+    click(root.querySelector("p") as Element);
+    menu("Paragraph", "Insert below");
     const el = rich(editor).editable;
     expect(el.textContent).toBe("");
     typeText(el, "between");
@@ -327,7 +327,7 @@ describe("DocEditor: formatted text", () => {
     expect(local.text).toBe("one\\\ntwo");
   });
 
-  it("typing sent as a block closes moves the lines: the next block, + or Tab still lands right", () => {
+  it("typing sent as a block closes moves the lines: the next block, Enter or Tab still lands right", () => {
     const { local, editor } = setup("onetwo\n\nb\n\nc");
     const lineBreak = () => {
       click(root.querySelector("p") as Element);
@@ -343,14 +343,18 @@ describe("DocEditor: formatted text", () => {
     click(root.querySelector("p") as Element);
     typeText(rich(editor).editable, "onetwo");
     key(rich(editor).editable, "Escape");
-    // A + below a block further down, the same way (the open block has none of its own).
+    // Enter at the end of a block further down, the same way.
     lineBreak();
-    click(root.querySelectorAll(".plinth-doc__insert")[1] as Element);
+    click(root.querySelectorAll("p")[1] as Element);
+    expect(rich(editor).editable.textContent).toBe("b");
+    select(rich(editor).editable, 1);
+    key(rich(editor).editable, "Enter");
     typeText(rich(editor).editable, "new");
     key(rich(editor).editable, "Escape");
     expect(local.text).toBe("one\\\ntwo\n\nb\n\nnew\n\nc");
     // Tab from a new block typed into: the block after it, not the new one.
-    click(root.querySelectorAll(".plinth-doc__insert")[1] as Element);
+    click(root.querySelector("p") as Element);
+    menu("Paragraph", "Insert below");
     typeText(rich(editor).editable, "x");
     key(rich(editor).editable, "Tab");
     expect(rich(editor).editable.textContent).toBe("b");
@@ -761,8 +765,13 @@ describe("DocEditor: the block menu", () => {
 
   it("the menu of a new empty block acts on that block, never on the block after it", () => {
     const { local, editor } = setup("a\n\nb\n\nc");
-    const plus = () => root.querySelectorAll(".plinth-doc__insert")[1] as Element;
-    click(plus());
+    // An empty paragraph after "a", from Enter at its end.
+    const fresh = () => {
+      click(root.querySelector("p") as Element);
+      select(rich(editor).editable, 1);
+      key(rich(editor).editable, "Enter");
+    };
+    fresh();
     expect(rich(editor).editable.textContent).toBe("");
     // It has no lines yet, so it cannot move.
     const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
@@ -780,7 +789,7 @@ describe("DocEditor: the block menu", () => {
     expect(editor.openEditor).toBeNull();
     expect(local.mine).toBeNull();
     // Insert below lands where the new block was, after "a".
-    click(plus());
+    fresh();
     menu("Divider", "Insert below");
     expect(local.text).toBe("a\n\n---\n\nb\n\nc");
   });
@@ -794,8 +803,12 @@ describe("DocEditor: the block menu", () => {
     menu("Delete");
     expect(local.text).toBe("a\n\nb");
     expect(editor.openEditor).toBeNull();
-    // At the top of the doc, Insert below puts the new kind there.
-    click(root.querySelectorAll(".plinth-doc__insert")[0] as Element);
+    // At the top of the doc (Enter at the start of its first block), Insert below puts the new
+    // kind there.
+    click(root.querySelector("p") as Element);
+    select(rich(editor).editable, 0);
+    key(rich(editor).editable, "Enter");
+    expect(rich(editor).editable.textContent).toBe("");
     menu("Heading 2", "Insert below");
     typeText(rich(editor).editable, "Top");
     key(rich(editor).editable, "Escape");
@@ -912,10 +925,13 @@ describe("DocEditor: read-only blocks and images", () => {
     const md = "Intro\n\n- item\n\n  ```\n  code\n  ```\n\nEnd";
     const { local, editor } = setup(md);
     click(root.querySelector("ul") as Element);
-    // Not opened for editing: a bar offers what can be done, and its Ask an agent says why.
+    // Not opened for editing: it is drawn in a panel like an open block's, with a bar on top of
+    // what can be done, and its Ask an agent says why.
     expect(editor.openEditor).toBeNull();
-    const bar = root.querySelector(".plinth-doc__blockbar") as HTMLElement;
-    expect(root.querySelector("ul")?.classList.contains("plinth-doc__selected")).toBe(true);
+    const panel = root.querySelector(":scope > .plinth-doc__selected") as HTMLElement;
+    const bar = panel.firstElementChild as HTMLElement;
+    expect(bar.classList.contains("plinth-doc__blockbar")).toBe(true);
+    expect(panel.querySelector(":scope > ul")).not.toBeNull();
     const askButton = [...bar.querySelectorAll("button")].find(
       (b) => b.textContent === "Ask an agent",
     ) as HTMLElement;
@@ -923,7 +939,9 @@ describe("DocEditor: read-only blocks and images", () => {
     // Two controls only: Ask an agent and the block menu, with no paragraph of text.
     expect(bar.children).toHaveLength(2);
     click(askButton);
-    expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "Block 2" });
+    // A structural key and no label (no block number, none of its text).
+    expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "" });
+    expect(root.querySelector(".plinth-doc__selected")).toBeNull();
     // Move and Delete keep its bytes.
     click(root.querySelector("ul") as Element);
     menu("Move up");
@@ -931,6 +949,21 @@ describe("DocEditor: read-only blocks and images", () => {
     click(root.querySelector("ul") as Element);
     menu("Delete");
     expect(local.text).toBe("Intro\n\nEnd");
+  });
+
+  it("a selected read-only block follows none of its links, and Esc puts it back in the page", () => {
+    setup("- [a link](https://example.com)\n\n  ```\n  code\n  ```\n\nEnd");
+    click(root.querySelector("ul") as Element);
+    const panel = root.querySelector(":scope > .plinth-doc__selected") as HTMLElement;
+    const link = panel.querySelector("a") as HTMLAnchorElement;
+    const e = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(root.querySelector(".plinth-doc__selected")).toBe(panel);
+    key(panel.querySelector("button") as Element, "Escape");
+    expect(root.querySelector(".plinth-doc__selected")).toBeNull();
+    expect(root.querySelector(":scope > ul")).not.toBeNull();
+    expect(document.activeElement).toBe(root.querySelector(":scope > ul"));
   });
 
   it("edits an image's alt text, keeps its file, and asks an agent to change the image", () => {
@@ -953,7 +986,7 @@ describe("DocEditor: read-only blocks and images", () => {
     click(
       [...r.el.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
     );
-    expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "Block 1, image" });
+    expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "" });
     expect(editor.openEditor).toBeNull();
   });
 
@@ -961,7 +994,7 @@ describe("DocEditor: read-only blocks and images", () => {
     setup("one\n\ntwo");
     click(root.querySelectorAll("p")[1] as Element);
     menu("Image", "Insert below");
-    expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "Block 2, image" });
+    expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "" });
   });
 
   it("the menu's top level is five items; Turn into and Insert below open in its place", () => {
@@ -1056,7 +1089,7 @@ describe("DocEditor: holders and reconnects", () => {
     // Leaving edit mode takes every decoration away.
     editor.setEditing(false);
     expect(
-      root.querySelector(".plinth-doc__held, .plinth-doc__holder, .plinth-doc__insert"),
+      root.querySelector(".plinth-doc__held, .plinth-doc__holder, .plinth-doc__selected"),
     ).toBeNull();
     expect(root.querySelector("[tabindex='0']:not(pre):not(div)")).toBeNull();
     expect(root.classList.contains("plinth-doc--editing")).toBe(false);
