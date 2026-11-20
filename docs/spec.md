@@ -1688,7 +1688,9 @@ from discovery tags) stays.
   aligned in order so that the summed likeness is highest, a pair counting only at 0.3 or more,
   and blocks with the same content count as fully alike. A matched pair is a change, an old block
   left over is removed and a new one added: a paragraph inserted next to an edited one reads as
-  added, and an edit that keeps no content word reads as removed and added. Text with no words at
+  added, and an edit that keeps no content word reads as removed and added. A block moved on a
+  page or in a doc, unchanged, is removed at its old place and added at its new one (neither
+  lists moves); a slide or a board moved is listed once as moved. Text with no words at
   all ("★★★", an emoji) pairs with nothing; only two slides, or two boards, with no words at all
   (a slide of only an image) may pair, at 0.3 and below any pair that shares a word. A region of
   more than 40,000 old×new blocks, or one whose cells and word comparisons pass what is left of

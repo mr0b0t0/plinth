@@ -146,6 +146,95 @@ describe("an edit in place", () => {
   });
 });
 
+describe("a block moved to another place, unchanged", () => {
+  // Cut from the top and pasted near the bottom, under another heading. A page or a doc has no
+  // moves: the block is removed at its old place and added at its new one, each listed where a
+  // person finds it. It is never "changed" against the block that took its place. A deck's block
+  // is a slide, which moves.
+  const MOVED = "The harbour lighthouse keeper logs every passing ship";
+  const rest = [
+    "Orchard soils hold the spring rain",
+    "River ferries cross at dawn",
+    "Mountain passes close in winter",
+    "Desert wells run dry by August",
+  ];
+  const removedAdded = (what: string) => [
+    { kind: "removed", where: "Under “Atlas”", what: `${what} removed`, before: MOVED },
+    { kind: "added", where: "Under “Appendix”", what: `${what} added`, after: MOVED },
+  ];
+
+  it("is removed at the old place and added at the new one, on a page", () => {
+    const page = (top: boolean) =>
+      [
+        "<h1>Atlas</h1>",
+        top ? `<p>${MOVED}</p>` : "",
+        `<p>${rest[0]}</p><p>${rest[1]}</p>`,
+        "<h2>Appendix</h2>",
+        `<p>${rest[2]}</p>`,
+        top ? "" : `<p>${MOVED}</p>`,
+        `<p>${rest[3]}</p>`,
+      ].join("\n");
+    expect(items("html", page(true), page(false))).toEqual(removedAdded("Text"));
+  });
+
+  it("is removed at the old place and added at the new one, in a doc", () => {
+    const doc = (top: boolean) =>
+      [
+        "# Atlas",
+        ...(top ? [MOVED] : []),
+        rest[0],
+        rest[1],
+        "## Appendix",
+        rest[2],
+        ...(top ? [] : [MOVED]),
+        rest[3],
+      ].join("\n\n");
+    expect(items("doc", doc(true), doc(false))).toEqual(removedAdded("Paragraph"));
+  });
+
+  it("is listed once as moved when it is a slide, in a deck", () => {
+    const titled: [string, string][] = [
+      ["Harbour", MOVED],
+      ["Orchards", rest[0] as string],
+      ["Ferries", rest[1] as string],
+      ["Passes", rest[2] as string],
+      ["Wells", rest[3] as string],
+    ];
+    const deck = (order: number[]) =>
+      order.map((k) => `# ${titled[k]?.[0]}\n\n${titled[k]?.[1]}`).join("\n\n---\n\n");
+    expect(items("slides", deck([0, 1, 2, 3, 4]), deck([1, 2, 3, 0, 4]))).toEqual([
+      { kind: "moved", where: "“Harbour”", what: "Slide 1 moved to 4" },
+    ]);
+  });
+
+  it("changes the two slides it left and joined, each against itself, in a deck", () => {
+    const deck = (top: boolean) =>
+      [
+        `# Harbour\n\n${top ? `${MOVED}\n\n` : ""}Boats wait for the tide`,
+        `# Orchards\n\n${rest[0]}`,
+        `# Ferries\n\n${rest[1]}`,
+        `# Passes\n\n${rest[2]}${top ? "" : `\n\n${MOVED}`}`,
+        `# Wells\n\n${rest[3]}`,
+      ].join("\n\n---\n\n");
+    expect(items("slides", deck(true), deck(false))).toEqual([
+      {
+        kind: "changed",
+        where: "Slide 1",
+        what: "Text changed",
+        before: `${MOVED} Boats wait for the tide`,
+        after: "Boats wait for the tide",
+      },
+      {
+        kind: "changed",
+        where: "Slide 4",
+        what: "Text changed",
+        before: rest[2],
+        after: `${rest[2]} ${MOVED}`,
+      },
+    ]);
+  });
+});
+
 describe("alignRegion", () => {
   const key = (x: string) => x;
   const text = (x: string) => x;
@@ -383,6 +472,55 @@ describe("alignRegion", () => {
     expect(at.items).toHaveLength(CHANGE_LIMITS.maxItems);
     expect(at.items.every((i) => i.kind === "changed")).toBe(true);
     expect(at.items[7]).toMatchObject({ before: "Report 7 first", after: "Report 7 second" });
+  });
+
+  it("aligns a region of exactly alignCells, and falls back at one cell more", () => {
+    expect(200 * 200).toBe(CHANGE_LIMITS.alignCells);
+    expect(221 * 181).toBe(CHANGE_LIMITS.alignCells + 1);
+    const region = (n: number, word: string) =>
+      Array.from({ length: n }, (_, k) => `Report ${k} ${word}`);
+    const key = (x: string) => x;
+    const at = alignRegion(region(200, "first"), region(200, "second"), { key, text: key });
+    expect(at.aligned).toBe(true);
+    expect(at.pairs).toHaveLength(200);
+    expect(at.pairs[7]).toEqual(["Report 7 first", "Report 7 second"]);
+    const over = alignRegion(region(221, "first"), region(181, "second"), { key, text: key });
+    expect(over.aligned).toBe(false);
+    expect(over.pairs).toEqual([]);
+    expect(over.removed).toHaveLength(221);
+    expect(over.added).toHaveLength(181);
+    // And on a page: 200 paragraphs edited pair as changed; 221 replaced by 181 are only removed
+    // and added, never paired by place.
+    const page = (n: number, word: string) =>
+      region(n, word)
+        .map((p) => `<p>${p}</p>`)
+        .join("");
+    const pageAt = describeChanges("html", page(200, "first"), page(200, "second"));
+    expect(pageAt.items.every((i) => i.kind === "changed")).toBe(true);
+    const pageOver = describeChanges("html", page(221, "first"), page(181, "second"));
+    expect(pageOver.items.some((i) => i.kind === "changed")).toBe(false);
+    expect(pageOver.items.slice(0, 2)).toEqual([
+      { kind: "removed", where: "", what: "Text removed", before: "Report 0 first" },
+      { kind: "removed", where: "", what: "Text removed", before: "Report 1 first" },
+    ]);
+  });
+
+  it("aligns the costliest region at alignCells within alignWork", () => {
+    // 200 × 200 blocks of 49 content words, 45 of them shared by all, so every cell is compared
+    // and every pair is alike: each cell costs 1 + 49 + 49, and the region 3,960,000 of 4,000,000.
+    const shared = Array.from({ length: 45 }, (_, w) => `common${w}`);
+    const block = (k: number, word: string) =>
+      [...shared, `block${k}`, `${word}${k}`, `${word}x${k}`, `${word}y${k}`].join(" ");
+    const a = Array.from({ length: 200 }, (_, k) => block(k, "old"));
+    const b = Array.from({ length: 200 }, (_, k) => block(k, "new"));
+    expect(contentWords(a[0] as string).size).toBe(49);
+    const budget = { left: CHANGE_LIMITS.alignWork };
+    const key = (x: string) => x;
+    const p = alignRegion(a, b, { key, text: key, budget });
+    expect(p.aligned).toBe(true);
+    expect(CHANGE_LIMITS.alignWork - budget.left).toBe(200 * 200 * (1 + 49 + 49));
+    // Each block pairs with its own edit: "block7" is what tells them apart.
+    expect(p.pairs[7]).toEqual([a[7], b[7]]);
   });
 
   it("stays fast on a deck of many same-titled slides", () => {
