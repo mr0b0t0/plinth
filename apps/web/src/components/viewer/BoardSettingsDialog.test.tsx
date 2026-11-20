@@ -320,8 +320,8 @@ describe("BoardSettingsDialog", () => {
     expect(
       ((await screen.findByRole("radio", { name: /^Dots/ })) as HTMLInputElement).checked,
     ).toBe(true);
-    expect(
-      (screen.getByRole("radio", { name: /^Editors only/ }) as HTMLInputElement).checked,
-    ).toBe(true);
+    expect((screen.getByRole("radio", { name: /^Editors only/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 });
