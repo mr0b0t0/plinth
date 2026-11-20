@@ -238,6 +238,11 @@ field to the stored declaration, `versions.capabilities.hold`, written only when
 to show a version in place, 16 KiB of carried state, read within 30 s. Carried state lives in the
 viewer's browser (the content origin's `sessionStorage`), not in D1.
 
+**Following the presenter** ([Slides](#slides-decided-2026-11-19), no migration) stores nothing
+and adds one setting, `ALLOW_SLIDES_FOLLOW` (on), in effect only where live rooms are. Fixed: a
+slides-socket frame of 128 bytes; the room's other caps (`ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, 8
+sockets per viewer, 20 connects per viewer per minute, the message rate) apply unchanged.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -823,7 +828,9 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   Viewers still join, set presence and receive; `canEmit(topic)` and the availability check's
   `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
-  served by the artifact's Durable Object with the Hibernation API. The handshake is checked in
+  served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
+  `/__plinth/room/v1/doc` (on-page doc editing) and `/__plinth/room/v1/slides` (following the
+  presenter in a deck) the same way. The handshake is checked in
   order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
   the artifact, the content pass with its identity claim at the current epoch, the kind the path
   names (after the pass, so a caller without one learns nothing about the declaration), and policy
@@ -846,6 +853,12 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Watch sockets are not members.** The [live views](#live-views-decided-2026-11-19) sockets of an
   artifact's open views share its object, but join no room, never appear among peers and never
   count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`.
+- **The slides channel (decided 2026-11-19).** A deck's room carries only slide numbers: every
+  identified viewer may join (`/__plinth/room/v1/slides`, behind `ALLOW_SLIDES_FOLLOW`), owners and
+  editors present, and everyone else (commenters, viewers) follows and may send nothing but the
+  keep-alive. It has no declaration (the slides type has it), shows nobody's email, name or role
+  to anyone, and counts toward the room's caps like any other room socket. See
+  [Slides](#slides-decided-2026-11-19), "Following the presenter".
 
 ### Design systems (decided 2026-11-19)
 
@@ -1041,6 +1054,37 @@ source editor work as for docs. A deck is not edited on its page.
   again if no file was saved. Nothing is sent to the server, and the file holds only
   what the viewer can already read, notes included. There is no switch: it is part of the deck
   type, and costs the instance nothing.
+- **Following the presenter (decided 2026-11-19).** Where live rooms run (origin isolation,
+  `ALLOW_ROOMS`, the `ROOMS` binding) and `ALLOW_SLIDES_FOLLOW` is on (the default), an owner or
+  editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view (where,
+  at phone width, it takes the wall clock's place and paging moves to a second row), sends each
+  slide they show to the identified viewers who have the deck open (the owner and people it is
+  shared with, signed in or confirmed by code), whose decks follow it, with "Following" at the end
+  of the deck's controls. Paging by hand pauses following ("Back to slide 7" in its place returns
+  to it), and someone who opens the deck mid-talk lands on the presenter's slide. While on, the
+  toggle shows how many other people have the deck open ("3 following": people, not tabs), or
+  "Leading" while nobody does. The toggle and the follower's status keep one width across their
+  labels, so the arrows beside them never move. The last presenter
+  to turn it on leads; an earlier one stops leading and follows.
+  Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
+  and no one learns who else is watching or who leads, only the slide. It runs entirely in the
+  deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)), and the slide in each
+  viewer's URL fragment follows as for any paging. The app is involved for a presenter's
+  audience window: it tells that window's frame it is paired (`paired`), and the frame closes its
+  socket and shows no note or toggle, since its presenter window moves it. It also keeps a lead
+  across a new frame: the deck's frame says whether the person leads (`leading { on }`), and when
+  the app replaces the frame (a newer version, a sharing change, review mode ending, all outside
+  full screen and presenter view) it asks the new one to lead again (`lead`, after the slide), so
+  the audience keeps following; it is remembered for the open page only. While a deck follows,
+  the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
+  room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
+  thumbnail captures, review mode, the editor preview and a permanent version link never follow
+  or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
+  closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
+  other pages), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
+  between reconnects, stops retrying) and catches up when shown, while a leader's stays
+  connected. Nothing is stored: the presenter's slide lives only in the room's memory of the
+  presenter's socket.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
   the handout, the `.pptx`, the source). Agents treat deck text, notes included, as untrusted
   data.
@@ -1055,13 +1099,13 @@ source editor work as for docs. A deck is not edited on its page.
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
-  (renderer protocol version 1: `goto`, `view`, `print` and `export { format, nonce }`
-  from the app; `ready`, `position`, `view`, `fullscreen` and
-  `exported { nonce, ok, images_skipped, opaque }` from the frame); see
+  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }` and
+  `paired` and `lead` from the app; `ready`, `position`, `view`, `fullscreen`,
+  `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
-- **Not in this slice.** Following a presenter over a live room comes later; transitions, builds,
-  custom themes and fonts, math, diagrams and video are not planned for slides, and a `.pptx` is
-  never imported.
+- **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
+  viewers only); transitions, builds, custom themes and fonts, math, diagrams and video are not
+  planned for slides, and a `.pptx` is never imported.
 
 ### Comments from the page (decided 2026-11-19)
 
@@ -2695,6 +2739,7 @@ are free, and a hibernating room accrues no duration. A room stores nothing.
 | Re-check while sockets are open | 60 per hour per room | 1 each | 0 |
 | Sharing change, takedown, delete or a changed declaration | 1 notify call (only for artifacts that can have a room) | 1 | 0 |
 | Doc page edit (sent at most 4 times a second per typist) | 1/20 | 0 | 0 |
+| A leading presenter's slide change (the followers' copies are outgoing, so free) | 1/20 | 0 | 0 |
 | Doc draft flush | 0 | 0 | at most 1 per `LIVE_DRAFT_FLUSH_S` per doc (720 an hour at the default 5 s) |
 | Doc checkpoint (a saved version) | 2 calls | as an update | as an update |
 | Doc version published from outside | 1 notify call | 0 | 0 |

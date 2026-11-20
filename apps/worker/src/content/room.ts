@@ -1,7 +1,8 @@
 // Live rooms on an artifact's own content origin (#36, docs/security.md#live-rooms).
 //
-// /__plinth/room/v1/page (an HTML page that declares `room`) and /__plinth/room/v1/doc (Plinth's
-// own doc editing channel) upgrade to a WebSocket served by the artifact's Durable Object. Every
+// /__plinth/room/v1/page (an HTML page that declares `room`), /__plinth/room/v1/doc (Plinth's
+// own doc editing channel) and /__plinth/room/v1/slides (Plinth's own follow-the-presenter channel
+// for decks) upgrade to a WebSocket served by the artifact's Durable Object. Every
 // framed artifact shares one partitioned SameSite=None cookie jar, so a sibling artifact's
 // `new WebSocket()` would carry this artifact's content cookie: a WebSocket handshake is not
 // subject to CORS, and cross-site WebSocket hijacking is the threat. The checks, in this order,
@@ -19,8 +20,8 @@
 //   7. the content pass at the current epoch, with an identity claim; preview and capture passes
 //      never join. It comes before the kind check, so a caller without a pass learns no more than
 //      the content path tells them (that the artifact exists), never its type or declaration;
-//   8. the kind the path names (an HTML page that declares `room`, or a doc, which also needs
-//      ALLOW_LIVE_EDITING);
+//   8. the kind the path names (an HTML page that declares `room`; a doc, which also needs
+//      ALLOW_LIVE_EDITING; or a type with `follow`, which also needs ALLOW_SLIDES_FOLLOW);
 //   9. policy (policy.ts roomAccess).
 // The room then gets a fresh internal request whose only header is the one built here; no client
 // header is copied. Only the status and a reason code are logged, never bodies.
@@ -30,6 +31,7 @@
 import {
   type ArtifactType,
   hasPageCapabilities,
+  ROOM_KINDS,
   ROOM_LIMITS,
   ROOM_PATH_PREFIX,
   ROOM_PROTOCOL,
@@ -38,7 +40,14 @@ import {
   type RoomUnavailableReason,
   typeDef,
 } from "@plinth/shared";
-import { type Bindings, type Config, contentOrigin, liveEditMode, roomsActive } from "../config.ts";
+import {
+  type Bindings,
+  type Config,
+  contentOrigin,
+  liveEditMode,
+  roomsActive,
+  slidesFollowActive,
+} from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { roomAccess } from "../policy.ts";
 import {
@@ -168,9 +177,21 @@ function refuse(
 
 /** The kind of room a path names, or null for anything else under the prefix. */
 function kindOf(path: string): RoomKind | null {
-  if (path === `${ROOM_PATH_PREFIX}page`) return "page";
-  if (path === `${ROOM_PATH_PREFIX}doc`) return "doc";
-  return null;
+  if (!path.startsWith(ROOM_PATH_PREFIX)) return null;
+  const name = path.slice(ROOM_PATH_PREFIX.length);
+  return (ROOM_KINDS as readonly string[]).includes(name) ? (name as RoomKind) : null;
+}
+
+/** Step 8: whether the artifact has the room the path names. */
+function fitsKind(kind: RoomKind, target: RoomTarget, config: Config, env: Bindings): boolean {
+  switch (kind) {
+    case "page":
+      return hasPageCapabilities(typeDef(target.type)) && target.caps?.room === true;
+    case "doc":
+      return typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
+    case "slides":
+      return typeDef(target.type)?.follow === true && slidesFollowActive(config, env);
+  }
 }
 
 function offersProtocol(header: string | null): boolean {
@@ -227,12 +248,8 @@ async function upgrade(
   if (pass.preview) return refuse(config, 403, "preview");
   if (pass.capture || !pass.claim) return refuse(config, 403, "not_identified");
   // 8. The path matching the type. A doc socket also needs on-page editing on
-  // (ALLOW_LIVE_EDITING).
-  const fits =
-    kind === "page"
-      ? hasPageCapabilities(typeDef(target.type)) && target.caps?.room === true
-      : typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
-  if (!fits) return refuse(config, 404, "not_declared");
+  // (ALLOW_LIVE_EDITING), a slides socket following on (ALLOW_SLIDES_FOLLOW).
+  if (!fitsKind(kind, target, config, env)) return refuse(config, 404, "not_declared");
   // 9. Policy.
   const access = roomAccess(pass.claim, target.caps, kind, { active: true, type: target.type });
   if (!access.join) return refuse(config, 403, "forbidden");
@@ -256,6 +273,7 @@ async function upgrade(
     emit: access.emit,
     openTopics: access.openTopics,
     doc: access.doc,
+    ...(access.slides ? { slides: access.slides } : {}),
     limits: {
       maxConnections: config.rooms.maxConnectionsPerArtifact,
       maxMessageBytes: config.rooms.maxMessageBytes,

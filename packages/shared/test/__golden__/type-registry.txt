@@ -81,6 +81,7 @@
       },
       "liveEdit": false,
       "present": true,
+      "follow": true,
       "fileExports": [
         "pptx"
       ]

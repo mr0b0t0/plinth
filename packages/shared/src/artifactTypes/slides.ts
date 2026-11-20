@@ -1,7 +1,7 @@
 // The slides type: Markdown in slides.md (a line --- between slides, packages/shared/src/slides.ts)
 // plus image assets, shown as a deck by Plinth's slides renderer (apps/web/src/renderers/slides/),
-// with paging, Present, a presenter view, print to PDF and a .pptx download. Edited only in the
-// source editor.
+// with paging, Present, a presenter view, print to PDF, a .pptx download and, where live rooms
+// run, following the presenter. Edited only in the source editor.
 import type { TypeModule } from "../artifactTypes.ts";
 import { LIMITS } from "../constants.ts";
 
@@ -25,5 +25,7 @@ export const slides: TypeModule<"slides"> = {
   editor: { language: "markdown", wordWrap: "on" },
   liveEdit: false,
   present: true,
+  // Owners and editors lead identified viewers over the room's `slides` channel (rooms/slides.ts).
+  follow: true,
   fileExports: ["pptx"],
 };

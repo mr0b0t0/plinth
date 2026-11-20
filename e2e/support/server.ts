@@ -47,6 +47,9 @@ export const DEV_VARS: Record<string, string> = {
   ALLOW_LIVE_VIEWS: "true",
   // Category sharing (docs/spec.md "Category sharing and personal categories"), on by default.
   ALLOW_CATEGORY_SHARING: "true",
+  // Following the presenter in a deck (docs/spec.md "Slides"), on by default. On the opaque server
+  // it has no effect: it runs over live rooms, which need origin isolation.
+  ALLOW_SLIDES_FOLLOW: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

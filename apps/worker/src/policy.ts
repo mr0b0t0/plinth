@@ -15,6 +15,7 @@ import {
   type RoomDocRight,
   type RoomEmitRight,
   type RoomKind,
+  type RoomSlidesRight,
   type Scope,
   TYPE_REGISTRY,
   typeDef,
@@ -382,6 +383,8 @@ export interface RoomAccess {
   seeIdentity: boolean;
   /** On a doc socket: follow the live draft, or edit it. */
   doc: RoomDocRight;
+  /** On a slides socket: present (lead the others) or follow. Absent on every other kind. */
+  slides?: RoomSlidesRight;
 }
 
 const NO_ROOM: RoomAccess = {
@@ -411,6 +414,7 @@ export function roomAccess(
   ctx: { active: boolean; type: ArtifactType },
 ): RoomAccess {
   if (!ctx.active || !claim) return NO_ROOM;
+  if (kind === "slides") return slidesRoomAccess(claim, ctx.type);
   const editor = claim.role === "owner" || claim.role === "editor";
   if (kind === "doc") {
     if (!TYPE_REGISTRY[ctx.type]?.liveEdit || !editor) return NO_ROOM;
@@ -855,4 +859,26 @@ export function mayManageInvitationEmails(
   if (p.kind === "user") return { allow: true, email: p.email };
   if (p.kind === "agent") return { allow: false, reason: "not_a_person" };
   return { allow: false, reason: "unauthenticated" };
+}
+
+// ---------- slides: follow the presenter (docs/spec.md "Slides") ----------
+
+/**
+ * A deck's `slides` socket, Plinth's own channel for types with `follow`: every identified viewer
+ * joins (roomAccess has already refused rooms off and passes without a claim). Owners and editors
+ * present, everyone else (commenters, viewers) follows and may send nothing. Nobody's email or role
+ * reaches another socket: the room stamps positions with a random socket id only. Checked at the
+ * upgrade, and through the room's stamped header on every frame.
+ */
+export function slidesRoomAccess(claim: PageClaim, type: ArtifactType): RoomAccess {
+  if (TYPE_REGISTRY[type]?.follow !== true) return NO_ROOM;
+  const editor = claim.role === "owner" || claim.role === "editor";
+  return {
+    join: true,
+    emit: "none",
+    openTopics: [],
+    seeIdentity: false,
+    doc: "none",
+    slides: editor ? "present" : "watch",
+  };
 }

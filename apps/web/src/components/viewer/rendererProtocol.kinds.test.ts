@@ -10,7 +10,9 @@ import {
   FRAME_MESSAGE_KINDS,
   type FrameMessage,
   gotoMessage,
+  leadMessage,
   matchFrameMessage,
+  pairedMessage,
   printMessage,
   readFrameMessage,
   sheetExportMessage,
@@ -39,6 +41,8 @@ describe("renderer protocol kinds", () => {
       "view",
       "export",
       "version",
+      "paired",
+      "lead",
     ]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft", "shown"]);
     expect(
@@ -50,6 +54,8 @@ describe("renderer protocol kinds", () => {
         viewMessage("presenter"),
         exportMessage("n".repeat(16)),
         versionMessage(2, "n".repeat(16)),
+        pairedMessage(),
+        leadMessage(),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -62,6 +68,8 @@ describe("renderer protocol kinds", () => {
       sheetExportMessage("csv"),
       boardExportMessage("png"),
       versionMessage(1, "x".repeat(16)),
+      pairedMessage(),
+      leadMessage(),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });

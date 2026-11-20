@@ -38,7 +38,21 @@ describe("readSlidesFrameMessage", () => {
       "view",
       "fullscreen",
       "exported",
+      "leading",
     ]);
+  });
+
+  it("accepts leading with a boolean only", () => {
+    const e = { source: win, origin: ORIGIN, data: data({ type: "leading", on: true }) };
+    expect(read(e)).toEqual({ type: "leading", on: true });
+    expect(read({ ...e, data: data({ type: "leading", on: false }) })).toEqual({
+      type: "leading",
+      on: false,
+    });
+    for (const on of ["true", 1, null, undefined]) {
+      expect(read({ ...e, data: data({ type: "leading", on }) })).toBeNull();
+    }
+    expect(read({ ...e, source: {} })).toBeNull();
   });
 
   it("accepts ready, position, view and fullscreen from the frame at the exact content origin", () => {

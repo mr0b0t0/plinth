@@ -65,6 +65,8 @@ const WORKER_VARS = [
   // Invitation emails per UTC day for the instance (0 turns them off) and for one owner.
   "INVITATION_EMAILS_PER_DAY",
   "INVITATION_EMAILS_PER_OWNER_PER_DAY",
+  // Following the presenter in a deck (docs/docker.md#settings), through the same live rooms.
+  "ALLOW_SLIDES_FOLLOW",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

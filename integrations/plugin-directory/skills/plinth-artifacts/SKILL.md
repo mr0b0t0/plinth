@@ -719,6 +719,9 @@ CSS.
   in the artifact page's menu. Do not build a .pptx yourself or send one as an asset. Image files
   go in the file only on instances whose decks have their own origin; elsewhere Plinth says they
   were left out.
+- **Presenting to people in other places?** Tell the person to open the deck and turn on **Lead
+  viewers** (in the deck's controls or presenter view): the people it is shared with who have it
+  open follow their slide. People who only have the link do not follow. You never lead a deck.
 
 ```json
 {

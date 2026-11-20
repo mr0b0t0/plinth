@@ -198,6 +198,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: a
   "v5 is available" toast offers Update instead. Every other page is replaced at once, as before.
   Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
+- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
+  controls or presenter view, and the people the deck is shared with who have it open follow their
+  slide, shown as "Following" in the deck's controls; paging by hand pauses it until
+  they choose "Back to slide N". Someone who opens the deck mid-talk lands on the presenter's
+  slide. Only slide numbers travel, over the deck's live room; nobody sees who else is watching.
+  It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;
+  `ALLOW_SLIDES_FOLLOW=false` turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
+  publishes a new version or the owner changes who the deck is shared with.
 
 ## 0.6.0 (2026-11-20)
 
