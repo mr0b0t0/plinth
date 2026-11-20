@@ -1,14 +1,14 @@
 // "Your name": the signed-in person's display name (PATCH /api/v1/me). It labels their comments and
 // versions, and pages that show who is viewing see it beside their email. The rules are the
-// Worker's (displayName.ts): no "@", no control or invisible characters, at most 100 characters;
-// an empty name clears it.
+// Worker's (displayName.ts): no "@", no control or invisible characters, at most 100 characters.
+// Saving an empty field clears it, so there is no separate Clear button.
 import { API, displayNameProblem, LIMITS, type Me, normalizeDisplayName } from "@plinth/shared";
 import { type FormEvent, useId, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Button, Dialog, Input, useToast } from "../ui/index.ts";
 
 export const PROFILE_NAME_HELP =
-  "Shown with your comments and versions, and on pages that show who is viewing. It is not checked: people see your email address too.";
+  "Shown with your comments and versions, and on pages that show who is viewing.";
 
 export function ProfileNameDialog({
   current,
@@ -31,7 +31,7 @@ export function ProfileNameDialog({
     setBusy(true);
     try {
       const me = await api<Me>(API.me, { method: "PATCH", body: { name } });
-      toast.success(me.name ? "Name saved" : "Name cleared", me.name ?? "");
+      toast.success(me.name ? "Name saved" : "Name cleared");
       onSaved(me);
     } catch (err) {
       setBusy(false);
@@ -58,9 +58,6 @@ export function ProfileNameDialog({
       title="Your name"
       footer={
         <>
-          <Button variant="ghost" onClick={() => void save("")} disabled={busy || current === null}>
-            Clear
-          </Button>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -73,6 +70,7 @@ export function ProfileNameDialog({
       <form id={formId} onSubmit={submit} noValidate aria-busy={busy || undefined}>
         <Input
           label="Name"
+          hideLabel
           value={typed}
           maxLength={LIMITS.maxDisplayNameLength}
           hint={PROFILE_NAME_HELP}

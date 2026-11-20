@@ -81,7 +81,6 @@
       },
       "liveEdit": false,
       "present": true,
-      "follow": true,
       "fileExports": [
         "pptx"
       ]
@@ -135,10 +134,7 @@
         "style": "design.css",
         "frame": "board.html"
       },
-      "editor": {
-        "language": "html",
-        "wordWrap": "on"
-      },
+      "editor": null,
       "liveEdit": false,
       "opaqueFrames": true
     }

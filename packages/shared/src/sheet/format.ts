@@ -8,7 +8,7 @@
 // one JSON.stringify per row with trailing nulls trimmed, no trailing newline. So each row has one
 // spelling, and a version diff shows only the rows that changed.
 import { LIMITS } from "../constants.ts";
-import { utf8Bytes } from "../pageComments.ts";
+import { utf8Length } from "../utf8.ts";
 import { a1 } from "./address.ts";
 import { parseFormula } from "./formula/parser.ts";
 import { isoDateSerial } from "./formula/values.ts";
@@ -109,7 +109,7 @@ export function isSheetLinkUrl(s: unknown): s is string {
 function overBytes(s: string, max: number): boolean {
   if (s.length > max) return true;
   if (s.length * 3 <= max) return false;
-  return utf8Bytes(s) > max;
+  return utf8Length(s) > max;
 }
 
 class Issues {

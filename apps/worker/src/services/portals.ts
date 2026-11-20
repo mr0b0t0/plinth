@@ -25,6 +25,7 @@ import { enforce } from "../lib/ratelimit.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
 import { decide, decidePortal, type Principal } from "../policy.ts";
 import { factsOf, grantEmails, toSummary } from "./artifacts.ts";
+import { refuseBoundToken } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 import { getUserById } from "./users.ts";
 import {
@@ -114,6 +115,7 @@ async function portalRows(ctx: Ctx, share: ShareSql): Promise<ArtifactRow[]> {
  * policy.ts decidePortal lets the caller open it with that grant, as GET /portals/:id decides.
  */
 export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
+  refuseBoundToken(ctx.principal);
   if (!ctx.config.allowCategorySharing) return [];
   const { emails } = grantEmails(ctx);
   if (emails.length === 0) return [];
@@ -159,6 +161,7 @@ export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
  * email); `ok` with the items for a grantee, and for the owner as a preview.
  */
 export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
+  refuseBoundToken(ctx.principal);
   const share = await loadShare(ctx, id);
   if (!share) throw notFound("Portal");
   const { own, emails } = grantEmails(ctx);
@@ -265,6 +268,7 @@ const ipKey = (ctx: Ctx) => ctx.ip ?? "unknown";
  * allowlist code flow), so the people on a share cannot be probed. Mailed after the response.
  */
 export async function requestPortalCode(ctx: Ctx, id: string, email: string): Promise<void> {
+  refuseBoundToken(ctx.principal);
   const share = await loadShare(ctx, id);
   if (!share) throw notFound("Portal");
   const tooMany = "Too many codes requested. Try again later.";
@@ -346,6 +350,7 @@ export async function verifyPortalCode(
   email: string,
   code: string,
 ): Promise<ViewerCodeResult> {
+  refuseBoundToken(ctx.principal);
   const share = await loadShare(ctx, id);
   if (!share) throw notFound("Portal");
   const tooMany = "Too many attempts. Try again later.";

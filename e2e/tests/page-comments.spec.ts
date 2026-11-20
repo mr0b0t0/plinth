@@ -75,8 +75,7 @@ test("the page opens the composer with its anchor, and the frame keeps its state
   const panel = page.getByRole("region", { name: "Comments" });
   await expect(panel).toBeVisible();
   const chip = panel.locator(".cm-anchor-chip");
-  await expect(chip).toContainText("Placed by the page:");
-  await expect(chip).toContainText("Point");
+  await expect(chip).toContainText("Pinned to Point");
   // No pick button: the page places its own anchors.
   await expect(panel.getByRole("button", { name: "Pin to an element" })).toHaveCount(0);
   // Focus stayed in the page: a page request never moves it, so keystrokes meant for the page
@@ -138,8 +137,9 @@ test("the page opens the composer with its anchor, and the frame keeps its state
 
   // Clicking Plinth's pin tells the page, which marks its own marker.
   await pin.click();
-  await expect(board(page).locator("#focused")).toHaveText(threadId ?? "");
-  await expect(marker).toHaveAttribute("data-focused", "");
+  await expect(
+    board(page).locator(`.marker[data-thread-id="${threadId}"][data-focused]`),
+  ).toHaveCount(1);
 
   // After a reload the page and the pins come back.
   await page.reload();
@@ -176,7 +176,7 @@ test("a hostile page can only open the composer, once, and never fill it in", as
   await expect(panel).toBeVisible();
   const chip = panel.locator(".cm-anchor-chip");
   // The oversized one was dropped; the next one opened the composer; the rest were refused.
-  await expect(chip).toHaveText(/Placed by the page: <img src=x onerror=/);
+  await expect(chip).toHaveText(/Pinned to <img src=x onerror=/);
   await expect(panel.locator(".cm-anchor-chip")).toHaveCount(1);
   await page.waitForTimeout(300);
   await expect(chip).toHaveText(/<img src=x/);

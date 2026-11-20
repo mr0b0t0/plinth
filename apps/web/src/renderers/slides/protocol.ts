@@ -5,10 +5,9 @@
 //
 //   app -> frame: goto { slide }             show slide N (clamped to the deck)
 //   app -> frame: view { mode }              "deck", "presenter" or "overview"
-//   app -> frame: print { notes? }           print the deck, or the handout with notes
+//   app -> frame: print                      print the deck (the handout with notes from
+//                                            presenter view)
 //   app -> frame: export { format, nonce }   build the deck as .pptx and download it in the frame
-//   app -> frame: paired                     this frame is an audience window: its presenter
-//                                            window moves it, so it stops following the room
 //   frame -> app: ready { slide, count }     after boot
 //   frame -> app: position { slide, count }  after every change
 //   frame -> app: view { mode }              the view it now shows, after every change (its own
@@ -28,9 +27,8 @@ import type { DeckMode } from "./nav.ts";
 export type SlidesAppMessage =
   | { type: "goto"; slide: number }
   | { type: "view"; mode: DeckMode }
-  | { type: "print"; notes: boolean }
-  | { type: "export"; format: "pptx"; nonce: string }
-  | { type: "paired" };
+  | { type: "print" }
+  | { type: "export"; format: "pptx"; nonce: string };
 
 /** The app's nonce for one export request. */
 export const EXPORT_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -46,17 +44,13 @@ export function readSlidesAppMessage(data: unknown): SlidesAppMessage | null {
   if (m.type === "view") {
     return MODES.includes(m.mode as DeckMode) ? { type: "view", mode: m.mode as DeckMode } : null;
   }
-  if (m.type === "print") {
-    if (m.notes !== undefined && typeof m.notes !== "boolean") return null;
-    return { type: "print", notes: m.notes === true };
-  }
+  if (m.type === "print") return { type: "print" };
   if (m.type === "export") {
     if (m.format !== "pptx" || typeof m.nonce !== "string" || !EXPORT_NONCE_RE.test(m.nonce)) {
       return null;
     }
     return { type: "export", format: "pptx", nonce: m.nonce };
   }
-  if (m.type === "paired") return { type: "paired" };
   return null;
 }
 

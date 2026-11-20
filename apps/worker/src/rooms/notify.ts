@@ -1,14 +1,13 @@
 // Telling an artifact's live room that access or the declaration changed (#36). Best effort, after
 // the response (waitUntil), with one retry: the room's 60 s alarm re-checks D1 and closes what a
 // lost call left open. Only artifacts that can have sockets are notified: with live views off, a
-// doc, a deck (its follow channel) or an HTML artifact whose current or previous version declares
-// `room`, so ordinary artifacts
+// doc or an HTML artifact whose current or previous version declares `room`, so ordinary artifacts
 // never instantiate an object; with live views on, every artifact, since anyone who opens one may
 // hold a watch socket on it. Failures are logged with the operation only, never content.
 //
 // Live views (notifyViewers): a new version, or a change to the page's shared data, reaches the
 // artifact's watch sockets the same way, as a signal made of integers and nothing else.
-import { type Capabilities, typeDef } from "@plinth/shared";
+import { type Capabilities, TYPE_REGISTRY } from "@plinth/shared";
 import {
   type Bindings,
   type Config,
@@ -59,17 +58,17 @@ async function loadRoomFacts(env: Bindings, artifactId: string) {
 
 /**
  * Whether the artifact's object may hold sockets: watch sockets on every artifact while live views
- * are active, room sockets on a doc, on a type with `follow` (a deck's follow channel, which has no
- * declaration to redeclare), or on a page whose current or previous version declares `room`.
+ * are active, room sockets on a doc or a page whose current or previous version declares `room`.
  */
 function mayHaveSockets(
   facts: NonNullable<Awaited<ReturnType<typeof loadRoomFacts>>>,
   ctx: NotifyCtx,
 ): boolean {
   if (liveViewsActive(ctx.config, ctx.env)) return true;
-  const def = typeDef(facts.type);
-  if (def?.liveEdit || def?.follow) return true;
-  return facts.cur?.room === true || facts.prev?.room === true;
+  const live = Object.hasOwn(TYPE_REGISTRY, facts.type)
+    ? TYPE_REGISTRY[facts.type as keyof typeof TYPE_REGISTRY].liveEdit
+    : false;
+  return live || facts.cur?.room === true || facts.prev?.room === true;
 }
 
 async function call(env: Bindings, artifactId: string, op: RoomOp, epoch: number): Promise<void> {

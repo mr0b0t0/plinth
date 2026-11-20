@@ -5,14 +5,14 @@
 import { expect, test } from "@playwright/test";
 import { publishArtifact, uniqueEmail } from "../support/api.ts";
 import { latestCode } from "../support/mail.ts";
+import { CURRENT_FRAME } from "../support/poll.ts";
 import { seedToken } from "../support/tokens.ts";
-import { CURRENT_FRAME } from "../support/viewer.ts";
 
 test("an invitee confirms the code at the gate, is signed in, and finds the artifact on the dashboard", async ({
   page,
 }) => {
   // One project is enough: every viewing code in the suite counts against one per-IP limit (the
-  // e2e Worker ignores client IPs), so code flows run once, as outsider-templates.spec.ts does.
+  // e2e Worker ignores client IPs), so code flows run in one project only.
   test.skip(test.info().project.name !== "light", "code flows run in the light project only");
   test.setTimeout(60_000);
   const owner = uniqueEmail("inv-owner");

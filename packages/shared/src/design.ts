@@ -471,8 +471,3 @@ export function boardDocument(o: { board: DesignBoard; shared: string; baseHref:
     "</body></html>"
   );
 }
-
-/** A board's size as people read it: "1080 × 1080". */
-export function boardSizeLabel(b: Pick<DesignBoard, "width" | "height">): string {
-  return `${b.width} × ${b.height}`;
-}

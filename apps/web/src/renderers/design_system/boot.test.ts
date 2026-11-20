@@ -1,8 +1,8 @@
 // The design system renderer's entry and site: it boots from the JSON block the shell embeds,
-// renders every section, shows readable problems for JSON it cannot use, and puts every author
+// renders every section, shows one short line for JSON it cannot use, and puts every author
 // string on the page as text.
 import { jsonForScript, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
 import { groupOf, sectionId } from "./render.ts";
 import { FIXTURE } from "./testFixture.ts";
@@ -59,14 +59,21 @@ describe("boot", () => {
       ["Shadows", "#tokens/shadow"],
       ["Motion", "#tokens/motion"],
       ["Other tokens", "#tokens/other"],
-      ["Components", "#components"],
       ["Button", "#components/button"],
       ["Badge", "#components/badge"],
     ]);
+    // Components are listed under a heading in the navigation, not a page of their own.
+    expect(root().querySelector(".ds-nav__group .ds-nav__label")?.textContent).toBe("Components");
+    expect(root().querySelectorAll(".ds-nav__group a")).toHaveLength(2);
     for (const [, href] of nav) {
       expect(document.getElementById(sectionId((href ?? "").slice(1))), href ?? "").not.toBeNull();
     }
-    // Guidelines go through the doc renderer's Markdown.
+    // Guidelines go through the doc renderer's Markdown, right under the header: the overview has
+    // no heading of its own over theirs.
+    const overview = document.getElementById(sectionId("overview"));
+    expect(overview?.getAttribute("aria-label")).toBe("Overview");
+    expect(overview?.firstElementChild?.classList.contains("plinth-doc")).toBe(true);
+    expect(overview?.querySelector(":scope > h2")).toBeNull();
     expect(root().querySelector("#ds-overview .plinth-doc h1")?.textContent).toMatch(
       /^Using Acme UI/,
     );
@@ -76,6 +83,13 @@ describe("boot", () => {
     );
     expect(links).toEqual([FIXTURE.fonts[0]?.google]);
     expect(document.head.querySelector("style")?.textContent).toContain('font-family:"Acme Mono"');
+  });
+
+  it("leaves the overview out when there are no guidelines", () => {
+    mountShell(JSON.stringify({ ...FIXTURE, guidelines: undefined }));
+    stop = boot(window);
+    expect(document.getElementById(sectionId("overview"))).toBeNull();
+    expect(root().querySelector(".ds-nav a")?.textContent).toBe("Colors");
   });
 
   it("a malformed hash neither throws nor stops navigation and printing", () => {
@@ -131,29 +145,195 @@ describe("boot", () => {
       "Alias of color.brand.500",
     );
     expect(rows[4]?.querySelector(".ds-token__deprecated")?.textContent).toBe("Deprecated Use fg");
+    // A pair sits on each theme's ground; a token that is the same in both, on the reader's.
+    expect(samples.map((s) => s.getAttribute("data-theme"))).toEqual(["light", "dark"]);
+    const brand = rows[0]?.querySelectorAll(".ds-sample") ?? [];
+    expect(brand).toHaveLength(1);
+    expect(brand[0]?.hasAttribute("data-theme")).toBe(false);
   });
 
-  it("renders each component's examples in preview frames, with HTML and CSS views", () => {
+  it("keeps the token tables' column headings for screen readers only", () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const head = root().querySelector("#ds-tokens-color thead");
+    expect(head?.className).toBe("ds-visually-hidden");
+    expect([...(head?.querySelectorAll("th[scope=col]") ?? [])].map((t) => t.textContent)).toEqual([
+      "Sample",
+      "Token",
+    ]);
+    // The value shares a line with the variable, in the token's cell.
+    const bg = root().querySelector('.ds-token[data-path="color.bg"]');
+    expect(bg?.querySelectorAll("td")).toHaveLength(2);
+    expect(bg?.querySelector(".ds-token__line .ds-token__values")).not.toBeNull();
+  });
+
+  it("labels light and dark samples once, only in a group that has a pair", () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const themes = root().querySelectorAll("#ds-tokens-color .ds-themes");
+    expect(themes).toHaveLength(1);
+    expect(themes[0]?.getAttribute("aria-hidden")).toBe("true");
+    expect([...(themes[0]?.children ?? [])].map((s) => s.textContent)).toEqual(["Light", "Dark"]);
+    expect(root().querySelector("#ds-tokens-space .ds-themes")).toBeNull();
+  });
+
+  it("shows a type specimen in a block that can end in an ellipsis", () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const specimen = root().querySelector('.ds-token[data-path="font.body"] .ds-sample--type');
+    expect(specimen?.hasAttribute("data-theme")).toBe(false);
+    expect(specimen?.children).toHaveLength(1);
+    expect(specimen?.firstElementChild?.className).toBe("ds-sample__text");
+  });
+
+  it("marks the navigation link of the section in view", () => {
+    type Report = (entries: { target: Element; isIntersecting: boolean }[]) => void;
+    const seen: Element[] = [];
+    const observer: { report: Report } = { report: () => undefined };
+    const report: Report = (entries) => observer.report(entries);
+    const original = window.IntersectionObserver;
+    window.IntersectionObserver = class {
+      constructor(cb: Report) {
+        observer.report = cb;
+      }
+      observe(el: Element) {
+        seen.push(el);
+      }
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      mountShell(JSON.stringify(FIXTURE));
+      stop = boot(window);
+      const current = () =>
+        [...root().querySelectorAll(".ds-nav a[aria-current]")].map((a) => a.textContent);
+      expect(seen.map((s) => s.getAttribute("data-hash"))).toContain("components/button");
+      const at = (hash: string) => seen.find((s) => s.getAttribute("data-hash") === hash);
+      report([{ target: at("overview") as Element, isIntersecting: true }]);
+      expect(current()).toEqual(["Overview"]);
+      report([
+        { target: at("overview") as Element, isIntersecting: false },
+        { target: at("components/button") as Element, isIntersecting: true },
+      ]);
+      expect(current()).toEqual(["Button"]);
+    } finally {
+      window.IntersectionObserver = original;
+    }
+  });
+
+  it("renders each component's description, usage, then its examples in preview frames, with no source code", () => {
     mountShell(JSON.stringify(FIXTURE));
     stop = boot(window);
     const button = document.getElementById("ds-components-button") as HTMLElement;
     const frames = button.querySelectorAll("iframe");
     expect(frames).toHaveLength(1);
     expect(frames[0]?.getAttribute("sandbox")).toBe("allow-same-origin");
-    const both = button.querySelector<HTMLButtonElement>('.ds-seg button[data-value="both"]');
-    both?.click();
-    expect([...button.querySelectorAll("iframe")].map((f) => f.dataset.theme)).toEqual([
-      "light",
-      "dark",
-    ]);
-    button.querySelector<HTMLButtonElement>('.ds-seg button[data-value="html"]')?.click();
-    const codes = button.querySelectorAll<HTMLElement>(".ds-example__code");
-    expect(codes[0]?.hidden).toBe(false);
-    expect(codes[0]?.textContent).toBe('<button class="acme-btn acme-btn--primary">Save</button>');
-    button.querySelector<HTMLButtonElement>('.ds-seg button[data-value="768"]')?.click();
-    expect(button.querySelector<HTMLElement>(".ds-example__stage")?.style.maxWidth).toBe("768px");
+    expect(frames[0]?.dataset.theme).toBe("light");
+    // People never see source code: agents read the HTML and CSS with get_design_system.
+    expect(button.querySelectorAll("details, pre, code")).toHaveLength(0);
+    expect(button.textContent).not.toContain("acme-btn");
+    // Reading order: heading, description, usage, then the examples.
+    expect(
+      [...button.children].map(
+        (c) => c.tagName.toLowerCase() + (c.className ? `.${c.className.split(" ").pop()}` : ""),
+      ),
+    ).toEqual(["h2", "div.ds-prose", "h3", "div.ds-prose", "figure.ds-example"]);
+    // No view, theme or width switches.
+    expect(button.querySelectorAll("button")).toHaveLength(0);
     const badge = document.getElementById("ds-components-badge") as HTMLElement;
     expect(badge.querySelector(".ds-badge")?.textContent).toBe("Beta");
+  });
+
+  it("shows previews in the reader's color scheme and follows a change", () => {
+    let dark = true;
+    const listeners: (() => void)[] = [];
+    const matchMedia = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      get matches() {
+        return q === "(prefers-color-scheme: dark)" && dark;
+      },
+      addEventListener: (_: string, f: () => void) => listeners.push(f),
+      removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      mountShell(JSON.stringify(FIXTURE));
+      stop = boot(window);
+      const themes = () =>
+        [...document.querySelectorAll<HTMLIFrameElement>("#ds-components-button iframe")].map(
+          (f) => f.dataset.theme,
+        );
+      expect(themes()).toEqual(["dark"]);
+      dark = false;
+      for (const f of listeners) f();
+      expect(themes()).toEqual(["light"]);
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
+  it("copies a token's variable when its name is clicked", async () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const copied: string[] = [];
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => void copied.push(t) },
+    });
+    try {
+      const name = root().querySelector<HTMLButtonElement>(
+        '.ds-token[data-path="color.bg"] button.ds-token__var',
+      );
+      expect(name?.getAttribute("aria-label")).toBe("Copy var(--acme-color-bg)");
+      name?.click();
+      expect(copied).toEqual(["var(--acme-color-bg)"]);
+      await vi.waitFor(() => expect(name?.hasAttribute("data-copied")).toBe(true));
+      expect(window.getSelection()?.rangeCount ?? 0).toBe(0);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("copies through the selection when the frame may not use the clipboard, and clears it", async () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("blocked by permissions policy")) },
+    });
+    const execCommand = document.execCommand;
+    const selected: string[] = [];
+    let works = true;
+    document.execCommand = ((cmd: string) => {
+      selected.push(`${cmd}:${window.getSelection()?.toString()}`);
+      return works;
+    }) as typeof document.execCommand;
+    try {
+      const name = root().querySelector<HTMLButtonElement>(
+        '.ds-token[data-path="color.bg"] button.ds-token__var',
+      );
+      name?.click();
+      await vi.waitFor(() => expect(name?.hasAttribute("data-copied")).toBe(true));
+      expect(selected).toEqual(["copy:var(--acme-color-bg)"]);
+      expect(window.getSelection()?.toString()).toBe("");
+
+      // When the browser refuses that too, the text stays selected for the reader, and nothing
+      // says "Copied".
+      const fg = root().querySelector<HTMLButtonElement>(
+        '.ds-token[data-path="color.fg"] button.ds-token__var',
+      );
+      works = false;
+      fg?.click();
+      await vi.waitFor(() => expect(selected).toHaveLength(2));
+      expect(window.getSelection()?.toString()).toBe("var(--acme-color-fg)");
+      expect(fg?.hasAttribute("data-copied")).toBe(false);
+    } finally {
+      document.execCommand = execCommand;
+      window.getSelection()?.removeAllRanges();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
   });
 
   it("puts every author string on the page as text", () => {
@@ -185,16 +365,13 @@ describe("boot", () => {
     expect(root().textContent).toContain(evil);
   });
 
-  it("shows the problems and sets data-ready=error for JSON it cannot use", () => {
+  it("shows one short line and sets data-ready=error for JSON it cannot use", () => {
     mountShell(JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" }));
     stop = boot(window);
     expect(document.documentElement.getAttribute("data-ready")).toBe("error");
-    expect(root().querySelector(".ds-error h1")?.textContent).toBe(
-      "This design system could not be shown",
-    );
-    expect(root().querySelector(".ds-problems li")?.textContent).toBe(
-      'format must be "plinth.design-system/1"',
-    );
+    // The editor lists the problems above the source; the page does not repeat them.
+    expect(root().textContent).toBe("This design system could not be shown.");
+    expect(root().querySelectorAll("h1, ul")).toHaveLength(0);
   });
 
   it("refuses a payload for another type or that is not JSON", () => {

@@ -51,18 +51,16 @@ const meta = {
   keywords: [...PLUGIN.keywords],
 };
 
-// The Claude Code plugins' server follows their Plinth instance option (PLUGIN_USER_CONFIG), whose
-// default is the hosted instance. The full plugin lets PLINTH_URL override it, as before the option
-// existed; the directory build reads no environment variables.
-const optionMcp = `\${user_config.${PLUGIN_INSTANCE_OPTION}}/mcp`;
-const claudeManifest = json({
-  ...meta,
+// The full Claude Code plugin has the Plinth instance option (PLUGIN_USER_CONFIG), whose default is
+// the hosted instance; its server is below. The directory build has no option: see its section.
+const listingFields = {
   privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
   termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
   supportUrl: PLUGIN.supportUrl,
   documentationUrl: PLUGIN.documentationUrl,
-  userConfig: PLUGIN_USER_CONFIG,
-});
+};
+const claudeManifest = json({ ...meta, ...listingFields, userConfig: PLUGIN_USER_CONFIG });
+const directoryManifest = json({ ...meta, ...listingFields });
 
 /** path (from the repo root) -> content */
 const outputs = new Map();
@@ -206,10 +204,11 @@ outputs.set(
 
 // ---------- Claude Code plugin directory build ----------
 // Anthropic's plugin directory accepts hooks, monitors and scripts only from verified
-// organizations, and each MCP server URL must be an absolute https URL or a `${user_config.KEY}`
-// reference (claude.com/docs/plugins/pre-submission-checklist). So the directory gets the skill and
-// a server that follows the instance option. The full plugin (watcher, session note, PLINTH_URL)
-// stays the one in integrations/plugin, installed from this repository's marketplace.
+// organizations, and its policy check refuses an MCP server whose url has a `${...}` variable in it
+// ("Plugin couldn't be read completely", 2026-11-19, though the pre-submission checklist allows a
+// `${user_config.KEY}` reference). So the directory gets the skill and a fixed server at the hosted
+// instance, with no instance option. The full plugin (instance option, watcher, session note,
+// PLINTH_URL) stays the one in integrations/plugin, installed from this repository's marketplace.
 const DIRECTORY = "integrations/plugin-directory";
 const directorySkillEdits = [
   [
@@ -218,7 +217,7 @@ const directorySkillEdits = [
   ],
   [
     "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.",
-    "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Change it later in `/config` (the Plinth plugin's Plinth instance), then restart\n  Claude Code.",
+    "- Claude Code: this build of the plugin, from Anthropic's plugin directory, connects to the\n  hosted instance only. For another instance, add it as its own server\n  (`claude mcp add --transport http plinth <origin>/mcp`), or use the full plugin from this\n  repository's marketplace instead (`claude plugin marketplace add mr0b0t0/plinth`, then\n  `claude plugin install plinth@plinth --config instance_url=<origin>`).",
   ],
 ];
 let directorySkill = skill;
@@ -231,11 +230,119 @@ for (const [from, to] of directorySkillEdits) {
   directorySkill = directorySkill.replace(from, to);
 }
 outputs.set(`${DIRECTORY}/skills/${SKILL_NAME}/SKILL.md`, directorySkill);
-outputs.set(`${DIRECTORY}/.claude-plugin/plugin.json`, claudeManifest);
+outputs.set(`${DIRECTORY}/.claude-plugin/plugin.json`, directoryManifest);
 outputs.set(
   `${DIRECTORY}/.mcp.json`,
-  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: optionMcp } } }),
+  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
 );
+
+// ---------- The skill for other listings (OpenAI, Cursor) ----------
+// Listings outside Claude Code get the skill without its Claude Code passages, and without the
+// comparison with other products' page features: OpenAI asks that no model-readable text steer the
+// model away from other plugins or built-in features (developers.openai.com/plugins/plugin-guidelines),
+// and those features are not in Cursor. `instanceBullet` replaces the Claude Code bullet under
+// "Connecting" with one for the listing's own client.
+const listingSkill = (build, instanceBullet) => {
+  const edits = [
+    // The frontmatter description, which clients read before the body.
+    [
+      "They installed Plinth for this, so use this skill instead of a built-in artifact, page or document tool whenever the result is meant to be kept, sent or shown to someone else",
+      "Use it whenever the result is meant to be kept, sent or shown to someone else",
+    ],
+    [" A quick chart or mockup to look at in the conversation can stay in a built-in viewer.", ""],
+    [
+      "The person installed Plinth to keep and share what their agents make. If your environment has its\nown artifact, page or document feature (Claude artifacts and docs, Codex or ChatGPT Sites, T3 Code's\nvisual replies), use Plinth for anything meant to be kept, sent or shown to someone else, unless the\nperson names the other feature or another place. A built-in viewer is fine for a chart or mockup to\nlook at now in the conversation; in T3 Code that is a visual reply (`html_render`), which is deleted\nwith its thread.\n",
+      "The person installed Plinth to keep and share what their agents make. Publish a page or document\nmeant to be kept, sent or shown to someone else to Plinth, unless the person names another place\nfor it.\n",
+    ],
+    [
+      "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.\n",
+      "",
+    ],
+    [
+      "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.\n",
+      instanceBullet,
+    ],
+    [
+      "\nIn Claude Code, install Plinth as the plugin, from a terminal:\n\n```sh\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth\n```\n\nor in a session with `/plugin marketplace add mr0b0t0/plinth`, then `/plugin install plinth@plinth`.\nA bare `claude mcp add` gives the tools only, without these rules. Use one or the other: both give\ntwo Plinth servers (`plinth` and `plugin:plinth:plinth`) and two connections.\n",
+      "",
+    ],
+  ];
+  let out = skill;
+  for (const [from, to] of edits) {
+    if (!out.includes(from)) {
+      throw new Error(
+        `${build}: the skill no longer contains a passage this build rewrites:\n${from}`,
+      );
+    }
+    out = out.replace(from, to);
+  }
+  for (const claudeOnly of ["Claude Code", "/plinth:", "claude plugin", "built-in"]) {
+    if (out.includes(claudeOnly)) {
+      throw new Error(`${build}: the skill still mentions "${claudeOnly}"; add an edit above`);
+    }
+  }
+  return out;
+};
+
+// ---------- OpenAI plugin directory build (ChatGPT and Codex) ----------
+// OpenAI's directory takes a ZIP of one plugin folder and refuses lifecycle hooks. So this build
+// has the portable manifest with the listing block, the hosted server, the icon and the listing
+// skill. The ZIP is this folder.
+const OPENAI = "integrations/plugin-openai";
+outputs.set(
+  `${OPENAI}/skills/${SKILL_NAME}/SKILL.md`,
+  listingSkill(
+    OPENAI,
+    "- ChatGPT: this plugin connects to the hosted instance. Add another instance as a custom\n  connector at its `/mcp` URL; ChatGPT reaches it from OpenAI's servers, so it must be public.\n",
+  ),
+);
+outputs.set(
+  `${OPENAI}/plugin.json`,
+  json({
+    $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+    ...meta,
+    // No `hooks` key at all: the folder has none, and the directory refuses lifecycle hooks.
+    extensions: { "com.openai": { interface: reg.CODEX_INTERFACE } },
+  }),
+);
+outputs.set(`${OPENAI}/mcp.json`, outputs.get("integrations/plugin/mcp.json"));
+outputs.set(`${OPENAI}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
+
+// ---------- Cursor plugin (Cursor Marketplace, cursor.directory) ----------
+// Cursor's plugin layout (github.com/cursor/plugins): `.cursor-plugin/plugin.json`, `mcp.json` and
+// `skills/` at the plugin root. cursor.directory finds a plugin in a repository by any
+// `<dir>/.cursor-plugin/plugin.json`. The rule file below stays for people who add rules by hand.
+const CURSOR = "integrations/plugin-cursor";
+outputs.set(
+  `${CURSOR}/.cursor-plugin/plugin.json`,
+  json({
+    name: PLUGIN.name,
+    displayName: reg.CODEX_INTERFACE.displayName,
+    version: PLUGIN.version,
+    description: PLUGIN.description,
+    author: PLUGIN.author,
+    homepage: PLUGIN.homepage,
+    repository: PLUGIN.repository,
+    license: PLUGIN.license,
+    logo: "assets/icon.svg",
+    category: "integrations",
+    keywords: [...PLUGIN.keywords],
+    skills: "./skills/",
+    mcpServers: "./mcp.json",
+  }),
+);
+outputs.set(
+  `${CURSOR}/mcp.json`,
+  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
+);
+outputs.set(
+  `${CURSOR}/skills/${SKILL_NAME}/SKILL.md`,
+  listingSkill(
+    CURSOR,
+    "- Cursor: this plugin connects to the hosted instance. Add another instance as its own server\n  in `~/.cursor/mcp.json`, at its `/mcp` URL.\n",
+  ),
+);
+outputs.set(`${CURSOR}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
 
 // ---------- Gemini CLI extension ----------
 outputs.set(

@@ -105,11 +105,9 @@ describe("OpenAPI document", () => {
     expect([...tools].sort()).toEqual(
       [
         "claim_mention",
-        "delete_artifact_file",
         "get_artifact",
         "get_design_system",
         "list_artifact_data",
-        "list_artifact_files",
         "list_artifacts",
         "list_mentions",
         "list_versions",

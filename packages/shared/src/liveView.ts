@@ -59,25 +59,7 @@ export const LIVE_VIEW_LIMITS = {
   refusedRetryS: 300,
   /** Reconnect delays in seconds after a network failure; the last one repeats. */
   backoffS: [1, 2, 5, 10, 30],
-  /**
-   * Applying a new version while keeping the reader's state (docs/spec.md "Live views"): how long
-   * the app waits for the page runtime's answer to `update` before deciding itself.
-   */
-  updateReplyMs: 1000,
-  /** How long the page's onVersion handlers may take, all together, before the runtime answers. */
-  versionBudgetMs: 800,
-  /** How long the app waits for the doc renderer to show a version in place before it swaps. */
-  inPlaceReplyMs: 5000,
-  /** Page state (plinth.onVersion's `{ state }`) handed to the next version, as JSON. */
-  carryMaxBytes: 16384,
-  /** A carry record older than this is ignored (and removed). */
-  carryMaxAgeS: 30,
-  /** The longest path inside the artifact a frame may report to land the next version on. */
-  maxCarryPathLength: 2048,
 } as const;
-
-/** The content origin's sessionStorage key for the state carried to the next version. */
-export const VIEW_CARRY_KEY = "__plinth_carry";
 
 /** Server -> client, JSON text frames. The client only ever sends the text "ping". */
 export type ViewWatchFrame =
@@ -141,34 +123,7 @@ export type ViewFrameMessage =
       v: typeof VIEW_MESSAGE_VERSION;
       type: "push";
       on: boolean;
-    }
-  /**
-   * A newer version is about to replace the page (the runtime's version fragment): the page's
-   * onVersion handlers run, and the runtime records scroll, location and the page's own state in
-   * the content origin's sessionStorage, or answers `update:hold`. `force`: the viewer asked for
-   * it, so a hold does not count. The nonce is the app's own; the answer echoes it.
-   */
-  | {
-      source: typeof VIEW_MESSAGE_SOURCE;
-      v: typeof VIEW_MESSAGE_VERSION;
-      type: "update";
-      from: number;
-      to: number;
-      nonce: string;
-      force: boolean;
     };
-
-/**
- * Frame -> app messages from the page runtime, posted only to the parent at the app origin. The app
- * reads them only from the frame it holds, at the exact content origin (origin isolation), and
- * treats them as untrusted: `hello` (this frame can answer `update`), `update:ok` (carry recorded;
- * `path` is where the page is, which only becomes the gate's `next`) and `update:hold` (the page
- * asks to keep it until the viewer chooses Update).
- */
-export type ViewPageMessage =
-  | { type: "hello" }
-  | { type: "update:ok"; nonce: string; path: string | null }
-  | { type: "update:hold"; nonce: string };
 
 /** Parse one watch frame from the server, or null when it is not one. */
 export function readViewWatchFrame(raw: unknown): ViewWatchFrame | null {
