@@ -69,8 +69,16 @@ export function confirmText(file: string, base: number): string {
 }
 
 /** What the dialog asks after a newer version was published since the file was chosen. */
-export function conflictText(current: number, by: string | null): string {
-  return `v${current} was published${by ? ` by ${by}` : ""} meanwhile. Replace v${current} too?`;
+export function conflictText(current: number, by: string | null, file: string): string {
+  const news = by
+    ? `${by} published v${current} meanwhile.`
+    : `v${current} was published meanwhile.`;
+  return `${news} Replace it with ${file}?`;
+}
+
+/** What the dialog says when the file cannot be used. */
+export function problemText(file: string, message: string): string {
+  return `Could not use ${file}. ${message}`;
 }
 
 /** The current version a 409 names, or null for any other refusal. */
@@ -149,7 +157,7 @@ export function ReplaceSheetDialog({
         body: { ...s.sent, base_version: s.base, note: replacedNote(s.file) },
       });
       if (!alive.current) return;
-      toast.success(`Replaced: v${r.version} from ${s.file}`);
+      toast.success(`Replaced with ${s.file}`);
       onReplaced(r.version);
     } catch (e) {
       if (!alive.current) return;
@@ -213,7 +221,7 @@ export function ReplaceSheetDialog({
         disabled={blocked !== null}
         onClick={() => void replace(step)}
       >
-        {step.kind === "conflict" ? `Replace v${step.base}` : "Replace"}
+        Replace
       </Button>
     </>
   ) : step.kind === "reading" ? (
@@ -231,14 +239,16 @@ export function ReplaceSheetDialog({
       <div role="status" className="pl-replace-sheet__status">
         {signIn && <p>{SIGN_IN_TEXT}</p>}
         {!signIn && step.kind === "confirm" && <p>{confirmText(step.file, step.base)}</p>}
-        {!signIn && step.kind === "conflict" && <p>{conflictText(step.base, step.by)}</p>}
+        {!signIn && step.kind === "conflict" && (
+          <p>{conflictText(step.base, step.by, step.file)}</p>
+        )}
         {!signIn && blocked !== null && (step.kind === "confirm" || step.kind === "conflict") && (
           <p>{blocked}</p>
         )}
       </div>
       {!signIn && step.kind === "problem" && (
         <div role="alert" className="pl-replace-sheet__problem">
-          <p>{`${step.file} could not be used: ${step.message}`}</p>
+          <p>{problemText(step.file, step.message)}</p>
           {step.issues.length > 0 && (
             <ul className="pl-import-issues">
               {step.issues.map((m, i) => (

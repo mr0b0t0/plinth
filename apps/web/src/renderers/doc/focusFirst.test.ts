@@ -6,7 +6,7 @@ import { RENDERER_MESSAGE_SOURCE, RENDERER_PROTOCOL_VERSION } from "@plinth/shar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEditMessage } from "../common/editSession.ts";
 import type { ClientLease, LiveBackend } from "../common/live.ts";
-import { DocEditor, LocalDoc } from "./edit.ts";
+import { DocEditor, headingLevel, LocalDoc, selectHeading } from "./edit.ts";
 
 let root: HTMLElement;
 
@@ -58,6 +58,41 @@ describe("focus on the first block", () => {
     expect(field.tagName).toBe("TEXTAREA");
     expect(field.value).toBe("# Untitled document");
     expect(document.activeElement).toBe(field);
+    // The title's text is selected, so the first keystroke replaces it.
+    expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe("Untitled document");
+  });
+
+  it("selects only a one-line heading's text", () => {
+    const field = document.createElement("textarea");
+    const sel = (v: string) => {
+      field.value = v;
+      field.setSelectionRange(0, 0);
+      selectHeading(field);
+      return field.value.slice(field.selectionStart, field.selectionEnd);
+    };
+    expect(sel("## Plan  ")).toBe("Plan");
+    expect(sel("Body text")).toBe("");
+    expect(sel("# Title\n\nMore")).toBe("");
+    expect(sel("#nospace")).toBe("");
+  });
+
+  it("types a one-line heading in its heading's type", () => {
+    expect(headingLevel("# Untitled document")).toBe(1);
+    expect(headingLevel("### Notes ")).toBe(3);
+    expect(headingLevel("# Title\n\nBody")).toBe(0);
+    expect(headingLevel("Body")).toBe(0);
+    const local = new LocalDoc("# Untitled document\n", {
+      granted: (l: ClientLease) => editor.granted(l),
+      changed: () => editor.changed(),
+    });
+    const editor: DocEditor = new DocEditor(root, window, local, hooks);
+    editor.setEditing(true);
+    editor.focusFirst();
+    const field = editor.fieldElement as HTMLTextAreaElement;
+    expect(field.dataset.heading).toBe("1");
+    field.value = "Plain text";
+    field.dispatchEvent(new Event("input"));
+    expect(field.dataset.heading).toBeUndefined();
   });
 
   it("waits for the room's draft, then asks for the first block's lines once", () => {

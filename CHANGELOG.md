@@ -15,9 +15,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
   for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
   file and keeps the link, sharing and comments; it asks again when a newer version was published
-  meanwhile, waits while there are unpublished changes on the page, and asks a person confirmed by
-  email code without an account to sign in first. HTML pages and designs still come only from
-  agents. `POST /api/v1/artifacts` takes `note` for the first version.
+  meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
+  by email code without an account to sign in first. It replaces the source editor's "Import CSV or
+  .xlsx" button, so there is one way to bring a file into a sheet. HTML pages and designs still come
+  only from agents. `POST /api/v1/artifacts` takes `note` for the first version.
 - **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
   agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width)
   opens the comments panel in request mode, where they point at an element or a board, describe

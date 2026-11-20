@@ -1072,19 +1072,6 @@ function ComponentSpecimens() {
               { label: "Import a spreadsheet…", onSelect: () => undefined },
             ]}
           />
-          {/* An item that is off says why on a second line (a sheet's Replace with a file…). */}
-          <Menu
-            label="Sheet actions"
-            icon={DotsThreeIcon}
-            variant="ghost"
-            items={[
-              {
-                label: "Replace with a file…",
-                disabled: true,
-                description: "Publish or discard changes first",
-              },
-            ]}
-          />
         </Row>
       </Specimen>
 

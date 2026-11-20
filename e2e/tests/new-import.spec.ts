@@ -2,7 +2,7 @@
 // live rooms: New on the dashboard makes a blank document or sheet that opens in edit mode with
 // the focus on its title or first cell, and Publish makes v2; Import sends an .xlsx that the Worker
 // converts and opens the sheet in edit mode; a sheet's "Replace with a file…" confirms, asks again
-// when an agent published meanwhile, keeps the artifact, and is off while the page is edited.
+// when an agent published meanwhile, keeps the artifact, and is hidden while the page is edited.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
@@ -46,6 +46,9 @@ test("New document: v1 'Created in the app' opens in edit mode on its title, and
   const field = frameOf(page).locator("textarea.plinth-doc__field");
   await expect(field).toHaveValue("# Untitled document", { timeout: 15_000 });
   await expect(field).toBeFocused();
+  // The title's text is selected: typing replaces it and keeps the heading.
+  await page.keyboard.type("Trip plan");
+  await expect(field).toHaveValue("# Trip plan");
   await field.fill("# Trip plan\n\nDay one: the coast.");
   await field.press("Escape");
   await expect(frameOf(page).locator("h1")).toContainText("Trip plan");
@@ -128,7 +131,9 @@ test("Import refuses a file it cannot read and says why, creating nothing", asyn
     buffer: Buffer.from("not a zip"),
   });
   const dialog = page.getByRole("alertdialog", { name: "Could not import broken.xlsx" });
-  await expect(dialog).toContainText("The xlsx file could not be imported");
+  await expect(dialog).toContainText("This is not an .xlsx file.");
+  await expect(dialog).not.toContainText("could not be imported:");
+  await expect(dialog).not.toContainText("ZIP");
   await dialog.getByRole("button", { name: "Cancel" }).click();
   const list = await apiGet(page.request, "/artifacts");
   expect(list.body.items).toEqual([]);
@@ -139,7 +144,7 @@ async function openActions(page: Page) {
   return page.getByRole("menu", { name: "Artifact actions" });
 }
 
-test("Replace a sheet with a file: confirm, a version published meanwhile, and off while editing", async ({
+test("Replace a sheet with a file: confirm, a version published meanwhile, and hidden while editing", async ({
   page,
 }) => {
   test.setTimeout(90_000);
@@ -176,8 +181,11 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and o
   );
   expect(agentV2.status).toBe(200);
   await dialog.getByRole("button", { name: "Replace", exact: true }).click();
-  await expect(dialog).toContainText("v2 was published by Work agent meanwhile. Replace v2 too?");
-  await dialog.getByRole("button", { name: "Replace v2" }).click();
+  await expect(dialog).toContainText(
+    "Work agent published v2 meanwhile. Replace it with fruit.csv?",
+  );
+  await dialog.getByRole("button", { name: "Replace", exact: true }).click();
+  await expect(page.getByText("Replaced with fruit.csv")).toBeVisible();
   await expect(dialog).toHaveCount(0);
   await expect(cell(page, "B3")).toHaveText("5", { timeout: 15_000 });
   const versions = await apiGet(page.request, `/artifacts/${art.id}/versions`);
@@ -189,7 +197,7 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and o
   const detail = await apiGet(page.request, `/artifacts/${art.id}`);
   expect(detail.body).toMatchObject({ id: art.id, slug: art.slug, current_version: 3 });
 
-  // While editing on the page, the item is off and says why.
+  // While editing on the page, the item is hidden.
   await page.keyboard.press("Escape");
   const toggle = page.getByRole("button", { name: "Edit", exact: true });
   if (await toggle.isVisible()) await toggle.click();
@@ -199,7 +207,6 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and o
   }
   await expect(bar(page)).toBeVisible();
   menu = await openActions(page);
-  const off = menu.getByRole("menuitem", { name: "Replace with a file…" });
-  await expect(off).toHaveAttribute("aria-disabled", "true");
-  await expect(off).toContainText("Publish or discard changes first");
+  await expect(menu.getByRole("menuitem", { name: "Edit source" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Replace with a file…" })).toHaveCount(0);
 });

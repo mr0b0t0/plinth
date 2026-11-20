@@ -1,7 +1,9 @@
 // The doc renderer's prose styles moved to shared/prose.css, which doc.css imports first. The doc
-// page's CSS must not change: with the import inlined and comments and whitespace collapsed,
-// doc.css is the same text as before the split (its sha256 was taken from doc.css at that point).
-// The built doc.css was also compared byte for byte when the split was made.
+// page's reading CSS must not change: with the import inlined and comments and whitespace
+// collapsed, doc.css up to its on-page editing section is the same text as before the split (its
+// sha256 was taken from doc.css at that point). The built doc.css was also compared byte for byte
+// when the split was made. The editing section after it belongs to on-page editing, whose look
+// changes with the editor (the open block's focus mark and heading type), so it is not pinned here.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -14,10 +16,12 @@ const normalize = (css: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const DOC_CSS_BEFORE_SPLIT = "1937c2c27885c6d993671fd19eb5ec5159864261a11970fa3f0c9749e46cb926";
+const EDITING_SECTION = "/* ---------- On-page editing (#36)";
+const DOC_READING_CSS_BEFORE_SPLIT =
+  "26abf052182167c638eb9bd699775f700349ac05a0e9150a392516698ce615ac";
 
 describe("shared prose styles", () => {
-  it("leave the doc page's CSS as it was", () => {
+  it("leave the doc page's reading CSS as it was", () => {
     const doc = read("../doc/doc.css");
     const prose = read("./prose.css");
     const importLine = '@import "../shared/prose.css";';
@@ -25,8 +29,10 @@ describe("shared prose styles", () => {
     // The import comes first: nothing but the file's comment before it.
     expect(normalize(doc.slice(0, doc.indexOf(importLine)))).toBe("");
     const inlined = doc.replace(importLine, prose);
-    expect(createHash("sha256").update(normalize(inlined)).digest("hex")).toBe(
-      DOC_CSS_BEFORE_SPLIT,
+    const reading = inlined.slice(0, inlined.indexOf(EDITING_SECTION));
+    expect(inlined.indexOf(EDITING_SECTION)).toBeGreaterThan(0);
+    expect(createHash("sha256").update(normalize(reading)).digest("hex")).toBe(
+      DOC_READING_CSS_BEFORE_SPLIT,
     );
   });
 });

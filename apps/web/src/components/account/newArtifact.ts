@@ -187,5 +187,21 @@ export function importProblem(e: unknown): ImportProblem {
         .slice(0, 20)
     : [];
   const count = typeof d.count === "number" ? d.count : issues.length;
-  return { message: e.message, issues, count };
+  return { message: plainCause(e.message), issues, count };
+}
+
+/**
+ * The Worker's refusal as a plain cause: without its "The xlsx file could not be imported:" lead
+ * (the dialog's title already says so) and without a closing parenthetical, which names parser
+ * internals ("(no ZIP directory)"), ending as a sentence. Other messages pass as they are.
+ * Agents still get the whole sentence from the API.
+ */
+export function plainCause(message: string): string {
+  const cause = message
+    .replace(/^The \w+ file could not be imported:\s*/i, "")
+    .replace(/\s*\([^()]*\)\s*\.?\s*$/, "")
+    .trim();
+  if (!cause || cause === message) return message;
+  const first = (cause[0] ?? "").toUpperCase() + cause.slice(1);
+  return /[.!?]$/.test(first) ? first : `${first}.`;
 }

@@ -27,11 +27,6 @@ export type MenuEntry =
       danger?: boolean;
       disabled?: boolean;
       /**
-       * A second, smaller line under the label: what the item does, or why it is off. It is the
-       * item's accessible description, never part of its name.
-       */
-      description?: string;
-      /**
        * One of a set of choices (e.g. the theme): the item becomes a menuitemradio and shows a
        * check when true. Leave undefined for a plain action.
        */
@@ -254,7 +249,6 @@ export function Menu({
               return <hr key={`sep-${i}`} className="pl-menu__separator" />;
             }
             const ItemIcon = entry.icon;
-            const descId = entry.description ? `${menuId}-d${i}` : undefined;
             const common = {
               ref: (el: HTMLElement | null) => {
                 itemRefs.current[i] = el;
@@ -263,7 +257,6 @@ export function Menu({
               "aria-checked": entry.checked,
               tabIndex: -1,
               "aria-disabled": entry.disabled || undefined,
-              "aria-describedby": descId,
               className: `pl-menu__item${entry.danger ? " pl-menu__item--danger" : ""}`,
               onClick: (e: MouseEvent) => select(entry, e),
               onPointerMove: () => !entry.disabled && active !== i && setActive(i),
@@ -275,17 +268,7 @@ export function Menu({
                 ) : (
                   hasIcons && <span className="pl-menu__icon-slot" aria-hidden="true" />
                 )}
-                {descId ? (
-                  <span className="pl-menu__label pl-menu__label--described">
-                    <span>{entry.label}</span>
-                    {/* Hidden from the name; aria-describedby still reads it. */}
-                    <span id={descId} className="pl-menu__description" aria-hidden="true">
-                      {entry.description}
-                    </span>
-                  </span>
-                ) : (
-                  <span className="pl-menu__label">{entry.label}</span>
-                )}
+                <span className="pl-menu__label">{entry.label}</span>
                 {entry.checked && (
                   <CheckIcon size={ICON_SIZE.sm} aria-hidden="true" className="pl-menu__check" />
                 )}

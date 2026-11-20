@@ -235,7 +235,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   slides: [presenterView, printTyped, printWithNotes, downloadPptx],
   design_system: [copyForAgent],
   design: [printTyped, downloadDesign],
-  sheet: [downloadSheet, printTyped, replaceSheet],
+  sheet: [downloadSheet, printTyped],
   whiteboard: [boardSettings],
 };
 
@@ -283,6 +283,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   compactSignInToEdit,
   askAgentMenu,
   editSource,
+  replaceSheet,
   settings,
   typeItems,
   capabilityItems,

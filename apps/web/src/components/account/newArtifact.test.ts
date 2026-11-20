@@ -13,6 +13,7 @@ import {
   formatOf,
   importProblem,
   openHref,
+  plainCause,
   readSpreadsheet,
   SpreadsheetFileError,
   sheetsAvailable,
@@ -128,6 +129,24 @@ describe("importProblem", () => {
       issues: ['B7: "lots" is not a number', "line 9 is blank"],
       count: 23,
     });
+  });
+
+  it("shows a conversion refusal as its plain cause, without the lead or parser internals", () => {
+    const e = new ApiRequestError(
+      400,
+      "invalid_input",
+      "The xlsx file could not be imported: This is not an .xlsx file (no ZIP directory)",
+    );
+    expect(importProblem(e).message).toBe("This is not an .xlsx file.");
+    expect(plainCause("The csv file could not be imported: the file is empty")).toBe(
+      "The file is empty.",
+    );
+    expect(plainCause("Encrypted .xlsx files are not supported")).toBe(
+      "Encrypted .xlsx files are not supported",
+    );
+    expect(plainCause("The xlsx file could not be imported: ")).toBe(
+      "The xlsx file could not be imported: ",
+    );
   });
 
   it("says plainly what happened without a server answer", () => {

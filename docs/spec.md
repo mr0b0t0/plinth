@@ -1987,12 +1987,11 @@ editors also edit a sheet on its page, live with each other
   100 `<col>` ranges and only for columns A to CV, a number format code longer than Excel's 255
   characters reads as General, and XML whose tag, comment, CDATA section or processing
   instruction never ends is refused as damaged.
-  The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
-  .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
-  until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
-  `--id`. In the app, the dashboard's "Import a spreadsheet" and a sheet's "Replace with a file…"
-  send the file to the Worker, which converts it the same way ([New and
-  Import](#new-and-import-decided-2026-11-19)).
+  The import is checked like any sheet and stored as JSON lines. The CLI publishes one `.csv` or
+  `.xlsx` file as a new sheet, or the next version of `--id`. In the app, the dashboard's "Import a
+  spreadsheet" and a sheet's "Replace with a file…" send the file to the Worker, which converts it
+  the same way ([New and Import](#new-and-import-decided-2026-11-19)); the source editor has no
+  import button of its own.
 - **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
   their letters, types and formats) and the cells of an A1 range (default every data row), a
   formula as `{f, v}`, every other cell as itself, at most `limit_cells` cells (default 2,000, at
@@ -2701,33 +2700,39 @@ pages and designs come only from agents.
   name without its extension as the title, and the note "Imported from <file name>". The Worker
   converts and checks it exactly as it does for agents (see Imports under
   [Sheets](#sheets-decided-2026-11-19)), so the app carries no spreadsheet reader of its own. A
-  refusal ("Could not import <file name>") shows the Worker's sentence and the cells it names
-  ("B7: …"), never code. The sheet then opens in edit mode where editing on the page works, and on
-  its page otherwise.
+  refusal ("Could not import <file name>") shows the plain cause and the cells it names ("B7: …"),
+  never code: the Worker's sentence without its "The xlsx file could not be imported:" lead and
+  without a closing parenthetical of parser detail ("This is not an .xlsx file."). Agents get the
+  whole sentence. The sheet then opens in edit mode where editing on the page works, and on its
+  page otherwise.
 - **`?edit` starts editing.** On the artifact page, `?edit` for an owner or editor who may edit
   there (the gate's `live`, without `sign_in`) is dropped from the address and the page opens in
   edit mode. The app focuses the frame and posts `edit { on: true, focus: "first" }` (again on the
   frame's load, until the frame reports that it is editing). Once the draft is drawn, the doc
-  renderer opens the first block for typing, so a new doc's title takes the keyboard, and the
-  sheet renderer focuses cell A2 (A1 when there are no rows). When someone else holds that block,
+  renderer opens the first block for typing, a heading in its heading's type and with its text
+  selected, so the first keystroke replaces "Untitled document", and the sheet renderer focuses
+  cell A2 (A1 when there are no rows). When someone else holds that block,
   or the person cannot write, it only takes the focus and nothing is asked of the room. Every
   other case of `?edit` is described under [Ask an agent](#ask-an-agent-decided-2026-11-19).
-- **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on the
-  current version. It opens the file picker at once, takes the same files and limits as Import, and
-  confirms the chosen file first ("sales.xlsx becomes v6. v5 stays in history."), then sends `PUT
-  /api/v1/artifacts/:ref` with `content_format`, `content`, `base_version` (the version on screen)
-  and the note "Replaced from <file name>". The new version keeps the link, the sharing and the
-  comments. When a newer version was published since, the save is refused (409) and the dialog asks
-  again against it ("v6 was published by Ana meanwhile. Replace v6 too?"), or the person cancels. A
-  file chosen after that is confirmed against the newer version. While the sheet has unpublished
-  changes on its page or someone is editing it there, the item is off and says "Publish or discard
-  changes first", and the dialog checks the same again when Replace is pressed. A draft someone
-  starts after that press is never overwritten: one with changes is frozen for review against the
-  new version, as for any version published meanwhile ("Versions from elsewhere" under Sheets), and
-  one without moves to it. An editor confirmed by code without an account sees the item off with
-  "Sign in first", since publishing a version needs an account; where the gate does not say so, the
-  item opens "Sign in to replace this sheet." without a picker, and the dialog says the same if the
-  save is refused for that reason. After a replace the page shows the new version.
+- **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…", right after Edit source, for
+  owners and editors on the current version. It is the one way to bring a file into an existing
+  sheet (the source editor has no import of its own). It opens the file picker at once, takes the
+  same files and limits as Import, and confirms the chosen file first ("sales.xlsx becomes v6. v5
+  stays in history."), then sends `PUT /api/v1/artifacts/:ref` with `content_format`, `content`,
+  `base_version` (the version on screen) and the note "Replaced from <file name>". The new version
+  keeps the link, the sharing and the comments, and the page says "Replaced with <file name>". When
+  a newer version was published since, the save is refused (409) and the dialog asks again against
+  it ("Ana published v6 meanwhile. Replace it with sales.xlsx?", with the same Replace button), or
+  the person cancels. A file chosen after that is confirmed against the newer version. A file the
+  Worker refuses is shown as "Could not use <file name>." with the plain cause, as for Import.
+  While the sheet has unpublished changes on its page or someone is editing it there, the item is
+  hidden, and the dialog checks the same again when Replace is pressed ("Publish or discard changes
+  first"). A draft someone starts after that press is never overwritten: one with changes is frozen
+  for review against the new version, as for any version published meanwhile ("Versions from
+  elsewhere" under Sheets), and one without moves to it. A person without an account (an editor
+  confirmed by code) gets the dialog's "Sign in to replace this sheet." without a picker, since
+  publishing a version needs an account, and the dialog says the same if the save is refused for
+  that reason. After a replace the page shows the new version.
 - **Where editing on the page is off** (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path
   fallback): New offers only Import, and an imported sheet opens on its page. Import and "Replace
   with a file…" are ordinary app requests and work in every isolation mode.

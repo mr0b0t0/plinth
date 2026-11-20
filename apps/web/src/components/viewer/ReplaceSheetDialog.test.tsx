@@ -1,8 +1,9 @@
-// "Replace with a file…" on a sheet (docs/spec.md "New and Import"): the ⋯ item for owners and
-// editors on the current version, off with its reason while page changes exist or someone edits,
-// opens the file picker straight away; the dialog confirms the chosen file before sending, sends the file as it is with base_version and the note, asks
-// again against a version published meanwhile (naming who published it), and shows a refusal with
-// the cells it names. A file picked after that conflict is confirmed against the newer version;
+// "Replace with a file…" on a sheet (docs/spec.md "New and Import"): the ⋯ item, next to Edit
+// source, for owners and editors on the current version, hidden while page changes exist or
+// someone edits, opens the file picker straight away; the dialog confirms the chosen file before
+// sending, sends the file as it is with base_version and the note, asks again against a version
+// published meanwhile (naming who published it and the file), and shows a refusal with the cells
+// it names. A file picked after that conflict is confirmed against the newer version;
 // Replace waits while a draft started after the dialog opened; a person without an account is told
 // to sign in instead.
 import type { ViewGate } from "@plinth/shared";
@@ -24,10 +25,9 @@ import {
   REPLACE_BLOCKED,
   REPLACE_LABEL,
   REPLACE_SHEET_DIALOG,
-  REPLACE_SIGN_IN,
   replaceSheet,
 } from "./sheetReplaceItems.tsx";
-import { STAGE_DIALOGS, type StageContext, TYPE_MENU_ITEMS } from "./stageItems.tsx";
+import { MENU_ITEMS, STAGE_DIALOGS, type StageContext, TYPE_MENU_ITEMS } from "./stageItems.tsx";
 import { type Call, json, ME, stubApi } from "./test-utils.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
@@ -67,6 +67,7 @@ function context(over: {
   status?: LiveFrameStatus | null;
   editing?: boolean;
   signIn?: boolean;
+  type?: string;
 }) {
   const openDialog = vi.fn();
   const c = {
@@ -76,7 +77,7 @@ function context(over: {
         id: "sheet1",
         slug: "sales",
         title: "Sales",
-        type: "sheet",
+        type: over.type ?? "sheet",
         version: over.version ?? 5,
         current_version: over.current ?? 5,
       },
@@ -105,8 +106,12 @@ function context(over: {
 }
 
 describe("the ⋯ item", () => {
-  it("is the sheet's, after its downloads and print, with its dialog in the stage", () => {
-    expect(TYPE_MENU_ITEMS.sheet?.at(-1)).toBe(replaceSheet);
+  it("sits right after Edit source, for sheets only, with its dialog in the stage", () => {
+    const at = MENU_ITEMS.indexOf(replaceSheet);
+    expect(at).toBeGreaterThan(0);
+    expect(MENU_ITEMS[at - 1]?.name).toBe("editSource");
+    expect(TYPE_MENU_ITEMS.sheet).not.toContain(replaceSheet);
+    expect(replaceSheet(context({ type: "doc" }).c)).toEqual([]);
     expect(STAGE_DIALOGS.map((d) => d.id)).toContain(REPLACE_SHEET_DIALOG);
   });
 
@@ -116,7 +121,8 @@ describe("the ⋯ item", () => {
     const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
     const { c, openDialog } = context({});
     const [entry] = replaceSheet(c);
-    expect(entry).toMatchObject({ label: REPLACE_LABEL, disabled: false });
+    expect(entry).toMatchObject({ label: REPLACE_LABEL });
+    expect(entry).not.toHaveProperty("disabled");
     (entry as { onSelect: () => void }).onSelect();
     expect(click).toHaveBeenCalledTimes(1);
     expect(openDialog).not.toHaveBeenCalled();
@@ -140,8 +146,8 @@ describe("the ⋯ item", () => {
     expect(replaceSheet(context({ version: 4, current: 5 }).c)).toEqual([]);
   });
 
-  it("is off with its reason while page changes exist or someone edits on the page", () => {
-    const off = (o: Parameters<typeof context>[0]) => replaceSheet(context(o).c)[0];
+  it("is hidden while page changes exist or someone edits on the page", () => {
+    const items = (o: Parameters<typeof context>[0]) => replaceSheet(context(o).c);
     for (const o of [
       { draft: true },
       { editing: true },
@@ -149,24 +155,21 @@ describe("the ⋯ item", () => {
       { status: { ...STATUS, editors: [{ email: "ana@example.org", block: false }] } },
       { status: { ...STATUS, conflict_version: 6 } },
     ]) {
-      expect(off(o), JSON.stringify(o)).toMatchObject({
-        label: REPLACE_LABEL,
-        disabled: true,
-        description: REPLACE_BLOCKED,
-      });
+      expect(items(o), JSON.stringify(o)).toEqual([]);
     }
-    expect(REPLACE_BLOCKED).toBe("Publish or discard changes first");
-    expect(off({ status: STATUS })).toMatchObject({ disabled: false });
+    expect(items({ status: STATUS })).toHaveLength(1);
   });
 
-  it("is off with Sign in as its reason for an editor confirmed by code without an account", () => {
-    const [entry] = replaceSheet(context({ role: "editor", signIn: true }).c);
-    expect(entry).toMatchObject({
-      label: REPLACE_LABEL,
-      disabled: true,
-      description: REPLACE_SIGN_IN,
-    });
-    expect(REPLACE_SIGN_IN).toBe("Sign in first");
+  it("opens the sign-in step without a picker for an editor confirmed by code", async () => {
+    stubApi({ me: ME });
+    await refreshSession();
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    const { c, openDialog } = context({ role: "editor", signIn: true });
+    const [entry] = replaceSheet(c);
+    expect(entry).toMatchObject({ label: REPLACE_LABEL });
+    (entry as { onSelect: () => void }).onSelect();
+    expect(click).not.toHaveBeenCalled();
+    expect(openDialog).toHaveBeenCalledWith(REPLACE_SHEET_DIALOG);
   });
 
   it("opens the sign-in step without a picker for a person without an account", async () => {
@@ -293,7 +296,7 @@ describe("the dialog", () => {
         note: "Replaced from sales.csv",
       },
     ]);
-    expect(await screen.findByText("Replaced: v6 from sales.csv")).toBeTruthy();
+    expect(await screen.findByText("Replaced with sales.csv")).toBeTruthy();
   });
 
   it("asks again against a version published meanwhile, naming who published it", async () => {
@@ -303,10 +306,15 @@ describe("the dialog", () => {
       file: new File([new Uint8Array([0x50, 0x4b, 3, 4])], "sales.xlsx"),
     });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
-    expect(await within(dialog).findByText(conflictText(6, "Ana"))).toBeTruthy();
-    expect(conflictText(6, "Ana")).toBe("v6 was published by Ana meanwhile. Replace v6 too?");
+    expect(await within(dialog).findByText(conflictText(6, "Ana", "sales.xlsx"))).toBeTruthy();
+    expect(conflictText(6, "Ana", "sales.csv")).toBe(
+      "Ana published v6 meanwhile. Replace it with sales.csv?",
+    );
+    expect(conflictText(6, null, "sales.csv")).toBe(
+      "v6 was published meanwhile. Replace it with sales.csv?",
+    );
     expect(onReplaced).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole("button", { name: "Replace v6" }));
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
     await waitFor(() => expect(onReplaced).toHaveBeenCalledWith(7));
     expect(puts(calls).map((c) => (c.body as { base_version: number }).base_version)).toEqual([
       5, 6,
@@ -323,8 +331,8 @@ describe("the dialog", () => {
       file: new File(["a\n1\n"], "a.csv"),
     });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
-    expect(await within(dialog).findByText(conflictText(6, "Ana"))).toBeTruthy();
-    await user.click(within(dialog).getByRole("button", { name: "Replace v6" }));
+    expect(await within(dialog).findByText(conflictText(6, "Ana", "a.csv"))).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
     await within(dialog).findByRole("alert");
     expect(within(dialog).getByRole("button", { name: "Choose another file…" })).toBeTruthy();
     const input = screen.getByTestId("replace-sheet-file") as HTMLInputElement;
@@ -413,7 +421,7 @@ describe("the dialog", () => {
     });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
     const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toContain("long.csv could not be used: This sheet has 1 problem");
+    expect(alert.textContent).toContain("Could not use long.csv. This sheet has 1 problem");
     expect(within(alert).getByRole("listitem").textContent).toBe("B3: the text is too long");
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalled();
