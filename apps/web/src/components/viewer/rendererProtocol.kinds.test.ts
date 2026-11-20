@@ -7,9 +7,11 @@ import {
   editMessage,
   FRAME_MESSAGE_KINDS,
   type FrameMessage,
+  gotoMessage,
   matchFrameMessage,
   printMessage,
   readFrameMessage,
+  viewMessage,
 } from "./rendererProtocol.ts";
 
 const ORIGIN = "http://art123.content.localhost:8787";
@@ -25,12 +27,25 @@ function event(data: unknown) {
 
 describe("renderer protocol kinds", () => {
   it("lists each kind once, at version 1", () => {
-    expect([...APP_MESSAGE_KINDS]).toEqual(["print", "edit", "collect"]);
+    expect([...APP_MESSAGE_KINDS]).toEqual(["print", "edit", "collect", "goto", "view"]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft"]);
     expect(
-      [printMessage(), editMessage(true), collectMessage("n".repeat(16))].map((m) => m.type),
+      [
+        printMessage(),
+        editMessage(true),
+        collectMessage("n".repeat(16)),
+        gotoMessage(2),
+        viewMessage("presenter"),
+      ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
-    for (const m of [printMessage(), editMessage(false), collectMessage("x".repeat(16))]) {
+    const all = [
+      printMessage(),
+      editMessage(false),
+      collectMessage("x".repeat(16)),
+      gotoMessage(1),
+      viewMessage("deck"),
+    ];
+    for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
     }
   });

@@ -17,8 +17,11 @@ type OkGate = Extract<ViewGate, { status: "ok" }>;
  *   takes the new version number and the frame stays;
  * - "hold": the frame holds unsaved solo edits, so only the count of versions moves on and the
  *   page can say that a newer one was published meanwhile.
+ * While a deck is presented (full screen or presenter view) the frame is not swapped either:
+ * - "present": as "hold", only the count of versions moves on; the deck shows the newer version
+ *   once presenting ends, or when the presenter asks for it.
  */
-export type WatchPause = "follow" | "hold" | null;
+export type WatchPause = "follow" | "hold" | "present" | null;
 
 /**
  * What to show when the server reports `fresh` while `shown` is on screen, or null to keep it.

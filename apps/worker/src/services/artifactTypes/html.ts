@@ -1,10 +1,11 @@
 // The html type's Worker hooks: its title is the page's <title>, its capabilities are what its
 // declaration metas (plinth-capabilities and the rest, data.ts parseCapabilities) name, and a new
 // version tells the page's live room, whose sockets reconnect through the gate when the room
-// declaration changed.
+// declaration changed. A page may name the design system it was built on.
 import { LIMITS, parseCapabilities, serializeCapabilities } from "@plinth/shared";
 import { notifyVersion } from "../../rooms/notify.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
+import { designSystemReference, designSystemRefWarnings } from "../designSystems.ts";
 
 /** The text of an HTML document's first <title> in its first 64 KB, entities decoded, or null. */
 export function htmlTitle(text: string): string | null {
@@ -43,4 +44,8 @@ export const htmlHooks: TypeHooks = {
     }
     return v.result;
   },
+  // A page built on a design system names it (<meta name="plinth-design-system">): checked once
+  // per publish as the publisher, never on serve.
+  publishWarnings: (ctx, v) => designSystemRefWarnings(ctx, v.text, v.def.sourcePath),
+  detail: designSystemReference,
 };

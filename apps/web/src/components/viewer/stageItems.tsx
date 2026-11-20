@@ -8,6 +8,7 @@
 // itself (the frame, the hold rule) stay in ViewerStage.
 
 import {
+  ArrowsOutIcon,
   ChartLineUpIcon,
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
@@ -17,7 +18,10 @@ import {
   GearSixIcon,
   MoonIcon,
   PencilSimpleIcon,
+  PlayIcon,
+  PresentationChartIcon,
   PrinterIcon,
+  ProjectorScreenIcon,
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
@@ -31,6 +35,7 @@ import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
+import type { Presentation } from "./usePresentation.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -48,6 +53,8 @@ export interface StageContext {
   /** On-page editing (#36). */
   live: LiveEdit;
   editing: boolean;
+  /** Presenting a deck (usePresentation); inert for every other type. */
+  present: Presentation;
   hrefs: {
     current: string;
     edit: string;
@@ -148,7 +155,28 @@ const printTyped: MenuItem = (c) => [
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
+  slides: [printTyped],
 };
+
+/**
+ * The Present control's two ways to present a deck: full screen (the app puts its own frame full
+ * screen) and presenter view (notes, the next slide and a timer, in the frame). While presenter
+ * view is on, its slot opens an audience window that follows it; the frame's own Exit and Escape
+ * leave presenter view. An audience window offers full screen only.
+ */
+export function presentEntries(p: Presentation): MenuEntry[] {
+  const entries: MenuEntry[] = [{ label: "Full screen", icon: ArrowsOutIcon, onSelect: p.present }];
+  if (p.mode === "presenter") {
+    entries.push({ label: "Audience window", icon: ProjectorScreenIcon, onSelect: p.openAudience });
+  } else if (p.mode === "off") {
+    entries.push({
+      label: "Presenter view",
+      icon: PresentationChartIcon,
+      onSelect: p.presenterView,
+    });
+  }
+  return entries;
+}
 
 /** Menu items for a page that declares one capability, in order, after the type's items. */
 export const CAPABILITY_MENU_ITEMS: Partial<Record<DataCapability, readonly MenuItem[]>> = {};
@@ -272,6 +300,20 @@ const commentsToggle: StageNode = (c) => {
   );
 };
 
+/** Present a deck: the one bar control for full screen and presenter view (presentEntries). */
+const presentButton: StageNode = (c) =>
+  c.present.available && (
+    <Menu
+      label="Present"
+      icon={PlayIcon}
+      iconOnly
+      variant="ghost"
+      align="end"
+      triggerClassName="pl-viewer__present-button"
+      items={presentEntries(c.present)}
+    />
+  );
+
 const shareButton: StageNode = (c) =>
   !c.compact && (
     <Button variant="primary" onClick={c.actions.openShare}>
@@ -295,6 +337,7 @@ export const BAR_CONTROLS: readonly StageItem[] = [
   { id: "history", render: historyLink },
   { id: "edit", render: editToggle },
   { id: "sign-in-to-edit", render: signInToEdit },
+  { id: "present", render: presentButton },
   { id: "comments", render: commentsToggle },
   { id: "share", render: shareButton },
   { id: "menu", render: actionsMenu },

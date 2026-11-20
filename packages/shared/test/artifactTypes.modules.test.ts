@@ -3,12 +3,14 @@
 import { describe, expect, it } from "vitest";
 import { doc } from "../src/artifactTypes/doc.ts";
 import { html } from "../src/artifactTypes/html.ts";
+import { slides } from "../src/artifactTypes/slides.ts";
 import { ARTIFACT_TYPES, RENDERERS_DIR, rendererFiles, TYPE_REGISTRY } from "../src/index.ts";
 
 describe("type modules", () => {
   it("builds each registry row from its own module", () => {
     expect(TYPE_REGISTRY.html).toBe(html);
     expect(TYPE_REGISTRY.doc).toBe(doc);
+    expect(TYPE_REGISTRY.slides).toBe(slides);
     expect(Object.keys(TYPE_REGISTRY)).toEqual([...ARTIFACT_TYPES]);
   });
 
@@ -17,6 +19,10 @@ describe("type modules", () => {
     expect(rendererFiles(TYPE_REGISTRY.doc)).toEqual([
       { name: "doc.js", contentType: "text/javascript" },
       { name: "doc.css", contentType: "text/css" },
+    ]);
+    expect(rendererFiles(TYPE_REGISTRY.slides)).toEqual([
+      { name: "slides.js", contentType: "text/javascript" },
+      { name: "slides.css", contentType: "text/css" },
     ]);
     for (const t of ARTIFACT_TYPES) {
       const names = rendererFiles(TYPE_REGISTRY[t]).map((f) => f.name);

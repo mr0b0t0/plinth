@@ -15,9 +15,26 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   its own markers for the threads and tell Plinth where to put its pins. The person still writes
   and posts every comment, and the page never sees comment text. Opening comments on such a page no
   longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
-  tasks. Example: `docs/examples/canvas-comments.html`.
+  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0.
 - **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
   off its anchor; it now grows in place.
+- **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
+  between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
+  slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
+  clicks or swipes, link to a slide (`#slide=4`), see every slide in a thumbnail grid, and from
+  Present in the bar go full screen or open a presenter view with the notes, the next slide and a
+  timer (and an audience window that follows it with nothing but the slide). Print or save as PDF
+  with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
+  Plugin 0.19.0.
+- **Design systems.** Publish tokens, guidelines and components as a design system (`type:
+  "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
+  spacing and shadow samples and live component previews in light and dark. Agents read one with
+  the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
+  into the pages they build, and get a `design_system_outdated` warning when a page was built on
+  an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
+  type. CSS blocks may not hold escapes or `url()`s to other hosts, and a `url()` to a file the
+  design system lacks is a `missing_file` warning. Plugin 0.18.0.
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
   linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
   the people who opened it (name and email for people signed in and allowlisted viewers, with the

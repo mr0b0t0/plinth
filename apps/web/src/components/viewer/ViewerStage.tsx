@@ -27,6 +27,7 @@ import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
 import { useLiveEdit } from "./useLiveEdit.ts";
+import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
 
@@ -56,6 +57,10 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /** The frame is in review mode (the comment-anchoring frame). */
+  review?: boolean;
+  /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
+  onLeaveReview?: () => void;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -88,6 +93,8 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  review,
+  onLeaveReview,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -150,9 +157,30 @@ export function ViewerStage({
     onReload: onReload ?? (() => undefined),
   });
   const editing = live.editing;
+  // Presenting a deck: the slide, full screen, presenter view and its audience window. Present in
+  // review mode leaves review mode first.
+  const present = usePresentation({
+    gate,
+    frame,
+    contentOrigin,
+    config,
+    slug,
+    review,
+    leaveReview: onLeaveReview,
+  });
+  const pause: WatchPause = live.pause ?? present.pause;
   useEffect(() => {
-    onPauseChange?.(live.pause);
-  }, [live.pause, onPauseChange]);
+    onPauseChange?.(pause);
+  }, [pause, onPauseChange]);
+  // A version published while presenting waits; once presenting ends, the deck catches up.
+  const presented = useRef(false);
+  useEffect(() => {
+    const was = presented.current;
+    presented.current = present.pause !== null;
+    if (was && present.pause === null && !pinned) {
+      if (artifact.version < artifact.current_version) onReload?.();
+    }
+  }, [present.pause, pinned, artifact.version, artifact.current_version, onReload]);
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
@@ -210,6 +238,7 @@ export function ViewerStage({
     contentOrigin,
     live,
     editing,
+    present,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -241,7 +270,7 @@ export function ViewerStage({
     <IconProvider>
       <SkipLink />
       <div
-        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
+        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}${present.paired ? " pl-viewer--audience" : ""}`}
       >
         <header className="pl-viewer__bar" ref={headerRef}>
           <div className="pl-viewer__crumbs">
