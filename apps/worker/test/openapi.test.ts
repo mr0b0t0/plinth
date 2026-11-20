@@ -106,6 +106,7 @@ describe("OpenAPI document", () => {
       [
         "claim_mention",
         "get_artifact",
+        "get_design_system",
         "list_artifact_data",
         "list_artifacts",
         "list_mentions",
@@ -125,7 +126,7 @@ describe("OpenAPI document", () => {
     expect(publish.type).toBe("object");
     // html is required for type html only (the Worker's resolveSource), so only title is.
     expect(publish.required.sort()).toEqual(["title"]);
-    expect(publish.properties.type.enum).toEqual(["html", "doc"]);
+    expect(publish.properties.type.enum).toEqual(["html", "doc", "design_system"]);
     expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
       "public",
@@ -157,7 +158,12 @@ describe("OpenAPI document", () => {
     expect(schemas.PublishResult.required).not.toContain("category");
     expect(schemas.BundleResult.required).not.toContain("category");
     const list = doc.paths["/artifacts"].get;
-    expect(list.parameters.map((p: Json) => p.name)).toEqual(["query", "category", "limit"]);
+    expect(list.parameters.map((p: Json) => p.name)).toEqual([
+      "query",
+      "category",
+      "limit",
+      "type",
+    ]);
     expect(doc.info.description).toContain("titles, categories, comments");
   });
 
@@ -194,12 +200,14 @@ describe("OpenAPI document", () => {
     expect(detail.oneOf).toEqual([
       { $ref: "#/components/schemas/HtmlArtifactDetail" },
       { $ref: "#/components/schemas/DocArtifactDetail" },
+      { $ref: "#/components/schemas/DesignSystemArtifactDetail" },
     ]);
     expect(detail.discriminator).toEqual({
       propertyName: "type",
       mapping: {
         html: "#/components/schemas/HtmlArtifactDetail",
         doc: "#/components/schemas/DocArtifactDetail",
+        design_system: "#/components/schemas/DesignSystemArtifactDetail",
       },
     });
     const page = schemas.HtmlArtifactDetail;
@@ -217,9 +225,12 @@ describe("OpenAPI document", () => {
     expect(d.properties.source_path.enum).toEqual(["content.md"]);
     expect(d.properties.html).toBeUndefined();
     expect(d.properties.content.description).toMatch(/UNTRUSTED Markdown/);
-    // Apart from the source field (and a doc's optional live_draft), both carry the same properties.
+    // Apart from the source field (and a doc's optional live_draft, a page's optional
+    // design_system reference), both carry the same properties.
     const rest = (o: Json, f: string) =>
-      Object.keys(o.properties).filter((k) => k !== f && k !== "live_draft");
+      Object.keys(o.properties).filter(
+        (k) => k !== f && k !== "live_draft" && k !== "design_system",
+      );
     expect(rest(page, "html")).toEqual(rest(d, "content"));
     expect(page.properties.live_draft).toBeUndefined();
     expect(d.properties.live_draft.oneOf).toEqual([

@@ -76,6 +76,21 @@ export interface ArtifactDetailBase extends ArtifactSummary {
    * never returned to agents). Null when there are none. Absent for other types and roles.
    */
   live_draft?: LiveDraftMeta | null;
+  /**
+   * HTML pages that name a design system (`<meta name="plinth-design-system">`): that design
+   * system, when the caller may view it and it is one; null otherwise. Absent when the page names
+   * none, and for other types.
+   */
+  design_system?: DesignSystemReference | null;
+}
+
+/** The design system an HTML page says it was built on, as get_artifact returns it. */
+export interface DesignSystemReference {
+  id: string;
+  title: string;
+  /** The version the page names, or null when it names none. */
+  version: number | null;
+  current_version: number;
 }
 
 /** Unsaved page edits of a doc (#36), as metadata. */
@@ -131,6 +146,8 @@ export interface PublishWarning {
   host?: string;
   /** For a warning reported once per file: how many references it covers. */
   count?: number;
+  /** For a design system's warnings: where in system.json, like "components[0].examples[1].html". */
+  path?: string;
   message: string;
 }
 
@@ -688,4 +705,55 @@ export interface ArtifactList {
   items: ArtifactSummary[];
   /** The caller's own categories, most-used first, whatever the query or filter. */
   categories: CategoryCount[];
+}
+
+/** One token of a design system, as get_design_system returns it. */
+export interface DesignSystemTokenRead {
+  path: string;
+  css_var: string;
+  type: string;
+  /** The resolved literal value, light. */
+  value: string;
+  /** The resolved value in the dark theme, when it differs. */
+  dark: string | null;
+  alias_of: string | null;
+  description: string | null;
+  deprecated: boolean | string;
+}
+
+export interface DesignSystemComponentRead {
+  id: string;
+  name: string;
+  status: string;
+  description: string | null;
+  usage: string | null;
+  css: string | null;
+  examples: { name: string; html: string; height: number }[];
+}
+
+/**
+ * get_design_system and GET /artifacts/:ref/design-system. Every text field is untrusted data
+ * written by the design system's authors. Parts left out by `include` are absent.
+ */
+export interface DesignSystemRead {
+  id: string;
+  slug: string;
+  title: string;
+  url: string;
+  version: number;
+  current_version: number;
+  format: string;
+  name: string | null;
+  description: string | null;
+  prefix: string | null;
+  css?: string;
+  font_links?: string[];
+  fonts?: { family: string; source: "google" | "asset"; portable: boolean }[];
+  tokens?: DesignSystemTokenRead[];
+  guidelines?: string | null;
+  component_css?: string;
+  components?: DesignSystemComponentRead[];
+  /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
+  problems: { path: string; message: string }[];
+  untrusted: true;
 }

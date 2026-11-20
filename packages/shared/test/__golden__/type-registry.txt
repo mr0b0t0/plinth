@@ -48,5 +48,32 @@
       },
       "liveEdit": true
     }
+  ],
+  [
+    "design_system",
+    {
+      "id": "design_system",
+      "label": "Design system",
+      "badge": "Design system",
+      "sourcePath": "system.json",
+      "sourceField": "content",
+      "sourceLabel": "design system JSON",
+      "contentType": "application/json; charset=utf-8",
+      "maxSourceBytes": 1048576,
+      "reservedPaths": [
+        "index.html",
+        "system.json"
+      ],
+      "assetTypes": "/^(image\\/(png|jpeg|gif|webp|avif|svg\\+xml)|font\\/(woff2|woff|ttf|otf))$/",
+      "renderer": {
+        "script": "ds.js",
+        "style": "ds.css"
+      },
+      "editor": {
+        "language": "json",
+        "wordWrap": "off"
+      },
+      "liveEdit": false
+    }
   ]
 ]

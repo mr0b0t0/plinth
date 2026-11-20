@@ -36,6 +36,7 @@ artifactsApi.get("/artifacts", async (c) => {
     category: c.req.query("category"),
     // A query string is text: a non-number fails the schema's integer check (400).
     limit: limit === undefined || limit === "" ? undefined : Number(limit),
+    type: c.req.query("type") || undefined,
   });
   return c.json(await listArtifacts(serviceCtx(c), input));
 });

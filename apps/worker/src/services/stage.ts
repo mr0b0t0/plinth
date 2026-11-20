@@ -24,7 +24,13 @@ import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/erro
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
-import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import {
+  checkAsset,
+  requireTypeDef,
+  resolveSource,
+  typeHooks,
+  typePublishWarnings,
+} from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
   attemptCutoff,
@@ -813,13 +819,22 @@ export class VersionStager implements Stager {
         if (!e) continue;
         files.push({ path: byRaw.get(raw) ?? raw, bytes, contentType: e.content_type });
       }
+      const manifestPaths = new Set(entries.map((e) => e.path));
+      // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
+      // reference warnings.
+      const extra = await typePublishWarnings(this.ctx, {
+        def,
+        text: sourceText,
+        paths: manifestPaths,
+      });
       warnings = scanPublish({
         files,
-        manifestPaths: new Set(entries.map((e) => e.path)),
+        manifestPaths,
         sources: contentSources(this.ctx.config),
         isolation: this.ctx.config.contentIsolation,
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
+        extra,
       });
       this.scanText.clear();
     }
