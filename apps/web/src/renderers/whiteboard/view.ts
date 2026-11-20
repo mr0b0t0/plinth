@@ -30,9 +30,13 @@ export interface Toolbar {
   /** The add buttons' group. */
   adds: HTMLElement;
   add: Record<ToolKind, HTMLButtonElement>;
-  /** The colour swatches' group. */
+  /** The colour control: the swatches, and at phone width the one swatch that opens them. */
+  colour: HTMLElement;
+  /** The swatches' group. */
   palette: HTMLElement;
   colors: Record<BoardColor, HTMLButtonElement>;
+  /** At phone width, one swatch in the current colour, which opens the others. */
+  pick: HTMLButtonElement;
   connect: HTMLButtonElement;
   remove: HTMLButtonElement;
   fit: HTMLButtonElement;
@@ -103,15 +107,23 @@ function buildToolbar(doc: Document, banner: HTMLElement): Toolbar {
   const adds = group(doc, "Add", ...Object.values(add));
   adds.classList.add("wb-adds");
   const palette = group(doc, "Colour", ...Object.values(colors));
+  palette.classList.add("wb-palette");
+  const pick = button(doc, "", "Colour");
+  pick.className = "wb-swatch wb-pick";
+  pick.dataset.color = "yellow";
+  pick.setAttribute("aria-expanded", "false");
+  const colour = doc.createElement("div");
+  colour.className = "wb-colour";
+  colour.append(pick, palette);
   // One row: the tools (which scroll sideways at phone width), then who is here and Fit.
   const tools = doc.createElement("div");
   tools.className = "wb-tools";
-  tools.append(banner, adds, connect, remove, palette);
+  tools.append(banner, adds, connect, remove, colour);
   const end = doc.createElement("div");
   end.className = "wb-end";
   end.append(people, status, fit);
   el.append(tools, end);
-  return { el, adds, add, palette, colors, connect, remove, fit, status, people };
+  return { el, adds, add, colour, palette, colors, pick, connect, remove, fit, status, people };
 }
 
 /** Build the board's DOM into `root`, replacing what it held. */

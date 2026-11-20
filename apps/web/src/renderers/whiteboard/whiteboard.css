@@ -79,11 +79,18 @@ body {
 /* On the board's background, with no band of its own: the page reads as the app's header and the
    board. */
 .wb-toolbar {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
   background: var(--wb-bg);
+}
+
+/* The one swatch that opens the colours is for phone widths only. */
+.wb-pick {
+  display: none;
 }
 
 /* The reason a board is read-only is for screen readers: the line itself says "View only". */
@@ -173,6 +180,9 @@ button:focus-visible,
   background: var(--wb-fill-yellow);
 }
 
+.wb-swatch[data-color=""]::before {
+  background: var(--wb-fill-none);
+}
 .wb-swatch[data-color="green"]::before {
   background: var(--wb-fill-green);
 }
@@ -499,9 +509,9 @@ html[data-readonly="true"] .wb-block {
   }
 }
 
-/* At phone width the bar stays one row: the tools scroll sideways, a selection's controls take
-   the add buttons' place, and the people here are coloured dots (their names on hover and for
-   screen readers). */
+/* At phone width the bar stays one row: the tools scroll sideways if they must, a selection's
+   controls take the add buttons' place, one swatch stands for the colours, and the people here
+   are coloured dots (their names on hover and for screen readers). */
 @media (max-width: 560px) {
   .wb-toolbar {
     gap: 8px;
@@ -526,6 +536,28 @@ html[data-readonly="true"] .wb-block {
   }
   .wb-end {
     flex: none;
+  }
+  /* One swatch in the current colour; it opens the others under the bar, outside the scrolling
+     row (the toolbar is their containing block), so the row never shows half a swatch. */
+  .wb-pick {
+    display: block;
+  }
+  .wb-palette {
+    display: none;
+  }
+  .wb-colour[data-open="true"] .wb-palette {
+    display: flex;
+    position: absolute;
+    top: calc(100% - 2px);
+    left: 16px;
+    padding: 4px;
+    background: var(--wb-surface);
+    border: 1px solid var(--wb-border);
+    border-radius: 8px;
+    box-shadow: var(--wb-shadow);
+  }
+  .wb-colour[data-open="true"] .wb-pick {
+    border-color: var(--wb-accent);
   }
   .wb-people li {
     gap: 0;

@@ -359,4 +359,36 @@ describe("Board's toolbar and editing", () => {
     board.setReadOnly(true);
     expect(bar?.dataset.selection).toBe("false");
   });
+
+  it("shows the selected block's colour on one swatch that opens the colours and closes on a pick", () => {
+    const blocks = new Coll();
+    blocks.docs.set("a", { id: "a", data: { ...blk(0, "A1"), color: "blue" }, rev: 3 });
+    const { board, root } = viewer(blocks);
+    board.model.upsertBlock("a", { ...blk(0, "A1"), color: "blue" }, 3);
+    board.redraw();
+    const colour = root.querySelector<HTMLElement>(".wb-colour");
+    const pick = root.querySelector<HTMLButtonElement>(".wb-pick");
+    if (!colour || !pick) throw new Error("no colour control");
+    expect(colour.hidden).toBe(true);
+    root.querySelector(".wb-block")?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(colour.hidden).toBe(false);
+    expect(pick.getAttribute("aria-label")).toBe("Colour");
+    expect(pick.dataset.color).toBe("blue");
+    expect(pick.getAttribute("aria-expanded")).toBe("false");
+    pick.click();
+    expect(colour.dataset.open).toBe("true");
+    expect(pick.getAttribute("aria-expanded")).toBe("true");
+    // Escape closes it and leaves the selection as it is.
+    root
+      .querySelector('[aria-label="Pink"]')
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(colour.dataset.open).toBe("false");
+    expect(colour.hidden).toBe(false);
+    pick.click();
+    root.querySelector<HTMLButtonElement>('[aria-label="Pink"]')?.click();
+    expect(colour.dataset.open).toBe("false");
+    expect(pick.dataset.color).toBe("pink");
+    expect(document.activeElement).toBe(pick);
+    expect(blocks.sets.at(-1)?.data).toMatchObject({ color: "pink" });
+  });
 });

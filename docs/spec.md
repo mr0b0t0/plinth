@@ -1755,9 +1755,10 @@ its page without a new version each time, and agents add and move blocks with
   at every width (for a commenter on an `editors` board, screen readers also hear ": editors can
   change this board").
   Under 560 px a selection's controls take the add buttons' place and the row scrolls sideways
-  if it must, the people here are coloured dots (the full name on hover and for screen readers),
-  and Fit zooms out no further than 75% so text stays readable, starting from the board's
-  top-left.
+  if it must, the colours are one swatch in the block's colour that opens the six under the bar
+  (closed by a pick, Escape or a tap on the board), the people here are coloured dots (the full
+  name on hover and for screen readers), and Fit zooms out no further than 75% so text stays
+  readable, starting from the board's top-left.
 - **History.** A board's versions hold only its settings, so the history's restore is "Restore
   settings", and its header says only "Tick two versions to compare them."
 - **On the board.** A cursor's tag and the people list show a person's name, or their email's local

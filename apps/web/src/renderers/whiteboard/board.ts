@@ -173,15 +173,31 @@ export class Board {
     const id = this.selected;
     const block = id ? this.model.blocks.get(id)?.data : undefined;
     const edit = !this.readOnly;
-    t.palette.hidden = !edit || !block || block.kind === "text";
+    t.colour.hidden = !edit || !block || block.kind === "text";
     for (const [c, b] of Object.entries(t.colors) as [BoardColor, HTMLButtonElement][]) {
       b.setAttribute("aria-pressed", String(block?.color === c));
     }
+    // At phone width one swatch shows the colour and opens the others; they close on a pick, on
+    // Escape and when the selection goes.
+    t.pick.dataset.color = block ? (block.color ?? "") : this.color;
+    if (t.colour.hidden) this.openPalette(false);
     t.connect.hidden = !edit || (!block && !this.connecting);
     t.connect.disabled = this.model.blocks.size < 2;
     t.remove.hidden = !edit || id === null;
     // At phone width the selection's controls take the add buttons' place, so the bar stays one row.
     t.el.dataset.selection = String(edit && (id !== null || this.connecting));
+  }
+
+  private openPalette(on: boolean): void {
+    const t = this.view.toolbar;
+    t.colour.dataset.open = String(on);
+    t.pick.setAttribute("aria-expanded", String(on));
+    if (!on) return;
+    // Under the swatch that opened it, kept inside the bar's 16 px gutters.
+    const bar = t.el.getBoundingClientRect();
+    const at = t.pick.getBoundingClientRect().left - bar.left;
+    const room = bar.width - t.palette.offsetWidth - 16;
+    t.palette.style.left = `${Math.round(Math.max(16, Math.min(at, room)))}px`;
   }
 
   /**
@@ -478,9 +494,20 @@ export class Board {
         const id = this.selected;
         const blk = id ? this.model.blocks.get(id)?.data : undefined;
         if (id && blk && blk.kind !== "text") this.save(id, { color: c });
+        if (t.colour.dataset.open === "true") {
+          this.openPalette(false);
+          t.pick.focus();
+        }
         this.redraw();
       });
     }
+    t.pick.addEventListener("click", () => this.openPalette(t.colour.dataset.open !== "true"));
+    t.colour.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || t.colour.dataset.open !== "true") return;
+      e.stopPropagation();
+      this.openPalette(false);
+      t.pick.focus();
+    });
     t.connect.addEventListener("click", () => {
       if (!this.readOnly) this.setConnecting(!this.connecting);
       this.redraw();
@@ -494,7 +521,10 @@ export class Board {
     t.fit.addEventListener("click", () => this.fitBoard());
 
     const vp = v.viewport;
-    vp.addEventListener("pointerdown", (e) => this.onPointerDown(e));
+    vp.addEventListener("pointerdown", (e) => {
+      this.openPalette(false);
+      this.onPointerDown(e);
+    });
     vp.addEventListener("pointermove", (e) => this.onPointerMove(e));
     vp.addEventListener("pointerup", (e) => this.onPointerUp(e));
     vp.addEventListener("pointercancel", (e) => this.onPointerUp(e));
