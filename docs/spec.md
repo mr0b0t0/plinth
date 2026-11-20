@@ -1694,8 +1694,8 @@ its review has exactly two choices (below).
   Rows and formulas refer to each other by position, and a line merge cannot tell a row edited in
   place from one deleted and another inserted, so it could put a value or a formula reference where
   neither side wrote it. When such a version vN lands, the room freezes the draft: leases end,
-  edits and `struct` frames are refused (`frozen`), and the strip says "vN was published while you
-  edited. Review it to go on." Two cases need no review: a version whose sheet equals the draft's
+  edits and `struct` frames are refused (`frozen`), the Row and Column menus are hidden, and the
+  edit bar says "vN was published while you edited" beside Review changes. Two cases need no review: a version whose sheet equals the draft's
   base (it changed only the title, or restored the same content) moves the base under the draft's
   lines as they are, and a version equal to the draft ends it. The review shows the draft and vN
   side by side as read-only grids (one at a time, with a "Mine" and "vN" switch, at phone width),
@@ -1704,7 +1704,7 @@ its review has exactly two choices (below).
   note "Edited on the page. Replaces the changes in vN." (the editor's own note first); vN stays in
   the history and can be restored. **Discard mine** asks first, naming what will be lost (and, in
   room mode, that it drops everyone's unpublished page edits), then returns the page to vN for
-  everyone. Cancel closes the review and keeps the draft frozen. The checkpoint enforces this: a
+  everyone. Closing the review keeps the draft frozen. The checkpoint enforces this: a
   frozen sheet draft is resolved only to the room's draft exactly or to vN exactly, at the draft's
   current `rev`. Both choices, and the strip's Discard (a doc's too), run under the room's
   checkpoint lock, so one resolves the draft and never on top of the other: a choice or a Discard
@@ -1723,9 +1723,9 @@ its review has exactly two choices (below).
   tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
   carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
-  takes 12.5 for 12.5%. A strip under the bar (the selected cell and the filter) inserts a row above or below, deletes the
-  row, inserts a column left or right, deletes the column, and opens the column's settings (name,
-  type, number format, currency, decimals, options). A value the room would refuse stays in its
+  takes 12.5 for 12.5%. Two menus under the bar (the selected cell and the filter) act on the
+  selected cell: Row (insert above, insert below, delete) and Column (insert left, insert right,
+  delete, and the column's settings: name, type, number format, currency, decimals, options). A value the room would refuse stays in its
   field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
   came first) is asked for again on the same row or column where it is now, found by the row's
   line or the column's definition under the same columns, and dropped with "The sheet changed

@@ -47,7 +47,7 @@ describe("EditBar", () => {
       "A newer version changed the same lines. Review the changes.",
     );
     expect(editStatus(props({ phase: "conflict", merges: false, conflictVersion: 6 }))).toBe(
-      "v6 was published while you edited. Review it to go on.",
+      "v6 was published while you edited",
     );
   });
 
@@ -238,7 +238,7 @@ describe("LiveDraftNotice", () => {
       />,
     );
     expect(screen.getByRole("note").textContent).toContain(
-      "v5 was published over the unsaved page edits. Review them to go on.",
+      "v5 was published over the unsaved page edits",
     );
   });
 

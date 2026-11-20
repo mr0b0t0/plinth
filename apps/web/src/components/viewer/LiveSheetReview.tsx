@@ -7,9 +7,9 @@
 //   which stays in the history ("Edited on the page. Replaces the changes in v6.");
 // - "Discard mine": after a confirmation that names what will be lost, the page goes back to the
 //   version published meanwhile.
-// Cancel closes the review and keeps the draft frozen. It is its own lazy chunk. Cells are text
-// nodes, never HTML: sheet text is untrusted.
-import { FloppyDiskIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
+// Closing the dialog keeps the draft frozen. It is its own lazy chunk. Cells are text nodes, never
+// HTML: sheet text is untrusted.
+import { FloppyDiskIcon, TrashIcon } from "@phosphor-icons/react";
 import { type RefObject, type UIEvent, useMemo, useRef, useState } from "react";
 import { Button, ConfirmDialog, Dialog, SegmentedControl } from "../ui/index.ts";
 import {
@@ -35,10 +35,9 @@ export interface LiveSheetReviewProps {
 
 type Side = "mine" | "theirs";
 
-function Changes({ title, list }: { title: string; list: ChangeList }) {
+function Changes({ list }: { list: ChangeList }) {
   return (
     <div className="pl-sheetreview__changes">
-      <h4 className="pl-sheetreview__changes-title">{title}</h4>
       {list.items.length === 0 ? (
         <p className="pl-sheetreview__none">No changes.</p>
       ) : (
@@ -122,7 +121,7 @@ export default function LiveSheetReview({
   onPublishMine,
   onDiscardMine,
 }: LiveSheetReviewProps) {
-  const { base, current, draft, currentText } = conflict;
+  const { current, draft, currentText } = conflict;
   const baseText = conflict.baseText ?? null;
   const [show, setShow] = useState<Side>("mine");
   const [confirming, setConfirming] = useState(false);
@@ -145,24 +144,20 @@ export default function LiveSheetReview({
   };
   const next = current + 1;
   const lost = mineChanges ? changeCount(mineChanges) : 0;
+  const everyone = mode === "room" ? " for everyone editing" : "";
   const discardDescription =
-    (mineChanges && lost > 0
-      ? `${lost === 1 ? "This change" : `These ${lost} changes`} will be lost: ${summarize(mineChanges)}. They are not kept anywhere.`
-      : "The page changes will be lost. They are not kept anywhere.") +
-    (mode === "room" ? " This drops the unpublished changes of everyone editing this sheet." : "");
-  const mineLabel = `Your page changes (not published, based on v${base})`;
+    mineChanges && lost > 0
+      ? `${lost === 1 ? "This change" : `These ${lost} changes`} will be lost${everyone}: ${summarize(mineChanges)}.`
+      : `Your page changes will be lost${everyone}.`;
   return (
     <Dialog
       open
       onClose={onClose}
       title={`v${current} was published while you were editing`}
-      description={`Your page changes were not combined with it. Choose which one to keep. The other stays available: v${current} in History, or your changes until you discard them.`}
+      description={`Publish mine makes v${next} without v${current}'s changes. v${current} stays in History.`}
       size="lg"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
           <Button
             variant="secondary"
             icon={TrashIcon}
@@ -178,13 +173,6 @@ export default function LiveSheetReview({
       }
     >
       <div className="pl-sheetreview" data-show={show}>
-        <p className="pl-sheetreview__choice">
-          <WarningIcon aria-hidden="true" className="pl-sheetreview__icon" />
-          <span>
-            Publish mine: your page changes become v{next}. The changes v{current} made, listed
-            below, will not be in v{next}. v{current} stays in History and can be restored.
-          </span>
-        </p>
         <SegmentedControl<Side>
           label="Show"
           className="pl-sheetreview__switch"
@@ -197,18 +185,14 @@ export default function LiveSheetReview({
           ]}
         />
         <div className="pl-sheetreview__panes">
-          <section className="pl-sheetreview__pane" data-side="mine" aria-label={mineLabel}>
-            <h3 className="pl-sheetreview__label">{mineLabel}</h3>
-            {mineChanges && (
-              <Changes title={`Your page changes, since v${base}`} list={mineChanges} />
-            )}
-            <Grid grid={mine} label={mineLabel} scrollRef={mineRef} onScroll={follow(theirsRef)} />
+          <section className="pl-sheetreview__pane" data-side="mine" aria-label="Mine">
+            <h3 className="pl-sheetreview__label">Mine</h3>
+            {mineChanges && <Changes list={mineChanges} />}
+            <Grid grid={mine} label="Mine" scrollRef={mineRef} onScroll={follow(theirsRef)} />
           </section>
           <section className="pl-sheetreview__pane" data-side="theirs" aria-label={`v${current}`}>
             <h3 className="pl-sheetreview__label">v{current}</h3>
-            {theirChanges && (
-              <Changes title={`What v${current} changed, since v${base}`} list={theirChanges} />
-            )}
+            {theirChanges && <Changes list={theirChanges} />}
             <Grid
               grid={theirs}
               label={`v${current}`}
@@ -225,9 +209,9 @@ export default function LiveSheetReview({
           setConfirming(false);
           onDiscardMine();
         }}
-        title="Discard the page changes?"
+        title="Discard your page changes?"
         description={discardDescription}
-        confirmLabel="Discard the page changes"
+        confirmLabel="Discard"
         danger
       />
     </Dialog>

@@ -287,17 +287,47 @@ describe("solo editing", () => {
   it("inserts and deletes rows and columns, moving formulas", async () => {
     const f = start();
     cell("A3").focus();
-    button("Row above").click();
+    button("Insert above").click();
     expect(document.documentElement.getAttribute("data-rows")).toBe("4");
     expect((await collected(f)).split("\n")[4]).toBe('["Total","=SUM(B2:B4)","=B2*C2+B4*C4"]');
     cell("B2").focus();
-    button("Column left").click();
+    button("Insert left").click();
     expect(text("B1")).toBe("Column 6");
     button("Delete column").click();
     expect(text("B1")).toBe("Qty");
     cell("A3").focus();
     button("Delete row").click();
     expect((await collected(f)).split("\n")).toEqual(LINES);
+  });
+
+  it("offers rows and columns in two menus, by keyboard too", () => {
+    start();
+    const strip = document.querySelector(".plinth-sheet__strip") as HTMLElement;
+    const menus = [...strip.querySelectorAll<HTMLButtonElement>("[aria-haspopup=menu]")];
+    expect(menus.map((b) => b.textContent)).toEqual(["Row", "Column"]);
+    expect(strip.textContent).not.toContain("Double-click");
+    const [row] = menus as [HTMLButtonElement];
+    const list = document.getElementById(row.getAttribute("aria-controls") ?? "") as HTMLElement;
+    expect(list.hidden).toBe(true);
+    // On the header row, a row cannot go above it or be deleted.
+    cell("A1").focus();
+    key(row, "ArrowDown");
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(list.hidden).toBe(false);
+    expect(document.activeElement?.textContent).toBe("Insert below");
+    key(document.activeElement as Element, "ArrowDown");
+    expect(document.activeElement?.textContent).toBe("Insert below");
+    key(document.activeElement as Element, "Escape");
+    expect(list.hidden).toBe(true);
+    expect(document.activeElement).toBe(row);
+    cell("A3").focus();
+    row.click();
+    expect(document.activeElement?.textContent).toBe("Insert above");
+    key(document.activeElement as Element, "End");
+    expect(document.activeElement?.textContent).toBe("Delete row");
+    (document.activeElement as HTMLButtonElement).click();
+    expect(list.hidden).toBe(true);
+    expect(document.documentElement.getAttribute("data-rows")).toBe("2");
   });
 
   it("renames by typing in the header, and refuses a type the cells do not fit", async () => {
@@ -310,7 +340,7 @@ describe("solo editing", () => {
     key(input, "Enter");
     expect(text("A1")).toBe("Fruit");
     cell("B2").focus();
-    button("Column settings").click();
+    button("Column settings…").click();
     const form = document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
     const typeSelect = form.querySelectorAll("select")[0] as HTMLSelectElement;
     typeSelect.value = "checkbox";
@@ -412,13 +442,23 @@ describe("room editing", () => {
     ws.frame({ t: "released", lease: "l9" });
     await tick();
     expect(cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder")).toBeNull();
-    button("Row below").click();
+    button("Insert below").click();
     const op = { op: "insert_rows", before: 4, count: 1 };
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 4, op });
     ws.frame({ t: "struct", gen: "g1", rev: 5, op, by: "s1" });
     await tick();
     expect(document.documentElement.getAttribute("data-rows")).toBe("4");
     expect(text("A5")).toBe("Total");
+  });
+
+  it("hides the Row and Column menus while the draft waits for a review", async () => {
+    const { ws } = start();
+    const strip = document.querySelector(".plinth-sheet__strip") as HTMLElement;
+    expect(strip.hidden).toBe(false);
+    ws.frame({ t: "conflict", version: 4 });
+    await tick();
+    await tick();
+    expect(strip.hidden).toBe(true);
   });
 
   it("aims a struct refused as stale at the row chosen, or drops it when that row is gone", async () => {
@@ -464,7 +504,7 @@ describe("room editing", () => {
     });
     await tick();
     cell("A3").focus();
-    button("Row below").click();
+    button("Insert below").click();
     expect(ws.sent.at(-1)).toEqual({
       t: "struct",
       rev: 6,

@@ -42,7 +42,7 @@ export interface EditBarProps {
 export function editStatus(p: EditBarProps): string {
   if (p.saving) return "Saving…";
   if (p.phase === "conflict" && p.merges === false) {
-    return `${p.conflictVersion ? `v${p.conflictVersion}` : "A newer version"} was published while you edited. Review it to go on.`;
+    return `${p.conflictVersion ? `v${p.conflictVersion}` : "A newer version"} was published while you edited`;
   }
   if (p.phase === "conflict") return "A newer version changed the same lines. Review the changes.";
   if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;

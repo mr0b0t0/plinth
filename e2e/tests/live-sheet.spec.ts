@@ -138,7 +138,8 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
 
   // A row inserted above Plums: both pages show it, and the totals' ranges grow.
   await cell(page, "A4").click();
-  await frameOf(page).getByRole("button", { name: "Row above" }).click();
+  await frameOf(page).getByRole("button", { name: "Row", exact: true }).click();
+  await frameOf(page).getByRole("menuitem", { name: "Insert above" }).click();
   await expect(frameOf(page).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(frameOf(other).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(cell(other, "A6")).toHaveText("Total");
@@ -204,27 +205,25 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   // The agent changes the row right below the page's edit: still never merged.
   await type("B2", "4");
   await agentSets("B3", 6, 1);
-  await expect(bar).toContainText("v2 was published while you edited. Review it to go on.", {
+  await expect(bar).toContainText("v2 was published while you edited", {
     timeout: 10_000,
   });
+  // Nothing on the strip works while the draft waits for the review, so it is not shown.
+  await expect(frameOf(page).getByRole("toolbar", { name: "Rows and columns" })).toBeHidden();
   await bar.getByRole("button", { name: "Review changes" }).click();
   const review = page.getByRole("dialog", { name: "v2 was published while you were editing" });
-  await expect(
-    review.getByRole("region", { name: "Your page changes (not published, based on v1)" }),
-  ).toContainText("B2: 3 → 4");
+  await expect(review.getByRole("region", { name: "Mine" })).toContainText("B2: 3 → 4");
   // At phone width one sheet shows at a time, with a switch between them.
   const toV2 = review.getByRole("radio", { name: "v2" });
   if (await toV2.isVisible()) {
     await toV2.check();
-    await expect(
-      review.getByRole("region", { name: "Your page changes (not published, based on v1)" }),
-    ).toHaveCount(0);
+    await expect(review.getByRole("region", { name: "Mine" })).toHaveCount(0);
   }
   await expect(review.getByRole("region", { name: "v2" })).toContainText("B3: 5 → 6");
-  // Cancel keeps the draft frozen, and the review opens again.
-  await review.getByRole("button", { name: "Cancel" }).click();
+  // Closing the review keeps the draft frozen, and the review opens again.
+  await review.getByRole("button", { name: "Close" }).click();
   await expect(review).toHaveCount(0);
-  await expect(bar).toContainText("Review it to go on.");
+  await expect(bar.getByRole("button", { name: "Review changes" })).toBeVisible();
   await bar.getByRole("button", { name: "Review changes" }).click();
 
   // Publish mine: the page edits become v3 as they are; v2 stays in the history.
@@ -243,15 +242,15 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   // Editing resumes on v3. Discard mine asks first, naming what would be lost.
   await type("B2", "7");
   await agentSets("B4", 9, 3);
-  await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
+  await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
   const second = page.getByRole("dialog", { name: "v4 was published while you were editing" });
   await second.getByRole("button", { name: "Discard mine" }).click();
-  const confirm = page.getByRole("alertdialog", { name: "Discard the page changes?" });
-  await expect(confirm).toContainText("This change will be lost: B2: 4 → 7.");
+  const confirm = page.getByRole("alertdialog", { name: "Discard your page changes?" });
+  await expect(confirm).toContainText("This change will be lost for everyone editing: B2: 4 → 7.");
   // Pressed, not clicked: at phone width the "Updated to v4" toast can sit over this button, and a
   // toast under a resting pointer pauses, so a click can wait on it until the test times out.
-  await confirm.getByRole("button", { name: "Discard the page changes" }).press("Enter");
+  await confirm.getByRole("button", { name: "Discard", exact: true }).press("Enter");
   await expect(page.getByText("The page is back to v4.")).toBeVisible({ timeout: 10_000 });
   await expect(cell(page, "B2")).toHaveText("4");
   await expect(cell(page, "B4")).toHaveText("9");

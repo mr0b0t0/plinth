@@ -79,8 +79,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
   sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
   Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
-  spreadsheet fills the rows they cover. A strip inserts and deletes rows and columns and changes a
-  column's name, type and format. The others editing see each change as it is typed, and rows
+  spreadsheet fills the rows they cover. Row and Column menus insert and delete rows and columns
+  and change a column's name, type and format. The others editing see each change as it is typed, and rows
   someone holds show their email. Save version (or a pause) makes the next version, as for docs.
   A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged into the
   page edits: editing pauses, and the editors review both sheets side by side, with what each

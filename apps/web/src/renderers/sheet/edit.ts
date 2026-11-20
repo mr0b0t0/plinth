@@ -7,9 +7,9 @@
 // back as it was. A checkbox toggles with Enter, Space or a double-click; Delete clears a cell;
 // pasting tab-separated text writes the rows it covers. Rows other people hold show their email.
 //
-// Rows and columns: the edit strip inserts and deletes them with a `struct` frame, which the room
-// applies only while nobody else holds a lease, and the column settings change a column's name,
-// type and format through a lease on the header line. Every line this sends is checked first with
+// Rows and columns: the strip's Row and Column menus insert and delete them with a `struct` frame,
+// which the room applies only while nobody else holds a lease, and the column settings change a
+// column's name, type and format through a lease on the header line. Every line this sends is checked first with
 // the same rules the room applies (checkRow, the header rules), so a refused value never leaves the
 // frame and the room's draft is always a valid sheet.
 //
@@ -384,8 +384,10 @@ export class SheetEditor {
       this.mountStrip();
     } else {
       this.win.removeEventListener("keydown", this.onSaveKey);
+      this.closeMenu(false);
       this.strip?.remove();
       this.strip = null;
+      this.stripButtons.clear();
       this.closePanel();
       this.hideNotice();
     }
@@ -1034,38 +1036,129 @@ export class SheetEditor {
   }
 
   private stripButtons = new Map<string, HTMLButtonElement>();
+  private menuOpen: { button: HTMLButtonElement; list: HTMLElement } | null = null;
 
+  /** Two menus, Row and Column, acting on the selected cell. */
   private makeStrip(): HTMLElement {
     const d = this.doc;
     const strip = d.createElement("div");
     strip.className = "plinth-sheet__strip";
     strip.setAttribute("role", "toolbar");
     strip.setAttribute("aria-label", "Rows and columns");
-    const add = (key: string, label: string, run: () => void) => {
-      const b = d.createElement("button");
-      b.type = "button";
-      b.className = "plinth-sheet__btn";
-      b.textContent = label;
-      b.addEventListener("click", run);
-      this.stripButtons.set(key, b);
-      strip.append(b);
-    };
-    add("rowAbove", "Row above", () => this.rowAction("above"));
-    add("rowBelow", "Row below", () => this.rowAction("below"));
-    add("rowDelete", "Delete row", () => this.rowAction("delete"));
-    add("colLeft", "Column left", () => this.columnAction("left"));
-    add("colRight", "Column right", () => this.columnAction("right"));
-    add("colDelete", "Delete column", () => this.columnAction("delete"));
-    add("colEdit", "Column settings", () => this.openPanel());
-    const hint = d.createElement("span");
-    hint.className = "plinth-sheet__hint";
-    hint.textContent = "Double-click a cell, or select it and type, to edit.";
-    strip.append(hint);
+    strip.append(
+      this.makeMenu("Row", [
+        ["rowAbove", "Insert above", () => this.rowAction("above")],
+        ["rowBelow", "Insert below", () => this.rowAction("below")],
+        ["rowDelete", "Delete row", () => this.rowAction("delete")],
+      ]),
+      this.makeMenu("Column", [
+        ["colLeft", "Insert left", () => this.columnAction("left")],
+        ["colRight", "Insert right", () => this.columnAction("right")],
+        ["colDelete", "Delete column", () => this.columnAction("delete")],
+        ["colEdit", "Column settings…", () => this.openPanel()],
+      ]),
+    );
     return strip;
+  }
+
+  /** A menu button and its list: arrows move, Escape and Tab close, a choice runs and closes. */
+  private makeMenu(label: string, items: [string, string, () => void][]): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement("div");
+    wrap.className = "plinth-sheet__menu";
+    const button = d.createElement("button");
+    button.type = "button";
+    button.className = "plinth-sheet__btn plinth-sheet__menu-btn";
+    button.textContent = label;
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    const list = d.createElement("div");
+    list.className = "plinth-sheet__menu-list";
+    list.id = `plinth-sheet-menu-${label.toLowerCase()}`;
+    list.setAttribute("role", "menu");
+    list.setAttribute("aria-label", label);
+    list.hidden = true;
+    button.setAttribute("aria-controls", list.id);
+    for (const [key, text, run] of items) {
+      const item = d.createElement("button");
+      item.type = "button";
+      item.className = "plinth-sheet__menu-item";
+      item.setAttribute("role", "menuitem");
+      item.tabIndex = -1;
+      item.textContent = text;
+      item.addEventListener("click", () => {
+        this.closeMenu(true);
+        run();
+      });
+      this.stripButtons.set(key, item);
+      list.append(item);
+    }
+    const enabled = () =>
+      [...list.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].filter((b) => !b.disabled);
+    const show = (focus: "first" | "last") => {
+      this.closeMenu(false);
+      this.updateStrip();
+      list.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      this.menuOpen = { button, list };
+      this.doc.addEventListener("pointerdown", this.onOutside, true);
+      const all = enabled();
+      (focus === "first" ? all[0] : all[all.length - 1])?.focus();
+    };
+    button.addEventListener("click", () => {
+      if (this.menuOpen?.list === list) this.closeMenu(true);
+      else show("first");
+    });
+    button.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        show(e.key === "ArrowDown" ? "first" : "last");
+      }
+    });
+    list.addEventListener("keydown", (e) => {
+      const all = enabled();
+      const at = all.indexOf(this.doc.activeElement as HTMLButtonElement);
+      let next: HTMLButtonElement | undefined;
+      if (e.key === "ArrowDown") next = all[(at + 1) % all.length];
+      else if (e.key === "ArrowUp") next = all[(at - 1 + all.length) % all.length];
+      else if (e.key === "Home") next = all[0];
+      else if (e.key === "End") next = all[all.length - 1];
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeMenu(true);
+        return;
+      } else if (e.key === "Tab") {
+        this.closeMenu(false);
+        return;
+      } else return;
+      e.preventDefault();
+      next?.focus();
+    });
+    wrap.append(button, list);
+    return wrap;
+  }
+
+  private readonly onOutside = (e: Event) => {
+    const m = this.menuOpen;
+    if (m && !m.list.parentNode?.contains(e.target as Node)) this.closeMenu(false);
+  };
+
+  private closeMenu(focusButton: boolean): void {
+    const m = this.menuOpen;
+    if (!m) return;
+    this.menuOpen = null;
+    this.doc.removeEventListener("pointerdown", this.onOutside, true);
+    m.list.hidden = true;
+    m.button.setAttribute("aria-expanded", "false");
+    if (focusButton) m.button.focus();
   }
 
   private updateStrip(): void {
     if (!this.strip || !this.grid) return;
+    // Nothing on the strip works while the draft waits for a review.
+    this.strip.hidden = this.backend.conflictVersion !== null;
+    if (this.strip.hidden) this.closeMenu(false);
     const { row } = this.grid.selected();
     const cols = this.header()?.columns.length ?? 0;
     const set = (k: string, disabled: boolean) => {
@@ -1077,6 +1170,11 @@ export class SheetEditor {
     set("colDelete", cols <= 1);
     set("colLeft", cols >= LIMITS.maxSheetColumns);
     set("colRight", cols >= LIMITS.maxSheetColumns);
+  }
+
+  /** The room's state changed (connected, frozen): the strip follows. */
+  sync(): void {
+    this.updateStrip();
   }
 
   /** Send a struct; `again` aims it at the same rows or column if the room says it is stale. */

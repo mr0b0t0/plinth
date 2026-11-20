@@ -400,14 +400,18 @@ body {
 
 .plinth-sheet__strip {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 16px;
   border-bottom: 1px solid var(--sheet-rule);
 }
 
-/* The edit strip's and panels' buttons (the page has no other buttons: downloads are in the app). */
+.plinth-sheet__strip[hidden] {
+  display: none;
+}
+
+/* The strip's menus and the panels' buttons (the page has no other buttons: downloads are in the
+   app). */
 .plinth-sheet__btn {
   padding: 5px 10px;
   border: 1px solid var(--sheet-rule-strong);
@@ -418,23 +422,78 @@ body {
   cursor: pointer;
 }
 
-.plinth-sheet__btn:hover {
+.plinth-sheet__btn:hover,
+.plinth-sheet__menu-btn[aria-expanded="true"] {
   background: var(--sheet-head-bg);
 }
 
-.plinth-sheet__btn:focus-visible {
+.plinth-sheet__btn:focus-visible,
+.plinth-sheet__menu-item:focus-visible {
   outline: 2px solid var(--sheet-accent);
   outline-offset: -2px;
 }
 
-.plinth-sheet__strip .plinth-sheet__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.plinth-sheet__menu {
+  position: relative;
 }
 
-.plinth-sheet__hint {
+.plinth-sheet__menu-btn {
+  padding: 3px 8px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.plinth-sheet__menu-btn::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 2px 3px 8px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(45deg);
+  opacity: 0.6;
+}
+
+.plinth-sheet__menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 8px;
+  background: var(--sheet-bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+.plinth-sheet__menu-list[hidden] {
+  display: none;
+}
+
+.plinth-sheet__menu-item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sheet-fg);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plinth-sheet__menu-item:hover:not(:disabled),
+.plinth-sheet__menu-item:focus {
+  background: var(--sheet-head-bg);
+}
+
+.plinth-sheet__menu-item:disabled {
   color: var(--sheet-muted);
-  margin-left: auto;
+  cursor: not-allowed;
 }
 
 .plinth-sheet__panel {

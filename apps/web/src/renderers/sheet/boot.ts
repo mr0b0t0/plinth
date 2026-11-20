@@ -179,6 +179,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         editors,
       };
       post({ type: "live", ...s });
+      editor?.sync();
     };
     const status = () => {
       if (queued) return;
