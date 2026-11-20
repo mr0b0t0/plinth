@@ -17,15 +17,19 @@ import {
   browserSession,
   call,
   config,
+  contentOrigin,
   createToken,
   createUser,
   db,
+  enterContent,
+  fetchWith,
   json,
   mcpClient,
   publish,
   serviceCtxFor,
   tool,
 } from "./helpers.ts";
+import { upgrade } from "./room-helpers.ts";
 
 const DATA_PAGE = `<!doctype html><title>Report</title>
 <meta name="plinth-capabilities" content="data">
@@ -506,6 +510,128 @@ describe("using a token limited to one artifact", () => {
       artifact: null,
     });
     expect((await req("GET", "/me", h)).body.connection).toBeNull();
+  });
+
+  it("a type filter applies to its one artifact too", async () => {
+    const { h, id } = await setup();
+    const t = await boundToken(h, id);
+    expect((await req("GET", "/artifacts?type=html", t.auth)).body.items).toHaveLength(1);
+    expect((await req("GET", "/artifacts?type=doc", t.auth)).body).toEqual({
+      items: [],
+      categories: [],
+    });
+    const c = await mcpClient(t.token);
+    expect((await tool(c, "list_artifacts", { type: "doc" })).data.items).toEqual([]);
+    expect((await tool(c, "list_artifacts", { type: "html" })).data.items).toHaveLength(1);
+    await c.close();
+  });
+});
+
+describe("a token limited to one artifact never sees the page run with its data", () => {
+  /** A shared-data read the way the runtime makes one, with whatever content cookie it has. */
+  const readData = (id: string, cookie: string | null) =>
+    call(`${contentOrigin(id)}/__plinth/api/v1/data/votes`, {
+      headers: {
+        "x-plinth-data": "1",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+        ...(cookie ? { cookie } : {}),
+      },
+    });
+
+  it("the viewer gate refuses it, so no pass reads the shared data", async () => {
+    const { owner, id, other } = await setup();
+    const t = await boundToken(await signedIn(owner.user.id), id);
+    const gate = await req("GET", `/view/${id}`, t.auth);
+    expect(gate.status).toBe(403);
+    expect(gate.body.error.details.reason).toBe("token_bound");
+    expect(gate.body.enter_url).toBeUndefined();
+    // Every other artifact is the 404 it always is.
+    expect((await req("GET", `/view/${other.id}`, t.auth)).body).toEqual({ status: "not_found" });
+    // The reviewer's path: redeem the gate's URL, then read /__plinth/api/ as a page script would.
+    const entered = await enterContent(id, { headers: t.auth });
+    expect(entered.cookie).toBeNull();
+    const read = await readData(id, entered.cookie);
+    expect(read.status).not.toBe(200);
+    expect(await read.text()).not.toContain('"votes"');
+    // The owner's account-wide token and the owner in a browser still open it, and read the data.
+    expect((await req("GET", `/view/${id}`, owner.auth)).body.status).toBe("ok");
+    const mine = await enterContent(id, { headers: (await browserSession(owner.user.id)).headers });
+    expect(mine.cookie).toBeTruthy();
+    expect((await readData(id, mine.cookie)).status).toBe(200);
+  });
+
+  it("the gate refuses it on an unlisted artifact too, and after a correct password", async () => {
+    const pub = await setup({ visibility: "unlisted" });
+    const t = await boundToken(pub.h, pub.id);
+    const gate = await req("GET", `/view/${pub.id}`, t.auth);
+    expect(gate.status).toBe(403);
+    expect(gate.body.error.details.reason).toBe("token_bound");
+
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const locked = await publish(owner.auth, {
+      title: "Locked",
+      html: DATA_PAGE,
+      visibility: "password",
+      password: "correct horse battery",
+    });
+    expect(locked.res.status).toBe(201);
+    const lt = await boundToken(h, locked.body.id);
+    // The owner's token needs no password, and gets no pass either way.
+    expect((await req("GET", `/view/${locked.body.id}`, lt.auth)).body.error.details.reason).toBe(
+      "token_bound",
+    );
+    const pw = await req("POST", `/view/${locked.body.id}/password`, lt.auth, {
+      password: "correct horse battery",
+    });
+    expect(pw.status).toBe(403);
+    expect(pw.body.error.details.reason).toBe("token_bound");
+  });
+
+  it("gets no thumbnail, and its summaries carry no thumbnail_url", async () => {
+    const { owner, h, id } = await setup();
+    const t = await boundToken(h, id);
+    const shot = await req("GET", `/artifacts/${id}/thumbnail`, t.auth);
+    expect(shot.status).toBe(403);
+    expect(shot.body.error.details.reason).toBe("token_bound");
+    // The owner's own answer is the usual "No thumbnail yet" (this instance takes none).
+    expect((await req("GET", `/artifacts/${id}/thumbnail`, owner.auth)).status).toBe(404);
+    // With thumbnails on, the owner's summary links one and the bound token's does not.
+    const on = { BROWSER: {} as Fetcher };
+    const mine = await json(
+      await fetchWith(on, `/api/v1/artifacts/${id}`, { headers: owner.auth }),
+    );
+    expect(mine.thumbnail_url).toEqual(expect.stringContaining(`/artifacts/${id}/thumbnail`));
+    const its = await json(await fetchWith(on, `/api/v1/artifacts/${id}`, { headers: t.auth }));
+    expect(its.id).toBe(id);
+    expect(its.thumbnail_url).toBeNull();
+    const list = await json(await fetchWith(on, "/api/v1/artifacts", { headers: t.auth }));
+    expect(list.items[0].thumbnail_url).toBeNull();
+  });
+
+  it("its in-chat preview is a pass that reads no shared data and joins no room", async () => {
+    const { h, id } = await setup();
+    const t = await boundToken(h, id);
+    const c = await mcpClient(t.token);
+    const room = `<!doctype html><title>Board</title>
+<meta name="plinth-capabilities" content="data viewer room"><p>board</p>`;
+    const up = await tool(c, "update_artifact", { id, html: room, base_version: 1 });
+    expect(up.isError, up.text).toBe(false);
+    const link = await tool(c, "preview_artifact", { id });
+    expect(link.isError, link.text).toBe(false);
+    await c.close();
+    const enter = await call(link.data.preview_url, { headers: { "sec-fetch-dest": "iframe" } });
+    const cookie = (enter.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    expect(cookie).toContain("=");
+    const read = await readData(id, cookie);
+    expect(read.status).toBeGreaterThanOrEqual(400);
+    expect(await read.text()).toContain("preview");
+    const ws = await upgrade(id, cookie);
+    expect(ws.status).toBe(403);
+    expect(ws.webSocket).toBeFalsy();
+    expect(await ws.text()).toContain("preview");
   });
 });
 

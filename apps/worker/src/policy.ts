@@ -75,7 +75,13 @@ export type ArtifactAction =
    * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
    * token bound to one artifact never may.
    */
-  | "comments_read";
+  | "comments_read"
+  /**
+   * See the page as it runs: an enter URL for the content host (the viewer gate), or a picture of
+   * it running (a thumbnail). As view, except that a token bound to one artifact never may: a pass
+   * reads the page's shared data, and a capture can draw it.
+   */
+  | "enter";
 
 export interface ArtifactFacts {
   id: string;
@@ -130,6 +136,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   views: "artifacts:read",
   live_edit: "artifacts:write",
   comments_read: "artifacts:read",
+  enter: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -190,7 +197,7 @@ export function decide(
     // Only the owner may still manage or delete it; an admin may look at it to review a report.
     if (role === "owner" && (action === "manage" || action === "delete"))
       return { allow: true, role };
-    if (isAdmin && action === "view") return { allow: true, role };
+    if (isAdmin && (action === "view" || action === "enter")) return { allow: true, role };
     return deny("taken_down", role);
   }
 
@@ -198,6 +205,7 @@ export function decide(
     case "view":
     case "report":
     case "comments_read":
+    case "enter":
       return canView(p, artifact, access, role, isAdmin);
     case "comment":
     case "mention": {
@@ -467,5 +475,14 @@ export function mayCreateArtifacts(p: Principal): boolean {
  * the artifacts the binding hides. One artifact's stats go through decide(views) as usual.
  */
 export function mayReadStatsSummary(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
+
+/**
+ * Does a summary built for this principal (one that may view the artifact) carry `thumbnail_url`?
+ * Not for a token bound to one artifact, which decide(enter) refuses the thumbnail itself, so the
+ * link would only answer 403. Wherever decide(view) allows, this equals decide(enter).allow.
+ */
+export function seesThumbnails(p: Principal): boolean {
   return boundArtifactOf(p) === null;
 }

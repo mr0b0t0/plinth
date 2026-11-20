@@ -15,7 +15,8 @@ shell) use the CLI with the same options.
 
 Use a token limited to the artifact. It can read that artifact and publish new versions of it,
 and nothing else: it cannot create artifacts, open or change any other artifact, share, rename,
-restore or delete, or read comments, shared data and view counts. If it leaks, the most it can do
+restore or delete, or read comments, shared data (not through the viewer gate or a thumbnail
+either) and view counts. If it leaks, the most it can do
 is publish a version, which anyone with edit rights can revert.
 
 1. In Plinth, open **Connections**, then **Advanced: personal access tokens for scripts and CI**,

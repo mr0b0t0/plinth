@@ -15,6 +15,7 @@ import {
   scopeFor,
   seesOwnerMetadata,
   seesPeople,
+  seesThumbnails,
 } from "../src/policy.ts";
 
 const OWNER = "u-owner";
@@ -36,6 +37,7 @@ const ACTIONS = Object.keys({
   views: true,
   live_edit: true,
   comments_read: true,
+  enter: true,
 } satisfies Record<ArtifactAction, true>) as ArtifactAction[];
 
 const ALL = ["artifacts:read", "artifacts:write", "mentions"] as const;
@@ -199,6 +201,58 @@ describe("policy: a token bound to one artifact", () => {
         }
       }
     }
+  });
+
+  it("enter: refused for a bound token, exactly view for everyone else, takedowns included", () => {
+    expect(scopeFor("enter")).toBe("artifacts:read");
+    expect(decide(boundAgent(ALL), "enter", art(), access())).toEqual({
+      allow: false,
+      reason: "token_bound",
+      role: "owner",
+    });
+    // A page the token could open signed out: it still gets no pass of its own.
+    expect(decide(boundAgent(ALL), "enter", art({ visibility: "public" }), access())).toEqual({
+      allow: false,
+      reason: "token_bound",
+      role: "owner",
+    });
+    const wide: Principal = {
+      ...(boundAgent(ALL) as Extract<Principal, { kind: "agent" }>),
+      boundArtifactId: null,
+    };
+    const noRead: Principal = {
+      ...(boundAgent(["artifacts:write"]) as Extract<Principal, { kind: "agent" }>),
+      boundArtifactId: null,
+    };
+    const user: Principal = { kind: "user", userId: "u-x", email: "x@example.com", isAdmin: false };
+    const admin: Principal = { ...user, isAdmin: true };
+    const owner: Principal = {
+      kind: "user",
+      userId: OWNER,
+      email: "o@example.com",
+      isAdmin: false,
+    };
+    const viewer: Principal = { kind: "viewer", email: "v@example.com" };
+    const anon: Principal = { kind: "anonymous" };
+    for (const p of [wide, noRead, user, admin, owner, viewer, anon]) {
+      for (const visibility of ["public", "unlisted", "allowlist", "password"] as const) {
+        for (const grantRole of [null, "viewer", "commenter", "editor"] as const) {
+          for (const takenDown of [false, true]) {
+            for (const passwordPassed of [false, true]) {
+              const facts = art({ visibility, hasPassword: visibility === "password", takenDown });
+              const acc = access({ grantRole, passwordPassed, isAdmin: p === admin });
+              expect(
+                decide(p, "enter", facts, acc),
+                `${p.kind} ${visibility} ${grantRole} ${takenDown} ${passwordPassed}`,
+              ).toEqual(decide(p, "view", facts, acc));
+            }
+          }
+        }
+      }
+      // A summary's thumbnail_url follows the same rule.
+      expect(seesThumbnails(p), p.kind).toBe(true);
+    }
+    expect(seesThumbnails(boundAgent(ALL))).toBe(false);
   });
 
   it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, seesPeople, canActOnMention", () => {

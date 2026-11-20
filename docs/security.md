@@ -34,6 +34,7 @@ make a test pass.
 | A page steers the app through a deck's messages | A script on another frame posts look-alike `position` or `fullscreen` messages to the app page | Deck messages are accepted only from the window of the frame the app holds, at the exact content origin (or `null` under opaque isolation), only for decks, and carry only slide numbers; full screen still needs the person's activation ([Slides](#slides)) |
 | A page drives the comment composer | A page that declares `comments` opens the composer again and again, swaps the anchor under a comment someone is writing, prefills `@claude ...` for a collaborator to click through, or reads comment text through the channel | The page can only open the composer: it never posts and cannot fill in the text; at most one compose a second, none while the tab is hidden or a dialog is open, none before the page said hello; a closed panel reopened at most once a second, by compose and `open` together; `busy` and no change while someone is writing; no page request moves focus, so keystrokes meant for the page never land in the composer; the frame is told ids, pins, status and anchors only ([Comments from the page](#comments-from-the-page)) |
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
+| A CI token reads shared data through a content pass | A token limited to one artifact (refused `data_read`) asks the viewer gate for an enter URL, redeems it and reads `/__plinth/api/` with a script, or reads a thumbnail of a version that draws the data | The gate and thumbnails ask the policy for `enter`, which is `view` for everyone else and `token_bound` for a bound token, so it never gets an enter URL or a thumbnail; its in-chat preview pass reads no shared data and joins no room ([Authorization](#authorization)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 
@@ -562,6 +563,25 @@ only where `decide(view)` allows it for the person now. A binding only narrows: 
 updated, deleting or taking down the artifact revokes its tokens, erasing it removes them by cascade
 (never `SET NULL`), and a CHECK refuses it on an OAuth connection. Only the artifact's owner or an
 editor (`edit`) can make one; strangers get 404.
+
+A bound token never holds a content pass of its own. A pass reads the page's shared data once the
+current version declares `data` (`pageDataAccess` lets any pass read, and a page's script meets the
+data API's caller checks itself), so a gate for the token would undo the `data_read` refusal: with
+publish rights it could ship a version that declares `data viewer`, have identified viewers' pages
+copy their emails into a document, and read them back through its own pass. The viewer gate
+(`GET /api/v1/view/:ref`, which the password and code routes also answer through) therefore asks
+the policy for `enter`, not `view`: the same rule as `view` for every other principal (admins on a
+takedown included), and `token_bound` (403) for a bound token on its artifact, so no enter URL, no
+identity claim, no room and no counted open is ever minted for it. Thumbnails are `enter` too
+(`GET /artifacts/:ref/thumbnail` answers 403 `token_bound`, and summaries give the token
+`thumbnail_url: null`, `policy.seesThumbnails`), since Plinth's capture runs the page with a pass
+that reads its data and the picture could show it. The in-chat preview (`preview_artifact`) stays
+allowed: a preview pass carries no identity, reads and writes no shared data (`reason: "preview"`)
+and never joins a room, so it shows the version's files, which `get_artifact` already returns. The
+token's own versions still run for everyone who opens the artifact, as an editor's agent's do: page
+code can show identified viewers' emails to whoever may read the page's data, which is the
+threat table's "Page code harvests viewer emails" row (the viewer is told, and anyone with edit rights can
+revert the version), not a read the token makes.
 
 An artifact's stats ([spec](spec.md#artifact-stats)), which name the people who opened it, are
 behind their own policy action, `views`: the owner only, a read action for agents

@@ -14,7 +14,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact
   (**Limit to one artifact** in the New token dialog): it reads that artifact and publishes new versions
-  of it, nothing else (not even the owner's or other people's email addresses), and deleting the
+  of it, nothing else (not even the owner's or other people's email addresses, nor an enter URL
+  or a thumbnail, which would show the page's shared data), and deleting the
   artifact revokes it. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
   a JSON object on failure and for `--dry-run` too, and prints `live_draft` as a note that needs no

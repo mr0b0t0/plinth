@@ -238,7 +238,7 @@ function responseSchemas(): Record<string, Json> {
       ...nullable("string", {
         format: "uri",
         description:
-          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands",
+          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none, and for a token limited to one artifact. May answer 404 until the first capture lands",
       }),
     },
     category: nullable("string", {
@@ -1588,14 +1588,14 @@ function operations(): Operation[] {
       operationId: "getArtifactThumbnail",
       summary: "Thumbnail image",
       description:
-        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding.",
+        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding. A token limited to one artifact gets 403 `token_bound`: a capture runs the page, which may draw its shared data.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",
       query: [{ name: "version", schema: int({ minimum: 1 }) }],
       ok: [200, null],
       okMedia: "image/jpeg",
-      errors: [401, 404],
+      errors: [401, 403, 404],
     },
     {
       method: "get",
@@ -1759,6 +1759,8 @@ function operations(): Operation[] {
       path: API.view,
       operationId: "viewGate",
       summary: "Check access and get a one-time enter URL for the content host",
+      description:
+        "A token limited to one artifact gets 403 `token_bound` for its artifact (and the usual not_found gate for every other): the URL becomes a content pass, which reads the page's shared data.",
       tag: "Viewing",
       auth: "optional",
       query: [
@@ -1773,6 +1775,7 @@ function operations(): Operation[] {
         { name: "next", schema: str(), description: "Path inside the artifact to land on" },
       ],
       ok: [200, "ViewGate"],
+      errors: [403],
     },
     {
       method: "post",

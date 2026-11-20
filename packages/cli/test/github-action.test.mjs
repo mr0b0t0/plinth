@@ -12,6 +12,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  ARTIFACT_ID_RE,
   actionableWarnings,
   buildArgv,
   conflictAdvice,
@@ -22,10 +23,14 @@ import {
   formatOutputs,
   outcomeOf,
   readInputs,
+  renderSummary,
   SLUG_RE,
   writeOutputFile,
 } from "../../../publish/lib.mjs";
-import { SLUG_RE as SERVER_SLUG_RE } from "../../shared/src/schemas.ts";
+import {
+  ARTIFACT_ID_RE as SERVER_ARTIFACT_ID_RE,
+  SLUG_RE as SERVER_SLUG_RE,
+} from "../../shared/src/schemas.ts";
 import { PAT, startFakePlinth } from "./helpers/fake-plinth.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -735,5 +740,45 @@ describe("the Action's helpers", () => {
     assert.equal(o.slug, undefined);
     assert.equal(o.url, "");
     assert.equal(o["compare-url"], "");
+  });
+
+  it("puts only an id the server could have made into the outputs and the summary", () => {
+    assert.equal(ARTIFACT_ID_RE.source, SERVER_ARTIFACT_ID_RE.source);
+    const good = "0123456789abcdefghij";
+    const summaryFor = (id) => {
+      const json = { id, slug: "report-1sxs6tzyab", version: 1, verified: true, warnings: [] };
+      const outputs = formatOutputs({ code: 0, json, raw: "{}", origin: "https://p.example" });
+      return {
+        outputs: Object.fromEntries(outputs),
+        summary: renderSummary({ code: 0, json, outputs, created: true }),
+      };
+    };
+    const ok = summaryFor(good);
+    assert.equal(ok.outputs.id, good);
+    assert.match(ok.summary, new RegExp(`Add \`id: ${good}\` to this step`));
+    for (const id of [
+      "a",
+      "x` [click](https://evil.example) `",
+      "0123456789abcdefghij\n### Injected",
+      "0123456789ABCDEFGHIJ",
+      `${good}0`,
+    ]) {
+      const r = summaryFor(id);
+      assert.equal(r.outputs.id, undefined, id);
+      assert.doesNotMatch(r.summary, /Add `id:/, id);
+      assert.doesNotMatch(r.summary, /evil|Injected/, id);
+    }
+    // Even outputs handed in directly: the summary checks the id itself.
+    const direct = renderSummary({
+      code: 0,
+      json: { version: 1 },
+      outputs: [
+        ["outcome", "published"],
+        ["version", "1"],
+        ["id", "x` [click](https://evil.example) `"],
+      ],
+      created: true,
+    });
+    assert.doesNotMatch(direct, /evil/);
   });
 });

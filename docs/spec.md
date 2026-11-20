@@ -215,6 +215,11 @@ name, with no id or email, and each version's author by name or the address's lo
 ids, even when the token is the owner's. Design systems are other artifacts too: `get_design_system`
 answers 404 for every one but its own artifact, unlisted and public ones included, so a page it publishes that
 names one gets `design_system_unavailable` and `get_artifact` shows `design_system: null` to it.
+It never gets a content pass of its own, which reads the page's shared data: the viewer gate
+(`GET /api/v1/view/:ref`, and its password route) answers 403 `token_bound` on its artifact
+instead of an enter URL, and so does the thumbnail (a capture runs the page, which may draw its
+shared data), whose `thumbnail_url` is null for it. Its in-chat preview (`preview_artifact`) stays,
+since a preview pass reads no shared data and joins no room. It reads the page through the API.
 Only the artifact's owner or an editor can make one. The limit
 never widens; deleting or taking down the artifact revokes it, and removing the person's grant stops
 it.
@@ -368,7 +373,8 @@ JSON, which agents read with `get_design_system` to build other pages; see
   adds `versions.thumbnail` and `thumbnail_at` to coordinate this.
 - Dashboard cards show the current version's thumbnail from
   `GET /api/v1/artifacts/:ref/thumbnail`, which uses the same access check as reading the
-  artifact (`thumbnail_url` on summaries; null when the instance takes none). The initials
+  artifact (`thumbnail_url` on summaries; null when the instance takes none), except that a token
+  limited to one artifact gets none (the policy action `enter`). The initials
   placeholder stays until the image loads.
 - Link previews: `/a/...` pages carry Open Graph and Twitter tags. Unfurlers fetch without
   credentials, so they get what a signed-out visitor may see: an artifact anyone with the link

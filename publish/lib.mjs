@@ -16,6 +16,9 @@ export const TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 /** packages/shared SLUG_RE: an artifact slug as the server makes them (a test keeps them equal). */
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
 
+/** packages/shared ARTIFACT_ID_RE: an artifact id as the server makes them (a test keeps them equal). */
+export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
+
 /** A usage problem with the step's inputs: the step fails with exit code 2. */
 export class InputError extends Error {}
 
@@ -222,7 +225,8 @@ export function formatOutputs({ code, json, raw, origin }) {
   const outcome = outcomeOf(code, json);
   const pairs = [["outcome", outcome]];
   const ok = outcome !== "dry_run" && code === 0 && json && typeof json.version === "number";
-  if (json && typeof json.id === "string") pairs.push(["id", json.id]);
+  // Only an id the server could have made: it is printed into the summary as code.
+  if (typeof json?.id === "string" && ARTIFACT_ID_RE.test(json.id)) pairs.push(["id", json.id]);
   const slug = typeof json?.slug === "string" && SLUG_RE.test(json.slug) ? json.slug : null;
   if (slug) pairs.push(["slug", slug]);
   if (ok) {
@@ -339,7 +343,7 @@ export function renderSummary({ code, json, outputs, created, message, baseState
         .join("; ");
       lines.push(`| Warnings | ${warnings.length}: ${first}${warnings.length > 5 ? "; …" : ""} |`);
     }
-    if (created && out.id) {
+    if (created && typeof out.id === "string" && ARTIFACT_ID_RE.test(out.id)) {
       lines.push(
         "",
         `This run created a new private artifact. Add \`id: ${out.id}\` to this step (or use a token limited to it) so later runs update it.`,
