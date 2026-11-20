@@ -164,6 +164,43 @@ describe("CommentsPanel, comments from the page", () => {
     expect(k.settled).toHaveBeenCalledTimes(2);
   });
 
+  it("removes the page's pin when another version is shown, and keeps the draft", async () => {
+    const server: Server = { items: [], posts: [] };
+    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
+    await screen.findByText("No comments yet.");
+    expect(chip(k.panel)).toBe("Pinned to Top left");
+    const user = userEvent.setup();
+    const box = within(k.panel).getByRole("textbox", { name: "New comment" });
+    await user.type(box, "About this");
+    // A live update swaps in version 2, which may draw something else at that spot.
+    k.rerender({ version: 2, pageCompose: { req: REQ, anchor: ANCHOR } });
+    expect(chip(k.panel)).toBeNull();
+    expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
+    expect((box as HTMLTextAreaElement).value).toBe("About this");
+    await user.click(within(k.panel).getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(server.posts.length).toBe(1));
+    expect(server.posts[0]).toEqual({ body: "About this", version_number: 2 });
+    // The same version again changes nothing.
+    k.rerender({ version: 2, pageCompose: { req: "request-0000000003", anchor: ANCHOR } });
+    expect(chip(k.panel)).toBe("Pinned to Top left");
+    k.rerender({ version: 2, pageCompose: { req: "request-0000000003", anchor: ANCHOR } });
+    expect(chip(k.panel)).toBe("Pinned to Top left");
+  });
+
+  it("ends picking when a new version makes the page anchor its own comments", async () => {
+    const server: Server = { items: [], posts: [] };
+    const k = renderPanel(server, { pageOwnsAnchors: false });
+    await screen.findByText("No comments yet.");
+    await userEvent
+      .setup()
+      .click(within(k.panel).getByRole("button", { name: "Pin to an element" }));
+    expect(k.panel.dataset.picking).toBe("true");
+    k.rerender({ version: 2, pageOwnsAnchors: true });
+    expect(k.panel.dataset.picking).toBeUndefined();
+    expect(within(k.panel).queryByRole("button", { name: "Pin to an element" })).toBeNull();
+    expect(within(k.panel).getByRole("textbox", { name: "New comment" })).toBeTruthy();
+  });
+
   it("keeps a request through React's strict-mode effect re-run", async () => {
     serve({ items: [], posts: [] });
     const { frame } = fakeFrame();

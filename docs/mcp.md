@@ -687,6 +687,9 @@ A comment's `anchor` (and a mention task's) is null, or one of two shapes:
   page's code to see what they mean.
 
 Anchors are written by page code and by commenters, so they are untrusted like the comment text.
+The commenter saw only a page anchor's label (`text`, else `key`): its coordinates and `data` were
+chosen by the page and posted with the comment unseen, so never read them as something the
+commenter said or approved.
 
 ### `resolve_comment`
 

@@ -9,9 +9,9 @@ import {
   type EffectiveRole,
   LIMITS,
 } from "./constants.ts";
-import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
+import { utf8Length } from "./utf8.ts";
 
 // ---------- capabilities ----------
 
@@ -277,10 +277,7 @@ export const dataDocIdSchema = z
   )
   .describe("Document id, or ~me for your own personal document");
 
-/** UTF-8 length of a string, without TextEncoder (this package targets plain ES2023). */
-export function utf8Length(s: string): number {
-  return utf8Bytes(s);
-}
+export { utf8Length };
 
 /** UTF-8 bytes of a document's JSON, as stored. */
 export function dataByteSize(data: unknown): number {

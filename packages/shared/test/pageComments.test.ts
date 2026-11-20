@@ -131,6 +131,22 @@ describe("page anchors", () => {
     expect(anchorSchema.safeParse({ selector: "h1", x: 2 }).success).toBe(false);
   });
 
+  it("drop control and format characters from an element's text, and refuse them on a page's", () => {
+    // An element's text comes from the page's DOM (soft hyphens, emoji joiners): cleaned, kept.
+    const picked = { selector: "h1", text: "co­op ‮evil‬​\tdone 👩‍💻" };
+    expect(anchorSchema.parse(picked)).toEqual({ selector: "h1", text: "coop evildone 👩💻" });
+    expect(createCommentInput.parse({ body: "hi", anchor: picked }).anchor).toEqual({
+      selector: "h1",
+      text: "coop evildone 👩💻",
+    });
+    // A page chooses its label and data: refused, so the page learns at once.
+    for (const bad of ["a‮b", "a​b", "a⁨b", "a\u0007b"]) {
+      expect(pageAnchorSchema.safeParse({ kind: "page", key: "a", text: bad }).success).toBe(false);
+      const data = { kind: "page", key: "a", data: { s: bad } };
+      expect(pageAnchorSchema.safeParse(data).success).toBe(false);
+    }
+  });
+
   it("are told apart by isPageAnchor", () => {
     expect(isPageAnchor({ kind: "page", key: "a" })).toBe(true);
     expect(isPageAnchor({ selector: "h1" })).toBe(false);

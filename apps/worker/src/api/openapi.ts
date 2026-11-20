@@ -622,7 +622,7 @@ function responseSchemas(): Record<string, Json> {
             page_comments: {
               const: true,
               description:
-                "The current version declares `comments` (HTML only): the page may open the " +
+                "The version being shown declares `comments` (HTML only): the page may open the " +
                 "comment composer with its own anchors, and `review` is ignored",
             },
           },

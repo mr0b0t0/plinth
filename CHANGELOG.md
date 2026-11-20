@@ -15,7 +15,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   its own markers for the threads and tell Plinth where to put its pins. The person still writes
   and posts every comment, and the page never sees comment text. Opening comments on such a page no
   longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
-  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0.
+  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0. A declaring page connects as
+  soon as it loads, so its pins show even before its code calls `plinth.comments`, and they follow
+  the layout as images load or the page resizes. Whether the page anchors its own comments follows
+  the version being viewed, so an older version without the declaration keeps "Pin to an element".
 - **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
   off its anchor; it now grows in place.
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`

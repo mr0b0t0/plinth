@@ -870,10 +870,16 @@ markers and tell Plinth where to draw its pins.
 
 - **Declaration.** `comments` in `<meta name="plinth-capabilities">` (for example
   `content="comments"`), HTML artifacts only. It is neither shared data nor a room: a page that
-  declares only `comments` has no store and no room. The current version's declaration governs, as
-  for data and rooms, and the viewer gate says so with `page_comments: true`.
-- **Page API.** `window.plinth.comments` in `/__plinth/runtime.js`. Nothing is sent until the page
-  first uses it.
+  declares only `comments` has no store and no room. Unlike data and rooms, which follow the
+  current version's declaration, the declaration of the version being shown decides, because it
+  only changes what the app shows for that page; the viewer gate says so with
+  `page_comments: true`. An old version that does not declare it keeps review mode and "Pin to an
+  element".
+- **Page API.** `window.plinth.comments` in `/__plinth/runtime.js`. A page whose own
+  `<meta name="plinth-capabilities">` lists `comments` starts it as the runtime loads (or once that
+  meta is parsed), so Plinth's pins for its threads work however late the page first calls the
+  API, or if it never does; calling it again starts nothing twice. On any other page nothing is
+  sent until the page first uses it.
   - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
     direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
     in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
@@ -890,6 +896,8 @@ markers and tell Plinth where to draw its pins.
     `{ left, top, width, height }` in the frame's viewport, or null. Without it Plinth draws no pin
     for page anchors.
   - `refresh()` runs `locate` again after the page moved things (coalesced, at most 20 a second).
+    The runtime also measures again on window scroll and resize, on `load` and whenever the
+    document's size changes (`ResizeObserver`), and reports positions only when they changed.
   - `open(id)` shows a thread in the panel.
   - `onFocus(fn)` hears when the person picks a page-anchored thread in the panel or by its pin.
 - **The person posts.** A page never posts a comment and cannot fill in its text: the person writes
@@ -912,7 +920,12 @@ markers and tell Plinth where to draw its pins.
   to in its own terms (`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`), `x` and `y` are page coordinates
   (finite, within ±10⁹), `text` is a label of at most 120 characters for the composer's chip, and
   `data` holds at most 16 flat page-defined fields (keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`; strings of
-  at most 200 characters, finite numbers, booleans or null; 1 KiB as JSON). The schema is strict:
+  at most 200 characters, finite numbers, booleans or null; 1 KiB as JSON). `text` and `data`
+  strings may not hold control or format characters (Unicode `Cc` and `Cf`: newlines, bidi
+  overrides and isolates, zero-width characters). An element anchor's `text` comes from the page's
+  DOM, so those characters are removed from it instead, on input and when stored anchors are read.
+  The app renders every anchor label isolated (`<bdi>`). The commenter sees only the label: the
+  page's `key`, coordinates and `data` go with the comment unseen. The schema is strict:
   anything that says `kind: "page"` is a valid page anchor or is refused. Element anchors keep their
   shape and are stored without `kind`. The server accepts page anchors on any comment its author may
   post, with or without the declaration, as it accepts element anchors outside review mode; both
@@ -925,9 +938,14 @@ markers and tell Plinth where to draw its pins.
   while the tab is visible and no dialog is open; a compose while someone is writing is `busy` and
   leaves the draft and its anchor alone. `open` is refused while the tab is hidden or a dialog is
   open. A request that would open a closed panel, compose or `open`, is accepted at most once a
-  second, the two together. No page request moves focus. At most 4 `open` and 20 position reports
-  a second, and 500 threads. A page can at worst reopen a panel the person closed, once a second;
-  the report link covers a page that abuses it.
+  second, the two together. No page request moves focus. At most 4 `open` a second and 500
+  threads. `hello` is answered at most once a second. Position reports are checked before they are
+  parsed: 20 a second, and reports over that are coalesced into the latest one, applied when the
+  second ends. They re-render the app only while the comments panel is open, where the latest one
+  is shown when it opens. A pin placed before the shown version changes (a live update, or another
+  version picked) is removed from the composer, which keeps the draft, and its page request settles
+  `closed`. A page can at worst reopen a panel the person closed, once a second; the report link
+  covers a page that abuses it.
 - **Availability.** Origin and opaque isolation alike: the app identifies the frame by its window
   (and, under origin isolation, its exact origin) and posts to it with the exact content origin, or
   `"*"` under opaque isolation, which is safe because the messages hold nothing the framed document

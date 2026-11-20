@@ -7,7 +7,8 @@
 <!--
   A sketch board that takes comments on a spot of the canvas, for Plinth (docs/agents.md
   "Comments from the page"). Click the canvas to draw a dot and open Plinth's comment composer
-  pinned to that point; the person writes and posts the comment there. The board draws its own
+  pinned to that point; the person writes and posts the comment there, and the dot goes away if
+  they close the composer instead (or are writing another comment). The board draws its own
   numbered markers from plinth.comments.onThreads and tells Plinth where each anchor is on screen
   (locate), so Plinth's pins sit on the same spots. Picking a thread in Plinth's panel flashes its
   marker (onFocus); clicking a marker shows the thread (open). The drawing lives only in this tab:
@@ -128,19 +129,29 @@
     const r = canvas.getBoundingClientRect();
     const s = scale();
     const p = { x: Math.round((e.clientX - r.left) / s), y: Math.round((e.clientY - r.top) / s) };
-    dots.push(p);
-    draw();
     if (!comments) {
       say("Comments are not available here.");
       return;
     }
+    // The dot shows while the composer is open, and stays only if a comment was posted on it.
+    dots.push(p);
+    draw();
+    const drop = () => {
+      dots.splice(dots.indexOf(p), 1);
+      draw();
+    };
     comments
       .compose({ key: "canvas", x: p.x, y: p.y, text: `Point ${p.x}, ${p.y}` })
       .then((res) => {
-        if (res.status === "posted") say("Comment posted.");
-        else if (res.status === "busy") say("Finish the comment you are writing first.");
+        if (res.status === "posted") return say("Comment posted.");
+        drop();
+        if (res.status === "busy") say("Finish the comment you are writing first.");
+        else say("");
       })
-      .catch(() => say("Comments are not available here."));
+      .catch(() => {
+        drop();
+        say("Comments are not available here.");
+      });
   });
 
   if (comments) {

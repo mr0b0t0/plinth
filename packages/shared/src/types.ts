@@ -413,7 +413,7 @@ export type ViewGate =
        */
       live?: ViewGateLive;
       /**
-       * The current version declares `comments` (HTML only): the page may open the comment
+       * The version being shown declares `comments` (HTML only): the page may open the comment
        * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
        */
       page_comments?: true;

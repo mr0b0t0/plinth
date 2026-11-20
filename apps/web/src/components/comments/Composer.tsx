@@ -30,7 +30,10 @@ function chipText(anchor: PickedAnchor | PageAnchor) {
   const label = isPageAnchor(anchor) ? anchor.text?.trim() || anchor.key : anchor.text?.trim();
   return label ? (
     <>
-      Pinned to <q>{excerpt(label, 40)}</q>
+      Pinned to{" "}
+      <q>
+        <bdi>{excerpt(label, 40)}</bdi>
+      </q>
     </>
   ) : (
     "Pinned to an element"

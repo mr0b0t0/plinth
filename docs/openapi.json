@@ -2283,7 +2283,8 @@
                         { "type": "boolean" },
                         { "type": "null" }
                       ]
-                    }
+                    },
+                    "maxProperties": 16
                   }
                 },
                 "required": ["kind", "key"],
@@ -3405,7 +3406,8 @@
                     { "type": "boolean" },
                     { "type": "null" }
                   ]
-                }
+                },
+                "maxProperties": 16
               }
             },
             "required": ["kind", "key"],
@@ -3760,7 +3762,7 @@
               "live": { "$ref": "#/components/schemas/ViewGateLive" },
               "page_comments": {
                 "const": true,
-                "description": "The current version declares `comments` (HTML only): the page may open the comment composer with its own anchors, and `review` is ignored"
+                "description": "The version being shown declares `comments` (HTML only): the page may open the comment composer with its own anchors, and `review` is ignored"
               }
             },
             "required": ["status", "artifact", "enter_url", "role"]

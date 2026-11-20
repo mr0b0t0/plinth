@@ -17,9 +17,10 @@ import {
 import {
   PAGE_ANCHOR_DATA_KEY_RE,
   PAGE_ANCHOR_KEY_RE,
+  PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENT_LIMITS,
-  utf8Bytes,
 } from "./pageComments.ts";
+import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
 export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
@@ -359,9 +360,20 @@ export const viewerCodeInput = z.object({
 });
 
 /** A comment pinned to an element: what the review-mode bridge picks. Stored without a `kind`. */
+const UNSAFE_ALL = new RegExp(PAGE_ANCHOR_UNSAFE_RE.source, "gu");
+
 export const elementAnchorSchema = z.object({
   selector: z.string().max(1000),
-  text: z.string().max(500).optional(),
+  /**
+   * The element's text, for the label. It comes from the page's DOM, where soft hyphens and emoji
+   * joiners are common, so control and format characters are removed rather than refused (stored
+   * anchors read back the same way).
+   */
+  text: z
+    .string()
+    .max(500)
+    .transform((t) => t.replace(UNSAFE_ALL, ""))
+    .optional(),
   /** Position inside the element, 0..1 of its box, so a pin lands where it was dropped. */
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
@@ -369,8 +381,17 @@ export const elementAnchorSchema = z.object({
   kind: z.never().optional(),
 });
 
+/** Plain text the page chose: no control or format characters (bidi overrides, zero-width). */
+const pageText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((t) => !PAGE_ANCHOR_UNSAFE_RE.test(t), {
+      message: "No control or format characters (bidi, zero-width)",
+    });
+
 const anchorDataValue = z.union([
-  z.string().max(PAGE_COMMENT_LIMITS.maxDataString),
+  pageText(PAGE_COMMENT_LIMITS.maxDataString),
   z.number().finite(),
   z.boolean(),
   z.null(),
@@ -391,21 +412,26 @@ export const pageAnchorSchema = z
     /** What the page anchors to, in its own terms: "canvas", "slide-3", "node:42". */
     key: z
       .string()
-      .regex(PAGE_ANCHOR_KEY_RE, "Key: a letter or digit, then up to 127 of A-Z a-z 0-9 _ . : / -"),
+      .regex(
+        PAGE_ANCHOR_KEY_RE,
+        `Key: a letter or digit, then up to ${PAGE_COMMENT_LIMITS.maxKey - 1} of A-Z a-z 0-9 _ . : / -`,
+      ),
     /** A point in the page's own coordinates (canvas pixels, diagram units). */
     x: pageCoord.optional(),
     y: pageCoord.optional(),
     /** A short label for the anchor chip ("Slide 3, top left"). Plain text. */
-    text: z.string().max(PAGE_COMMENT_LIMITS.maxText).optional(),
+    text: pageText(PAGE_COMMENT_LIMITS.maxText).optional(),
     /** Extra page-defined fields (zoom, layer): flat, at most 16 keys and 1 KiB as JSON. */
     data: z
       .record(z.string().regex(PAGE_ANCHOR_DATA_KEY_RE), anchorDataValue)
       .refine((d) => Object.keys(d).length <= PAGE_COMMENT_LIMITS.maxDataKeys, {
         message: `At most ${PAGE_COMMENT_LIMITS.maxDataKeys} data keys`,
       })
-      .refine((d) => utf8Bytes(JSON.stringify(d)) <= PAGE_COMMENT_LIMITS.maxDataBytes, {
+      .refine((d) => utf8Length(JSON.stringify(d)) <= PAGE_COMMENT_LIMITS.maxDataBytes, {
         message: `Data is over ${PAGE_COMMENT_LIMITS.maxDataBytes} bytes`,
       })
+      // The key count is a refinement, which JSON Schema cannot express; say it for OpenAPI.
+      .meta({ maxProperties: PAGE_COMMENT_LIMITS.maxDataKeys })
       .optional(),
   })
   .strict();

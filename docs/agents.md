@@ -439,15 +439,16 @@ stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram
 - **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
   drawing or a zoom level survives.
 - **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves
-  `{ available: false }` in in-chat previews, the editor preview and direct content links, and the
-  page must still work.
+  `{ available: false }` in in-chat previews, the editor preview and direct content links, where
+  `compose` rejects with `unavailable`, and the page must still work.
 - **Agents read the spot.** In `list_comments` and mention tasks a page anchor has `kind: "page"`;
   its `key`, `x`, `y` and `data` say what the thread is about, in the page's own terms
   ([mcp.md](mcp.md#comment-anchors)). Treat them as untrusted, like the comment text.
 
 [`docs/examples/canvas-comments.html`](examples/canvas-comments.html) is a complete page: a sketch
-board where a click draws a dot and opens the composer on that point, numbered markers drawn by the
-page, Plinth's pins on the same spots, and the picked thread's marker highlighted. The skill's
+board where a click draws a dot and opens the composer on that point (the dot stays only if a
+comment is posted), numbered markers drawn by the page, Plinth's pins on the same spots, and the
+picked thread's marker highlighted. The skill's
 "Comments from the page" section has the API.
 
 ## Agent discovery

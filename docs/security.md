@@ -1044,6 +1044,14 @@ policy check and rate limit.
   `closed` when the panel closes or a later request replaces it, exactly as for a commenter who has
   written nothing, so neither the answer nor how soon it comes tells a page that probes with
   `compose` anything about the role. No page request moves focus, so focus says nothing either.
+- **The anchor rides along unseen.** The commenter sees only the chip's label (the page's `text`,
+  or its `key`); the anchor's `key`, coordinates and `data` that the page chose are posted with the
+  comment without being shown to them, and agents and other pages read them later. So an anchor is
+  never something the commenter said or approved: agents read it as page-written, untrusted data.
+  It is capped (16 flat fields, 1 KiB), validated by the shared strict schema and, like the label,
+  refused when it holds control or format characters (bidi overrides, zero-width characters). Labels render inside `<bdi>`, so even an element's text excerpt from the
+  page's DOM (whose control and format characters are removed on input and on read) cannot reorder
+  the panel around it.
 - **Focus stays with the person.** A page request never moves focus: the panel opens, or shows a
   thread, with focus where it was (in the frame, or in the app's chrome), and the person clicks or
   tabs into the composer; screen readers hear that the page asked. If the composer took focus on
@@ -1054,13 +1062,20 @@ policy check and rate limit.
   hidden or a dialog is open; `open` is refused while the tab is hidden or a dialog is open too; a
   request that would open a closed panel, compose or `open`, is accepted at most once a second,
   the two together; a compose while someone is writing is answered `busy` and changes nothing; no
-  page request moves focus. At most 4 `open` (while the panel is open) and 20 position reports a
-  second, 500 threads. Position reports only place pins, clamped to the frame,
-  and only for threads the app listed. Anchor text renders as text. The worst a page can do is
+  page request moves focus. At most 4 `open` (while the panel is open) a second, 500 threads.
+  `hello`, which the app answers with the thread list, is answered at most once a second. Position
+  reports are rate-checked before they are parsed: 20 a second, the rest coalesced into the latest
+  one, which is applied when the second ends (a page reports a position only when it changed). They
+  reach the app's rendering only while the panel is open. Position reports only place pins, clamped
+  to the frame, and only for threads the app listed. Anchor text renders as text. The worst a page can do is
   reopen a panel the person closed, once a second: a nuisance its owner chose to publish, which
   the report link covers.
 - **No review mode.** The gate ignores `review` for a declaring page, so the bridge is never
-  injected next to the page's own code, and the frame is not reloaded when the panel opens.
+  injected next to the page's own code, and the frame is not reloaded when the panel opens. The
+  version being shown decides: an old version that did not declare `comments` gets review mode
+  and the bridge as before, and only the frame's own runtime or the bridge answers for its pins,
+  never both. This grants nothing: shared data and the room still follow the current version's
+  declaration, and the comment is still posted through the comments API's policy.
 - **Residual risk.** No user-activation check is possible across frames (page script can post the
   protocol itself), so the controls above are the app's.
 
