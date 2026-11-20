@@ -19,6 +19,7 @@ function context(
     live: { ...live, signIn: false },
     hrefs: { edit: "/edit", settings: "/settings", stats: "/stats", history: "/history" },
     actions: { toggleEditing: () => undefined, openShare: () => undefined },
+    refs: { edit: { current: null }, bar: { current: null } },
     theme: { next: "dark", set: () => undefined },
   } as unknown as StageContext;
 }
