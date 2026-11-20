@@ -1,17 +1,11 @@
 // REST mirror of the shared-data MCP tools (list_artifact_data, write_artifact_data), plus the
 // owner's "delete all shared data". Bearer requests write via "agent", cookie requests via "app"
 // (and pass the CSRF check in context.ts). Same services, same policy, same validation.
-import {
-  API,
-  listArtifactDataInput,
-  listArtifactPeopleInput,
-  writeArtifactDataInput,
-} from "@plinth/shared";
+import { API, listArtifactDataInput, writeArtifactDataInput } from "@plinth/shared";
 import { Hono } from "hono";
 import {
   clearArtifactData,
   listArtifactData,
-  listArtifactPeople,
   writeArtifactData,
 } from "../services/artifactData.ts";
 import { type AppContext, type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
@@ -50,14 +44,6 @@ dataApi.get(API.dataCollection, async (c) => {
     ...pageQuery(c),
   });
   return c.json(await listArtifactData(serviceCtx(c), input));
-});
-
-dataApi.get(API.people, async (c) => {
-  const input = parseInput(listArtifactPeopleInput, {
-    id: c.req.param("ref"),
-    q: c.req.query("q"),
-  });
-  return c.json(await listArtifactPeople(serviceCtx(c), input));
 });
 
 dataApi.get(API.dataDoc, async (c) => {

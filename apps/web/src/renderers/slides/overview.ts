@@ -1,6 +1,8 @@
-// The overview: every slide stacked at the frame's width, each with its number. It is what review
-// mode (comment pins need every slide in the DOM), the editor preview, phones and printing show,
-// and what `o` toggles. Clicking a slide leaves the overview at that slide, unless the overview is
+// The overview: every slide, each with its number, in a grid of thumbnails on a wide frame and
+// stacked at the frame's width on a narrow one (stage.ts overviewColumns). It is what `o` and the
+// pill toggle, what phones in portrait show, and, always in one column, what review mode (comment
+// pins need every slide in the DOM) and the editor preview show. Clicking a slide, or Enter on the
+// one the arrows selected (nav.ts), leaves the overview at that slide, unless the overview is
 // fixed (review mode and the editor preview).
 
 /** The slide number a click in the overview landed on, or null. */

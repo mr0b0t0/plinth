@@ -6,7 +6,7 @@
 // otherwise its cached value is used; number formats become the column's format where they map.
 // The result is checked by parseSheet like any published sheet.
 import { LIMITS } from "../constants.ts";
-import { utf8Bytes } from "../pageComments.ts";
+import { utf8Length } from "../utf8.ts";
 import { colLetter } from "./address.ts";
 import { readCsv } from "./csv.ts";
 import {
@@ -186,7 +186,7 @@ function csvValue(s: string): In {
 
 /** A sheet from CSV text. Throws SheetImportError. */
 export function sheetFromCsv(text: string): Sheet {
-  if (utf8Bytes(text) > LIMITS.maxSheetImportBytes) {
+  if (utf8Length(text) > LIMITS.maxSheetImportBytes) {
     throw new SheetImportError(
       `A CSV import is at most ${Math.round(LIMITS.maxSheetImportBytes / (1024 * 1024))} MB`,
     );

@@ -24,7 +24,6 @@ import {
   DATA_PAGE_NOTE,
   DESIGN_SYSTEM_PUBLISH_NOTE,
   DOC_PUBLISH_NOTE,
-  dictationNote,
   LIVE_DRAFT_NOTE,
   REUSE_NOTE,
   ROOM_PAGE_NOTE,
@@ -57,7 +56,6 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         opaque +
         DATA_PAGE_NOTE +
         ROOM_PAGE_NOTE +
-        dictationNote(ctx.config) +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
       ...preview,
@@ -80,7 +78,6 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         TYPE_UPDATE_NOTE +
         opaque +
         DATA_PAGE_NOTE +
-        dictationNote(ctx.config) +
         UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
       ...preview,

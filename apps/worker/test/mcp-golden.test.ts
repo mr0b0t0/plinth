@@ -1,15 +1,14 @@
 // The MCP surface agents see (tools/list with descriptions, input schemas, annotations and _meta;
 // resources/list and the preview resource; the server instructions) is pinned by hash to the
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
-// no byte of it. A change that means to alter the surface updates the hashes here, on purpose
-// (viewer identity: names on document authors and the people list; page comments: the anchor note
-// in list_comments and list_mentions; the design_system type: get_design_system, list_artifacts'
-// type filter, the publish and update notes, and the server instructions' design system sentence;
-// the slides type: its publish note, the type and content descriptions and the instructions' deck
-// sentence; publishing from CI: the instructions' sentence on tokens limited to one artifact; the
-// sheet type: read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
-// and content_format descriptions, the untrusted note's sheet sentence and the instructions'
-// sheet sentence).
+// no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
+// the design_system type (get_design_system, list_artifacts' type filter, the publish and update
+// notes, and the server instructions' design system sentence) did, so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence), so did
+// comments from the page (the page anchor note in list_comments and list_mentions), and so did the
+// sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
+// and content_format descriptions, the untrusted note's sheet sentence and the instructions' sheet
+// sentence).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -50,6 +49,7 @@ const NAMES = [
   "claim_mention",
   "reply_comment",
   "start_upload",
+  "get_artifact_stats",
   "list_artifact_data",
   "write_artifact_data",
   "preview_artifact",
@@ -65,7 +65,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "0584a5c6f271f23b45dd79872508b38bfaf9210381aac051a962360901f94cf3",
+      tools: "65665295660c5bee41b7e38d79290d2101312649f0f23383a045baecda26ec3c",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -75,7 +75,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "333704202ce428a9ca6147cfb246c82cfb6f22f7e017c66c851cf8c01eb2ff12",
+      tools: "9a60caaaac7c4fda83036657ecbd7c1a6ea7498575430ab059d5ed44f056a1a2",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -87,7 +87,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "99091d9f99c51cc4e380503acb19b0101c7f978d51bb9949273de226000d9024",
+      tools: "624b934b7d6d832b1fb4a156c1eb90a42a58da7868562472ee95461ead35ac00",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

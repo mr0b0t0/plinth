@@ -35,17 +35,10 @@ export interface PrintMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "print";
-  /** A deck prints the handout with speaker notes. The doc renderer ignores it. */
-  notes?: true;
 }
 
-export function printMessage(notes = false): PrintMessage {
-  return {
-    source: RENDERER_MESSAGE_SOURCE,
-    v: RENDERER_PROTOCOL_VERSION,
-    type: "print",
-    ...(notes ? { notes: true as const } : {}),
-  };
+export function printMessage(): PrintMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "print" };
 }
 
 /**
@@ -61,14 +54,10 @@ export function rendererTargetOrigin(
 }
 
 /** Ask the renderer in `frame` to print. False when there is no frame window or target. */
-export function postPrint(
-  frame: HTMLIFrameElement | null,
-  targetOrigin: string | null,
-  notes = false,
-): boolean {
+export function postPrint(frame: HTMLIFrameElement | null, targetOrigin: string | null): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
-  win.postMessage(printMessage(notes), targetOrigin);
+  win.postMessage(printMessage(), targetOrigin);
   return true;
 }
 

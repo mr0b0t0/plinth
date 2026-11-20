@@ -63,7 +63,7 @@ export const ARTIFACT_KEPT: Readonly<Record<string, string>> = {
   reports: "the moderation record; a takedown closes the open ones",
   login_codes: "short-lived viewer codes that expire on their own",
   upload_tickets: "single-use and short-lived; a commit to a deleted artifact is refused",
-  artifact_view_days: "a daily number of opens with no viewer data, gone with the erase",
+  artifact_opens: "who opened it, for its stats; folded after the retention, gone with the erase",
   artifact_view_totals: "the folded number of opens, gone with the erase",
 };
 

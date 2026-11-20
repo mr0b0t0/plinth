@@ -3,7 +3,13 @@
 // (the snap hint) and tests. The character check lives here, not in a zod regex, so the JSON Schema
 // MCP clients and OpenAPI consumers see stays a plain length-limited string.
 import { LIMITS } from "./constants.ts";
-import { REFUSED_CHARS } from "./text.ts";
+
+/**
+ * Control (Cc) and format (Cf: bidi overrides, zero-width) characters. Line breaks, tabs and the
+ * line (Zl) and paragraph (Zp) separators are whitespace, so normalizeCategory has already turned
+ * them into a space; Zl and Zp stay here only for a caller that skips normalising.
+ */
+const REFUSED_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 /** Stored form: NFC, every whitespace run (line breaks and separators included) -> one space, trimmed. */
 export function normalizeCategory(s: string): string {

@@ -23,6 +23,7 @@ import { registerDataTools } from "./tools/data.ts";
 import { registerDesignSystemTools } from "./tools/designSystems.ts";
 import { registerPreviewTools } from "./tools/preview.ts";
 import { registerSheetTools } from "./tools/sheets.ts";
+import { registerStatsTools } from "./tools/stats.ts";
 import { registerUploadTools } from "./tools/uploads.ts";
 
 export * from "./catalog.ts";
@@ -36,6 +37,7 @@ export const MCP_TOOL_FILES: readonly ToolRegistrar[] = [
   registerArtifactTools,
   registerCommentTools,
   registerUploadTools,
+  registerStatsTools,
   registerDataTools,
   registerPreviewTools,
   registerDesignSystemTools,

@@ -289,10 +289,16 @@ describe("One artifact cannot read another artifact's cookies, storage or files;
     const { body: p } = await publish(a.auth);
     const { enter } = await enterContent(p.id);
     const sc = enter?.headers.get("set-cookie") ?? "";
+    // While VIEW_COUNTS is on (the default) the cookie lasts 30 days to keep the anonymous visitor
+    // id; the pass it carries still expires after 12 hours (test/views.test.ts).
     expect(sc).toMatch(
-      /^__Host-plinth_content=[^;]+; Path=\/; Max-Age=43200; HttpOnly; Secure; SameSite=None; Partitioned$/,
+      /^__Host-plinth_content=[^;]+; Path=\/; Max-Age=2592000; HttpOnly; Secure; SameSite=None; Partitioned$/,
     );
     expect(sc).not.toMatch(/Domain=/i);
+    const off = await enterContent(p.id, { vars: { VIEW_COUNTS: "off" } });
+    expect(off.enter?.headers.get("set-cookie") ?? "").toMatch(
+      /^__Host-plinth_content=[^;]+; Path=\/; Max-Age=43200; HttpOnly; Secure; SameSite=None; Partitioned$/,
+    );
   });
 
   it("a token for A is refused on B; a cookie for A (or one re-labelled for B) opens nothing on B", async () => {

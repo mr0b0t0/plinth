@@ -1,6 +1,6 @@
 // The source editor on a design system: Monaco holds JSON (draft.json, which the JSON Schema is
-// attached to), the preview is the design system shell, problems show under the editor with their
-// paths, and Save waits until there are none.
+// attached to), the preview is the design system shell, problems show above the editor with their
+// paths while the preview keeps its last valid render, and Save waits until there are none.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -159,15 +159,20 @@ describe("the editor on a design system", () => {
     })) as HTMLTextAreaElement;
     const broken = SOURCE.replace('"#ffffff"', '"#ffffff; }"');
     fireEvent.change(box, { target: { value: broken } });
-    const notice = await screen.findByText(/has a problem\. Fix it to save\./);
-    const list = notice.closest(".pl-editor__problems") as HTMLElement;
+    const list = await screen.findByRole("status", { name: "Fix the design system JSON to save" });
     expect(list.querySelector("code")?.textContent).toBe("tokens.color.bg.$value");
     const save = screen.getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
+    // The preview keeps the last valid render instead of repeating the problems.
+    expect(seen.preview.at(-1)).not.toContain("#ffffff; }");
+    expect(seen.preview.at(-1)).toContain("#ffffff");
 
     const fixed = SOURCE.replace('"#ffffff"', '"#fafafa"');
     fireEvent.change(box, { target: { value: fixed } });
-    await waitFor(() => expect(screen.queryByText(/Fix it to save/)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: /^Fix the design system JSON/ })).toBeNull(),
+    );
+    await waitFor(() => expect(seen.preview.at(-1)).toContain("#fafafa"));
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     await waitFor(() => expect(sent.some((s) => s.method === "PUT")).toBe(true));

@@ -760,6 +760,20 @@ function utf8Text(f, bytes) {
   }
 }
 
+/**
+ * --json --dry-run's one object: what would be sent (nothing was). `files` and `bytes` count the
+ * whole version; on an update `changed` and `reused` count its asset files (the source is always
+ * sent), and `send` says how it would go: `inline` (one request) or `bundle`.
+ */
+function printDryRun(said, fields, opts, ctx) {
+  if (!opts.json) {
+    ctx.stdout(said);
+    return;
+  }
+  ctx.stderr(said);
+  ctx.stdout(JSON.stringify({ outcome: "dry_run", dry_run: true, ...fields }, null, 2));
+}
+
 /** Rethrow `err`; one whose outcome is unknown also prints the ids to check, as JSON, with --json. */
 function unknownOutcome(err, opts, ctx) {
   if (opts.json && err?.unknown) ctx.stdout(JSON.stringify(err.unknown, null, 2));
@@ -829,10 +843,13 @@ export async function publish(dir, givenOpts, ctx) {
     const { total } = checkLimits(files, sourcePath, type, limits);
     hashFiles(files);
     if (opts["dry-run"]) {
-      ctx.stdout(
+      printDryRun(
         printable(
           `Would publish ${files.length} files (${formatBytes(total)}) to ${ctx.origin} as a new ${nounOf(type)}${category.category !== undefined ? ` under ${category.category}` : ""}, in one bundle.`,
         ),
+        { type, files: files.length, bytes: total, send: "bundle" },
+        opts,
+        ctx,
       );
       return EXIT.ok;
     }
@@ -881,13 +898,13 @@ export async function publish(dir, givenOpts, ctx) {
     const type = detail.type;
     const sourcePath = detail.source_path ?? SOURCE_FILES[type] ?? "index.html";
     if (!files.some((f) => f.path === sourcePath)) {
-      // One file publishes a page (.html) or a document (.md); a deck needs its folder.
-      const single = type === "html" ? ".html" : type === "doc" ? ".md" : null;
+      // One file can stand in for a page's index.html or a document's content.md, not a deck's.
+      const fileExt = { html: ".html", doc: ".md" }[type];
       throw new CliError(
         source.kind !== "file"
           ? `${ref} is a ${nounOf(type)}; the folder needs ${sourcePath} at its top`
-          : single
-            ? `${ref} is a ${nounOf(type)}; publish a ${single} file (or a folder with ${sourcePath} at its top)`
+          : fileExt
+            ? `${ref} is a ${nounOf(type)}; publish a ${fileExt} file (or a folder with ${sourcePath} at its top)`
             : `${ref} is a ${nounOf(type)}; publish a folder with ${sourcePath} at its top`,
       );
     }
@@ -946,8 +963,24 @@ export async function publish(dir, givenOpts, ctx) {
     const inlineBytes = sourceFile.size + changed.reduce((n, f) => n + f.size, 0);
     const inline = inlineBytes <= INLINE_UPDATE_MAX_BYTES;
     if (opts["dry-run"]) {
-      ctx.stdout(
-        `Would update ${ref} from v${base} to v${base + 1} on ${ctx.origin}: ${files.length} files (${formatBytes(total)}), ${changed.length} changed asset files, ${assets.length - changed.length} reused, ${inline ? "in one request" : "in one bundle"}.`,
+      printDryRun(
+        printable(
+          `Would update ${ref} from v${base} to v${base + 1} on ${ctx.origin}: ${files.length} files (${formatBytes(total)}), ${changed.length} changed asset files, ${assets.length - changed.length} reused, ${inline ? "in one request" : "in one bundle"}.`,
+        ),
+        {
+          id: detail.id,
+          slug: detail.slug,
+          type,
+          base_version: base,
+          next_version: base + 1,
+          files: files.length,
+          bytes: total,
+          changed: changed.length,
+          reused: assets.length - changed.length,
+          send: inline ? "inline" : "bundle",
+        },
+        opts,
+        ctx,
       );
       return EXIT.ok;
     }
