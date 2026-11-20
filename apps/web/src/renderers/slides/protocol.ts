@@ -8,6 +8,10 @@
 //   app -> frame: print                      print the deck (the handout with notes from
 //                                            presenter view)
 //   app -> frame: export { format, nonce }   build the deck as .pptx and download it in the frame
+//   app -> frame: paired                     this frame is an audience window: its presenter
+//                                            window moves it, so it stops following the room
+//   app -> frame: lead                       the frame this one replaced was leading viewers and
+//                                            the person never stopped: lead again from here
 //   frame -> app: ready { slide, count }     after boot
 //   frame -> app: position { slide, count }  after every change
 //   frame -> app: view { mode }              the view it now shows, after every change (its own
@@ -21,6 +25,10 @@
 //                                            because the frame's origin is opaque. An export asked
 //                                            for while one runs is not started again: the running
 //                                            one answers with the newest nonce
+//   frame -> app: leading { on }             the person turned Lead viewers on or off, or the
+//                                            lead ended (another presenter took over, the right
+//                                            is gone); not sent when the socket closed for good,
+//                                            so the next frame can lead again
 import { isSlideNumber, RENDERER_MESSAGE_SOURCE, RENDERER_PROTOCOL_VERSION } from "@plinth/shared";
 import type { DeckMode } from "./nav.ts";
 
@@ -28,7 +36,9 @@ export type SlidesAppMessage =
   | { type: "goto"; slide: number }
   | { type: "view"; mode: DeckMode }
   | { type: "print" }
-  | { type: "export"; format: "pptx"; nonce: string };
+  | { type: "export"; format: "pptx"; nonce: string }
+  | { type: "paired" }
+  | { type: "lead" };
 
 /** The app's nonce for one export request. */
 export const EXPORT_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -51,6 +61,8 @@ export function readSlidesAppMessage(data: unknown): SlidesAppMessage | null {
     }
     return { type: "export", format: "pptx", nonce: m.nonce };
   }
+  if (m.type === "paired") return { type: "paired" };
+  if (m.type === "lead") return { type: "lead" };
   return null;
 }
 
@@ -68,7 +80,8 @@ export type SlidesFrameMessage =
   | { type: "position"; slide: number; count: number }
   | { type: "view"; mode: DeckMode }
   | { type: "fullscreen" }
-  | { type: "exported"; nonce: string; ok: boolean; images_skipped: number; opaque: boolean };
+  | { type: "exported"; nonce: string; ok: boolean; images_skipped: number; opaque: boolean }
+  | { type: "leading"; on: boolean };
 
 /** Posts to the app page, at the exact app origin only. */
 export function postToApp(win: Window, appOrigin: string, msg: SlidesFrameMessage): void {

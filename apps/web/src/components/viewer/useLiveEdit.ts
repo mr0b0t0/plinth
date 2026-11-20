@@ -1,6 +1,7 @@
-// On-page editing of a doc (#36), app side: the state machine behind the Edit toggle, the edit bar
-// and the unsaved-edits notice. The doc frame does the editing; this hook talks to it with the
-// renderer protocol (rendererProtocol.ts) and to the server with the session cookie.
+// On-page editing of a doc or a sheet (#36), app side: the state machine behind the Edit toggle,
+// the edit bar and the unsaved-edits notice. The frame does the editing (the doc or sheet
+// renderer); this hook talks to it with the renderer protocol (rendererProtocol.ts) and to the
+// server with the session cookie.
 //
 // Modes (gate.live.mode, decided by the server):
 // - "room": the frame edits the live draft in the artifact's room with the other editors. The app
@@ -21,9 +22,12 @@ import {
   type ArtifactDetail,
   type LiveCheckpointResult,
   type LiveInfo,
+  liveReplacesNote,
+  liveRules,
   type PublishResult,
   route,
   sourceOf,
+  typeDef,
   type ViewGate,
 } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -61,9 +65,17 @@ export interface LiveConflict {
   /** The version that changed the same lines (or, solo, the one now current). */
   current: number;
   currentText: string;
+  /**
+   * The text of `base`, for a type that is never merged (a sheet): its review lists what each
+   * side changed since then.
+   */
+  baseText?: string;
   /** Room mode: the draft revision and base the resolution is checked against. */
   rev?: number;
 }
+
+/** The note a version of page edits carries when the editor gave none (as the server's). */
+export const LIVE_NOTE = "Edited on the page";
 
 /** How often solo edits are copied to sessionStorage while dirty. */
 export const SOLO_KEEP_MS = 5000;
@@ -71,6 +83,9 @@ export const SOLO_KEEP_MS = 5000;
 export const COLLECT_TIMEOUT_MS = 5000;
 /** Editors whose edit was not the last one autosave this much later. */
 export const AUTOSAVE_FALLBACK_MS = 30_000;
+/** A review choice refused because another choice or a save holds the room's checkpoint lock. */
+const CHOOSING_BUSY =
+  "These page edits are being published or discarded right now. Look again in a moment.";
 
 export interface UseLiveEditOptions {
   gate: OkGate;
@@ -84,6 +99,12 @@ export interface UseLiveEditOptions {
 export interface LiveEdit {
   /** On-page editing exists for this person here (owner or editor, origin isolation). */
   available: boolean;
+  /**
+   * A version published meanwhile is merged under the page edits when that is clean (a doc).
+   * False for a sheet: the page edits are never merged, and the review offers exactly two
+   * choices, publish them as they are or discard them.
+   */
+  merges: boolean;
   /** Confirmed by code without an account: they must sign in to edit. */
   signIn: boolean;
   mode: "room" | "solo" | null;
@@ -127,6 +148,12 @@ export function useLiveEdit({
 }: UseLiveEditOptions): LiveEdit {
   const { artifact } = gate;
   const id = artifact.id;
+  const def = typeDef(artifact.type);
+  const merges = liveRules(artifact.type)?.merge !== false;
+  // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
+  const noun = (def?.badge ?? "doc").toLowerCase();
+  const maxBytes =
+    artifact.type === "doc" ? config?.limits.max_doc_bytes : (def?.maxSourceBytes ?? undefined);
   const target = editTargetOrigin(config, contentOrigin);
   const available = gate.live !== undefined && target !== null;
   const signIn = gate.live?.sign_in === true;
@@ -162,7 +189,7 @@ export function useLiveEdit({
         contentOrigin: target,
         solo: latest.current.mode === "solo",
         nonce: collecting.current?.nonce ?? null,
-        maxDocBytes: config?.limits.max_doc_bytes,
+        maxDocBytes: maxBytes,
       });
       if (!m) return;
       matchFrameMessage(m, {
@@ -192,11 +219,13 @@ export function useLiveEdit({
           collecting.current = null;
           c.resolve(text);
         },
+        // A version shown in place is the live-view update's answer (useViewUpdate.ts).
+        shown() {},
       });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, config]);
+  }, [available, frame, target, maxBytes]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
@@ -234,22 +263,25 @@ export function useLiveEdit({
 
   // ---------- errors ----------
 
-  const fail = useCallback((e: unknown, onConflict?: () => void) => {
-    if (!(e instanceof ApiRequestError)) {
-      toast(e instanceof Error ? e.message : "Something went wrong. Your edits are kept.");
-      return;
-    }
-    if (e.status === 401) {
-      toast("Sign in again to save. Your edits are kept.");
-      latest.current.onReload();
-    } else if (e.status === 403) toast("You can no longer edit this doc.");
-    else if (e.status === 409 && onConflict) onConflict();
-    else if (e.status === 409) toast(e.message);
-    else if (e.status === 413) toast("This doc is too large to save as a version.");
-    else if (e.status === 429) toast("Hourly version limit reached. Your edits stay as a draft.");
-    else if (e.status === 503) toast("Live editing is unavailable. Your edits are kept.");
-    else toast(e.message);
-  }, []);
+  const fail = useCallback(
+    (e: unknown, onConflict?: () => void) => {
+      if (!(e instanceof ApiRequestError)) {
+        toast(e instanceof Error ? e.message : "Something went wrong. Your edits are kept.");
+        return;
+      }
+      if (e.status === 401) {
+        toast("Sign in again to save. Your edits are kept.");
+        latest.current.onReload();
+      } else if (e.status === 403) toast(`You can no longer edit this ${noun}.`);
+      else if (e.status === 409 && onConflict) onConflict();
+      else if (e.status === 409) toast(e.message);
+      else if (e.status === 413) toast(`This ${noun} is too large to save as a version.`);
+      else if (e.status === 429) toast("Hourly version limit reached. Your edits stay as a draft.");
+      else if (e.status === 503) toast("Live editing is unavailable. Your edits are kept.");
+      else toast(e.message);
+    },
+    [noun],
+  );
 
   // ---------- review (conflicts) ----------
 
@@ -281,19 +313,23 @@ export function useLiveEdit({
         toast("Nothing to review: the page edits merged cleanly.", "neutral");
         return;
       }
-      const currentText = await versionText(d.conflict_version);
+      const [currentText, baseText] = await Promise.all([
+        versionText(d.conflict_version),
+        merges ? undefined : versionText(d.base_version),
+      ]);
       setConflict({
         draft: d.text,
         base: d.base_version,
         current: d.conflict_version,
         currentText,
+        ...(baseText !== undefined ? { baseText } : {}),
         rev: d.rev,
       });
     } catch (e) {
       setReviewing(false);
       fail(e);
     }
-  }, [id, versionText, fail, collect]);
+  }, [id, versionText, fail, collect, merges]);
 
   const soloConflict = useCallback(
     async (draft: string, base: number, details: unknown) => {
@@ -302,14 +338,23 @@ export function useLiveEdit({
           ? (details as { current_version: number }).current_version
           : latest.current.gate.artifact.current_version;
       try {
-        const currentText = await versionText(n);
-        setConflict({ draft, base, current: n, currentText });
+        const [currentText, baseText] = await Promise.all([
+          versionText(n),
+          merges ? undefined : versionText(base),
+        ]);
+        setConflict({
+          draft,
+          base,
+          current: n,
+          currentText,
+          ...(baseText !== undefined ? { baseText } : {}),
+        });
         setReviewing(true);
       } catch (e) {
         fail(e);
       }
     },
-    [versionText, fail],
+    [versionText, fail, merges],
   );
 
   const soloConflictRef = useRef(soloConflict);
@@ -475,7 +520,10 @@ export function useLiveEdit({
     const c = conflict;
     if (!c) return;
     if (latest.current.mode === "solo" || c.rev === undefined) {
-      const r = await publishSolo(c.draft, c.current);
+      // A sheet's page edits replace the version published meanwhile, and the note says so (as
+      // the room's checkpoint does).
+      const note = merges ? undefined : liveReplacesNote(LIVE_NOTE, c.current);
+      const r = await publishSolo(c.draft, c.current, note);
       if (r) closeReview();
       return;
     }
@@ -488,6 +536,11 @@ export function useLiveEdit({
         resolved_text: c.draft,
         conflict_version: c.current,
       });
+      if (!r.saved && r.reason === "busy") {
+        // The other choice (or a save) holds the room's lock: the review stays open.
+        toast(CHOOSING_BUSY, "neutral");
+        return;
+      }
       if (r.saved) setSavedVersion(r.version.version);
       closeReview();
     } catch (e) {
@@ -495,7 +548,7 @@ export function useLiveEdit({
     } finally {
       setSaving(false);
     }
-  }, [conflict, id, publishSolo, closeReview, failResolve]);
+  }, [conflict, id, publishSolo, closeReview, failResolve, merges]);
 
   const takeLatest = useCallback(async () => {
     const c = conflict;
@@ -509,13 +562,17 @@ export function useLiveEdit({
     }
     setSaving(true);
     try {
-      await liveCheckpoint(id, {
+      const r = await liveCheckpoint(id, {
         base_version: c.base,
         rev: c.rev,
         reason: "save",
         resolved_text: c.currentText,
         conflict_version: c.current,
       });
+      if (!r.saved && r.reason === "busy") {
+        toast(CHOOSING_BUSY, "neutral");
+        return;
+      }
       closeReview();
       showToast({ title: `The page is back to v${c.current}.` });
     } catch (e) {
@@ -628,6 +685,7 @@ export function useLiveEdit({
 
   return {
     available,
+    merges,
     signIn,
     mode,
     editing,

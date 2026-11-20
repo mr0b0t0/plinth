@@ -747,6 +747,18 @@ describe("printing", () => {
 });
 
 describe("readSlidesAppMessage", () => {
+  it("accepts paired, which carries nothing", () => {
+    expect(readSlidesAppMessage(msg({ type: "paired" }))).toEqual({ type: "paired" });
+    expect(readSlidesAppMessage({ type: "paired" })).toBeNull();
+    expect(readSlidesAppMessage({ ...msg({ type: "paired" }), v: 2 })).toBeNull();
+  });
+
+  it("accepts lead, which carries nothing", () => {
+    expect(readSlidesAppMessage(msg({ type: "lead" }))).toEqual({ type: "lead" });
+    expect(readSlidesAppMessage({ type: "lead" })).toBeNull();
+    expect(readSlidesAppMessage({ ...msg({ type: "lead" }), v: 2 })).toBeNull();
+  });
+
   it("accepts goto, view and print, and nothing malformed", () => {
     expect(readSlidesAppMessage(msg({ type: "goto", slide: 2 }))).toEqual({
       type: "goto",

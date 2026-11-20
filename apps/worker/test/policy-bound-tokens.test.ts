@@ -304,6 +304,7 @@ describe("policy: a token bound to one artifact", () => {
       roomOpen: [],
       comments: false,
       people: false,
+      hold: false,
     };
     expect(pageDataAccess(null, caps, true, "html")).toEqual({
       read: true,

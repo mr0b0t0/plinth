@@ -1,5 +1,6 @@
-// Version history: the list, compare (source and rendered), restore with conflict handling,
-// permanent version links, access states and the axe checks for History and Compare.
+// Version history: the list, compare (the list of changes and the rendered versions), restore
+// with conflict handling, permanent version links, access states and the axe checks for History
+// and Compare.
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Page, type TestInfo, test } from "@playwright/test";
@@ -172,7 +173,7 @@ test("history lists every version with author, note and links", async ({ page },
   await shot(page, info, "history");
 });
 
-test("compare v1 and v3: source diff, side by side, and rendered frames", async ({
+test("compare v1 and v3: the list of changes, then both versions rendered, and no source", async ({
   page,
 }, info) => {
   const s = await seedHistory();
@@ -185,46 +186,33 @@ test("compare v1 and v3: source diff, side by side, and rendered frames", async 
   await expect(page).toHaveURL(new RegExp(`/a/${s.slug}/compare\\?from=1&to=3$`));
   await expect(page).toHaveTitle(`Compare v1 and v3 of ${TITLE} · Plinth`);
 
-  // Source: the changed lines, with markers, and the unchanged run folded.
-  const diff = page.getByRole("table", { name: /Changes to index.html from v1 to v3/ });
-  await expect(diff).toBeVisible();
-  await expect(diff.getByRole("row", { name: /Removed <h1>Version one<\/h1>/ })).toBeVisible();
-  await expect(diff.getByRole("row", { name: /Added <h1>Version three<\/h1>/ })).toBeVisible();
-  await expect(diff.getByRole("row", { name: /Removed <p>Alpha line<\/p>/ })).toBeVisible();
-  await expect(diff.getByRole("row", { name: /Added <p>Gamma line<\/p>/ })).toBeVisible();
-  const fold = diff.getByRole("button", { name: /Show \d+ unchanged lines/ });
-  await expect(fold).toBeVisible();
-  await expect(page.locator(".hx-stat--added")).toHaveText(/^\+3/);
-  await expect(page.locator(".hx-stat--removed")).toHaveText(/^−2/);
+  // The list says what a person sees changed, in plain language, with excerpts.
+  const changes = page.getByRole("region", { name: "Changes" });
+  await expect(changes).toBeVisible();
+  const item = (what: string) => changes.getByRole("listitem").filter({ hasText: what });
+  await expect(item("Heading “Version one” changed")).toContainText("Version three");
+  await expect(item("Text changed")).toContainText("Under “Version three”");
+  await expect(item("Text changed")).toContainText("Alpha line");
+  await expect(item("Text changed")).toContainText("Beta line");
+  await expect(item("Text added")).toContainText("Gamma line");
+  // No file changed, so there are no file rows.
+  await expect(changes.getByRole("listitem").filter({ hasText: /^File “/ })).toHaveCount(0);
+  // No source anywhere: no markup, no line table, no Source tab.
+  await expect(page.locator("main")).not.toContainText("<h1>");
+  await expect(page.locator("main")).not.toContainText("<p>");
+  await expect(page.getByRole("table")).toHaveCount(0);
+  await expect(page.getByRole("tab")).toHaveCount(0);
   await expectNoAxeViolations(page);
-  await shot(page, info, "compare-source");
-
-  await fold.click();
-  await expect(diff.getByRole("row", { name: /Unchanged paragraph 12/ })).toBeVisible();
-
-  if (info.project.name !== "mobile") {
-    await page.getByRole("radio", { name: "Side by side" }).check();
-    const split = page.getByRole("table", { name: /v1 on the left and v3 on the right/ });
-    await expect(split).toBeVisible();
-    await expect(
-      split
-        .getByRole("row")
-        .filter({ hasText: "Version one" })
-        .filter({ hasText: "Version three" }),
-    ).toBeVisible();
-    await expectNoAxeViolations(page);
-    await shot(page, info, "compare-split");
-  }
+  await shot(page, info, "compare-changes");
 
   // Swap sides.
   await page.getByRole("button", { name: "Swap sides" }).click();
   await expect(page).toHaveURL(/compare\?from=3&to=1$/);
+  await expect(page.getByRole("region", { name: "Changes" })).toBeVisible();
   await page.getByRole("button", { name: "Swap sides" }).click();
   await expect(page).toHaveURL(/compare\?from=1&to=3$/);
 
-  // Rendered: both versions in sandboxed frames on the content host.
-  await page.getByRole("tab", { name: "Rendered" }).click();
-  await expect(page).toHaveURL(/view=rendered/);
+  // Rendered: both versions in sandboxed frames on the content host, under the list.
   const f1 = page.locator(`iframe[title="v1 of ${TITLE}"]`);
   const f3 = page.locator(`iframe[title="v3 of ${TITLE}"]`);
   for (const f of [f1, f3]) {
@@ -233,20 +221,43 @@ test("compare v1 and v3: source diff, side by side, and rendered frames", async 
     await expect(f).toHaveAttribute("src", new RegExp(`^http://${s.id}\\.content\\.localhost:`));
   }
   await expect(
-    page
-      .frameLocator(`iframe[title="v1 of ${TITLE}"]`)
-      .getByRole("heading", { name: "Version one" }),
-  ).toBeVisible();
-  await expect(
     page.frameLocator(`iframe[title="v3 of ${TITLE}"]`).getByText("Gamma line"),
   ).toBeVisible();
   await expect(
     page.frameLocator(`iframe[title="v1 of ${TITLE}"]`).getByText("Gamma line"),
   ).toHaveCount(0);
-  await expect(page.getByRole("figure", { name: "v1" })).toBeVisible();
-  await expect(page.getByRole("figure", { name: "v3" })).toBeVisible();
+  const side = page.getByRole("region", { name: "Side by side" });
+  if (info.project.name === "mobile") {
+    // One version at a time, with a Before and After switch; After first.
+    await expect(side.getByRole("figure", { name: "v3" })).toBeVisible();
+    await expect(side.getByRole("figure", { name: "v1" })).toBeHidden();
+    await side.getByRole("radio", { name: "Before · v1" }).check();
+    await expect(side.getByRole("figure", { name: "v1" })).toBeVisible();
+    await expect(side.getByRole("figure", { name: "v3" })).toBeHidden();
+    await expect(
+      page
+        .frameLocator(`iframe[title="v1 of ${TITLE}"]`)
+        .getByRole("heading", { name: "Version one" }),
+    ).toBeVisible();
+    const box = await side.getByRole("figure", { name: "v1" }).boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThan(300);
+  } else {
+    await expect(side.getByRole("radio", { name: "Before · v1" })).toBeHidden();
+    await expect(side.getByRole("figure", { name: "v1" })).toBeVisible();
+    await expect(side.getByRole("figure", { name: "v3" })).toBeVisible();
+    await expect(
+      page
+        .frameLocator(`iframe[title="v1 of ${TITLE}"]`)
+        .getByRole("heading", { name: "Version one" }),
+    ).toBeVisible();
+  }
   await expectNoAxeViolations(page);
   await shot(page, info, "compare-rendered");
+
+  // An older link that asked for the source view lands on the same page.
+  await page.goto(`/a/${s.slug}/compare?from=1&to=3&view=source`);
+  await expect(page.getByRole("region", { name: "Changes" })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(0);
 });
 
 test("restore v1 publishes it as v4; a stale restore elsewhere gets the conflict message", async ({
@@ -344,7 +355,9 @@ test("a password-protected history explains how to get in", async ({ browser }, 
   }
 });
 
-test("a 5,000-line document diffs quickly and renders in pages", async ({ page }, info) => {
+test("a 5,000-line document's changes are listed quickly, and the list is capped", async ({
+  page,
+}, info) => {
   const email = uniqueEmail("history-big");
   const { token } = await seedToken(email, { label: "Work agent" });
   const lines = Array.from({ length: 5000 }, (_, i) => `<p class="r${i}">Row ${i}</p>`);
@@ -358,32 +371,34 @@ test("a 5,000-line document diffs quickly and renders in pages", async ({ page }
   ]);
   await signInApi(page.request, email);
 
-  // Scattered edits: unchanged runs fold, so each edit shows 2 changed and 6 context rows.
+  // Scattered edits: one item per changed paragraph, each with its two excerpts. "Row 0" to
+  // "Line 0" and "Row 50" to "Line 50" keep no content word (a number under three digits is
+  // none), so each of those two reads as one paragraph removed and another added.
   const t0 = Date.now();
   await page.goto(`/a/${slug}/compare?from=1&to=2`);
-  const table = page.getByRole("table", { name: /Changes to index.html from v1 to v2/ });
-  await expect(table).toBeVisible();
+  const scattered = page.getByRole("region", { name: "Changes" });
+  await expect(scattered.getByRole("listitem").first()).toBeVisible();
   const scatteredMs = Date.now() - t0;
-  await expect(page.locator(".hx-stat--added")).toHaveText(/^\+100\b/);
-  expect(await table.locator("tr.hx-line").count()).toBeLessThan(1000);
+  await expect(scattered.getByRole("list").first().getByRole("listitem")).toHaveCount(102);
+  await expect(scattered.getByRole("listitem").filter({ hasText: "Line 4950" })).toContainText(
+    "Row 4950",
+  );
+  await expect(scattered.getByText("More changed than this list shows.")).toHaveCount(0);
 
-  // Everything changed: the diff stays bounded and renders the first page of rows.
+  // Everything changed: the list stops at 200 items and says it was cut.
   const t1 = Date.now();
   await page.goto(`/a/${slug}/compare?from=1&to=3`);
-  const all = page.getByRole("table", { name: /Changes to index.html from v1 to v3/ });
-  await expect(all).toBeVisible();
+  const all = page.getByRole("region", { name: "Changes" });
+  await expect(all.getByText("More changed than this list shows.")).toBeVisible();
   const replacedMs = Date.now() - t1;
-  await expect(page.locator(".hx-stat--added")).toHaveText(/^\+5,000\b/);
-  expect(await all.locator("tr.hx-line").count()).toBe(1500);
-  await page.getByRole("button", { name: /Show 1,500 more lines/ }).click();
-  await expect(all.locator("tr.hx-line")).toHaveCount(3000);
+  await expect(all.getByRole("list").first().getByRole("listitem")).toHaveCount(200);
 
   info.annotations.push({
     type: "timing",
     description: `5,000 lines: scattered edits ${scatteredMs} ms, full rewrite ${replacedMs} ms`,
   });
   console.log(
-    `[${info.project.name}] 5,000-line diff: scattered ${scatteredMs} ms, rewrite ${replacedMs} ms`,
+    `[${info.project.name}] 5,000-line change list: scattered ${scatteredMs} ms, rewrite ${replacedMs} ms`,
   );
   expect(scatteredMs).toBeLessThan(5000);
   expect(replacedMs).toBeLessThan(5000);

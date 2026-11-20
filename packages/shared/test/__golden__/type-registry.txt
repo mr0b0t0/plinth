@@ -81,6 +81,7 @@
       },
       "liveEdit": false,
       "present": true,
+      "follow": true,
       "fileExports": [
         "pptx"
       ]
@@ -160,7 +161,7 @@
         "style": "sheet.css"
       },
       "editor": null,
-      "liveEdit": false
+      "liveEdit": true
     }
   ],
   [

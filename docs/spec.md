@@ -31,8 +31,8 @@ account.
 - Viewers need no AI account. At most they confirm an email address.
 - Every publish is a version. Old versions stay readable and restorable.
 - People can edit an artifact in the browser and ask an agent for changes by commenting on it.
-- Invited people can work on a page together live, and owners and editors can edit a doc on its
-  page together.
+- Invited people can work on a page together live, and owners and editors can edit a doc or a
+  sheet on its page together.
 - Open source, and cheap enough to self-host on Cloudflare's free tier.
 
 **Non-goals for v1**
@@ -43,7 +43,8 @@ account.
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts (docs are edited on the page; HTML in the source editor).
+- On-page editing of HTML artifacts (docs and sheets are edited on the page; HTML in the source
+  editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -165,7 +166,7 @@ and two fields to the stored declaration:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.capabilities` | adds `room`, `roomOpen` | Written only when the page declares `room` (`<meta name="plinth-capabilities" content="room">`, open topics from `<meta name="plinth-room-open">`), so every other declaration is stored exactly as before. A row without them reads as no room. `room` is not shared data: a page that declares only `room` has none |
-| `live_drafts` | artifact_id (key), base_version, content, size_bytes, rev, conflict_version, updated_by_user, created_at, updated_at | At most one unsaved page draft per doc, apart from its immutable versions, and never a version itself. Written by the artifact's room in a guarded flush that cannot bring back a deleted or taken-down artifact, never moves `rev` backwards and keeps at most 20 drafts per owner. A row exists only while the draft differs from `base_version`, or while `conflict_version` (a version published meanwhile that changed the same lines) waits for review. Content follows the doc limits (1 MB, 50,000 lines). Deleted with the artifact and on takedown; `updated_by_user` is cleared on `erase-user`; untouched rows are deleted after `LIVE_DRAFT_RETENTION_DAYS` |
+| `live_drafts` | artifact_id (key), base_version, content, size_bytes, rev, conflict_version, updated_by_user, created_at, updated_at | At most one unsaved page draft per doc, apart from its immutable versions, and never a version itself. Written by the artifact's room in a guarded flush that cannot bring back a deleted or taken-down artifact, never moves `rev` backwards and keeps at most 20 drafts per owner. A row exists only while the draft differs from `base_version`, or while `conflict_version` (a version published meanwhile that changed the same lines) waits for review. Content follows the doc limits (1 MB, 50,000 lines), or a sheet's (1 MB, 10,000 rows) for a sheet ([Live sheets](#live-sheets-decided-2026-11-19)). Deleted with the artifact and on takedown; `updated_by_user` is cleared on `erase-user`; untouched rows are deleted after `LIVE_DRAFT_RETENTION_DAYS` |
 
 Settings (env vars): `ALLOW_ROOMS` (on), `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (50, from 2 to 1000),
 `ROOM_MAX_MESSAGE_BYTES` (8192, from 512 to 65536), `ROOM_MESSAGES_PER_SECOND` (20 per connection,
@@ -230,6 +231,18 @@ Fixed: board.json of at most 512 KiB on input; a starting board of at most 500 b
 block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characters, arrow labels up
 to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolation, and its board
 counts toward the `DATA_*` limits like any page's shared data.
+
+**Keeping state across versions** ([below](#live-views-decided-2026-11-19), no migration) adds one
+field to the stored declaration, `versions.capabilities.hold`, written only when the page declares
+`hold` (a row without it reads as no hold), and no setting: it follows `ALLOW_LIVE_VIEWS`. Fixed:
+1 s for a page's runtime to answer, 800 ms for its `onVersion` handlers, 5 s for the doc renderer
+to show a version in place, 16 KiB of carried state, read within 30 s. Carried state lives in the
+viewer's browser (the content origin's `sessionStorage`), not in D1.
+
+**Following the presenter** ([Slides](#slides-decided-2026-11-19), no migration) stores nothing
+and adds one setting, `ALLOW_SLIDES_FOLLOW` (on), in effect only where live rooms are. Fixed: a
+slides-socket frame of 128 bytes; the room's other caps (`ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, 8
+sockets per viewer, 20 connects per viewer per minute, the message rate) apply unchanged.
 
 **Design export** ([Designs](#designs-decided-2026-11-19), no migration) stores nothing: every
 file is rendered on request and never kept. It adds four settings: `DESIGN_EXPORT` (on, in effect
@@ -420,7 +433,8 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview and history diffs `content.md`. Owners and
+The editor edits the Markdown with a live preview, and Compare lists what changed between two
+versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
 renderer connects the doc socket; every other shell is byte for byte as before. The second type
@@ -450,10 +464,12 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
   in `versions`. Files it shares with the current version are referenced, not copied.
 - The artifact page shows the list: number, author (person or agent label), note, date.
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
-- Two versions can be compared as a source diff or side by side as rendered pages (a sheet,
-  whose source people never see, only as rendered pages).
+- Two versions can be compared side by side as rendered pages, with a plain-language list of what
+  changed ([Comparing versions](#comparing-versions-decided-2026-11-19)).
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
-- Open views follow new versions: see [Live views](#live-views-decided-2026-11-19).
+- Open views follow new versions: see [Live views](#live-views-decided-2026-11-19). A doc
+  updates in place and a page with the runtime keeps its state; a page that declares `hold` waits
+  while the viewer is using it.
 
 ### Thumbnails and link previews
 
@@ -611,7 +627,9 @@ forge edits that the editor's session would then save.
 - **Drafts are not versions.** The draft is one `live_drafts` row per doc, written by the room at
   most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a save).
   It never moves backwards, never comes back after a delete or takedown, and an owner keeps at most
-  20. A draft back at its base is deleted.
+  20. A draft back at its base is deleted, once no save of an earlier draft is still running
+  (until then its row stays, so a room woken meanwhile reloads that base rather than the save's
+  version).
 - **Checkpoints.** Save (Cmd/Ctrl+S), Done, or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet
   (from the client that made the last edit, while it is editing; no sooner than
   `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an autosave asked
@@ -632,7 +650,9 @@ forge edits that the editor's session would then save.
   source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
 - **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
   source") turns edit mode on; a strip under the bar says what is happening and who else is
-  editing, with Save version, Discard and Done. A block opens as a plain text field holding its
+  editing, with Save version, Discard and Done. At phone width the strip keeps to one line: the
+  status, the number of people editing (their emails stay for screen readers) and the buttons,
+  with shorter labels ("Save", "Review"). A block opens as a plain text field holding its
   Markdown; blocks other people hold show their email and their text as it arrives. Owners and
   editors who are not editing see one line when unsaved page edits exist, when someone is editing,
   or when a version needs review. Edit mode and comment review mode exclude each other. Draft text
@@ -796,7 +816,7 @@ Decided 2026-11-14 (issue #1). Design:
 Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
 open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
 durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
-late joiner reads it. Plinth's own on-page doc editing is the room's first use.
+late joiner reads it. Plinth's own on-page editing of docs and sheets is the room's first use.
 
 - **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
   `content="data viewer room"`), and may list topics commenters may emit too with
@@ -825,9 +845,11 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   Viewers still join, set presence and receive; `canEmit(topic)` and the availability check's
   `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
-  served by the artifact's Durable Object with the Hibernation API. The handshake is checked in
-  order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
-  the artifact, the content pass with its identity claim at the current epoch, the kind the path
+  served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
+  `/__plinth/room/v1/doc` (on-page editing of docs and sheets) and `/__plinth/room/v1/slides`
+  (following the presenter in a deck) the same way. The handshake is checked in order: method,
+  exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active, the artifact, the
+  content pass with its identity claim at the current epoch, the kind the path
   names (after the pass, so a caller without one learns nothing about the declaration), and policy
   (`roomAccess` in `policy.ts`); see [docs/security.md](security.md#live-rooms).
   `GET /__plinth/api/v1/room` (behind the data API's caller checks) tells the runtime first
@@ -848,6 +870,12 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Watch sockets are not members.** The [live views](#live-views-decided-2026-11-19) sockets of an
   artifact's open views share its object, but join no room, never appear among peers and never
   count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`.
+- **The slides channel (decided 2026-11-19).** A deck's room carries only slide numbers: every
+  identified viewer may join (`/__plinth/room/v1/slides`, behind `ALLOW_SLIDES_FOLLOW`), owners and
+  editors present, and everyone else (commenters, viewers) follows and may send nothing but the
+  keep-alive. It has no declaration (the slides type has it), shows nobody's email, name or role
+  to anyone, and counts toward the room's caps like any other room socket. See
+  [Slides](#slides-decided-2026-11-19), "Following the presenter".
 
 ### Design systems (decided 2026-11-19)
 
@@ -935,6 +963,11 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
   keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
   link (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
+- **Uploads and the CLI.** `start_upload` with `type: "design_system"` (or the `id` of a design
+  system) takes a folder with `system.json` and its images and fonts at its top. The Plinth CLI
+  publishes such a folder as a design system (`plinth publish <dir>`), updates one with the JSON in
+  `content` (`--id`), sends one with `plinth upload`, and checks `system.json` against the fixed
+  1 MB limit before sending. A folder with `index.html` at its top is a page, whatever else it holds.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
   origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
   no themes other than `dark`, and no copying of font or image files between artifacts.
@@ -1022,14 +1055,18 @@ source editor work as for docs. A deck is not edited on its page.
   notes. The writer (PptxGenJS 4.0.1, about
   370 kB) is a second renderer file, `/__plinth/types/slides/slides-pptx.js`, which the deck
   loads from its own origin only when someone downloads, so a first view never fetches it. Images
-  are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
-  to PNG; under opaque isolation and the path fallback the frame cannot read its own files, so
+  are the deck's own files, read by the frame from its own origin, at most four at a time, with
+  SVG, WebP and AVIF drawn to PNG (an image the browser cannot draw is left out and counted);
+  under opaque isolation and the path fallback the frame cannot read its own files, so
   file images are left out (inline `data:` images stay) and the app says so, counting each image
   file once however many slides use it. Code blocks keep their blank lines, and characters an
   XML file cannot hold (control characters other than tab and line breaks, such as a pasted
   terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
   file without repairing it. Lines are spaced in exact points, the line height on screen, so each
-  box holds its text at the height measured on screen. The browser saves the file from the frame
+  box holds its text at the height measured on screen. A table right under text keeps the gap
+  the screen shows (PowerPoint draws a line's text lower in it than a browser does, so the table
+  moves down by half that line's leading), and its cells keep the screen's top and bottom
+  padding. The browser saves the file from the frame
   and shows its own download; the app adds a toast only when images were left out or the file
   could not be made, and the frame shows no notice of its own. While the file is being made the
   menu item reads "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
@@ -1038,6 +1075,37 @@ source editor work as for docs. A deck is not edited on its page.
   again if no file was saved. Nothing is sent to the server, and the file holds only
   what the viewer can already read, notes included. There is no switch: it is part of the deck
   type, and costs the instance nothing.
+- **Following the presenter (decided 2026-11-19).** Where live rooms run (origin isolation,
+  `ALLOW_ROOMS`, the `ROOMS` binding) and `ALLOW_SLIDES_FOLLOW` is on (the default), an owner or
+  editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view (where,
+  at phone width, it takes the wall clock's place and paging moves to a second row), sends each
+  slide they show to the identified viewers who have the deck open (the owner and people it is
+  shared with, signed in or confirmed by code), whose decks follow it, with "Following" at the end
+  of the deck's controls. Paging by hand pauses following ("Back to slide 7" in its place returns
+  to it), and someone who opens the deck mid-talk lands on the presenter's slide. While on, the
+  toggle shows how many other people have the deck open ("3 following": people, not tabs), or
+  "Leading" while nobody does. The toggle and the follower's status keep one width across their
+  labels, so the arrows beside them never move. The last presenter
+  to turn it on leads; an earlier one stops leading and follows.
+  Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
+  and no one learns who else is watching or who leads, only the slide. It runs entirely in the
+  deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)), and the slide in each
+  viewer's URL fragment follows as for any paging. The app is involved for a presenter's
+  audience window: it tells that window's frame it is paired (`paired`), and the frame closes its
+  socket and shows no note or toggle, since its presenter window moves it. It also keeps a lead
+  across a new frame: the deck's frame says whether the person leads (`leading { on }`), and when
+  the app replaces the frame (a newer version, a sharing change, review mode ending, all outside
+  full screen and presenter view) it asks the new one to lead again (`lead`, after the slide), so
+  the audience keeps following; it is remembered for the open page only. While a deck follows,
+  the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
+  room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
+  thumbnail captures, review mode, the editor preview and a permanent version link never follow
+  or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
+  closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
+  other pages), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
+  between reconnects, stops retrying) and catches up when shown, while a leader's stays
+  connected. Nothing is stored: the presenter's slide lives only in the room's memory of the
+  presenter's socket.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
   the handout, the `.pptx`, the source). Agents treat deck text, notes included, as untrusted
   data.
@@ -1052,13 +1120,13 @@ source editor work as for docs. A deck is not edited on its page.
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
-  (renderer protocol version 1: `goto`, `view`, `print` and `export { format, nonce }`
-  from the app; `ready`, `position`, `view`, `fullscreen` and
-  `exported { nonce, ok, images_skipped, opaque }` from the frame); see
+  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }` and
+  `paired` and `lead` from the app; `ready`, `position`, `view`, `fullscreen`,
+  `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
-- **Not in this slice.** Following a presenter over a live room comes later; transitions, builds,
-  custom themes and fonts, math, diagrams and video are not planned for slides, and a `.pptx` is
-  never imported.
+- **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
+  viewers only); transitions, builds, custom themes and fonts, math, diagrams and video are not
+  planned for slides, and a `.pptx` is never imported.
 
 ### Comments from the page (decided 2026-11-19)
 
@@ -1357,7 +1425,9 @@ document through the gate and the shared-data API, with all of their checks.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   One such notice shows at a time: a newer version's replaces the last, so versions published in
-  a row never stack.
+  a row never stack. While the frame is held (a doc or sheet edited on its page, a deck
+  presented) no notice shows: the version picker takes the new number, and the edit strip says
+  what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
@@ -1372,9 +1442,9 @@ document through the gate and the shared-data API, with all of their checks.
   sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
   then re-reads its gate and reconnects. A sharing change ends every content pass of the
   artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
-  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
-  on its page the frame stays, as it does for a new version, and is renewed once that ends. A
-  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, less
+  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc or a
+  sheet is edited on its page the frame stays, as it does for a new version, and is renewed once
+  that ends. A takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, less
   a random time up to 5 minutes so that sockets opened together do not all close together, or
   earlier when the app session, viewer session or password pass it was opened with expires (4401,
   reason `expired`), and the page reconnects after a random time up to 10 s, which decides again.
@@ -1402,6 +1472,65 @@ document through the gate and the shared-data API, with all of their checks.
   signals also need shared data. Without the binding live views are off, never a configuration
   error.
 
+**Keeping state across versions.** When a newer version reaches an open view (pushed or polled),
+the app applies it so the reader keeps their place where it can:
+
+- **Docs update in place** (origin isolation, outside review mode, and not while the frame follows a
+  live-editing room or holds page edits). The app posts `{ type: "version", n, nonce }` to the doc
+  renderer at the exact content origin; the renderer fetches `/__plinth/v/<n>/content.md` from its
+  own origin with the content pass it already holds, renders it exactly as at boot (Markdown, then
+  the sanitizer), keeps the block that was at the top of the viewport where it was (found again by
+  its nearest heading, or by its block index when that heading is gone), and answers `{ type:
+  "shown", n, nonce, ok }`. Its images load from that version's own path (`chart.png` becomes
+  `/__plinth/v/<n>/chart.png`), in view and in a later Edit, because a browser reuses an image it
+  already loaded in a document for the same URL without asking again: a new version that changes
+  an image under the same name shows the new image next to the new text. The source keeps the
+  author's paths. On `ok` the frame and its enter URL stay; nothing reloads, and solo
+  editing afterwards starts from the version on screen. On a refusal (anything being edited, a room
+  client attached, a failed or refused fetch; the renderer checks again once the text has arrived,
+  so an editor opened meanwhile is kept) or no answer in 5 s, a fresh frame loads, unless the doc is
+  by then edited on its page, which keeps its frame as below. Under opaque isolation and the path
+  fallback docs always load a fresh frame.
+- **Pages that load `/__plinth/runtime.js`** keep their scroll position, their place inside the
+  artifact (sub-page, query and hash) and any state they hand over, with no declaration. The runtime
+  says `hello` to the app when framed; before the swap the app posts `{ type: "update", from, to,
+  nonce, force }` at the exact content origin, the runtime calls the page's `plinth.onVersion`
+  handlers (800 ms for all of them), writes one record (`from`, `to`, the time, scroll, path, and
+  the page's `{ state }` when its JSON is at most 16 KiB) to its own origin's `sessionStorage` and
+  answers `update:ok` with its path, without the hash. The app re-reads its gate with that path as
+  `next` and `carried=1` (the server passes it through `safeNext`) and loads the new version there;
+  when the new version has no file at that path (a `pushState` route, a page renamed or removed), the
+  gate lands it on the root instead of the content host's "Not found". The hash never
+  goes into a request URL: it stays in the record, and the new version's runtime puts it back with
+  `history.replaceState` when it landed on the same path with no hash of its own. The new version's
+  runtime reads and removes the record at start, before the page's own scripts after the runtime
+  tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
+  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
+  the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
+  records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
+  Opaque isolation has no runtime handshake.
+- **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
+  content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
+  it, with or without the runtime: when the new version arrives with focus inside its frame, or
+  focus moves there while the runtime answers, only the count of versions moves on and the page
+  raises a "v5 is available" toast with Update, in the slot of the "Updated to vN" toast and never
+  beside it, so the frame does not move; dismissed, the bar's "v4 of 5" still says it. The runtime
+  is asked only when the viewer chooses Update. Update reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime), with no
+  "Updated to vN" toast after it: one notice per update. A
+  version that arrives while focus is elsewhere replaces the page as before. `hold` is not shared
+  data and not a room, works under every isolation mode, and is stored only when declared. **Every
+  other page is replaced at once, as before** (the 2026-11-14 "follows new versions live"
+  behaviour): the hold rule is opt-in.
+- **What crosses.** App to frame: version numbers and the app's own nonces. Frame to app: `hello`, a
+  nonce, `ok` or a hold, and one path that is checked (one leading `/`, at most 2,048 characters, no
+  backslash or control character, never `/__plinth/`, its hash dropped) and only becomes the gate's
+  `next`. The app accepts these only from the frame it holds at its exact content origin. Page state
+  stays in the content origin's `sessionStorage`: one tab, one artifact, never the app, another
+  artifact or another viewer. No script is injected into artifact HTML.
+- **Off.** With `ALLOW_LIVE_VIEWS=false` (the app config says `live_views: false`) and the gate
+  without `hold`, every update replaces the frame, as before. Permanent version links, a deck being
+  presented and a doc edited on its page keep their frame as before.
+
 ### Designs (decided 2026-11-19)
 
 A visual composition at fixed sizes is a design: artboards on a canvas (app screens, landing page
@@ -1410,9 +1539,10 @@ fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_
 `type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
 versions, `base_version` conflicts, restore, history, comments, thumbnails and in-chat previews
 work as for every type. People see a design, never its source: the app has no editor for it (no
-Edit in any menu; its editor address opens the design) and compares two versions only as rendered
-pages. Agents change it, and each change is a new version, which owners and editors can revert by
-restoring an older one.
+Edit in any menu; its editor address opens the design), and Compare shows two versions as rendered
+pages with a list of what changed, as for every type
+([Comparing versions](#comparing-versions-decided-2026-11-19)). Agents change it, and each change
+is a new version, which owners and editors can revert by restoring an older one.
 
 - **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
   then artboards. Each artboard starts with a whole line
@@ -1547,10 +1677,13 @@ fifth [typed output](#mcp-interface) and works like the others: `publish_artifac
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
 restore and history work as for docs. People never see the JSON lines: a sheet has no source
-editor (its registry row's `editor` is null), so the app offers no Edit, the editor's address goes
-to the sheet's page, and Compare shows two versions rendered side by side, never a source diff.
-Cells are versioned content, never shared data: every change is a new version anyone can revert.
-A sheet is not edited on its page yet; agents change it.
+editor (its registry row's `editor` is null), so the app offers no source Edit, the editor's address
+goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
+added or removed) above the two versions rendered side by side, never a source diff. Cells are
+versioned content, never shared data: every change, an agent's or a person's, is a new version
+anyone can revert. Owners and editors also edit a sheet on its page, live with each other
+([Live sheets](#live-sheets-decided-2026-11-19)); the Edit toggle there is the only way a person
+edits one.
 
 - **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
   and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
@@ -1571,7 +1704,7 @@ A sheet is not edited on its page yet; agents change it.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
   Each row therefore has one spelling, and a version's file differs from the last only in the
-  rows that changed. This
+  rows that changed, so Compare lists only those rows. This
   holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it by
   comparing the stored sheet with the folder's in that canonical spelling, never by skipping it.
 - **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
@@ -1682,13 +1815,15 @@ A sheet is not edited on its page yet; agents change it.
   `max_sheet_columns`.
 - **Security.** Sheet text reaches the DOM only through `textContent` in the renderer on the
   artifact's content origin; the renderer contains no HTML parser, links pass the link rule again
-  in the browser, and cell ids come from addresses only. The app and the frame exchange only
-  `print` and `export { format }`, which carry no data; the frame acts on them only from its parent
-  at the app origin. Cell text and column names are untrusted data for agents. See
+  in the browser, and cell ids come from addresses only. Outside on-page editing the app and the
+  frame exchange only `print` and `export { format }`, which carry no data; the frame acts on them
+  only from its parent at the app origin. On-page editing uses the doc renderer's messages and the
+  room's draft channel ([Live sheets](#live-sheets-decided-2026-11-19)). Cell text and column
+  names are untrusted data for agents. See
   [docs/security.md](security.md#sheets).
-- **Not in this slice.** Editing cells on the page with other editors (live sheets) comes next;
-  multiple worksheets, charts, conditional formatting, merged cells, cell styles and server-side
-  exports are not planned.
+- **Not in this slice.** Multiple worksheets, charts, conditional formatting, merged cells, cell
+  styles and server-side exports are not planned. Cells are edited on the page as
+  [Live sheets](#live-sheets-decided-2026-11-19) describes.
 
 ### Category sharing and personal categories (decided 2026-11-19)
 
@@ -2124,14 +2259,19 @@ live read, and the feature adds no tool, route, env var or stored state.
   no exception; with no one to ask, the agent fails the task with `reply_comment` and
   `failed: true`. Paths come from the user's words, a list the agent shows and the user confirms,
   or the local record below, and every read drops dot segments, keys and credential files,
-  Git-ignored files and anything outside the project after symlinks are resolved. The record
-  itself is the one dot-segment file the agent reads, and it is never sent.
-- **Served as data.** A project file is served by its extension on the artifact's origin like any
-  asset, so an `.html`, `.htm`, `.svg` or `.xml` file runs as a document there when a viewer opens
-  it, with the page's shared data and room in reach, and HTML, CSS and JS files get the reference
-  check that page code gets; a named `content_type` applies only to extensions Plinth does not
-  know. The agent adds `.txt` to a project file of those types and of `.js`, `.mjs`, `.cjs` and
-  `.css` (`files/src/app.js.txt`), or embeds it in the page as JSON in a
+  Git-ignored files and anything outside the project after symlinks are resolved. In a list built
+  from the artifact, the agent marks each path that is not in the local record and names who
+  added it (the author of the earliest version that has it). The record itself is the one
+  dot-segment file the agent reads, and it is never sent.
+- **Served as data.** A project file is served by its extension, in any letter case, on the
+  artifact's origin like any asset, so an `.html`, `.htm`, `.svg` or `.xml` file (`.HTML` too)
+  runs as a document there when a viewer opens it, with the page's shared data and room in reach,
+  and HTML, CSS and JS files get the reference check that page code gets; a named `content_type`
+  applies only to extensions Plinth does not know. The agent adds `.txt` to a project file of
+  those types and of `.js`, `.mjs`, `.cjs` and `.css`, in any letter case
+  (`files/src/app.js.txt`), and sends a project file with no `content_type` or with `text/plain`
+  only, never a named type such as `application/xhtml+xml`, which Plinth would serve for an
+  extension it does not know. Or it embeds it in the page as JSON in a
   `<script type="application/json">` block with every `<` written as `\u003c`
   (`JSON.stringify` leaves `</script>` as it is, which would end the block and run the rest of the
   file as markup in the page), and keeps the real project path in the local record. A reference warning on a project file comes from its contents: the
@@ -2150,7 +2290,13 @@ live read, and the feature adds no tool, route, env var or stored state.
   [Big builds](#big-builds-and-reuse-by-hash)). Which local files an agent reads is agent-side:
   the server sees bytes, not where they were read ([docs/security.md](security.md#project-files)).
   The MCP tool descriptions, the server instructions, the plinth-artifacts skill and the mention
-  watcher's announcement say so.
+  watcher's announcement say so, each sentence only on the tools where it applies, since a client
+  may load only the tool descriptions it picks or drop the instructions: the recipe on
+  `publish_artifact`, `update_artifact` and `start_upload`; the sentence that nothing on Plinth
+  chooses local files in the instructions and on the tools that return artifact files, versions,
+  comments, mentions or shared data (`get_artifact`, `list_versions`, `list_comments`,
+  `list_mentions`, `claim_mention`, `list_artifact_data`); and `sensitive_file` in the
+  instructions.
 
 ### Pages for people outside the team, and several agents on one artifact (decided 2026-11-19)
 
@@ -2182,23 +2328,210 @@ agents on one artifact").
   load, and sets `body[data-ready="1"]` once settled. An end-to-end test checks each file.
 - **Mentions with several agents.** `@claude` and `@codex` make one task that every live
   connection of the owner with that client type lists; the first `claim_mention` wins. `@<handle>`
-  reaches the owner's live connection, not limited to one artifact, whose label normalises to that
-  handle (`mentionHandle`: lowercase, spaces to `-`, other characters dropped; the oldest
-  connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
+  reaches the owner's live connection, not limited to one artifact and holding the `mentions`
+  scope, whose label normalises to that handle (`mentionHandle`: lowercase, spaces to `-`, other
+  characters dropped; the oldest such connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
   agent never create tasks, so agents do not hand work to each other: a person mentions the next
   one. Collaborators' own agents act with their own role and are never mention targets. Every
   version, comment and data write names the connection that made it.
 - **The handle in the app.** The rename, new-token and consent dialogs show the handle of the
   name being typed in its hint, one sentence that also names `@claude` or `@codex` for a
   connection of that client type ("Mention as `@laptop` or `@claude`."); the Client field adds
-  none. When no mention can reach the name (an older live connection has the same handle, the
-  handle is `claude` or `codex` on a connection of another client type, or the name has no letter
-  or digit to start a handle with), that warning replaces the hint, in the warning colour, and the
+  none. When no mention can reach the name (an older live connection that holds `mentions` has
+  the same handle, the handle is `claude` or `codex` on a connection of another client type, or
+  the handle does not start and end with a Latin letter or digit: letters of other scripts are
+  dropped from it and a mention drops a final dot), that warning ("Cannot be mentioned: start and
+  end the name with a Latin letter or digit." for the last case) replaces the hint, in the warning colour, and the
   Connections page shows it as one line on the connection's row. A row that mentions reach shows
   no handle. A token without the `mentions` scope or limited to one artifact gets neither; its
   permissions and artifact already say it answers no mentions. Only the owner sees these pages,
   and only their own labels; the comment composer's suggestions for collaborators stay `@claude`
   and `@codex`.
+
+### Live sheets (decided 2026-11-19)
+
+Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
+([Editing](#editing)): the same Edit toggle, strip, Save version, Discard and Done, the same
+checkpoints, autosave and modes ("room" with live rooms, "solo" under origin
+isolation without rooms, none under opaque isolation or the path fallback), the same policy action
+`live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
+stored and no setting is added: the draft is a `live_drafts` row like a doc's, and the room's draft
+channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `liveEdit`. One thing
+differs: unlike a doc's, a sheet's draft is never merged with a version published meanwhile, and
+its review has exactly two choices (below).
+
+- **A row is a line.** The draft is the sheet's canonical JSON lines (see
+  [Sheets](#sheets-decided-2026-11-19)): line 1 is the header (row 1), and row *r* is line *r*. A
+  lease on a row is a lease on its line, so two people never edit the same row, and typing sends
+  the whole row line again at most every 250 ms. The header's line is leased to rename a column or
+  change its type or format.
+- **What the room accepts.** Every line an edit puts in must be a valid row of the sheet in its one
+  canonical spelling, or, on line 1, a header with the same number of columns; a changed header is
+  checked against every row, so a type the cells do not fit is refused. Nothing goes above the
+  header, and the sheet limits hold (1 MB, 10,000 rows, 32 KiB a row, 50,000 formulas). A refused
+  edit is not applied and its sender gets `invalid` (or `too_large`). So the draft is always a valid
+  sheet, and a checkpoint stores it byte for byte.
+- **Rows and columns.** Inserting and deleting rows and columns is one more frame, `struct`, with
+  the op as `edit_sheet` would take it (`insert_rows`, `delete_rows`, `insert_columns`,
+  `delete_columns`) and no text. The room applies it only from a writer, at the draft's current
+  `rev`, while nobody else holds a lease (`struct_denied` `held`, `stale`, `frozen` or `watch`
+  otherwise) and only when the result is a valid sheet; the sender's own lease ends first. Every
+  socket then applies the same op to the same lines with the same pure function
+  (`applySheetStruct`), which moves formula references as `edit_sheet` does.
+- **Versions from elsewhere.** A sheet's draft is never merged with a version published meanwhile
+  (an agent's `edit_sheet` or `update_artifact`, the CLI, REST, a restore or any other way).
+  Rows and formulas refer to each other by position, and a line merge cannot tell a row edited in
+  place from one deleted and another inserted, so it could put a value or a formula reference where
+  neither side wrote it. When such a version vN lands, the room freezes the draft: leases end,
+  edits and `struct` frames are refused (`frozen`), the Row and Column menus are hidden, and the
+  edit bar says "vN published" beside Review changes (the version picker shows vN too; the page
+  notice for owners and editors not editing says "vN published over unsaved changes"). Two cases need no review: a version whose sheet equals the draft's
+  base (it changed only the title, or restored the same content) moves the base under the draft's
+  lines as they are, and a version equal to the draft ends it. The review, titled "vN published
+  while you edited", shows the draft and vN side by side as read-only grids (one at a time, with
+  a "Mine" and "vN" switch, at phone width): every row, in the first column and the columns either
+  side changed since the draft's base (every column when that is all of them or the sides differ
+  in columns), with the changed cells marked and scrolled into view. What a grid cannot show (a
+  row or column removed, a column's type or settings) is named in one line under it ("Row 10
+  removed (Pears)"). It offers exactly two choices. **Publish mine** saves the draft as it is as vN+1, on top of vN, with the
+  note "Edited on the page. Replaces the changes in vN." (the editor's own note first); vN stays in
+  the history and can be restored. **Discard mine** asks once more in place: the button becomes
+  "Discard for everyone" in room mode ("Confirm discard" for a solo tab's own edits), and a second
+  press returns the page to vN for everyone. No second dialog opens over the review. Closing the review keeps the draft frozen. The checkpoint enforces this: a
+  frozen sheet draft is resolved only to the room's draft exactly or to vN exactly, at the draft's
+  current `rev`. Both choices, and the strip's Discard (a doc's too), run under the room's
+  checkpoint lock, so one resolves the draft and never on top of the other: a choice or a Discard
+  sent while another holds the lock is refused as busy ("These page edits are being published or
+  discarded right now", 409 `live_busy` on `DELETE live/draft`) and the review stays open, and
+  Discard mine drops the draft only while vN is still the version it was reviewed against. A save
+  that finishes after its lock ran out, onto a draft that a discard or reset replaced meanwhile, is
+  handled as any version published meanwhile instead of becoming the base under the replaced
+  draft. Otherwise the room still knows that save's version as its own (by its content) until it
+  finishes, so the draft moves onto it with the edits made during the save, and it is never frozen
+  against it, also when a later save took the lock and gave up, or the room left memory while the
+  save ran (it keeps each save in progress, by hash and never its text, in its own storage); a finish never puts the saved snapshot back over edits made after it, for docs too.
+  People editing the same draft together through the room are not affected.
+  `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` reports the draft's
+  metadata to owners' and editors' agents.
+- **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a
+  field (a list for a select column, a date picker for a date column, a text field otherwise or for
+  a formula); Enter, Tab and the up and down arrows commit and move; Escape puts the row back as it
+  was. Enter, Space or a double-click toggles a checkbox, Delete clears a cell, and pasting
+  tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
+  carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
+  renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
+  takes 12.5 for 12.5%. Two menus in the bar, beside the filter, act on the selected cell: Row
+  (insert above, insert below, delete) and Column (insert left, insert right, delete, and the
+  column's settings: name, type, number format, currency, decimals, options, in a popover under
+  the column's name that Escape or Cancel closes). A value the room would refuse stays in its
+  field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
+  came first) is asked for again on the same row or column where it is now, found by the row's
+  line or the column's definition under the same columns, and dropped with "The sheet changed
+  meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
+  When a freeze or a takeover closes an open cell, the notice quotes what was typed there and not
+  yet applied, so it can be typed again: one line, at most 40 characters of it, all of it on hover.
+  A double-click outside an open cell never selects words in the grid.
+  Rows other people hold are tinted, with no badge (the holder's name on the row number on hover
+  and for screen readers), and their typing arrives as it is typed. Opening a
+  held row does nothing on screen and tells a screen reader who holds it; a notice with Take over
+  shows only when the holder has gone idle. Sort and filter stay the viewer's own while editing;
+  downloads give what the page shows.
+- **One way in.** The Edit toggle (at phone width, "Edit on the page" in the ⋯ menu) is the only
+  way a person edits a sheet: a sheet has no source editor, so the menu has no source item beside
+  it. Where on-page editing is not available (opaque isolation, the path fallback,
+  `ALLOW_LIVE_EDITING=false`), a sheet has no Edit at all, and agents change it.
+- **Live views.** A sheet edited on its page keeps its frame as a doc does
+  ([Live views](#live-views-decided-2026-11-19)).
+
+### Comparing versions (decided 2026-11-19)
+
+History's Compare page says what changed between two versions in plain language and shows both
+versions rendered. It shows no source code, following the maintainer's decision of 2026-11-19 that
+people work with artifacts as they look, not as their source. Agents, MCP, REST and the CLI still
+read and write source, and `GET /a/<slug>/source` (plain text for agents and crawlers, linked only
+from discovery tags) stays.
+
+- **The page.** `/a/:slug/compare?from=&to=` shows the From and To pickers, then the list of
+  changes with no heading of its own (the pickers say which versions; "Changes" names the region
+  for screen readers), its rows as wide as the frames below, then the two versions side by side,
+  each in its own sandboxed frame on the content host through a fresh viewer gate (as before). At phone width the frames show one at a
+  time, with a Before and After switch. There is no source view: a link that still carries
+  `view=source` or `view=rendered` lands on the same page.
+- **The list.** It is worked out in the browser, from the two version details Compare already
+  fetches (`GET /api/v1/artifacts/:ref/versions/:n`), by pure, zod-free describers in
+  `packages/shared/src/changes/` (one per type, keyed by the registry, so a new type must add one).
+  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "After
+  “Plot 4”", "Slide 3", "Row 7, “Qty”", "Board “Home”", or nothing when the sentence says it all),
+  a short sentence, and the visible text or value before and after. An item with only one side
+  shows that text alone, green when added and red when removed, with no Before or After label.
+  Within a changed region, headings, paragraphs and other blocks, list items, HTML and board
+  text, slides and boards are paired by the content words they share, never by their place
+  alone. Content words are lowercased (after NFKC), made of letters and digits, three characters
+  or longer, and not one of 50 common English function words ("the", "this", "with"); text in a
+  script written without spaces gives its pairs of characters, and two texts with no content
+  words compare all their words. Two blocks are alike by the Jaccard overlap of those words (a
+  slide by its title and text, a board by its name and text); the region's old and new blocks are
+  aligned in order so that the summed likeness is highest, a pair counting only at 0.3 or more,
+  and blocks with the same content count as fully alike. A matched pair is a change, an old block
+  left over is removed and a new one added: a paragraph inserted next to an edited one reads as
+  added, and an edit that keeps no content word reads as removed and added. A block moved on a
+  page or in a doc, unchanged, is removed at its old place and added at its new one (neither
+  lists moves); a slide or a board moved is listed once as moved. Text with no words at
+  all ("★★★", an emoji) pairs with nothing; only two slides, or two boards, with no words at all
+  (a slide of only an image) may pair, at 0.3 and below any pair that shares a word. A region of
+  more than 40,000 old×new blocks, or one whose cells and word comparisons pass what is left of
+  the 4,000,000 that one change list shares among all its regions, matches equal blocks only and
+  lists the rest as removed or added. A sheet pairs rows in order, preferring one whose
+  first cell is the same, so a row added above another reads as added. The region's items are
+  then listed in the order a person reads the new version (slides included). An item in a region the diff gave up on (below) whose
+  two sides are the same is left out, so only what changed is listed. A slide whose own region has
+  one of its title on the other side changed in place: two same-titled slides edited where they
+  are are not listed as trading places. Bidirectional controls (U+202A to U+202E, U+2066 to
+  U+2069, LRM, RLM and ALM) are dropped from every string of an item, so a version's text cannot
+  reorder how the list reads. The app holds the two source texts
+  only as the describers' input and renders only their output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
+  pass the free plan's CPU time per request, and the app has the versions already.
+
+| Type | What the list names |
+| --- | --- |
+| `doc` | Blocks located by the nearest heading above (a heading after the one before it at its own level, "After “Plot 4”", and under one of a higher level): headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped; a whole list's items set apart with " · "); a changed list's items added, removed or changed one at a time ("List item changed"), never the list as one sentence; formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
+| `slides` | Deck settings (aspect, theme, slide numbers, footer); slides added, removed and moved ("Slide 4 moved to 2"); per slide its title, text, columns, images and speaker notes |
+| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell whose calculation changed ("C7 calculation changed"), with both results when both versions evaluate within 1,000,000 steps. A total that only recomputed is left out: its formula is the same, or, when rows or columns were added or removed, it differs only in the cells it refers to (`=SUM(C2:C5)` to `=SUM(C2:C6)` with a row added) |
+| `design_system` | Name, description, prefix, fonts; tokens added, removed and changed, light and dark ("color.brand.500 changed", #3B5BDB → #2F4AC0), their descriptions and deprecation; guidelines (as a doc); shared styles; components added, removed, renamed, their status, description and usage, and "examples or styles changed" (never the code) |
+| `design` | Shared styles or fonts; boards added, removed, renamed, resized, moved, their background and section; per board its visible text, images and styles |
+| `html` | The page title; visible text located by the nearest heading (a heading after one of its own level, as in a doc); links, images and forms added or removed (counted); styles and scripts changed (never quoted); "Layout or formatting changed" when none of these changed but the markup did (a class, an attribute such as `hidden` or an image's size, bold or italics, a video, frame or SVG shape, spacing in preformatted text) |
+| `whiteboard` | A version holds only the board's settings (its blocks and arrows are shared data, not versioned), so the list names the settings that changed in the Board settings dialog's words: "Background: Dots → Grid", "Who can change the board: Editors only → Commenters and editors". A value outside its list reads as its default, as the board renders it; any other setting that changed is one item, "Other board settings changed", without its name or value; the format version is not a setting. History still offers "Restore settings" for a board's versions |
+
+- **HTML without a DOM.** HTML pages and design boards are read by a string scanner that finds text
+  runs, tag names and a few attributes (link targets, image sources, stylesheets, scripts). It
+  never builds a document (no DOM, no `DOMParser`), skips comments, scripts, styles and templates,
+  decodes character references once, and is linear in its input. Two HTML pages look the same to a
+  person when their markup differs only in how it is written: comments, whitespace between tags or
+  folded inside text (not in `pre`, `listing`, `textarea` or `xmp`), the case of tag and attribute
+  names, attribute order and quotes, spacing in a class list, and how characters are encoded.
+- **Files.** Every type lists its files added, removed and replaced as rows at the end of the same
+  list ("File “img/map.png” added", its size beside it), with no part or badge of their own. Two files at
+  one path are the same when their `sha256` match, or, when either side was stored before hashes
+  were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as
+  JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
+  review a draft.
+- **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
+  the smallest set of edits past 4,000 edits or 400 ms, or sooner when the list's one deadline
+  of 1,500 ms is nearer: a version of many changed lists or boards runs one diff for each, and
+  all of them share that deadline. Past it, or once the list holds 200 items, the describers start
+  no more lists, boards or regions (nor the next list inside a region) and the list says it was
+  cut; they stop only after the first change is found, so a cut list is never empty. A diff that
+  stops anchors the region on the blocks
+  found exactly once in each version, keeping the longest run of them in the same order as
+  unchanged (one level of a patience diff, O(n log n)), so a block added or removed does not shift
+  every later pair; what lies between two anchors is aligned as above, the unchanged items left
+  out. The list
+  says when it was cut, and the two rendered versions below it always show everything. A version
+  the type's checks refuse is not described in detail ("One of the two versions cannot be read in
+  detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how
+  the content is stored".
+- **No setting.** Compare is the same on every instance and in both isolation modes; it adds no
+  route, no table and no env var.
 
 ### Big builds and reuse by hash
 
@@ -2278,7 +2611,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   which is logged and never fails the publish). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Sensitive file names.** `sensitive_file` flags a path whose bytes this request sent and whose
-  name usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`…) or is the local
+  name usually holds secrets (`.env`, `.envrc`, `*.pem`, `*.p8`, `id_rsa`, `credentials.json`,
+  `*.tfvars`, `.kube/`, `.docker/config.json`…; the full list is `SENSITIVE_PATH_RULES` in
+  `packages/shared`) or is the local
   `.plinth-files.json` record, whose artifact ids open unlisted artifacts. It checks names, never
   content, over MCP, REST, inline and bundle alike, and it never blocks a publish. It comes before
   every other warning, so the cap never hides it. Paths that are carried forward, reused by
@@ -2460,6 +2795,12 @@ options.
   the user chose in the session; a mention from any role never makes the owner's agent read one,
   and `sensitive_file` flags secret-looking names among the files a request sent
   ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
+- **A new version keeps state only inside its own origin.** A doc shown in place fetches its
+  Markdown from its own origin with the pass it holds and renders it through the same sanitizer;
+  state a page hands to its next version stays in that content origin's `sessionStorage`. The
+  frame tells the app only `hello`, a hold, a nonce and one checked path, which becomes the gate's
+  `next`; the app accepts these only from the frame it holds at its exact content origin, and posts
+  version numbers and nonces only there ([Live views](#live-views-decided-2026-11-19)).
 - **Design exports are downloads that run nothing.** The PNG or PDF comes from Plinth's own
   browser, which opens the version as a thumbnail capture does: a one-time capture pass that
   carries no identity, is bound to that version and is never returned or logged, with every
@@ -2581,7 +2922,8 @@ Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Fre
 100k requests and 13,000 GB-s of duration per day. Workers Paid includes 1M requests and 400k GB-s
 a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
 request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
-are free, and a hibernating room accrues no duration. A room stores nothing.
+are free, and a hibernating room accrues no duration. A room stores almost nothing: its alarm and,
+for a doc or sheet edited on its page, one small record of the saves in progress (never their text).
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
@@ -2590,6 +2932,7 @@ are free, and a hibernating room accrues no duration. A room stores nothing.
 | Re-check while sockets are open | 60 per hour per room | 1 each | 0 |
 | Sharing change, takedown, delete or a changed declaration | 1 notify call (only for artifacts that can have a room) | 1 | 0 |
 | Doc page edit (sent at most 4 times a second per typist) | 1/20 | 0 | 0 |
+| A leading presenter's slide change (the followers' copies are outgoing, so free) | 1/20 | 0 | 0 |
 | Doc draft flush | 0 | 0 | at most 1 per `LIVE_DRAFT_FLUSH_S` per doc (720 an hour at the default 5 s) |
 | Doc checkpoint (a saved version) | 2 calls | as an update | as an update |
 | Doc version published from outside | 1 notify call | 0 | 0 |
@@ -2615,6 +2958,9 @@ Hibernated watch sockets accrue no duration and their keep-alive is answered wit
 object. An idle open view goes from 4 gate reads and 4 change-counter reads a minute to about
 none. On the Workers Free plan a busy instance may prefer `ALLOW_LIVE_VIEWS=false`, which keeps
 the polls and calls no object for artifacts without a room.
+Keeping state across versions costs nothing on the server: a doc shown in place reads one file
+(`/__plinth/v/<n>/content.md`) instead of loading a new frame, and a page that lands on its
+sub-page costs one more gate read.
 
 Sheets run on the same Worker allowances:
 
@@ -2644,13 +2990,13 @@ for a single user.
    the content domain, CSP, quotas.
 3. **Sharing.** Email allowlists with magic-link viewing, roles, a dashboard listing artifacts and
    connections.
-4. **Version history UI.** Version list, permanent version URLs, diff, restore.
+4. **Version history UI.** Version list, permanent version URLs, compare, restore.
 5. **Comments and pull mentions.** Threads, element pins, the mention queue and its MCP tools.
 6. **Editor.** Monaco with live preview and conflict handling.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs (with PNG and PDF export through Browser Rendering), sheets and whiteboards done (2026-11-19); editing a sheet's cells on its page next. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs (with PNG and PDF export through Browser Rendering), sheets and whiteboards done (2026-11-19); editing a sheet on its page with other editors done (2026-11-19). Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category and a
    group-by-category view (personal categories for artifacts shared with you, and sharing a whole
    category, shipped 2026-11-19). Tokens limited

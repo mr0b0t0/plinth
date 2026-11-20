@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, dismissToast, EmptyState, showToast } from "../components/ui/index.ts";
 import { GateScreen } from "../components/viewer/GateScreen.tsx";
-import { parseVersion } from "../components/viewer/gate.ts";
+import { gatePath, parseVersion } from "../components/viewer/gate.ts";
 import { useGate } from "../components/viewer/useGate.ts";
 import { useLiveView } from "../components/viewer/useLiveView.ts";
 import {
@@ -15,9 +15,12 @@ import {
   versionPollMs,
   type WatchPause,
 } from "../components/viewer/useVersionWatch.ts";
+import type { UpdateHandlers } from "../components/viewer/useViewUpdate.ts";
 import { ViewerSkeleton, ViewerStage } from "../components/viewer/ViewerStage.tsx";
 import { api } from "../lib/api.ts";
 import { useLocation } from "../lib/router.tsx";
+
+type OkGate = Extract<ViewGate, { status: "ok" }>;
 
 export default function ArtifactPage({ params }: { params: Record<string, string> }) {
   const slug = params.slug ?? "";
@@ -47,16 +50,30 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // One quiet notice: a version pushed while the last one's notice is still up replaces it, so an
   // agent publishing several versions in a row never stacks "Updated to" toasts.
   const updatedToast = useRef<number | null>(null);
-  const onNewer = (gate: Extract<ViewGate, { status: "ok" }>) => {
+  // While the frame is held (edited on the page, a deck presented) the page's own bar says what
+  // happened, so no toast repeats it. A held version (the hold rule) says so in that same slot, so
+  // the frame never moves under the viewer and the two notices never stack; the bar's "vN of M"
+  // stays after it is dismissed.
+  const heldToast = useRef<number | null>(null);
+  // A fresh gate for a newer version waits here until the stage has applied it: in place for a
+  // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
+  const [pending, setPending] = useState<OkGate | null>(null);
+  const show = (gate: OkGate, quiet = false) => {
     const moved = gate.artifact.version !== shown?.artifact.version;
+    setPending(null);
     setGate(gate);
-    if (!pinned && moved) {
+    if (!pinned && moved && !quiet && pause === null) {
       if (updatedToast.current !== null) dismissToast(updatedToast.current);
       updatedToast.current = showToast({ title: `Updated to v${gate.artifact.version}` });
     }
   };
-  const latest = useRef({ shown, pause, path, onNewer });
-  latest.current = { shown, pause, path, onNewer };
+  const onNewer = (gate: OkGate) => {
+    // The frame stays (a pinned link, or a paused one): only the bar moves on.
+    if (gate.enter_url === shown?.enter_url) show(gate);
+    else setPending(gate);
+  };
+  const latest = useRef({ shown, pause, path, onNewer, show });
+  latest.current = { shown, pause, path, onNewer, show };
   // A sharing change ended the frame's content pass. The page re-reads its gate; a refusal is
   // shown, and otherwise a fresh frame renews the pass, except while a deck is presented or a doc
   // is edited on its page: that frame stays, and is renewed once the pause ends.
@@ -65,7 +82,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     const asked = latest.current.path;
     api<ViewGate>(asked).then(
       (fresh) => {
-        const { shown: now, pause: paused, path: current, onNewer: show } = latest.current;
+        const { shown: now, pause: paused, path: current, show } = latest.current;
         if (!now || current !== asked) return;
         const next = afterAccessChange(now, fresh, pinned, paused);
         if (next.kind === "keep") {
@@ -99,10 +116,42 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     pause,
   );
   checkRef.current = checkNow;
+  const onVersionSeen = useCallback(() => checkRef.current(), []);
   // A page that declares `comments` anchors its own comments: opening the panel never reloads it
   // into review mode (the gate ignores review for it too). If a new version drops the declaration
   // while the panel is open, review mode turns on then, with one reload as on a first open.
   const pageComments = shown?.page_comments === true;
+  const updateHandlers: UpdateHandlers = {
+    pending,
+    apply: (gate, quiet) => latest.current.show(gate, quiet),
+    count: (gate) => {
+      setPending(null);
+      setGate(gate);
+    },
+    drop: () => setPending(null),
+    fetchGate: async (to) => {
+      // The place comes from the older version: the gate lands on the root if this one lacks it.
+      const fresh = await api<ViewGate>(
+        to ? gatePath("view", slug, { ...query, next: to, carried: true }) : latest.current.path,
+      );
+      return fresh.status === "ok" ? fresh : null;
+    },
+    offer: (version, update) => {
+      const offered = heldToast.current;
+      heldToast.current = null;
+      if (offered !== null) dismissToast(offered);
+      if (updatedToast.current === offered) updatedToast.current = null;
+      if (version === null) return;
+      if (updatedToast.current !== null) dismissToast(updatedToast.current);
+      const id = showToast({
+        title: `v${version} is available`,
+        duration: 0,
+        action: { label: "Update", onClick: update },
+      });
+      heldToast.current = id;
+      updatedToast.current = id;
+    },
+  };
   useEffect(() => {
     if (commentsOpen && shown && !pageComments) setReview(true);
   }, [commentsOpen, shown, pageComments]);
@@ -176,9 +225,11 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       onReload={reload}
       onEditModeChange={onEditModeChange}
       onPauseChange={setPause}
+      onVersionSeen={onVersionSeen}
       review={review}
       onLeaveReview={onLeaveReview}
       liveData={{ pushed: live === "open", tick: dataTick }}
+      update={updateHandlers}
     />
   );
 }

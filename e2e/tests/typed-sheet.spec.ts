@@ -251,7 +251,7 @@ test.describe("a published sheet", () => {
     }
   });
 
-  test("edit_sheet publishes a version the open page picks up, changing one stored line", async ({
+  test("edit_sheet publishes a version the open page picks up, and Compare lists the cell", async ({
     page,
   }) => {
     test.setTimeout(90_000);
@@ -287,6 +287,15 @@ test.describe("a published sheet", () => {
       expect(changed).toHaveLength(1);
       expect(before[changed[0] as number]).toContain('["Apples",3,');
       expect(after[changed[0] as number]).toContain('["Apples",10,');
+      await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
+      // One cell changed, said as a cell and its two values; no sheet lines on the page.
+      const changes = page.getByRole("region", { name: "Changes" });
+      const items = changes.getByRole("list").first().getByRole("listitem");
+      await expect(items).toHaveCount(1);
+      await expect(items).toContainText("B2 changed");
+      await expect(items).toContainText("Row 2, “Qty”");
+      await expect(items).toContainText(/Before: 3\b.*after: 10\b/);
+      await expect(page.locator("main")).not.toContainText('["Apples"');
     } finally {
       await client.close();
     }
@@ -302,7 +311,9 @@ test.describe("a published sheet", () => {
       await sheetFrame(page);
       await page.getByRole("button", { name: "Artifact actions" }).click();
       await expect(page.getByRole("menuitem", { name: "Download .csv" })).toBeVisible();
-      await expect(page.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
+      // No source Edit. The Edit toggle (at phone width, "Edit on the page" here) is a sheet's one
+      // way into editing.
+      await expect(page.getByRole("menuitem", { name: /^Edit( source)?$/ })).toHaveCount(0);
       await page.keyboard.press("Escape");
 
       // The editor's address goes to the sheet's page, with no code on screen.

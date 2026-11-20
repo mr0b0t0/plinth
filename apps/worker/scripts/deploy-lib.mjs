@@ -163,6 +163,7 @@ export function runtimeBase(repoCfg) {
         "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
         "SHEET_EVAL_BUDGET",
         "ALLOW_CATEGORY_SHARING",
+        "ALLOW_SLIDES_FOLLOW",
         "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR",
         "DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR",
       ]

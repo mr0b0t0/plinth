@@ -38,6 +38,7 @@ describe("versionCapabilities", () => {
         roomOpen: ["block.move"],
         people: false,
         comments: false,
+        hold: false,
       });
     },
   );

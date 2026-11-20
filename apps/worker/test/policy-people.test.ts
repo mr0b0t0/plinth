@@ -23,6 +23,7 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   roomOpen: [],
   comments: false,
   people: true,
+  hold: false,
   ...over,
 });
 

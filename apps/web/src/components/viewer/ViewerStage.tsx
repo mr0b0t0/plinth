@@ -8,7 +8,7 @@
 // (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
 import { FileIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import { API, APP_ROUTES, type CommentInfo, route, typeDef, type ViewGate } from "@plinth/shared";
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
@@ -36,10 +36,12 @@ import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
+import { type UpdateHandlers, useViewUpdate } from "./useViewUpdate.ts";
 import "./viewer.css";
 
 // The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
 const LiveConflictDialog = lazy(() => import("./LiveConflictDialog.tsx"));
+const LiveSheetReview = lazy(() => import("./LiveSheetReview.tsx"));
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -64,6 +66,11 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /**
+   * The edit bar names a version the bar's picker does not show yet (one saved from the page, or
+   * published meanwhile): the page reads its gate now, so both name the same version.
+   */
+  onVersionSeen?: () => void;
   /** The frame is in review mode (the comment-anchoring frame). */
   review?: boolean;
   /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
@@ -73,6 +80,11 @@ export interface ViewerStageProps {
    * data changed; the frame's runtime is told both (useLiveDataRelay).
    */
   liveData?: { pushed: boolean; tick: number };
+  /**
+   * Live views: a newer version waiting to be applied, and how to apply it (useViewUpdate). Absent:
+   * the page swaps the frame itself, as before.
+   */
+  update?: UpdateHandlers;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -105,9 +117,11 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  onVersionSeen,
   review,
   onLeaveReview,
   liveData,
+  update: updateHandlers,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -163,7 +177,7 @@ export function ViewerStage({
     openComments: onToggleComments,
   });
 
-  // On-page editing of a doc (#36): owners and editors on the current version only.
+  // On-page editing of a doc or a sheet (#36): owners and editors on the current version only.
   const live = useLiveEdit({
     gate,
     frame,
@@ -198,6 +212,18 @@ export function ViewerStage({
   useEffect(() => {
     onPauseChange?.(pause);
   }, [pause, onPauseChange]);
+  // Live views: a newer version is applied in place, with the page's state, or held while the
+  // viewer is using a page that declares `hold` (viewUpdate.ts).
+  const update = useViewUpdate({
+    frame,
+    contentOrigin,
+    config,
+    gate,
+    pinned,
+    pause,
+    review: review === true,
+    handlers: updateHandlers,
+  });
   // A version published while presenting waits; once presenting ends, the deck catches up.
   const presented = useRef(false);
   useEffect(() => {
@@ -210,6 +236,11 @@ export function ViewerStage({
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
+  // The version the edit bar names (saved as, or published meanwhile) and the picker agree.
+  const named = Math.max(live.savedVersion ?? 0, live.status?.conflict_version ?? 0);
+  useEffect(() => {
+    if (!pinned && named > artifact.version) onVersionSeen?.();
+  }, [named, pinned, artifact.version, onVersionSeen]);
 
   // The toggle gets focus back when the panel closes.
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -265,6 +296,7 @@ export function ViewerStage({
     live,
     editing,
     present,
+    update,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -393,13 +425,27 @@ export function ViewerStage({
           </nav>
         </footer>
       </div>
-      {live.reviewing && live.conflict && (
+      {live.reviewing && live.conflict && !live.merges && (
+        <Suspense fallback={null}>
+          <LiveSheetReview
+            conflict={live.conflict}
+            saving={live.saving}
+            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            onClose={live.closeReview}
+            onPublishMine={() => void live.keepMine()}
+            onDiscardMine={() => void live.takeLatest()}
+          />
+        </Suspense>
+      )}
+      {live.reviewing && live.conflict && live.merges && (
         <Suspense fallback={null}>
           <LiveConflictDialog
             conflict={live.conflict}
             artifactId={artifact.id}
             saving={live.saving}
             mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            language={typeDef(artifact.type)?.editor?.language ?? "markdown"}
+            sourceLabel={typeDef(artifact.type)?.sourceLabel ?? "Markdown"}
             onClose={live.closeReview}
             onKeepMine={() => void live.keepMine()}
             onTakeLatest={() => void live.takeLatest()}

@@ -47,6 +47,9 @@ export const DEV_VARS: Record<string, string> = {
   ALLOW_LIVE_VIEWS: "true",
   // Category sharing (docs/spec.md "Category sharing and personal categories"), on by default.
   ALLOW_CATEGORY_SHARING: "true",
+  // Following the presenter in a deck (docs/spec.md "Slides"), on by default. On the opaque server
+  // it has no effect: it runs over live rooms, which need origin isolation.
+  ALLOW_SLIDES_FOLLOW: "true",
   // Design export's instance and per-artifact hourly caps, at their defaults. The local Worker has
   // no Browser Rendering binding, so exports stay off (typed-design-export.spec.ts).
   DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "120",

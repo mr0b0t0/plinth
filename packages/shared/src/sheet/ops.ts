@@ -10,10 +10,12 @@ import {
   type Cell,
   isFormula,
   MAX_FREEZE_COLS,
+  parseSheet,
   type Sheet,
   type SheetColumn,
   type SheetColumnType,
   type SheetNumberFormat,
+  serializeSheet,
 } from "./format.ts";
 import { type StructuralChange, shiftFormula } from "./refs.ts";
 
@@ -314,4 +316,43 @@ export function applySheetOps(
     }
   });
   return { sheet: s, changed };
+}
+
+// ---------- live sheets: structural changes to the draft's lines ----------
+
+/**
+ * A structural change to a live sheet draft (the room's `struct` frame): the four edit_sheet ops
+ * that move rows or columns, without values. Rows are A1 rows (2 is the first data row), columns
+ * letters.
+ */
+export type SheetStructOp =
+  | { op: "insert_rows"; before: number; count: number }
+  | { op: "delete_rows"; from: number; count: number }
+  | { op: "insert_columns"; before: string; columns: SheetColumnInput[] }
+  | { op: "delete_columns"; from: string; count: number };
+
+export const SHEET_STRUCT_KINDS = [
+  "insert_rows",
+  "delete_rows",
+  "insert_columns",
+  "delete_columns",
+] as const;
+
+/**
+ * The lines of a canonical sheet (line 0 the header, then one row per line) after a structural
+ * change, or null when the lines are not a valid sheet or the op does not apply. Pure and
+ * deterministic: the room and every renderer apply the same op to the same lines and get the same
+ * lines, so a struct frame never carries text. The result is canonical (serializeSheet); whether
+ * it is still a valid sheet (an inserted column's definition, the limits) is the caller's check.
+ */
+export function applySheetStruct(lines: readonly string[], op: SheetStructOp): string[] | null {
+  const parsed = parseSheet(lines.join("\n"));
+  if (!parsed.ok) return null;
+  try {
+    const { sheet } = applySheetOps(parsed.sheet, [op]);
+    return serializeSheet(sheet).split("\n");
+  } catch (e) {
+    if (e instanceof SheetOpError) return null;
+    throw e;
+  }
 }

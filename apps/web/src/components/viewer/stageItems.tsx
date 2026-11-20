@@ -51,6 +51,7 @@ import {
 } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
+import type { ViewUpdate } from "./useViewUpdate.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -70,6 +71,8 @@ export interface StageContext {
   editing: boolean;
   /** Presenting a deck (usePresentation); inert for every other type. */
   present: Presentation;
+  /** Live views: a newer version held while the viewer uses the page (useViewUpdate). */
+  update: ViewUpdate;
   hrefs: {
     current: string;
     edit: string;
@@ -147,7 +150,10 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
-/** A type with no source editor (a sheet or a design) has no Edit: agents change it. */
+/**
+ * A type with no source editor (a sheet or a design) has no Edit: agents change it. A sheet's one
+ * way into editing is the Edit toggle on its page.
+ */
 const editSource: MenuItem = (c) =>
   canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
     ? [
@@ -425,7 +431,10 @@ export const BAR_CONTROLS: readonly StageItem[] = [
 
 // ---------- the strip under the bar ----------
 
-const olderVersion: StageNode = ({ gate: { artifact }, hrefs }) =>
+// While a version is held its toast says so (useViewUpdate.ts), so this line stays away: one
+// notice, and the frame does not move under the viewer.
+const olderVersion: StageNode = ({ gate: { artifact }, hrefs, update }) =>
+  update.held === null &&
   artifact.version < artifact.current_version && (
     <p className="pl-viewer__notice">
       You are viewing <span className="type-num">v{artifact.version}</span>
@@ -452,6 +461,8 @@ const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
       savedVersion={live.savedVersion}
       rebasedVersion={live.rebasedVersion}
       newerVersion={live.newerVersion}
+      merges={live.merges}
+      conflictVersion={live.status?.conflict_version ?? live.conflict?.current ?? null}
       editors={live.status?.editors ?? []}
       onSave={(note) => void live.save(note)}
       onDiscard={() => void live.discard()}
@@ -468,6 +479,7 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
       status={live.status}
       restore={live.restore}
       signIn={live.signIn}
+      merges={live.merges}
       unavailable={
         live.roomReady
           ? null

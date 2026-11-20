@@ -65,6 +65,8 @@ const WORKER_VARS = [
   // Invitation emails per UTC day for the instance (0 turns them off) and for one owner.
   "INVITATION_EMAILS_PER_DAY",
   "INVITATION_EMAILS_PER_OWNER_PER_DAY",
+  // Following the presenter in a deck (docs/docker.md#settings), through the same live rooms.
+  "ALLOW_SLIDES_FOLLOW",
   // Design exports the instance renders per hour, and per artifact for people other than its
   // owner and editors; in effect only once the operator adds a Browser Rendering binding.
   "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR",

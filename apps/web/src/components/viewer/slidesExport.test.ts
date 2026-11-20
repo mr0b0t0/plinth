@@ -237,6 +237,12 @@ describe("usePresentation exportPptx", () => {
     rerender({ f: second });
     expect(result.current.exporting).toBe(false);
     expect(toast).toHaveBeenCalledExactlyOnceWith(EXPORT_INTERRUPTED_TOAST);
+    // The app cannot tell whether the old frame saved the file, so the toast says what to do.
+    expect(EXPORT_INTERRUPTED_TOAST).toEqual({
+      title: "The .pptx download was interrupted",
+      description: "If no file was saved, download it again.",
+      tone: "warning",
+    });
     // The old timeout does not fire a second toast, and the menu item works again.
     act(() => {
       vi.advanceTimersByTime(EXPORT_TIMEOUT_MS);

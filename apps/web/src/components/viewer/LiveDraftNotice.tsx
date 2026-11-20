@@ -24,6 +24,8 @@ export interface LiveDraftNoticeProps {
    * connected), or null when it can. Those two actions are disabled with this as the reason.
    */
   unavailable?: string | null;
+  /** False for a type whose page edits are never merged (a sheet). Default true (a doc). */
+  merges?: boolean;
   /** For tests. */
   now?: number;
   onSave: () => void;
@@ -63,7 +65,10 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
   let buttons: ReactNode = null;
   if (kind === "conflict") {
     const n = (status?.connected ? status.conflict_version : draft?.conflict_version) as number;
-    text = `v${n} changed the same paragraphs as the unsaved page edits`;
+    text =
+      props.merges === false
+        ? `v${n} published over unsaved changes`
+        : `v${n} changed the same paragraphs as the unsaved page edits`;
     if (actions) {
       buttons = (
         <Button size="sm" variant="secondary" onClick={onReview}>

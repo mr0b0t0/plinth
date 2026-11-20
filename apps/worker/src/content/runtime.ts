@@ -37,6 +37,12 @@
 //   comments   comments from the page (runtime/comments.ts); nothing is posted until first use:
 //              ready, compose(anchor?), onThreads(fn), locate(fn), refresh(), open(id), onFocus(fn)
 //
+//   onVersion  (fn({ from, to, force }) -> void | false | { state }) -> off: before a newer
+//              version replaces the page (runtime/version.ts); false keeps the page until the
+//              viewer chooses Update, { state } hands JSON (16 KiB) to the next version
+//   carried    { from, to, state } in the version that replaced the one before, else null; the
+//              scroll position and place inside the artifact come back by themselves
+//
 // Under opaque isolation the page's origin is "null": ready resolves unavailable without any
 // request, and db calls reject with "unavailable". A 401 means the content pass expired: listeners
 // get "expired" as their terminal error and a "plinth:expired" event fires on window. The room
@@ -53,6 +59,7 @@ import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
+import { VERSION_FRAGMENT } from "./runtime/version.ts";
 
 /**
  * The fragments, in their fixed order: core (head and tail, around the rest), app channel, data,
@@ -65,6 +72,7 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   COMMENTS_FRAGMENT,
   LIVE_FRAGMENT,
   PEOPLE_FRAGMENT,
+  VERSION_FRAGMENT,
 ];
 
 /** Assemble the script from `fragments`, with the app channel when one of them uses it. */

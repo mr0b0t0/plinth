@@ -133,6 +133,8 @@ export class Presenter {
       viewport: () => { w: number; h: number };
       clock?: PresenterClock;
       measure?: Measure;
+      /** More controls for the bar, before Exit (a presenter's Lead viewers toggle). */
+      bar?: readonly HTMLElement[];
     },
   ) {
     const clock = this.clock;
@@ -163,6 +165,7 @@ export class Presenter {
     this.clockEl = el(doc, "span", "plinth-slides__clock");
     end.append(
       this.clockEl,
+      ...(this.o.bar ?? []),
       iconButton(doc, "x", "Exit presenter view", () => this.o.exit()),
     );
     bar.append(timing, paging, end);

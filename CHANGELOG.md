@@ -25,6 +25,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
   It checks names only, never blocks, and is not reported for files carried forward, reused by
   hash or restored.
+- **`sensitive_file` knows more names**: `.envrc`, `.pgpass`, `*.p8`, `*.ppk`, `*.tfvars`, files
+  under `.kube/`, and `.docker/config.json`.
+- **Shorter MCP tool descriptions.** The sentence that nothing on Plinth chooses local files is on
+  the tools that return artifact files, versions, comments, mentions or shared data instead of on
+  every tool, which takes about 3,750 characters (some 950 tokens) off what an agent loads. The
+  project files rules stay on each tool that publishes files.
+- **Project files: safer types, and a marked list.** Agents add `.txt` to page and code files in
+  any letter case (`App.HTML` too), send project files only as plain text, and, when they offer
+  files taken from the artifact, mark each one the user has not chosen before and say who added
+  it.
 - **Pages for clients and approvers, and several agents on one artifact.** Three finished example
   pages for people outside your team, who confirm their email by code with no account: an approval
   sign-off, a client intake form and a client checklist (`docs/examples/`). What your side decides
@@ -34,6 +44,19 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   conflicts and who did what. The rename, new-token and consent dialogs show the handle a name
   is mentioned by as you type (`Claude Code` is `@claude-code`), and the Connections page warns on
   a connection's row when a name cannot be reached.
+- **A mention skips connections that cannot answer it.** `@<handle>` no longer goes to a
+  connection without the "Answer mentions" permission, where it would wait for ever; a newer one
+  with the same handle that can answer gets it, and the Connections page warns accordingly.
+- **A clearer hint for names no mention can reach.** The rename and new-token dialogs now say
+  "start and end the name with a Latin letter or digit", which also covers names in other scripts
+  and names ending in a dot.
+- **The intake example shows who changed an answer.** Answers the owner or an editor changed say
+  "Changed by" with their email and role on the response's date line, and a question whose id is
+  `constructor` or another built-in name no longer shows a stray answer.
+- **The approval example keeps your own decision current.** "You approved · Withdraw" follows the
+  shared data, so it updates when the owner or an editor changes or deletes your sign-off, without
+  a reload. Who changed a sign-off now joins its decision and date line ("· Changed by" with the
+  email, and the role when there is one), as on the intake page.
 - **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
   (shared data, rooms, page comments) no longer gets a publish warning it could not fix.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
@@ -48,6 +71,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
   On instances with opaque content isolation the file leaves out the deck's image files, and says
   so. Plugin 0.23.0.
+- **.pptx: images four at a time.** The download reads and draws at most four of a deck's images
+  at once, so a deck with hundreds of them no longer risks a phone's tab, and an image the browser
+  cannot draw is counted among those left out.
+- **.pptx: space above tables.** A table right under a list or a paragraph keeps the gap the slide
+  shows, instead of sitting against the last line.
+- **.pptx: an interrupted download says what to do.** When a newer version replaces the deck while
+  the file is made, the notice says to download it again if no file was saved.
 - **Open pages follow new versions at once.** An artifact page that is open picks up a version an
   agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
   vN" notice at a time, however many versions arrive in a row), and pages that keep
@@ -166,6 +196,66 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
   them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
   Migration `0021_invitation_opt_outs.sql`.
+- **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
+  sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
+  Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
+  spreadsheet fills the rows they cover. Row and Column menus in the sheet's bar insert and delete
+  rows and columns and change a column's name, type and format. The others editing see each change
+  as it is typed, and rows someone holds are tinted. Save version (or a pause) makes the next
+  version, as for docs. The Edit toggle is the only way to edit a sheet: there is still no source
+  editor. A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged
+  into the page edits: editing pauses, and the editors review both sheets side by side, with the
+  cells each side changed marked, and choose **Publish mine** (the page edits become the next
+  version, and the other stays in the history) or **Discard mine** (pressed twice: it turns into
+  "Discard for everyone"). When two people change rows at once, each change lands on the row it was
+  made on, or is dropped with a note when that row is gone. While one editor publishes or discards,
+  a second choice or a Discard from someone else waits with a note instead of undoing it, for docs
+  too. A save that takes longer than 30 seconds keeps the edits made while it ran, for docs too,
+  and never sends them to review against its own version. While a doc or sheet is edited on its
+  page, a version published meanwhile no longer shows an "Updated to" notice (the strip says it,
+  and the version picker follows), and at phone width the edit strip keeps to one line. Numbers
+  are typed in your locale. Follows `ALLOW_LIVE_EDITING`. The agent's sheet rules say a
+  `live_draft` on a sheet needs no action.
+- **Compare says what changed, in words.** History's Compare page no longer shows a source diff.
+  It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
+  paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
+  "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
+  the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
+  formatting changed". A heading, paragraph, slide or row added before another reads as added,
+  not as the next one renamed or changed: blocks pair by the words they share, never by their
+  place alone, so a paragraph rewritten with none of its words kept reads as removed and added. Items come in the order the page reads, a changed list names only the item that
+  changed, and a sheet total that only recomputed for an added row is left out. A large edit the
+  diff gives up on still lists only the blocks that changed, a block added or removed in it
+  included, and two same-titled slides edited in
+  place are not listed as moved. Every type
+  compares this way, designs included, and a whiteboard lists its settings in the Board settings
+  dialog's words ("Background: Dots → Grid", "Who can change the board: Editors only → Commenters
+  and editors"), with History's "Restore settings" unchanged. The two
+  versions are still rendered side by side below the list, one at a time with a Before and After
+  switch on a phone. Older links with `view=source` open the same page. Agents still read and write
+  source as before.
+- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
+  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
+  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
+  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
+  is still a page.
+- **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
+  not reloaded, the heading you were reading stays where it was, and an image the new version
+  changed under the same name shows the new file. A page that loads
+  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
+  sub-page the new version no longer has opens at its root instead), and can hand state to the
+  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
+  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: a
+  "v5 is available" toast offers Update instead. Every other page is replaced at once, as before.
+  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
+- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
+  controls or presenter view, and the people the deck is shared with who have it open follow their
+  slide, shown as "Following" in the deck's controls; paging by hand pauses it until
+  they choose "Back to slide N". Someone who opens the deck mid-talk lands on the presenter's
+  slide. Only slide numbers travel, over the deck's live room; nobody sees who else is watching.
+  It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;
+  `ALLOW_SLIDES_FOLLOW=false` turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
+  publishes a new version or the owner changes who the deck is shared with.
 - **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
   artifact menu has **Download .png** (the one artboard at once, or pick one when there are more;
   2x where it fits, else 1x, transparent where the board is) and **Download .pdf** (every board,

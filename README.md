@@ -37,7 +37,7 @@ pages from any of them:
 - **A review loop with your agents.** Pin a comment to an element, mention `@claude` or `@codex`,
   and the agent publishes a new version and replies in the thread. Open pages update live.
 - **Work on a page together, live.** On instances with live rooms on, owners and editors edit a doc
-  right on its page and see each other's changes as they type, saved as versions, and pages can
+  or a sheet right on its page and see each other's changes as they type, saved as versions, and pages can
   show who else is there and share cursors and moves with `plinth.room`
   ([a whiteboard](docs/examples/whiteboard.html)).
 - **Pages for clients and approvers.** People outside your team confirm their email by code, with

@@ -7,7 +7,8 @@
 // artifact menu downloads a PNG and an SVG and offers no source editor; the keyboard moves a block
 // and zooms; the page fits a phone; and the ⋯ menu's one Settings item (the owner's settings page,
 // the editor's dialog) saves settings versions, and after a newer version shows that version's
-// settings and loads it behind the dialog instead.
+// settings and loads it behind the dialog instead; History offers Restore settings, and Compare
+// lists the settings that changed in the dialog's words.
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Frame, type Page, test } from "@playwright/test";
@@ -441,6 +442,30 @@ test("Board settings: one Settings item; the owner's page and the editor's dialo
     const v4 = await tool(client, "get_artifact", { id });
     expect(v4.data.version).toBe(4);
     expect(JSON.parse(v4.data.content)).toEqual({ v: 1, background: "plain", edit: "editors" });
+
+    // History offers Restore settings, and Compare lists the settings that changed in the
+    // dialog's words.
+    await page.goto(`/a/${slug}/history`);
+    const v1Row = page.locator('li[data-version="1"]');
+    await v1Row.getByRole("button", { name: "More actions for v1" }).click();
+    await expect(page.getByRole("menuitem", { name: "Restore settings" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await v1Row.getByRole("checkbox", { name: "Select v1 to compare" }).check();
+    await page
+      .locator('li[data-version="3"]')
+      .getByRole("checkbox", { name: "Select v3 to compare" })
+      .check();
+    await page.getByRole("button", { name: "Compare selected" }).click();
+    await expect(page).toHaveURL(new RegExp(`/a/${slug}/compare\\?from=1&to=3$`));
+    const items = page.getByRole("region", { name: "Changes" }).getByRole("listitem");
+    await expect(items).toHaveText([
+      "Background: Dots → Plain",
+      "Who can change the board: Editors only → Commenters and editors",
+    ]);
+    await page.goto(`/a/${slug}/compare?from=3&to=4`);
+    await expect(items).toHaveText([
+      "Who can change the board: Commenters and editors → Editors only",
+    ]);
   } finally {
     await editorPage.context().close();
     await client.close();

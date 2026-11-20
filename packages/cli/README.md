@@ -100,8 +100,10 @@ Everything else, from the content domain to email and the Public Suffix List, is
 The `plinth` command also publishes to any Plinth instance, the hosted one included: a built site
 (Vite, Next export, anything with `index.html` at the top of its folder) or a folder of files. A
 folder with `content.md` at its top is published as a document, one with `slides.md` (and its
-images) as a deck, and one with `sheet.jsonl` as a sheet. One `.csv` or `.xlsx` file is imported
-as a sheet: its first row names the columns.
+images) as a deck, one with `design.html` as a design, one with `sheet.jsonl` as a sheet, and one
+with `system.json` (and its images and fonts) as a design system. A folder with `index.html` at its
+top is always a page. One `.csv` or `.xlsx` file is imported as a sheet: its first row names the
+columns.
 
 ```sh
 npx @mr0b0t0/plinth login                 # once: approve "Plinth CLI" in the browser
@@ -119,7 +121,8 @@ npx @mr0b0t0/plinth publish budget.xlsx   # a sheet (budget.csv works too)
   error (exit 2), and so is a file given through a symbolic link. Paths may use letters, digits, `.`, `_`,
   `-` and `/`; the command suggests a new name for any other.
 - **Limits.** It checks the instance's limits (from `/api/v1/config`) before sending anything:
-  files per version, the size of one file and of the whole version.
+  files per version, the size of one file and of the whole version, and the size of the source
+  file (a design system's `system.json` may hold at most 1 MB).
 - **Updates.** With `--id`, only the files that changed are stored; the others are reused from
   the current version. When the changed files fit in one request (about 24 MB) only they are
   sent; otherwise the whole folder goes as one compressed upload and the server reuses the

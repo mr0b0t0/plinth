@@ -7,7 +7,7 @@
 // 2. Every slide is laid out and fitted (as for print) and measured (exportModel.ts).
 // 3. Images: under origin isolation the frame reads its own files (connect-src 'self', the
 //    content cookie) and SVG, WebP and AVIF are drawn to PNG at twice their size (a same-origin
-//    image does not taint the canvas). Under opaque isolation and the path fallback this document
+//    image does not taint the canvas), IMAGE_CONCURRENCY at a time. Under opaque isolation and the path fallback this document
 //    has no origin of its own: it cannot read its files (the content host sends no CORS, by rule)
 //    and a canvas would be tainted, so file images are left out and the app says so. Inline
 //    data: images are part of the deck's text and always go in.
@@ -23,6 +23,11 @@ export const WRITER_TIMEOUT_MS = 30_000;
 export const REVOKE_AFTER_MS = 60_000;
 /** The largest side of an image drawn to PNG, in pixels. */
 const MAX_RASTER = 4096;
+/**
+ * How many images are read or drawn at once. A deck with hundreds of distinct images would
+ * otherwise hold every file and canvas in memory together, which can exhaust a phone's tab.
+ */
+export const IMAGE_CONCURRENCY = 4;
 
 const RASTER_PASS = /^image\/(png|jpeg|gif)$/;
 const DATA_PASS = /^data:image\/(png|jpeg|gif);base64,/i;
@@ -112,7 +117,9 @@ async function rasterize(win: Window, from: Blob | string): Promise<string | nul
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/png");
+    // A canvas the browser could not allocate gives "data:,": the image is left out and counted.
+    const png = canvas.toDataURL("image/png");
+    return png.startsWith("data:image/png") ? png : null;
   } catch {
     return null;
   } finally {
@@ -149,15 +156,29 @@ export async function imageData(win: Window, src: string, opaque: boolean): Prom
   }
 }
 
-/** Every image of the model that can go in, keyed by its src (at most the version's file cap). */
+/**
+ * Every image of the model that can go in, keyed by its src (at most the version's file cap), in
+ * the order of first use. At most `concurrency` images are read or drawn at a time.
+ */
 export async function collectImages(
   win: Window,
   model: DeckModel,
   opaque: boolean,
+  concurrency = IMAGE_CONCURRENCY,
 ): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
   const srcs = imageSources(model).slice(0, LIMITS.maxAssetsCeiling);
-  const got = await Promise.all(srcs.map((src) => imageData(win, src, opaque)));
+  const got: (string | null)[] = new Array(srcs.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < srcs.length) {
+      const i = next++;
+      got[i] = await imageData(win, srcs[i] as string, opaque);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, srcs.length)) }, worker),
+  );
+  const out = new Map<string, string>();
   srcs.forEach((src, i) => {
     const data = got[i];
     if (data) out.set(src, data);

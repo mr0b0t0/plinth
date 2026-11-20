@@ -112,6 +112,24 @@ function segmentMatches(seg: string, last: boolean): boolean {
       case "folder":
         if (!last && seg === r.value) return true;
         break;
+      case "path":
+        // Matched on the whole path, in isSensitivePath.
+        break;
+    }
+  }
+  return false;
+}
+
+/** Whether the path's last segments are one of the `path` rules' segments. */
+function tailMatches(segs: string[]): boolean {
+  for (const r of SENSITIVE_PATH_RULES) {
+    if (r.kind !== "path") continue;
+    const want = r.value.split("/");
+    if (
+      want.length <= segs.length &&
+      want.every((w, i) => segs[segs.length - want.length + i] === w)
+    ) {
+      return true;
     }
   }
   return false;
@@ -123,7 +141,7 @@ function segmentMatches(seg: string, last: boolean): boolean {
  */
 export function isSensitivePath(path: string): boolean {
   const segs = path.toLowerCase().split("/");
-  return segs.some((seg, i) => segmentMatches(seg, i === segs.length - 1));
+  return segs.some((seg, i) => segmentMatches(seg, i === segs.length - 1)) || tailMatches(segs);
 }
 
 /** Whether a path names the local project files record (PROJECT_FILES_RECORD) in any segment. */
