@@ -176,15 +176,18 @@ const downloadPptx: MenuItem = (c) =>
       ]
     : [];
 
-/** A sheet downloads itself: the frame builds the file, the app only names the format. */
+/**
+ * A sheet downloads itself: the frame builds the file, the app only names the format. Two items
+ * labelled like a deck's Download .pptx, not a submenu: the menu has none.
+ */
 const downloadSheet: MenuItem = (c) => [
   {
-    label: "Download as Excel (.xlsx)",
+    label: "Download .xlsx",
     icon: DownloadSimpleIcon,
     onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "xlsx"),
   },
   {
-    label: "Download as CSV",
+    label: "Download .csv",
     icon: DownloadSimpleIcon,
     onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "csv"),
   },
@@ -194,7 +197,7 @@ const downloadSheet: MenuItem = (c) => [
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
-  sheet: [downloadSheet, printTyped],
+  sheet: [printTyped, downloadSheet],
 };
 
 /**

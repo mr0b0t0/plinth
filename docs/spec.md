@@ -1287,8 +1287,8 @@ A sheet is not edited on its page yet; agents change it.
   header row repeats on every page). The browser spends at most 20,000,000 steps; a sheet past
   that shows `#LIMIT!` in the cells it did not compute, with a one-line note.
 - **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx from the artifact
-  menu (Download as CSV, Download as Excel (.xlsx)), which also has Print; the frame has no
-  buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
+  menu (Print or save as PDF, then Download .xlsx and Download .csv, labelled like a deck's
+  Download .pptx); the frame has no buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
   UTF-8 with a BOM, CRLF, RFC 4180 quoting with every text value quoted (column names too, so
   Excel with a semicolon or tab list separator still reads each as one cell, and the file never
   starts with Excel's `sep=` directive), text starting with `=`, `+`, `-`, `@`, tab or carriage

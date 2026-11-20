@@ -219,7 +219,7 @@ test.describe("a published sheet", () => {
 
       const [csv] = await Promise.all([
         page.waitForEvent("download"),
-        openMenuItem(page, "Download as CSV"),
+        openMenuItem(page, "Download .csv"),
       ]);
       expect(csv.suggestedFilename()).toBe("Fruit budget.csv");
       const text = readFileSync((await csv.path()) as string, "utf8");
@@ -235,7 +235,7 @@ test.describe("a published sheet", () => {
 
       const [xlsx] = await Promise.all([
         page.waitForEvent("download"),
-        openMenuItem(page, "Download as Excel (.xlsx)"),
+        openMenuItem(page, "Download .xlsx"),
       ]);
       expect(xlsx.suggestedFilename()).toBe("Fruit budget.xlsx");
       const files = unzipSync(new Uint8Array(readFileSync((await xlsx.path()) as string)));
@@ -301,7 +301,7 @@ test.describe("a published sheet", () => {
       await page.goto(`/a/${artifact.slug}`);
       await sheetFrame(page);
       await page.getByRole("button", { name: "Artifact actions" }).click();
-      await expect(page.getByRole("menuitem", { name: "Download as CSV" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Download .csv" })).toBeVisible();
       await expect(page.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
       await page.keyboard.press("Escape");
 
