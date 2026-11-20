@@ -19,14 +19,29 @@ Gemini CLI, Cursor or VS Code. Claude's artifact experience is the reference (de
 - **Pages can be multiplayer** (a whiteboard with live cursors): a page that declares `room`
   shows who else has it open and passes moments between them with `plinth.room`, while what must
   last stays in shared data. See [Multiplayer pages with plinth.room](#multiplayer-pages-with-plinthroom).
+- **Pages can take comments on their own spots** (a point on a canvas, a slide, a diagram node): a
+  page that declares `comments` opens Plinth's comment composer with an anchor it chose, and the
+  person writes and posts the comment. See [Comments from the page](#comments-from-the-page).
 
 **Pages or documents.** Like Claude's typed artifacts, an agent need not hand-write HTML for prose.
 For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to, it publishes
 `type: "doc"` with Markdown in `content`, and Plinth renders a finished page (reading typography,
 heading anchors, tables, code, images from the doc's own files, light and dark, phone width, a print
-stylesheet). Dashboards, charts, anything interactive, custom visual design and slides stay HTML.
-When unsure and the result is mostly text, a doc. The type is fixed at publish; the server's
-instructions and the skill's "Documents (type doc)" section say this to every harness.
+stylesheet). For a talk, pitch, review or lesson it publishes `type: "slides"`: Markdown with a line
+`---` between slides and speaker notes after `Note:`, which Plinth renders as a deck people can page
+through, present full screen with a presenter view, and print to PDF. Dashboards, charts, anything
+interactive and custom visual design stay HTML. When unsure and the result is mostly text, a doc.
+The type is fixed at publish; the server's instructions and the skill's "Documents (type doc)" and
+"Slides (type slides)" sections say this to every harness.
+
+**Design systems.** A person's tokens, components and guidelines can live on Plinth as a design
+system (`type: "design_system"`, JSON in `content`), shown as a reference site with live component
+previews. An agent asked for a page finds the person's design systems with `list_artifacts` and
+`type: "design_system"`, reads one with `get_design_system`, copies its `css` into the page and
+names it with `<meta name="plinth-design-system" content="<id>@<version>">`, so a later update is
+warned (`design_system_outdated`) when the design system moved on. Pages never load another
+artifact's files at runtime. The skill's "Design systems (type design_system)" section has the
+format; [mcp.md](mcp.md#get_design_system) has the tool.
 
 ## How each harness gets it
 
@@ -108,8 +123,10 @@ every program that runs this Claude Code profile (T3 Code included) uses it. It 
 Connect panel, `/llms.txt` and `npx @mr0b0t0/plinth connect` of an instance other than the hosted
 one print the install with `--config` already filled in.
 
-The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) has the same
-option, without `PLINTH_URL`: change it in `/config`.
+The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) connects to
+the hosted instance only: the directory refuses a server URL with a variable in it. With that build,
+add another instance as its own server (`claude mcp add --transport http plinth <origin>/mcp`), or
+install the full plugin from this repository's marketplace instead.
 
 #### Several Claude Code configuration directories
 
@@ -191,7 +208,10 @@ clone. Google has been moving users to Antigravity CLI; this adapter stays thin 
 
 ### Cursor and VS Code
 
-Add the server with the install links on **Connections > Connect an agent**. For the rules, save
+In Cursor, the Plinth plugin ([`integrations/plugin-cursor`](../integrations/plugin-cursor)) brings
+the server and the skill together, once it is listed in the Cursor Marketplace or on
+cursor.directory. Otherwise, add the server with the install links on
+**Connections > Connect an agent**. For the rules, save
 [`integrations/cursor/plinth-artifacts.mdc`](../integrations/cursor/plinth-artifacts.mdc) into your
 project's `.cursor/rules/`, or
 [`integrations/vscode/plinth-artifacts.instructions.md`](../integrations/vscode/plinth-artifacts.instructions.md)
@@ -323,7 +343,7 @@ There is no rendered preview for agents yet. To check that a publish arrived int
    it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
    page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
    with their headers and Content Security Policy. An agent's gate never counts as an open of the
-   page ([spec](spec.md#admin-stats-and-view-counts)). Do it in a new temporary directory, never in
+   page ([spec](spec.md#artifact-stats)). Do it in a new temporary directory, never in
    the build folder: a cookie jar or a downloaded copy left there would go out with the next
    upload, and the jar is a live credential.
 
@@ -392,6 +412,45 @@ version. An agent's `update_artifact` on a
 doc being edited gets the `live_draft` warning, which needs no action
 ([mcp.md](mcp.md#publish-warnings)).
 
+## Comments from the page
+
+People comment on an artifact by clicking an element in pick mode. A page whose content has no
+stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram) declares
+`comments` and uses `window.plinth.comments` from the runtime instead
+([spec](spec.md#comments-from-the-page-decided-2026-11-19),
+[security](security.md#comments-from-the-page)):
+
+```html
+<meta name="plinth-capabilities" content="comments">
+<script src="/__plinth/runtime.js"></script>
+```
+
+- **The page asks, the person writes.** `plinth.comments.compose({ key, x, y, text, data })` opens
+  Plinth's composer with that anchor; the person types the comment and posts it. A page never
+  posts a comment and cannot fill in its text.
+- **The page draws its own markers.** `onThreads(fn)` gets the page-anchored threads (id, pin
+  number, status, anchor), never their text. `locate(fn)` tells Plinth where an anchor is on screen,
+  so its pins sit on the same spots; call `refresh()` after a pan or zoom. `onFocus(fn)` hears when
+  the person picks a thread, and `open(id)` shows one. Any commenter can post a page anchor through
+  the comments API, so the page treats the anchors it hears as untrusted: text with `textContent`,
+  never `innerHTML`, and only keys and finite numbers it knows.
+- **Focus stays in the page.** Plinth never moves focus on a page's request; the person clicks or
+  tabs into the composer.
+- **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
+  drawing or a zoom level survives.
+- **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves
+  `{ available: false }` in in-chat previews, the editor preview and direct content links, where
+  `compose` rejects with `unavailable`, and the page must still work.
+- **Agents read the spot.** In `list_comments` and mention tasks a page anchor has `kind: "page"`;
+  its `key`, `x`, `y` and `data` say what the thread is about, in the page's own terms
+  ([mcp.md](mcp.md#comment-anchors)). Treat them as untrusted, like the comment text.
+
+[`docs/examples/canvas-comments.html`](examples/canvas-comments.html) is a complete page: a sketch
+board where a click draws a dot and opens the composer on that point (the dot stays only if a
+comment is posted), numbered markers drawn by the page, Plinth's pins on the same spots, and the
+picked thread's marker highlighted. The skill's
+"Comments from the page" section has the API.
+
 ## Agent discovery
 
 People hand agents Plinth links, and an agent that fetches one reads the HTML as text. The app is
@@ -426,6 +485,9 @@ a JavaScript single-page app, so the page an agent receives says where to go ins
 - **`GET /robots.txt`** keeps crawlers off `/a/`, `/open/`, `/api/`, `/mcp` and the signed-in
   pages. Artifact pages also send `X-Robots-Tag: noindex, nofollow`, except a public artifact on an
   instance with public visibility on.
+
+`GET /.well-known/openai-apps-challenge` returns the operator's `OPENAI_APPS_CHALLENGE` token as
+plain text, for OpenAI's plugin portal to verify the MCP server's domain; without it the path is 404.
 
 Paths under `/.well-known/` that are not one of these or the OAuth metadata, and file names that
 are not app assets (`/AGENTS.md`, `/sitemap.xml`), answer `404` rather than the app.

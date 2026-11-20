@@ -18,14 +18,68 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
   page. The list and the owner's sharing settings name a person once they have commented, entered
   something or published a version there, so adding an address never reveals whether it has an
-  account. Names are display text: no `@`, no invisible characters, never a role.
+  account. Names are display text: no `@`, no invisible characters, never a role. Plugin 0.22.0.
+- **Comments from the page.** A page that declares `comments` can open the comment composer on a
+  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
+  its own markers for the threads and tell Plinth where to put its pins. The person still writes
+  and posts every comment, and the page never sees comment text. Opening comments on such a page no
+  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
+  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0. A declaring page connects as
+  soon as it loads, so its pins show even before its code calls `plinth.comments`, and they follow
+  the layout as images load or the page resizes. Whether the page anchors its own comments follows
+  the version being viewed, so an older version without the declaration keeps "Pin to an element".
+- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
+  off its anchor; it now grows in place.
+- **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
+  between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
+  slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
+  clicks or swipes, link to a slide (`#slide=4`), see every slide in a thumbnail grid, and from
+  Present in the bar go full screen or open a presenter view with the notes, the next slide and a
+  timer (and an audience window that follows it with nothing but the slide). Print or save as PDF
+  with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
+  Plugin 0.19.0.
+- **Design systems.** Publish tokens, guidelines and components as a design system (`type:
+  "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
+  spacing and shadow samples and live component previews in light and dark. Agents read one with
+  the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
+  into the pages they build, and get a `design_system_outdated` warning when a page was built on
+  an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
+  type. CSS blocks may not hold escapes or `url()`s to other hosts, and a `url()` to a file the
+  design system lacks is a `missing_file` warning. Plugin 0.18.0.
+- **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
+  linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
+  the people who opened it (name and email for people signed in and allowlisted viewers, with the
+  version they last saw), opens per version and an approximate count of anonymous visitors. Agents read the same with the `get_artifact_stats` MCP
+  tool, `GET /api/v1/artifacts/:ref/stats` and `GET /api/v1/stats/artifacts` (owner only). This
+  replaces the open counts in the Share dialog and `GET /api/v1/artifacts/:ref/views`, which is
+  gone. Opens are kept with who made them for `VIEW_LOG_RETENTION_DAYS` (default 365), then only
+  counted; `VIEW_COUNTS=off` still stops recording. Apply migration `0020_artifact_opens.sql`
+  before deploying: it keeps the existing daily counts as opens with no viewer. Plugin 0.17.0.
+- **A Cursor plugin.** `integrations/plugin-cursor` packages the Plinth server and skill in Cursor's
+  plugin layout, for the Cursor Marketplace and cursor.directory.
+- **A build for OpenAI's plugin directory.** `integrations/plugin-openai` is the folder to ZIP for
+  ChatGPT and Codex: the portable manifest with its listing block, the hosted server, the icon and
+  the skill, with no hooks and no Claude Code passages.
+- **The plugin directory build connects to the hosted instance again.** Anthropic's plugin directory
+  refused the 0.15.0 build because its server URL used the Plinth instance option, so the directory
+  build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
+  self-hosted instance as its own server, or install the full plugin from this repository's
+  marketplace, which keeps the option. Plugin 0.16.0.
+- **OpenAI domain verification.** Set `OPENAI_APPS_CHALLENGE` to the token OpenAI's plugin portal
+  shows, and the instance serves it at `/.well-known/openai-apps-challenge`. Unset, the path stays
+  404.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
   From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
+  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
+- **Review account sign-in.** An operator can give one ordinary account a password, for a
+  directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
+  `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at
+  `/login/review`, linked from the sign-in page, and locks after repeated wrong passwords. Off
+  unless both are set; never an admin account ([security.md](docs/security.md#review-account-sign-in)).
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.

@@ -402,6 +402,7 @@ describe("policy: pageDataAccess", () => {
     shared: [],
     room: false,
     roomOpen: [],
+    comments: false,
     people: false,
   });
   it("full truth table, written out", () => {
@@ -699,6 +700,7 @@ describe("policy: roomAccess", () => {
     shared: [],
     room: true,
     roomOpen: [],
+    comments: false,
     people: false,
     ...extra,
   });

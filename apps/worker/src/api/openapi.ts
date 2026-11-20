@@ -37,8 +37,10 @@ import {
   reportInput,
   requestLoginInput,
   restoreVersionInput,
+  reviewLoginInput,
   SCOPES,
   SHA256_RE,
+  STATS_RANGES,
   setVisibilityInput,
   startUploadInput,
   TTL,
@@ -145,6 +147,7 @@ function requestSchemas(): Record<string, Json> {
     RequestLoginInput: fromZod(requestLoginInput),
     VerifyLoginCodeInput: fromZod(verifyLoginCodeInput),
     VerifyMagicLinkInput: fromZod(verifyMagicLinkInput),
+    ReviewLoginInput: fromZod(reviewLoginInput),
     UpdateProfileInput: fromZod(updateProfileInput),
     CreateTokenInput: fromZod(createTokenInput),
     RenameConnectionInput: fromZod(renameConnectionInput),
@@ -162,12 +165,33 @@ function requestSchemas(): Record<string, Json> {
   };
 }
 
-/** Component name of one type's artifact detail: HtmlArtifactDetail, DocArtifactDetail. */
-const detailSchemaName = (t: ArtifactType) => `${t[0]?.toUpperCase()}${t.slice(1)}ArtifactDetail`;
+/**
+ * Component name of one type's artifact detail: HtmlArtifactDetail, DocArtifactDetail,
+ * DesignSystemArtifactDetail.
+ */
+const detailSchemaName = (t: ArtifactType) =>
+  `${t
+    .split("_")
+    .map((w) => `${w[0]?.toUpperCase()}${w.slice(1)}`)
+    .join("")}ArtifactDetail`;
 
-const SOURCE_DESCRIPTIONS: Record<ArtifactTypeDef["sourceField"], string> = {
-  html: "UNTRUSTED: written by the artifact's authors",
-  content: "UNTRUSTED Markdown, written by the artifact's authors",
+/** The description of a type's source field. */
+const sourceDescription = (def: ArtifactTypeDef) =>
+  def.sourceField === "html"
+    ? "UNTRUSTED: written by the artifact's authors"
+    : `UNTRUSTED ${def.sourceLabel}, written by the artifact's authors`;
+
+/** Each type in a few words, for the ArtifactType description. One type per line. */
+const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
+  html: "a hand-written page",
+  doc: "a Markdown document",
+  slides: "a Markdown deck",
+  design_system: "design tokens, guidelines and components as JSON",
+};
+
+/** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
+const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
+  design_system: "renders as a reference site and get_design_system compiles",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -235,9 +259,12 @@ function responseSchemas(): Record<string, Json> {
     }),
     ArtifactType: {
       ...enumOf(ARTIFACT_TYPES),
-      description:
-        '"html": a hand-written page (source index.html). "doc": a Markdown document (source ' +
-        "content.md) that Plinth renders. Fixed at publish.",
+      description: `${ARTIFACT_TYPES.map((t) => {
+        const d = TYPE_REGISTRY[t];
+        return d.renderer
+          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}) that Plinth ${TYPE_RENDERS[t] ?? "renders"}.`
+          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}).`;
+      }).join(" ")} Fixed at publish.`,
     },
     ArtifactSummary: obj(artifactSummary),
     // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:
@@ -265,7 +292,7 @@ function responseSchemas(): Record<string, Json> {
               enum: [def.sourcePath],
               description: "The version file holding the source",
             }),
-            [def.sourceField]: str({ description: SOURCE_DESCRIPTIONS[def.sourceField] }),
+            [def.sourceField]: str({ description: sourceDescription(def) }),
             assets: {
               type: "array",
               description: "The version's other files; never index.html or content.md",
@@ -321,9 +348,13 @@ function responseSchemas(): Record<string, Json> {
         ref: str({ description: "The reference as written (truncated)" }),
         host: str(),
         count: int({ minimum: 1 }),
+        path: str({
+          description:
+            'Design system warnings: where in system.json, like "components[0].examples[1].html"',
+        }),
         message: str(),
       },
-      ["ref", "host", "count"],
+      ["ref", "host", "count", "path"],
     ),
     StoredSummary: obj({
       files: int({ description: "Files in the version, the source included" }),
@@ -553,6 +584,14 @@ function responseSchemas(): Record<string, Json> {
         description: "Hosts artifacts may load scripts and styles from (the CSP's CDN_ALLOWLIST)",
       },
       upload_ticket_ttl_s: int({ description: "How long an upload ticket stays valid" }),
+      review_login: {
+        type: "boolean",
+        description:
+          "The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is on",
+      },
+      view_log_retention_days: int({
+        description: "VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it",
+      }),
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -590,9 +629,15 @@ function responseSchemas(): Record<string, Json> {
             role: { oneOf: [effectiveRole, { type: "null" }] },
             data: ref("ViewGateData"),
             live: ref("ViewGateLive"),
+            page_comments: {
+              const: true,
+              description:
+                "The version being shown declares `comments` (HTML only): the page may open the " +
+                "comment composer with its own anchors, and `review` is ignored",
+            },
             people: ref("ViewGatePeople"),
           },
-          ["data", "live", "people"],
+          ["data", "live", "page_comments", "people"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -617,7 +662,7 @@ function responseSchemas(): Record<string, Json> {
       artifacts: int({ description: "Artifacts created, including any deleted since" }),
       publishes: int({ description: "Versions published, including restores" }),
       agent_publishes: int({ description: "Versions published by an agent connection" }),
-      views: int({ description: "Opens (see ArtifactViews)" }),
+      views: int({ description: "Counted opens (see ArtifactStats)" }),
       artifacts_viewed: int({ description: "Artifacts opened at least once" }),
     }),
     AdminStats: obj({
@@ -657,21 +702,80 @@ function responseSchemas(): Record<string, Json> {
         description: "One entry per UTC day of the window, oldest first",
       },
     }),
-    ArtifactViews: obj({
-      enabled: { type: "boolean", description: "Whether this instance counts opens (VIEW_COUNTS)" },
-      total: int({ description: "Opens counted since `since`" }),
-      since: nullable("string", {
-        format: "date",
-        description:
-          "The first UTC day with a counted open, or null. Opens before this instance began " +
-          "counting are not known.",
+    ArtifactStats: obj({
+      enabled: {
+        type: "boolean",
+        description: "Whether this instance records opens (VIEW_COUNTS)",
+      },
+      days: int({ enum: [...STATS_RANGES] }),
+      retention_days: int({
+        description: "VIEW_LOG_RETENTION_DAYS: older opens keep only their count",
       }),
-      last_7: int(),
-      last_30: int(),
-      days: {
+      current_version: int(),
+      totals: obj({
+        opens: int({ description: "Counted opens in the window" }),
+        viewers: int({ description: "Distinct people plus distinct anonymous visitors" }),
+        people: int({ description: "Distinct identified people (accounts and confirmed emails)" }),
+        anonymous_visitors: int({
+          description:
+            "Distinct anonymous browsers, approximate (a random id in the content cookie)",
+        }),
+        anonymous_opens: int(),
+        all_time_opens: int({ description: "Every counted open, including folded ones" }),
+        since: nullable("string", {
+          format: "date",
+          description: "The first UTC day with a counted open, or null",
+        }),
+      }),
+      series: {
         type: "array",
-        items: obj({ day: str({ format: "date" }), views: int() }),
-        description: "The last 30 UTC days, oldest first",
+        items: obj({ day: str({ format: "date" }), opens: int(), viewers: int() }),
+        description: "One entry per UTC day of the window, oldest first",
+      },
+      people: {
+        type: "array",
+        description: `Last opened first, at most ${LIMITS.maxStatsPeople}. The owner's private data`,
+        items: obj({
+          name: nullable("string", { description: "UNTRUSTED: the account's display name" }),
+          email: str(),
+          kind: enumOf(["user", "email"]),
+          role: nullable("string", {
+            enum: ["editor", "commenter", "viewer", "public", "link", "password", null],
+          }),
+          first_opened_at: dateTime,
+          last_opened_at: dateTime,
+          opens: int(),
+          last_version_seen: nullable("integer"),
+        }),
+      },
+      people_total: int(),
+      versions: {
+        type: "array",
+        description: "Newest first; opens counted before versions were recorded are left out",
+        items: obj({ version: int(), opens: int(), viewers: int() }),
+      },
+    }),
+    ArtifactStatsSummary: obj({
+      enabled: { type: "boolean" },
+      retention_days: int(),
+      generated_at: dateTime,
+      items: {
+        type: "array",
+        description: "The caller's live artifacts, most recently opened first",
+        items: obj({
+          id: str(),
+          slug: str(),
+          title: str({ description: "UNTRUSTED" }),
+          type: enumOf(ARTIFACT_TYPES),
+          visibility: enumOf(VISIBILITIES),
+          current_version: int(),
+          opens_7d: int(),
+          opens_30d: int(),
+          viewers_7d: int(),
+          viewers_30d: int(),
+          all_time_opens: int(),
+          last_opened_at: nullable("string", { format: "date-time" }),
+        }),
       },
     }),
     DevOutbox: obj({
@@ -853,6 +957,88 @@ function dataSchemas(): Record<string, Json> {
   };
 }
 
+/** get_design_system's result and the reference an HTML page makes to a design system. */
+function designSystemSchemas(): Record<string, Json> {
+  const untrusted = (what: string) => `UNTRUSTED: ${what}, written by the design system's authors`;
+  return {
+    DesignSystemReference: obj({
+      id: str(),
+      title: str({ description: "Untrusted text" }),
+      version: nullable("integer", { description: "The version the page names; null for none" }),
+      current_version: int({ minimum: 1 }),
+    }),
+    DesignSystemToken: obj({
+      path: str({ description: 'Like "color.brand.500"' }),
+      css_var: str({ description: 'Like "--acme-color-brand-500"' }),
+      type: str(),
+      value: str({ description: "Resolved value, light" }),
+      dark: nullable("string", {
+        description: "Resolved value in the dark theme, when it differs",
+      }),
+      alias_of: nullable("string"),
+      description: nullable("string", { description: untrusted("Text") }),
+      deprecated: { type: ["boolean", "string"] },
+    }),
+    DesignSystemComponent: obj({
+      id: str(),
+      name: str({ description: untrusted("Text") }),
+      status: enumOf(["stable", "beta", "deprecated"]),
+      description: nullable("string", { description: untrusted("Markdown") }),
+      usage: nullable("string", { description: untrusted("Markdown") }),
+      css: nullable("string", { description: untrusted("CSS") }),
+      examples: {
+        type: "array",
+        items: obj({
+          name: str(),
+          html: str({ description: untrusted("HTML; never copy scripts or handlers from it") }),
+          height: int(),
+        }),
+      },
+    }),
+    DesignSystemRead: obj(
+      {
+        id: str(),
+        slug: str(),
+        title: str({ description: "Untrusted text" }),
+        url: str({ format: "uri" }),
+        version: int({ minimum: 1 }),
+        current_version: int({ minimum: 1 }),
+        format: str({ description: '"plinth.design-system/1", or "unknown" with problems' }),
+        name: nullable("string", { description: "Untrusted text" }),
+        description: nullable("string", { description: untrusted("Markdown") }),
+        prefix: nullable("string"),
+        css: str({
+          description:
+            "Custom properties for light and dark (prefers-color-scheme and data-theme): copy into your page",
+        }),
+        font_links: { type: "array", items: str({ format: "uri" }) },
+        fonts: {
+          type: "array",
+          items: obj({
+            family: str(),
+            source: enumOf(["google", "asset"]),
+            portable: {
+              type: "boolean",
+              description: "false: a file of the design system, which other artifacts cannot load",
+            },
+          }),
+        },
+        tokens: { type: "array", items: ref("DesignSystemToken") },
+        guidelines: nullable("string", { description: untrusted("Markdown") }),
+        component_css: str({ description: untrusted("CSS") }),
+        components: { type: "array", items: ref("DesignSystemComponent") },
+        problems: {
+          type: "array",
+          items: obj({ path: str(), message: str() }),
+          description: "Why the stored version no longer parses; empty when it does",
+        },
+        untrusted: { const: true },
+      },
+      ["css", "font_links", "fonts", "tokens", "guidelines", "component_css", "components"],
+    ),
+  };
+}
+
 /** get_artifact's data fields, added to every type's artifact detail (the ArtifactDetail union). */
 function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Json> {
   for (const t of ARTIFACT_TYPES) {
@@ -860,6 +1046,14 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
       | { properties: Json; required: string[] }
       | undefined;
     if (!detail) continue;
+    if (t === "html") {
+      detail.properties.design_system = {
+        oneOf: [ref("DesignSystemReference"), { type: "null" }],
+        description:
+          'Only for a page with <meta name="plinth-design-system">: that design system when you ' +
+          "may view it and it is one, else null",
+      };
+    }
     if (TYPE_REGISTRY[t].liveEdit) {
       detail.properties.live_draft = {
         oneOf: [ref("LiveDraftMeta"), { type: "null" }],
@@ -1191,6 +1385,21 @@ function operations(): Operation[] {
     },
     {
       method: "post",
+      path: API.loginReview,
+      operationId: "reviewLogin",
+      summary: "Sign in to the review account with its password",
+      description:
+        "Exists only when REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH are set; 404 everywhere else. " +
+        "Signs in that one ordinary account, for a directory's reviewers, and sets the session cookie like the other sign-ins. " +
+        "Locks for the rest of the hour after repeated wrong passwords.",
+      tag: "Auth",
+      auth: "optional",
+      body: "ReviewLoginInput",
+      ok: [200, "LoginResult"],
+      errors: [400, 403, 404, 429],
+    },
+    {
+      method: "post",
       path: API.logout,
       operationId: "logout",
       summary: "End the session",
@@ -1308,6 +1517,12 @@ function operations(): Operation[] {
           schema: int({ minimum: 0, maximum: 500 }),
           description:
             "At most this many items, most recent first (default and maximum 500); 0 returns only `categories`",
+        },
+        {
+          name: "type",
+          schema: enumOf(ARTIFACT_TYPES),
+          description:
+            "Only artifacts of this type (design_system: the design systems you can use)",
         },
       ],
       ok: [200, "ArtifactList"],
@@ -1512,6 +1727,37 @@ function operations(): Operation[] {
       errors: [401, 404],
     },
     {
+      method: "get",
+      path: API.designSystem,
+      operationId: "getDesignSystem",
+      summary: "Read a design system's tokens, CSS, guidelines and components",
+      description:
+        "For an artifact of type design_system the caller may view. Returns the tokens resolved to " +
+        "values, one CSS block of custom properties for light and dark, Google Fonts links, the " +
+        "guidelines and the component examples, to copy into a page built with it. Every text " +
+        "field is untrusted. An artifact of another type is refused with invalid_input.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      mcpTool: "get_design_system",
+      query: [
+        queryVersion,
+        {
+          name: "include",
+          schema: str(),
+          description:
+            "Comma-separated parts to return: tokens, css, guidelines, components (default all)",
+        },
+        {
+          name: "components",
+          schema: str(),
+          description: "Comma-separated component ids to return (default all, at most 50)",
+        },
+      ],
+      ok: [200, "DesignSystemRead"],
+      errors: [400, 401, 403, 404],
+    },
+    {
       method: "put",
       path: API.visibility,
       operationId: "setVisibility",
@@ -1563,7 +1809,9 @@ function operations(): Operation[] {
         {
           name: "review",
           schema: enumOf(["1"]),
-          description: "Review mode: inject the comment-anchoring bridge",
+          description:
+            "Review mode: inject the comment-anchoring bridge. Ignored for a page that declares " +
+            "`comments`, which anchors its own comments",
         },
         { name: "next", schema: str(), description: "Path inside the artifact to land on" },
       ],
@@ -1722,7 +1970,7 @@ function operations(): Operation[] {
       ok: [200, "ReportInfo"],
       errors: [400, 401, 403, 404, 409],
     },
-    // Admin stats and open counts
+    // Admin stats and artifact stats
     {
       method: "get",
       path: API.adminStats,
@@ -1743,18 +1991,40 @@ function operations(): Operation[] {
     },
     {
       method: "get",
-      path: API.artifactViews,
-      operationId: "getArtifactViews",
-      summary: "How often other people opened an artifact (owner only)",
+      path: API.artifactStats,
+      operationId: "getArtifactStats",
+      summary: "Who opened an artifact, when, how often and which version (owner only)",
       description:
-        "Owner only. Daily open counts; no viewer data. An open is one browser opening the live " +
-        "page it had not opened in the last 12 hours, or since its sharing last changed; the " +
-        "owner, agents, previews and history never count.",
+        "Owner only. An open is one browser opening the live page it had not opened in the last " +
+        "12 hours, or since its sharing last changed; the owner, agents, previews and history " +
+        "never count. People signed in, and allowlisted emails confirmed by code, are named; " +
+        "everyone else is an approximate anonymous visitor.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",
-      ok: [200, "ArtifactViews"],
-      errors: [401, 403, 404],
+      query: [
+        {
+          name: "days",
+          schema: { type: "string", enum: STATS_RANGES.map(String), default: "30" },
+          description: "Window in UTC days",
+        },
+      ],
+      ok: [200, "ArtifactStats"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.statsArtifacts,
+      operationId: "getArtifactStatsSummary",
+      summary: "Opens across the caller's own artifacts",
+      description:
+        "The caller's artifacts that are not deleted or taken down, with opens and viewers over 7 " +
+        "and 30 days, all-time opens and the last open.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      ok: [200, "ArtifactStatsSummary"],
+      errors: [401, 403],
     },
   ];
 }
@@ -1947,6 +2217,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...responseSchemas(),
         ...dataSchemas(),
         ...liveSchemas(),
+        ...designSystemSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {

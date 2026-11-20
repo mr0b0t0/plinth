@@ -71,7 +71,8 @@ function parseAnchor(raw: unknown): PickedAnchor | null {
   return { selector, text: text ?? "", x, y };
 }
 
-function parseItem(raw: unknown): PinPosition | null {
+/** One reported pin position, validated as untrusted data (also used by pageChannel.ts). */
+export function parseItem(raw: unknown): PinPosition | null {
   if (!isObject(raw)) return null;
   const { id, top, left, width, height, visible } = raw;
   if (typeof id !== "string" || id === "" || id.length > BRIDGE_LIMITS.maxId) return null;

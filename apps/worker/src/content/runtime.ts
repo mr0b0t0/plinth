@@ -1,9 +1,10 @@
-// /__plinth/runtime.js: the script a page loads to use its artifact's shared data and live room
-// (docs/spec.md "Shared data and viewer identity", "Live rooms"). It holds no secrets and no
-// artifact data, so it is served without a content cookie and is the same for every artifact on an
-// instance. Its only possible configuration value is the public app origin, which the app channel
-// (runtime/app.ts) embeds when a fragment uses it; none does yet. It talks only to its own
-// origin's /__plinth/api/v1/ (connect-src 'self'). Assembled from the fragments in runtime/.
+// /__plinth/runtime.js: the script a page loads to use its artifact's shared data, live room and
+// comments from the page (docs/spec.md "Shared data and viewer identity", "Live rooms", "Comments
+// from the page"). It holds no secrets and no artifact data, so it is served without a content
+// cookie and is the same for every artifact on an instance. Its only configuration value is the
+// instance's public app origin, which the app channel (runtime/app.ts) embeds for page comments.
+// It talks only to its own origin's /__plinth/api/v1/ (connect-src 'self') and, by postMessage, to
+// the app that frames it. Assembled from the fragments in runtime/.
 //
 // window.plinth:
 //   ready      Promise<Session>, never rejects: { available, reason, viewer, canWrite,
@@ -30,6 +31,9 @@
 //              "open", "reconnecting", "closed", "unavailable"); join(name) -> a sub-room with
 //              the same methods (3 at most); leave()
 //
+//   comments   comments from the page (runtime/comments.ts); nothing is posted until first use:
+//              ready, compose(anchor?), onThreads(fn), locate(fn), refresh(), open(id), onFocus(fn)
+//
 // Under opaque isolation the page's origin is "null": ready resolves unavailable without any
 // request, and db calls reject with "unavailable". A 401 means the content pass expired: listeners
 // get "expired" as their terminal error and a "plinth:expired" event fires on window. The room
@@ -39,6 +43,7 @@
 import type { Config } from "../config.ts";
 import { applyContentHeaders } from "./csp.ts";
 import { APP_CHANNEL_FRAGMENT } from "./runtime/app.ts";
+import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
@@ -53,6 +58,7 @@ import { ROOM_FRAGMENT } from "./runtime/room.ts";
 export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
+  COMMENTS_FRAGMENT,
   PEOPLE_FRAGMENT,
 ];
 

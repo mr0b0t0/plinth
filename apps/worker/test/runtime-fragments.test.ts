@@ -1,16 +1,21 @@
 // /__plinth/runtime.js is assembled from fragments (content/runtime/). The assembly replaced one
-// static string without a behaviour change, so the served bytes are pinned to the script on main
-// before the split; and the app channel, which no fragment uses yet, is tested on its own. A
-// change that means to alter the script updates the pin here, on purpose: display names and the
-// people fragment (who is viewing) did.
+// static string without a behaviour change, so the fragments that use no app channel (data, room
+// and people) are pinned. A change that means to alter that script updates the pin here, on
+// purpose: display names and the people fragment (who is viewing) did. Page comments added the app
+// channel and their own fragment; the channel is also tested on its own.
 import { describe, expect, it } from "vitest";
+import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
+import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
+import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
+import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
 /**
- * sha256 and length of the script: at 94ea515, the last commit before the fragments, it was
- * 409e0c69… (24787 characters); names and plinth.people changed it to this.
+ * sha256 and length of the data, room and people fragments assembled without the app channel. At
+ * 94ea515, the last commit before the fragments, the script was 409e0c69… (24787 characters);
+ * names and plinth.people changed it to this.
  */
 const GOLDEN_SHA256 = "9a9a912c4e45c260f2cd80264adca6f24a578134c2dc0e64b8e53052681c61a3";
 const GOLDEN_LENGTH = 26439;
@@ -39,6 +44,8 @@ const probe: RuntimeFragment = {
 };
 
 const WITH_PROBE = [...RUNTIME_FRAGMENTS, probe];
+/** The fragments that use no app channel. */
+const BEFORE = [DATA_FRAGMENT, ROOM_FRAGMENT, PEOPLE_FRAGMENT];
 
 /** Evaluate a script with an opaque origin (no session fetch) and capture window listeners. */
 function boot(script: string, opts: { framed: boolean }) {
@@ -82,20 +89,37 @@ function boot(script: string, opts: { framed: boolean }) {
 }
 
 describe("runtime fragments", () => {
-  it("serves the same bytes as the script before the fragments, on every instance", async () => {
+  it("keeps the data, room and people code byte for byte, and serves it with page comments", async () => {
+    const before = assembleRuntime(config(), BEFORE);
+    expect(before.length).toBe(GOLDEN_LENGTH);
+    expect(await sha256(before)).toBe(GOLDEN_SHA256);
+    // Without a fragment that uses the app channel, no configuration value is in the script.
+    expect(before).not.toContain("APP_ORIGIN");
+    expect(assembleRuntime({ appOrigin: APP }, BEFORE)).toBe(before);
+    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual(["data", "room", "comments", "people"]);
     const served = runtimeScript(config());
-    expect(served.length).toBe(GOLDEN_LENGTH);
-    expect(await sha256(served)).toBe(GOLDEN_SHA256);
-    // No listed fragment uses the app channel yet, so no configuration value is in the script.
-    expect(served).not.toContain("APP_ORIGIN");
-    expect(runtimeScript({ appOrigin: APP })).toBe(served);
     expect(assembleRuntime(config())).toBe(served);
-    // Memoized per app origin.
+    expect(
+      assembleRuntime(config(), [DATA_FRAGMENT, ROOM_FRAGMENT, COMMENTS_FRAGMENT, PEOPLE_FRAGMENT]),
+    ).toBe(served);
+    // Memoized per app origin, which page comments embed.
     expect(runtimeScript(config())).toBe(served);
+    expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);
+    expect(runtimeScript({ appOrigin: APP })).not.toBe(served);
+    // The core head, the data, room and people fragments and the core tail are all still there.
+    const start = before.indexOf("  // ---------- live updates");
+    const people = before.indexOf("  // ---------- people:");
+    const end = before.indexOf("  Object.defineProperty(window");
+    expect(start).toBeLessThan(people);
+    expect(people).toBeLessThan(end);
+    expect(served.startsWith(before.slice(0, start))).toBe(true);
+    expect(served).toContain(before.slice(start, people));
+    expect(served).toContain(before.slice(people, end));
+    expect(served.endsWith(before.slice(end))).toBe(true);
   });
 
   it("places the app channel after the core head and before the other fragments", () => {
-    const plain = assembleRuntime({ appOrigin: APP });
+    const plain = assembleRuntime({ appOrigin: APP }, [DATA_FRAGMENT, ROOM_FRAGMENT]);
     const withChannel = assembleRuntime({ appOrigin: APP }, WITH_PROBE);
     expect(withChannel).toContain(`var APP_ORIGIN = ${JSON.stringify(APP)};`);
     const at = withChannel.indexOf("// ---------- app channel");
@@ -154,7 +178,7 @@ describe("runtime fragments", () => {
   });
 
   it("adds no message listener when no fragment uses the app channel", () => {
-    const { listeners } = boot(runtimeScript({ appOrigin: APP }), { framed: true });
+    const { listeners } = boot(assembleRuntime({ appOrigin: APP }, BEFORE), { framed: true });
     expect(listeners.has("message")).toBe(false);
   });
 });

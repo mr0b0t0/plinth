@@ -15,6 +15,13 @@ import {
   VISIBILITIES,
 } from "./constants.ts";
 import { displayNameProblem, normalizeDisplayName } from "./displayName.ts";
+import {
+  PAGE_ANCHOR_DATA_KEY_RE,
+  PAGE_ANCHOR_KEY_RE,
+  PAGE_ANCHOR_UNSAFE_RE,
+  PAGE_COMMENT_LIMITS,
+} from "./pageComments.ts";
+import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
 export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
@@ -62,14 +69,19 @@ export const contentSchema = z
   .string()
   .min(1)
   .describe(
-    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md). ' +
+    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md); ' +
+      'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md); ' +
+      'for type "design_system", the design system JSON (stored as system.json). ' +
       "Not for html artifacts, which send html.",
   );
 export const artifactTypeSchema = z
   .enum(ARTIFACT_TYPES)
   .describe(
     '"html" (default): a hand-written page sent as html. "doc": a Markdown document sent as ' +
-      "content, which Plinth renders as a finished page. Fixed at publish.",
+      'content, which Plinth renders as a finished page. "slides": a Markdown deck sent as content, ' +
+      "which Plinth renders as a presentation. " +
+      '"design_system": design tokens, guidelines and components as JSON in content ' +
+      "(format plinth.design-system/1), which Plinth renders as a reference site. Fixed at publish.",
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z
@@ -194,7 +206,37 @@ export const listArtifactsInput = z.object({
       "At most this many items, most recent first (default and maximum 500). 0 returns no items, only " +
         "categories: the cheap way to read your category names before you publish.",
     ),
+  /** Only artifacts of this type (design_system lists the design systems the caller can use). */
+  type: z
+    .enum(ARTIFACT_TYPES)
+    .optional()
+    .describe(
+      "Only artifacts of this type, e.g. design_system for the design systems you can use.",
+    ),
 });
+
+/** get_design_system and GET /artifacts/:ref/design-system. */
+export const DESIGN_SYSTEM_PARTS = ["tokens", "css", "guidelines", "components"] as const;
+export type DesignSystemPart = (typeof DESIGN_SYSTEM_PARTS)[number];
+
+export const getDesignSystemInput = z.object({
+  id: artifactRefSchema,
+  version: versionNumberSchema.optional(),
+  include: z
+    .array(z.enum(DESIGN_SYSTEM_PARTS))
+    .min(1)
+    .optional()
+    .describe(
+      "Only these parts (default all). css also returns font_links and fonts; components returns " +
+        "component_css too.",
+    ),
+  components: z
+    .array(z.string().regex(/^[a-z][a-z0-9-]{0,47}$/))
+    .max(50)
+    .optional()
+    .describe("Only these component ids (default all)."),
+});
+export type GetDesignSystemInput = z.input<typeof getDesignSystemInput>;
 
 export const listVersionsInput = z.object({ id: artifactRefSchema });
 
@@ -245,6 +287,10 @@ export const verifyLoginCodeInput = z.object({
   code: z.string().regex(/^\d{6}$/, "Six digits"),
 });
 export const verifyMagicLinkInput = z.object({ token: z.string().min(10).max(200) });
+export const reviewLoginInput = z.object({
+  email: emailSchema,
+  password: z.string().min(1).max(256),
+});
 export const updateProfileInput = z.object({
   // No "@": a display name must not look like an email address (or an agent mention) to agents
   // reading comment authors. No control, bidi or zero-width characters either (displayName.ts);
@@ -318,14 +364,96 @@ export const viewerCodeInput = z.object({
   code: z.string().regex(/^\d{6}$/, "Six digits"),
 });
 
-export const anchorSchema = z.object({
+/** A comment pinned to an element: what the review-mode bridge picks. Stored without a `kind`. */
+const UNSAFE_ALL = new RegExp(PAGE_ANCHOR_UNSAFE_RE.source, "gu");
+
+export const elementAnchorSchema = z.object({
   selector: z.string().max(1000),
-  text: z.string().max(500).optional(),
+  /**
+   * The element's text, for the label. It comes from the page's DOM, where soft hyphens and emoji
+   * joiners are common, so control and format characters are removed rather than refused (stored
+   * anchors read back the same way).
+   */
+  text: z
+    .string()
+    .max(500)
+    .transform((t) => t.replace(UNSAFE_ALL, ""))
+    .optional(),
   /** Position inside the element, 0..1 of its box, so a pin lands where it was dropped. */
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
+  /** Never set: a `kind` means a page anchor, which must then be valid as one. */
+  kind: z.never().optional(),
 });
-export type Anchor = z.infer<typeof anchorSchema>;
+
+/** Plain text the page chose: no control or format characters (bidi overrides, zero-width). */
+const pageText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((t) => !PAGE_ANCHOR_UNSAFE_RE.test(t), {
+      message: "No control or format characters (bidi, zero-width)",
+    });
+
+const anchorDataValue = z.union([
+  pageText(PAGE_COMMENT_LIMITS.maxDataString),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+]);
+const pageCoord = z
+  .number()
+  .finite()
+  .min(-PAGE_COMMENT_LIMITS.maxPageCoord)
+  .max(PAGE_COMMENT_LIMITS.maxPageCoord);
+
+/**
+ * A spot the page's own code placed (`plinth.comments.compose`): a point on a canvas, a slide, a
+ * node in a diagram. Written by page code and commenters, so untrusted like the comment text.
+ */
+export const pageAnchorSchema = z
+  .object({
+    kind: z.literal("page"),
+    /** What the page anchors to, in its own terms: "canvas", "slide-3", "node:42". */
+    key: z
+      .string()
+      .regex(
+        PAGE_ANCHOR_KEY_RE,
+        `Key: a letter or digit, then up to ${PAGE_COMMENT_LIMITS.maxKey - 1} of A-Z a-z 0-9 _ . : / -`,
+      ),
+    /** A point in the page's own coordinates (canvas pixels, diagram units). */
+    x: pageCoord.optional(),
+    y: pageCoord.optional(),
+    /** A short label for the anchor chip ("Slide 3, top left"). Plain text. */
+    text: pageText(PAGE_COMMENT_LIMITS.maxText).optional(),
+    /** Extra page-defined fields (zoom, layer): flat, at most 16 keys and 1 KiB as JSON. */
+    data: z
+      .record(z.string().regex(PAGE_ANCHOR_DATA_KEY_RE), anchorDataValue)
+      .refine((d) => Object.keys(d).length <= PAGE_COMMENT_LIMITS.maxDataKeys, {
+        message: `At most ${PAGE_COMMENT_LIMITS.maxDataKeys} data keys`,
+      })
+      .refine((d) => utf8Length(JSON.stringify(d)) <= PAGE_COMMENT_LIMITS.maxDataBytes, {
+        message: `Data is over ${PAGE_COMMENT_LIMITS.maxDataBytes} bytes`,
+      })
+      // The key count is a refinement, which JSON Schema cannot express; say it for OpenAPI.
+      .meta({ maxProperties: PAGE_COMMENT_LIMITS.maxDataKeys })
+      .optional(),
+  })
+  .strict();
+
+/**
+ * A comment's anchor: a page anchor (`kind: "page"`) or an element. The page schema comes first
+ * and is strict, and an element anchor refuses `kind`, so anything that says it is a page anchor
+ * is a valid one or is refused.
+ */
+export const anchorSchema = z.union([pageAnchorSchema, elementAnchorSchema]);
+export type ElementAnchor = Omit<z.infer<typeof elementAnchorSchema>, "kind">;
+export type PageAnchor = z.infer<typeof pageAnchorSchema>;
+export type Anchor = ElementAnchor | PageAnchor;
+
+export function isPageAnchor(a: Anchor | null | undefined): a is PageAnchor {
+  return !!a && (a as { kind?: unknown }).kind === "page";
+}
 
 export const createCommentInput = z.object({
   body: z.string().trim().min(1).max(LIMITS.maxCommentLength),
@@ -345,4 +473,13 @@ export const reportDecisionInput = z.object({
 /** GET /api/v1/admin/stats?days=: the trend window in UTC days. */
 export const adminStatsQuerySchema = z.object({
   days: z.enum(["7", "30", "90"]).default("30"),
+});
+/** GET /api/v1/artifacts/:ref/stats?days=: the owner's window in UTC days. */
+export const artifactStatsQuerySchema = z.object({
+  days: z.enum(["7", "30", "90", "365"]).default("30"),
+});
+/** get_artifact_stats: one artifact's stats with an id, the caller's summary without. */
+export const getArtifactStatsInput = z.object({
+  id: artifactRefSchema.optional(),
+  days: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)]).optional(),
 });

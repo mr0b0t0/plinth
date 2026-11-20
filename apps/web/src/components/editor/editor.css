@@ -73,6 +73,22 @@
   flex: 1;
   margin: 0;
 }
+/* A typed format's problems (a design system's JSON), with the path of each. */
+.pl-editor__problems {
+  align-items: flex-start;
+}
+.pl-editor__problems ul {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.pl-editor__problems code {
+  font-family: var(--font-mono);
+  color: var(--color-ink);
+}
 
 .pl-editor__body {
   position: relative;
