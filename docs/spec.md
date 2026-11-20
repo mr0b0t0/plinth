@@ -1497,9 +1497,11 @@ the app applies it so the reader keeps their place where it can:
   runtime reads and removes the record at start, before the page's own scripts after the runtime
   tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
   30 s or one its frame was not loaded for: the app names each viewer frame for the version it
-  shows (`plinth-v5`, the page's `window.name`), and the runtime takes a record only in the frame
-  named for its `to`, so a record the app did not act on (a hold, a kept frame, a failed gate read)
-  is never read by a reload or a sub-page of the old frame, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
+  shows (`plinth-v5`, the page's `window.name`), and a frame named for a version takes a record
+  only when that version is its `to`, so a record the app did not act on (a hold, a kept frame, a
+  failed gate read) is never read by a reload or a sub-page of the old frame. A frame without such
+  a name (an app tab opened before frames were named, or a page that renamed its own window) takes
+  the record as before. The runtime restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
   the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
   records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
   Opaque isolation has no runtime handshake.

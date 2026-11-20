@@ -1721,9 +1721,11 @@ artifact or another viewer. The next version's runtime reads and removes it at s
 older than 30 s. It takes the record only in the frame the app loaded the record's `to` in: the
 app names each viewer frame for the version it shows (`plinth-v<n>`, which the page reads as
 `window.name`), so a record the app did not act on (the update was held, the frame was kept, the
-gate read failed) is removed, unread, by a reload or a sub-page of the old frame. The name is a
-version number the page is told anyway; a page that renames its own window changes only what its
-own record does. A page can already write anything to its own storage; the record adds no new
+gate read failed) is removed, unread, by a reload or a sub-page of the old frame. A frame whose
+name is not of that form (an app tab opened before frames were named, or a page that renamed its
+own window) takes the record as before the names, within the 30 s. The name is a version number
+the page is told anyway; a page that renames its own window changes only what its own record
+does. A page can already write anything to its own storage; the record adds no new
 reader.
 
 **The hold rule.** Only a page whose shown version declares `hold` (the gate says `hold: true`, only

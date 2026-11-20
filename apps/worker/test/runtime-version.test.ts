@@ -316,15 +316,7 @@ describe("runtime: new versions", () => {
     const rec = p.storage.getItem(KEY) as string;
     // The app held the update or kept the frame: a reload or sub-page of the old frame still has
     // the old frame's name, so it is not that update.
-    for (const name of [
-      "plinth-v1",
-      "plinth-v3",
-      "",
-      "plinth-v",
-      "plinth-v02",
-      "plinth-v2x",
-      "x",
-    ]) {
+    for (const name of ["plinth-v1", "plinth-v3", "plinth-v10"]) {
       const s = memoryStorage({ [KEY]: rec });
       const old = boot({ storage: s, name, path: "/guide.html", readyState: "complete" });
       expect(old.win.plinth.carried, name).toBeNull();
@@ -336,6 +328,23 @@ describe("runtime: new versions", () => {
     const next = boot({ storage: memoryStorage({ [KEY]: rec }), path: "/guide.html" });
     expect(next.win.plinth.carried).toEqual({ from: 1, to: 2, state: { draft: "stale" } });
     expect(next.replaced).toEqual(["#step-2"]);
+  });
+
+  it("takes a record as before in a frame the app did not name for a version", async () => {
+    const p = boot({ path: "/guide.html#step-2" });
+    p.win.plinth.onVersion(() => ({ state: { draft: "kept" } }));
+    p.fromApp(update());
+    expect((await p.answer())?.[0].type).toBe("update:ok");
+    const rec = p.storage.getItem(KEY) as string;
+    // An app tab opened before frames were named loads the next version in an unnamed frame; a
+    // page may rename its own window (window.name = "main"), or a library may keep data there.
+    for (const name of ["", "main", "x", "plinth-v", "plinth-v0", "plinth-v02", "plinth-v2x"]) {
+      const s = memoryStorage({ [KEY]: rec });
+      const next = boot({ storage: s, name, path: "/guide.html" });
+      expect(next.win.plinth.carried, name).toEqual({ from: 1, to: 2, state: { draft: "kept" } });
+      expect(next.replaced, name).toEqual(["#step-2"]);
+      expect(s.getItem(KEY)).toBeNull();
+    }
   });
 
   it("uses the live-view limits and key from the shared constants", () => {

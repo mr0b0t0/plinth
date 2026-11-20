@@ -19,7 +19,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   new version once its window lost focus, so text you were typing before switching to another app
   or tab could be lost; it now waits for Update as long as focus is still in the page. State a page
   handed to the next version is read only by that version's frame: a reload of the old page in the
-  meantime no longer picks it up.
+  meantime no longer picks it up (unless the page renamed its window: then it carries as before).
 - **Project files for a page.** Agents now have a recipe for pages that show files from a project
   (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
   `files/` and read them by relative URL; a refresh is a new version. Only the user in the session

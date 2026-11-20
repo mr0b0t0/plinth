@@ -21,9 +21,10 @@
 // artifact, never the app, another artifact or another viewer. It holds { from, to, at, scroll,
 // path, hash, state }, state only when its JSON is at most 16 KiB. The next version's runtime reads
 // and removes it at start, before the page's own scripts after the runtime tag run, ignores it when
-// older than 30 s or when its frame is not the one the app loaded version `to` in (the app names
-// each frame `plinth-v<n>`, VIEW_FRAME_NAME_PREFIX; a reload or sub-page of the old frame keeps the
-// old frame's name), puts the hash back (history.replaceState, no navigation) when it landed on the
+// older than 30 s or when its frame is named for another version (the app names each frame
+// `plinth-v<n>`, VIEW_FRAME_NAME_PREFIX; a reload or sub-page of the old frame keeps the old frame's
+// name; a frame with no such name, from an older app tab or a page that renamed its window, takes
+// the record as before), puts the hash back (history.replaceState, no navigation) when it landed on the
 // same path and has no hash of its own, and, on the same path, scrolls to the recorded place after
 // `load` and one animation frame. The gate lands a path the new version lacks on its root
 // (`carried=1`); state still crosses, the scroll does not. The hash never goes to the app: it becomes part of no request URL, so state a
@@ -149,8 +150,11 @@ export const VERSION_FRAGMENT: RuntimeFragment = {
     var age = Date.now() - rec.at;
     if (!(age >= 0 && age <= CARRY_MAX_AGE_MS)) return null;
     if (!versionInt(rec.from) || !versionInt(rec.to)) return null;
-    // Only in the update it was written for: the frame the app loaded version "to" in.
-    if (rec.to !== frameVersion()) return null;
+    // Only in the update it was written for: a frame the app named for a version takes it only
+    // when that version is "to". A frame with no such name (an app tab opened before frames were
+    // named, or a page that renamed its own window) takes it as before the names.
+    var named = frameVersion();
+    if (named !== null && rec.to !== named) return null;
     restoreHash(rec);
     // Only on the same page: a place the new version lacks lands on its root, at the top.
     if (rec.scroll && typeof rec.scroll === "object" && samePath(rec.path, pagePath())) {
