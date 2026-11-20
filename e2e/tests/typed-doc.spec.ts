@@ -707,4 +707,37 @@ test.describe("editing a doc on its page as formatted text", () => {
       await client.close();
     }
   });
+
+  test("a paragraph cleared between two lists is gone from a Publish made while it is open", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const LISTS = [`# ${TITLE}`, "", "- one", "", "Between the lists.", "", "- two", ""].join("\n");
+    const { artifact, client } = await publishDoc(page, LISTS);
+    try {
+      await page.goto(`/a/${artifact.slug}`);
+      const frame = page.frameLocator(CURRENT_FRAME);
+      await expect(frame.locator("h1")).toContainText(TITLE, { timeout: 15_000 });
+      const bar = await startEditing(page);
+      const open = frame.locator('.plinth-doc__open [contenteditable="true"]');
+
+      await frame.locator("p", { hasText: "Between the lists." }).click();
+      await expect(open).toHaveText("Between the lists.");
+      await open.press("ControlOrMeta+a");
+      await open.press("Backspace");
+      await expect(open).toHaveText("");
+      // Publish while the emptied block is still open: the lists stay two, and the paragraph is
+      // not in the version.
+      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
+      const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}`)).body.content as string;
+      expect(v2).toBe([`# ${TITLE}`, "", "- one", "", "* two", ""].join("\n"));
+      await expect(frame.locator("ul")).toHaveCount(2);
+      // The list that took another marker opens like any other.
+      await frame.locator("li", { hasText: "two" }).click();
+      await expect(open).toHaveText("two");
+    } finally {
+      await client.close();
+    }
+  });
 });

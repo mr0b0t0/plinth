@@ -2729,8 +2729,14 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
   nothing. So does an Enter or typing that cannot be sent; after an Enter the block stays open
   with what was typed, still waiting to be sent. A block whose text is cleared where its empty
-  lines would run the blocks around it together keeps its last text in the doc while it is open,
-  and closing it deletes it as "Delete" does, with the same marker change or refusal. A new block
+  lines would run the blocks around it together is removed at once, by the same one edit as
+  "Delete" (the list after it takes another marker), under one lease over its lines and the lines
+  that edit writes again. The doc then has what the page shows at every moment, so a Publish,
+  Done or an autosave made while the block is still open never has the old text. The block stays
+  open, empty, where it was, and what is typed in it becomes a new block there. When the removal
+  is refused (someone holds the lines next to it, the page is not connected, or the doc cannot
+  take it), the block stays open with its last text, which is what the doc has, and the page says
+  so: "Couldn't remove this block now. Try again.", or why the doc cannot take it. A new block
   not typed into yet has no lines in the doc: its menu's "Insert below" puts the block where the
   new one is, "Move up" and "Move down" are off, and "Delete" gives it up, leaving the doc as it
   was.

@@ -26,8 +26,9 @@
 // doc's live rules (liveTypes.ts) run on the edit before it is sent, as the room runs them; a
 // refusal (here, or from the room when the lines changed first) puts the block back as the room
 // has it and says why. A block cleared where its empty lines would run the blocks around it
-// together is not sent empty; closing it deletes it as Delete does. Images are drawn from the
-// draft's base version's files (common/files.ts), which are the files a Publish keeps.
+// together is removed at once, in the same one edit as Delete, and stays open, empty, where it
+// was. Images are drawn from the draft's base version's files (common/files.ts), which are the
+// files a Publish keeps.
 import {
   blockLines,
   editableBlock,
@@ -89,6 +90,15 @@ export const DOC_FULL = "The doc is at its size limit, so that change wasn't mad
 export const NOT_SENT = "Not connected. Try again in a moment.";
 /** Why a block was not sent: it is over one frame. */
 export const TOO_LONG = "This block is too long to send. Split it into smaller blocks.";
+/** Why a block op was not made yet: the one before it is still waiting for its lease. */
+const STILL_MAKING = "One moment: the last change is still being made.";
+/** Why a block op was not made: the lines it needed changed after it was asked for. */
+const CHANGED_MEANWHILE = "The doc changed meanwhile. Try again.";
+/**
+ * Why a cleared block was not removed (removeCleared): its lease or its edit was refused. The block
+ * stays open with its last text, which is what the doc has.
+ */
+export const CLEAR_REFUSED = "Couldn't remove this block now. Try again.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
 export type DocBackend = LiveBackend;
@@ -215,6 +225,21 @@ interface Pad {
  * it (null at the top of the doc).
  */
 type Place = { start: number } | { above: number | null };
+
+/**
+ * A cleared block being removed (removeCleared). "lease": the lease on its lines and the blocks
+ * the removal writes again is asked for, in place of the block's own; "sent": the edit is sent;
+ * "insert": the insert point the block stays open at is asked for. `drop` once the block was
+ * closed meanwhile: the removal ends as a Delete does, and the lease is released where it lands.
+ */
+interface Clearing {
+  phase: "lease" | "sent" | "insert";
+  drop: boolean;
+  /** "sent": the edit, its lease, and where the block stays open (from the lease's start). */
+  text: string;
+  lease: string;
+  at: number;
+}
 
 /** The block being edited: its formatted-text editor and the lines kept around its core. */
 interface Open {
@@ -412,6 +437,8 @@ export class DocEditor {
   private afterCaret: "start" | "end" = "end";
   /** What the person asked for while a block op waited for its lease, run once it is done. */
   private queued: (() => void) | null = null;
+  /** A cleared block being removed (removeCleared), until the block is open where it was. */
+  private clearing: Clearing | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -431,9 +458,14 @@ export class DocEditor {
     return this.want?.op !== undefined;
   }
 
-  /** A block's text is waiting in the debounce, not yet sent. */
+  /** A block's text is waiting in the debounce, or a cleared block's removal is on its way. */
   get pending(): boolean {
-    return this.timer !== null;
+    return this.timer !== null || this.clearing !== null;
+  }
+
+  /** A block op or a cleared block's removal is on its way: other ops and opens wait for it. */
+  private get busy(): boolean {
+    return this.opPending || this.clearing !== null;
   }
 
   setBackend(b: DocBackend): void {
@@ -451,10 +483,12 @@ export class DocEditor {
     if (!b.ready) return;
     const blocks = parseBlocks(joinLines(b.lines));
     const openEl = this.open?.rich.el ?? null;
-    // While a block is being re-taken (after a reconnect or a merge) it stays where it was,
+    // While a block is being re-taken (after a reconnect or a merge), or a cleared block's lease
+    // goes from its lines to the place it stays open at (removeCleared), it stays where it was,
     // keeping the text and the focus.
-    const retaking = openEl && this.want?.keep !== undefined && !b.mine ? this.held : null;
-    const mine = this.editing && openEl ? (b.mine ?? retaking) : null;
+    const pinned =
+      openEl && (this.want?.keep !== undefined || this.clearing !== null) ? this.held : null;
+    const mine = this.editing && openEl ? (pinned ?? b.mine) : null;
     if (b.mine && mine === b.mine) this.held = { start: mine.start, end: mine.end };
     const others = this.editing ? [...b.leases.values()].filter((l) => l.id !== b.mine?.id) : [];
     const desired: Node[] = [];
@@ -546,7 +580,7 @@ export class DocEditor {
     pinFiles(this.root, this.editing ? (this.hooks.fileVersion?.() ?? null) : null);
     this.focusAfter(blocks);
     const q = this.queued;
-    if (q && !this.opPending && !this.backend.mine && !this.after) {
+    if (q && !this.busy && !this.backend.mine && !this.after) {
       this.queued = null;
       q();
     }
@@ -737,7 +771,8 @@ export class DocEditor {
 
   /** Where the open block's menu acts (see Place); `start` is the line it was opened at. */
   private openPlace(start: number): Place {
-    const range = this.backend.mine ?? this.held;
+    // While a cleared block is being removed its lease is not the block's: where it is shown is.
+    const range = this.clearing ? this.held : (this.backend.mine ?? this.held);
     if (!range) return this.blockAt(start) ? { start } : { above: null };
     const blocks = this.blocks();
     const own = blocks.find(
@@ -768,17 +803,16 @@ export class DocEditor {
     if (!this.editing || !b.ready) return;
     const text = joinLines(b.lines.slice(block.start, block.end));
     const near = block.start;
-    // A block op is waiting for its lease: open this block once the op is done, found again by its
-    // text (the op may move it).
-    const later = () => {
+    if (this.busy) {
+      // A block op is waiting for its lease, or a cleared block is being removed (which this
+      // closes): open this block once that is done, found again by its text (the op may move it,
+      // or give a list another marker).
+      this.close(true);
       this.queued = () => {
         const blocks = this.blocks();
-        const i = this.findBlock(blocks, text, near);
+        const i = this.findBlock(blocks, text, near, true);
         if (i >= 0) this.open_(blocks[i] as Block, caret);
       };
-    };
-    if (this.opPending) {
-      later();
       return;
     }
     if (b.you?.right !== "write") {
@@ -799,12 +833,8 @@ export class DocEditor {
       return;
     }
     this.close(true);
-    // Closing the open block may have deleted it (a cleared block, close()).
-    if (this.opPending) {
-      later();
-      return;
-    }
-    // close() may have changed the lines (solo): find the block again.
+    // close() may have sent the open block's typing, which moves the lines (solo): find the block
+    // again.
     const blocks = this.blocks();
     const again = blocks[this.findBlock(blocks, text, near)];
     if (!again) return;
@@ -833,20 +863,14 @@ export class DocEditor {
     const b = this.backend;
     if (!this.canWrite) return;
     const point = this.pointAt(where);
-    const later = () => {
+    if (this.busy) {
+      this.close(true);
       this.queued = () => this.openInsert(point(), initial);
-    };
-    if (this.opPending) {
-      later();
       return;
     }
     this.close(true);
     this.deselect();
-    // Closing the open block may have deleted it (a cleared block, close()).
-    if (this.opPending) {
-      later();
-      return;
-    }
+    // close() may have sent the open block's typing, which moves the lines (solo).
     const at = point();
     const range = { start: at, end: at };
     const other = this.heldBy(range);
@@ -878,7 +902,7 @@ export class DocEditor {
       if (joinLines(now) === was) return at;
       if (!above) return 0;
       const blocks = this.blocks();
-      const found = blocks[this.findBlock(blocks, text, above.start)];
+      const found = blocks[this.findBlock(blocks, text, above.start, true)];
       return found ? found.end : Math.min(at, now.length);
     };
   }
@@ -891,7 +915,11 @@ export class DocEditor {
         ? {
             label: "Take over",
             run: () => {
-              this.close(true, false, false);
+              if (this.busy) {
+                this.showNotice(STILL_MAKING);
+                return;
+              }
+              this.close(true);
               this.want = { start: l.start, end: l.end, text: "", insert: false, tries: 0 };
               if (this.backend.takeover(l.id)) this.hideNotice();
             },
@@ -1010,7 +1038,7 @@ export class DocEditor {
   /** Ask an agent about block `start` (its image, with `image`): the app opens its Ask dialog. */
   private ask(start: number, image: boolean): void {
     const index = this.blockAt(start)?.index ?? 0;
-    this.close(true, false, false);
+    this.close(true);
     this.deselect();
     const n = index + 1;
     this.hooks.ask?.(
@@ -1024,6 +1052,10 @@ export class DocEditor {
     const open = this.open;
     const mine = this.backend.mine;
     if (!open || !mine) return;
+    if (this.busy) {
+      this.showNotice(STILL_MAKING);
+      return;
+    }
     const near = this.neighbours(mine);
     const next = turnInto(open.rich.model, kind, near);
     if (verifyBlock(next, TOOLS, open.env) === null) {
@@ -1062,6 +1094,10 @@ export class DocEditor {
 
   /** A new block of `kind` below block `start`, or at the top of the doc for null. */
   private insertBelow(start: number | null, kind: BlockKind): void {
+    if (this.busy) {
+      this.showNotice(STILL_MAKING);
+      return;
+    }
     const found = start === null ? null : this.blockAt(start);
     if (start !== null && !found) return;
     const lines = this.backend.lines;
@@ -1070,7 +1106,7 @@ export class DocEditor {
       found ? lines[found.block.core.start] : undefined,
       next ? lines[next.core.start] : undefined,
     ];
-    this.close(true, false, false);
+    this.close(true);
     // close() may have changed the lines (solo): find the block again.
     const at = start === null ? 0 : (this.blockAt(start) ?? found)?.block.end;
     if (at === undefined) return;
@@ -1089,11 +1125,11 @@ export class DocEditor {
   /** Runs `plan` (the range and its text, found again on every try) as a one-edit lease. */
   private runOp(plan: () => (LineRange & { text: string }) | null, build: OpBuild): void {
     if (!this.canWrite) return;
-    if (this.opPending) {
-      this.showNotice("One moment: the last change is still being made.");
+    if (this.busy) {
+      this.showNotice(STILL_MAKING);
       return;
     }
-    this.close(true, false, false);
+    this.close(true);
     this.deselect();
     const p = plan();
     if (!p) return;
@@ -1163,6 +1199,19 @@ export class DocEditor {
   }
 
   private remove(start: number): void {
+    const { plan, build } = this.removal(start);
+    this.runOp(plan, build);
+  }
+
+  /**
+   * Delete of block `start`: the lines it covers (with the block after it when that one must be
+   * written again: escaped, apart from the block before, or with a free list marker) and what they
+   * become, in one edit. Delete and a cleared block (removeCleared) both make it.
+   */
+  private removal(start: number): {
+    plan: () => (LineRange & { text: string }) | null;
+    build: OpBuild;
+  } {
     const target = this.blockText(start);
     const plan = () => {
       const lines = this.backend.lines;
@@ -1191,7 +1240,7 @@ export class DocEditor {
       }
       return { start: s, end: e, text: joinLines(lines.slice(s, e)) };
     };
-    this.runOp(plan, (lines, lease) => {
+    const build: OpBuild = (lines, lease) => {
       const blocks = parseBlocks(joinLines(lines));
       const i = blocks.findIndex((x) => x.core.start >= lease.start && x.core.end <= lease.end);
       const cur = blocks[i];
@@ -1215,7 +1264,8 @@ export class DocEditor {
       }
       const out = separated(lines, lease, text);
       return { text: out.text, focus: lease.start + out.lead, blocks: blocks.length - 1 };
-    });
+    };
+    return { plan, build };
   }
 
   private insertDivider(start: number | null): void {
@@ -1267,17 +1317,27 @@ export class DocEditor {
     return joinLines(this.backend.lines.slice(found.block.start, found.block.end));
   }
 
-  /** The block whose lines are `text`, nearest to line `near`. */
-  private findBlock(blocks: Block[], text: string, near: number): number {
+  /**
+   * The block whose lines are `text`, nearest to line `near`. With `anyMarker`, a list whose
+   * markers alone changed (a removal or Move gave it a free one) is found too, when no block's
+   * lines are `text` as they are.
+   */
+  private findBlock(blocks: Block[], text: string, near: number, anyMarker = false): number {
     const lines = this.backend.lines;
-    let best = -1;
-    blocks.forEach((b, i) => {
-      if (joinLines(lines.slice(b.start, b.end)) !== text) return;
-      if (best < 0 || Math.abs(b.start - near) < Math.abs((blocks[best] as Block).start - near)) {
-        best = i;
-      }
-    });
-    return best;
+    const nearest = (same: (t: string) => boolean) => {
+      let best = -1;
+      blocks.forEach((b, i) => {
+        if (!same(joinLines(lines.slice(b.start, b.end)))) return;
+        if (best < 0 || Math.abs(b.start - near) < Math.abs((blocks[best] as Block).start - near)) {
+          best = i;
+        }
+      });
+      return best;
+    };
+    const exact = nearest((t) => t === text);
+    if (exact >= 0 || !anyMarker) return exact;
+    const plainText = withoutMarkers(text);
+    return nearest((t) => withoutMarkers(t) === plainText);
   }
 
   // ---------- lease events (from the backend) ----------
@@ -1285,8 +1345,20 @@ export class DocEditor {
   granted(lease: ClientLease): void {
     const w = this.want;
     this.want = null;
+    const c = this.clearing;
+    const placed = c?.phase === "insert" && !w?.op;
+    if (c && placed) {
+      // The place a cleared block stays open at, once its removal is in (removeCleared).
+      this.clearing = null;
+      if (c.drop || !this.open || !this.editing) {
+        this.backend.release();
+        this.render();
+        this.hooks.status();
+        return;
+      }
+    }
     // A block op asked for in edit mode is made even when edit mode ended meanwhile (a cleared
-    // block deleted as edit mode ends).
+    // block's removal as edit mode ends).
     if (!this.editing && !w?.op) {
       this.backend.release();
       return;
@@ -1348,7 +1420,8 @@ export class DocEditor {
         // The caret is where the person clicked.
       } else open.rich.focus(w?.caret ?? (w?.insert ? "start" : "end"));
     }
-    if (keep) this.schedule(0);
+    // What was typed in a cleared block while it was removed is sent now; an empty one has nothing.
+    if (keep && !(placed && isEmptyBlock(open.rich.model))) this.schedule(0);
     else if (w?.insert && !isEmptyBlock(open.rich.model)) this.schedule(0);
     this.hooks.status();
   }
@@ -1424,7 +1497,7 @@ export class DocEditor {
         pinFiles(frag, this.hooks.fileVersion?.() ?? null);
         return Array.from(frag.childNodes);
       },
-      changed: () => this.schedule(EDIT_DEBOUNCE_MS),
+      changed: () => this.edited(),
       split: (keep, next) => this.split(keep, next),
       tab: (back) => this.tabOut(back),
       escape: () => this.close(true, true),
@@ -1446,34 +1519,38 @@ export class DocEditor {
     const lines = this.backend.lines;
     const text = joinLines(lines.slice(lease.start, lease.end));
     const result = text === w.text ? op.build(lines, lease) : null;
-    if (!result) {
-      this.backend.release();
-      this.showNotice("The doc changed meanwhile. Try again.");
+    const checked = result ? this.checkOp(lease, result) : { refusal: CHANGED_MEANWHILE };
+    const refusal =
+      "refusal" in checked
+        ? checked.refusal
+        : checked.text !== text && !this.backend.edit(checked.text)
+          ? NOT_SENT
+          : null;
+    const c = this.clearing;
+    if (c) {
+      if (refusal !== null || !result || "refusal" in checked) {
+        // Checked before the lease was asked for, so the doc changed meanwhile. The lease now
+        // covers the blocks around the cleared one too, so the block closes with its last text.
+        this.clearing = null;
+        this.backend.release();
+        this.dropOpen();
+        this.held = null;
+        this.showNotice(CLEAR_REFUSED);
+        this.render();
+        this.hooks.status();
+        return;
+      }
+      c.phase = "sent";
+      c.text = checked.text;
+      c.at = (result.focus ?? lease.start) - lease.start;
+      c.lease = lease.id;
+      this.clearedSent();
       return;
-    }
-    const fitted = this.fits(lease, result.text);
-    if (fitted === null) {
-      this.backend.release();
-      this.showNotice(REFUSED_EDIT);
-      return;
-    }
-    const after = [
-      ...lines.slice(0, lease.start),
-      ...blockLines(fitted),
-      ...lines.slice(lease.end),
-    ];
-    let refusal: string | null = null;
-    if (result.blocks !== undefined && parseBlocks(joinLines(after)).length !== result.blocks) {
-      refusal = JOINED_BLOCKS;
-    } else if (new TextEncoder().encode(joinLines(after)).byteLength > LIMITS.maxDocBytes) {
-      refusal = DOC_FULL;
-    } else if (fitted !== text && !this.backend.edit(fitted)) {
-      refusal = NOT_SENT;
     }
     this.backend.release();
-    if (refusal) {
+    if (refusal !== null || !result) {
       // Nothing changed, so nothing is opened or selected for it.
-      this.showNotice(refusal);
+      this.showNotice(refusal ?? CHANGED_MEANWHILE);
       this.render();
       return;
     }
@@ -1482,18 +1559,57 @@ export class DocEditor {
     this.hooks.status();
   }
 
+  /** What an op's result writes over `range`, or why the doc cannot take it. */
+  private checkOp(range: LineRange, result: OpResult): { text: string } | { refusal: string } {
+    const fitted = this.fits(range, result.text);
+    if (fitted === null) return { refusal: REFUSED_EDIT };
+    const lines = this.backend.lines;
+    const after = [
+      ...lines.slice(0, range.start),
+      ...blockLines(fitted),
+      ...lines.slice(range.end),
+    ];
+    if (result.blocks !== undefined && parseBlocks(joinLines(after)).length !== result.blocks) {
+      return { refusal: JOINED_BLOCKS };
+    }
+    if (new TextEncoder().encode(joinLines(after)).byteLength > LIMITS.maxDocBytes) {
+      return { refusal: DOC_FULL };
+    }
+    return { text: fitted };
+  }
+
   denied(reason: LeaseDenial, by?: string): void {
     const w = this.want;
     this.want = null;
     if (reason === "stale" && w && w.tries < STALE_RETRIES) {
       this.retake(w);
+      // A cleared block's removal that no longer applies ends as a refused one does.
+      if (this.clearing && !this.want) this.clearFailed();
       return;
+    }
+    const c = this.clearing;
+    if (c && c.phase !== "insert") {
+      this.clearFailed();
+      return;
+    }
+    if (c) {
+      // The removal is in, but not the place the block stays open at: what is typed in it stays
+      // on the page to copy, as after a reconnect (below); an empty one closes.
+      this.clearing = null;
+      this.backend.release();
+      if (c.drop || !this.open || isEmptyBlock(this.open.rich.model)) {
+        this.dropOpen();
+        this.held = null;
+        this.render();
+        this.hooks.status();
+        return;
+      }
     }
     if (w?.op) {
       this.showNotice(
         reason === "held"
           ? `${by ?? "Someone"} is editing next to this block. Try again when they finish.`
-          : "The doc changed meanwhile. Try again.",
+          : CHANGED_MEANWHILE,
       );
       this.render();
       return;
@@ -1545,6 +1661,19 @@ export class DocEditor {
     const open = this.open;
     const held = this.held;
     this.cancelTimer();
+    const c = this.clearing;
+    if (c) {
+      // A cleared block's lease ended while it was being removed: the block closes as the doc
+      // has it, and the page says so when the removal was not made.
+      this.clearing = null;
+      this.want = null;
+      this.dropOpen();
+      this.held = null;
+      this.render();
+      if (c.phase === "lease") this.showNotice(CLEAR_REFUSED);
+      this.hooks.status();
+      return;
+    }
     if (!open || !held || !this.editing) {
       this.dropOpen();
       this.render();
@@ -1583,6 +1712,13 @@ export class DocEditor {
       this.want = null;
       this.retake(w);
     }
+    this.clearedSent();
+    // Lines changed around an emptied block not sent yet can make its empty lines join them: it
+    // is removed now, as typing would have (edited()), never later inside a close.
+    if (this.clearedJoins()) {
+      this.cancelTimer();
+      this.removeCleared();
+    }
     this.render();
   }
 
@@ -1603,16 +1739,21 @@ export class DocEditor {
   private split(keep: RichBlock, next: RichBlock | null): void {
     const open = this.open;
     const mine = this.backend.mine;
-    if (!open || !mine) return;
+    if (!open || !mine || this.clearing) return;
     const keepCore = verifyBlock(keep, TOOLS, open.env);
     const nextCore = next ? verifyBlock(next, TOOLS, open.env) : "";
     if (keepCore === null || nextCore === null) {
       this.showNotice(FORMAT_LOST);
       return;
     }
-    // Enter in a cleared block whose empty lines would run the blocks around it together: there is
-    // nothing to split, and it stays open as it is (send()).
-    if (keepCore === "" && nextCore === "" && this.clearedJoins()) return;
+    if (keepCore === "" && nextCore === "" && this.emptyJoins()) {
+      // An Enter that leaves nothing where empty lines would run the blocks around it together
+      // (the last empty item of a list): the block is removed as a cleared one is.
+      open.rich.setModel(para());
+      this.cancelTimer();
+      this.removeCleared();
+      return;
+    }
     // Typing not sent yet goes with the split (at the start, before the paragraph above opens).
     const pending = this.timer !== null;
     this.cancelTimer();
@@ -1705,10 +1846,26 @@ export class DocEditor {
     this.timer = null;
   }
 
+  /** The open block's text changed: it is sent after the pause, and a cleared one removed now. */
+  private edited(): void {
+    if (this.clearedJoins()) {
+      this.cancelTimer();
+      this.removeCleared();
+      return;
+    }
+    this.schedule(EDIT_DEBOUNCE_MS);
+  }
+
   /** Sends the open block. False when it was not sent (refused, or not expressible). */
   private send(): boolean {
     const mine = this.backend.mine;
-    if (!this.open || !mine) return false;
+    // While a cleared block is being removed, its lease is not the block's: what is typed meanwhile
+    // is sent once the block has its place again (granted()).
+    if (!this.open || !mine || this.clearing) return false;
+    if (this.clearedJoins()) {
+      this.removeCleared();
+      return true;
+    }
     const block = this.currentText();
     if (block === null) {
       this.showNotice(FORMAT_LOST);
@@ -1717,9 +1874,6 @@ export class DocEditor {
     const text = padded(block, this.pad);
     const lines = this.backend.lines;
     if (joinLines(lines.slice(mine.start, mine.end)) === text) return true;
-    // A cleared block whose empty lines would run the blocks around it together is not sent: the
-    // block keeps its last text in the doc while it is open, and closing it deletes it (close()).
-    if (this.clearedJoins()) return true;
     // The room's rules, checked here first: a refusal is never silent.
     if (RULES?.checkEdit(lines, mine.start, mine.end - mine.start, blockLines(text))) {
       this.refused(REFUSED_EDIT);
@@ -1740,10 +1894,120 @@ export class DocEditor {
    */
   private clearedJoins(): boolean {
     const open = this.open;
+    if (!open || !isEmptyBlock(open.rich.model)) return false;
+    return verifyBlock(open.rich.model, TOOLS, open.env) === "" && this.emptyJoins();
+  }
+
+  /** The open block's lines written empty would run the blocks around it together. */
+  private emptyJoins(): boolean {
+    const open = this.open;
     const mine = this.backend.mine;
-    if (!open || !mine || verifyBlock(open.rich.model, TOOLS, open.env) !== "") return false;
+    if (!open || !mine || this.clearing) return false;
     const text = padded(composeBlock(open.prefix, "", open.suffix), this.pad);
     return runsTogether(this.backend.lines, mine, text);
+  }
+
+  /**
+   * The open block was emptied where its lines sent empty would run the blocks around it together.
+   * One edit removes them at once, as Delete does (the list after it takes a free marker), under
+   * one lease that takes the place of the block's own, so the doc never holds text the page no
+   * longer shows. The block then stays open, empty, at the place it had (clearedSent). A removal
+   * that cannot be made leaves the block open with its last text, which the doc has, and says why.
+   */
+  private removeCleared(): void {
+    const b = this.backend;
+    const mine = b.mine;
+    if (!mine || this.clearing) return;
+    const own = this.blocks().find(
+      (x) => x.core.end > x.core.start && x.core.start >= mine.start && x.core.end <= mine.end,
+    );
+    if (!own) return;
+    const { plan, build } = this.removal(own.start);
+    const p = plan();
+    const result = p ? build(b.lines, p) : null;
+    const checked = p && result ? this.checkOp(p, result) : { refusal: CLEAR_REFUSED };
+    if (!p || "refusal" in checked) {
+      this.refused("refusal" in checked ? checked.refusal : CLEAR_REFUSED);
+      return;
+    }
+    if (this.heldBy(p)) {
+      this.refused(CLEAR_REFUSED);
+      return;
+    }
+    this.clearing = { phase: "lease", drop: false, text: "", lease: "", at: 0 };
+    this.want = {
+      start: p.start,
+      end: p.end,
+      text: p.text,
+      insert: false,
+      tries: 0,
+      op: { plan, build },
+    };
+    this.hooks.status();
+    if (!b.lease(p)) {
+      this.want = null;
+      this.clearing = null;
+      this.refused(CLEAR_REFUSED);
+    }
+  }
+
+  /**
+   * A cleared block's removal, once the doc has it: the block stays open, empty, at the place it
+   * had, under an insert-point lease that takes the place of the removal's. Closed meanwhile, the
+   * removal ends as a Delete does.
+   */
+  private clearedSent(): void {
+    const c = this.clearing;
+    const b = this.backend;
+    const m = b.mine;
+    if (c?.phase !== "sent" || !m || m.id !== c.lease) return;
+    // The room sends the edit back before the lines change here.
+    const n = blockLines(c.text).length;
+    if (m.end - m.start !== n || joinLines(b.lines.slice(m.start, m.end)) !== c.text) return;
+    const at = m.start + c.at;
+    if (c.drop || !this.open || !this.editing) {
+      this.clearing = null;
+      b.release();
+      if (this.editing) this.after = { line: at, open: false };
+      this.render();
+      this.hooks.status();
+      return;
+    }
+    c.phase = "insert";
+    this.held = { start: at, end: at };
+    this.pad = { before: at > 0 && !isBlank(b.lines[at - 1]), after: !isBlank(b.lines[at]) };
+    // One try spent, so a release seen before the grant does not ask again (changed()).
+    this.want = { start: at, end: at, text: "", insert: true, keep: "", tries: 1 };
+    if (!b.lease(this.want)) {
+      this.want = null;
+      this.clearing = null;
+      b.release();
+      this.dropOpen();
+      this.held = null;
+      this.showNotice(NOT_SENT);
+    }
+    this.render();
+    this.hooks.status();
+  }
+
+  /**
+   * A cleared block's removal was refused, or no longer applies. Not granted, the block's own
+   * lease is as it was: the block stays open with its last text, which the doc has, and the page
+   * says so. Closed meanwhile, the lease is released and the block shows that text.
+   */
+  private clearFailed(): void {
+    const c = this.clearing;
+    this.clearing = null;
+    if (!c) return;
+    if (!c.drop && this.open) {
+      this.refused(CLEAR_REFUSED);
+      this.render();
+      return;
+    }
+    if (this.backend.mine) this.backend.release();
+    this.showNotice(CLEAR_REFUSED);
+    this.render();
+    this.hooks.status();
   }
 
   /** Why `text` in place of the leased lines cannot be sent, checked first; null when it can. */
@@ -1785,19 +2049,18 @@ export class DocEditor {
   }
 
   /**
-   * Close the open block: send what is pending, release the lease, show the block again. A block
-   * cleared where it could not be sent empty (send()) is then deleted as Delete does, which keeps
-   * the blocks around it apart or says why it cannot; `deleteCleared` is false when a block op
-   * follows, which gives it back as the doc has it.
+   * Close the open block: send what is pending, release the lease, show the block again. While a
+   * cleared block is being removed (removeCleared) its lease is changing hands: the removal ends as
+   * a Delete does, and the lease is released where it lands.
    */
-  close(release: boolean, refocus = false, deleteCleared = true): void {
+  close(release: boolean, refocus = false): void {
     const open = this.open;
     const held = this.held;
-    if (this.want && !this.want.op) this.want = null;
+    if (this.want && !this.want.op && !this.clearing) this.want = null;
     if (!open) return;
-    const place = release && deleteCleared && this.clearedJoins() ? this.openPlace(0) : null;
     this.flush();
-    if (release && this.backend.mine) this.backend.release();
+    if (this.clearing) this.clearing.drop = true;
+    else if (release && this.backend.mine) this.backend.release();
     this.dropOpen();
     this.held = null;
     this.render();
@@ -1811,7 +2074,6 @@ export class DocEditor {
       }
     }
     this.hooks.status();
-    if (place && "start" in place) this.remove(place.start);
   }
 
   // ---------- notices ----------
@@ -1925,6 +2187,11 @@ function listMark(lines: readonly string[]): ListMark | null {
     .filter((t) => t.type === "list_item_open" && t.level === 1)
     .map((t) => t.map?.[0] ?? -1);
   return { ordered: first.type === "ordered_list_open", mark: first.markup, items };
+}
+
+/** A block's text with every line's list marker written one way, to find a re-marked list. */
+function withoutMarkers(text: string): string {
+  return text.replace(/^(\s*)[-*+](?=\s|$)/gm, "$1-").replace(/^(\s*\d{1,9})[.)](?=\s|$)/gm, "$1.");
 }
 
 /** Whether two blocks are lists that would be read as one with only blank lines between them. */

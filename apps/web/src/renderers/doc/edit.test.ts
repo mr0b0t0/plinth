@@ -5,9 +5,10 @@
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
 import { LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClientLease } from "../common/live.ts";
+import type { ClientLease, LeaseDenial } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
+  CLEAR_REFUSED,
   composeBlock,
   DOC_FULL,
   DocEditor,
@@ -304,6 +305,36 @@ describe("DocEditor: formatted text", () => {
     key(r.editable, "Enter", { shiftKey: true });
     key(rich(editor).editable, "Escape");
     expect(local.text).toBe("one\\\ntwo");
+  });
+
+  it("typing sent as a block closes moves the lines: the next block, + or Tab still lands right", () => {
+    const { local, editor } = setup("onetwo\n\nb\n\nc");
+    const lineBreak = () => {
+      click(root.querySelector("p") as Element);
+      select(rich(editor).editable, 3);
+      key(rich(editor).editable, "Enter", { shiftKey: true });
+    };
+    // A click on a block below, before the pause: the block above gains a line as it closes.
+    lineBreak();
+    click(root.querySelectorAll("p")[2] as Element);
+    expect(rich(editor).editable.textContent).toBe("c");
+    key(rich(editor).editable, "Escape");
+    expect(local.text).toBe("one\\\ntwo\n\nb\n\nc");
+    click(root.querySelector("p") as Element);
+    typeText(rich(editor).editable, "onetwo");
+    key(rich(editor).editable, "Escape");
+    // A + below a block further down, the same way (the open block has none of its own).
+    lineBreak();
+    click(root.querySelectorAll(".plinth-doc__insert")[1] as Element);
+    typeText(rich(editor).editable, "new");
+    key(rich(editor).editable, "Escape");
+    expect(local.text).toBe("one\\\ntwo\n\nb\n\nnew\n\nc");
+    // Tab from a new block typed into: the block after it, not the new one.
+    click(root.querySelectorAll(".plinth-doc__insert")[1] as Element);
+    typeText(rich(editor).editable, "x");
+    key(rich(editor).editable, "Tab");
+    expect(rich(editor).editable.textContent).toBe("b");
+    expect(local.text).toBe("one\\\ntwo\n\nx\n\nb\n\nnew\n\nc");
   });
 
   it("an Enter the doc has no room for keeps the block open with its text and says so", () => {
@@ -778,39 +809,87 @@ describe("DocEditor: the block menu", () => {
     expect(local.text).toBe("## Top\n\na\n\nb");
   });
 
-  it("a block cleared by typing between two lists is deleted on close, keeping them apart", () => {
+  it("a block cleared between two lists is removed at once, in one edit, and stays open there", () => {
     const { local, editor } = setup("- a\n\nmid\n\n- b");
+    const edit = vi.spyOn(local, "edit");
     click(root.querySelector("p") as Element);
     typeText(rich(editor).editable, "");
-    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
-    // Sending nothing in its place would run the lists together, so nothing is sent yet.
-    expect(local.text).toBe("- a\n\nmid\n\n- b");
+    // No pause: the doc has what the page shows at once. Sending nothing in its place would run
+    // the lists together, so the list after it takes another marker in the same edit.
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(local.text).toBe("- a\n\n* b");
     expect(root.querySelectorAll("ul").length).toBe(2);
-    // Typing again goes on as usual.
+    expect(editor.pending).toBe(false);
+    // The block stays open, empty, where it was, with no lines in the doc.
+    expect(rich(editor).editable.textContent).toBe("");
+    expect(local.mine).toMatchObject({ start: 2, end: 2 });
+    const kids = [...root.children].filter((c) => c.tagName !== "BUTTON");
+    expect(kids.map((c) => c.tagName)).toEqual(["UL", "DIV", "UL"]);
+    expect(kids[1]).toBe(rich(editor).el);
+    // Typing again puts a block there.
     typeText(rich(editor).editable, "new");
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
-    expect(local.text).toBe("- a\n\nnew\n\n- b");
+    expect(local.text).toBe("- a\n\nnew\n\n* b");
     typeText(rich(editor).editable, "");
     key(rich(editor).editable, "Escape");
-    // Closing it empty deletes it as Delete does: the list after it takes another marker.
     expect(local.text).toBe("- a\n\n* b");
     expect(root.querySelectorAll("ul").length).toBe(2);
     expect(editor.openEditor).toBeNull();
     expect(local.mine).toBeNull();
   });
 
-  it("a cleared block whose Delete would run the blocks together stays, and says why", () => {
+  it("Publish, Cmd/Ctrl+S and Done read a cleared block's removal while it is still open", () => {
+    const { local, editor } = setup("- a\n\nmid\n\n- b");
+    const seen: string[] = [];
+    save.mockImplementation(() => seen.push(local.text));
+    click(root.querySelector("p") as Element);
+    typeText(rich(editor).editable, "");
+    expect(editor.openEditor).not.toBeNull();
+    // Publish in solo mode collects the frame's text after a flush.
+    editor.flush();
+    expect(local.text).toBe("- a\n\n* b");
+    key(rich(editor).editable, "s", { metaKey: true });
+    expect(seen).toEqual(["- a\n\n* b"]);
+    // Done leaves edit mode with the same text.
+    editor.setEditing(false);
+    expect(local.text).toBe("- a\n\n* b");
+    expect(root.textContent).not.toContain("mid");
+    expect(root.querySelectorAll("ul").length).toBe(2);
+  });
+
+  it("click and Tab reach the list a cleared block's removal gave another marker", () => {
+    const { local, editor } = setup("- a\n\nmid\n\n- b\n\nlast");
+    click(root.querySelector("p") as Element);
+    typeText(rich(editor).editable, "");
+    expect(local.text).toBe("- a\n\n* b\n\nlast");
+    // Tab from the empty block opens the list after it (where Tab then indents).
+    key(rich(editor).editable, "Tab");
+    expect(rich(editor).editable.textContent).toBe("b");
+    key(rich(editor).editable, "Escape");
+    // Shift+Tab from the paragraph after it opens it again.
+    click(root.querySelectorAll("p")[0] as Element);
+    expect(rich(editor).editable.textContent).toBe("last");
+    key(rich(editor).editable, "Tab", { shiftKey: true });
+    expect(rich(editor).editable.textContent).toBe("b");
+    key(rich(editor).editable, "Escape");
+    // A click on it opens it too.
+    click(root.querySelectorAll("ul")[1] as Element);
+    expect(rich(editor).editable.textContent).toBe("b");
+    expect(local.text).toBe("- a\n\n* b\n\nlast");
+  });
+
+  it("a cleared block whose removal would run the blocks together keeps its text, and says why", () => {
     const { local, editor } = setup("- a\n\nmid\n\n    code");
     click(root.querySelector("p") as Element);
     typeText(rich(editor).editable, "");
-    // Enter in it changes nothing either.
-    key(rich(editor).editable, "Enter");
+    // Nothing changed: the block stays open with its last text, which the doc has.
     expect(local.text).toBe("- a\n\nmid\n\n    code");
-    expect(editor.openEditor).not.toBeNull();
+    expect(rich(editor).editable.textContent).toBe("mid");
+    expect(editor.pending).toBe(false);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
     key(rich(editor).editable, "Escape");
     expect(local.text).toBe("- a\n\nmid\n\n    code");
     expect(root.querySelectorAll("pre").length).toBe(1);
-    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
   });
 
   it("a cleared block that joins nothing is still sent empty while it is open", () => {
@@ -1189,5 +1268,234 @@ describe("DocEditor: holders and reconnects", () => {
     expect(backend.lines.join("\n")).toBe("- a\n\n* b");
     expect(root.querySelectorAll("ul").length).toBe(2);
     expect(mine).toBeNull();
+  });
+});
+
+/**
+ * A room as the doc socket sees it: requests go out at once, and the room's answers arrive later,
+ * in order. A lease takes the place of the one held (released, then leased), an edit comes back as
+ * an op that changes the lines, and an edit or release under a lease no longer held is refused.
+ */
+function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
+  let mine: ClientLease | null = null;
+  let n = 0;
+  const later = (f: () => void) => queueMicrotask(f);
+  const backend = {
+    lines: text.split("\n"),
+    ready: true,
+    connected: true,
+    settled: true,
+    get mine() {
+      return mine;
+    },
+    leases: new Map<string, ClientLease>(),
+    you: { id: "s1", email: "ada@example.org", right: "write" as const },
+    conflictVersion: null,
+    ackedText: null,
+    durableText: null,
+    refused: [] as string[],
+    lease: vi.fn((r: { start: number; end: number }) => {
+      later(() => {
+        const why = deny();
+        if (why) {
+          editor.denied(why, "bo@example.org");
+          return;
+        }
+        if (mine) {
+          mine = null;
+          editor.changed();
+        }
+        const l = { id: `l${++n}`, ...r, by: "ada@example.org", holder: "s1", at: 0 };
+        mine = l;
+        editor.granted(l);
+        editor.changed();
+      });
+      return true;
+    }),
+    edit: vi.fn((t: string) => {
+      const id = mine?.id;
+      if (!id) return false;
+      later(() => {
+        const l = mine;
+        if (l?.id !== id) {
+          backend.refused.push(`edit ${id}`);
+          return;
+        }
+        const ins = t === "" ? [] : t.split("\n");
+        backend.lines = [...backend.lines.slice(0, l.start), ...ins, ...backend.lines.slice(l.end)];
+        mine = { ...l, end: l.start + ins.length };
+        editor.changed();
+      });
+      return true;
+    }),
+    release: vi.fn(() => {
+      const id = mine?.id;
+      later(() => {
+        if (!id || mine?.id !== id) {
+          backend.refused.push(`release ${id}`);
+          return;
+        }
+        mine = null;
+        editor.changed();
+      });
+    }),
+    takeover: vi.fn(() => true),
+  };
+  const editor = new DocEditor(root, window, backend, { save, status: () => undefined });
+  editor.setEditing(true);
+  const settle = async () => {
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+  };
+  return { backend, editor, settle, text: () => backend.lines.join("\n") };
+}
+
+describe("DocEditor: a cleared block, with a room", () => {
+  it("is removed with the list after it under one lease, before anything else reads the doc", async () => {
+    const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b");
+    click(root.querySelector("p") as Element);
+    await settle();
+    typeText(rich(editor).editable, "");
+    // Asked for at once, with no pause, over the block and the list it writes again; until the
+    // room has it, the app sees unsent changes (so Publish and Done wait for it).
+    expect(backend.lease).toHaveBeenLastCalledWith({ start: 2, end: 5, text: "mid\n\n- b" });
+    expect(backend.release).not.toHaveBeenCalled();
+    expect(editor.pending).toBe(true);
+    expect(rich(editor).editable.textContent).toBe("");
+    await settle();
+    // The room's doc is what the page shows while the block is still open, empty, where it was.
+    expect(text()).toBe("- a\n\n* b");
+    expect(editor.pending).toBe(false);
+    expect(rich(editor).editable.textContent).toBe("");
+    expect(backend.mine).toMatchObject({ start: 2, end: 2 });
+    expect(root.querySelectorAll("ul").length).toBe(2);
+    expect(root.textContent).not.toContain("mid");
+    // Typing in it puts a paragraph there.
+    typeText(rich(editor).editable, "new");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await settle();
+    expect(text()).toBe("- a\n\nnew\n\n* b");
+    expect(backend.refused).toEqual([]);
+  });
+
+  it("keeps what is typed while the removal is on its way, and sends it once it is in", async () => {
+    const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b");
+    click(root.querySelector("p") as Element);
+    await settle();
+    typeText(rich(editor).editable, "");
+    typeText(rich(editor).editable, "new");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await settle();
+    vi.advanceTimersByTime(0);
+    await settle();
+    expect(text()).toBe("- a\n\nnew\n\n* b");
+    expect(rich(editor).editable.textContent).toBe("new");
+    expect(backend.refused).toEqual([]);
+  });
+
+  it("click and Tab while the removal is on its way reach the list it gave another marker", async () => {
+    const tab = fakeRoom("- a\n\nmid\n\n- b\n\nlast");
+    click(root.querySelector("p") as Element);
+    await tab.settle();
+    typeText(rich(tab.editor).editable, "");
+    key(rich(tab.editor).editable, "Tab");
+    await tab.settle();
+    expect(tab.text()).toBe("- a\n\n* b\n\nlast");
+    expect(rich(tab.editor).editable.textContent).toBe("b");
+    expect(tab.backend.refused).toEqual([]);
+    tab.editor.setEditing(false);
+    await tab.settle();
+    document.body.innerHTML = "";
+    root = document.createElement("main");
+    document.body.append(root);
+    const clicked = fakeRoom("- a\n\nmid\n\n- b\n\nlast");
+    click(root.querySelector("p") as Element);
+    await clicked.settle();
+    typeText(rich(clicked.editor).editable, "");
+    click(root.querySelectorAll("ul")[1] as Element);
+    await clicked.settle();
+    expect(clicked.text()).toBe("- a\n\n* b\n\nlast");
+    expect(rich(clicked.editor).editable.textContent).toBe("b");
+    expect(clicked.backend.refused).toEqual([]);
+  });
+
+  it("an emptied block not sent yet is removed once someone's edit makes it join its neighbours", async () => {
+    const { backend, editor, settle, text } = fakeRoom("para\n\nmid\n\n- b");
+    click(root.querySelectorAll("p")[1] as Element);
+    await settle();
+    typeText(rich(editor).editable, "");
+    // A paragraph and a list around it: sent empty after the pause, as usual.
+    expect(editor.pending).toBe(true);
+    expect(text()).toBe("para\n\nmid\n\n- b");
+    // Before the pause ends, someone turns the paragraph above into a list of the same marker.
+    backend.lines[0] = "- a";
+    editor.changed();
+    // Then a click on the list below.
+    click(root.querySelectorAll("ul")[1] as Element);
+    await settle();
+    expect(text()).toBe("- a\n\n* b");
+    expect(rich(editor).editable.textContent).toBe("b");
+    expect(backend.refused).toEqual([]);
+  });
+
+  it("closed while the removal is on its way, it is removed as Delete does", async () => {
+    const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b");
+    click(root.querySelector("p") as Element);
+    await settle();
+    typeText(rich(editor).editable, "");
+    key(rich(editor).editable, "Escape");
+    expect(editor.openEditor).toBeNull();
+    await settle();
+    expect(text()).toBe("- a\n\n* b");
+    expect(backend.mine).toBeNull();
+    expect(editor.pending).toBe(false);
+    expect(backend.refused).toEqual([]);
+  });
+
+  it("a removal the room refuses keeps the block open with its last text, and says so", async () => {
+    let why: LeaseDenial | null = null;
+    const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b", () => why);
+    click(root.querySelector("p") as Element);
+    await settle();
+    const own = backend.mine;
+    why = "held";
+    typeText(rich(editor).editable, "");
+    await settle();
+    // Nothing is held back unsent: the doc and the block both have the last text.
+    expect(text()).toBe("- a\n\nmid\n\n- b");
+    expect(rich(editor).editable.textContent).toBe("mid");
+    expect(editor.pending).toBe(false);
+    expect(backend.mine).toBe(own);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(CLEAR_REFUSED);
+    // Editing goes on under the block's own lease.
+    why = null;
+    typeText(rich(editor).editable, "mid!");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await settle();
+    expect(text()).toBe("- a\n\nmid!\n\n- b");
+    // Not connected: the same.
+    backend.lease.mockImplementationOnce(() => false);
+    typeText(rich(editor).editable, "");
+    expect(rich(editor).editable.textContent).toBe("mid!");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(CLEAR_REFUSED);
+    await settle();
+    expect(text()).toBe("- a\n\nmid!\n\n- b");
+    expect(backend.refused).toEqual([]);
+  });
+
+  it("a removal refused after the block was closed releases its lease and says so", async () => {
+    let why: LeaseDenial | null = null;
+    const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b", () => why);
+    click(root.querySelector("p") as Element);
+    await settle();
+    why = "held";
+    typeText(rich(editor).editable, "");
+    key(rich(editor).editable, "Escape");
+    await settle();
+    expect(text()).toBe("- a\n\nmid\n\n- b");
+    expect(root.textContent).toContain("mid");
+    expect(backend.mine).toBeNull();
+    expect(editor.pending).toBe(false);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(CLEAR_REFUSED);
+    expect(backend.refused).toEqual([]);
   });
 });
