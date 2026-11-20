@@ -8,6 +8,7 @@ import {
   type CategoryCount,
   categoryKey,
   categoryProblem,
+  invitationSkippedSummary,
   LIMITS,
   normalizeCategory,
   ROLES,
@@ -23,6 +24,7 @@ import { ApiRequestError, api } from "../../lib/api.ts";
 import { Link, navigate } from "../../lib/router.tsx";
 import {
   Button,
+  Checkbox,
   Dialog,
   IconButton,
   Input,
@@ -438,17 +440,25 @@ export function PeopleSection({
   sharing,
   ownerEmail,
   onChange,
+  invitations = true,
 }: {
   artifact: ArtifactSummary;
   sharing: SharingSettings;
   ownerEmail: string | null;
   onChange: (next: SharingSettings) => void;
+  /**
+   * The instance sends invitation emails (AppConfig.invitation_emails). Off, there is no Notify
+   * people box and adding a person never asks to notify.
+   */
+  invitations?: boolean;
 }) {
   const toast = useToast();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("viewer");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Invitation emails (docs/spec.md "Invitation emails"): on by default, for the person added.
+  const [notify, setNotify] = useState(true);
   const emailRef = useRef<HTMLInputElement>(null);
   const grants: GrantDraft[] = sharing.grants.map((g) => ({ email: g.email, role: g.role }));
   // The display name behind each address (display text only): the server sends it only once its
@@ -456,18 +466,20 @@ export function PeopleSection({
   // account.
   const names = new Map(sharing.grants.map((g) => [g.email, g.name ?? null]));
 
-  const put = async (next: GrantDraft[]): Promise<boolean> => {
+  /** Save the whole list. Only adding a person asks to email them; role changes and undo never do. */
+  const put = async (next: GrantDraft[], invite = false): Promise<SharingSettings | null> => {
     setBusy(true);
     try {
       const res = await api<SharingSettings>(route(API.sharing, { ref: artifact.id }), {
         method: "PUT",
-        body: { grants: next },
+        body: invite ? { grants: next, notify: true } : { grants: next },
       });
-      onChange(res);
-      return true;
+      const { invitations: _sent, ...settings } = res;
+      onChange(settings);
+      return res;
     } catch (err) {
       toast.error("Could not update people", errMsg(err));
-      return false;
+      return null;
     } finally {
       setBusy(false);
     }
@@ -484,9 +496,13 @@ export function PeopleSection({
     }
     setError(null);
     const added = r.grants[r.grants.length - 1];
-    if (await put(r.grants)) {
+    const res = await put(r.grants, invitations && notify);
+    if (res) {
       setEmail("");
-      toast.success("Person added", `${added?.email} · ${ROLE_META[role].label}`);
+      // One toast: a person the Worker did not email turns it into a warning that says why.
+      const skipped = invitationSkippedSummary(res.invitations);
+      if (skipped) toast.toast({ title: "Person added", description: skipped, tone: "warning" });
+      else toast.success("Person added", `${added?.email} · ${ROLE_META[role].label}`);
       emailRef.current?.focus();
     }
   };
@@ -592,6 +608,14 @@ export function PeopleSection({
         <Button type="submit" icon={UserPlusIcon} loading={busy} className="pl-acct-add__button">
           Add person
         </Button>
+        {invitations && (
+          <Checkbox
+            label="Notify people"
+            checked={notify}
+            className="pl-acct-add__notify"
+            onChange={(e) => setNotify(e.target.checked)}
+          />
+        )}
       </form>
       <p className="type-small text-muted">
         Changes apply at once. Anyone who has it open now will need to open the link again.

@@ -14,6 +14,7 @@ import {
   type CategoryShareDetail,
   type CategorySharePreview,
   type CategoryShareWriteResult,
+  invitationSkippedSummary,
   LIMITS,
   route,
 } from "@plinth/shared";
@@ -114,6 +115,11 @@ export interface ShareCategoryDialogProps {
   onClose: () => void;
   /** After a change: the share (null once it stopped). */
   onDone: (share: { id: string } | null) => void;
+  /**
+   * The instance sends invitation emails (AppConfig.invitation_emails). Off, the dialog has no
+   * Notify people box and never asks to notify.
+   */
+  invitations?: boolean;
 }
 
 export function ShareCategoryDialog({
@@ -121,6 +127,7 @@ export function ShareCategoryDialog({
   shareId: givenShareId,
   onClose: givenOnClose,
   onDone,
+  invitations = true,
 }: ShareCategoryDialogProps) {
   const toast = useToast();
   /**
@@ -144,6 +151,8 @@ export function ShareCategoryDialog({
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
+  // Invitation emails (docs/spec.md "Invitation emails"): on by default, for the people added.
+  const [notify, setNotify] = useState(true);
   /** The people as loaded, to tell whether they changed. */
   const [loadedPeople, setLoadedPeople] = useState<string>("[]");
   /** The dialog opens on who it is shared with. */
@@ -182,6 +191,10 @@ export function ShareCategoryDialog({
   const share = load.status === "ready" ? load.share : null;
   const rows = load.status === "ready" ? listedRows(load.rows, share !== null) : [];
   const peopleChanged = JSON.stringify(people) !== loadedPeople;
+  // Ask to email only when the box is ticked and someone new is on the list.
+  const had = new Set((JSON.parse(loadedPeople) as CategoryPerson[]).map((p) => p.email));
+  const invite =
+    invitations && notify && people.some((p) => !had.has(p.email)) ? { notify: true } : {};
   const reviewChanged =
     share !== null && rows.some((r) => (r.state === "shared") !== ticked.has(r.id));
 
@@ -211,15 +224,24 @@ export function ShareCategoryDialog({
     sent: ReturnType<typeof reviewItems>,
   ) => {
     const review = res && "share" in res ? res.review : res;
+    const notEmailed = invitationSkippedSummary(
+      res && "share" in res ? res.invitations : undefined,
+    );
     const skipped = skippedText(review, sent);
     if (skipped) {
+      if (notEmailed) {
+        toast.toast({ title: "No invitation sent", description: notEmailed, tone: "warning" });
+      }
       setNote(skipped);
       if (!shareId) setCreatedId(id);
       setReload((n) => n + 1);
       setBusy(false);
       return;
     }
-    toast.success(shareId ? "Sharing saved" : "Category shared", title.trim() || category);
+    // One toast: people the Worker did not email turn it into a warning that names them and why.
+    const done = shareId ? "Sharing saved" : "Category shared";
+    if (notEmailed) toast.toast({ title: done, description: notEmailed, tone: "warning" });
+    else toast.success(done, title.trim() || category);
     onDone({ id });
   };
 
@@ -237,7 +259,7 @@ export function ShareCategoryDialog({
       if (!share) {
         const res = await api<CategoryShareWriteResult>(API.categoryShares, {
           method: "POST",
-          body: { category, title: title.trim(), people, review },
+          body: { category, title: title.trim(), people, review, ...invite },
         });
         finish(res, res.share.id, review);
         return;
@@ -247,7 +269,7 @@ export function ShareCategoryDialog({
       if (peopleChanged) {
         const res = await api<CategoryShareWriteResult>(route(API.categoryShare, { id }), {
           method: "PATCH",
-          body: { ...(titleChanged ? { title: title.trim() } : {}), people, review },
+          body: { ...(titleChanged ? { title: title.trim() } : {}), people, review, ...invite },
         });
         finish(res, id, review);
         return;
@@ -425,6 +447,13 @@ export function ShareCategoryDialog({
               />
               <Button onClick={() => addPerson()}>Add</Button>
             </div>
+            {invitations && (
+              <Checkbox
+                label="Notify people"
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+              />
+            )}
           </fieldset>
           <fieldset className="pl-share-cat__artifacts">
             <legend>Artifacts they see</legend>

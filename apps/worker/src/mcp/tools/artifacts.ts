@@ -27,7 +27,9 @@ import {
   DESIGN_PUBLISH_NOTE,
   DESIGN_SYSTEM_PUBLISH_NOTE,
   DOC_PUBLISH_NOTE,
+  INVITATION_NOTE,
   LIVE_DRAFT_NOTE,
+  PROJECT_FILES_NOTE,
   REUSE_NOTE,
   ROOM_PAGE_NOTE,
   SHEET_PUBLISH_NOTE,
@@ -63,6 +65,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         opaque +
         DATA_PAGE_NOTE +
         ROOM_PAGE_NOTE +
+        PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
       ...preview,
@@ -87,6 +90,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         WHITEBOARD_PUBLISH_NOTE +
         opaque +
         DATA_PAGE_NOTE +
+        PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
       ...preview,
@@ -179,6 +183,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "the link), password (needs password unless one is already set), or allowlist (private: the owner, " +
         "collaborators and the listed emails; viewers confirm their address by code). Passing emails " +
         "replaces the viewer allowlist; allowlist with no emails is private to the owner and collaborators. " +
+        INVITATION_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: setVisibilityInput,
     },

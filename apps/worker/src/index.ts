@@ -24,6 +24,7 @@ import { ApiError } from "./lib/errors.ts";
 import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
+import { pruneInvitationMarks } from "./services/invitations.ts";
 import { liveRetentionDays, pruneLiveDrafts } from "./services/live.ts";
 import { foldOpens, viewRetentionDays } from "./services/views.ts";
 
@@ -164,6 +165,8 @@ const SCHEDULED_TASKS: readonly ((env: Bindings, at: number) => Promise<unknown>
       await foldOpens(env.DB, keepDays, at);
   },
   (env, at) => pruneLiveDrafts(env.DB, liveRetentionDays(env), at),
+  // Invitation email counters (hashed addresses) older than two days.
+  (env, at) => pruneInvitationMarks(env.DB, at),
 ];
 
 export default {
@@ -207,9 +210,10 @@ export default {
   /**
    * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
    * left, upload tickets past their status window (services/attempts.ts), and live doc drafts
-   * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts). At 03 UTC, also fold opens
-   * older than VIEW_LOG_RETENTION_DAYS into per-artifact counts and delete them (services/views.ts),
-   * whether or not counting is on. Needs only the D1 and R2 bindings, not the host configuration.
+   * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts), and invitation email counters
+   * older than two days (services/invitations.ts). At 03 UTC, also fold opens older than
+   * VIEW_LOG_RETENTION_DAYS into per-artifact counts and delete them (services/views.ts), whether
+   * or not counting is on. Needs only the D1 and R2 bindings, not the host configuration.
    */
   async scheduled(
     controller: ScheduledController,

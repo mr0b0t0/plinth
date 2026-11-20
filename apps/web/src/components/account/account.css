@@ -899,6 +899,10 @@ ul.pl-acct-steps > li::before {
 .pl-acct-add__button {
   flex: 0 0 auto;
 }
+/* Invitation emails: the "Notify people" box takes its own line under the add row. */
+.pl-acct-add__notify {
+  flex: 1 0 100%;
+}
 
 @media (max-width: 40rem) {
   .pl-acct-add__role,
