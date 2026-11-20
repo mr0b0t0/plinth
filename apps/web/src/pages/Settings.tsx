@@ -1,9 +1,10 @@
-// Page: /a/:slug/settings. Owner only: title, category, who can open it (visibility and password), people
-// and their roles, the share link, and deletion.
+// Page: /a/:slug/settings. Owner only: title, category, a whiteboard's board settings, who can open
+// it (visibility and password), people and their roles, the share link, and deletion.
 import { ArrowSquareOutIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ArtifactSummary, route, type SharingSettings } from "@plinth/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "../components/account/account.css";
+import { BoardSection } from "../components/account/BoardSection.tsx";
 import { useDocumentTitle, useSignInRedirect, useSignOut } from "../components/account/hooks.tsx";
 import { Note } from "../components/account/Note.tsx";
 import {
@@ -196,6 +197,18 @@ export default function Settings({ params }: { params: Record<string, string> })
               )
             }
           />
+          {state.artifact.type === "whiteboard" && (
+            <BoardSection
+              artifactId={state.artifact.id}
+              onVersion={(version) =>
+                setState((s) =>
+                  s.status === "ready"
+                    ? { ...s, artifact: { ...s.artifact, current_version: version } }
+                    : s,
+                )
+              }
+            />
+          )}
           <AccessSection
             key={`access-${state.sharing.visibility}-${state.sharing.has_password}`}
             artifact={state.artifact}

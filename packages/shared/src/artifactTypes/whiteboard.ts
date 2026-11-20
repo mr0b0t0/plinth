@@ -4,7 +4,8 @@
 // renderer (apps/web/src/renderers/whiteboard/) draws it with the page runtime, so live cursors and
 // drags go through the artifact's page room. Its capabilities are fixed by the server from the
 // settings, never declared by a page. It has no assets and no bundle upload. People never see its
-// source: they edit the board on its page, and agents change the settings with update_artifact.
+// source: they edit the board on its page and its settings from Settings in its ⋯ menu, and
+// agents change the settings with update_artifact.
 import type { TypeModule } from "../artifactTypes.ts";
 import { LIMITS } from "../constants.ts";
 

@@ -4,8 +4,9 @@
 //
 // A feature adds its own item function (in its own file) and one line in the list where it
 // belongs. Items for one artifact type go in TYPE_MENU_ITEMS, items for one declared capability in
-// CAPABILITY_MENU_ITEMS. Order in a list is the order on screen. Layout and behaviour of the stage
-// itself (the frame, the hold rule) stay in ViewerStage.
+// CAPABILITY_MENU_ITEMS. Order in a list is the order on screen. A menu item that opens a dialog
+// adds the dialog to STAGE_DIALOGS and opens it by id (actions.openDialog). Layout and behaviour
+// of the stage itself (the frame, the hold rule) stay in ViewerStage.
 
 import {
   ArrowsOutIcon,
@@ -37,6 +38,7 @@ import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
+import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
@@ -99,6 +101,10 @@ export interface StageContext {
     finishEditing: () => void;
     /** After a notice button that may have unmounted with focus in it: move focus on. */
     refocusAfterNotice: () => void;
+    /** Fetch a fresh gate (the newest version). */
+    reload: () => void;
+    /** Open the dialog with this id from STAGE_DIALOGS (one at a time). */
+    openDialog: (id: string) => void;
   };
 }
 
@@ -110,6 +116,11 @@ export type StageNode = (c: StageContext) => ReactNode;
 export interface StageItem {
   id: string;
   render: StageNode;
+}
+/** A dialog the stage holds: rendered only while open, `close` closes it. */
+export interface StageDialog {
+  id: string;
+  render: (c: StageContext, close: () => void) => ReactNode;
 }
 
 // ---------- the ⋯ menu ----------
@@ -223,7 +234,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   slides: [printTyped, downloadPptx],
   design: [printTyped],
   sheet: [printTyped, downloadSheet],
-  whiteboard: [downloadBoard],
+  whiteboard: [boardSettings, downloadBoard],
 };
 
 /**
@@ -290,6 +301,9 @@ export const MENU_ITEMS: readonly MenuItem[] = [
 export function menuEntries(c: StageContext): MenuEntry[] {
   return MENU_ITEMS.flatMap((item) => item(c));
 }
+
+/** The dialogs a menu item may open, by id. One dialog per line. */
+export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog];
 
 // ---------- the bar's controls ----------
 
