@@ -1,8 +1,9 @@
-// `plinth publish <dir|file.html|file.md>` and `plinth upload <dir> --to <upload_url>`.
+// `plinth publish <dir|file.html|file.md|file.csv|file.xlsx>` and `plinth upload <dir> --to <upload_url>`.
 
 //
-// One .html (or .htm) file is published as index.html, one .md file as a doc's content.md; anything
-// else is a build folder. With PLINTH_TOKEN limited to one artifact (docs/ci.md) and no --id, the
+// One .html (or .htm) file is published as index.html, one .md file as a doc's content.md, and one
+// .csv or .xlsx file is imported as a sheet (the server converts it to sheet.jsonl: POST or PUT
+// /artifacts inline with content_format); anything else is a build folder. With PLINTH_TOKEN limited to one artifact (docs/ci.md) and no --id, the
 // token's artifact is the one updated.
 //
 // publish, new artifact: POST /uploads, then one gzipped tar to the upload_url it returns.
@@ -19,9 +20,11 @@ import { lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   badPaths,
+  canonicalSheet,
   checkLimits,
   defaultLimits,
   hashFiles,
+  IMPORT_FORMATS,
   SOURCE_FILES,
   sha256,
   sourceField,
@@ -104,15 +107,21 @@ export function singleFileName(p) {
   return null;
 }
 
+/** The content_format a single file is imported with (.csv or .xlsx), or null. */
+export function importFormat(p) {
+  return IMPORT_FORMATS[path.extname(p).toLowerCase()] ?? null;
+}
+
 /**
- * What `plinth publish` was given: `{ kind: "dir", abs }`, or `{ kind: "file", abs, as }` for one
- * .html, .htm or .md file (sent as index.html or content.md). A link to a file is refused, as in
- * a folder; anything else is a usage error.
+ * What `plinth publish` was given: `{ kind: "dir", abs }`, `{ kind: "file", abs, as }` for one
+ * .html, .htm or .md file (sent as index.html or content.md), or `{ kind: "import", abs, format }`
+ * for one .csv or .xlsx file (imported as a sheet). A link to a file is refused, as in a folder;
+ * anything else is a usage error.
  */
 export function checkSource(p) {
   if (!p)
     throw new CliError(
-      "Name the build folder or file: plinth publish <dir|file.html|file.md>",
+      "Name the build folder or file: plinth publish <dir|file.html|file.md|file.csv|file.xlsx>",
       EXIT.usage,
     );
   const abs = path.resolve(p);
@@ -137,9 +146,14 @@ export function checkSource(p) {
     );
   }
   if (st.isDirectory()) return { kind: "dir", abs };
+  const format = st.isFile() ? importFormat(abs) : null;
+  if (format) return { kind: "import", abs, format, size: st.size };
   const as = st.isFile() ? singleFileName(abs) : null;
   if (!as)
-    throw new CliError(`${p}: publish takes a build folder, or one .html or .md file`, EXIT.usage);
+    throw new CliError(
+      `${p}: publish takes a build folder, or one .html, .md, .csv or .xlsx file`,
+      EXIT.usage,
+    );
   return { kind: "file", abs, as, size: st.size };
 }
 
@@ -218,14 +232,20 @@ export function collect(dir, { includeMaps }) {
 }
 
 /** What each artifact type is called in messages. */
-const TYPE_NOUNS = { html: "page", doc: "document", slides: "deck", design: "design" };
+const TYPE_NOUNS = {
+  html: "page",
+  doc: "document",
+  slides: "deck",
+  design: "design",
+  sheet: "sheet",
+};
 const nounOf = (type) => TYPE_NOUNS[type] ?? "page";
 
 function typeOfFolder(files) {
   const has = new Set(files.map((f) => f.path));
   for (const [type, source] of Object.entries(SOURCE_FILES)) if (has.has(source)) return type;
   throw new CliError(
-    "No index.html (or content.md for a document, slides.md for a deck, design.html for a design) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
+    "No index.html (or content.md for a document, slides.md for a deck, design.html for a design, sheet.jsonl for a sheet) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
   );
 }
 
@@ -509,11 +529,15 @@ async function verify(api, result, files) {
   const remote = new Map((d.assets ?? []).map((a) => [a.path, a.sha256]));
   const source = d.html ?? d.content;
   const local = new Map(files.map((f) => [f.path, f.sha256]));
+  // A sheet's JSON lines are stored in their canonical spelling, which can differ from the file
+  // byte for byte (key order, spaces, a final newline): both sides are compared in that spelling.
+  const canonical = d.type === "sheet" && typeof source === "string";
   if (typeof source === "string") {
-    remote.set(d.source_path, sourceTextHash(source));
+    const spell = canonical ? (text) => canonicalSheet(text) ?? text : (text) => text;
+    remote.set(d.source_path, sourceTextHash(spell(source)));
     const file = files.find((f) => f.path === d.source_path);
     if (file)
-      local.set(file.path, sourceTextHash(new TextDecoder().decode(readFileSync(file.abs))));
+      local.set(file.path, sourceTextHash(spell(new TextDecoder().decode(readFileSync(file.abs)))));
   }
   const differ = files.filter(
     (f) =>
@@ -537,7 +561,135 @@ async function verify(api, result, files) {
       ...title,
     };
   }
-  return { verified: true, note: `Verified ${files.length} files.`, ...title };
+  return {
+    verified: true,
+    note: `Verified ${files.length} files.${canonical ? ` ${d.source_path} is stored in its canonical form.` : ""}`,
+    ...title,
+  };
+}
+
+/** The title a new sheet takes from its file's name: "q4-budget.csv" is "q4-budget". */
+const titleOfFile = (abs) =>
+  path
+    .basename(abs)
+    .replace(/\.[^.]+$/, "")
+    .slice(0, LIMITS.maxTitleLength) || "Sheet";
+
+/**
+ * `plinth publish <file.csv|file.xlsx>`: the file goes inline (CSV as text, .xlsx as base64) with
+ * content_format, and the server imports it as a sheet. A new artifact is POST /artifacts; --id is
+ * PUT /artifacts/:id with base_version. The answer is read back to confirm the version is a sheet.
+ */
+async function publishImport(source, opts, ctx, { base, category }) {
+  const name = path.basename(source.abs);
+  if (source.size > LIMITS.maxSheetImportBytes) {
+    throw new CliError(
+      `${name} is ${formatBytes(source.size)}; a file to import is at most ${formatBytes(LIMITS.maxSheetImportBytes)}.`,
+    );
+  }
+  const bytes = readFileSync(source.abs);
+  const content =
+    source.format === "xlsx" ? bytes.toString("base64") : utf8Text({ path: name }, bytes);
+  const api = ctx.api();
+  const note = opts.note !== undefined ? { note: opts.note } : {};
+  let result;
+  if (opts.id === undefined) {
+    if (opts["dry-run"]) {
+      ctx.stdout(
+        printable(
+          `Would import ${name} (${formatBytes(source.size)}) to ${ctx.origin} as a new sheet${category.category !== undefined ? ` under ${category.category}` : ""}.`,
+        ),
+      );
+      return EXIT.ok;
+    }
+    await ctx.requireAuth();
+    const title = opts.title ?? titleOfFile(source.abs);
+    try {
+      result = await api.post("/artifacts", {
+        type: "sheet",
+        title,
+        content,
+        content_format: source.format,
+        ...category,
+      });
+    } catch (e) {
+      if (e instanceof LostResponse) {
+        throw unknownOutcome(
+          unknownError(
+            `${e.message}
+The answer was lost, so the sheet may have been published. Check your artifacts for "${title}" before running it again, or it will publish a second sheet.`,
+            {},
+          ),
+          opts,
+          ctx,
+        );
+      }
+      throw apiFailure(e);
+    }
+  } else {
+    await ctx.requireAuth();
+    const ref = opts.id;
+    let detail;
+    try {
+      detail = await api.get(`/artifacts/${encodeURIComponent(ref)}`);
+    } catch (e) {
+      throw apiFailure(e);
+    }
+    if (detail.type !== "sheet") {
+      throw new CliError(
+        `${ref} is a ${nounOf(detail.type)}; a .csv or .xlsx file updates a sheet only`,
+      );
+    }
+    const from = base ?? detail.version;
+    if (from !== detail.version) {
+      throw conflictError(staleBase(ref, from)(detail.version), detail.version);
+    }
+    if (opts["dry-run"]) {
+      ctx.stdout(
+        `Would import ${name} as v${from + 1} of ${ref} on ${ctx.origin}, in one request.`,
+      );
+      return EXIT.ok;
+    }
+    try {
+      result = await api.put(`/artifacts/${encodeURIComponent(detail.id)}`, {
+        content,
+        content_format: source.format,
+        base_version: from,
+        ...note,
+        ...category,
+      });
+    } catch (e) {
+      if (e instanceof LostResponse) {
+        throw unknownOutcome(
+          unknownError(
+            `${e.message}
+It may have been published. ${rerunWithBase(from)}`,
+            {
+              id: detail.id,
+              base: from,
+            },
+          ),
+          opts,
+          ctx,
+        );
+      }
+      throw conflict(e, staleBase(ref, from)) ?? apiFailure(e);
+    }
+  }
+  let check;
+  try {
+    const d = await api.get(`/artifacts/${encodeURIComponent(result.id)}`, {
+      query: { version: String(result.version) },
+    });
+    check =
+      d.type === "sheet" && d.source_path === "sheet.jsonl"
+        ? { verified: true, note: `Imported ${name}: v${result.version} holds it as sheet.jsonl.` }
+        : { verified: false, failed: true, note: `v${result.version} is not a sheet.` };
+  } catch (e) {
+    check = { verified: false, note: `Could not read it back to verify: ${e.message}` };
+  }
+  report(result, check, opts, ctx);
+  return check.failed ? EXIT.error : EXIT.ok;
 }
 
 function report(result, check, opts, out) {
@@ -639,7 +791,7 @@ const RETRY_UPLOAD = {
   ended: "Call start_upload again for a new upload.",
 };
 
-/** plinth publish <dir|file.html|file.md> */
+/** plinth publish <dir|file.html|file.md|file.csv|file.xlsx> */
 export async function publish(dir, givenOpts, ctx) {
   const source = checkSource(dir);
   // The checks that need no request come first: a bad --category or --base-version sends nothing.
@@ -677,6 +829,7 @@ export async function publish(dir, givenOpts, ctx) {
       throw new CliError("--base-version applies to an update (--id)", EXIT.usage);
   }
   const category = opts.category !== undefined ? { category: checkCategory(opts.category) } : {};
+  if (source.kind === "import") return publishImport(source, opts, ctx, { base, category });
 
   const { files, skipped } = collectSource(source, {
     includeMaps: opts["include-maps"] === true,

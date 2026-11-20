@@ -56,6 +56,8 @@ describe("MCP endpoint", () => {
         "start_upload",
         "update_artifact",
         "write_artifact_data",
+        "read_sheet",
+        "edit_sheet",
       ].sort(),
     );
     for (const name of names) {

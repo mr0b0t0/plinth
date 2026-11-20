@@ -33,7 +33,7 @@ export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void):
   const items: MenuEntry[] = [
     { label: "Open", icon: ArrowSquareOutIcon, href: route(APP_ROUTES.artifact, slug) },
   ];
-  // A type with no source editor (a design) has no Edit: agents change it.
+  // A type with no source editor (a sheet or a design) has no Edit: agents change it.
   if ((a.role === "owner" || a.role === "editor") && typeDef(a.type)?.editor) {
     items.push({ label: "Edit", icon: PencilSimpleIcon, href: route(APP_ROUTES.editor, slug) });
   }

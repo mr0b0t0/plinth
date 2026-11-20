@@ -4,7 +4,7 @@
 // under /__plinth/types/<id>/. This one table drives validation, storage paths, wire fields,
 // serving, the shell, the editor, the diff label and the dashboard badge.
 //
-// Each type is its own module, artifactTypes/<id>.ts. Adding a type (deck, sheet) is that module,
+// Each type is its own module, artifactTypes/<id>.ts. Adding a type is that module,
 // one line in ARTIFACT_TYPES, one line in TYPE_REGISTRY, its Worker hooks
 // (apps/worker/src/services/artifactTypes/<id>.ts) and, for a type with a renderer, a renderer
 // directory (apps/web/src/renderers/<id>/main.ts); no wire change.
@@ -12,6 +12,7 @@ import { design } from "./artifactTypes/design.ts";
 import { designSystem } from "./artifactTypes/design_system.ts";
 import { doc } from "./artifactTypes/doc.ts";
 import { html } from "./artifactTypes/html.ts";
+import { sheet } from "./artifactTypes/sheet.ts";
 import { slides } from "./artifactTypes/slides.ts";
 import { escapeHtml } from "./markdown.ts";
 
@@ -23,6 +24,7 @@ export const ARTIFACT_TYPES = [
   "slides",
   "design_system",
   "design",
+  "sheet",
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
@@ -56,7 +58,7 @@ export interface ArtifactTypeDef {
    */
   renderer: RendererFiles | null;
   /**
-   * The source editor's settings, or null for a type people never see the source of (a design):
+   * The source editor's settings, or null for a type people never see the source of (a sheet or a design):
    * the app then offers no Edit and no source diff, and agents change it.
    */
   editor: { language: EditorLanguage; wordWrap: "on" | "off" } | null;
@@ -112,6 +114,7 @@ export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
   slides,
   design_system: designSystem,
   design,
+  sheet,
 };
 
 /**

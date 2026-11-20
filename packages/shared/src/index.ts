@@ -19,6 +19,7 @@ export * from "./pageComments.ts";
 export * from "./room.ts";
 export * from "./routes.ts";
 export * from "./schemas.ts";
+export * from "./sheet/index.ts";
 export * from "./slides.ts";
 export * from "./text.ts";
 export * from "./types.ts";

@@ -117,6 +117,9 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.deepEqual(repoCfg.durable_objects, ROOMS_DO);
     assert.deepEqual(repoCfg.migrations, ROOMS_MIGRATIONS);
     for (const k of ROOM_VARS) assert.ok(k in repoCfg.vars, `wrangler.jsonc vars.${k}`);
+    // The sheet formula budget ships at its documented default, and the CLI's base copies it.
+    assert.equal(repoCfg.vars.SHEET_EVAL_BUDGET, "200000");
+    assert.equal(runtimeBase(repoCfg).vars.SHEET_EVAL_BUDGET, "200000");
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
