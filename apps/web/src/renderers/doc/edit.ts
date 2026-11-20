@@ -25,8 +25,9 @@
 // leave an agent's block starting like an HTML document first re-sends that block escaped too. The
 // doc's live rules (liveTypes.ts) run on the edit before it is sent, as the room runs them; a
 // refusal (here, or from the room when the lines changed first) puts the block back as the room
-// has it and says why. Images are drawn from the draft's base version's files (common/files.ts),
-// which are the files a Publish keeps.
+// has it and says why. A block cleared where its empty lines would run the blocks around it
+// together is not sent empty; closing it deletes it as Delete does. Images are drawn from the
+// draft's base version's files (common/files.ts), which are the files a Publish keeps.
 import {
   blockLines,
   editableBlock,
@@ -207,6 +208,13 @@ interface Pad {
   before: boolean;
   after: boolean;
 }
+
+/**
+ * Where a block's menu acts: on its block in the doc, or, for an open block with no lines in the
+ * doc yet (a new one not typed into, or one whose text was cleared and sent), on the block above
+ * it (null at the top of the doc).
+ */
+type Place = { start: number } | { above: number | null };
 
 /** The block being edited: its formatted-text editor and the lines kept around its core. */
 interface Open {
@@ -727,6 +735,18 @@ export class DocEditor {
     return { block: blocks[index] as Block, index, blocks };
   }
 
+  /** Where the open block's menu acts (see Place); `start` is the line it was opened at. */
+  private openPlace(start: number): Place {
+    const range = this.backend.mine ?? this.held;
+    if (!range) return this.blockAt(start) ? { start } : { above: null };
+    const blocks = this.blocks();
+    const own = blocks.find(
+      (b) => b.core.end > b.core.start && b.core.start >= range.start && b.core.end <= range.end,
+    );
+    if (own) return { start: own.start };
+    return { above: blocks.filter((b) => b.end <= range.start).at(-1)?.start ?? null };
+  }
+
   /** The block's model, if it can be edited in place (the fidelity check), with the doc's env. */
   private modelOf(block: Block): { model: RichBlock; env: MdEnv } | null {
     const lines = this.backend.lines;
@@ -746,16 +766,19 @@ export class DocEditor {
   private open_(block: Block, caret: "start" | "end", at?: { x: number; y: number }): void {
     const b = this.backend;
     if (!this.editing || !b.ready) return;
-    if (this.opPending) {
-      // A block op is waiting for its lease: open this block once the op is done, found again by
-      // its text (the op may move it).
-      const text = joinLines(b.lines.slice(block.start, block.end));
-      const near = block.start;
+    const text = joinLines(b.lines.slice(block.start, block.end));
+    const near = block.start;
+    // A block op is waiting for its lease: open this block once the op is done, found again by its
+    // text (the op may move it).
+    const later = () => {
       this.queued = () => {
         const blocks = this.blocks();
         const i = this.findBlock(blocks, text, near);
         if (i >= 0) this.open_(blocks[i] as Block, caret);
       };
+    };
+    if (this.opPending) {
+      later();
       return;
     }
     if (b.you?.right !== "write") {
@@ -775,38 +798,56 @@ export class DocEditor {
       this.open.rich.focus("end");
       return;
     }
-    if (!this.modelOf(block)) {
-      this.close(true);
-      this.select(block);
+    this.close(true);
+    // Closing the open block may have deleted it (a cleared block, close()).
+    if (this.opPending) {
+      later();
       return;
     }
-    this.close(true);
+    // close() may have changed the lines (solo): find the block again.
+    const blocks = this.blocks();
+    const again = blocks[this.findBlock(blocks, text, near)];
+    if (!again) return;
+    if (!this.modelOf(again)) {
+      this.select(again);
+      return;
+    }
     this.deselect();
     this.want = {
-      start: block.start,
-      end: block.end,
-      text: joinLines(b.lines.slice(block.start, block.end)),
+      start: again.start,
+      end: again.end,
+      text,
       insert: false,
       tries: 0,
       caret,
       ...(at ? { at } : {}),
     };
-    if (!b.lease(block)) {
+    if (!b.lease(again)) {
       this.want = null;
       this.showNotice("Not connected. Try again in a moment.");
     }
   }
 
   /** Open a new block of `initial` at line `at` (an insert-point lease). */
-  private openInsert(at: number, initial: RichBlock): void {
+  private openInsert(where: number, initial: RichBlock): void {
     const b = this.backend;
     if (!this.canWrite) return;
+    const point = this.pointAt(where);
+    const later = () => {
+      this.queued = () => this.openInsert(point(), initial);
+    };
     if (this.opPending) {
-      this.queued = () => this.openInsert(Math.min(at, this.backend.lines.length), initial);
+      later();
       return;
     }
     this.close(true);
     this.deselect();
+    // Closing the open block may have deleted it (a cleared block, close()).
+    if (this.opPending) {
+      later();
+      return;
+    }
+    const at = point();
     const range = { start: at, end: at };
     const other = this.heldBy(range);
     if (other) {
@@ -821,6 +862,27 @@ export class DocEditor {
     }
   }
 
+  /**
+   * Line `at`, found again once the lines change: right after the block above it (by its text),
+   * or the top of the doc.
+   */
+  private pointAt(at: number): () => number {
+    const lines = this.backend.lines;
+    const was = joinLines(lines);
+    const above = this.blocks()
+      .filter((x) => x.end <= at)
+      .at(-1);
+    const text = above ? joinLines(lines.slice(above.start, above.end)) : "";
+    return () => {
+      const now = this.backend.lines;
+      if (joinLines(now) === was) return at;
+      if (!above) return 0;
+      const blocks = this.blocks();
+      const found = blocks[this.findBlock(blocks, text, above.start)];
+      return found ? found.end : Math.min(at, now.length);
+    };
+  }
+
   private explainHeld(l: ClientLease): void {
     const idle = Date.now() - l.at >= LIMITS.liveLeaseIdleS * 1000;
     this.showNotice(
@@ -829,7 +891,7 @@ export class DocEditor {
         ? {
             label: "Take over",
             run: () => {
-              this.close(true);
+              this.close(true, false, false);
               this.want = { start: l.start, end: l.end, text: "", insert: false, tries: 0 };
               if (this.backend.takeover(l.id)) this.hideNotice();
             },
@@ -860,7 +922,7 @@ export class DocEditor {
     });
     const menu = new BlockMenu(
       this.doc,
-      () => this.menuGroups(block.start, null),
+      () => this.menuGroups({ start: block.start }, null),
       this.tableForm(block.start),
     );
     bar.append(note, ask, menu.button);
@@ -887,8 +949,11 @@ export class DocEditor {
 
   // ---------- the block menu ----------
 
-  private menuGroups(start: number, model: RichBlock | null): MenuGroup[] {
-    const found = this.blockAt(start);
+  private menuGroups(place: Place, model: RichBlock | null): MenuGroup[] {
+    // A new block with nothing in the doc yet acts as the block above it would: what it inserts
+    // below lands where it is, and it cannot move. Delete gives it up.
+    const start = "start" in place ? place.start : place.above;
+    const found = "start" in place ? this.blockAt(place.start) : null;
     const index = found?.index ?? -1;
     const count = found?.blocks.length ?? 0;
     const groups: MenuGroup[] = [];
@@ -910,32 +975,42 @@ export class DocEditor {
         { label: "Divider", run: () => this.insertDivider(start) },
         {
           label: "Add or replace an image: Ask an agent",
-          run: () => this.ask(start, true),
+          disabled: start === null,
+          run: () => {
+            if (start !== null) this.ask(start, true);
+          },
         },
       ],
     });
     groups.push({
       items: [
-        { label: "Move up", disabled: index <= 0, run: () => this.move(start, -1) },
+        {
+          label: "Move up",
+          disabled: index <= 0,
+          run: () => found && this.move(found.block.start, -1),
+        },
         {
           label: "Move down",
           disabled: index < 0 || index >= count - 1,
-          run: () => this.move(start, 1),
+          run: () => found && this.move(found.block.start, 1),
         },
-        { label: "Delete", run: () => this.remove(start) },
+        {
+          label: "Delete",
+          run: () => (found ? this.remove(found.block.start) : this.close(true, true)),
+        },
       ],
     });
     return groups;
   }
 
-  private tableForm(start: number) {
+  private tableForm(start: number | null) {
     return { insert: (rows: number, cols: number) => this.insertTable(start, rows, cols) };
   }
 
   /** Ask an agent about block `start` (its image, with `image`): the app opens its Ask dialog. */
   private ask(start: number, image: boolean): void {
     const index = this.blockAt(start)?.index ?? 0;
-    this.close(true);
+    this.close(true, false, false);
     this.deselect();
     const n = index + 1;
     this.hooks.ask?.(
@@ -985,16 +1060,20 @@ export class DocEditor {
     ];
   }
 
-  private insertBelow(start: number, kind: BlockKind): void {
-    const found = this.blockAt(start);
-    if (!found) return;
+  /** A new block of `kind` below block `start`, or at the top of the doc for null. */
+  private insertBelow(start: number | null, kind: BlockKind): void {
+    const found = start === null ? null : this.blockAt(start);
+    if (start !== null && !found) return;
     const lines = this.backend.lines;
-    const next = found.blocks[found.index + 1];
-    const near = [lines[found.block.core.start], next ? lines[next.core.start] : undefined];
-    this.close(true);
+    const next = found ? found.blocks[found.index + 1] : this.blocks()[0];
+    const near = [
+      found ? lines[found.block.core.start] : undefined,
+      next ? lines[next.core.start] : undefined,
+    ];
+    this.close(true, false, false);
     // close() may have changed the lines (solo): find the block again.
-    const again = this.blockAt(start) ?? found;
-    const at = again.block.end;
+    const at = start === null ? 0 : (this.blockAt(start) ?? found)?.block.end;
+    if (at === undefined) return;
     // The new block is sent once typed into, so it is checked as it will be then.
     const now = this.backend.lines;
     const pad = { before: at > 0 && !isBlank(now[at - 1]), after: !isBlank(now[at]) };
@@ -1014,7 +1093,7 @@ export class DocEditor {
       this.showNotice("One moment: the last change is still being made.");
       return;
     }
-    this.close(true);
+    this.close(true, false, false);
     this.deselect();
     const p = plan();
     if (!p) return;
@@ -1139,11 +1218,11 @@ export class DocEditor {
     });
   }
 
-  private insertDivider(start: number): void {
+  private insertDivider(start: number | null): void {
     this.insertAfter(start, () => ({ text: "---" }));
   }
 
-  private insertTable(start: number, rows: number, cols: number): void {
+  private insertTable(start: number | null, rows: number, cols: number): void {
     const cells = () => Array.from({ length: cols }, () => [] as RichInline);
     const table: RichBlock = {
       t: "table",
@@ -1156,10 +1235,11 @@ export class DocEditor {
     this.insertAfter(start, () => ({ text: serializeBlock(table), open: true }));
   }
 
-  /** A new block from `make` right below block `start`, in one edit. */
-  private insertAfter(start: number, make: () => { text: string; open?: boolean }): void {
-    const target = this.blockText(start);
+  /** A new block from `make` right below block `start` (at the top for null), in one edit. */
+  private insertAfter(start: number | null, make: () => { text: string; open?: boolean }): void {
+    const target = start === null ? "" : this.blockText(start);
     const plan = () => {
+      if (start === null) return { start: 0, end: 0, text: "" };
       const blocks = this.blocks();
       const i = this.findBlock(blocks, target, start);
       if (i < 0) return null;
@@ -1205,7 +1285,9 @@ export class DocEditor {
   granted(lease: ClientLease): void {
     const w = this.want;
     this.want = null;
-    if (!this.editing) {
+    // A block op asked for in edit mode is made even when edit mode ended meanwhile (a cleared
+    // block deleted as edit mode ends).
+    if (!this.editing && !w?.op) {
       this.backend.release();
       return;
     }
@@ -1312,16 +1394,11 @@ export class DocEditor {
     const holder: { open: Open | null } = { open: null };
     const menu = new BlockMenu(
       this.doc,
-      () => {
-        const s = this.backend.mine?.start ?? start;
-        const found = this.blockAt(s) ?? this.blockAt(s + 1);
-        return this.menuGroups(found?.block.start ?? s, holder.open?.rich.model ?? model);
-      },
+      () => this.menuGroups(this.openPlace(start), holder.open?.rich.model ?? model),
       {
         insert: (rows, cols) => {
-          const s = this.backend.mine?.start ?? start;
-          const found = this.blockAt(s) ?? this.blockAt(s + 1);
-          this.insertTable(found?.block.start ?? s, rows, cols);
+          const place = this.openPlace(start);
+          this.insertTable("start" in place ? place.start : place.above, rows, cols);
         },
       },
     );
@@ -1334,9 +1411,9 @@ export class DocEditor {
       ask.addEventListener("mousedown", (e) => e.preventDefault());
       ask.addEventListener("click", (e) => {
         e.preventDefault();
-        const s = this.backend.mine?.start ?? start;
-        const found = this.blockAt(s) ?? this.blockAt(s + 1);
-        this.ask(found?.block.start ?? s, true);
+        const place = this.openPlace(start);
+        const at = "start" in place ? place.start : place.above;
+        if (at !== null) this.ask(at, true);
       });
       extra.push(ask);
     }
@@ -1533,6 +1610,9 @@ export class DocEditor {
       this.showNotice(FORMAT_LOST);
       return;
     }
+    // Enter in a cleared block whose empty lines would run the blocks around it together: there is
+    // nothing to split, and it stays open as it is (send()).
+    if (keepCore === "" && nextCore === "" && this.clearedJoins()) return;
     // Typing not sent yet goes with the split (at the start, before the paragraph above opens).
     const pending = this.timer !== null;
     this.cancelTimer();
@@ -1585,15 +1665,21 @@ export class DocEditor {
 
   private tabOut(back: boolean): void {
     const from = this.held;
+    const before = this.blocks();
+    const next = from
+      ? back
+        ? before.filter((b) => b.end <= from.start).at(-1)
+        : before.find((b) => b.start >= from.end && b.end > b.start)
+      : undefined;
+    const text = next ? joinLines(this.backend.lines.slice(next.start, next.end)) : "";
     // Focus stays on the block just closed (there may be no next one, and the next one opens
     // only once its lease arrives), never on the frame's body.
     this.close(true, true);
-    if (!from) return;
+    if (!next) return;
+    // close() may have changed the lines: find the next block again.
     const blocks = this.blocks();
-    const next = back
-      ? blocks.filter((b) => b.end <= from.start).at(-1)
-      : blocks.find((b) => b.start >= from.end && b.end > b.start);
-    if (next) this.open_(next, back ? "end" : "start");
+    const again = blocks[this.findBlock(blocks, text, next.start)];
+    if (again) this.open_(again, back ? "end" : "start");
   }
 
   /** The text the open block would be sent as now, or null when it cannot be. */
@@ -1631,6 +1717,9 @@ export class DocEditor {
     const text = padded(block, this.pad);
     const lines = this.backend.lines;
     if (joinLines(lines.slice(mine.start, mine.end)) === text) return true;
+    // A cleared block whose empty lines would run the blocks around it together is not sent: the
+    // block keeps its last text in the doc while it is open, and closing it deletes it (close()).
+    if (this.clearedJoins()) return true;
     // The room's rules, checked here first: a refusal is never silent.
     if (RULES?.checkEdit(lines, mine.start, mine.end - mine.start, blockLines(text))) {
       this.refused(REFUSED_EDIT);
@@ -1643,6 +1732,18 @@ export class DocEditor {
       return false;
     }
     return true;
+  }
+
+  /**
+   * The open block is empty, and its lines written empty would run the blocks around it together
+   * (two lists of one marker, or a list and the indented block below it).
+   */
+  private clearedJoins(): boolean {
+    const open = this.open;
+    const mine = this.backend.mine;
+    if (!open || !mine || verifyBlock(open.rich.model, TOOLS, open.env) !== "") return false;
+    const text = padded(composeBlock(open.prefix, "", open.suffix), this.pad);
+    return runsTogether(this.backend.lines, mine, text);
   }
 
   /** Why `text` in place of the leased lines cannot be sent, checked first; null when it can. */
@@ -1683,12 +1784,18 @@ export class DocEditor {
     this.send();
   }
 
-  /** Close the open block: send what is pending, release the lease, show the block again. */
-  close(release: boolean, refocus = false): void {
+  /**
+   * Close the open block: send what is pending, release the lease, show the block again. A block
+   * cleared where it could not be sent empty (send()) is then deleted as Delete does, which keeps
+   * the blocks around it apart or says why it cannot; `deleteCleared` is false when a block op
+   * follows, which gives it back as the doc has it.
+   */
+  close(release: boolean, refocus = false, deleteCleared = true): void {
     const open = this.open;
     const held = this.held;
     if (this.want && !this.want.op) this.want = null;
     if (!open) return;
+    const place = release && deleteCleared && this.clearedJoins() ? this.openPlace(0) : null;
     this.flush();
     if (release && this.backend.mine) this.backend.release();
     this.dropOpen();
@@ -1704,6 +1811,7 @@ export class DocEditor {
       }
     }
     this.hooks.status();
+    if (place && "start" in place) this.remove(place.start);
   }
 
   // ---------- notices ----------
@@ -1758,6 +1866,17 @@ function filledEnd(lines: readonly string[], b: Block): number {
   let end = b.end;
   while (end > b.start && isBlank(lines[end - 1])) end--;
   return end;
+}
+
+/**
+ * Whether `text`, which holds no block, written over `range` runs blocks outside it together: the
+ * doc would then have fewer blocks than the ones outside the range.
+ */
+function runsTogether(lines: readonly string[], range: LineRange, text: string): boolean {
+  const before = parseBlocks(joinLines(lines));
+  const inside = before.filter((b) => b.core.start >= range.start && b.core.end <= range.end);
+  const after = [...lines.slice(0, range.start), ...blockLines(text), ...lines.slice(range.end)];
+  return parseBlocks(joinLines(after)).length !== before.length - inside.length;
 }
 
 /**

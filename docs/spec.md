@@ -2728,7 +2728,12 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   next to it or take one in (a numbered list between lists that use both `.` and `)`, or a list
   right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
   nothing. So does an Enter or typing that cannot be sent; after an Enter the block stays open
-  with what was typed, still waiting to be sent.
+  with what was typed, still waiting to be sent. A block whose text is cleared where its empty
+  lines would run the blocks around it together keeps its last text in the doc while it is open,
+  and closing it deletes it as "Delete" does, with the same marker change or refusal. A new block
+  not typed into yet has no lines in the doc: its menu's "Insert below" puts the block where the
+  new one is, "Move up" and "Move down" are off, and "Delete" gives it up, leaving the doc as it
+  was.
 - **Images are agent-only.** An image block's alt text is a field; the image itself, and adding
   one, are left to agents through Ask an agent, whose page anchor names the place (`block-3`, or
   `block-3:image`), never its text.
