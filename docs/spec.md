@@ -591,7 +591,9 @@ forge edits that the editor's session would then save.
   source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
 - **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
   source") turns edit mode on; a strip under the bar says what is happening and who else is
-  editing, with Save version, Discard and Done. A block opens as a plain text field holding its
+  editing, with Save version, Discard and Done. At phone width the strip keeps to one line: the
+  status, the number of people editing (their emails stay for screen readers) and the buttons,
+  with shorter labels ("Save", "Review"). A block opens as a plain text field holding its
   Markdown; blocks other people hold show their email and their text as it arrives. Owners and
   editors who are not editing see one line when unsaved page edits exist, when someone is editing,
   or when a version needs review. Edit mode and comment review mode exclude each other. Draft text
@@ -1496,7 +1498,9 @@ document through the gate and the shared-data API, with all of their checks.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   One such notice shows at a time: a newer version's replaces the last, so versions published in
-  a row never stack.
+  a row never stack. While the frame is held (a doc or sheet edited on its page, a deck
+  presented) no notice shows: the version picker takes the new number, and the edit strip says
+  what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
@@ -1695,16 +1699,20 @@ its review has exactly two choices (below).
   place from one deleted and another inserted, so it could put a value or a formula reference where
   neither side wrote it. When such a version vN lands, the room freezes the draft: leases end,
   edits and `struct` frames are refused (`frozen`), the Row and Column menus are hidden, and the
-  edit bar says "vN was published while you edited" beside Review changes. Two cases need no review: a version whose sheet equals the draft's
+  edit bar says "vN published" beside Review changes (the version picker shows vN too; the page
+  notice for owners and editors not editing says "vN published over unsaved changes"). Two cases need no review: a version whose sheet equals the draft's
   base (it changed only the title, or restored the same content) moves the base under the draft's
-  lines as they are, and a version equal to the draft ends it. The review shows the draft and vN
-  side by side as read-only grids (one at a time, with a "Mine" and "vN" switch, at phone width),
-  with what each changed since the draft's base ("B7: 12 → 14", "Row 10 added (Pears)"), and
-  exactly two choices. **Publish mine** saves the draft as it is as vN+1, on top of vN, with the
+  lines as they are, and a version equal to the draft ends it. The review, titled "vN published
+  while you edited", shows the draft and vN side by side as read-only grids (one at a time, with
+  a "Mine" and "vN" switch, at phone width): every row, in the first column and the columns either
+  side changed since the draft's base (every column when that is all of them or the sides differ
+  in columns), with the changed cells marked and scrolled into view. What a grid cannot show (a
+  row or column removed, a column's type or settings) is named in one line under it ("Row 10
+  removed (Pears)"). It offers exactly two choices. **Publish mine** saves the draft as it is as vN+1, on top of vN, with the
   note "Edited on the page. Replaces the changes in vN." (the editor's own note first); vN stays in
-  the history and can be restored. **Discard mine** asks first, naming what will be lost (and, in
-  room mode, that it drops everyone's unpublished page edits), then returns the page to vN for
-  everyone. Closing the review keeps the draft frozen. The checkpoint enforces this: a
+  the history and can be restored. **Discard mine** asks once more in place: the button becomes
+  "Discard for everyone" in room mode ("Confirm discard" for a solo tab's own edits), and a second
+  press returns the page to vN for everyone. No second dialog opens over the review. Closing the review keeps the draft frozen. The checkpoint enforces this: a
   frozen sheet draft is resolved only to the room's draft exactly or to vN exactly, at the draft's
   current `rev`. Both choices, and the strip's Discard (a doc's too), run under the room's
   checkpoint lock, so one resolves the draft and never on top of the other: a choice or a Discard
@@ -1723,15 +1731,23 @@ its review has exactly two choices (below).
   tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
   carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
-  takes 12.5 for 12.5%. Two menus under the bar (the selected cell and the filter) act on the
-  selected cell: Row (insert above, insert below, delete) and Column (insert left, insert right,
-  delete, and the column's settings: name, type, number format, currency, decimals, options). A value the room would refuse stays in its
+  takes 12.5 for 12.5%. Two menus in the bar, beside the filter, act on the selected cell: Row
+  (insert above, insert below, delete) and Column (insert left, insert right, delete, and the
+  column's settings: name, type, number format, currency, decimals, options, in a popover under
+  the column's name that Escape or Cancel closes). A value the room would refuse stays in its
   field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
   came first) is asked for again on the same row or column where it is now, found by the row's
   line or the column's definition under the same columns, and dropped with "The sheet changed
   meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
-  Rows other people hold show their email, and their typing arrives as it is typed. Sort and
-  filter stay the viewer's own while editing; downloads give what the page shows.
+  Rows other people hold are tinted, with the holder's initials inside the row number (the name
+  in full on hover and for screen readers), and their typing arrives as it is typed. Opening a
+  held row does nothing on screen and tells a screen reader who holds it; a notice with Take over
+  shows only when the holder has gone idle. Sort and filter stay the viewer's own while editing;
+  downloads give what the page shows.
+- **One way in.** The Edit toggle (at phone width, "Edit on the page" in the ⋯ menu) is the only
+  way to edit a sheet where on-page editing is available: the menu has no source editor item
+  beside it. Where it is not (opaque isolation, the path fallback, `ALLOW_LIVE_EDITING=false`),
+  the menu's Edit opens the source editor as before.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
 

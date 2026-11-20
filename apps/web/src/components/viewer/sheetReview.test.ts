@@ -1,11 +1,14 @@
-// The sheet review's pure parts (#36): what each side shows as a grid, and the plain-language
-// lists of what changed since the draft's base.
+// The sheet review's pure parts (#36): what each side shows as a grid (changed cells marked), and
+// the plain-language lists of what changed since the draft's base.
 import { applySheetStruct } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   CHANGE_LIST_MAX,
   changeCount,
+  changedColumns,
   describeSheetChanges,
+  offGridChanges,
+  onlyColumns,
   REVIEW_MAX_ROWS,
   reviewGrid,
   summarize,
@@ -99,17 +102,44 @@ describe("describeSheetChanges", () => {
   });
 });
 
+describe("offGridChanges", () => {
+  it("names only what a grid cannot show: rows removed, a column's type or settings", () => {
+    expect(offGridChanges(SHEET, withLine(2, '["Pears",7,true]')).items).toEqual([]);
+    const removed = LINES.filter((_, i) => i !== 3).join("\n");
+    expect(offGridChanges(SHEET, removed).items).toEqual(["Row 4 removed (Plums)"]);
+    const typed = SHEET.replace(
+      '{"name":"Paid","type":"checkbox"}',
+      '{"name":"Paid","type":"text"}',
+    );
+    expect(offGridChanges(SHEET, typed).items).toEqual(["Column C (Paid): type changed to text"]);
+    expect(offGridChanges(SHEET, SHEET.replace('"name":"Qty"', '"name":"Count"')).items).toEqual(
+      [],
+    );
+  });
+});
+
 describe("reviewGrid", () => {
   it("shows each cell as the sheet does, formulas computed, and marks rows changed since the base", () => {
     const g = reviewGrid(withLine(2, '["Pears",7]'), SHEET);
     expect(g?.columns).toEqual(["A · Item", "B · Qty", "C · Paid"]);
     expect(g?.rows.map((r) => r.n)).toEqual([2, 3, 4, 5]);
     expect(g?.rows.map((r) => r.changed)).toEqual([false, true, false, false]);
+    // Only the cell that changed is marked, not its whole row.
+    expect(g?.rows[1]?.cells.map((c) => c.changed)).toEqual([false, true, false]);
+    expect(g?.columnsChanged).toEqual([false, false, false]);
     expect(g?.rows[0]?.cells.map((c) => c.text)).toEqual(["Apples", "3", "☑ Yes"]);
     const total = g?.rows[3]?.cells[1];
-    expect(total).toEqual({ text: "10", number: true, title: "=SUM(B2:B4)" });
+    expect(total).toEqual({ text: "10", number: true, changed: false, title: "=SUM(B2:B4)" });
     expect(g?.more).toBe(0);
     expect(reviewGrid("nope", SHEET)).toBeNull();
+  });
+
+  it("marks every cell of a row added, and a column renamed", () => {
+    const appended = `${SHEET}\n["Figs",1]`;
+    const g = reviewGrid(appended, SHEET);
+    expect(g?.rows[4]?.cells.every((c) => c.changed)).toBe(true);
+    const renamed = reviewGrid(SHEET.replace('"name":"Qty"', '"name":"Count"'), SHEET);
+    expect(renamed?.columnsChanged).toEqual([false, true, false]);
   });
 
   it("shows at most REVIEW_MAX_ROWS rows and counts the rest", () => {
@@ -118,5 +148,32 @@ describe("reviewGrid", () => {
     expect(g?.rows).toHaveLength(REVIEW_MAX_ROWS);
     expect(g?.more).toBe(20);
     expect(g?.rows.every((r) => !r.changed)).toBe(true);
+  });
+});
+
+describe("changedColumns", () => {
+  it("keeps the first column and those either side changed, the same on both sides", () => {
+    const mine = reviewGrid(withLine(2, '["Pears",7]'), SHEET);
+    const theirs = reviewGrid(withLine(1, '["Apples",3,false]'), SHEET);
+    // B on one side and C on the other: with A that is every column, so all are shown.
+    expect(changedColumns(mine, theirs)).toBeNull();
+    // A change in one column only: that column and the first.
+    expect(changedColumns(mine, reviewGrid(SHEET, SHEET))).toEqual([0, 1]);
+    const narrow = onlyColumns(mine, [0, 1]);
+    expect(narrow?.columns).toEqual(["A · Item", "B · Qty"]);
+    expect(narrow?.rows[1]?.cells.map((c) => c.text)).toEqual(["Pears", "7"]);
+    expect(onlyColumns(mine, null)).toBe(mine);
+  });
+
+  it("keeps every column when nothing changed in a cell or the sides differ in columns", () => {
+    expect(changedColumns(reviewGrid(SHEET, SHEET), reviewGrid(SHEET, SHEET))).toBeNull();
+    const added = applySheetStruct(LINES, {
+      op: "insert_columns",
+      before: "C",
+      columns: [{ name: "Note", type: "text" }],
+    }) as string[];
+    expect(
+      changedColumns(reviewGrid(added.join("\n"), SHEET), reviewGrid(SHEET, SHEET)),
+    ).toBeNull();
   });
 });

@@ -42,7 +42,7 @@ export interface EditBarProps {
 export function editStatus(p: EditBarProps): string {
   if (p.saving) return "Saving…";
   if (p.phase === "conflict" && p.merges === false) {
-    return `${p.conflictVersion ? `v${p.conflictVersion}` : "A newer version"} was published while you edited`;
+    return p.conflictVersion ? `v${p.conflictVersion} published` : "A newer version was published";
   }
   if (p.phase === "conflict") return "A newer version changed the same lines. Review the changes.";
   if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;
@@ -53,6 +53,16 @@ export function editStatus(p: EditBarProps): string {
   if (p.savedVersion && !p.dirty) return `Saved as v${p.savedVersion}`;
   if (p.dirty) return "Unsaved changes";
   return `Editing v${p.version}`;
+}
+
+/** A button's label, shorter at phone width so the strip stays one line (the name is aria-label). */
+function Label({ wide, narrow }: { wide: string; narrow: string }) {
+  return (
+    <>
+      <span className="pl-editbar__wide">{wide}</span>
+      <span className="pl-editbar__narrow">{narrow}</span>
+    </>
+  );
 }
 
 export function EditBar(props: EditBarProps) {
@@ -87,20 +97,26 @@ export function EditBar(props: EditBarProps) {
       {editors.length > 0 && (
         <span className="pl-editbar__editors">
           <UsersIcon size={14} aria-hidden="true" />
-          <span className="visually-hidden">Also here: </span>
-          {shown.map((e) => (
-            <span key={e.email} className="pl-editbar__editor">
-              {e.email}
-              {e.block && <span className="pl-editbar__typing"> (editing)</span>}
-            </span>
-          ))}
-          {more > 0 && <span className="pl-editbar__editor">+{more}</span>}
+          {/* At phone width the names collapse to a count (they stay for screen readers). */}
+          <span className="pl-editbar__count" aria-hidden="true">
+            {editors.length}
+          </span>
+          <span className="pl-editbar__names">
+            <span className="visually-hidden">Also here: </span>
+            {shown.map((e) => (
+              <span key={e.email} className="pl-editbar__editor">
+                {e.email}
+                {e.block && <span className="pl-editbar__typing"> (editing)</span>}
+              </span>
+            ))}
+            {more > 0 && <span className="pl-editbar__editor">+{more}</span>}
+          </span>
         </span>
       )}
       <span className="pl-editbar__actions">
         {conflict && onReview ? (
-          <Button variant="primary" size="sm" onClick={onReview}>
-            Review changes
+          <Button variant="primary" size="sm" onClick={onReview} aria-label="Review changes">
+            <Label wide="Review changes" narrow="Review" />
           </Button>
         ) : (
           <Button
@@ -114,7 +130,7 @@ export function EditBar(props: EditBarProps) {
             aria-label="Save version"
             onClick={() => onSave()}
           >
-            Save version
+            <Label wide="Save version" narrow="Save" />
           </Button>
         )}
         <Menu

@@ -143,11 +143,18 @@ export default function Editor({ params }: { params: Record<string, string> }) {
       >
         {state.pageEdits && (
           <p className="pl-editor-page__live" role="note">
-            There are unsaved page edits based on v{state.pageEdits.base_version}. Saving here
-            publishes a new version;{" "}
-            {liveRules(state.artifact.type)?.merge === false
-              ? "their edits are kept, and they choose to publish them in its place or discard them."
-              : "their edits are merged onto it, or reviewed if they overlap."}
+            {liveRules(state.artifact.type)?.merge === false ? (
+              <>
+                Unsaved changes on the page are based on v{state.pageEdits.base_version}. Saving
+                here sends them to review.
+              </>
+            ) : (
+              <>
+                There are unsaved page edits based on v{state.pageEdits.base_version}. Saving here
+                publishes a new version; their edits are merged onto it, or reviewed if they
+                overlap.
+              </>
+            )}
           </p>
         )}
         {!wide && (

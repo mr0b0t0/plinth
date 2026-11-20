@@ -303,6 +303,8 @@ describe("solo editing", () => {
   it("offers rows and columns in two menus, by keyboard too", () => {
     start();
     const strip = document.querySelector(".plinth-sheet__strip") as HTMLElement;
+    // In the bar beside the filter, not a toolbar of their own.
+    expect(strip.closest(".plinth-sheet__bar")).not.toBeNull();
     const menus = [...strip.querySelectorAll<HTMLButtonElement>("[aria-haspopup=menu]")];
     expect(menus.map((b) => b.textContent)).toEqual(["Row", "Column"]);
     expect(strip.textContent).not.toContain("Double-click");
@@ -350,6 +352,21 @@ describe("solo editing", () => {
     expect(notice()).toContain("Some cells do not fit");
     expect((await collected(f)).split("\n")[0]).toContain('"Fruit"');
     expect((await collected(f)).split("\n")[0]).toContain('{"name":"Qty","type":"number"}');
+  });
+
+  it("opens column settings as a popover that Escape closes", () => {
+    start();
+    cell("B2").focus();
+    button("Column settings…").click();
+    const form = document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
+    // Over the grid, not a strip above it; Cancel before the primary Apply.
+    expect(form.closest(".plinth-sheet__slot")).toBeNull();
+    expect(form.getAttribute("aria-label")).toBe("Column B settings");
+    const actions = [...form.querySelectorAll("button")].map((b) => b.textContent);
+    expect(actions).toEqual(["Cancel", "Apply"]);
+    key(form.querySelector("input") as HTMLInputElement, "Escape");
+    expect(document.querySelector(".plinth-sheet__panel")).toBeNull();
+    expect(document.activeElement).toBe(cell("B2"));
   });
 });
 
@@ -415,8 +432,11 @@ describe("room editing", () => {
     const { ws } = start();
     ws.frame({ t: "leased", lease: "l9", start: 1, end: 2, holder: "s2", by: "bo@example.org" });
     await tick();
+    // Initials inside the row number; the name for a pointer and a screen reader.
     const tag = cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder");
-    expect(tag?.textContent).toBe("bo@example.org is editing");
+    expect(tag?.querySelector("[aria-hidden=true]")?.textContent).toBe("BO");
+    expect(tag?.querySelector(".plinth-sheet__sr")?.textContent).toBe("Bo is editing");
+    expect(tag?.getAttribute("title")).toBe("Bo is editing");
     // Their typing arrives.
     ws.frame({
       t: "op",
@@ -434,7 +454,11 @@ describe("room editing", () => {
     const before = ws.sent.length;
     dbl(cell("A2"));
     expect(ws.sent.length).toBe(before);
-    expect(notice()).toContain("bo@example.org is editing this row.");
+    // The tint already shows it: no notice on screen, a screen reader is told.
+    expect(notice()).toBe("");
+    expect(document.querySelector(".plinth-sheet__sr[role=status]")?.textContent).toBe(
+      "Bo is editing this row.",
+    );
     cell("A3").focus();
     button("Delete row").click();
     expect(ws.sent.length).toBe(before);
@@ -639,6 +663,6 @@ describe("room editing", () => {
     button("Delete column").click();
     expect(ws.sent.at(-1)).toMatchObject({ t: "struct", op: { op: "delete_columns" } });
     ws.frame({ t: "struct_denied", reason: "held", by: "bo@example.org" });
-    expect(notice()).toContain("bo@example.org is editing");
+    expect(notice()).toContain("Bo is editing. Rows and columns change once they finish.");
   });
 });

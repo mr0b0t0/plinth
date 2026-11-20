@@ -14,8 +14,9 @@
 //
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
 // cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
-// with the view carried over), setHolders() marks the rows other people hold with their email,
-// and the edit strip (rows, columns) sits in the slot between the bar and the cells.
+// with the view carried over), setHolders() marks the rows other people hold with their initials
+// in the row number, the editor's Row and Column menus sit in the bar (`tools`), and the slot
+// between the bar and the cells is kept for what the editor adds there.
 import {
   a1,
   type Cell,
@@ -46,8 +47,10 @@ export interface Grid {
   el: HTMLElement;
   /** The cells' table, for the editor's listeners. */
   table: HTMLTableElement;
-  /** Between the bar (and its note) and the cells: the editor's strip goes here. */
+  /** Between the bar (and its note) and the cells. */
   slot: HTMLElement;
+  /** In the bar, before the filter: the editor's Row and Column menus go here. */
+  tools: HTMLElement;
   select(row: number, col: number): void;
   /** The selected cell's A1 row and column. */
   selected(): { row: number; col: number };
@@ -65,7 +68,7 @@ export interface Grid {
   update(sheet: Sheet, ev: SheetEvaluation): boolean;
   /** Paint a cell again from its computed value (after its field closed). */
   repaint(row: number, col: number): void;
-  /** Rows other people hold: A1 row to the holder's email. */
+  /** Rows other people hold: A1 row to the holder's email (shown as initials, named in full). */
   setHolders(rows: ReadonlyMap<number, string>): void;
   /** Cells the grid must not repaint (the one being edited). */
   setLocked(locked: (td: HTMLElement) => boolean): void;
@@ -93,6 +96,32 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (className) e.className = className;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/** "ana.costa-x1@example.com" -> "AC": two letters from an email's name part, for a held row. */
+export function initialsOf(email: string): string {
+  const words = email
+    .replace(/@.*$/, "")
+    .split(/[\s._+-]+/)
+    .filter((w) => /^\p{L}/u.test(w));
+  const letters =
+    words.length > 1
+      ? `${Array.from(words[0] ?? "")[0] ?? ""}${Array.from(words[1] ?? "")[0] ?? ""}`
+      : Array.from(words[0] ?? "")
+          .slice(0, 2)
+          .join("");
+  return letters.toLocaleUpperCase() || "?";
+}
+
+/** "ana.costa-x1@example.com" -> "Ana": a first name from an email, for short notes. */
+export function personName(email: string): string {
+  const first = email
+    .replace(/@.*$/, "")
+    .split(/[\s._+-]+/)
+    .find((w) => /^\p{L}/u.test(w));
+  if (!first) return email;
+  const [head = "", ...rest] = Array.from(first);
+  return head.toLocaleUpperCase() + rest.join("");
 }
 
 /** A column's width in pixels, clamped. */
@@ -193,7 +222,8 @@ export function buildGrid(
   filterInput.setAttribute("aria-label", "Filter rows");
   filterInput.autocomplete = "off";
   filterInput.spellcheck = false;
-  bar.append(fx, count, filterInput);
+  const tools = el(doc, "div", "plinth-sheet__tools");
+  bar.append(fx, count, tools, filterInput);
   const note = opts.exhausted
     ? el(
         doc,
@@ -356,6 +386,7 @@ export function buildGrid(
     el: root,
     table,
     slot: el(doc, "div", "plinth-sheet__slot"),
+    tools,
     selected: () => ({ row: selRow, col: selCol }),
     cell: (row, col) => byAddress.get(a1(row, col)) ?? null,
     select(row, col) {
@@ -456,7 +487,12 @@ export function buildGrid(
           holderTags.set(row, tag);
           num.append(tag);
         }
-        tag.textContent = `${email} is editing`;
+        // Initials inside the row number; the name in full for a pointer and a screen reader.
+        const said = `${personName(email)} is editing`;
+        const short = el(doc, "span", undefined, initialsOf(email));
+        short.setAttribute("aria-hidden", "true");
+        tag.replaceChildren(short, el(doc, "span", "plinth-sheet__sr", said));
+        tag.title = said;
       }
     },
     setLocked(fn) {

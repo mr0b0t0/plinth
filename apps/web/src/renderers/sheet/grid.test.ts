@@ -3,7 +3,7 @@
 // with the rest never gets a stale left offset back.
 import { evaluateSheet, parseSheet, type Sheet } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildGrid } from "./grid.ts";
+import { buildGrid, initialsOf, personName } from "./grid.ts";
 
 const HEADER = JSON.stringify({
   plinth: "sheet",
@@ -69,5 +69,16 @@ describe("frozen columns while the grid repaints", () => {
     const after = sheetOf(['["Pears",3]']);
     expect(grid.update(after, evaluateSheet(after, { budget: 100_000 }))).toBe(true);
     expect(cell("A2").style.left).toBe("48px");
+  });
+});
+
+describe("a held row's holder", () => {
+  it("is named by initials in the row, and by a first name in notes", () => {
+    expect(initialsOf("ana.costa-mwp21wp4-1@example.com")).toBe("AC");
+    expect(initialsOf("bo@example.org")).toBe("BO");
+    expect(initialsOf("123@example.org")).toBe("?");
+    expect(personName("ana.costa-mwp21wp4-1@example.com")).toBe("Ana");
+    expect(personName("rui_santos@example.com")).toBe("Rui");
+    expect(personName("42@example.com")).toBe("42@example.com");
   });
 });

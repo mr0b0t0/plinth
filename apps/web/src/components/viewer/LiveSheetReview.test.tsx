@@ -1,6 +1,7 @@
 // The review of a sheet's page edits beside a version published meanwhile (#36): both sheets
-// whole, what each side changed since the base, and exactly two choices. "Discard mine" asks
-// first and names what would be lost; closing the dialog keeps the draft (nothing is called).
+// whole, the cells each side changed since the base marked, and exactly two choices. "Discard
+// mine" asks once more in place (the button becomes the confirmation, no second dialog); closing
+// the dialog keeps the draft (nothing is called).
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,28 +34,30 @@ function setup(mode: "room" | "solo" = "room") {
 }
 
 describe("LiveSheetReview", () => {
-  it("shows both sheets whole, side by side, with what each side changed since the base", () => {
+  it("shows both sheets whole, side by side, with the changed cells marked", () => {
     setup();
-    const dialog = screen.getByRole("dialog", {
-      name: "v6 was published while you were editing",
-    });
-    expect(dialog.textContent).toContain(
-      "Publish mine makes v7 without v6's changes. v6 stays in History.",
-    );
+    const dialog = screen.getByRole("dialog", { name: "v6 published while you edited" });
+    // No subtitle and no change lists: the grids show the changes.
+    expect(dialog.querySelector("ul")).toBeNull();
     const mine = screen.getByRole("region", { name: "Mine" });
-    expect(within(mine).getByText("B2: 3 → 4")).toBeTruthy();
-    expect(within(mine).getByRole("table").textContent).toContain("Apples4");
+    const changed = within(mine).getByRole("table").querySelectorAll("td[data-changed]");
+    expect([...changed].map((td) => td.textContent)).toEqual(["4 (changed)"]);
     const theirs = screen.getByRole("region", { name: "v6" });
-    expect(within(theirs).getByText("Row 4 added (<img src=x onerror=alert(1)>)")).toBeTruthy();
+    const added = within(theirs).getByRole("table").querySelectorAll("td[data-changed]");
+    expect([...added].map((td) => td.textContent)).toEqual([
+      "<img src=x onerror=alert(1)> (changed)",
+      "1 (changed)",
+    ]);
+    // Nothing here that a grid cannot show (rows removed, column settings), so no line under them.
+    expect(dialog.querySelector(".pl-sheetreview__offgrid")).toBeNull();
     // Cell text is text, never markup.
     expect(dialog.querySelector("img")).toBeNull();
-    expect(within(theirs).getByRole("table").textContent).toContain("<img src=x onerror=alert(1)>");
     // The phone-width switch between the two.
     expect(screen.getByRole("radio", { name: "Mine" })).toBeTruthy();
     expect(screen.getByRole("radio", { name: "v6" })).toBeTruthy();
   });
 
-  it("has exactly two choices: Publish mine at once, Discard mine after naming what is lost", async () => {
+  it("has exactly two choices: Publish mine at once, Discard mine on a second press", async () => {
     const p = setup();
     const buttons = within(screen.getByRole("dialog")).getAllByRole("button");
     const named = buttons.map((b) => b.textContent?.trim()).filter(Boolean);
@@ -64,18 +67,17 @@ describe("LiveSheetReview", () => {
     expect(p.onPublishMine).toHaveBeenCalledTimes(1);
 
     await userEvent.click(screen.getByRole("button", { name: "Discard mine" }));
-    const confirm = screen.getByRole("alertdialog", { name: "Discard your page changes?" });
-    expect(confirm.textContent).toContain(
-      "This change will be lost for everyone editing: B2: 3 → 4.",
-    );
+    // No dialog over the dialog: the button itself asks.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(p.onDiscardMine).not.toHaveBeenCalled();
-    // Backing out of the confirmation loses nothing.
-    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
-    expect(p.onDiscardMine).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Discard for everyone" }));
+    expect(p.onDiscardMine).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks a solo editor to confirm their own discard", async () => {
+    const p = setup("solo");
     await userEvent.click(screen.getByRole("button", { name: "Discard mine" }));
-    await userEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Confirm discard" }));
     expect(p.onDiscardMine).toHaveBeenCalledTimes(1);
   });
 

@@ -47,7 +47,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import type { Grid } from "./grid.ts";
+import { type Grid, personName } from "./grid.ts";
 import { cellFromInput, inputText, type NumberLocale, numberLocale, parseTsv } from "./input.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
@@ -291,6 +291,8 @@ export class SheetEditor {
   private want: Want | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private notice: HTMLElement | null = null;
+  /** Says to a screen reader what the tinted rows already show (who holds a row). */
+  private said: HTMLElement | null = null;
   private strip: HTMLElement | null = null;
   private panel: HTMLElement | null = null;
   private lastStruct: SentStruct | null = null;
@@ -390,6 +392,8 @@ export class SheetEditor {
       this.stripButtons.clear();
       this.closePanel();
       this.hideNotice();
+      this.said?.remove();
+      this.said = null;
     }
     g?.el.classList.toggle("plinth-sheet__page--editing", on);
     this.render();
@@ -495,23 +499,27 @@ export class SheetEditor {
     return undefined;
   }
 
+  /**
+   * A held row: its tint and initials say who holds it, so only a screen reader is told, unless
+   * the holder went idle and the row can be taken over (a choice, so a notice with the button).
+   */
   private explainHeld(l: ClientLease, what: string): void {
     const idle = Date.now() - l.at >= LIMITS.liveLeaseIdleS * 1000;
-    this.showNotice(
-      `${l.by} is editing ${what}.`,
-      idle && this.backend.you?.right === "write"
-        ? {
-            label: "Take over",
-            run: () => {
-              this.close(true);
-              const row = l.start + 1;
-              const sel = this.grid?.selected();
-              this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
-              if (this.backend.takeover(l.id)) this.hideNotice();
-            },
-          }
-        : undefined,
-    );
+    const text = `${personName(l.by)} is editing ${what}.`;
+    if (!idle || this.backend.you?.right !== "write") {
+      this.announce(text);
+      return;
+    }
+    this.showNotice(text, {
+      label: "Take over",
+      run: () => {
+        this.close(true);
+        const row = l.start + 1;
+        const sel = this.grid?.selected();
+        this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
+        if (this.backend.takeover(l.id)) this.hideNotice();
+      },
+    });
   }
 
   /** Ask for a cell's row, then open a field in it. */
@@ -749,7 +757,7 @@ export class SheetEditor {
       this.dropKept(w);
       return;
     }
-    if (reason === "held") this.showNotice(`${by ?? "Someone"} is editing this row.`);
+    if (reason === "held") this.announce(`${by ? personName(by) : "Someone"} is editing this row.`);
     else if (reason === "frozen")
       this.showNotice("Editing is paused until the changes are reviewed.");
     else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
@@ -845,7 +853,9 @@ export class SheetEditor {
     }
     this.lastStruct = null;
     if (reason === "held") {
-      this.showNotice(`${by ?? "Someone"} is editing. Rows and columns change once they finish.`);
+      this.showNotice(
+        `${by ? personName(by) : "Someone"} is editing. Rows and columns change once they finish.`,
+      );
     } else if (reason === "frozen") {
       this.showNotice("Editing is paused until the changes are reviewed.");
     } else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
@@ -1027,12 +1037,14 @@ export class SheetEditor {
 
   // ---------- rows and columns ----------
 
+  /** The Row and Column menus go in the bar, beside the filter (no toolbar of their own). */
   private mountStrip(): void {
     const g = this.grid;
     if (!g) return;
     if (!this.strip) this.strip = this.makeStrip();
-    if (this.strip.parentNode !== g.slot) g.slot.append(this.strip);
-    if (this.panel && this.panel.parentNode !== g.slot) g.slot.append(this.panel);
+    if (this.strip.parentNode !== g.tools) g.tools.append(this.strip);
+    if (this.panel && this.panel.parentNode !== g.el) g.el.append(this.panel);
+    if (this.panel) this.placePanel();
   }
 
   private stripButtons = new Map<string, HTMLButtonElement>();
@@ -1185,7 +1197,9 @@ export class SheetEditor {
     const b = this.backend;
     for (const l of b.leases.values()) {
       if (l.id !== b.mine?.id) {
-        this.showNotice(`${l.by} is editing. Rows and columns change once they finish.`);
+        this.showNotice(
+          `${personName(l.by)} is editing. Rows and columns change once they finish.`,
+        );
         return;
       }
     }
@@ -1263,9 +1277,26 @@ export class SheetEditor {
   // ---------- column settings ----------
 
   private closePanel(): void {
-    this.panel?.remove();
+    if (!this.panel) return;
+    this.panel.remove();
     this.panel = null;
+    this.win.removeEventListener("resize", this.placePanel);
+    this.doc.removeEventListener("scroll", this.placePanel, true);
   }
+
+  /** The settings popover, under the selected column's name and inside the frame. */
+  private readonly placePanel = () => {
+    const p = this.panel;
+    const g = this.grid;
+    if (!p || !g) return;
+    const head = g.cell(1, Number(p.dataset.col ?? 0));
+    const bar = g.tools.getBoundingClientRect();
+    const r = head?.getBoundingClientRect() ?? bar;
+    const room = this.doc.documentElement.clientWidth;
+    const width = p.offsetWidth;
+    p.style.top = `${Math.round(Math.max(r.bottom, bar.bottom) + 4)}px`;
+    p.style.left = `${Math.round(Math.max(8, Math.min(r.left, room - width - 8)))}px`;
+  };
 
   private openPanel(): void {
     const g = this.grid;
@@ -1277,6 +1308,7 @@ export class SheetEditor {
     const d = this.doc;
     const form = d.createElement("form");
     form.className = "plinth-sheet__panel";
+    form.dataset.col = String(col);
     form.setAttribute("aria-label", `Column ${colLetter(col)} settings`);
     const field = (labelText: string, input: HTMLElement) => {
       const label = d.createElement("label");
@@ -1341,16 +1373,27 @@ export class SheetEditor {
     sync();
     const apply = d.createElement("button");
     apply.type = "submit";
-    apply.className = "plinth-sheet__btn";
+    apply.className = "plinth-sheet__btn plinth-sheet__btn--primary";
     apply.textContent = "Apply";
     const cancel = d.createElement("button");
     cancel.type = "button";
     cancel.className = "plinth-sheet__btn";
     cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => this.closePanel());
+    const dismiss = () => {
+      this.closePanel();
+      const cell = this.grid?.selected();
+      if (cell) this.grid?.cell(cell.row, cell.col)?.focus();
+    };
+    cancel.addEventListener("click", dismiss);
+    form.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      dismiss();
+    });
     const actions = d.createElement("div");
     actions.className = "plinth-sheet__panel-actions";
-    actions.append(apply, cancel);
+    actions.append(cancel, apply);
     form.append(actions);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -1397,7 +1440,10 @@ export class SheetEditor {
       });
     });
     this.panel = form;
-    g.slot.append(form);
+    g.el.append(form);
+    this.placePanel();
+    this.win.addEventListener("resize", this.placePanel);
+    this.doc.addEventListener("scroll", this.placePanel, true);
     name.focus();
   }
 
@@ -1441,6 +1487,26 @@ export class SheetEditor {
   private hideNotice(): void {
     this.notice?.remove();
     this.notice = null;
+  }
+
+  /** Tells a screen reader only (a polite status): nothing on screen repeats the rows' tint. */
+  private announce(text: string): void {
+    let el = this.said;
+    if (!el) {
+      el = this.doc.createElement("div");
+      el.className = "plinth-sheet__sr";
+      el.setAttribute("role", "status");
+      this.doc.body.append(el);
+      this.said = el;
+    }
+    // The same words again are announced again.
+    el.textContent = "";
+    el.textContent = text;
+  }
+
+  /** For tests: what a screen reader was last told. */
+  get announced(): string {
+    return this.said?.textContent ?? "";
   }
 
   /** For tests and the status line. */

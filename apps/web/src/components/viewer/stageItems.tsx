@@ -130,9 +130,14 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
-/** A type with no source editor (a design) has no Edit: agents change it. */
+/**
+ * A type with no source editor (a design) has no Edit: agents change it. A sheet edited on its
+ * page (its edits are never merged) has one way in, the Edit toggle: no source entry beside it.
+ */
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
+  canEdit(c.gate.role) &&
+  typeDef(c.gate.artifact.type)?.editor &&
+  !(c.live.available && !c.live.merges)
     ? [
         {
           label: c.live.available ? "Edit source" : "Edit",

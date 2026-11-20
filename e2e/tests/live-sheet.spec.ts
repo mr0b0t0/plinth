@@ -103,19 +103,20 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(field).toHaveValue("3");
   await field.fill("30");
 
-  // The editor sees the row held, with the owner's email, and the value as it arrives.
-  await expect(
-    frameOf(other).locator("tr.plinth-sheet__row--held .plinth-sheet__holder"),
-  ).toHaveText(`${s.owner} is editing`);
+  // The editor sees the row held, with the owner's initials in it, and the value as it arrives.
+  const holder = frameOf(other).locator("tr.plinth-sheet__row--held .plinth-sheet__holder");
+  await expect(holder).toHaveAttribute("title", "Sheet is editing");
+  await expect(holder.locator("[aria-hidden=true]")).toHaveText("SO");
   await expect(cell(other, "B2")).toHaveText("30");
   await expect(cell(other, "B5")).toHaveText("37");
   await expect(other.getByRole("region", { name: "Editing on the page" })).toContainText(s.owner);
-  // Opening a cell of that row does not open it.
+  // Opening a cell of that row does not open it; a screen reader is told why, and nothing pops up.
   await cell(other, "A2").dblclick();
   await expect(frameOf(other).locator(".plinth-sheet__input")).toHaveCount(0);
-  await expect(frameOf(other).locator(".plinth-sheet__notice")).toContainText(
-    `${s.owner} is editing this row.`,
+  await expect(frameOf(other).locator(".plinth-sheet__sr[role=status]")).toHaveText(
+    "Sheet is editing this row.",
   );
+  await expect(frameOf(other).locator(".plinth-sheet__notice")).toHaveCount(0);
 
   // The editor edits another row at the same time, by typing into a selected cell.
   await cell(other, "A3").click();
@@ -205,21 +206,24 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   // The agent changes the row right below the page's edit: still never merged.
   await type("B2", "4");
   await agentSets("B3", 6, 1);
-  await expect(bar).toContainText("v2 was published while you edited", {
-    timeout: 10_000,
-  });
-  // Nothing on the strip works while the draft waits for the review, so it is not shown.
+  await expect(bar).toContainText("v2 published", { timeout: 10_000 });
+  // The version picker names the version the bar does, and no toast repeats it.
+  await expect(page.locator(".hx-picker__shown")).toHaveText("v2");
+  await expect(page.getByText(/^Updated to v/)).toHaveCount(0);
+  // Nothing in the menus works while the draft waits for the review, so they are not shown.
   await expect(frameOf(page).getByRole("toolbar", { name: "Rows and columns" })).toBeHidden();
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const review = page.getByRole("dialog", { name: "v2 was published while you were editing" });
-  await expect(review.getByRole("region", { name: "Mine" })).toContainText("B2: 3 → 4");
+  const review = page.getByRole("dialog", { name: "v2 published while you edited" });
+  const changedIn = (side: string) =>
+    review.getByRole("region", { name: side }).locator("td[data-changed]");
+  await expect(changedIn("Mine")).toHaveText(["4 (changed)"]);
   // At phone width one sheet shows at a time, with a switch between them.
   const toV2 = review.getByRole("radio", { name: "v2" });
   if (await toV2.isVisible()) {
     await toV2.check();
     await expect(review.getByRole("region", { name: "Mine" })).toHaveCount(0);
   }
-  await expect(review.getByRole("region", { name: "v2" })).toContainText("B3: 5 → 6");
+  await expect(changedIn("v2")).toHaveText(["6 (changed)"]);
   // Closing the review keeps the draft frozen, and the review opens again.
   await review.getByRole("button", { name: "Close" }).click();
   await expect(review).toHaveCount(0);
@@ -230,6 +234,8 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await review.getByRole("button", { name: "Publish mine" }).click();
   await expect(review).toHaveCount(0);
   await expect(bar).toContainText("Saved as v3", { timeout: 10_000 });
+  await expect(page.locator(".hx-picker__shown")).toHaveText("v3");
+  await expect(page.getByText(/^Updated to v/)).toHaveCount(0);
   const v3 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
   expect(v3.split("\n").slice(1, 3)).toEqual(['["Apples",4,1.5,true]', '["Pears",5,0.5,false]']);
   const versions = await apiGet(page.request, `/artifacts/${s.id}/versions`);
@@ -239,18 +245,15 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   });
   expect(versions.body.items[1]).toMatchObject({ number: 2 });
 
-  // Editing resumes on v3. Discard mine asks first, naming what would be lost.
+  // Editing resumes on v3. Discard mine asks once more, in place: the button becomes the choice.
   await type("B2", "7");
   await agentSets("B4", 9, 3);
-  await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
+  await expect(bar).toContainText("v4 published", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const second = page.getByRole("dialog", { name: "v4 was published while you were editing" });
+  const second = page.getByRole("dialog", { name: "v4 published while you edited" });
   await second.getByRole("button", { name: "Discard mine" }).click();
-  const confirm = page.getByRole("alertdialog", { name: "Discard your page changes?" });
-  await expect(confirm).toContainText("This change will be lost for everyone editing: B2: 4 → 7.");
-  // Pressed, not clicked: at phone width the "Updated to v4" toast can sit over this button, and a
-  // toast under a resting pointer pauses, so a click can wait on it until the test times out.
-  await confirm.getByRole("button", { name: "Discard", exact: true }).press("Enter");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await second.getByRole("button", { name: "Discard for everyone" }).click();
   await expect(page.getByText("The page is back to v4.")).toBeVisible({ timeout: 10_000 });
   await expect(cell(page, "B2")).toHaveText("4");
   await expect(cell(page, "B4")).toHaveText("9");

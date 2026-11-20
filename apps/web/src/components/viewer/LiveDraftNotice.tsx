@@ -67,7 +67,7 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
     const n = (status?.connected ? status.conflict_version : draft?.conflict_version) as number;
     text =
       props.merges === false
-        ? `v${n} was published over the unsaved page edits`
+        ? `v${n} published over unsaved changes`
         : `v${n} changed the same paragraphs as the unsaved page edits`;
     if (actions) {
       buttons = (

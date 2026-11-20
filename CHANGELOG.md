@@ -79,17 +79,22 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
   sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
   Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
-  spreadsheet fills the rows they cover. Row and Column menus insert and delete rows and columns
-  and change a column's name, type and format. The others editing see each change as it is typed, and rows
-  someone holds show their email. Save version (or a pause) makes the next version, as for docs.
+  spreadsheet fills the rows they cover. Row and Column menus in the sheet's bar insert and
+  delete rows and columns and change a column's name, type and format. The others editing see
+  each change as it is typed, and rows someone holds are tinted with their initials. Save version
+  (or a pause) makes the next version, as for docs. On-page editing is a sheet's one Edit: the
+  menu offers no source editor beside it.
   A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged into the
-  page edits: editing pauses, and the editors review both sheets side by side, with what each
-  changed, and choose **Publish mine** (the page edits become the next version, and the other stays
-  in the history) or **Discard mine** (after a confirmation that lists what will be lost). When two
+  page edits: editing pauses, and the editors review both sheets side by side, with the cells
+  each side changed marked, and choose **Publish mine** (the page edits become the next version,
+  and the other stays in the history) or **Discard mine** (pressed twice: it turns into "Discard
+  for everyone"). When two
   people change rows at once, each change lands on the row it was made on, or is dropped with a
   note when that row is gone. While one editor publishes or discards, a second choice or a Discard
-  from someone else waits with a note instead of undoing it, for docs too. Numbers are typed in
-  your locale. Follows `ALLOW_LIVE_EDITING`. Plugin 0.29.0: the agent's sheet rules say a
+  from someone else waits with a note instead of undoing it, for docs too. While a doc or sheet is
+  edited on its page, a version published meanwhile no longer shows an "Updated to" notice (the
+  strip says it, and the version picker follows), and at phone width the edit strip keeps to one
+  line. Numbers are typed in your locale. Follows `ALLOW_LIVE_EDITING`. Plugin 0.29.0: the agent's sheet rules say a
   `live_draft` on a sheet needs no action.
 
 ## 0.6.0 (2026-11-20)

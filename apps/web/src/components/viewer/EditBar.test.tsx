@@ -47,7 +47,7 @@ describe("EditBar", () => {
       "A newer version changed the same lines. Review the changes.",
     );
     expect(editStatus(props({ phase: "conflict", merges: false, conflictVersion: 6 }))).toBe(
-      "v6 was published while you edited",
+      "v6 published",
     );
   });
 
@@ -57,6 +57,11 @@ describe("EditBar", () => {
     const status = screen.getByText("Unsaved changes");
     expect(status.getAttribute("aria-live")).toBe("polite");
     expect(screen.getByText("bo@example.org").textContent).toContain("(editing)");
+    // At phone width the names collapse to this count, hidden from screen readers (they read the
+    // names).
+    const count = document.querySelector(".pl-editbar__count");
+    expect(count?.textContent).toBe("1");
+    expect(count?.getAttribute("aria-hidden")).toBe("true");
     const save = screen.getByRole("button", { name: "Save version" });
     expect(save.getAttribute("aria-keyshortcuts")).toBe("Meta+S Control+S");
     await userEvent.click(save);
@@ -237,9 +242,7 @@ describe("LiveDraftNotice", () => {
         {...h}
       />,
     );
-    expect(screen.getByRole("note").textContent).toContain(
-      "v5 was published over the unsaved page edits",
-    );
+    expect(screen.getByRole("note").textContent).toContain("v5 published over unsaved changes");
   });
 
   it("gives a code-confirmed editor no editing actions", () => {

@@ -59,6 +59,11 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /**
+   * The edit bar names a version the bar's picker does not show yet (one saved from the page, or
+   * published meanwhile): the page reads its gate now, so both name the same version.
+   */
+  onVersionSeen?: () => void;
   /** The frame is in review mode (the comment-anchoring frame). */
   review?: boolean;
   /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
@@ -100,6 +105,7 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  onVersionSeen,
   review,
   onLeaveReview,
   liveData,
@@ -203,6 +209,11 @@ export function ViewerStage({
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
+  // The version the edit bar names (saved as, or published meanwhile) and the picker agree.
+  const named = Math.max(live.savedVersion ?? 0, live.status?.conflict_version ?? 0);
+  useEffect(() => {
+    if (!pinned && named > artifact.version) onVersionSeen?.();
+  }, [named, pinned, artifact.version, onVersionSeen]);
 
   // The toggle gets focus back when the panel closes.
   const toggleRef = useRef<HTMLButtonElement>(null);
