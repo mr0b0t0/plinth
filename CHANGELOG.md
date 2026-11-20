@@ -22,6 +22,20 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
   On instances with opaque content isolation the file leaves out the deck's image files, and says
   so. Plugin 0.23.0.
+- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
+  agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
+  vN" notice at a time, however many versions arrive in a row), and pages that keep
+  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
+  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
+  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
+  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
+  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
+  pushes, half for the people an artifact is shared with and half for everyone else, so a link
+  viewer can never tell from the socket whether the owner or a collaborator has the page open.
+  After a deploy, open pages reconnect spread over 10 seconds, and a busy shared page sends its
+  views at most one "data changed" signal per spread (2 s at the default). A
+  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.24.0: the agent's rule
+  never to tell people to reload.
 - **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
   posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
   `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
@@ -32,7 +46,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   prints or saves the design as PDF one board per page. People see the design, never its source:
   agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
   a folder with `design.html` at its top as a design. Thumbnails show each board
-  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.24.0.
+  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.25.0.
 
 ## 0.6.0 (2026-11-20)
 

@@ -13,7 +13,9 @@
 //   available, viewer ({ id, email | null, role } | null), canWrite: set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
-//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs })
+//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs }).
+//              While the app pushes changes (live views, runtime/live.ts) onSnapshot re-reads when
+//              told and polls only every 60 s; intervalMs applies while it does not
 //   PlinthError: .code unavailable | read_only | forbidden | not_found | conflict |
 //              quota_exceeded | too_large | rate_limited | expired | invalid | network;
 //              .retryAfter, .currentRev, .limit
@@ -42,6 +44,7 @@ import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
+import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
 
 /**
@@ -53,6 +56,7 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
   COMMENTS_FRAGMENT,
+  LIVE_FRAGMENT,
 ];
 
 /** Assemble the script from `fragments`, with the app channel when one of them uses it. */

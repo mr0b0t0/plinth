@@ -65,6 +65,7 @@ export const API = {
   viewPassword: "/view/:ref/password",
   viewEmail: "/view/:ref/email",
   viewCode: "/view/:ref/code",
+  viewWatch: "/view/:ref/watch", // GET WebSocket upgrade (plinth.view.v1): live views, the app only
   // comments and mentions
   comments: "/artifacts/:ref/comments",
   comment: "/comments/:id",
