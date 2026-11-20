@@ -1,7 +1,8 @@
 // Change lists when the sequence diff gives up (its edit or time cap): the changed middle is
-// anchored on blocks found once on each side, then each gap is paired in order. An unchanged block
-// must not be listed as a change, even after a block added or removed earlier in the region. The
-// diff is made to give up every time here, so the shape does not depend on how fast the machine is.
+// anchored on blocks found once on each side, then each gap is aligned by content words. An
+// unchanged block must not be listed as a change, even after a block added or removed earlier in
+// the region. The diff is made to give up every time here, so the shape does not depend on how
+// fast the machine is.
 import { describe, expect, it, vi } from "vitest";
 import { CHANGE_LIMITS, type ChangeItem, describeChanges, diffSequence } from "../src/index.ts";
 
@@ -150,6 +151,34 @@ describe("a region the diff gave up on", () => {
       });
     });
   }
+
+  it("lists no unchanged block and pairs nothing by position in a region past alignCells (3000)", () => {
+    // Unchanged paragraphs that repeat are no anchors, so the whole page is one region, far past
+    // alignCells: equal blocks match, the rest is removed or added, and nothing shifts.
+    const n = 3000;
+    const old = Array.from({ length: n }, (_, k) =>
+      k % 3 === 0 ? `Row ${k} ok` : "Same text here",
+    );
+    const now = ["Brand new paragraph", ...old.map((r) => r.replace(" ok", " edited"))];
+    const check = (list: ReturnType<typeof describeChanges>) => {
+      expect(list.truncated).toBe(true);
+      expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
+      expect(list.items.some((i) => i.kind === "changed")).toBe(false);
+      expect(list.items.some((i) => `${i.before}${i.after}`.includes("Same"))).toBe(false);
+      for (const i of list.items) {
+        if (i.kind === "removed") expect(i.before).toMatch(/^Row \d+ ok$/);
+        else expect(i.after).toMatch(/^(Row \d+ edited|Brand new paragraph)$/);
+      }
+      expect(list.items.slice(0, 3).map((i) => [i.kind, i.before ?? i.after])).toEqual([
+        ["removed", "Row 0 ok"],
+        ["added", "Brand new paragraph"],
+        ["added", "Row 0 edited"],
+      ]);
+    };
+    const page = (list: string[]) => `<h1>Rows</h1>\n${list.map((r) => `<p>${r}</p>`).join("\n")}`;
+    check(describeChanges("html", page(old), page(now)));
+    check(describeChanges("doc", ["# Rows", ...old].join("\n\n"), ["# Rows", ...now].join("\n\n")));
+  });
 
   it("keeps a deck's slides in place around an insertion and a removal", () => {
     const deck = (list: string[]) =>

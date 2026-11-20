@@ -15,6 +15,13 @@ export const CHANGE_LIMITS = {
   maxEdits: 4000,
   /** And the wall-clock cap of one diff, for inputs whose edits are few but costly to find. */
   timeoutMs: 400,
+  /**
+   * Old × new blocks of one changed region that `alignRegion` aligns by likeness; past this a
+   * region matches equal blocks only and lists the rest as removed and added.
+   */
+  alignCells: 40_000,
+  /** And the word comparisons it may make in one region, under the same fallback. */
+  alignWork: 4_000_000,
   /** Formula steps a sheet may spend so that a calculation's results can be listed. */
   sheetEvalSteps: 1_000_000,
 } as const;

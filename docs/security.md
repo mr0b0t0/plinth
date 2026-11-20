@@ -1788,7 +1788,10 @@ there is what it has to keep.
 - **Bounded work.** Every step is linear in its input: the scanner and the Markdown reader use no
   regular expression that can backtrack across a line (tests feed a megabyte of `<`, `![`, `[a](`
   and unclosed quotes). A diff stops past 4,000 edits or 400 ms and reports the region as
-  replaced; a list holds at most 200 items, and the collector cuts every excerpt and value to 160
+  replaced. Aligning the blocks of one changed region by their words is the one step that is not
+  linear: it runs only on a region of at most 40,000 old×new blocks whose word comparisons, counted
+  before any is made, stay within 4,000,000, and matches equal blocks only (in linear time) past
+  either; a list holds at most 200 items, and the collector cuts every excerpt and value to 160
   characters whatever a describer passes it; a sheet's formulas get
   1,000,000 steps. A hostile version can slow its own Compare page at most, in the viewer's own
   tab, after the page has painted.

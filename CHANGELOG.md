@@ -82,7 +82,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
   the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
   formatting changed". A heading, paragraph, slide or row added before another reads as added,
-  not as the next one renamed or changed, items come in the order the page reads, a changed list names only the item that
+  not as the next one renamed or changed: blocks pair by the words they share, never by their
+  place alone, so a paragraph rewritten with none of its words kept reads as removed and added. Items come in the order the page reads, a changed list names only the item that
   changed, and a sheet total that only recomputed for an added row is left out. A large edit the
   diff gives up on still lists only the blocks that changed, a block added or removed in it
   included, and two same-titled slides edited in

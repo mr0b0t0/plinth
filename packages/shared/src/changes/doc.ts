@@ -3,6 +3,8 @@
 // code blocks, tables and lists added, removed or changed, with excerpts of their visible text (a
 // changed list's items one at a time); images added, removed or described differently.
 // Also used for a design system's guidelines.
+
+import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import {
   type MdBlock,
@@ -11,7 +13,7 @@ import {
   type MdListItem,
   markdownBlocks,
 } from "./markdownText.ts";
-import { inReadingOrder, multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
+import { inReadingOrder, multisetChanges } from "./pairs.ts";
 import { changeExcerpt, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector, ChangeItem } from "./types.ts";
 
@@ -100,12 +102,10 @@ function listItemChanges(x: MdBlock, y: MdBlock, where: string): ChangeItem[] {
   );
   const out: ChangeItem[] = [];
   for (const h of hunks) {
-    const p = pairInOrder(
-      ai.slice(h.aStart, h.aEnd),
-      bi.slice(h.bStart, h.bEnd),
-      undefined,
-      (u, v) => sharesWord(u.text, v.text),
-    );
+    const p = alignRegion(ai.slice(h.aStart, h.aEnd), bi.slice(h.bStart, h.bEnd), {
+      key: (i) => i.text,
+      text: (i) => i.text,
+    });
     const pos = (i: MdListItem) => at.get(i) as number;
     for (const { step } of inReadingOrder(p, pos, pos, h.bStart)) {
       if (step.x && step.y && step.x.text === step.y.text) continue;
@@ -221,14 +221,14 @@ export function describeMarkdown(
     const whereA = (x: MdBlock) => place(aPlace[at(x)] as Place, scope);
     const whereB = (y: MdBlock) => place(bPlace[at(y)] as Place, scope);
     const shown = (x: MdBlock) => x.kind !== "image" && x.kind !== "definition";
-    const paired = pairInOrder(
-      removedBlocks.filter(shown),
-      addedBlocks.filter(shown),
-      (x, y) => x.kind === y.kind,
-      // A heading renamed keeps a word ("Notes" to "Field notes"); one that shares none with it
-      // but sits before one that does was added there.
-      (x, y) => sharesWord(x.text, y.text),
-    );
+    // Aligned by the content words they share: a heading renamed keeps one ("Notes" to "Field
+    // notes"), and a block added next to an edited one is not taken for it. The same text in
+    // other formatting is alike too; the same Markdown is no change.
+    const paired = alignRegion(removedBlocks.filter(shown), addedBlocks.filter(shown), {
+      key: (x) => `${x.kind}\u0000${x.text}`,
+      text: (x) => x.text,
+      compatible: (x, y) => x.kind === y.kind,
+    });
     const steps = inReadingOrder(paired, at, at, h.bStart);
     const events: Event[] = [];
     const push = (key: number, item: ChangeItem) => events.push({ key, item });
@@ -252,7 +252,7 @@ export function describeMarkdown(
     const removedKey = (x: MdBlock) => removedKeys.get(x) as number;
     for (const { key, step } of steps) {
       const { x, y } = step;
-      // A region the diff gave up on pairs unchanged blocks too: they are not changes.
+      // The same Markdown (a region the diff gave up on holds unchanged blocks too) is no change.
       if (x && y && x.raw === y.raw) continue;
       if (x && y) {
         const where = whereB(y);

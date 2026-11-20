@@ -1678,12 +1678,21 @@ from discovery tags) stays.
   “Plot 4”", "Slide 3", "Row 7, “Qty”", "Board “Home”", or nothing when the sentence says it all),
   a short sentence, and the visible text or value before and after. An item with only one side
   shows that text alone, green when added and red when removed, with no Before or After label.
-  Within a changed region, items are paired in order, preferring a heading, paragraph or HTML
-  text that is the same or keeps a word of four or more letters of its old text, a slide that
-  keeps its title or a word of its text, and a row whose first cell is the same, so a heading,
-  paragraph, slide or row added before another reads as added, not as the next one renamed or
-  overwritten; the region's items are then listed in the order a person reads the new version
-  (slides included). An item in a region the diff gave up on (below) whose
+  Within a changed region, headings, paragraphs and other blocks, list items, HTML and board
+  text, slides and boards are paired by the content words they share, never by their place
+  alone. Content words are lowercased (after NFKC), made of letters and digits, three characters
+  or longer, and not one of 50 common English function words ("the", "this", "with"); text in a
+  script written without spaces gives its pairs of characters, and two texts with no content
+  words compare all their words. Two blocks are alike by the Jaccard overlap of those words (a
+  slide by its title and text, a board by its name and text); the region's old and new blocks are
+  aligned in order so that the summed likeness is highest, a pair counting only at 0.3 or more,
+  and blocks with the same content count as fully alike. A matched pair is a change, an old block
+  left over is removed and a new one added: a paragraph inserted next to an edited one reads as
+  added, and an edit that keeps no content word reads as removed and added. A region of more than
+  40,000 old×new blocks, or one needing more than 4,000,000 word comparisons, matches equal blocks
+  only and lists the rest as removed or added. A sheet pairs rows in order, preferring one whose
+  first cell is the same, so a row added above another reads as added. The region's items are
+  then listed in the order a person reads the new version (slides included). An item in a region the diff gave up on (below) whose
   two sides are the same is left out, so only what changed is listed. A slide whose own region has
   one of its title on the other side changed in place: two same-titled slides edited where they
   are are not listed as trading places. Bidirectional controls (U+202A to U+202E, U+2066 to
@@ -1718,7 +1727,7 @@ from discovery tags) stays.
   the smallest set of edits past 4,000 edits or 400 ms. It then anchors the region on the blocks
   found exactly once in each version, keeping the longest run of them in the same order as
   unchanged (one level of a patience diff, O(n log n)), so a block added or removed does not shift
-  every later pair; what lies between two anchors is paired in order, the unchanged items left
+  every later pair; what lies between two anchors is aligned as above, the unchanged items left
   out. The list
   says when it was cut, and the two rendered versions below it always show everything. A version
   the type's checks refuse is not described in detail ("One of the two versions cannot be read in

@@ -156,14 +156,10 @@ describe("versionChanges", () => {
     expect(versionChanges(a, b)).toEqual({
       changes: {
         truncated: false,
+        // "One." and "Two." share no content word: one paragraph removed, another added.
         items: [
-          {
-            kind: "changed",
-            where: "Under “Plan”",
-            what: "Paragraph changed",
-            before: "One.",
-            after: "Two.",
-          },
+          { kind: "removed", where: "Under “Plan”", what: "Paragraph removed", before: "One." },
+          { kind: "added", where: "Under “Plan”", what: "Paragraph added", after: "Two." },
         ],
       },
       files: {

@@ -107,13 +107,9 @@ describe("doc", () => {
 
   it("lists headings, blocks and images with visible text, located by the heading above", () => {
     expect(items("doc", before, after)).toEqual<ChangeItem[]>([
-      {
-        kind: "changed",
-        where: "Under “Plan”",
-        what: "Heading “Pricing” renamed",
-        before: "Pricing",
-        after: "Prices",
-      },
+      // "Pricing" and "Prices" share no content word: one heading removed, another added.
+      { kind: "removed", where: "Under “Plan”", what: "Heading “Pricing” removed" },
+      { kind: "added", where: "Under “Plan”", what: "Heading “Prices” added" },
       {
         kind: "changed",
         where: "Under “Prices”",
@@ -175,12 +171,16 @@ describe("doc", () => {
 
   it("keeps a fenced block whole, so a heading inside code is not a heading", () => {
     expect(items("doc", "```\n# not a heading\n```", "```\n# still not\n```")).toEqual([
+      { kind: "removed", where: "", what: "Code block removed", before: "# not a heading" },
+      { kind: "added", where: "", what: "Code block added", after: "# still not" },
+    ]);
+    expect(items("doc", "```\n# a heading\n```", "```\n# a heading, not\n```")).toEqual([
       {
         kind: "changed",
         where: "",
         what: "Code block changed",
-        before: "# not a heading",
-        after: "# still not",
+        before: "# a heading",
+        after: "# a heading, not",
       },
     ]);
   });
@@ -201,15 +201,10 @@ describe("doc", () => {
         after: "Field notes",
       },
     ]);
-    // A rename that keeps no word is still a rename.
+    // A heading that keeps no content word was replaced: it is never paired by its place alone.
     expect(items("doc", "## Notes\n\nText.", "## Observations\n\nText.")).toEqual([
-      {
-        kind: "changed",
-        where: "",
-        what: "Heading “Notes” renamed",
-        before: "Notes",
-        after: "Observations",
-      },
+      { kind: "removed", where: "", what: "Heading “Notes” removed" },
+      { kind: "added", where: "", what: "Heading “Observations” added" },
     ]);
   });
 
@@ -331,8 +326,9 @@ describe("slides", () => {
         before: "say it loud",
         after: "say it louder",
       },
-      { kind: "changed", where: "Slide 4", what: "Title changed", before: "End", after: "Thanks" },
-      { kind: "added", where: "Slide 4", what: "Image chart.png added" },
+      // "End" and "Thanks" share no content word: one slide removed, another added.
+      { kind: "removed", where: "", what: "Slide 4 “End” removed" },
+      { kind: "added", where: "", what: "Slide 4 “Thanks” added" },
     ]);
   });
 
@@ -798,13 +794,9 @@ describe("design", () => {
         before: "393 × 852",
         after: "820 × 1180",
       },
-      {
-        kind: "changed",
-        where: "Board “Home page”",
-        what: "Heading “Hi” changed",
-        before: "Hi",
-        after: "Hello",
-      },
+      // "Hi" is no content word, so "Hello" is a heading added in its place.
+      { kind: "removed", where: "Board “Home page”", what: "Heading “Hi” removed" },
+      { kind: "added", where: "Board “Home page”", what: "Heading “Hello” added" },
       { kind: "changed", where: "Board “Home page”", what: "Images changed" },
       { kind: "changed", where: "Board “About”", what: "Styles changed" },
       { kind: "added", where: "", what: "Board “Banner” added", after: "1200 × 630" },
@@ -948,8 +940,10 @@ describe("html", () => {
   });
 
   it("names the changes it can and leaves layout to the rendered versions", () => {
+    // "Hi" is no content word, so "Hello" is text added in its place; the class is not named.
     expect(items("html", '<p class="a">Hi</p>', '<p class="b">Hello</p>')).toEqual([
-      { kind: "changed", where: "", what: "Text changed", before: "Hi", after: "Hello" },
+      { kind: "removed", where: "", what: "Text removed", before: "Hi" },
+      { kind: "added", where: "", what: "Text added", after: "Hello" },
     ]);
   });
 });

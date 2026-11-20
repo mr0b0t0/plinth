@@ -371,13 +371,15 @@ test("a 5,000-line document's changes are listed quickly, and the list is capped
   ]);
   await signInApi(page.request, email);
 
-  // Scattered edits: one item per changed paragraph, each with its two excerpts.
+  // Scattered edits: one item per changed paragraph, each with its two excerpts. "Row 0" to
+  // "Line 0" and "Row 50" to "Line 50" keep no content word (a number under three digits is
+  // none), so each of those two reads as one paragraph removed and another added.
   const t0 = Date.now();
   await page.goto(`/a/${slug}/compare?from=1&to=2`);
   const scattered = page.getByRole("region", { name: "Changes" });
   await expect(scattered.getByRole("listitem").first()).toBeVisible();
   const scatteredMs = Date.now() - t0;
-  await expect(scattered.getByRole("list").first().getByRole("listitem")).toHaveCount(100);
+  await expect(scattered.getByRole("list").first().getByRole("listitem")).toHaveCount(102);
   await expect(scattered.getByRole("listitem").filter({ hasText: "Line 4950" })).toContainText(
     "Row 4950",
   );

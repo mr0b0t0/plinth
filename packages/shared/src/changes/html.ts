@@ -3,9 +3,10 @@
 // removed (counted), and whether styles or scripts changed. A page whose markup changed in a way
 // none of these name gets one item, CHANGES_LAYOUT. Markup and code are never quoted.
 import { type DesignBoard, type DesignSource, parseDesign } from "../design.ts";
+import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import { type HtmlScan, type HtmlTextRun, markupSignature, scanHtml } from "./htmlScan.ts";
-import { inReadingOrder, multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
+import { inReadingOrder, multisetChanges } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
@@ -42,18 +43,17 @@ function describeRuns(
     for (const [k, r] of removedRuns.entries()) index.set(r, h.aStart + k);
     for (const [k, r] of addedRuns.entries()) index.set(r, h.bStart + k);
     const at = (r: HtmlTextRun) => index.get(r) as number;
-    const paired = pairInOrder(
-      removedRuns,
-      addedRuns,
-      (x, y) => x.heading === y.heading,
-      // As in a doc: a heading renamed or a paragraph edited keeps a word (or is the same), so a
-      // heading or paragraph added before it is not taken for it.
-      (x, y) => key(x) === key(y) || sharesWord(x.text, y.text),
-    );
+    // Aligned by the content words they share, so a heading or paragraph added next to an edited
+    // one is not taken for it.
+    const paired = alignRegion(removedRuns, addedRuns, {
+      key,
+      text: (r) => r.text,
+      compatible: (x, y) => x.heading === y.heading,
+    });
     // In the order a person reads the page, so a heading added above a changed one comes first.
     for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
       const { x, y } = step;
-      // A region the diff gave up on pairs unchanged runs too: they are not changes.
+      // Equal runs (a region the diff gave up on holds unchanged ones too) are not changes.
       if (x && y && key(x) === key(y)) continue;
       if (x && y) {
         out.add(
@@ -204,10 +204,22 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
     moved.add(x).add(y);
     same.push([x, y]);
   }
+  // A board renamed in place keeps its contents or the words of its name and text; one that
+  // shares neither with any board it replaced is removed, and the new one added.
+  const words = new Map<DesignBoard, string>();
+  const text = (x: DesignBoard) => {
+    let t = words.get(x);
+    if (t === undefined) {
+      t = [x.name, ...scanHtml(x.html).runs.map((r) => r.text)].join(" ");
+      words.set(x, t);
+    }
+    return t;
+  };
   for (const region of regions) {
-    const p = pairInOrder(
+    const p = alignRegion(
       region.removed.filter((x) => !moved.has(x)),
       region.added.filter((x) => !moved.has(x)),
+      { key: (x) => x.html, text },
     );
     for (const x of p.removed) out.add({ kind: "removed", where: "", what: `${name(x)} removed` });
     same.push(...p.pairs);

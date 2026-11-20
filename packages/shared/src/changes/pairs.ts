@@ -1,5 +1,7 @@
-// Pairing the two sides of one changed region: the items of a region that differs are matched in
-// order, so "the second paragraph became this" reads as one change, not a removal and an addition.
+// Pairing the two sides of one changed region, and listing it in reading order. Text blocks
+// (HTML, boards, docs, slides) are aligned by likeness (`alignRegion`, align.ts); a sheet's rows
+// and columns are matched in order by `pairInOrder`, so "the second row became this" reads as one
+// change, not a removal and an addition.
 
 export interface Paired<T> {
   /** Matched in order: [before, after]. */
@@ -94,17 +96,6 @@ export function inReadingOrder<T>(
   }
   // A stable sort: a removal and the pairs keep their own order on equal keys.
   return out.sort((u, v) => u.key - v.key);
-}
-
-/** Whether two texts share a word of four or more letters, ignoring case. */
-export function sharesWord(a: string, b: string): boolean {
-  const words = (t: string) =>
-    t
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((w) => w.length >= 4);
-  const seen = new Set(words(a));
-  return words(b).some((w) => seen.has(w));
 }
 
 /**

@@ -1,9 +1,10 @@
 // What changed in a deck (slides.md): slides added, removed and moved; per slide its title, its
 // text, its columns, its images and its speaker notes; and the deck settings.
 import { type DeckSettings, parseDeck, type SlideSource } from "../slides.ts";
+import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import { markdownBlocks } from "./markdownText.ts";
-import { inReadingOrder, multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
+import { inReadingOrder, multisetChanges } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
@@ -212,21 +213,16 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
     for (const [k, s] of a.slice(h.aStart, h.aEnd).entries()) index.set(s, h.aStart + k);
     for (const [k, s] of b.slice(h.bStart, h.bEnd).entries()) index.set(s, h.bStart + k);
     const at = (s: Slide) => index.get(s) as number;
-    const paired = pairInOrder(
-      removedSlides,
-      addedSlides,
-      undefined,
-      // A slide edited in place keeps its title or a word of its text (or is the same), so a slide
-      // added before it is not taken for it.
-      (x, y) =>
-        x.key === y.key ||
-        (x.title !== "" && x.title === y.title) ||
-        sharesWord(`${x.title} ${x.text}`, `${y.title} ${y.text}`),
-    );
+    // Aligned by the content words of their title and text, so a slide added next to an edited
+    // one is not taken for it.
+    const paired = alignRegion(removedSlides, addedSlides, {
+      key: (s) => s.key,
+      text: (s) => `${s.title} ${s.text}`,
+    });
     // In the order a person reads the deck, so a slide added before an edited one comes first.
     for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
       const { x, y } = step;
-      // A region the diff gave up on pairs unchanged slides too: they are not changes.
+      // The same slide (a region the diff gave up on holds unchanged ones too) is no change.
       if (x && y && x.key === y.key) continue;
       // Every other step lists at least one item: once the list is full, the rest is cut.
       if (out.full) {

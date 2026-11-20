@@ -7,6 +7,7 @@ import type { ArtifactType } from "../artifactTypes.ts";
 import { CHANGE_DESCRIBERS, type ChangeDescriber } from "./describers.ts";
 import { ChangeCollector, type ChangeList } from "./types.ts";
 
+export * from "./align.ts";
 export type { ChangeDescriber } from "./describers.ts";
 export * from "./diff.ts";
 export * from "./files.ts";
