@@ -825,7 +825,8 @@ export class RichBlockEditor {
       this.altInput = null;
     }
     if (old) old.replaceWith(content);
-    else this.el.append(content);
+    // Before the link field, which docks under the text at phone width.
+    else this.el.insertBefore(content, this.linkForm);
     this.content = content;
   }
 
@@ -854,9 +855,9 @@ export class RichBlockEditor {
   }
 
   /**
-   * Places a floating bar (the format bar or the link field) next to `at`, a rectangle in the
-   * frame: above it, or below it when there is no room above, or on touch screens, where the
-   * browser's own selection menu takes the place above. Kept inside the frame's width.
+   * Places the format bar next to `at`, a rectangle in the frame: above it, or below it when there
+   * is no room above, or on touch screens, where the browser's own selection menu takes the place
+   * above. Kept inside the frame's width.
    */
   private float(box: HTMLElement, at: DOMRect): void {
     const win = this.doc.defaultView;
@@ -872,6 +873,21 @@ export class RichBlockEditor {
     const top = above ? at.top - h - EDGE : at.bottom + EDGE;
     const left = Math.max(EDGE, Math.min(vw - w - EDGE, (at.left + at.right) / 2 - w / 2));
     box.style.top = `${Math.round(top - host.top)}px`;
+    box.style.left = `${Math.round(left - host.left)}px`;
+  }
+
+  /**
+   * Places the link field under `at` (the text it links), from that text's left edge and inside
+   * the block's column, so it covers neither the text nor a heading above it. At phone width the
+   * stylesheet docks it in the block's flow instead, under the block's text, and this places
+   * nothing.
+   */
+  private under(box: HTMLElement, at: DOMRect): void {
+    if (this.doc.defaultView?.getComputedStyle(box).position === "static") return;
+    const host = this.el.getBoundingClientRect();
+    const w = box.offsetWidth;
+    const left = Math.max(host.left, Math.min(host.right - w, at.left));
+    box.style.top = `${Math.round(at.bottom + EDGE / 2 - host.top)}px`;
     box.style.left = `${Math.round(left - host.left)}px`;
   }
 
@@ -1199,11 +1215,11 @@ export class RichBlockEditor {
     const href = linkAt(c, range.from.offset)?.href ?? "";
     this.linkInput.value = href;
     this.removeButton.hidden = href === "";
-    // The field takes the format bar's place, at the text it links, with both on screen.
+    // The field takes the format bar's place, under the text it links, with both on screen.
     const at = this.selectionRect();
     this.toolbar.hidden = true;
     this.linkForm.hidden = false;
-    this.float(this.linkForm, at);
+    this.under(this.linkForm, at);
     this.linkInput.focus({ preventScroll: true });
     reveal(this.doc.defaultView, [
       this.linkForm.getBoundingClientRect(),

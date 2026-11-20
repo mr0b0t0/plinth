@@ -328,20 +328,47 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
-  it("asks the app about a block it cannot edit, by its place and never its text", async () => {
-    mountShell("Intro\n\n- secret item\n\n  ```\n  fenced in a list\n  ```");
+  it("asks the app about a block by its place and its published words, never draft text", async () => {
+    mountShell("Intro\n\n- first item\n\n  ```\n  fenced in a list\n  ```\n\n![Old alt](x.png)");
     stop = boot(window);
     post({ ...base, type: "edit", on: true });
     await Promise.resolve();
+    const askButton = () =>
+      [...root().querySelectorAll("button")].find(
+        (b) => b.textContent === "Ask an agent",
+      ) as HTMLElement;
     (root().querySelector("ul") as HTMLElement).click();
-    const ask = [...root().querySelectorAll("button")].find(
-      (b) => b.textContent === "Ask an agent",
-    ) as HTMLElement;
-    ask.click();
+    askButton().click();
     expect(posted("ask")).toEqual([
-      { ...base, type: "ask", anchor: { key: "block-2", text: "" }, what: "list" },
+      {
+        ...base,
+        type: "ask",
+        anchor: { key: "block-2", text: "first item fenced in a list" },
+        what: "list",
+      },
     ]);
-    expect(JSON.stringify(posted("ask"))).not.toContain("secret");
+    const image = () => (root().querySelector("img") as HTMLElement).closest("p") as HTMLElement;
+    image().click();
+    askButton().click();
+    expect(posted("ask").at(-1)).toEqual({
+      ...base,
+      type: "ask",
+      anchor: { key: "block-3:image", text: "Old alt" },
+      what: "image",
+    });
+    // Alt text changed in the draft is not posted: the dialog names the kind of block instead.
+    image().click();
+    const alt = root().querySelector(".plinth-rich__alt input") as HTMLInputElement;
+    alt.value = "Draft alt";
+    alt.dispatchEvent(new Event("input", { bubbles: true }));
+    askButton().click();
+    expect(posted("ask").at(-1)).toEqual({
+      ...base,
+      type: "ask",
+      anchor: { key: "block-3:image", text: "" },
+      what: "image",
+    });
+    expect(JSON.stringify(posted("ask"))).not.toContain("Draft");
   });
 
   it("with live: room, follows the live draft over the doc socket, never sending text to the app", async () => {

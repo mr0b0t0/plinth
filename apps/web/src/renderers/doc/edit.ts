@@ -41,6 +41,7 @@ import {
   type LineRange,
   liveRules,
   type MdEnv,
+  PAGE_COMMENT_LIMITS,
   type RichBlock,
   type RichInline,
   rangesOverlap,
@@ -181,7 +182,10 @@ export class LocalDoc implements DocBackend {
   }
 }
 
-/** A place on the page an agent is asked about (`ask`): a structural name, never content. */
+/**
+ * A place on the page an agent is asked about (`ask`): a structural key, and the first words of
+ * the block for the dialog's "About" line (empty for a block with no text).
+ */
 export interface AskAnchor {
   key: string;
   text: string;
@@ -202,7 +206,51 @@ export interface EditorHooks {
   ask?(anchor: AskAnchor, what: AskWhat): void;
 }
 
-/** What a drawn block is, in the Ask dialog's words ("About: list"); its text stays here. */
+/** Elements whose text reads as separate words from the text next to them. */
+const WORD_BREAKS = new Set([
+  "BR",
+  "P",
+  "LI",
+  "TD",
+  "TH",
+  "TR",
+  "PRE",
+  "BLOCKQUOTE",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+]);
+
+/**
+ * The first words of a block as the person sees them, for the Ask dialog's "About" line: spaces
+ * between cells, items and lines, every run of white space or control characters one space, at
+ * most the page anchor's length.
+ */
+export function blockWords(nodes: Node[]): string {
+  const parts: string[] = [];
+  const walk = (n: Node) => {
+    if (n.nodeType === 3) parts.push(n.nodeValue ?? "");
+    else if (n.nodeType === 1) {
+      // A heading's "#" link is not its text.
+      if ((n as Element).classList.contains("plinth-doc__anchor")) return;
+      const br = WORD_BREAKS.has((n as Element).tagName);
+      if (br) parts.push(" ");
+      for (const c of Array.from(n.childNodes)) walk(c);
+      if (br) parts.push(" ");
+    }
+  };
+  for (const n of nodes) walk(n);
+  // Control characters (none of them shown) read as spaces, as white space does.
+  const spaced = Array.from(parts.join(""), (c) => (c < " " || c === "\u007f" ? " " : c));
+  const text = spaced.join("").replace(/\s+/g, " ").trim();
+  return Array.from(text).slice(0, PAGE_COMMENT_LIMITS.maxText).join("").trimEnd();
+}
+
+/** What a drawn block is, in the Ask dialog's words ("About: the list"), for one with no text. */
 function whatOf(nodes: Node[]): AskWhat {
   const el = nodes.find((n): n is Element => n.nodeType === 1);
   if (!el) return "block";
@@ -1154,19 +1202,29 @@ export class DocEditor {
     const index = this.blockAt(start)?.index ?? 0;
     const sel = this.selected;
     const open = this.open?.rich.model;
+    const nodes =
+      sel?.start === start ? Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar) : null;
     const what: AskWhat = image
       ? "image"
-      : sel?.start === start
-        ? whatOf(Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar))
+      : nodes
+        ? whatOf(nodes)
         : open
           ? whatOfModel(open)
           : "block";
+    // The block's first words, as the person sees them (an open image's alt text): its number
+    // would mean nothing to the person asking. "Insert below, Image" asks about an image that is
+    // not there yet, and the dialog names the kind of block instead. The frame posts them only
+    // when the published version has them too (boot.ts).
+    const text =
+      open?.t === "image"
+        ? blockWords([this.doc.createTextNode(open.alt)])
+        : !image && nodes
+          ? blockWords(nodes)
+          : "";
     this.close(true);
     this.deselect();
     const n = index + 1;
-    // A structural key and no label: a block's number would mean nothing to the person asking,
-    // and its text stays in the frame. The dialog says only what kind of block it is about.
-    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text: "" }, what);
+    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text }, what);
   }
 
   private turn(kind: BlockKind): void {

@@ -297,7 +297,7 @@ export interface LiveFrameStatus {
 
 /**
  * What kind of block an `ask` is about, for the Ask dialog's "About" line when the anchor has no
- * text (a doc names its blocks by number and keeps their text in the frame). Never posted.
+ * text (a doc's divider, or the image "Insert below" asks for). Never posted.
  */
 export const ASK_WHAT = [
   "paragraph",

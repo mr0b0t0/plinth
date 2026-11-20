@@ -1,9 +1,11 @@
 // The doc's block menu (doc-blocks): one button that opens a short menu of block actions (Turn
 // into, Insert below, Move up and down, Delete). "Turn into", "Insert below" and its "Table" open
-// in place of the menu, with a way back, so the menu stays short at any width. Built with
-// createElement and textContent only, keyboard first: arrow keys, Home and End move between
-// items, Enter or ArrowRight opens a sub-menu, ArrowLeft or Escape goes back (Escape at the top
-// closes and gives focus back to the button), and a click outside closes it.
+// in place of the menu, with a way back, so the menu stays short at any width. It stays inside the
+// frame: below its button, above it when there is no room below, or moved up as far as it must
+// when there is room on neither side. Built with createElement and textContent only, keyboard
+// first: arrow keys, Home and End move between items, Enter or ArrowRight opens a sub-menu,
+// ArrowLeft or Escape goes back (Escape at the top closes and gives focus back to the button), and
+// a click outside closes it.
 
 export interface MenuItem {
   label: string;
@@ -30,6 +32,10 @@ export const MAX_TABLE_ROWS = 50;
 export const MAX_TABLE_COLS = 10;
 
 let counter = 0;
+
+/** How far the menu keeps from its button and from the frame's edges. */
+const GAP = 4;
+const MARGIN = 8;
 
 export class BlockMenu {
   readonly button: HTMLButtonElement;
@@ -101,8 +107,35 @@ export class BlockMenu {
       for (const item of g.items) group.append(this.item(item));
       panel.append(group);
     });
+    this.place();
     const items = this.items();
-    (items.find((i) => i.textContent === from) ?? items[0])?.focus();
+    (items.find((i) => i.textContent === from) ?? items[0])?.focus({ preventScroll: true });
+  }
+
+  /**
+   * Keeps the level just drawn inside the frame, so its last items show without scrolling the
+   * page: below the button, else above it, else as low as it fits.
+   */
+  private place(): void {
+    const panel = this.panel;
+    const win = this.doc.defaultView;
+    // Its parent is the block's corner, which is positioned: `top` counts from there.
+    const parent = panel?.parentElement;
+    if (!panel || !win || !parent) return;
+    panel.style.top = "";
+    panel.style.maxHeight = "";
+    const room = win.innerHeight - 2 * MARGIN;
+    if (panel.offsetHeight > room) panel.style.maxHeight = `${room}px`;
+    const h = panel.offsetHeight;
+    const b = this.button.getBoundingClientRect();
+    let top = b.bottom + GAP;
+    if (top + h > win.innerHeight - MARGIN) {
+      const above = b.top - GAP - h;
+      top = above >= MARGIN ? above : Math.max(MARGIN, win.innerHeight - MARGIN - h);
+    }
+    const box = parent.getBoundingClientRect();
+    panel.style.marginTop = "0";
+    panel.style.top = `${Math.round(top - box.top - parent.clientTop)}px`;
   }
 
   /** Goes back one level, with focus on the item that opened the level left. */
@@ -144,13 +177,14 @@ export class BlockMenu {
     if (item.table) group.append(this.tableForm(item.table));
     else for (const s of item.sub ?? []) group.append(this.item(s));
     panel.append(back, this.separator(), group);
+    this.place();
     const items = this.items().filter((i) => i !== back);
     const first = item.table
       ? group.querySelector<HTMLElement>("input")
       : (items.find((i) => i.textContent === from) ??
         items.find((i) => i.getAttribute("aria-checked") === "true") ??
         items[0]);
-    first?.focus();
+    first?.focus({ preventScroll: true });
   }
 
   private separator(): HTMLElement {

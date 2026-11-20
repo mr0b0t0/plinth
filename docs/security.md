@@ -2668,8 +2668,11 @@ CSP, sandbox flag or env var was added.
   sends is read back first and is not sent when it would not round trip. Untouched blocks, and the
   reference definitions after a block, keep their bytes.
 - **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
-  `block-3:image`) and no label, never the block's text, so no draft text
-  reaches the app page; the app accepts it only as an editing message, with the frame key (see
+  `block-3:image`) and, as its text, the block's first words (an image's alt text), at most the
+  page anchor's 120 characters with control characters as spaces. The frame posts those words only
+  when a block of the published version it was served (or an image in it) has the same words, and
+  an empty text otherwise, so no draft text reaches the app page; the app shows them as text and
+  accepts the message only as an editing message, with the frame key (see
   [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "About" line, is
   one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the
   message for any other value, renders it as text, and never posts it.

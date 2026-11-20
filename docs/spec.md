@@ -2637,9 +2637,10 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
   draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
   and a page anchor (`{ kind: "page", key, text }`, a structural name such as `slide-3:image-1`,
-  whose `text`, when there is one, is shown as text, as "About: …"; an anchor without text, a doc
-  block's, shows the kind of block the message names in `what`, one of a fixed list, such as
-  "About: list", which is never posted); the renderer releases its own lease before it asks. While the app is in edit
+  whose `text`, when there is one, is shown as text, as "About: “…”"; an anchor without text,
+  such as a doc's divider, shows the kind of block the message names in `what`, one of a fixed
+  list, such as "About: the list", which is never posted); the renderer releases its own lease
+  before it asks. While the app is in edit
   mode, an `ask` without the frame's key is dropped like any other editing message; only outside
   edit mode does a keyless `ask` open the comments panel in request mode. It has the description, the
   agent choice and "Publish my changes first", off by default and shown only when there are
@@ -2721,8 +2722,8 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   address, percent-encoded with the host in punycode) and Shift+X (strikethrough). Enter ends a
   block (a new item in a list, a new paragraph in a quote), Shift+Enter is a line break, Tab and
   Shift+Tab indent and outdent list items (three levels at most) and move between table cells,
-  and Esc gives the block back. The link field opens in the format bar's place and offers "Remove
-  link" only on a link. The rest of the time an open block shows only its menu button, "⋯", at
+  and Esc gives the block back. The link field opens in the format bar's place, under the text it
+  links, and offers "Remove link" only on a link. The rest of the time an open block shows only its menu button, "⋯", at
   its corner. Each block's menu has five items: "Turn into" (paragraph, heading 1 to 3, bulleted or numbered
   list, quote, code block), "Insert below" (the same kinds, "Divider", "Table", which asks for a
   size, and "Image", which asks an agent), "Move up", "Move down" and "Delete". "Turn into",
@@ -2763,8 +2764,12 @@ the same leases, room, drafts and Publish as [Editing](#editing).
 - **Images are agent-only.** An image block's menu has "Alt text" in place of "Turn into", which
   opens the alt text field at the block's corner (Enter or Esc closes it); the image itself, and
   adding one, are left to agents through Ask an agent, whose page anchor names the place
-  (`block-3`, or `block-3:image`) with no label, never its text: the Ask dialog's "About" line
-  says only what kind of block it is ("About: list", "About: image"). An open image block has its
+  (`block-3`, or `block-3:image`, never a block number the person would have to count) with the
+  block's first words, or an image's alt text, as its text, so the Ask dialog's "About" line reads
+  as the block does ("About: “Maria: launch post and pricing page…”"). The frame posts those
+  words only when a block of the published version has the same words, so no draft text reaches
+  the app; otherwise, and for a block with no text, the line names the kind of block ("About: the
+  list", "About: the image"). An open image block has its
   own "Ask an agent" for its image at its corner, beside the menu, as a read-only block has, and
   its "Insert below" has no "Image" (it would ask the same).
 - **An empty doc** shows "Write something", which starts a new paragraph.
@@ -2773,7 +2778,11 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   and Ask an agent where it has one) is a small bar on the block's top right edge, over the gap
   between blocks, or on its bottom edge when the block opens too near the top of the frame. An
   image's alt text field hangs from the same edge over the image. The format bar and the link
-  field show only for selected text. Opening a block, its link field or its alt text field scrolls
+  field show only for selected text; the link field opens under that text, inside the block's
+  column, so it covers neither the text nor a heading above it, and at phone width it docks in the
+  block under its text. The block menu opens below its button, above it when there is no room
+  below, or moved up as far as it must, so every item ("Table" and "Image" at the end of "Insert
+  below" too) shows without scrolling the frame. Opening a block, its link field or its alt text field scrolls
   the page by the least that shows the block and the field. A selected read-only block and a block
   someone else holds are drawn the same way; in a table the cells keep the page's background and
   stripes, so only the frame around it is tinted. Hovering a block gives it a fainter tint of the

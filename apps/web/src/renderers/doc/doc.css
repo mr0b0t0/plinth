@@ -223,7 +223,8 @@
   top: 100%;
   min-width: 12rem;
   max-width: min(22rem, calc(100vw - 2rem));
-  max-height: min(28rem, 70vh);
+  /* The editor keeps it inside the frame (menu.ts); this is the most it may take. */
+  max-height: calc(100vh - 16px);
   overflow-y: auto;
   margin-top: 0.25rem;
   padding: 0.25rem;

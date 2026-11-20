@@ -32,7 +32,7 @@ export interface AskDialogProps {
   owner: boolean;
   /** The place the renderer named (an in-frame `ask`), or null for the whole page. */
   anchor: AskAnchor | null;
-  /** What kind of block that place is, for an anchor without text ("About: list"). */
+  /** What kind of block that place is, for an anchor without text ("About: the list"). */
   what?: AskWhat | null;
   live: Pick<LiveEdit, "status" | "mode" | "publishFirst">;
   /** The version being edited. */
@@ -197,11 +197,15 @@ export function AskDialog({
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
         {anchor?.text ? (
           <p className="pl-ask__anchor">
-            About: <q>{excerpt(anchor.text, 60)}</q>
+            About: <q>{excerpt(anchor.text, 60).replace(/\s+…$/, "…")}</q>
           </p>
         ) : (
           anchor &&
-          what && <p className="pl-ask__anchor">About: {what === "block" ? "this block" : what}</p>
+          what && (
+            <p className="pl-ask__anchor">
+              About: {what === "block" ? "this block" : `the ${what}`}
+            </p>
+          )
         )}
         <Textarea
           label="What should change?"

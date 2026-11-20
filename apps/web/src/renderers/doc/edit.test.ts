@@ -573,6 +573,65 @@ describe("DocEditor: the block menu", () => {
     }
   });
 
+  it("keeps the block menu inside the frame: below its button, else above, else as low as fits", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get");
+    try {
+      setup("one\n\ntwo");
+      click(root.querySelector("p") as Element);
+      const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(
+        -1,
+      ) as HTMLElement;
+      height.mockReturnValue(300);
+      const vh = window.innerHeight;
+      // Every box sits where the button is, so `top` reads from the button's own top.
+      const at = (y: number) => rect.mockReturnValue(new DOMRect(500, y, 24, 24));
+      const top = () => (document.querySelector(".plinth-doc__menu") as HTMLElement).style.top;
+      at(100);
+      click(button);
+      expect(top()).toBe("28px");
+      key(document.querySelector(".plinth-doc__menu") as Element, "Escape");
+      // No room below: above the button.
+      at(vh - 50);
+      click(button);
+      expect(top()).toBe("-304px");
+      // Opening a sub-menu places it again: room on neither side, so as low as it fits.
+      height.mockReturnValue(vh - 100);
+      at(300);
+      click(menuItem("Insert below"));
+      expect(top()).toBe(`${vh - 8 - (vh - 100) - 300}px`);
+    } finally {
+      rect.mockRestore();
+      height.mockRestore();
+    }
+  });
+
+  it("opens the link field under the text it links, inside the block's column", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const style = document.createElement("style");
+    style.textContent = ".plinth-rich__link { position: absolute; }";
+    document.head.append(style);
+    try {
+      const { editor } = setup("one two three");
+      click(root.querySelector("p") as Element);
+      const r = rich(editor);
+      rect.mockReturnValue(new DOMRect(100, 200, 400, 40));
+      select(r.editable, 0, 3);
+      document.dispatchEvent(new Event("selectionchange"));
+      key(r.editable, "k", { metaKey: true });
+      const link = r.el.querySelector(":scope > .plinth-rich__link") as HTMLElement;
+      expect(link.hidden).toBe(false);
+      // 4px under the text's bottom edge, from its left edge.
+      expect(link.style.top).toBe("44px");
+      expect(link.style.left).toBe("0px");
+      // It comes after the text, where it docks at phone width.
+      expect(r.editable.nextElementSibling).toBe(link);
+    } finally {
+      rect.mockRestore();
+      style.remove();
+    }
+  });
+
   it("scrolls a block opened below the frame into view, with its corner", async () => {
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
     const scroll = vi.spyOn(window, "scrollBy").mockImplementation(() => undefined);
@@ -1036,8 +1095,8 @@ describe("DocEditor: read-only blocks and images", () => {
     // Two controls only: Ask an agent and the block menu, with no paragraph of text.
     expect(bar.children).toHaveLength(2);
     click(askButton);
-    // A structural key and no label (no block number, none of its text).
-    expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "" }, "list");
+    // A structural key and the block's first words (never its number).
+    expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "item code" }, "list");
     expect(root.querySelector(".plinth-doc__selected")).toBeNull();
     // Move and Delete keep its bytes.
     click(root.querySelector("ul") as Element);
@@ -1103,7 +1162,7 @@ describe("DocEditor: read-only blocks and images", () => {
     click(
       [...r.el.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
     );
-    expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "" }, "image");
+    expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "Sales [chart]" }, "image");
     expect(editor.openEditor).toBeNull();
   });
 

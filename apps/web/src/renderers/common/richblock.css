@@ -1,7 +1,8 @@
 /* Formatted-text editing of one block (richblock.ts): the format bar, the link field, the block's
    corner, the alt text field and the editable text. The block keeps the page's own look and place,
-   and its controls hide as little of the page as they can: the format bar (and the link field in
-   its place) shows only while text is selected, next to the selection, and the rest of the time
+   and its controls hide as little of the page as they can: the format bar shows only while text
+   is selected, next to the selection (the link field opens in its place, under the text), and the
+   rest of the time
    the block has only its corner, a small bar on its top right edge (its bottom edge with
    plinth-rich--below) where an image's alt text field opens too. Colours come from the renderer's
    own palette (--doc-* on a doc), with neutral fallbacks; every focus ring is the editing accent
@@ -36,9 +37,19 @@
   max-width: calc(100vw - 16px);
   padding: 0.125rem;
 }
+/* Under the text it links, inside the block's column. */
 .plinth-rich__link {
-  width: min(28rem, calc(100vw - 16px));
+  width: min(28rem, 100%);
   gap: 0.25rem;
+}
+/* At phone width it docks in the block, under its text, and covers nothing. */
+@media (max-width: 480px) {
+  .plinth-rich__link {
+    position: static;
+    width: auto;
+    margin-top: 0.5rem;
+    box-shadow: none;
+  }
 }
 /* On the open block's top right edge, half over the gap above it, so it covers next to nothing. */
 .plinth-rich__corner,

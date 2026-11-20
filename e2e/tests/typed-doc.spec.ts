@@ -632,9 +632,8 @@ test.describe("editing a doc on its page as formatted text", () => {
       await expect(askAgent).toHaveAttribute("title", /can't be edited here/);
       await askAgent.click();
       const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-      // It says what kind of block it is about, never the block's text.
-      await expect(dialog).toContainText("About: list");
-      await expect(dialog).not.toContainText("An item");
+      // It says which block it is about by the block's first words (quoted), never its number.
+      await expect(dialog.locator(".pl-ask__anchor")).toHaveText("About: An item fenced in a list");
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await expect(dialog).toHaveCount(0);
 
