@@ -49,7 +49,7 @@ test("adding a person with Notify people emails them a link that opens the page"
   await page.getByRole("textbox", { name: "Email address" }).fill(invitee);
   await page.getByLabel("Role", { exact: true }).selectOption("commenter");
   await page.getByRole("button", { name: "Add person" }).click();
-  await expect(page.getByText(/Invitation emailed/)).toBeVisible();
+  await expect(page.getByLabel(`Role for ${invitee}`)).toBeVisible();
 
   const mail = await latestEmail(page.request, invitee);
   expect(mail.subject).toBe(`${owner} shared "Launch plan" with you`);

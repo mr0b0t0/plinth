@@ -1692,7 +1692,8 @@ when the user told it to.
   `recipient_limit`, which covers both per-address limits, `instance_limit` and
   `invitations_off`). Without it, the result is exactly as
   before. A skipped invitation never fails the change: the grants are
-  saved either way. The app names the people it did not email, and why, in a toast.
+  saved either way. The app names the people it did not email, and why, in the change's one toast
+  (a warning in place of the success toast).
 - **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
   alone when the owner has no display name; the body names the
   owner by display name and address, the title (for a category, the name its people see, never the

@@ -219,17 +219,20 @@ export function ShareCategoryDialog({
     const notEmailed = invitationSkippedSummary(
       res && "share" in res ? res.invitations : undefined,
     );
-    if (notEmailed) {
-      toast.toast({ title: "No invitation sent", description: notEmailed, tone: "warning" });
-    }
     const skipped = skippedText(review, sent);
     if (skipped) {
+      if (notEmailed) {
+        toast.toast({ title: "No invitation sent", description: notEmailed, tone: "warning" });
+      }
       setNote(skipped);
       setReload((n) => n + 1);
       setBusy(false);
       return;
     }
-    toast.success(shareId ? "Sharing saved" : "Category shared", title.trim() || category);
+    // One toast: people the Worker did not email turn it into a warning that names them and why.
+    const done = shareId ? "Sharing saved" : "Category shared";
+    if (notEmailed) toast.toast({ title: done, description: notEmailed, tone: "warning" });
+    else toast.success(done, title.trim() || category);
     onDone({ id });
   };
 
@@ -438,7 +441,6 @@ export function ShareCategoryDialog({
             {invitations && (
               <Checkbox
                 label="Notify people"
-                hint="When you save, email the people you add the link to this collection, in your name."
                 checked={notify}
                 onChange={(e) => setNotify(e.target.checked)}
               />

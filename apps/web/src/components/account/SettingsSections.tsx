@@ -497,14 +497,10 @@ export function PeopleSection({
     const res = await put(r.grants, invitations && notify);
     if (res) {
       setEmail("");
-      const emailed = added && res.invitations?.emailed.includes(added.email);
-      toast.success(
-        "Person added",
-        `${added?.email} · ${ROLE_META[role].label}${emailed ? " · Invitation emailed" : ""}`,
-      );
+      // One toast: a person the Worker did not email turns it into a warning that says why.
       const skipped = invitationSkippedSummary(res.invitations);
-      if (skipped)
-        toast.toast({ title: "No invitation sent", description: skipped, tone: "warning" });
+      if (skipped) toast.toast({ title: "Person added", description: skipped, tone: "warning" });
+      else toast.success("Person added", `${added?.email} · ${ROLE_META[role].label}`);
       emailRef.current?.focus();
     }
   };
@@ -613,7 +609,6 @@ export function PeopleSection({
         {invitations && (
           <Checkbox
             label="Notify people"
-            hint="Email the person you add the link to this artifact, in your name."
             checked={notify}
             className="pl-acct-add__notify"
             onChange={(e) => setNotify(e.target.checked)}

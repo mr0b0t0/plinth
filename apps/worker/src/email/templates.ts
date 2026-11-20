@@ -71,11 +71,10 @@ const ROLE_SENTENCE: Record<"artifact" | "category", Record<Role, string>> = {
     editor: "You can view it, comment on it and publish new versions of it.",
   },
   category: {
-    viewer: "It is a collection of artifacts. You can view the ones it shares with you.",
-    commenter:
-      "It is a collection of artifacts. You can view the ones it shares with you and comment on them.",
+    viewer: "You can view the artifacts in it.",
+    commenter: "You can view the artifacts in it and comment on them.",
     // Category grants are viewer or commenter only (never editor); kept so the table is total.
-    editor: "It is a collection of artifacts. You can view the ones it shares with you.",
+    editor: "You can view the artifacts in it.",
   },
 };
 
@@ -104,7 +103,6 @@ export function invitationEmail(opts: {
   // in an inbox list either.
   const subject = `${who} shared "${subjectTitle}" with you`;
   const role = ROLE_SENTENCE[opts.kind][opts.role];
-  const confirm = `If ${PRODUCT_NAME} asks who you are when you open it, confirm this email address with the code it sends you then.`;
   const authored = `The title${name ? " and the name" : ""} above were written by the person who shared it, not by ${PRODUCT_NAME}.`;
   const why = `You got this email because ${opts.ownerEmail} added ${opts.to} on ${PRODUCT_NAME}. If you did not expect it, you can ignore it.`;
   const text = [
@@ -114,17 +112,15 @@ export function invitationEmail(opts: {
     "Open it:",
     opts.link,
     "",
-    confirm,
-    "",
     authored,
     why,
   ].join("\n");
-  const html = `<!doctype html><html><body style="font-family:system-ui,sans-serif;line-height:1.5">
+  // The footer is dimmed with opacity, not a fixed grey, so it stays legible in dark mail clients.
+  const html = `<!doctype html><html lang="en"><body style="font-family:system-ui,sans-serif;line-height:1.5">
 <p>${escapeHtml(who)} shared “<strong>${escapeHtml(title)}</strong>” with you on ${escapeHtml(PRODUCT_NAME)}.<br>
 ${escapeHtml(role)}</p>
 <p><a href="${escapeHtml(opts.link)}">Open it on ${escapeHtml(PRODUCT_NAME)}</a></p>
-<p>${escapeHtml(confirm)}</p>
-<p style="color:#555;font-size:0.9em">${escapeHtml(authored)}<br>
+<p style="opacity:0.7;font-size:0.9em">${escapeHtml(authored)}<br>
 ${escapeHtml(why)}</p>
 </body></html>`;
   return { to: opts.to, subject, text, html };
