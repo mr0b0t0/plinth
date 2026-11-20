@@ -150,14 +150,14 @@ html.plinth-reviewing body {
   color: var(--review-fg);
   font: inherit;
   text-align: left;
-  text-decoration: underline;
-  text-decoration-color: var(--review-border);
+  text-decoration: none;
   text-underline-offset: 3px;
   cursor: pointer;
 }
 
+/* A label is a way to its change, not a link: underlined only under the pointer. */
 .plinth-review__item-button:hover {
-  text-decoration-color: currentColor;
+  text-decoration: underline;
 }
 
 .plinth-review__values {
@@ -249,6 +249,11 @@ ins.plinth-review__word {
 
 .plinth-review__body .plinth-sheet__scroll {
   overflow: visible;
+}
+
+/* A sheet narrower than its pane fills it, with no empty strip at the right. */
+.plinth-review__body .plinth-sheet__grid {
+  min-width: 100%;
 }
 
 .plinth-review__body .plinth-sheet__bar,

@@ -85,6 +85,25 @@ async function startEditing(page: Page) {
   await expect(bar).not.toContainText("Not connected");
 }
 
+/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
+async function stopEditing(page: Page) {
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) {
+    // On a wide screen the toggle is the one way in and out: the strip has no Done.
+    await expect(
+      page
+        .getByRole("region", { name: "Editing on the page" })
+        .getByRole("button", { name: "Done" }),
+    ).toHaveCount(0);
+    await toggle.click();
+  } else {
+    await page
+      .getByRole("region", { name: "Editing on the page" })
+      .getByRole("button", { name: "Done" })
+      .click();
+  }
+}
+
 test("two editors on one sheet: a held row, typing that arrives live, a row both see, Publish makes v2", async ({
   page,
   browser,
@@ -161,7 +180,7 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
     '["Plums",2,2]',
     '["Total","=SUM(B2:B5)","=SUM(C2:C5)"]',
   ]);
-  await page.getByRole("button", { name: "Done" }).click();
+  await stopEditing(page);
   await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
   await other.context().close();
 });

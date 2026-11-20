@@ -19,18 +19,22 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   values that changed, as the page shows them. **Publish your changes** publishes them as they are,
   with the files they were made with, as the next version (the other stays in History); **Discard
   your changes** asks first, in the app's own confirmation; **Back** leaves the review. It looks like the rest of the app. The
-  strip offers only **Review changes** and **Done** while a version waits (and only its status
-  while the review is open, without an "Updated to" notification beside it), and the line shown
-  to people who are not editing is text only: the Edit toggle is the one way in, and Publish,
-  Discard and Review changes are in the strip. Both choices are safe against
+  strip offers only **Review changes** while a version waits (and only its status while the
+  review is open, without an "Updated to" notification beside it), and the line shown to people
+  who are not editing is one short line of text in the strip's look ("Unpublished changes · Ana,
+  3 h ago"): the Edit toggle is the one way in. Both choices are safe against
   another editor choosing at the same moment: exactly one takes effect, and every other open
   review closes saying what happened. No source is shown. Changes
   the tab kept from before a reload are reviewed the same way when a newer version is current.
 - **Publish on the page.** A doc that can be edited on its page no longer offers **Edit source**
-  in its menu: the Edit toggle is the one way in. The edit strip says **Publish**, **Publish with a note…** and
-  **Discard unpublished changes**, and its status says "Draft saved", "Publishing…" and "Published
-  as v7". It shows how many others are editing, with who and where in a tooltip. On a phone a
-  doc shows only the "+" above the block being edited and the one at the end, clear of the text.
+  in its menu: the Edit toggle is the one way in and out (on a phone, **Edit on the page** in the
+  ⋯ menu, and **Done** on the strip). The edit strip has one action, **Publish**, once there is
+  something to publish (when the changes can't be published yet, its tooltip says why), and its
+  status says "Draft saved", "Publishing…" and "Published as v7", on one line at any width.
+  **Discard unpublished changes** is in the ⋯ menu. The strip shows how many others are editing,
+  with who and where in a tooltip. A doc's block being edited keeps the page's own type, with no
+  box around it, and a "+" shows only beside the block under the pointer or being edited; on a
+  phone only the "+" above the block being edited and the one at the end show, clear of the text.
   A page Publish keeps the files of the version the changes were made from
   (`files_from_version` on `PUT /api/v1/artifacts/:ref`). `GET /api/v1/artifacts/:ref/live/draft`
   is removed, and `GET /api/v1/config` says whether editing on the page is on (`inline_editing`).

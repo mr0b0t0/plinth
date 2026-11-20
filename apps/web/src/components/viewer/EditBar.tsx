@@ -1,16 +1,17 @@
 // The slim strip under the artifact bar while a doc or a sheet is edited on its page (#36): what
 // is going on (announced politely), how many others are editing (who and where in its tooltip
-// and its name), Publish (the one primary
-// action, Cmd/Ctrl+S), "Publish with a note…" and "Discard unpublished changes" (behind a confirm)
-// in the overflow menu, and Done. While a version published meanwhile waits for review, Publish
-// and the overflow menu give way to "Review changes", which opens the whole-draft review in the
-// frame (the review holds the two choices and its own way out, Back). While that review is open the
-// strip shows its status only: no second exit. At phone width the status is short ("v5 published"),
-// so the strip stays one line.
-import { DotsThreeIcon, PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
+// and its name) and Publish (the one primary action, Cmd/Ctrl+S), shown once there is something
+// to publish. When the changes cannot be published yet, Publish stays visible but off, and says
+// why in its tooltip. The bar's Edit toggle is the way in and out; only at phone width, where the
+// toggle folds into the ⋯ menu, does the strip add Done. Discarding the changes is in the ⋯ menu
+// (stageItems.tsx). While a version published meanwhile waits for review, Publish gives way to
+// "Review changes", which opens the whole-draft review in the frame (the review holds the two
+// choices and its own way out, Back). While that review is open the strip shows its status only.
+// At phone width every status has a short form, so the strip stays one line.
+import { PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
 import { versionRange } from "@plinth/shared";
-import { type FormEvent, type Ref, useId, useState } from "react";
-import { Button, ConfirmDialog, Dialog, Input, Menu, Tooltip } from "../ui/index.ts";
+import type { Ref } from "react";
+import { Button, Tooltip } from "../ui/index.ts";
 import type { LivePhase } from "./useLiveEdit.ts";
 
 export interface EditBarProps {
@@ -35,12 +36,13 @@ export interface EditBarProps {
   publishable?: boolean;
   unpublishableReason?: string;
   editors: { email: string; block: boolean; where?: string }[];
-  onPublish: (note?: string) => void;
-  onDiscard: () => void;
+  onPublish: () => void;
   onDone: () => void;
   onReview?: () => void;
   /** The whole-draft review is open in the frame: the strip shows its status only. */
   reviewing?: boolean;
+  /** Phone width: the bar's Edit toggle is in the ⋯ menu, so the strip has its own Done. */
+  compact?: boolean;
   /** The strip's accessible name (the design page shows several at once). */
   label?: string;
   /** The strip itself, focusable, so focus can move to it when editing starts. */
@@ -83,6 +85,11 @@ export function editStatusShort(p: EditBarProps): string | null {
     return `${versionRange(from, n)} published`;
   }
   if (p.newerVersion) return `v${p.newerVersion} published`;
+  if (p.mode === "room" && p.connecting) return null;
+  if (p.mode === "room" && !p.connected) return "Not connected";
+  if (p.rebasedVersion && p.dirty) return `Merged with v${p.rebasedVersion}`;
+  if (p.savedVersion && !p.dirty) return null;
+  if (p.dirty && p.mode === "solo") return "Kept in this tab";
   return null;
 }
 
@@ -98,25 +105,33 @@ export function editorsText(editors: EditBarProps["editors"]): string {
 }
 
 export function EditBar(props: EditBarProps) {
-  const { phase, dirty, saving, editors, onPublish, onDiscard, onDone, onReview } = props;
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const noteForm = useId();
-  const reasonId = useId();
+  const { phase, dirty, saving, editors, onPublish, onDone, onReview } = props;
   const conflict = phase === "conflict";
   const publishable = props.publishable !== false;
-  const submitNote = (e: FormEvent) => {
-    e.preventDefault();
-    setNoteOpen(false);
-    onPublish(note.trim() || undefined);
-    setNote("");
-  };
   const status = editStatus(props);
   const short = editStatusShort(props);
   const reason = !publishable
     ? (props.unpublishableReason ?? "These changes can't be published yet.")
     : null;
+  // Publish shows once there is something to publish (or while it publishes).
+  const showPublish = !conflict && (dirty || saving);
+  const publish = (
+    <Button
+      variant="primary"
+      size="sm"
+      className="pl-editbar__publish"
+      loading={saving}
+      // Off but focusable when the changes cannot be published yet, so its tooltip says why.
+      {...(reason && !saving
+        ? { "aria-disabled": true, onClick: undefined }
+        : { onClick: () => onPublish() })}
+      aria-keyshortcuts="Meta+S Control+S"
+      // The label hides under the spinner while publishing; the name stays.
+      aria-label="Publish"
+    >
+      Publish
+    </Button>
+  );
 
   return (
     <section
@@ -155,104 +170,29 @@ export function EditBar(props: EditBarProps) {
           </span>
         </Tooltip>
       )}
-      {reason && (
-        <span id={reasonId} className="pl-editbar__reason">
-          {reason}
-        </span>
-      )}
       {!props.reviewing && (
         <span className="pl-editbar__actions">
-          {conflict ? (
-            onReview && (
-              <Button variant="primary" size="sm" onClick={onReview}>
-                Review changes
-              </Button>
-            )
-          ) : (
-            <>
-              <Button
-                variant="primary"
-                size="sm"
-                loading={saving}
-                disabled={!dirty || !publishable}
-                aria-keyshortcuts="Meta+S Control+S"
-                {...(reason ? { "aria-describedby": reasonId } : {})}
-                // The label hides under the spinner while publishing; the name stays.
-                aria-label="Publish"
-                onClick={() => onPublish()}
-              >
-                Publish
-              </Button>
-              <Menu
-                label="More editing actions"
-                icon={DotsThreeIcon}
-                iconOnly
-                variant="ghost"
-                size="sm"
-                align="end"
-                items={[
-                  {
-                    label: "Publish with a note…",
-                    disabled: !dirty || !publishable,
-                    onSelect: () => setNoteOpen(true),
-                  },
-                  {
-                    label: "Discard unpublished changes",
-                    danger: true,
-                    disabled: !dirty,
-                    onSelect: () => setConfirmDiscard(true),
-                  },
-                ]}
-              />
-            </>
+          {conflict
+            ? onReview && (
+                <Button variant="primary" size="sm" onClick={onReview}>
+                  Review changes
+                </Button>
+              )
+            : showPublish &&
+              (reason && !saving ? (
+                <Tooltip content={reason} placement="bottom">
+                  {publish}
+                </Tooltip>
+              ) : (
+                publish
+              ))}
+          {props.compact && (
+            <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
+              Done
+            </Button>
           )}
-          <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
-            Done
-          </Button>
         </span>
       )}
-      <Dialog
-        open={noteOpen}
-        onClose={() => setNoteOpen(false)}
-        title="Publish with a note"
-        size="sm"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setNoteOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" form={noteForm}>
-              Publish
-            </Button>
-          </>
-        }
-      >
-        <form id={noteForm} onSubmit={submitNote} noValidate>
-          <Input
-            label="Note"
-            value={note}
-            maxLength={500}
-            autoComplete="off"
-            onChange={(e) => setNote(e.currentTarget.value)}
-          />
-        </form>
-      </Dialog>
-      <ConfirmDialog
-        open={confirmDiscard}
-        onClose={() => setConfirmDiscard(false)}
-        onConfirm={() => {
-          setConfirmDiscard(false);
-          onDiscard();
-        }}
-        title="Discard unpublished changes?"
-        description={
-          props.mode === "room"
-            ? "The page goes back to the published version for everyone editing it."
-            : "The page goes back to the published version."
-        }
-        confirmLabel="Discard changes"
-        danger
-      />
     </section>
   );
 }

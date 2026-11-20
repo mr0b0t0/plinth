@@ -518,7 +518,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
         screen.getByRole("region", { name: "Editing on the page" }),
       ),
     );
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    // The toggle is the way out too: the strip has no Done beside it on a wide screen.
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    await user.click(toggle);
     await waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
     expect(screen.queryByRole("region", { name: "Editing on the page" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(toggle));
@@ -573,15 +575,13 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
-    expect(screen.getByRole("note").textContent).toContain(
-      "Unpublished changes on the page by bo@example.org, 2 h ago",
-    );
+    expect(screen.getByRole("note").textContent).toBe("Unpublished changes · Bo, 2 h ago");
     await user.click(screen.getByRole("button", { name: "Comments" }));
     expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
-    // The notice offers no action of its own: the bar's Edit toggle is the one way in, and the edit
-    // strip holds Publish and Discard.
+    // The notice offers no action of its own: the bar's Edit toggle is the one way in, the edit
+    // strip holds Publish and the ⋯ menu Discard.
     expect(screen.queryByRole("button", { name: "Continue editing" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
@@ -617,7 +617,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     const ArtifactPage = await loadPage();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
-    expect(screen.getByRole("note").textContent).toContain("Unpublished changes on the page");
+    expect(screen.getByRole("note").textContent).toContain("Unpublished changes");
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
   });

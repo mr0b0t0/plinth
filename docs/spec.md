@@ -663,8 +663,8 @@ page shows the strip and makes the REST calls, and renders no content.
   ordinary Publish the base is the current version, so nothing changes. In edit mode a doc draws
   its images from the base version's files (`/__plinth/v/<base>/`), so the page never shows a file
   the draft would not publish.
-- **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), "Publish with a note…", Done,
-  or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
+- **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), leaving edit mode (the Edit
+  toggle, or Done at phone width), or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
   while it is editing; no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version,
   whoever made it, and an autosave asked for sooner is tried again once that time has passed) turn
   the draft into the next version, through the ordinary publish path with the draft's
@@ -672,7 +672,7 @@ page shows the strip and makes the REST calls, and renders no content.
   nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
   made while a save runs are kept on top of the new version. A draft that cannot be a version yet
   (a type's `unpublishable` rule; no doc or sheet has one) is never checkpointed (409
-  `live_unpublishable`), and Publish is off with the reason.
+  `live_unpublishable`), and Publish is off, with the reason in its tooltip.
 - **Versions from elsewhere.** When an agent, the source editor, the CLI, REST or a restore
   publishes a version vN while a draft exists:
   - a draft with no changes moves to vN;
@@ -686,10 +686,11 @@ page shows the strip and makes the REST calls, and renders no content.
     freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
-  autosave and Done do not publish it, and the strip says "v6 was published while you edited"
+  autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
   (for several versions since the draft's base: "v6 to v7 were published while you edited"; at
   phone width "v6 published", so the strip stays one line), with "Review changes" in place of
-  Publish and its menu (the review holds both choices) and Done. While editing, the strip carries
+  Publish, and the ⋯ menu offers no Discard (the review holds both choices). While editing, the
+  strip carries
   every newer version's news, so the app shows no "Updated to vN" toast.
   Nothing is overwritten either way. `get_artifact` tells agents a draft exists (metadata only),
   and `update_artifact` and `edit_sheet` warn `live_draft`.
@@ -724,14 +725,14 @@ page shows the strip and makes the REST calls, and renders no content.
     of vN, with the files of the draft's base version, and the note "Edited on the page. Replaces
     the changes in v6." (or "… in v6 to v7."). vN stays in History and can be restored.
   - **Discard your changes** asks first, in the app's own confirmation over the dimmed page, as
-    the strip's Discard does ("Discard unpublished changes?", "The page goes back to v6 for
+    the ⋯ menu's Discard does ("Discard unpublished changes?", "The page goes back to v6 for
     everyone editing it." or, solo, "The page goes back to v6.", Cancel and "Discard changes"),
     then returns the page to vN for everyone. The frame only asks: its choice reaches the app as
     before, and the app discards only on confirm; Cancel answers the frame `failed`, so the review
     stays open with focus on its Discard.
   - **Back** (or Esc), the review's one way out, closes it; the draft stays frozen and kept.
 
-  Both choices, every Publish and the strip's "Discard unpublished changes" take the room's
+  Both choices, every Publish and the ⋯ menu's "Discard unpublished changes" take the room's
   checkpoint lock, so a frozen draft resolves exactly once and never on top of the other choice. A
   choice is checked against the version and the draft revision it was reviewed for, in this order,
   before anything else: another save or choice holds the lock (busy: the buttons go off with
@@ -761,16 +762,26 @@ page shows the strip and makes the REST calls, and renders no content.
   beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
   "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
   (who and where, "row 12", a structural place, never content, in its tooltip and its accessible
-  name), with Publish (a text button), a
-  menu with "Publish with a note…" and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
-  its Markdown; blocks other people hold show their email and their text as it arrives. At phone
-  width a doc shows only the "+" above the block being edited and the one at the end, each on a
-  line of its own, so none covers a rule or text. Esc at the
+  name), and Publish (a text button), shown once there is something to publish; when the changes
+  cannot be published yet it stays, off, with the reason in its tooltip. The strip has no menu of
+  its own and no second way out: the Edit toggle turns edit mode off, and only at phone width,
+  where the toggle folds into the ⋯ menu as "Edit on the page", does the strip add Done. Every
+  status has a short form at phone width ("Merged with v5", "Not connected", "Kept in this tab",
+  "v6 published"), so the strip stays one line. "Discard unpublished changes" is in the artifact's
+  ⋯ menu while editing with changes and nothing to review, behind the same confirmation. A doc's
+  block opens as a text field holding its Markdown, in the page's own type, size and line height,
+  with one focus outline and no box, so editing looks like the page; blocks other people hold show
+  their email and their text as it arrives. A "+" to add a block shows beside the block under the
+  pointer or being edited, above and below it, not beside every block; on touch, and at phone width
+  only the one above the block being edited and the one at the end, each on a line of its own, so
+  none covers a rule or text, the last clear of the page's bottom edge. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
-  line of text when unpublished changes exist, when someone is editing, or when a version needs
-  review; it has no buttons, because editing starts only from the Edit toggle and Publish, Discard
-  and Review changes are in the strip. Only the solo copy a tab kept from before a reload, which no
-  frame holds, gets Publish and Discard on that line.
+  line when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
+  the email on hover), when someone is editing ("Ana is editing"), or when a version needs review;
+  it looks like the strip (a bronze rule, a pencil, one line) and has no buttons, because editing
+  starts only from the Edit toggle, the strip holds Publish and Review changes, and the ⋯ menu
+  Discard. Only the solo copy a tab kept from before a reload, which no frame holds, gets Publish
+  and Discard on that line.
   Edit mode and comment review mode exclude each other. While the review is open, app
   notifications keep clear of its choices, and no notification ever covers a dialog's controls.
 - **The frame key.** For an owner or editor who may edit on the page, the app opens each frame
@@ -2502,7 +2513,7 @@ agents on one artifact").
 ### Live sheets (decided 2026-11-19)
 
 Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
-([Editing](#editing)): the same Edit toggle, strip, Publish, Discard and Done, the same
+([Editing](#editing)): the same Edit toggle, strip, Publish and Discard, the same
 checkpoints, autosave and modes ("room" with live rooms, "solo" under origin
 isolation without rooms, none under opaque isolation or the path fallback), the same policy action
 `live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
@@ -2544,7 +2555,7 @@ and the whole-draft review is the only way on (below).
   confirmation). The changed cells are marked in both grids. The two cases that need no review are a version whose sheet and files equal the
   draft's base (it changed only the title, or restored the same content), which moves the base
   under the draft's lines as they are, and a version equal to the draft, which ends it. Both
-  choices, and the strip's Discard, run under the room's checkpoint lock against the version and
+  choices, and the ⋯ menu's Discard, run under the room's checkpoint lock against the version and
   revision reviewed, so exactly one of them takes effect. A save that finishes after its lock ran
   out, onto a draft that a discard or reset replaced meanwhile, is handled as any version published
   meanwhile instead of becoming the base under the replaced draft. Otherwise the room still knows

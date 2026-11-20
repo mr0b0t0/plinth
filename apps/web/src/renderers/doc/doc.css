@@ -297,4 +297,40 @@
     opacity: 0;
     pointer-events: none;
   }
+  /* The last "+" keeps clear of the page's bottom edge and the app's footer under it. */
+  .plinth-doc--editing > .plinth-doc__insert:last-of-type {
+    margin-bottom: 1.5rem;
+  }
+}
+
+/* The block being edited looks like the page: the doc's own type, size, line height and spacing,
+   with one focus indicator (the outline every block gets in edit mode), and no box around it. */
+.plinth-doc__field {
+  min-height: 0;
+  margin: 0 0 1.1em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+}
+.plinth-doc__field:focus {
+  outline: 2px solid var(--doc-focus);
+  outline-offset: 4px;
+}
+
+/* With a pointer that hovers, a "+" shows beside the block under it or being edited (above and
+   below it), not beside every block at once; keyboard focus shows it too. */
+@media (hover: hover) {
+  .plinth-doc--editing:hover > .plinth-doc__insert {
+    opacity: 0;
+  }
+  .plinth-doc--editing
+    > .plinth-doc__insert:is(:has(+ :hover), :has(+ :focus-visible), :has(+ .plinth-doc__field)),
+  .plinth-doc--editing > :is(:hover, :focus-visible, .plinth-doc__field) + .plinth-doc__insert {
+    opacity: 0.45;
+  }
+  .plinth-doc--editing > .plinth-doc__insert:is(:hover, :focus-visible) {
+    opacity: 1;
+  }
 }

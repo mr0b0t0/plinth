@@ -70,9 +70,11 @@ import {
   pairColors,
 } from "../styles/contrast.ts";
 import "../styles/design-page.css";
+import { useMediaQuery } from "../components/editor/useMediaQuery.ts";
 import { EditBar, type EditBarProps } from "../components/viewer/EditBar.tsx";
 import { LiveDraftNotice } from "../components/viewer/LiveDraftNotice.tsx";
 import type { LiveFrameStatus } from "../components/viewer/rendererProtocol.ts";
+import { VIEWER_COMPACT_QUERY } from "../components/viewer/ViewerStage.tsx";
 import "../components/viewer/viewer.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
 
@@ -1345,6 +1347,8 @@ const LIVE_STATUS: LiveFrameStatus = {
 
 /** On-page editing (#36): the edit strip and the unpublished-changes line in every state. */
 function LiveEditSpecimens() {
+  // Done is on the strip only where the bar's Edit toggle folds into the ⋯ menu.
+  const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const bar: EditBarProps = {
     phase: "editing",
     mode: "room",
@@ -1356,9 +1360,9 @@ function LiveEditSpecimens() {
     rebasedVersion: null,
     editors: [],
     onPublish: noop,
-    onDiscard: noop,
     onDone: noop,
     onReview: noop,
+    compact,
   };
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
@@ -1402,17 +1406,6 @@ function LiveEditSpecimens() {
             restore={{ text: "", base: 4, saved_at: hoursAgo }}
             onSaveRestore={noop}
             onDropRestore={noop}
-          />
-          <LiveDraftNotice
-            draft={{
-              base_version: 4,
-              dirty: true,
-              conflict_version: null,
-              updated_at: hoursAgo,
-              updated_by_email: "bo@example.org",
-            }}
-            status={null}
-            signIn
           />
         </div>
       </Specimen>

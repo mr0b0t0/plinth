@@ -18,7 +18,6 @@ const props = (over: Partial<EditBarProps> = {}): EditBarProps => ({
   rebasedVersion: null,
   editors: [],
   onPublish: vi.fn(),
-  onDiscard: vi.fn(),
   onDone: vi.fn(),
   onReview: vi.fn(),
   ...over,
@@ -64,7 +63,12 @@ describe("EditBar", () => {
       "v5 to v7 published",
     );
     expect(editStatusShort(props({ mode: "solo", newerVersion: 5 }))).toBe("v5 published");
+    expect(editStatusShort(props({ dirty: true, rebasedVersion: 5 }))).toBe("Merged with v5");
+    expect(editStatusShort(props({ connected: false, dirty: true }))).toBe("Not connected");
+    expect(editStatusShort(props({ mode: "solo", dirty: true }))).toBe("Kept in this tab");
     expect(editStatusShort(props({ dirty: true }))).toBeNull();
+    expect(editStatusShort(props({ savedVersion: 5 }))).toBeNull();
+    expect(editStatusShort(props({ connected: false, connecting: true }))).toBeNull();
     // Both are in the live region; only the long words are read.
     render(<EditBar {...props({ dirty: true, phase: "conflict", conflictVersion: 5 })} />);
     const short = screen.getByText("v5 published");
@@ -94,56 +98,32 @@ describe("EditBar", () => {
     expect(publish.getAttribute("aria-keyshortcuts")).toBe("Meta+S Control+S");
     await userEvent.click(publish);
     expect(p.onPublish).toHaveBeenCalledTimes(1);
+    // One action and no menu of its own: Discard is in the bar's ⋯ menu.
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Publish"]);
+  });
+
+  it("shows Publish only once there is something to publish", () => {
+    const { rerender } = render(<EditBar {...props()} />);
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    rerender(<EditBar {...props({ savedVersion: 5 })} />);
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    rerender(<EditBar {...props({ dirty: true, saving: true })} />);
+    expect(screen.getByRole("button", { name: "Publish" }).getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("has Done only at phone width, where the bar's Edit toggle is in the ⋯ menu", async () => {
+    const { rerender } = render(<EditBar {...props({ dirty: true })} />);
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    const p = props({ dirty: true, compact: true });
+    rerender(<EditBar {...p} />);
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(p.onDone).toHaveBeenCalledTimes(1);
   });
 
-  it("asks before discarding, and only discards on confirm", async () => {
-    const p = props({ dirty: true });
-    const user = userEvent.setup();
-    render(<EditBar {...p} />);
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Discard unpublished changes" }));
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "Discard unpublished changes?",
-    });
-    expect(dialog.textContent).toContain("for everyone editing it");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(p.onDiscard).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Discard unpublished changes" }));
-    await user.click(await screen.findByRole("button", { name: "Discard changes" }));
-    expect(p.onDiscard).toHaveBeenCalledTimes(1);
-  });
-
-  it("publishes with a note from the menu", async () => {
-    const p = props({ dirty: true });
-    const user = userEvent.setup();
-    render(<EditBar {...p} />);
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Publish with a note…" }));
-    await user.type(await screen.findByLabelText("Note"), "Tidy the intro");
-    const dialog = screen.getByRole("dialog", { name: "Publish with a note" });
-    await user.click(dialog.querySelector(".pl-dialog__footer button:last-child") ?? dialog);
-    expect(p.onPublish).toHaveBeenCalledWith("Tidy the intro");
-  });
-
-  it("Enter in the note field publishes with the note", async () => {
-    const p = props({ dirty: true });
-    const user = userEvent.setup();
-    render(<EditBar {...p} />);
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Publish with a note…" }));
-    await user.type(await screen.findByLabelText("Note"), "Fix typos{Enter}");
-    expect(p.onPublish).toHaveBeenCalledWith("Fix typos");
-  });
-
-  it("offers only Review changes, not Publish or the menu, while a version waits for review", async () => {
-    const p = props({ dirty: true, phase: "conflict" });
+  it("offers only Review changes, not Publish, while a version waits for review", async () => {
+    const p = props({ dirty: true, phase: "conflict", compact: true });
     const { rerender } = render(<EditBar {...p} />);
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
-    // The review holds both choices, so the strip's menu (and its Discard) is not offered too.
-    expect(screen.queryByRole("button", { name: "More editing actions" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(p.onReview).toHaveBeenCalled();
     // While the review is open in the frame, the strip shows its status only: the review's Back
@@ -154,13 +134,17 @@ describe("EditBar", () => {
     expect(screen.getByRole("region").textContent).toContain("published while you edited");
   });
 
-  it("turns Publish off, with the reason, for a draft that cannot be a version yet", () => {
+  it("turns Publish off for a draft that cannot be a version yet, and says why in its tooltip", async () => {
     const p = props({ dirty: true, publishable: false, unpublishableReason: "Nothing to show." });
     render(<EditBar {...p} />);
-    const publish = screen.getByRole("button", { name: "Publish" }) as HTMLButtonElement;
-    expect(publish.disabled).toBe(true);
-    const reason = screen.getByText("Nothing to show.");
+    const publish = screen.getByRole("button", { name: "Publish" });
+    // Off but focusable, so keyboard users reach the reason; no sentence across the strip.
+    expect(publish.getAttribute("aria-disabled")).toBe("true");
+    const reason = screen.getByRole("tooltip", { hidden: true });
+    expect(reason.textContent).toBe("Nothing to show.");
     expect(publish.getAttribute("aria-describedby")).toBe(reason.id);
+    await userEvent.click(publish);
+    expect(p.onPublish).not.toHaveBeenCalled();
   });
 });
 
@@ -206,10 +190,12 @@ describe("LiveDraftNotice", () => {
     );
   });
 
-  it("names who left unpublished changes and when, and offers no action of its own", () => {
+  it("names who left unpublished changes and when, in one short line, and offers no action", () => {
     render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} />);
-    expect(screen.getByRole("note").textContent).toContain(
-      "Unpublished changes on the page by bo@example.org, 3 h ago",
+    expect(screen.getByRole("note").textContent).toBe("Unpublished changes · Bo, 3 h ago");
+    // The whole email is one hover away.
+    expect(screen.getByText("Unpublished changes · Bo, 3 h ago").getAttribute("title")).toBe(
+      "bo@example.org",
     );
     // The Edit toggle is the one way in; the edit strip holds Publish and Discard.
     expect(screen.queryByRole("button")).toBeNull();
@@ -222,7 +208,7 @@ describe("LiveDraftNotice", () => {
         status={status({ editors: [{ email: "bo@example.org", block: true }] })}
       />,
     );
-    expect(screen.getByRole("note").textContent).toContain("bo@example.org is editing");
+    expect(screen.getByRole("note").textContent).toBe("Bo is editing");
     expect(screen.queryByRole("button")).toBeNull();
     rerender(
       <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} />,
@@ -253,11 +239,5 @@ describe("LiveDraftNotice", () => {
     expect(onSaveRestore).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(onDropRestore).toHaveBeenCalledTimes(1);
-  });
-
-  it("gives a code-confirmed editor no editing actions", () => {
-    render(<LiveDraftNotice draft={DRAFT} status={null} signIn />);
-    expect(screen.getByRole("note").textContent).toContain("Sign in to edit.");
-    expect(screen.queryByRole("button")).toBeNull();
   });
 });

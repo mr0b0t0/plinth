@@ -1,15 +1,16 @@
 // One line above a doc or a sheet for its owners and editors while they are not editing it on the
-// page (#36): someone left unpublished changes on the page, someone is editing right now, or a
-// version published meanwhile waits for review beside the unpublished changes. The line only says
-// so: the bar's Edit toggle is the one way in, and the edit strip holds Publish, Discard and Review
-// changes. Only a copy this tab kept from before a reload (solo mode), which no frame holds, gets
-// its own Publish and Discard here. Viewers and commenters never get here: the gate gives them no
-// `live`, so they see versions only.
-import { WarningIcon } from "@phosphor-icons/react";
+// page (#36): someone left unpublished changes on the page ("Unpublished changes · Ana, 3 h ago"),
+// someone is editing right now, or a version published meanwhile waits for review beside the
+// unpublished changes. The line only says so, in the edit strip's own look (a bronze rule and a
+// pencil), on one line: the bar's Edit toggle is the one way in, and the edit strip and the ⋯ menu
+// hold Publish, Discard and Review changes. Only a copy this tab kept from before a reload (solo
+// mode), which no frame holds, gets its own Publish and Discard here. Viewers and commenters never
+// get here: the gate gives them no `live`, so they see versions only.
+import { PencilSimpleIcon } from "@phosphor-icons/react";
 import type { LiveDraftInfo } from "@plinth/shared";
 import type { PageDraft } from "../editor/draft.ts";
 import { Button } from "../ui/index.ts";
-import { timeAgo } from "./format.ts";
+import { personName, timeAgo } from "./format.ts";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 
 export interface LiveDraftNoticeProps {
@@ -19,8 +20,6 @@ export interface LiveDraftNoticeProps {
   status: LiveFrameStatus | null;
   /** Solo: page edits this tab kept before a reload. */
   restore?: PageDraft | null;
-  /** Confirmed by code without an account: no editing actions. */
-  signIn?: boolean;
   /** For tests. */
   now?: number;
   onSaveRestore?: () => void;
@@ -42,32 +41,43 @@ export function noticeKind(
   return null;
 }
 
-export function LiveDraftNotice(props: LiveDraftNoticeProps) {
-  const { draft, status, restore, signIn } = props;
-  const kind = noticeKind(props);
-  if (!kind) return null;
-  let text: string;
+/** The line's words, and whose email it names by first name (shown whole on hover). */
+export function noticeText(
+  p: Pick<LiveDraftNoticeProps, "draft" | "status" | "restore" | "now">,
+): { text: string; who?: string } | null {
+  const { draft, status, restore } = p;
+  const kind = noticeKind(p);
   if (kind === "conflict") {
     const n = (status?.connected ? status.conflict_version : draft?.conflict_version) as number;
-    text = `v${n} was published over unpublished changes`;
-  } else if (kind === "editing") {
-    const who = status?.editors.find((e) => e.block)?.email ?? "Someone";
-    text = `${who} is editing`;
-  } else if (kind === "draft") {
-    const by = draft?.updated_by_email;
-    const when = timeAgo(draft?.updated_at, props.now);
-    text = `Unpublished changes on the page${by ? ` by ${by}` : ""}${when ? `, ${when}` : ""}`;
-  } else {
-    text = `Unpublished changes from earlier in this tab, based on v${restore?.base}`;
+    return { text: `v${n} was published over unpublished changes` };
   }
+  if (kind === "editing") {
+    const who = status?.editors.find((e) => e.block)?.email;
+    return { text: `${who ? personName(who) : "Someone"} is editing`, who };
+  }
+  if (kind === "draft") {
+    // Who is known from the gate's draft; when, also from the room once the frame reports.
+    const who = draft?.updated_by_email ?? undefined;
+    const at = status?.connected ? (status.last_edit_at ?? draft?.updated_at) : draft?.updated_at;
+    const by = [who && personName(who), timeAgo(at, p.now)].filter(Boolean).join(", ");
+    return { text: by ? `Unpublished changes · ${by}` : "Unpublished changes", who };
+  }
+  if (kind === "restore") {
+    return { text: `Unpublished changes from earlier in this tab, based on v${restore?.base}` };
+  }
+  return null;
+}
+
+export function LiveDraftNotice(props: LiveDraftNoticeProps) {
+  const line = noticeText(props);
+  if (!line) return null;
   return (
-    <div className={`pl-livenotice pl-livenotice--${kind}`} role="note">
-      {kind === "conflict" && <WarningIcon size={14} aria-hidden="true" />}
-      <span className="pl-livenotice__text">{text}</span>
-      {signIn && kind !== "restore" && (
-        <span className="pl-livenotice__hint">Sign in to edit.</span>
-      )}
-      {kind === "restore" && (
+    <div className="pl-livenotice" role="note">
+      <PencilSimpleIcon size={14} aria-hidden="true" />
+      <span className="pl-livenotice__text" title={line.who}>
+        {line.text}
+      </span>
+      {props.restore && noticeKind(props) === "restore" && (
         <span className="pl-livenotice__actions">
           <Button size="sm" variant="secondary" onClick={props.onSaveRestore}>
             Publish

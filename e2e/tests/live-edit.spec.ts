@@ -82,6 +82,25 @@ async function startEditing(page: Page) {
   await expect(page.frameLocator(CURRENT_FRAME).locator("main.plinth-doc--editing")).toBeVisible();
 }
 
+/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
+async function stopEditing(page: Page) {
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) {
+    // On a wide screen the toggle is the one way in and out: the strip has no Done.
+    await expect(
+      page
+        .getByRole("region", { name: "Editing on the page" })
+        .getByRole("button", { name: "Done" }),
+    ).toHaveCount(0);
+    await toggle.click();
+  } else {
+    await page
+      .getByRole("region", { name: "Editing on the page" })
+      .getByRole("button", { name: "Done" })
+      .click();
+  }
+}
+
 const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
 
 /** Wait until the frame reports the doc socket open (the bar stops saying "Connecting…"). */
@@ -155,7 +174,7 @@ test("two editors on one doc: a held block, typing that arrives live, Publish ma
   expect(detail.body.content).toContain("First paragraph. Typed live.");
   expect(detail.body.content).toContain("Third paragraph. And theirs.");
 
-  await page.getByRole("button", { name: "Done" }).click();
+  await stopEditing(page);
   await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
   await other.context().close();
 });

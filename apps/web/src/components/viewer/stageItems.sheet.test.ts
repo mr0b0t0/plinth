@@ -69,3 +69,36 @@ describe("the ⋯ menu's edit entries", () => {
     expect(l).not.toContain("Edit on the page");
   });
 });
+
+describe("the ⋯ menu while editing on the page", () => {
+  const editing = (
+    status: { dirty: boolean } | null,
+    over: { phase?: string; saving?: boolean; reviewing?: boolean } = {},
+    compact = false,
+  ) => {
+    const c = context("doc", { available: true, merges: true }, compact);
+    return {
+      ...c,
+      editing: true,
+      live: { ...c.live, status, phase: "editing", saving: false, reviewing: false, ...over },
+    } as unknown as StageContext;
+  };
+
+  it("holds Discard, the one place for it, once there is something to discard", () => {
+    expect(labels(editing({ dirty: true }))).toContain("Discard unpublished changes");
+    expect(labels(editing({ dirty: false }))).not.toContain("Discard unpublished changes");
+    expect(labels(editing(null))).not.toContain("Discard unpublished changes");
+  });
+
+  it("has no Discard while a version waits for review (the review has its own) or publishing", () => {
+    for (const over of [{ phase: "conflict" }, { saving: true }, { reviewing: true }]) {
+      expect(labels(editing({ dirty: true }, over))).not.toContain("Discard unpublished changes");
+    }
+  });
+
+  it("at phone width has no second way out: the strip's Done is it", () => {
+    const l = labels(editing({ dirty: true }, {}, true));
+    expect(l).not.toContain("Done editing");
+    expect(l).not.toContain("Edit on the page");
+  });
+});

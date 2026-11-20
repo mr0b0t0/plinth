@@ -25,6 +25,7 @@ import {
   ProjectorScreenIcon,
   ShareNetworkIcon,
   SunIcon,
+  TrashIcon,
 } from "@phosphor-icons/react";
 import {
   type AppConfig,
@@ -140,13 +141,32 @@ const compactShareHistory: MenuItem = (c) =>
       ]
     : [];
 
+/** At phone width the Edit toggle folds in here; while editing, the strip's Done is the way out. */
 const compactEditToggle: MenuItem = (c) =>
-  c.compact && c.live.available && !c.live.signIn
+  c.compact && c.live.available && !c.live.signIn && !c.editing
+    ? [{ label: "Edit on the page", icon: PencilSimpleIcon, onSelect: c.actions.toggleEditing }]
+    : [];
+
+/** The dialog's id in STAGE_DIALOGS: the confirmation of discardEdits. */
+export const DISCARD_EDITS_DIALOG = "discard-edits";
+
+/**
+ * Discarding the changes made on the page: here, in the menu that already holds the artifact's
+ * actions, not in a second menu on the edit strip. Only while editing with something to discard
+ * and nothing to review (the review has its own Discard) or publishing.
+ */
+const discardEdits: MenuItem = (c) =>
+  c.editing &&
+  c.live.status?.dirty &&
+  c.live.phase !== "conflict" &&
+  !c.live.saving &&
+  !c.live.reviewing
     ? [
         {
-          label: c.editing ? "Done editing" : "Edit on the page",
-          icon: PencilSimpleIcon,
-          onSelect: c.actions.toggleEditing,
+          label: "Discard unpublished changes",
+          icon: TrashIcon,
+          danger: true,
+          onSelect: () => c.actions.openDialog(DISCARD_EDITS_DIALOG),
         },
       ]
     : [];
@@ -155,6 +175,29 @@ const compactSignInToEdit: MenuItem = (c) =>
   c.compact && c.live.available && c.live.signIn
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
+
+/** Asks before discardEdits drops the changes, with the words the review's Discard uses. */
+const discardEditsDialog: StageDialog = {
+  id: DISCARD_EDITS_DIALOG,
+  render: (c, close) => (
+    <ConfirmDialog
+      open
+      onClose={close}
+      onConfirm={() => {
+        close();
+        void c.live.discard();
+      }}
+      title="Discard unpublished changes?"
+      description={
+        c.live.mode === "room"
+          ? "The page goes back to the published version for everyone editing it."
+          : "The page goes back to the published version."
+      }
+      confirmLabel="Discard changes"
+      danger
+    />
+  ),
+};
 
 /**
  * The source editor, for a type that has one (not a sheet or a design: agents change those) and
@@ -298,6 +341,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   typeItems,
   capabilityItems,
   report,
+  discardEdits,
   separator,
   switchTheme,
 ];
@@ -308,7 +352,11 @@ export function menuEntries(c: StageContext): MenuEntry[] {
 }
 
 /** The dialogs a menu item may open, by id. One dialog per line. */
-export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog, designExportDialog];
+export const STAGE_DIALOGS: readonly StageDialog[] = [
+  boardSettingsDialog,
+  designExportDialog,
+  discardEditsDialog,
+];
 
 // ---------- the bar's controls ----------
 
@@ -447,7 +495,7 @@ const olderVersion: StageNode = ({ gate: { artifact }, hrefs, update }) =>
 
 const dataNotice: StageNode = (c) => <DataNotice gate={c.gate} />;
 
-const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
+const editBar: StageNode = ({ editing, live, gate, refs, actions, compact }) =>
   editing &&
   live.mode && (
     <EditBar
@@ -466,11 +514,11 @@ const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
       conflictVersion={live.status?.conflict_version ?? live.review?.current ?? null}
       publishable={live.status?.publishable ?? true}
       editors={live.status?.editors ?? []}
-      onPublish={(note) => void live.publish(note)}
-      onDiscard={() => void live.discard()}
+      onPublish={() => void live.publish()}
       onDone={actions.finishEditing}
       onReview={() => void live.openReview()}
       reviewing={live.reviewing}
+      compact={compact}
     />
   );
 
@@ -481,7 +529,6 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
       draft={gate.live?.draft ?? null}
       status={live.status}
       restore={live.restore}
-      signIn={live.signIn}
       onSaveRestore={() => {
         void live.saveRestore().then(actions.refocusAfterNotice);
       }}
@@ -493,7 +540,7 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
   );
 
 /**
- * The whole-draft review's Discard, confirmed with the edit strip's own words and dialog, which
+ * The whole-draft review's Discard, confirmed with the ⋯ menu's Discard words and dialog, which
  * dims the page, the frame and its review included.
  */
 const reviewDiscard: StageNode = ({ live }) => (

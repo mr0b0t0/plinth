@@ -526,7 +526,7 @@ export function useLiveEdit({
       return;
     }
     if (m.outcome === "discard" && !confirmed) {
-      // The frame cannot dim the app around it, so the app asks, as the strip's Discard does.
+      // The frame cannot dim the app around it, so the app asks, as the ⋯ menu's Discard does.
       setDiscardAsk(m);
       return;
     }
