@@ -50,6 +50,10 @@ export const DEV_VARS: Record<string, string> = {
   // Following the presenter in a deck (docs/spec.md "Slides"), on by default. On the opaque server
   // it has no effect: it runs over live rooms, which need origin isolation.
   ALLOW_SLIDES_FOLLOW: "true",
+  // Design export's instance and per-artifact hourly caps, at their defaults. The local Worker has
+  // no Browser Rendering binding, so exports stay off (typed-design-export.spec.ts).
+  DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "120",
+  DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "20",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

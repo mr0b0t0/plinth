@@ -8,7 +8,14 @@
 // (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
 import { FileIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import {
+  API,
+  APP_ROUTES,
+  type CommentInfo,
+  route,
+  type ViewGate,
+  viewFrameName,
+} from "@plinth/shared";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
@@ -398,6 +405,7 @@ export function ViewerStage({
                 ref={setFrame}
                 src={frameSrc}
                 title={`${artifact.title}, version ${artifact.version}`}
+                name={viewFrameName(artifact.version)}
                 isolation={config?.content_isolation}
                 loadingLabel={`Loading version ${artifact.version}`}
               />

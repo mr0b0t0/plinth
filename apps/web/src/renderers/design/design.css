@@ -291,6 +291,19 @@ body {
   margin: 0 0 24px;
 }
 
+/* The export layout (boot.ts, for the server's PNG and PDF export): the print layout with no page background, gap or shadow,
+   so a PNG is exactly the board (transparent where the board is) and a PDF page holds only it. */
+html[data-export],
+html[data-export] body {
+  background: transparent;
+}
+
+.plinth-design[data-mode="export"] .plinth-design__board {
+  margin: 0;
+  box-shadow: none;
+  background-image: none;
+}
+
 .plinth-design[data-print] .plinth-design__labels,
 .plinth-design[data-print] .plinth-design__toolbar,
 .plinth-design[data-print] .plinth-design__cover {

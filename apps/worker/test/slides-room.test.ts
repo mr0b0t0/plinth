@@ -5,6 +5,7 @@
 // shell's `follow` payload.
 import { listDurableObjectIds, runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { SLIDES_PRESENTER_SLOTS, slidesWatchCap } from "@plinth/shared";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { parseConfig, slidesFollowActive } from "../src/config.ts";
@@ -395,6 +396,64 @@ describe("slides socket: presenting and following", () => {
     const v = await slides(id, viewer.cookie);
     for (let i = 0; i < 60; i++) v.send({ t: "goto", slide: 1 });
     expect(await within(v.closed, 5000)).toMatchObject({ code: 4429 });
+  });
+
+  it("a full room of watchers still admits presenters: four slots are theirs", async () => {
+    const { id, ownerP } = await deckSetup();
+    const vars = { ROOM_MAX_CONNECTIONS_PER_ARTIFACT: "10" };
+    expect(SLIDES_PRESENTER_SLOTS).toBe(4);
+    expect(slidesWatchCap(10)).toBe(6);
+    // Never more than half the cap: an instance capped at 2 keeps one.
+    expect(slidesWatchCap(2)).toBe(1);
+    expect(slidesWatchCap(50)).toBe(46);
+    const viewer = await person(id, "viewer");
+    const other = await person(id, "commenter");
+    const watchers: Client[] = [];
+    for (const p of [viewer, viewer, viewer, other, other, other]) {
+      watchers.push(await slides(id, p.cookie, vars));
+    }
+    // A seventh watcher is refused: the room is full for watching.
+    const res = await upgrade(id, viewer.cookie, { kind: "slides", vars });
+    expect(res.status).toBe(101);
+    const ws = res.webSocket;
+    if (!ws) throw new Error("no socket");
+    ws.accept();
+    expect(await within(client(ws).closed)).toMatchObject({ code: 4409 });
+    // The owner and an editor still get in, and lead.
+    const o = await slides(id, ownerP.cookie, vars);
+    expect(o.welcome.you.present).toBe(true);
+    const ed = await person(id, "editor");
+    const e = await slides(id, ed.cookie, vars);
+    expect(e.welcome.you.present).toBe(true);
+    o.send({ t: "start", slide: 2 });
+    for (const w of watchers) {
+      expect(await next(w, "at")).toEqual({ t: "at", slide: 2, by: o.welcome.you.id });
+    }
+    for (const c of [...watchers, o, e]) c.ws.close(1000);
+  });
+
+  it("a presenter that reconnects before its old socket closes keeps leading; nobody gets stopped", async () => {
+    const { id, ownerP } = await deckSetup();
+    const viewer = await person(id, "viewer");
+    const v = await slides(id, viewer.cookie);
+    const old = await slides(id, ownerP.cookie);
+    old.send({ t: "start", slide: 3 });
+    expect(await next(v, "at")).toEqual({ t: "at", slide: 3, by: old.welcome.you.id });
+    // The presenter's network dropped and came back: a new socket, while the room still lists
+    // the old one as leading. Its welcome shows the old socket's lead, which the deck knows is
+    // its own (follow.ts), so it starts at once.
+    const fresh = await slides(id, ownerP.cookie);
+    expect(fresh.welcome.at).toEqual({ slide: 3, by: old.welcome.you.id });
+    fresh.send({ t: "start", slide: 3 });
+    expect(await next(v, "at")).toEqual({ t: "at", slide: 3, by: fresh.welcome.you.id });
+    expect(await next(fresh, "at")).toEqual({ t: "at", slide: 3, by: fresh.welcome.you.id });
+    // The old socket finally closes: the new one leads on, and the follower hears nothing.
+    old.ws.close(1000);
+    await none(v, "stopped", 500);
+    await none(v, "at", 0);
+    fresh.send({ t: "goto", slide: 4 });
+    expect(await next(v, "at")).toEqual({ t: "at", slide: 4, by: fresh.welcome.you.id });
+    for (const c of [v, fresh]) c.ws.close(1000);
   });
 
   it("slides sockets count toward ROOM_MAX_CONNECTIONS_PER_ARTIFACT", async () => {

@@ -342,6 +342,39 @@ describe("usePresentation", () => {
     expect(types(four.contentWindow)).not.toContain("lead");
   });
 
+  it("a lead belongs to one deck: moving to another artifact does not lead there", () => {
+    const one = fakeFrame();
+    const other: OkGate = {
+      ...gate(),
+      artifact: { ...gate().artifact, id: "art456", slug: "other-talk", title: "Other talk" },
+    };
+    const { rerender } = renderHook(
+      ({ frame, g }) =>
+        usePresentation({
+          gate: g,
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: g.artifact.slug,
+        }),
+      { initialProps: { frame: one.frame, g: gate() } },
+    );
+    const types = (w: { postMessage: ReturnType<typeof vi.fn> }) =>
+      w.postMessage.mock.calls.map((c) => (c[0] as { type: string }).type);
+    fromFrame(one.contentWindow, { type: "ready", slide: 1, count: 6 });
+    fromFrame(one.contentWindow, { type: "leading", on: true });
+    // The same page shows another deck: its frame is never asked to lead.
+    const two = fakeFrame();
+    rerender({ frame: two.frame, g: other });
+    fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(types(two.contentWindow)).not.toContain("lead");
+    // Back on the first deck, the lead it had is gone too: the person turns it on again.
+    const three = fakeFrame();
+    rerender({ frame: three.frame, g: gate() });
+    fromFrame(three.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(types(three.contentWindow)).not.toContain("lead");
+  });
+
   it("an audience window never records or sends a lead", () => {
     window.history.replaceState(null, "", `/a/talk#present=audience&pair=${"p".repeat(16)}`);
     const one = fakeFrame();

@@ -421,6 +421,47 @@ export const DEFAULTS = {
 };
 
 /**
+ * Server-side design export (docs/spec.md "Designs"): a PNG of one artboard, or a PDF of every
+ * board or one, rendered by Browser Rendering. DESIGN_EXPORT switches it; DESIGN_EXPORTS_PER_HOUR
+ * bounds how many one person (or one address, signed out) may start per hour.
+ */
+export const DESIGN_EXPORT = {
+  formats: ["png", "pdf"],
+  /** PNG pixel scales: each CSS px becomes this many device pixels per side. */
+  scales: [1, 2],
+  /**
+   * The largest file one export makes, in bytes (24 MiB). The Worker holds the whole file in its
+   * 128 MB isolate (the browser sends it as base64), so a PDF is read in pieces and refused once
+   * it passes this, and a PNG is checked before it is decoded.
+   */
+  maxBytes: 25_165_824,
+  /**
+   * The largest PNG, in device pixels: width x height x scale^2. A PNG takes at most about 4 bytes
+   * a pixel (RGBA that does not compress, such as noise), so any PNG within it fits in maxBytes,
+   * and the browser's base64 message, its string and the decoded file stay near 60 MB together.
+   * A board of at most 1,000,000 px exports at 2x, every preset at 1x.
+   */
+  maxPixels: 4_000_000,
+  /** DESIGN_EXPORTS_PER_HOUR's default and bounds. */
+  perHour: 30,
+  perHourBounds: [1, 1000],
+  /** DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR's default and bounds: every export on the instance. */
+  perInstancePerHour: 120,
+  perInstancePerHourBounds: [1, 100_000],
+  /**
+   * DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR's default and bounds: exports of one artifact by people
+   * other than its owner and editors.
+   */
+  perArtifactPerHour: 20,
+  perArtifactPerHourBounds: [1, 10_000],
+  /**
+   * Exports rendering at once across the instance, beside the thumbnails' own two (Browser
+   * Rendering limits the account's concurrent browsers).
+   */
+  maxConcurrent: 2,
+};
+
+/**
  * Browsers accept a `__Host-` cookie only when it is Secure, has Path=/ and no Domain, and no other
  * host (a sibling subdomain included) can set or overwrite one. Every app cookie uses it.
  */

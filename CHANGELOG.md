@@ -36,6 +36,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   kept as text, so the doc can still be published.
 - Notifications no longer cover a dialog's buttons, and a pointer resting on one no longer keeps
   it on screen for good.
+- **Leading a deck is steadier.** A presenter whose connection drops keeps the lead when it comes
+  back, instead of turning Lead viewers off and following its own old connection. Paging quickly (a held arrow key) always leaves
+  followers on the presenter's last slide. A deck's room keeps 4 of its slots for owners and
+  editors, so viewers' tabs can never lock the presenter out. Opening another deck in the same tab
+  no longer leads that deck's viewers.
+- **A held page stays held after you switch apps.** A page that declares `hold` was replaced by a
+  new version once its window lost focus, so text you were typing before switching to another app
+  or tab could be lost; it now waits for Update as long as focus is still in the page. State a page
+  handed to the next version is read only by that version's frame: a reload of the old page in the
+  meantime no longer picks it up (unless the page renamed its window: then it carries as before).
 - **Project files for a page.** Agents now have a recipe for pages that show files from a project
   (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
   `files/` and read them by relative URL; a refresh is a new version. Only the user in the session
@@ -282,6 +292,24 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;
   `ALLOW_SLIDES_FOLLOW=false` turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
   publishes a new version or the owner changes who the deck is shared with.
+- **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
+  artifact menu has **Download .png** (the one artboard at once, or pick one when there are more;
+  2x where it fits, else 1x, transparent where the board is) and **Download .pdf** (every board,
+  each on a page of its own size) in place of Print or save as PDF, rendered by the server from
+  the version on screen with the same safety as thumbnails. Anyone who may view the design can
+  export it, except a token limited to one artifact (`token_bound`, as for thumbnails), up to 30
+  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed out, per network), 20 times an hour
+  per design for everyone but its owner and editors (`DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR`) and
+  120 times an hour for the whole instance (`DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`), which bounds
+  the operator's browser time; at most two render at once across the instance, and
+  `DESIGN_EXPORT=false` turns it off. A PNG is at most 4,000,000 pixels (a board of up to
+  1,000,000 px at 2x, a 1080x1080 or 1920x1080 one at 1x only) and any file at most 24 MB, so one
+  export cannot run the Worker out of memory. Scripts and agents use
+  `GET /api/v1/artifacts/<id>/export?format=png&board=<id>&scale=1|2` or `?format=pdf` (every
+  board, or `&board=<id>`), with `/export/options` listing the boards. Without the binding nothing
+  changes: Print or save as PDF stays.
+- **Thumbnail capture failures are logged without URLs**, so a capture's one-time enter token
+  never reaches the Worker's logs.
 
 ## 0.6.0 (2026-11-20)
 

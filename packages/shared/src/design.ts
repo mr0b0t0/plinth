@@ -114,6 +114,37 @@ export const BOARD_IFRAME_SANDBOX = ARTIFACT_IFRAME_SANDBOX_OPAQUE;
 /** The board loader's file name under /__plinth/frames/design/ (the registry's renderer.frame). */
 export const BOARD_LOADER_FILE = "board.html";
 
+// The server's PNG and PDF export (services/designExport.ts in the Worker) opens the shell
+// top-level with print media emulated, where the renderer lays every board out at 100% (boot.ts),
+// and evaluates these expressions in its own copy of the page. They are Plinth's own text: a board
+// id is [a-z0-9-] and is quoted as a JSON string all the same.
+
+/** The renderer's element for each board, keyed by data-board. */
+const EXPORT_BOARD_SELECTOR = ".plinth-design__board";
+
+/** True once the renderer has taken the export layout (never the canvas). */
+export const DESIGN_EXPORT_LAYOUT_SCRIPT = 'document.documentElement.hasAttribute("data-export")';
+
+/**
+ * Removes every board but `id` from the page before the boards load, so one board's export waits
+ * for and prints only that board. Evaluates to whether that board is on the page.
+ */
+export function designExportKeepOnlyScript(id: string): string {
+  return `(() => { const id = ${JSON.stringify(id)}; let found = false; for (const el of document.querySelectorAll(${JSON.stringify(EXPORT_BOARD_SELECTOR)})) { if (el.getAttribute("data-board") === id) found = true; else el.remove(); } return found; })()`;
+}
+
+/** True once the export's boards have loaded: the one board, or `boards` of them. */
+export function designExportLoadedScript(board: string | null, boards: number): string {
+  return board !== null
+    ? `document.querySelector(${JSON.stringify(`${EXPORT_BOARD_SELECTOR}[data-board=${JSON.stringify(board)}][data-loaded]`)}) !== null`
+    : `Number(document.documentElement.getAttribute("data-boards-loaded") || "0") >= ${Math.trunc(boards)}`;
+}
+
+/** The board's element, for the PNG's box. */
+export function designExportBoardSelector(id: string): string {
+  return `${EXPORT_BOARD_SELECTOR}[data-board=${JSON.stringify(id)}]`;
+}
+
 const ATTRS = ["id", "name", "size", "width", "height", "background", "section"] as const;
 type Attr = (typeof ATTRS)[number];
 const ATTR_SET: ReadonlySet<string> = new Set(ATTRS);

@@ -150,6 +150,41 @@ test("a page with the runtime hands its state and scroll to the next version", a
   await expect.poll(() => shown.evaluate(() => Math.round(window.scrollY))).toBe(600);
 });
 
+test("a carry record left behind is not read by a reload of the old version's frame", async ({
+  page,
+}) => {
+  const { token } = await seedToken(uniqueEmail("runtime-stale"));
+  const art = await publishArtifact(page.request, token, { html: RUNTIME_PAGE("First") });
+  await page.goto(`/a/${art.slug}`);
+  const current = page.frameLocator(CURRENT_FRAME);
+  await expect(current.locator("h1")).toHaveText("First");
+  const frame = await shownFrame(page);
+  expect(await frame.evaluate(() => window.name)).toBe("plinth-v1");
+  // A record for v2 the app never acted on (the update was held, or the frame stayed), then the
+  // page reloads itself in the same frame: that load is not the update, so it reads nothing.
+  const navigated = page.waitForEvent("framenavigated", (f) => f === frame);
+  await frame.evaluate(() => {
+    const rec = { from: 1, to: 2, at: Date.now(), scroll: { x: 0, y: 0 }, path: "/", hash: null };
+    sessionStorage.setItem(
+      "__plinth_carry",
+      JSON.stringify({ ...rec, state: { draft: "left behind" } }),
+    );
+    setTimeout(() => location.reload(), 0);
+  });
+  await navigated;
+  await expect.poll(() => frame.evaluate(() => document.readyState)).toBe("complete");
+  await expect(current.locator("h1")).toHaveText("First");
+  await expect(current.locator("#carried")).toHaveText("none");
+  const reloaded = await shownFrame(page);
+  expect(await reloaded.evaluate(() => sessionStorage.getItem("__plinth_carry"))).toBeNull();
+
+  // The real update still carries, into the frame named for v2.
+  await current.locator("#draft").fill("typed now");
+  await update(token, art.id, { html: RUNTIME_PAGE("Second") }, 1);
+  const next = page.frameLocator('iframe[title$="version 2"]');
+  await expect(next.locator("#carried")).toHaveText("from v1: typed now", { timeout: 10_000 });
+});
+
 test("a page with the runtime keeps its query as it was, and gets its hash back", async ({
   page,
 }) => {

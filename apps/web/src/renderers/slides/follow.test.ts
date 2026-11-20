@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
 import {
   FOLLOW_BACKOFF_S,
+  FOLLOW_GOTO_GAP_MS,
+  FOLLOW_GOTO_SLOW_GAP_MS,
   FOLLOW_HIDDEN_CLOSE_MS,
   FOLLOW_PING_MS,
   Follow,
@@ -370,6 +372,122 @@ describe("Follow: presenting", () => {
     expect(third.frames()).toEqual([]);
     expect(f.client.wantLead).toBe(false);
     expect(deck.current).toBe(2);
+  });
+
+  it("a reconnect keeps the lead when the room still lists this presenter's old socket", () => {
+    const { f, s, deck, told } = setup("present");
+    const button = f.leadButton();
+    welcome(s, { id: "s_me", present: true });
+    deck.go(3);
+    f.toggleLead();
+    s.frame({ t: "at", slide: 3, by: "s_me" });
+    // The network drops; the room has not seen the old socket close, so it still leads there.
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    const again = last();
+    welcome(again, { id: "s_new", present: true, at: { slide: 3, by: "s_me" } });
+    expect(again.frames()).toEqual([{ t: "start", slide: 3 }]);
+    expect(f.client.wantLead).toBe(true);
+    expect(f.client.takenOver).toBe(false);
+    expect(told).toEqual([true]);
+    again.frame({ t: "at", slide: 3, by: "s_new" });
+    expect(f.client.leading).toBe(true);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    // A second drop before the room noticed either: both old ids are this presenter's.
+    again.drop();
+    vi.advanceTimersByTime(1000);
+    const third = last();
+    welcome(third, { id: "s_third", present: true, at: { slide: 3, by: "s_new" } });
+    expect(third.frames()).toEqual([{ t: "start", slide: 3 }]);
+    expect(told).toEqual([true]);
+  });
+
+  it("sends goto at most every 100 ms, and always the last slide", () => {
+    const { f, s, deck } = setup("present", 20);
+    welcome(s, { id: "s_me", present: true });
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    // A held arrow key: ten slides in 50 ms.
+    for (let i = 0; i < 10; i++) {
+      deck.next();
+      vi.advanceTimersByTime(5);
+    }
+    expect(s.frames().slice(1)).toEqual([{ t: "goto", slide: 2 }]);
+    vi.advanceTimersByTime(FOLLOW_GOTO_GAP_MS);
+    // The trailing send: the slide on screen, once.
+    expect(s.frames().slice(1)).toEqual([
+      { t: "goto", slide: 2 },
+      { t: "goto", slide: 11 },
+    ]);
+    vi.advanceTimersByTime(FOLLOW_GOTO_GAP_MS * 5);
+    expect(s.frames()).toHaveLength(3);
+    // After a pause, the next page turn goes at once.
+    deck.next();
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 12 });
+  });
+
+  it("after rate_limited it sends the slide on screen again, and slows down", () => {
+    const { f, s, deck } = setup("present", 20);
+    welcome(s, { id: "s_me", present: true });
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    deck.go(5);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 5 });
+    // The room dropped that goto.
+    s.frame({ t: "error", code: "rate_limited" });
+    expect(f.client.leading).toBe(true);
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS - 1);
+    expect(s.frames()).toHaveLength(2);
+    deck.go(6);
+    expect(s.frames()).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 6 });
+    // From now on at most once a second on this socket.
+    deck.go(7);
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS - 1);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 6 });
+    vi.advanceTimersByTime(1);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 7 });
+    // A new socket starts afresh.
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    const again = last();
+    welcome(again, { id: "s_new", present: true });
+    again.frame({ t: "at", slide: 7, by: "s_new" });
+    deck.go(8);
+    deck.go(9);
+    vi.advanceTimersByTime(FOLLOW_GOTO_GAP_MS);
+    expect(again.frames()).toEqual([
+      { t: "start", slide: 7 },
+      { t: "goto", slide: 8 },
+      { t: "goto", slide: 9 },
+    ]);
+  });
+
+  it("after rate_limited it sends a start or a stop the room may have dropped", () => {
+    const { f, s, deck } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    deck.go(2);
+    f.toggleLead();
+    // The start was dropped: no `at` of its own came back.
+    s.frame({ t: "error", code: "rate_limited" });
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS);
+    expect(s.frames()).toEqual([
+      { t: "start", slide: 2 },
+      { t: "start", slide: 2 },
+    ]);
+    s.frame({ t: "at", slide: 2, by: "s_me" });
+    expect(f.client.leading).toBe(true);
+    // The stop was dropped: the room still lists this socket as leading.
+    f.toggleLead();
+    s.frame({ t: "error", code: "rate_limited" });
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS);
+    expect(s.frames().slice(2)).toEqual([{ t: "stop" }, { t: "stop" }]);
+    // Once the room says nobody leads, nothing more is sent.
+    s.frame({ t: "stopped" });
+    s.frame({ t: "error", code: "rate_limited" });
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS);
+    expect(s.frames()).toHaveLength(4);
   });
 
   it("tells the app the person's lead: on and off, a takeover, a refusal, never a closed socket", () => {

@@ -283,3 +283,60 @@ test("an anonymous link viewer opens no socket and sees no note", async ({ page,
     await anon.context().close();
   }
 });
+
+test("a quick run of page turns ends with followers on the presenter's last slide", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const owner = uniqueEmail("follow-fast");
+  const viewerEmail = uniqueEmail("follow-fast-viewer");
+  const { token } = await seedToken(owner, { label: "Deck agent", clientType: "claude" });
+  // More slides than the room lets one socket send in a burst at the default rate (twice 20).
+  const count = 70;
+  const content = Array.from({ length: count }, (_, i) => `## Slide ${i + 1}`).join("\n\n---\n\n");
+  const art = await publishArtifact(page.request, token, {
+    title: "Long deck",
+    html: undefined,
+    type: "slides",
+    content: `${content}\n`,
+    visibility: "allowlist",
+  });
+  const shared = await apiPut(
+    page.request,
+    `/artifacts/${art.id}/sharing`,
+    { grants: [{ email: viewerEmail, role: "viewer" }] },
+    { token },
+  );
+  expect(shared.status, JSON.stringify(shared.body)).toBe(200);
+
+  await seedSession(page.context(), owner);
+  const gotos: number[] = [];
+  page.on("websocket", (ws) => {
+    if (!ws.url().includes("/__plinth/room/v1/slides")) return;
+    ws.on("framesent", (f) => {
+      const m = typeof f.payload === "string" && /^\{"t":"goto","slide":(\d+)\}$/.exec(f.payload);
+      if (m) gotos.push(Number(m[1]));
+    });
+  });
+  await page.goto(`/a/${art.slug}`);
+  await ready(page);
+  const viewer = await listedViewer(browser, art.slug, viewerEmail);
+  try {
+    const lead = deck(page).locator(".plinth-slides__controls .plinth-slides__lead");
+    await expect(lead).toBeEnabled({ timeout: 15_000 });
+    await lead.press("Enter");
+    await expect(lead).toHaveText("1 following", { timeout: 10_000 });
+    await root(page).focus();
+    // A held arrow key, all the way to the end.
+    for (let i = 1; i < count; i++) await page.keyboard.press("ArrowRight");
+    await expect(html(page)).toHaveAttribute("data-slide", String(count));
+    await expect(html(viewer)).toHaveAttribute("data-slide", String(count), { timeout: 10_000 });
+    await expect(deck(viewer).locator(".plinth-slides__follow")).toContainText("Following");
+    // Throttled: far fewer frames than page turns, and the last one is the slide on screen.
+    await expect.poll(() => gotos.at(-1)).toBe(count);
+    expect(gotos.length).toBeLessThan(count / 2);
+  } finally {
+    await viewer.context().close();
+  }
+});

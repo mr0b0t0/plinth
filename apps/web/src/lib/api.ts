@@ -8,6 +8,7 @@ import {
   COOKIES,
   CSRF_HEADER,
   type DataSummary,
+  type DesignExportOptions,
   type ErrorBody,
   type ErrorCode,
   HOST_COOKIE_PREFIX,
@@ -152,4 +153,70 @@ export function liveCheckpoint(
 export function liveDiscard(ref: string, rev: number, conflictVersion?: number): Promise<void> {
   const q = `?rev=${rev}${conflictVersion !== undefined ? `&conflict_version=${conflictVersion}` : ""}`;
   return api<void>(`${route(API.liveDraft, { ref })}${q}`, { method: "DELETE" });
+}
+
+// ---------- design export (PNG and PDF rendered by the server) ----------
+
+/** A design version's artboards and the formats it downloads as (anyone who may view it). */
+export function getDesignExportOptions(
+  ref: string,
+  version: number,
+  signal?: AbortSignal,
+): Promise<DesignExportOptions> {
+  return api<DesignExportOptions>(`${route(API.designExportOptions, { ref })}?version=${version}`, {
+    signal,
+  });
+}
+
+export interface DesignExportRequest {
+  format: "png" | "pdf";
+  version: number;
+  /** Required for png; for pdf, only this board. */
+  board?: string;
+  /** png only. */
+  scale?: 1 | 2;
+}
+
+/** The export's URL on the app host (same origin, so the session cookie goes with it). */
+export function designExportUrl(ref: string, r: DesignExportRequest): string {
+  const q = new URLSearchParams({ format: r.format, version: String(r.version) });
+  if (r.board) q.set("board", r.board);
+  if (r.format === "png" && r.scale) q.set("scale", String(r.scale));
+  return `${API_PREFIX}${route(API.designExport, { ref })}?${q}`;
+}
+
+/** The file name the server gave (Content-Disposition), or `fallback`. */
+export function attachmentName(header: string | null, fallback: string): string {
+  const m = header ? /filename="([A-Za-z0-9._-]{1,200})"/.exec(header) : null;
+  return m?.[1] ?? fallback;
+}
+
+/**
+ * Render and fetch a design export. Resolves with the file, or throws ApiRequestError with the
+ * server's message (rate limited, unavailable, off), so the dialog can say what went wrong instead
+ * of the browser saving an error as a file.
+ */
+export async function fetchDesignExport(
+  ref: string,
+  r: DesignExportRequest,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(designExportUrl(ref, r), { credentials: "same-origin", signal });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let err: ErrorBody["error"] | undefined;
+    try {
+      err = (JSON.parse(text) as ErrorBody).error;
+    } catch {
+      // fall through
+    }
+    throw new ApiRequestError(
+      res.status,
+      err?.code ?? "internal",
+      err?.message ?? `Request failed (${res.status})`,
+      err?.details,
+    );
+  }
+  const filename = attachmentName(res.headers.get("Content-Disposition"), `design.${r.format}`);
+  return { blob: await res.blob(), filename };
 }

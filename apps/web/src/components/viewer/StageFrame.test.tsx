@@ -57,6 +57,20 @@ describe("StageFrame", () => {
     expect(screen.getByRole("status").textContent).toBe("");
   });
 
+  it("names each frame for its version, and the outgoing one keeps its own name", () => {
+    // The page reads it as window.name: its runtime takes carried state only in the frame named
+    // for the record's version (docs/spec.md "Live views").
+    const { rerender } = render(
+      <StageFrame src="https://x.test/1" title="t, version 3" name="plinth-v3" loadingLabel="l" />,
+    );
+    fireEvent.load(frames()[0] as HTMLIFrameElement);
+    expect(frames()[0]?.getAttribute("name")).toBe("plinth-v3");
+    rerender(
+      <StageFrame src="https://x.test/2" title="t, version 4" name="plinth-v4" loadingLabel="l" />,
+    );
+    expect(frames().map((f) => f.getAttribute("name"))).toEqual(["plinth-v3", "plinth-v4"]);
+  });
+
   it("hands the ref to the newest frame", () => {
     let el: HTMLIFrameElement | null = null;
     const ref = (node: HTMLIFrameElement | null) => {

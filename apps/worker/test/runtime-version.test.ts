@@ -1,8 +1,14 @@
 // /__plinth/runtime.js, live views: a page keeps its state across versions (runtime/version.ts).
 // The real runtime runs against a fake window: the hello to the app, `update` answered with a hold
 // or a carry record, the record read back once as plinth.carried in the next version, its limits
-// (16 KiB of state, 30 s), the scroll restored after load, and messages from anywhere but the
-// parent at the app origin ignored.
+// (16 KiB of state, 30 s, only in the frame the app loaded the record's version in), the scroll
+// restored after load, and messages from anywhere but the parent at the app origin ignored.
+import {
+  LIVE_VIEW_LIMITS,
+  VIEW_CARRY_KEY,
+  VIEW_FRAME_NAME_PREFIX,
+  viewFrameName,
+} from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
@@ -33,6 +39,11 @@ function boot(
     readyState?: string;
     path?: string;
     scroll?: { x: number; y: number };
+    /**
+     * The frame's name (window.name), which the app sets to the version it loads there. By
+     * default the frame of version 2, which update() moves to.
+     */
+    name?: string;
   } = {},
 ) {
   const listeners = new Map<string, ((e: unknown) => void)[]>();
@@ -53,6 +64,7 @@ function boot(
     },
     dispatchEvent: () => true,
     sessionStorage: storage,
+    name: opts.name ?? "plinth-v2",
     location,
     history: {
       state: null,
@@ -291,9 +303,59 @@ describe("runtime: new versions", () => {
     const fresh = memoryStorage({
       [KEY]: JSON.stringify({ from: 3, to: 4, at: Date.now(), scroll: { x: 5, y: 7 }, path: "/" }),
     });
-    const q = boot({ storage: fresh, readyState: "complete" });
+    const q = boot({ storage: fresh, readyState: "complete", name: "plinth-v4" });
     expect(q.win.plinth.carried).toEqual({ from: 3, to: 4, state: null });
     expect(q.scrolled).toEqual([[5, 7]]);
+  });
+
+  it("reads a record only in the frame the app loaded its version in, and removes it anyway", async () => {
+    const p = boot({ name: "plinth-v1", path: "/guide.html#step-2", scroll: { x: 0, y: 400 } });
+    p.win.plinth.onVersion(() => ({ state: { draft: "stale" } }));
+    p.fromApp(update());
+    expect((await p.answer())?.[0].type).toBe("update:ok");
+    const rec = p.storage.getItem(KEY) as string;
+    // The app held the update or kept the frame: a reload or sub-page of the old frame still has
+    // the old frame's name, so it is not that update.
+    for (const name of ["plinth-v1", "plinth-v3", "plinth-v10"]) {
+      const s = memoryStorage({ [KEY]: rec });
+      const old = boot({ storage: s, name, path: "/guide.html", readyState: "complete" });
+      expect(old.win.plinth.carried, name).toBeNull();
+      expect(old.scrolled).toEqual([]);
+      expect(old.replaced).toEqual([]);
+      expect(s.getItem(KEY)).toBeNull();
+    }
+    // The frame the app loaded version 2 in takes it.
+    const next = boot({ storage: memoryStorage({ [KEY]: rec }), path: "/guide.html" });
+    expect(next.win.plinth.carried).toEqual({ from: 1, to: 2, state: { draft: "stale" } });
+    expect(next.replaced).toEqual(["#step-2"]);
+  });
+
+  it("takes a record as before in a frame the app did not name for a version", async () => {
+    const p = boot({ path: "/guide.html#step-2" });
+    p.win.plinth.onVersion(() => ({ state: { draft: "kept" } }));
+    p.fromApp(update());
+    expect((await p.answer())?.[0].type).toBe("update:ok");
+    const rec = p.storage.getItem(KEY) as string;
+    // An app tab opened before frames were named loads the next version in an unnamed frame; a
+    // page may rename its own window (window.name = "main"), or a library may keep data there.
+    for (const name of ["", "main", "x", "plinth-v", "plinth-v0", "plinth-v02", "plinth-v2x"]) {
+      const s = memoryStorage({ [KEY]: rec });
+      const next = boot({ storage: s, name, path: "/guide.html" });
+      expect(next.win.plinth.carried, name).toEqual({ from: 1, to: 2, state: { draft: "kept" } });
+      expect(next.replaced, name).toEqual(["#step-2"]);
+      expect(s.getItem(KEY)).toBeNull();
+    }
+  });
+
+  it("uses the live-view limits and key from the shared constants", () => {
+    // The literals are LIVE_VIEW_LIMITS and VIEW_CARRY_KEY: one place to change them.
+    expect(SCRIPT).toContain(`var CARRY_KEY = ${JSON.stringify(VIEW_CARRY_KEY)};`);
+    expect(SCRIPT).toContain(`var CARRY_MAX_BYTES = ${LIVE_VIEW_LIMITS.carryMaxBytes};`);
+    expect(SCRIPT).toContain(`var CARRY_MAX_AGE_MS = ${LIVE_VIEW_LIMITS.carryMaxAgeS * 1000};`);
+    expect(SCRIPT).toContain(`var VERSION_BUDGET_MS = ${LIVE_VIEW_LIMITS.versionBudgetMs};`);
+    expect(SCRIPT).toContain(`var FRAME_NAME_PREFIX = ${JSON.stringify(VIEW_FRAME_NAME_PREFIX)};`);
+    expect(KEY).toBe(VIEW_CARRY_KEY);
+    expect(viewFrameName(2)).toBe("plinth-v2");
   });
 
   it("answers within the budget when a handler never settles", async () => {

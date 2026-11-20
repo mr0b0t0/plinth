@@ -17,6 +17,7 @@ import {
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import {
+  designExportActive,
   instanceLimits,
   invitationEmailsActive,
   liveEditMode,
@@ -67,6 +68,7 @@ meApi.get("/config", (c) => {
     inline_editing: liveEditMode(config, c.env),
     invitation_emails: invitationEmailsActive(config),
     live_views: config.allowLiveViews,
+    design_export: designExportActive(config, c.env),
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

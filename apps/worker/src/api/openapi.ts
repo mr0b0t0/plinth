@@ -23,6 +23,7 @@ import {
   DATA_COLLECTION_RE,
   DATA_DOC_ID_RE,
   DEFAULTS,
+  DESIGN_EXPORT,
   ERROR_CODES,
   editSheetInput,
   grantsReplaceInput,
@@ -115,8 +116,11 @@ interface Operation {
   rawBody?: { types: string[]; description: string };
   /** Status code and component name of the success response (null for no body). */
   ok: [number, string | null];
-  /** A non-JSON success response: its media type (the body is binary). Replaces ok's schema. */
-  okMedia?: string;
+  /**
+   * A non-JSON success response: its media type, or the types it may have (the body is binary).
+   * Replaces ok's schema.
+   */
+  okMedia?: string | readonly string[];
   /** What the success response is, when it has no body (a WebSocket upgrade). */
   okDescription?: string;
   errors?: number[];
@@ -770,6 +774,11 @@ function responseSchemas(): Record<string, Json> {
           "Open views apply new versions while keeping the reader's state here (ALLOW_LIVE_VIEWS): " +
           "docs update in place, pages with the runtime carry their state, pages that declare " +
           "`hold` wait while the viewer uses them. Absent or false: a new version replaces the page",
+      },
+      design_export: {
+        type: "boolean",
+        description:
+          "Designs download as PNG or PDF rendered on the server here (DESIGN_EXPORT with a Browser Rendering binding)",
       },
     }),
     LoginResult: obj({
@@ -2761,7 +2770,12 @@ function operationObject(op: Operation): Json {
     [String(status)]: op.okMedia
       ? {
           description: "Success",
-          content: { [op.okMedia]: { schema: { type: "string", format: "binary" } } },
+          content: Object.fromEntries(
+            (typeof op.okMedia === "string" ? [op.okMedia] : op.okMedia).map((t) => [
+              t,
+              { schema: { type: "string", format: "binary" } },
+            ]),
+          ),
         }
       : schema === null
         ? { description: op.okDescription ?? "Done, no body" }
@@ -2824,6 +2838,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
     ...categorySharingOperations(),
     ...liveViewOperations(),
     ...invitationOperations(),
+    ...designExportOperations(),
   ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
@@ -2889,6 +2904,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...designSystemSchemas(),
         ...sheetSchemas(),
         ...invitationSchemas(),
+        ...designExportSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {
@@ -2991,6 +3007,95 @@ function invitationOperations(): Operation[] {
       body: "InvitationEmailsInput",
       ok: [200, "InvitationEmailSettings"],
       errors: [400, 401, 403],
+    },
+  ];
+}
+
+// ---------- Design export (docs/spec.md "Designs") ----------
+
+function designExportSchemas(): Record<string, Json> {
+  return {
+    DesignExportOptions: obj({
+      id: str(),
+      version: int({ minimum: 1 }),
+      boards: {
+        type: "array",
+        description: "The version's artboards, in source order",
+        items: obj({
+          id: str(),
+          name: str({ description: "Untrusted text" }),
+          width: int({ minimum: 16, maximum: 4096 }),
+          height: int({ minimum: 16, maximum: 4096 }),
+        }),
+      },
+      max_pixels: int({
+        description: "The largest PNG, in device pixels (width x height x scale^2)",
+      }),
+    }),
+  };
+}
+
+function designExportOperations(): Operation[] {
+  return [
+    {
+      method: "get",
+      path: API.designExportOptions,
+      operationId: "getDesignExportOptions",
+      summary: "A design's artboards and the PNG pixel cap",
+      description:
+        "For an artifact of type design the caller may view: its boards (id, name, size) in the " +
+        "version (the current one without `version`) and the largest PNG in pixels. A token " +
+        "limited to one artifact gets 403 `token_bound`, as for the export. 404 for an artifact " +
+        "of another type.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      query: [queryVersion],
+      ok: [200, "DesignExportOptions"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.designExport,
+      operationId: "exportDesign",
+      summary: "Download a design as PNG (one artboard) or PDF",
+      description:
+        "For an artifact of type design the caller may view, rendered on the server by Browser " +
+        "Rendering: a PNG of one board at 1x or 2x, or a PDF with one page per board at its own " +
+        "size (every board, or the one named). An attachment named `<slug>[-<board>].png` or " +
+        `\`.pdf\`. At most ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} PNG pixels (400), ` +
+        `files of at most ${DESIGN_EXPORT.maxBytes / 1_048_576} MB (413 payload_too_large, ` +
+        "with max_bytes: export fewer boards or at 1x), and " +
+        "DESIGN_EXPORTS_PER_HOUR exports per person, or per client network signed out (an IPv6 " +
+        "/64 as one; 429), DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR of one artifact by everyone but " +
+        "its owner and editors (429 with `details.reason` `artifact_limit`) and " +
+        "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR across the instance (429 with `details.reason` " +
+        "`instance_limit`), each with Retry-After. A token limited to one artifact gets 403 " +
+        "`token_bound`: the render runs the page, as a thumbnail capture does. 403 " +
+        "feature_disabled where the instance has no Browser Rendering " +
+        "binding or DESIGN_EXPORT is off; 503 unavailable when the render fails, or with " +
+        `Retry-After when ${DESIGN_EXPORT.maxConcurrent} exports are already rendering (not ` +
+        "counted). 404 for an artifact of another type.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      query: [
+        { name: "format", schema: enumOf(DESIGN_EXPORT.formats), description: "png or pdf" },
+        queryVersion,
+        {
+          name: "board",
+          schema: str({ pattern: "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }),
+          description: "The artboard id: required for png; for pdf, only this board",
+        },
+        {
+          name: "scale",
+          schema: { type: "integer", enum: [...DESIGN_EXPORT.scales] },
+          description: "png only: device pixels per CSS px (default 1)",
+        },
+      ],
+      ok: [200, null],
+      okMedia: ["image/png", "application/pdf"],
+      errors: [400, 401, 403, 404, 413, 429, 503],
     },
   ];
 }

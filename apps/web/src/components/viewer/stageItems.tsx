@@ -47,6 +47,7 @@ import {
 } from "../ui/index.ts";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
+import { designExportDialog, downloadDesign, unlessExports } from "./designItems.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import {
@@ -242,7 +243,7 @@ const downloadBoard: MenuItem = (c) => [
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
-  design: [printTyped],
+  design: [unlessExports(printTyped), downloadDesign],
   sheet: [printTyped, downloadSheet],
   whiteboard: [boardSettings, downloadBoard],
 };
@@ -313,7 +314,7 @@ export function menuEntries(c: StageContext): MenuEntry[] {
 }
 
 /** The dialogs a menu item may open, by id. One dialog per line. */
-export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog];
+export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog, designExportDialog];
 
 // ---------- the bar's controls ----------
 

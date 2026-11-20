@@ -66,9 +66,13 @@ export function planUpdate(s: UpdateSituation): UpdatePlan {
   return { kind: "swap" };
 }
 
-/** Whether the viewer is using the page in `frame`: focus is inside it and the tab has focus. */
+/**
+ * Whether the viewer is using the page in `frame`: focus is inside it. Not whether the window has
+ * focus too: a viewer who switches to another app or tab mid-sentence still has the frame as the
+ * document's active element, and the input they typed is just as unsaved.
+ */
 export function frameHasFocus(frame: HTMLIFrameElement | null): boolean {
-  return frame !== null && document.activeElement === frame && document.hasFocus();
+  return frame !== null && document.activeElement === frame;
 }
 
 /** The `update` message for the frame's runtime (posted at the exact content origin only). */

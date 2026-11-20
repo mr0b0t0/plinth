@@ -6,8 +6,11 @@
 // validates every server frame by hand, pings every 30 s, backs off 1, 2, 5, 10 then 30 s, closes
 // after 60 s in a hidden tab (unless it leads; between reconnects it stops retrying instead) and
 // reconnects when shown, and stops for good on 4401 (access changed) and 4404 (gone). A presenter
-// that was leading takes the lead again after a reconnect, unless someone else leads by then, and
-// sends the slide it moved to while its `start` was on the way.
+// that was leading takes the lead again after a reconnect, unless someone else leads by then (its
+// own old socket, which the room may still list, is not someone else), and sends the slide it
+// moved to while its `start` was on the way. It sends `goto` at most every 100 ms, always ending on
+// the slide on screen (trailing edge), and after the room's `rate_limited` at most once a second,
+// sending the room what it may have dropped again.
 //
 // The app replaces a deck's frame for a newer version or a sharing change (outside full screen and
 // presenter view), and the old frame's socket closes with it. So the frame tells the app whether
@@ -37,6 +40,16 @@ import type { DeckController } from "./nav.ts";
 export const FOLLOW_BACKOFF_S = [1, 2, 5, 10, 30] as const;
 export const FOLLOW_HIDDEN_CLOSE_MS = 60_000;
 export const FOLLOW_PING_MS = 30_000;
+/**
+ * A leader sends `goto` at most this often: paging faster (a held arrow key, a quick flick) sends
+ * only the latest slide once the gap has passed, well under the room's default 20 frames a second.
+ */
+export const FOLLOW_GOTO_GAP_MS = 100;
+/**
+ * After the room answered `rate_limited` (an instance with a low ROOM_MESSAGES_PER_SECOND, at
+ * least 1): the gap for the rest of the socket's life, and how long to wait before sending again.
+ */
+export const FOLLOW_GOTO_SLOW_GAP_MS = 1000;
 
 /** The slides socket's URL on this content origin. */
 export function followSocketUrl(loc: Pick<Location, "protocol" | "host">): string {
@@ -92,6 +105,16 @@ export class FollowClient {
   private slide = 1;
   /** A lead the frame this one replaced had: the next welcome takes it whoever the room lists. */
   private resuming = false;
+  /**
+   * The ids this client's earlier sockets had (the last few): after a reconnect the room may
+   * still list the old socket as leading, and that is this presenter, not someone else.
+   */
+  private readonly ownIds: string[] = [];
+  /** When the last `goto` went, and the gap before the next (FOLLOW_GOTO_GAP_MS or slow). */
+  private lastGotoAt = Number.NEGATIVE_INFINITY;
+  private gotoGap = FOLLOW_GOTO_GAP_MS;
+  /** The trailing `goto` (or the resend after `rate_limited`), waiting for the gap. */
+  private gotoTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly opts: FollowClientOptions) {}
 
@@ -161,13 +184,52 @@ export class FollowClient {
   /** The deck moved to `slide`: the others follow while this socket leads. */
   moved(slide: number): void {
     this.slide = slide;
-    if (this.leading) this.send({ t: "goto", slide });
+    if (this.leading) this.queueGoto(0);
+  }
+
+  /**
+   * Send the slide on screen once the gap since the last `goto` (and at least `wait` ms) has
+   * passed. While one is queued, later moves only change the slide it sends.
+   */
+  private queueGoto(wait: number): void {
+    if (this.gotoTimer) return;
+    const due = Math.max(wait, this.lastGotoAt + this.gotoGap - Date.now());
+    if (due <= 0) {
+      this.sendGoto();
+      return;
+    }
+    this.gotoTimer = setTimeout(() => {
+      this.gotoTimer = null;
+      this.resync();
+    }, due);
+  }
+
+  private sendGoto(): void {
+    this.lastGotoAt = Date.now();
+    this.send({ t: "goto", slide: this.slide });
+  }
+
+  /**
+   * Bring the room up to date with what the person wants: the slide on screen while leading, a
+   * `start` the room has not confirmed (it may have dropped it), or a `stop` it still lacks.
+   */
+  private resync(): void {
+    if (!this.connected) return;
+    if (this.leading) this.sendGoto();
+    else if (this.wantLead) this.send({ t: "start", slide: this.slide });
+    else if (this.you !== null && this.at?.by === this.you.id) this.send({ t: "stop" });
+  }
+
+  private clearGoto(): void {
+    if (this.gotoTimer) clearTimeout(this.gotoTimer);
+    this.gotoTimer = null;
   }
 
   private clearTimers(): void {
     if (this.retry) clearTimeout(this.retry);
     if (this.hiddenTimer) clearTimeout(this.hiddenTimer);
     if (this.ping) clearInterval(this.ping);
+    this.clearGoto();
     this.retry = null;
     this.hiddenTimer = null;
     this.ping = null;
@@ -204,6 +266,10 @@ export class FollowClient {
     this.audience = 0;
     if (this.ping) clearInterval(this.ping);
     this.ping = null;
+    // The next socket's `start` carries the slide on screen; its rate starts afresh.
+    this.clearGoto();
+    this.gotoGap = FOLLOW_GOTO_GAP_MS;
+    this.lastGotoAt = Number.NEGATIVE_INFINITY;
     if (code === ROOM_CLOSE.unauthorized || code === ROOM_CLOSE.gone) {
       this.ended = code === ROOM_CLOSE.gone ? "gone" : "unauthorized";
       this.stopped = true;
@@ -269,6 +335,11 @@ export class FollowClient {
   handle(f: SlidesServerFrame): void {
     switch (f.t) {
       case "welcome": {
+        const before = this.you?.id;
+        if (before && before !== f.you.id && !this.ownIds.includes(before)) {
+          this.ownIds.push(before);
+          if (this.ownIds.length > 8) this.ownIds.shift();
+        }
         this.you = f.you;
         this.at = f.at;
         this.connected = true;
@@ -283,9 +354,12 @@ export class FollowClient {
           }
         }, FOLLOW_PING_MS);
         if (this.wantLead) {
-          // Back after a reconnect: lead again, unless someone else leads now. A resumed lead
-          // takes it whoever leads: the person never stopped.
-          if (f.you.present && (f.at === null || this.resuming)) {
+          // Back after a reconnect: lead again, unless someone else leads now. This client's own
+          // old socket, which the room may not have seen close yet, is not someone else: its
+          // `start` takes over at once, and followers carry on. A resumed lead takes it whoever
+          // leads: the person never stopped.
+          const mine = f.at !== null && this.ownIds.includes(f.at.by);
+          if (f.you.present && (f.at === null || mine || this.resuming)) {
             this.send({ t: "start", slide: this.slide });
           } else this.lostLead(f.at !== null);
         }
@@ -296,9 +370,9 @@ export class FollowClient {
         const mine = f.by === this.you?.id;
         if (mine && this.wantLead && f.slide !== this.slide) {
           // The deck moved while `start` was on the way: the room's own `at` confirms the lead at
-          // the old slide, so the followers get the one on screen now.
-          this.send({ t: "goto", slide: this.slide });
+          // the old slide, so the followers get the one on screen (now, or once the gap passed).
           this.at = { slide: this.slide, by: f.by };
+          this.queueGoto(0);
           break;
         }
         if (!mine && this.wantLead && this.at?.by === this.you?.id) {
@@ -322,6 +396,13 @@ export class FollowClient {
           this.send({ t: "stop" });
         } else if (f.code === "forbidden" && this.wantLead) {
           this.lostLead(false);
+        } else if (f.code === "rate_limited") {
+          // The room dropped a frame (most likely a `goto`): slow down for this socket, and send
+          // the slide on screen (or the start or stop it lacks) once a second has passed.
+          this.gotoGap = FOLLOW_GOTO_SLOW_GAP_MS;
+          this.lastGotoAt = Date.now();
+          this.clearGoto();
+          this.queueGoto(FOLLOW_GOTO_SLOW_GAP_MS);
         }
         break;
     }

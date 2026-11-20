@@ -1,9 +1,11 @@
 // Boots a design: reads the payload the shell embeds (typedShellHtml in @plinth/shared), parses it
 // with the shared parser, lays the artboards out on the canvas and mounts a frame for each board
 // on screen (frames.ts). Boards load their files from the version the payload names (base.ts); a
-// payload without a valid version shows the error instead of any board. It runs synchronously at
-// the end of <body>, so the comments bridge (which waits for DOMContentLoaded) sees the finished
-// DOM.
+// payload without a valid version shows the error instead of any board. Opened top-level with print
+// media emulated before it loads, which only the server's PNG and PDF export does
+// (services/designExport.ts in the Worker), it lays every board out for that export instead. It
+// runs synchronously at the end of <body>, so the comments bridge (which waits for
+// DOMContentLoaded) sees the finished DOM.
 //
 // The shell's DOM never receives author markup: the shared section and the fragments exist here
 // only as strings posted to board frames, names only as textContent, and ids are
@@ -34,7 +36,7 @@ import {
   visibleBoards,
   zoomToBoard,
 } from "./layout.ts";
-import { pageName, preparePrint } from "./print.ts";
+import { pageName, preparePrint, printCss, printStyle } from "./print.ts";
 import { fromApp, readDesignAppMessage } from "./protocol.ts";
 import { boardLabel, boardSlot, el, toolbar } from "./ui.ts";
 
@@ -73,12 +75,31 @@ export function readPayload(doc: Document): TypedPayload | null {
   return value as TypedPayload;
 }
 
-/** Test seams: the frame scheduler, the shell's location, the frame limit and frame elements. */
+/**
+ * Test seams: the frame scheduler, the shell's location, the frame limit, frame elements and media
+ * queries.
+ */
 export interface BootOptions {
   schedule?: Schedule;
   location?: { href: string; search: string };
   maxLive?: number;
   createFrame?: (doc: Document) => HTMLIFrameElement;
+  /** Whether a media query matches now (window.matchMedia). */
+  matchMedia?: (query: string) => boolean;
+}
+
+/**
+ * The server's export layout: the shell is the top-level document and print media is in effect
+ * as it boots. Plinth's export browser sets that up through the DevTools protocol before the page
+ * loads. In the app the shell is a frame, and a person who prints a design has it on screen long
+ * before (Print and save as PDF keep their own path, preparePrint), so neither ever lands here.
+ */
+function exportLayoutWanted(win: Window, opts: BootOptions): boolean {
+  if (win.parent !== win) return false;
+  const matches =
+    opts.matchMedia ??
+    ((q: string) => typeof win.matchMedia === "function" && win.matchMedia(q).matches);
+  return matches("print");
 }
 
 export interface DesignHandle {
@@ -146,6 +167,39 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
         after();
       },
     });
+
+  // The export layout: what the server's PNG and PDF export renders. The export's own browser
+  // opens the shell top-level with print media emulated before the page loads; nothing in a URL
+  // or a message selects it. Every board mounted at 100% in normal flow, one named page per size,
+  // no chrome, no covers and no page background, and nothing printed from here: the export's
+  // browser prints or screenshots the page once the boards it needs have loaded.
+  if (exportLayoutWanted(win, opts)) {
+    const boards = design.boards;
+    root.setAttribute("data-mode", "export");
+    root.setAttribute("data-print", "");
+    html.setAttribute("data-export", "");
+    printStyle(doc).textContent = printCss(boards);
+    const stage = el(doc, "div", "plinth-design__export");
+    for (const b of boards) {
+      const { slot, cover } = boardSlot(doc, b, pageName(b));
+      cover.remove();
+      stage.append(slot);
+      frames.add(b, slot);
+    }
+    root.replaceChildren(stage);
+    html.setAttribute("data-boards", String(boards.length));
+    html.setAttribute("data-boards-loaded", "0");
+    html.setAttribute("data-zoom", "100");
+    frames.mountAll();
+    html.setAttribute("data-ready", "ok");
+    return {
+      stop: () => {
+        for (const f of cleanups.splice(0)) f();
+      },
+      view: null,
+      frames,
+    };
+  }
 
   const byId = new Map(design.boards.map((b) => [b.id, b]));
   root.setAttribute("data-mode", "canvas");

@@ -58,6 +58,7 @@ import {
   roomClientFrameSchema,
   SLIDES_FRAME_BYTES,
   type SlidesServerFrame,
+  slidesWatchCap,
   spreadMs,
   VIEW_WATCH_PROTOCOL,
   type ViewWatchFrame,
@@ -398,12 +399,18 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   /**
    * The per-artifact, per-viewer and per-minute caps. Records the connect when it is allowed. Only
-   * room sockets (page, doc and slides) count: watch sockets have caps of their own.
+   * room sockets (page, doc and slides) count: watch sockets have caps of their own. A slides
+   * socket that watches stops short of the cap (slidesWatchCap), so the last few slots are always
+   * there for a presenter.
    */
   private isFull(info: RoomConnect): boolean {
     let room = 0;
     for (const kind of ROOM_KINDS) room += this.ctx.getWebSockets(`k:${kind}`).length;
-    if (room >= info.limits.maxConnections) return true;
+    const cap =
+      info.kind === "slides" && info.slides !== "present"
+        ? slidesWatchCap(info.limits.maxConnections)
+        : info.limits.maxConnections;
+    if (room >= cap) return true;
     if (this.ctx.getWebSockets(`v:${info.viewer}`).length >= ROOM_LIMITS.socketsPerViewer) {
       return true;
     }
