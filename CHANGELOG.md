@@ -42,6 +42,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   conflicts and who did what. The rename, new-token and consent dialogs show the handle a name
   is mentioned by as you type (`Claude Code` is `@claude-code`), and the Connections page warns on
   a connection's row when a name cannot be reached.
+- **A mention skips connections that cannot answer it.** `@<handle>` no longer goes to a
+  connection without the "Answer mentions" permission, where it would wait for ever; a newer one
+  with the same handle that can answer gets it, and the Connections page warns accordingly.
+- **A clearer hint for names no mention can reach.** The rename and new-token dialogs now say
+  "start and end the name with a Latin letter or digit", which also covers names in other scripts
+  and names ending in a dot.
+- **The intake example shows who changed an answer.** Answers the owner or an editor changed say
+  "changed by" with their email and role, as sign-offs do, and a question whose id is
+  `constructor` or another built-in name no longer shows a stray answer.
+- **The approval example keeps your own decision current.** "You approved · Withdraw" follows the
+  shared data, so it updates when the owner or an editor changes or deletes your sign-off, without
+  a reload.
 - **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
   (shared data, rooms, page comments) no longer gets a publish warning it could not fix.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a

@@ -235,7 +235,7 @@ function clean(d) {
 function who(a) {
   if (!a) return "Someone";
   if (a.name && a.email) return `${a.name} (${a.email})`;
-  return a.email || a.name || "Someone";
+  return a.email || "Someone";
 }
 
 /** A date with the month's name ("Nov 20", with the year when it is not this year). */
@@ -321,6 +321,14 @@ function render(docs) {
   const counted = countedDocs(shown.map(({ doc }) => doc));
   list.replaceChildren(...shown.map(({ doc, s }) => row(doc, s, counted.has(doc))));
   empty.hidden = shown.length > 0;
+
+  // The viewer's own sign-off as the server has it now: the owner or an editor may have changed
+  // or deleted it, or the person signed in another tab. Not while this page is writing it.
+  if (canWrite && !busy) {
+    const own = docs.find((doc) => doc.personal === true && doc.mine === true);
+    const next = own ? clean(own.data) : null;
+    if (JSON.stringify(next) !== JSON.stringify(mine)) showMine(next);
+  }
 
   const current = shown.filter(({ doc, s }) => s.revision === REVISION && counted.has(doc));
   const approvals = current.filter(({ s }) => s.decision === "approve").length;

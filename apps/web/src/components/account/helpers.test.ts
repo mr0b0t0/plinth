@@ -220,6 +220,15 @@ describe("mentionReach", () => {
     expect(mentionReach("Claude Code", [{ ...older, artifact: { id: "x" } }], self).kind).toBe(
       "handle",
     );
+    // Nor is a connection without the mentions scope (the server skips it the same way), while
+    // one with it, or whose scopes are not known, still does.
+    expect(mentionReach("Claude Code", [{ ...older, scopes: ["artifacts:read"] }], self).kind).toBe(
+      "handle",
+    );
+    expect(
+      mentionReach("Claude Code", [{ ...older, scopes: ["artifacts:read", "mentions"] }], self)
+        .kind,
+    ).toBe("shadowed");
     // A connection that does not exist yet comes after every live one.
     expect(mentionReach("claude code", [newer], { client_type: "other" })).toMatchObject({
       kind: "shadowed",
@@ -235,8 +244,12 @@ describe("mentionReach", () => {
     expect(mentionReach("!!!", [], self)).toEqual({ kind: "none" });
     expect(mentionReach("-dash", [], self)).toEqual({ kind: "none" });
     expect(mentionReach("ends.", [], self)).toEqual({ kind: "none" });
+    // Letters of other scripts are dropped from a handle, so a Cyrillic name has none.
+    expect(mentionReach("Помощник", [], self)).toEqual({ kind: "none" });
+    expect(mentionReach("Мой agent", [], self)).toEqual({ kind: "none" });
+    // The hint fits every case: a name that starts with a letter can still end with a dot.
     expect(mentionReachText({ kind: "none" })).toBe(
-      "Cannot be mentioned: start the name with a letter or digit.",
+      "Cannot be mentioned: start and end the name with a Latin letter or digit.",
     );
   });
 

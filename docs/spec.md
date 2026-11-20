@@ -2134,18 +2134,20 @@ agents on one artifact").
   load, and sets `body[data-ready="1"]` once settled. An end-to-end test checks each file.
 - **Mentions with several agents.** `@claude` and `@codex` make one task that every live
   connection of the owner with that client type lists; the first `claim_mention` wins. `@<handle>`
-  reaches the owner's live connection, not limited to one artifact, whose label normalises to that
-  handle (`mentionHandle`: lowercase, spaces to `-`, other characters dropped; the oldest
-  connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
+  reaches the owner's live connection, not limited to one artifact and holding the `mentions`
+  scope, whose label normalises to that handle (`mentionHandle`: lowercase, spaces to `-`, other
+  characters dropped; the oldest such connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
   agent never create tasks, so agents do not hand work to each other: a person mentions the next
   one. Collaborators' own agents act with their own role and are never mention targets. Every
   version, comment and data write names the connection that made it.
 - **The handle in the app.** The rename, new-token and consent dialogs show the handle of the
   name being typed in its hint, one sentence that also names `@claude` or `@codex` for a
   connection of that client type ("Mention as `@laptop` or `@claude`."); the Client field adds
-  none. When no mention can reach the name (an older live connection has the same handle, the
-  handle is `claude` or `codex` on a connection of another client type, or the name has no letter
-  or digit to start a handle with), that warning replaces the hint, in the warning colour, and the
+  none. When no mention can reach the name (an older live connection that holds `mentions` has
+  the same handle, the handle is `claude` or `codex` on a connection of another client type, or
+  the handle does not start and end with a Latin letter or digit: letters of other scripts are
+  dropped from it and a mention drops a final dot), that warning ("Cannot be mentioned: start and
+  end the name with a Latin letter or digit." for the last case) replaces the hint, in the warning colour, and the
   Connections page shows it as one line on the connection's row. A row that mentions reach shows
   no handle. A token without the `mentions` scope or limited to one artifact gets neither; its
   permissions and artifact already say it answers no mentions. Only the owner sees these pages,

@@ -598,7 +598,7 @@ the Connections page to short names people can type in a comment: `Gemini`, `Cur
 | --- | --- | --- |
 | `@claude` | Every live connection of the owner with client type Claude | One task: the first to `claim_mention` takes it; the others get `conflict` and leave it |
 | `@codex` | Every live Codex connection of the owner | The same |
-| `@<handle>` | The owner's one connection whose name becomes that handle | The handle is the name lowercased, spaces turned into `-`, other characters dropped (`Claude Code` is `@claude-code`). `claude` and `codex` always mean the client types. When two names make one handle, the older connection gets it |
+| `@<handle>` | The owner's one connection whose name becomes that handle | The handle is the name lowercased, spaces turned into `-`, other characters dropped (`Claude Code` is `@claude-code`). `claude` and `codex` always mean the client types. When two names make one handle, the older connection gets it. A connection without the "Answer mentions" permission (`mentions` scope) never takes a handle |
 | Anything else | Nobody | Plain text |
 
 Only the artifact owner's connections are ever reached, and only the owner, editors and
@@ -606,8 +606,9 @@ commenters create requests. A personal access token is of type Other unless its 
 another, so `@claude` never reaches a CI token by accident, and a token limited to one artifact is
 never reached at all. Renaming a connection or creating a token shows the handle the name
 becomes, and the Connections page warns on a connection's row when a name cannot be reached (an
-older connection has the same handle, the name is `Claude` or `Codex` on a connection of another
-type, or it has no letter or digit to start with).
+older connection that can answer mentions has the same handle, the name is `Claude` or `Codex` on
+a connection of another type, or the name does not start and end with a Latin letter or digit:
+letters of other scripts are dropped from a handle, and a mention drops a final dot).
 
 **Picking a request up.** In Claude Code with the Plinth plugin, the mention watcher wakes the
 session when a request arrives (`/plinth:watch-mentions`). Every other harness checks when the

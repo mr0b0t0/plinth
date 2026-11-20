@@ -143,19 +143,23 @@ export interface MentionCandidate {
   revoked_at: string | null;
   /** Limited to one artifact: such a token never holds mentions, so it is never a target. */
   artifact?: unknown;
+  /** Without `mentions` it cannot pick requests up, so the server never makes it a target. */
+  scopes?: readonly string[];
 }
 
 /**
  * How a comment reaches a connection with this label (docs/agents.md "Several agents on one
  * artifact"). The server routes `@claude` and `@codex` to every connection of that client type,
  * and `@<handle>` to the owner's oldest live connection whose label normalizes to the handle
- * (mentionHandle), never to a token limited to one artifact.
+ * (mentionHandle) and that holds the `mentions` scope, never to a token limited to one artifact.
  *
  * - `handle`: `@<handle>` reaches it; `also` is `claude` or `codex` when that name reaches it too.
  * - `agent_name`: the label becomes `claude` or `codex`, which always mean the client type;
  *   `reached` says whether this connection is of that type.
- * - `shadowed`: an older live connection (`by`, its label) has the same handle and gets it.
- * - `none`: no mention can name it (no letter or digit to start the handle with).
+ * - `shadowed`: an older live connection (`by`, its label) that can answer mentions has the same
+ *   handle and gets it.
+ * - `none`: no mention can name it: its handle does not start with a Latin letter or digit (a
+ *   name in another script loses its letters), or ends with a dot, which a mention drops.
  * - `artifact_only`: a token limited to one artifact, which never answers mentions.
  * - `no_mentions`: routed, but it lacks the `mentions` scope, so it cannot pick requests up.
  */
@@ -190,6 +194,7 @@ export function mentionReach(
   let first: MentionCandidate | undefined;
   for (const o of others) {
     if (o.id === self.id || o.revoked_at !== null || o.artifact) continue;
+    if (o.scopes && !o.scopes.includes("mentions")) continue;
     if (mentionHandle(o.label) !== handle) continue;
     if (created !== undefined && !(o.created_at < created)) continue;
     if (!first || o.created_at < first.created_at) first = o;
@@ -228,7 +233,7 @@ export function mentionReachText(reach: MentionReach): string | null {
     case "shadowed":
       return `@${reach.handle} reaches “${reach.by}” instead. Rename one of them.`;
     case "none":
-      return "Cannot be mentioned: start the name with a letter or digit.";
+      return "Cannot be mentioned: start and end the name with a Latin letter or digit.";
     case "artifact_only":
     case "no_mentions":
       return null;

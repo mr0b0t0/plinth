@@ -115,6 +115,7 @@
   .response { border-top: 1px solid var(--border); padding: 12px 0 0; margin-top: 12px; }
   .response h3 { font-size: 16px; margin: 0; }
   .response .meta { color: var(--muted); font-size: 14px; margin: 2px 0 8px; }
+  .response .meta.changed { margin-top: -6px; overflow-wrap: anywhere; }
   .response dl { margin: 0; }
   .response dt { font-size: 14px; color: var(--muted); }
   .response dd { margin: 0 0 8px; white-space: pre-wrap; }
@@ -282,10 +283,13 @@ function answerOk(field, v) {
   return field.type !== "select" || field.options.includes(v);
 }
 
-/** Shared data is written by other people: keep only well-formed fields. */
+/**
+ * Shared data is written by other people: keep only well-formed fields. Answers live in an object
+ * with no prototype, so a field id such as "constructor" never reads an inherited key.
+ */
 function clean(d) {
   if (!d || typeof d !== "object") return null;
-  const answers = {};
+  const answers = Object.create(null);
   if (d.answers && typeof d.answers === "object" && !Array.isArray(d.answers)) {
     for (const [k, v] of Object.entries(d.answers)) {
       if (typeof v === "string") answers[k] = v.slice(0, 4000);
@@ -312,7 +316,7 @@ function when(iso) {
 function who(a) {
   if (!a) return "Someone";
   if (a.name && a.email) return `${a.name} (${a.email})`;
-  return a.email || a.name || "Someone";
+  return a.email || "Someone";
 }
 
 function setControls() {
@@ -324,7 +328,7 @@ function setControls() {
 function fill(doc) {
   const s = doc ? clean(doc.data) : null;
   for (const { field, input, wrap } of inputs.values()) {
-    const v = s ? s.answers[field.id] : undefined;
+    const v = s && Object.hasOwn(s.answers, field.id) ? s.answers[field.id] : undefined;
     const ok = v !== undefined && answerOk(field, v);
     if (field.type === "checkbox") input.checked = ok ? v : false;
     else input.value = ok ? String(v) : "";
@@ -398,9 +402,17 @@ function renderResponses(docs) {
     // Answers given before the questions last changed (FORM_REVISION) may miss the new ones.
     if (s.formRevision < FORM_REVISION) meta.append(" ", el("span", "tag", "earlier questions"));
     box.append(meta);
+    // The owner or an editor changed these answers (moderation): say who, from the stamps.
+    const u = doc.updatedBy;
+    const c = doc.createdBy;
+    if (u && c && u.email !== c.email) {
+      box.append(el("p", "meta changed", `changed by ${who(u)} (${u.role || "no role"})${u.via === "agent" ? " via agent" : ""}`));
+    } else if (u && u.via === "agent") {
+      box.append(el("p", "meta changed", "changed via agent"));
+    }
     const dl = document.createElement("dl");
     for (const f of QUESTIONS) {
-      if (!(f.id in s.answers)) continue;
+      if (!Object.hasOwn(s.answers, f.id)) continue;
       dl.append(el("dt", "", f.label), el("dd", "", answerText(f, s.answers[f.id])));
     }
     for (const [k, v] of Object.entries(s.answers)) {

@@ -372,6 +372,138 @@ test("client intake: answers by code, the owner's responses, new questions, clos
   }
 });
 
+test("client intake: a moderated answer says who changed it; a field named constructor stays empty", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const owner = uniqueEmail("intake-mod-owner");
+  const visitor = uniqueEmail("intake-mod-client");
+  const { token } = await seedToken(owner, { label: "Claude Code", clientType: "claude" });
+  const client = await mcpClient(token);
+  const pages: Page[] = [];
+  try {
+    // A field id that is also a key of Object.prototype: unanswered, it must read as no answer.
+    const html = INTAKE.replace(
+      '{ id: "contact_ok",',
+      '{ id: "constructor", label: "Who builds it?", type: "text" },\n  { id: "contact_ok",',
+    );
+    expect(html).not.toBe(INTAKE);
+    const art = await publishFor(client, "Project intake: Globex", html, [visitor]);
+
+    const pc = await invitee(browser, art.url, visitor);
+    pages.push(pc);
+    await readyFrame(pc);
+    const fc = inFrame(pc);
+    await expect(fc.getByLabel("Who builds it?")).toHaveValue("");
+    await fc.getByLabel("Company name").fill("Globex");
+    await fc.getByLabel("What should this project achieve?").fill("A new booking flow.");
+    await fc.getByRole("button", { name: "Send" }).click();
+    await expect(fc.locator("#sent")).toContainText("Sent on");
+    await reopen(pc);
+    await expect(fc.getByLabel("Who builds it?")).toHaveValue("");
+
+    // The owner's view lists the response without an answer for the unanswered field.
+    await openAs(browser, owner, art.url, page);
+    const fo = inFrame(page);
+    const response = fo.locator(".response").first();
+    await expect(response).toContainText("A new booking flow.");
+    await expect(response.locator("dt", { hasText: "Who builds it?" })).toHaveCount(0);
+    expect(await response.textContent()).not.toContain("function");
+    await expect(response).not.toContainText("changed by");
+
+    // The owner moderates the answers from the page: the response says who changed them.
+    const listed = await tool<{ docs: any[] }>(client, "list_artifact_data", {
+      id: art.id,
+      collection: "intake",
+    });
+    expect(listed.isError, listed.text).toBe(false);
+    const docId = listed.data.docs[0]?.id as string;
+    const frame = await readyFrame(page);
+    const moderated = await frame.evaluate(
+      (id) =>
+        (window as any).plinth.db
+          .collection("intake")
+          .set(id, {
+            answers: { company: "Globex", goal: "A new booking flow (no card numbers)." },
+            submitted: true,
+            formRevision: 1,
+          })
+          .then(
+            () => "ok",
+            (e: { code: string }) => e.code,
+          ),
+      docId,
+    );
+    expect(moderated).toBe("ok");
+    await reopen(page);
+    await expect(fo.locator(".response").first()).toContainText(`changed by ${owner} (owner)`);
+    await expect(fo.locator(".response").first()).toContainText("(no card numbers)");
+    await fo.locator(".response").first().scrollIntoViewIfNeeded();
+    await shot(page, "intake-changed-by");
+  } finally {
+    await client.close();
+    for (const p of pages) await p.context().close();
+  }
+});
+
+test("approval sign-off: the viewer's own decision follows the owner's moderation", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const owner = uniqueEmail("approval-mine-owner");
+  const a = uniqueEmail("approval-mine-a");
+  const { token } = await seedToken(owner, { label: "Claude Code", clientType: "claude" });
+  const client = await mcpClient(token);
+  const pages: Page[] = [];
+  try {
+    const art = await publishFor(client, "Approval: Logo", APPROVAL, [a]);
+    const pageA = await invitee(browser, art.url, a);
+    pages.push(pageA);
+    const fa = inFrame(pageA);
+    await fa.getByRole("button", { name: "Approve" }).click();
+    await expect(fa.locator("#mine")).toHaveText("You approved · Withdraw");
+
+    const listed = await tool<{ docs: any[] }>(client, "list_artifact_data", {
+      id: art.id,
+      collection: "signoffs",
+    });
+    expect(listed.isError, listed.text).toBe(false);
+    const docId = listed.data.docs[0]?.id as string;
+
+    // The owner turns A's approval into a request for changes, then deletes it, from the page.
+    // A's page, never reloaded, shows each state: its own decision is read from the shared data.
+    await openAs(browser, owner, art.url, page);
+    const frame = await readyFrame(page);
+    const run = (op: "set" | "delete") =>
+      frame.evaluate(
+        ([id, which]) => {
+          const c = (window as any).plinth.db.collection("signoffs");
+          const done =
+            which === "set"
+              ? c.set(id, { decision: "changes", revision: 1, note: "Wrong colour." })
+              : c.delete(id);
+          return done.then(
+            () => "ok",
+            (e: { code: string }) => e.code,
+          );
+        },
+        [docId, op] as const,
+      );
+    expect(await run("set")).toBe("ok");
+    await expect(fa.locator("#mine")).toHaveText("You requested changes · Withdraw", {
+      timeout: 20_000,
+    });
+    expect(await run("delete")).toBe("ok");
+    await expect(fa.locator("#mine")).toBeHidden({ timeout: 20_000 });
+    await expect(fa.locator("#withdraw")).toBeDisabled();
+  } finally {
+    await client.close();
+    for (const p of pages) await p.context().close();
+  }
+});
+
 test("client checklist: client ticks count, team ticks need the team, items change by version", async ({
   page,
   browser,
