@@ -22,10 +22,7 @@
 }
 .hx-changes__more {
   margin: 0;
-  padding: var(--space-1-5) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-warning-soft);
-  color: var(--color-ink);
+  color: var(--color-ink-muted);
 }
 .hx-changes__list,
 .hx-files__list {
@@ -39,37 +36,8 @@
   border-top: var(--border-width) solid var(--color-border);
 }
 .hx-change {
-  display: grid;
-  grid-template-columns: 1.5rem minmax(0, 1fr);
-  gap: var(--space-2);
   padding: var(--space-2) 0;
   border-bottom: var(--border-width) solid var(--color-border);
-}
-.hx-change__mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-sunk);
-  color: var(--color-ink-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-}
-.hx-change--added .hx-change__mark {
-  background: var(--color-success-soft);
-  color: var(--color-success);
-}
-.hx-change--removed .hx-change__mark {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
-}
-.hx-change--changed .hx-change__mark,
-.hx-change--moved .hx-change__mark {
-  background: var(--color-accent-soft);
-  color: var(--color-accent-ink);
 }
 .hx-change__body {
   display: flex;

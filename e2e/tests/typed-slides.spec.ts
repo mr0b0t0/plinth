@@ -664,7 +664,7 @@ test.describe("a published deck", () => {
         // Where Monaco put the typed lines varies with the platform's End key; the list names the
         // slide that the "## Appendix" line starts, wherever it landed.
         await expect(
-          changes.getByRole("listitem").filter({ hasText: /^\+Slide \d “Appendix.*” added$/ }),
+          changes.getByRole("listitem").filter({ hasText: /^Slide \d “Appendix.*” added$/ }),
         ).toHaveCount(1);
         await expect(page.locator("main")).not.toContainText("## Appendix");
 

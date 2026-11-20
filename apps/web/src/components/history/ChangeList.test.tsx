@@ -53,12 +53,13 @@ describe("ChangeList", () => {
     const region = screen.getByRole("region", { name: "What changed from v1 to v2" });
     const items = within(region).getAllByRole("listitem");
     expect(items.map((i) => i.textContent)).toEqual([
-      "~B7 changedRow 7, “Qty”Before: 12 → , after: 14",
-      "~Paragraph changedUnder “Pricing”BeforeWe charge ten euros a month for each seat, billed yearly.AfterWe charge twelve euros a month for each seat, billed yearly.",
-      "+Heading “FAQ” added",
+      "B7 changedRow 7, “Qty”Before: 12 → , after: 14",
+      "Paragraph changedUnder “Pricing”BeforeWe charge ten euros a month for each seat, billed yearly.AfterWe charge twelve euros a month for each seat, billed yearly.",
+      "Heading “FAQ” added",
     ]);
-    expect(within(region).getByRole("heading", { name: "Files" })).toBeTruthy();
-    expect(within(region).getByText("No files changed.")).toBeTruthy();
+    // No file changed: no Files part at all.
+    expect(within(region).queryByRole("heading", { name: "Files" })).toBeNull();
+    expect(within(region).queryByRole("region", { name: "Files" })).toBeNull();
   });
 
   it("shows text that looks like markup as text, never as markup", () => {
@@ -96,7 +97,7 @@ describe("ChangeList", () => {
         files={null}
       />,
     );
-    expect(screen.getByText(/differ in more places than the list shows/)).toBeTruthy();
+    expect(screen.getByText("More changed than this list shows.")).toBeTruthy();
   });
 
   it("lists added, removed and replaced files with sizes, and counts the rest", () => {
@@ -119,7 +120,7 @@ describe("ChangeList", () => {
         .getAllByRole("listitem")
         .map((i) => i.textContent),
     ).toEqual(["Addedimg/new.png12.4 KB", "Removedold.css820 B", "Replacedchart.png1 KB → 3.1 MB"]);
-    expect(within(files).getByText("And 3 more files. 1 file is the same in both.")).toBeTruthy();
+    expect(within(files).getByText("And 3 more files.")).toBeTruthy();
   });
 });
 

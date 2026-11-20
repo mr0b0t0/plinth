@@ -4,7 +4,7 @@
 // described differently. Also used for a design system's guidelines.
 import { diffSequence } from "./diff.ts";
 import { type MdBlock, type MdBlockKind, type MdImage, markdownBlocks } from "./markdownText.ts";
-import { multisetChanges, pairInOrder } from "./pairs.ts";
+import { multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
 import { changeExcerpt, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
@@ -120,6 +120,9 @@ export function describeMarkdown(
       removedBlocks.filter(shown),
       addedBlocks.filter(shown),
       (x, y) => x.kind === y.kind,
+      // A heading renamed keeps a word ("Notes" to "Field notes"); one that shares none with it
+      // but sits before one that does was added there.
+      (x, y) => sharesWord(x.text, y.text),
     );
     // Removals, then changes, then additions, each in order; then the region's images.
     for (const x of removed) {

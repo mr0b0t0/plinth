@@ -1666,7 +1666,7 @@ read and write source, and `GET /a/<slug>/source` (plain text for agents and cra
 from discovery tags) stays.
 
 - **The page.** `/a/:slug/compare?from=&to=` shows "What changed from v4 to v5", a list of changes
-  with a "Files" part, then the two versions side by side, each in its own sandboxed frame on the
+  with a "Files" part when a file was added, removed or replaced, then the two versions side by side, each in its own sandboxed frame on the
   content host through a fresh viewer gate (as before). At phone width the frames show one at a
   time, with a Before and After switch. There is no source view: a link that still carries
   `view=source` or `view=rendered` lands on the same page.
@@ -1675,8 +1675,10 @@ from discovery tags) stays.
   `packages/shared/src/changes/` (one per type, keyed by the registry, so a new type must add one).
   Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "Slide
   3", "Row 7, “Qty”", "Board “Home”"), a short sentence, and the visible text or value before and
-  after. The app holds the two source texts only as the describers' input and renders only their
-  output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
+  after. Within a changed region, items are paired in order, preferring a heading that keeps a word
+  of its old name and a row whose first cell is the same, so a heading or row added before another
+  reads as added, not as the next one renamed or overwritten. The app holds the two source texts
+  only as the describers' input and renders only their output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
   pass the free plan's CPU time per request, and the app has the versions already.
 
 | Type | What the list names |

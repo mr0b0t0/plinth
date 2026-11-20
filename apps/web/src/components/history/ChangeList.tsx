@@ -3,7 +3,6 @@
 // list shows what a person sees on the page, never the artifact's source.
 import type {
   ChangeItem,
-  ChangeKind,
   ChangeList as Changes,
   FileChange,
   FileChangeSummary,
@@ -12,8 +11,6 @@ import { useId } from "react";
 import { Badge, SkeletonText } from "../ui/index.ts";
 import { formatBytes } from "./format.ts";
 import "./changes.css";
-
-const MARK: Record<ChangeKind, string> = { added: "+", removed: "−", changed: "~", moved: "↕" };
 
 /** Values short enough to read on one line as "before → after". */
 const INLINE_MAX = 48;
@@ -65,6 +62,11 @@ function fileSize(c: FileChange): string {
     : `${formatBytes(c.before ?? 0)} → ${formatBytes(c.after ?? 0)}`;
 }
 
+/** Whether any file was added, removed or replaced. */
+export function filesChanged(files: FileChangeSummary): boolean {
+  return files.added.length + files.removed.length + files.replaced.length > 0 || files.more > 0;
+}
+
 /** The files part: added, removed and replaced files with their sizes, then a count of the rest. */
 export function FileChanges({
   files,
@@ -81,35 +83,21 @@ export function FileChanges({
       <H id={id} className="hx-files__title">
         Files
       </H>
-      {listed.length === 0 && files.more === 0 ? (
+      <ul className="hx-files__list">
+        {listed.map((c) => (
+          <li key={`${c.kind}:${c.path}`} className="hx-file">
+            <Badge tone={FILE_TONE[c.kind as keyof typeof FILE_TONE]}>
+              {FILE_LABEL[c.kind as keyof typeof FILE_LABEL]}
+            </Badge>
+            <span className="hx-file__path type-mono">{c.path}</span>
+            <span className="hx-file__size type-small text-muted">{fileSize(c)}</span>
+          </li>
+        ))}
+      </ul>
+      {files.more > 0 && (
         <p className="type-small text-muted">
-          No files changed
-          {files.same > 0
-            ? ` (${files.same === 1 ? "1 file is" : `${files.same} files are`} the same in both).`
-            : "."}
+          {`And ${files.more === 1 ? "1 more file" : `${files.more.toLocaleString("en")} more files`}.`}
         </p>
-      ) : (
-        <>
-          <ul className="hx-files__list">
-            {listed.map((c) => (
-              <li key={`${c.kind}:${c.path}`} className="hx-file">
-                <Badge tone={FILE_TONE[c.kind as keyof typeof FILE_TONE]}>
-                  {FILE_LABEL[c.kind as keyof typeof FILE_LABEL]}
-                </Badge>
-                <span className="hx-file__path type-mono">{c.path}</span>
-                <span className="hx-file__size type-small text-muted">{fileSize(c)}</span>
-              </li>
-            ))}
-          </ul>
-          {(files.more > 0 || files.same > 0) && (
-            <p className="type-small text-muted">
-              {files.more > 0 &&
-                `And ${files.more === 1 ? "1 more file" : `${files.more.toLocaleString("en")} more files`}. `}
-              {files.same > 0 &&
-                `${files.same === 1 ? "1 file is" : `${files.same.toLocaleString("en")} files are`} the same in both.`}
-            </p>
-          )}
-        </>
       )}
     </section>
   );
@@ -120,7 +108,7 @@ export interface ChangeListProps {
   heading: string;
   /** The describers' list, or null while it is being worked out. */
   changes: Changes | null;
-  /** The files part, or null to leave it out. */
+  /** The files part, or null to leave it out. It shows only when a file changed. */
   files: FileChangeSummary | null;
 }
 
@@ -146,9 +134,6 @@ export function ChangeList({ heading, changes, files }: ChangeListProps) {
                 // The list is replaced as a whole, never reordered: the index is a stable key.
                 // biome-ignore lint/suspicious/noArrayIndexKey: see above
                 <li key={k} className={`hx-change hx-change--${item.kind}`}>
-                  <span className="hx-change__mark" aria-hidden="true">
-                    {MARK[item.kind]}
-                  </span>
                   <div className="hx-change__body">
                     <p className="hx-change__what">
                       {item.what}
@@ -161,14 +146,11 @@ export function ChangeList({ heading, changes, files }: ChangeListProps) {
             </ul>
           )}
           {changes.truncated && (
-            <p className="hx-changes__more type-small">
-              These versions differ in more places than the list shows. The two versions below show
-              everything.
-            </p>
+            <p className="hx-changes__more type-small">More changed than this list shows.</p>
           )}
         </>
       )}
-      {files && <FileChanges files={files} />}
+      {files && filesChanged(files) && <FileChanges files={files} />}
     </section>
   );
 }

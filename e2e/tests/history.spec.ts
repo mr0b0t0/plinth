@@ -195,7 +195,8 @@ test("compare v1 and v3: the list of changes, then both versions rendered, and n
   await expect(item("Text changed")).toContainText("Alpha line");
   await expect(item("Text changed")).toContainText("Beta line");
   await expect(item("Text added")).toContainText("Gamma line");
-  await expect(changes.getByRole("region", { name: "Files" })).toContainText("No files changed.");
+  // No file changed, so there is no Files part.
+  await expect(changes.getByRole("region", { name: "Files" })).toHaveCount(0);
   // No source anywhere: no markup, no line table, no Source tab.
   await expect(page.locator("main")).not.toContainText("<h1>");
   await expect(page.locator("main")).not.toContainText("<p>");
@@ -380,13 +381,13 @@ test("a 5,000-line document's changes are listed quickly, and the list is capped
   await expect(scattered.getByRole("listitem").filter({ hasText: "Line 4950" })).toContainText(
     "Row 4950",
   );
-  await expect(scattered.getByText(/differ in more places/)).toHaveCount(0);
+  await expect(scattered.getByText("More changed than this list shows.")).toHaveCount(0);
 
   // Everything changed: the list stops at 200 items and says it was cut.
   const t1 = Date.now();
   await page.goto(`/a/${slug}/compare?from=1&to=3`);
   const all = page.getByRole("region", { name: "What changed from v1 to v3" });
-  await expect(all.getByText(/differ in more places than the list shows/)).toBeVisible();
+  await expect(all.getByText("More changed than this list shows.")).toBeVisible();
   const replacedMs = Date.now() - t1;
   await expect(all.getByRole("list").first().getByRole("listitem")).toHaveCount(200);
 

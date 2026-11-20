@@ -114,12 +114,15 @@ export default function Compare({ params }: { params: Record<string, string> }) 
 
         {ready && (
           <div className="hx-compare__body">
-            <ChangeList
-              key={`${from}-${to}`}
-              heading={`What changed from v${from} to v${to}`}
-              changes={changes?.changes ?? null}
-              files={changes?.files ?? null}
-            />
+            {/* One version on both sides: the note above says so, and there is nothing to list. */}
+            {from !== to && (
+              <ChangeList
+                key={`${from}-${to}`}
+                heading={`What changed from v${from} to v${to}`}
+                changes={changes?.changes ?? null}
+                files={changes?.files ?? null}
+              />
+            )}
             <RenderedCompare slug={slug} title={title ?? slug} from={from} to={to} />
           </div>
         )}

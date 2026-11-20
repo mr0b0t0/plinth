@@ -188,6 +188,33 @@ describe("doc", () => {
       },
     ]);
   });
+
+  it("pairs a renamed heading with the one that keeps a word, past a heading added before it", () => {
+    const a = "## Plot 4\n\nTwelve nests.\n\n## Notes\n\n- Fence needs repair.";
+    const b =
+      "## Plot 4\n\nTwelve nests.\n\n## Plot 5\n\nSix nests.\n\n## Field notes\n\n- Fence needs repair.";
+    expect(items("doc", a, b)).toEqual([
+      {
+        kind: "changed",
+        where: "Under “Plot 5”",
+        what: "Heading “Notes” renamed",
+        before: "Notes",
+        after: "Field notes",
+      },
+      { kind: "added", where: "Under “Plot 4”", what: "Heading “Plot 5” added" },
+      { kind: "added", where: "Under “Plot 5”", what: "Paragraph added", after: "Six nests." },
+    ]);
+    // A rename that keeps no word is still a rename.
+    expect(items("doc", "## Notes\n\nText.", "## Observations\n\nText.")).toEqual([
+      {
+        kind: "changed",
+        where: "",
+        what: "Heading “Notes” renamed",
+        before: "Notes",
+        after: "Observations",
+      },
+    ]);
+  });
 });
 
 describe("slides", () => {
@@ -427,6 +454,29 @@ describe("sheet", () => {
     expect(items("sheet", a, b)).toEqual([
       { kind: "added", where: "Column B", what: "Column “B” added" },
       { kind: "changed", where: "Row 3, “A”", what: "A3 changed", before: "y", after: "z" },
+    ]);
+  });
+
+  it("lists a row added above a total as one row, not as the total overwritten", () => {
+    const h = JSON.stringify({
+      plinth: "sheet",
+      v: 1,
+      columns: [
+        { name: "Task", type: "text" },
+        { name: "Hours", type: "number" },
+      ],
+    });
+    const a = [h, '["Audit",14]', '["Total","=SUM(B2:B2)"]'].join("\n");
+    const b = [h, '["Audit",14]', '["Handover",6]', '["Total","=SUM(B2:B3)"]'].join("\n");
+    expect(items("sheet", a, b)).toEqual([
+      {
+        kind: "changed",
+        where: "Row 4, “Hours”",
+        what: "B4: calculation changed",
+        before: "14",
+        after: "20",
+      },
+      { kind: "added", where: "Rows", what: "Row 3 added", after: "“Handover”" },
     ]);
   });
 

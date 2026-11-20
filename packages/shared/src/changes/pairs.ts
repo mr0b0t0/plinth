@@ -10,22 +10,46 @@ export interface Paired<T> {
   added: T[];
 }
 
+/** How far ahead `pairInOrder` looks for a better match, so a large region stays linear. */
+const LOOKAHEAD = 32;
+
 /**
  * Matches `before[k]` with `after[k]` while both exist and `alike` holds; the rest of the region is
- * removed and added. Order is kept on both sides.
+ * removed and added. Order is kept on both sides. With `prefer`, an alike pair that `prefer` does
+ * not hold for is skipped when either side has a preferred match a little further on: a row added
+ * above a "Total" row reads as one added row, not as every cell of "Total" changed.
  */
 export function pairInOrder<T>(
   before: readonly T[],
   after: readonly T[],
   alike: (a: T, b: T) => boolean = () => true,
+  prefer?: (a: T, b: T) => boolean,
 ): Paired<T> {
   const out: Paired<T> = { pairs: [], removed: [], added: [] };
+  const ahead = (list: readonly T[], from: number, test: (x: T) => boolean) => {
+    for (let k = from; k < list.length && k < from + LOOKAHEAD; k++) {
+      if (test(list[k] as T)) return true;
+    }
+    return false;
+  };
   let i = 0;
   let j = 0;
   while (i < before.length && j < after.length) {
     const a = before[i] as T;
     const b = after[j] as T;
     if (alike(a, b)) {
+      if (prefer && !prefer(a, b)) {
+        if (ahead(after, j + 1, (x) => alike(a, x) && prefer(a, x))) {
+          out.added.push(b);
+          j++;
+          continue;
+        }
+        if (ahead(before, i + 1, (x) => alike(x, b) && prefer(x, b))) {
+          out.removed.push(a);
+          i++;
+          continue;
+        }
+      }
       out.pairs.push([a, b]);
       i++;
       j++;
@@ -40,6 +64,17 @@ export function pairInOrder<T>(
   for (; i < before.length; i++) out.removed.push(before[i] as T);
   for (; j < after.length; j++) out.added.push(after[j] as T);
   return out;
+}
+
+/** Whether two texts share a word of four or more letters, ignoring case. */
+export function sharesWord(a: string, b: string): boolean {
+  const words = (t: string) =>
+    t
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length >= 4);
+  const seen = new Set(words(a));
+  return words(b).some((w) => seen.has(w));
 }
 
 /**

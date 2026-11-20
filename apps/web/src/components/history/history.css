@@ -224,14 +224,6 @@
   gap: var(--space-3);
   min-width: 0;
 }
-.hx-rendered-section__title {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-ui);
-  line-height: var(--line-ui);
-}
 .hx-rendered__switch {
   display: none;
 }
@@ -263,6 +255,16 @@
   .hx-rendered[data-shown="after"] .hx-frame--before,
   .hx-rendered[data-shown="before"] .hx-frame--after {
     display: none;
+  }
+  /* The switch already says which version is shown; the caption stays for screen readers. */
+  .hx-frame__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 .hx-frame {

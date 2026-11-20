@@ -221,9 +221,18 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
       out.truncated = true;
       break;
     }
+    // A row whose first shared cell is the same is the same row: a row added above "Total"
+    // reads as one added row, not as "Total" overwritten.
+    const labelColumn = pairs[0];
     const p = pairInOrder(
       a.rows.slice(h.aStart, h.aEnd).map((_, k) => h.aStart + k),
       b.rows.slice(h.bStart, h.bEnd).map((_, k) => h.bStart + k),
+      undefined,
+      labelColumn
+        ? (x, y) =>
+            ((a.rows[x] as Cell[])[labelColumn[0]] ?? null) ===
+            ((b.rows[y] as Cell[])[labelColumn[1]] ?? null)
+        : undefined,
     );
     if (p.removed.length > 0) {
       const first = (p.removed[0] as number) + 2;
