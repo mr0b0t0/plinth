@@ -26,7 +26,12 @@ import {
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { decideFor, findArtifact, requireArtifact, summaryFor } from "./artifacts.ts";
-import { ownerShareIdsByKey, ownerShareNames, refuseBoundToken } from "./categoryShares.ts";
+import {
+  ownerShareIdsByKey,
+  ownerShares,
+  refuseBoundToken,
+  shareNameForKey,
+} from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 
 // ---------- the category columns (migration 0013) ----------
@@ -95,29 +100,74 @@ function mergeByKey(rows: CategoryCount[]): CategoryCount[] {
 }
 
 /**
- * The owner's category names with counts, most-used first, capped at LIMITS.maxCategoriesListed
- * (the most-used names survive a cut). Writes always snap, so the merge by key only catches rows
- * written another way. While category sharing is on, a shared name carries `shared: true`, and a
- * share whose category holds no artifact yet is listed with count 0, so agents reuse its spelling.
+ * Every one of the owner's category names with counts, most-used first, uncapped. Writes always
+ * snap, so the merge by key only catches rows written another way. While category sharing is on,
+ * a shared name carries `shared: true`, and a share whose category holds no artifact yet is listed
+ * with count 0, so agents reuse its spelling (one read of the owner's shares).
  */
-export async function ownerCategories(
+async function allOwnerCategories(
   ctx: Ctx,
   ownerId: string,
   excludeArtifactId?: string,
 ): Promise<CategoryCount[]> {
   const merged = mergeByKey(await ownerSpellings(ctx, ownerId, excludeArtifactId));
   if (ctx.config.allowCategorySharing) {
-    const shared = await ownerShareIdsByKey(ctx.env.DB, ownerId);
-    if (shared.size > 0) {
-      const names = await ownerShareNames(ctx.env.DB, ownerId);
+    const shares = await ownerShares(ctx.env.DB, ownerId);
+    if (shares.length > 0) {
+      const shared = new Set(shares.map((s) => s.key));
       for (const c of merged) if (shared.has(categoryKey(c.name))) c.shared = true;
       const have = new Set(merged.map((c) => categoryKey(c.name)));
-      for (const n of names) {
-        if (!have.has(categoryKey(n))) merged.push({ name: n, count: 0, shared: true });
+      for (const s of shares) {
+        if (!have.has(s.key)) merged.push({ name: s.name, count: 0, shared: true });
       }
     }
   }
-  return merged.sort(byUse).slice(0, LIMITS.maxCategoriesListed);
+  return merged.sort(byUse);
+}
+
+/**
+ * The owner's category names with counts, most-used first, capped at LIMITS.maxCategoriesListed
+ * (the most-used names survive a cut): list_artifacts' `categories` and GET /categories.
+ */
+export async function ownerCategories(
+  ctx: Ctx,
+  ownerId: string,
+  excludeArtifactId?: string,
+): Promise<CategoryCount[]> {
+  return (await allOwnerCategories(ctx, ownerId, excludeArtifactId)).slice(
+    0,
+    LIMITS.maxCategoriesListed,
+  );
+}
+
+/**
+ * The owner's stored spelling for `key`, the one a new filing snaps onto: the most-used spelling
+ * among their live artifacts (other than `excludeArtifactId`), else, while sharing is on, the
+ * spelling of their share on that key. A targeted read, so it is never cut by the list's cap. Rows
+ * written before migration 0013 have no key yet, so they are read too and matched here.
+ */
+async function spellingForKey(
+  ctx: Ctx,
+  ownerId: string,
+  key: string,
+  excludeArtifactId?: string,
+): Promise<string | null> {
+  const exclude = excludeArtifactId ? " AND id != ?3" : "";
+  const stmt = ctx.env.DB.prepare(
+    `SELECT category AS name, count(*) AS n FROM artifacts
+      WHERE owner_id = ?1 AND deleted_at IS NULL AND category IS NOT NULL
+        AND (category_key = ?2 OR category_key IS NULL)${exclude}
+      GROUP BY category`,
+  );
+  const bound = excludeArtifactId
+    ? stmt.bind(ownerId, key, excludeArtifactId)
+    : stmt.bind(ownerId, key);
+  const { results } = await bound.all<{ name: string; n: number }>();
+  const [top] = mergeByKey(
+    results.filter((r) => categoryKey(r.name) === key).map((r) => ({ name: r.name, count: r.n })),
+  );
+  if (top) return top.name;
+  return ctx.config.allowCategorySharing ? shareNameForKey(ctx.env.DB, ownerId, key) : null;
 }
 
 /** The owner's stored spellings whose key matches `name` (the list_artifacts filter). */
@@ -159,8 +209,7 @@ export async function resolveCategory(
 ): Promise<string> {
   const name = normalizeCategory(raw);
   checkName(name, "category");
-  const existing = (await ownerCategories(ctx, ownerId, excludeArtifactId)).map((c) => c.name);
-  return snapCategory(name, existing);
+  return (await spellingForKey(ctx, ownerId, categoryKey(name), excludeArtifactId)) ?? name;
 }
 
 /**
@@ -290,7 +339,7 @@ export async function renameCategory(
     const problem = categoryProblem(name);
     if (problem) throw new ApiError("invalid_input", problem, { field: "to" });
     // Snap onto the owner's other names only: the ones being renamed must not pull it back.
-    const others = (await ownerCategories(ctx, uid))
+    const others = (await allOwnerCategories(ctx, uid))
       .map((c) => c.name)
       .filter((n) => !spellings.includes(n) && categoryKey(n) !== fromKey);
     category = snapCategory(name, others);
@@ -303,16 +352,21 @@ export async function renameCategory(
         .bind(uid)
         .first<{ rev: number }>()
     )?.rev ?? 0;
-  const shares = ctx.config.allowCategorySharing
-    ? await ownerShareIdsByKey(DB, uid)
-    : new Map<string, string>();
+  // The shares are read whatever ALLOW_CATEGORY_SHARING says: a share follows its category while
+  // the switch is off too, so turning it back on finds the share on the category's current key.
+  const shares = await ownerShareIdsByKey(DB, uid);
   const sFrom = fromKey ? (shares.get(fromKey) ?? null) : null;
   const sTo = toKey !== null && toKey !== fromKey ? (shares.get(toKey) ?? null) : null;
+  // A shared `from` merging into another existing category.
+  let merging = false;
   if (sFrom && toKey !== null && toKey !== fromKey) {
     const toHasArtifacts = (await ownerSpellings(ctx, uid)).some(
       (c) => categoryKey(c.name) === toKey,
     );
-    if (sTo || toHasArtifacts) {
+    merging = sTo !== null || toHasArtifacts;
+    // With the switch off the owner cannot stop sharing first, so the merge goes through and
+    // leaves the share where it is, empty, as clearing the category does.
+    if (merging && ctx.config.allowCategorySharing) {
       throw new ApiError("conflict", "A shared category cannot be merged into another one", {
         reason: "category_shared",
         next: `Stop sharing ${input.from} first, or rename it to a new name`,
@@ -333,7 +387,7 @@ export async function renameCategory(
   // G: the owner's share counter is still what the read saw. Nothing before the last statement
   // changes it, so G has one value for the whole batch (a D1 batch is one transaction).
   const G = "(SELECT category_share_rev FROM users WHERE id = ?2) = ?3";
-  const moveShare = sFrom !== null && toKey !== null && category !== null;
+  const moveShare = sFrom !== null && toKey !== null && category !== null && !merging;
   const stmts: D1PreparedStatement[] = [
     DB.prepare("SELECT category_share_rev AS rev FROM users WHERE id = ?1").bind(uid),
   ];
@@ -412,8 +466,8 @@ export async function renameCategory(
     }
   }
   const updated = moveIndex >= 0 ? (results[moveIndex]?.meta.changes ?? 0) : 0;
-  // Artifacts arriving in someone else's share start unreviewed.
-  return sTo && !sFrom && updated > 0
+  // Artifacts arriving in another share start unreviewed (said only while sharing is on).
+  return ctx.config.allowCategorySharing && sTo && !sFrom && updated > 0
     ? { updated, category, pending: updated }
     : { updated, category };
 }
@@ -450,15 +504,29 @@ export function prunePersonalCategories(
     .bind("artifactId" in scope ? scope.artifactId : scope.ownerId);
 }
 
-/** The person's own categories with counts, most-used first (live artifacts only). */
+/**
+ * The person's own categories with counts, most-used first, counting only the live artifacts the
+ * person can open now, as list_artifacts lists them: through a direct grant, or through a category
+ * grant that counts (policy.ts categoryRoleOf, mirrored here) while sharing is on and the artifact
+ * is not taken down. A personal category kept for a category grant while the switch is off is not
+ * counted, as its artifact is not listed.
+ */
 export async function personalCategoriesOf(ctx: Ctx, userId: string): Promise<CategoryCount[]> {
   const { results } = await ctx.env.DB.prepare(
     `SELECT p.category AS name, count(*) AS n FROM personal_categories p
        JOIN artifacts a ON a.id = p.artifact_id
+       JOIN users u ON u.id = p.user_id
       WHERE p.user_id = ?1 AND a.deleted_at IS NULL
+        AND (EXISTS (SELECT 1 FROM access_grants g
+                      WHERE g.artifact_id = a.id AND g.email = u.email)
+             OR (?2 = 1 AND a.category_review = 'shared' AND a.taken_down_at IS NULL
+                 AND EXISTS (SELECT 1 FROM category_shares s
+                               JOIN category_grants cg ON cg.share_id = s.id
+                              WHERE s.id = a.category_review_share AND s.owner_id = a.owner_id
+                                AND s.category_key = a.category_key AND cg.email = u.email)))
       GROUP BY p.category`,
   )
-    .bind(userId)
+    .bind(userId, ctx.config.allowCategorySharing ? 1 : 0)
     .all<{ name: string; n: number }>();
   return mergeByKey(results.map((r) => ({ name: r.name, count: r.n })))
     .sort(byUse)

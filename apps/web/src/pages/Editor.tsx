@@ -7,7 +7,6 @@ import {
   APP_ROUTES,
   type ArtifactDetail,
   type LiveDraftInfo,
-  liveRules,
   route,
   sourceOf,
 } from "@plinth/shared";
@@ -33,7 +32,7 @@ type Load =
   | { kind: "not_found" }
   | { kind: "forbidden"; artifact: ArtifactDetail | null }
   | { kind: "error"; message: string }
-  /** A type with no source editor (a design): the page sends people to the artifact. */
+  /** A type with no source editor (a sheet or a design): the page sends people to the artifact. */
   | { kind: "no_editor" }
   | {
       kind: "ready";
@@ -143,18 +142,8 @@ export default function Editor({ params }: { params: Record<string, string> }) {
       >
         {state.pageEdits && (
           <p className="pl-editor-page__live" role="note">
-            {liveRules(state.artifact.type)?.merge === false ? (
-              <>
-                Unsaved changes on the page are based on v{state.pageEdits.base_version}. Saving
-                here sends them to review.
-              </>
-            ) : (
-              <>
-                There are unsaved page edits based on v{state.pageEdits.base_version}. Saving here
-                publishes a new version; their edits are merged onto it, or reviewed if they
-                overlap.
-              </>
-            )}
+            There are unsaved page edits based on v{state.pageEdits.base_version}. Saving here
+            publishes a new version; their edits are merged onto it, or reviewed if they overlap.
           </p>
         )}
         {!wide && (

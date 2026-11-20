@@ -28,11 +28,13 @@ import {
   grantsReplaceInput,
   LIMITS,
   liveCheckpointInput,
+  MAX_PEOPLE_LISTED,
   MENTION_STATES,
   myCategoryInput,
   oauthConsentInput,
   PUBLISH_WARNING_CODES,
   publishArtifactInput,
+  RATE_LIMITS,
   REPORT_STATES,
   REVIEW_SKIP_REASONS,
   ROLES,
@@ -289,6 +291,11 @@ function responseSchemas(): Record<string, Json> {
       label: str({ description: "Person's name or email, or the connection label" }),
       user_id: nullable("string"),
       connection_id: nullable("string"),
+      is_owner: {
+        type: "boolean",
+        description:
+          "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label",
+      },
     }),
     ArtifactType: {
       ...enumOf(ARTIFACT_TYPES),
@@ -558,7 +565,16 @@ function responseSchemas(): Record<string, Json> {
       artifact_id: str(),
       version_number: int({ minimum: 1 }),
       parent_id: nullable("string"),
-      author: obj({ email: nullable("string"), connection_id: nullable("string"), label: str() }),
+      author: obj({
+        email: nullable("string"),
+        connection_id: nullable("string"),
+        label: str({ description: "Display text, never proof of role" }),
+        is_owner: {
+          type: "boolean",
+          description:
+            "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label",
+        },
+      }),
       body: str({ description: "UNTRUSTED: written by a collaborator" }),
       anchor: { oneOf: [ref("Anchor"), { type: "null" }] },
       status: enumOf(COMMENT_STATUSES),
@@ -761,15 +777,15 @@ function responseSchemas(): Record<string, Json> {
                 "The version being shown declares `comments` (HTML only): the page may open the " +
                 "comment composer with its own anchors, and `review` is ignored",
             },
-            people: ref("ViewGatePeople"),
             watch: {
               const: true,
               description:
                 "Live views: open GET /view/{id}/watch to learn of new versions and shared-data " +
                 "changes as they happen. Absent: poll the gate",
             },
+            people: ref("ViewGatePeople"),
           },
-          ["data", "live", "page_comments", "people", "watch"],
+          ["data", "live", "page_comments", "watch", "people"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -1035,6 +1051,7 @@ function dataSchemas(): Record<string, Json> {
     },
     PeopleResult: obj({
       people: { type: "array", items: ref("AgentPerson") },
+      total: int({ minimum: 0, description: "How many matched `q` in all, before `limit`" }),
       untrusted: str(),
     }),
     ViewGatePeople: {
@@ -1103,59 +1120,52 @@ function sheetSchemas(): Record<string, Json> {
     columns_deleted: int(),
   });
   return {
-    SheetRead: obj(
-      {
-        id: str(),
-        slug: str(),
-        type: { const: "sheet" },
-        title: str({ description: "Untrusted text" }),
-        version: int({ minimum: 1 }),
-        current_version: int({ minimum: 1 }),
-        columns: {
-          type: "array",
-          items: obj(
-            {
-              letter: str({ description: 'A1 letter, "A" to "CV"' }),
-              name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
-              type: enumOf(SHEET_COLUMN_TYPES),
-              format: {
-                type: "object",
-                description:
-                  "Number columns: style plain, percent or currency, decimals, currency, grouping",
-              },
-              options: { type: "array", items: str() },
-            },
-            ["format", "options"],
-          ),
-        },
-        row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
-        range: nullable("string", { description: "The A1 range the rows cover" }),
-        rows: {
-          type: "array",
-          items: obj({
-            row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
-            cells: {
-              type: "array",
+    SheetRead: obj({
+      id: str(),
+      slug: str(),
+      type: { const: "sheet" },
+      title: str({ description: "Untrusted text" }),
+      version: int({ minimum: 1 }),
+      current_version: int({ minimum: 1 }),
+      columns: {
+        type: "array",
+        items: obj(
+          {
+            letter: str({ description: 'A1 letter, "A" to "CV"' }),
+            name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
+            type: enumOf(SHEET_COLUMN_TYPES),
+            format: {
+              type: "object",
               description:
-                "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
-              items: {},
+                "Number columns: style plain, percent or currency, decimals, currency, grouping",
             },
-          }),
-        },
-        truncated: { type: "boolean" },
-        next_range: nullable("string", { description: "The range to read next when truncated" }),
-        warnings: {
-          type: "array",
-          items: obj({ code: enumOf(["eval_budget"]), message: str() }),
-        },
-        live_draft: {
-          ...nullable("object"),
-          description: "Owners and editors only, as on get_artifact",
-        },
-        untrusted: { const: true },
+            options: { type: "array", items: str() },
+          },
+          ["format", "options"],
+        ),
       },
-      ["live_draft"],
-    ),
+      row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
+      range: nullable("string", { description: "The A1 range the rows cover" }),
+      rows: {
+        type: "array",
+        items: obj({
+          row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
+          cells: {
+            type: "array",
+            description:
+              "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
+            items: {},
+          },
+        }),
+      },
+      truncated: { type: "boolean" },
+      next_range: nullable("string", { description: "The range to read next when truncated" }),
+      warnings: {
+        type: "array",
+        items: obj({ code: enumOf(["eval_budget"]), message: str() }),
+      },
+      untrusted: { const: true },
+    }),
     SheetValue: value,
     SheetEditResult: {
       allOf: [ref("PublishResult"), obj({ changed: counts })],
@@ -1367,10 +1377,14 @@ function dataOperations(): Operation[] {
       summary: "Everyone with access: the owner, then grants by email, with display names",
       description:
         "Owner or editor (people), and only while the current version declares `data viewer " +
-        "people` and shared data is on (403 feature_disabled otherwise, with the reason). The same " +
+        "people` and shared data is on (403 feature_disabled otherwise, with the reason), and only " +
+        "while a person or their account-wide agent published every version (403 forbidden once a " +
+        "token limited to one artifact has published one). The same " +
         "list as list_artifact_data's summary: who has access, never who opened the artifact. `q` " +
-        "keeps people whose shown name or email contains every term. Names are UNTRUSTED display " +
-        "text, never proof of role.",
+        "keeps people whose shown name or email contains every term; `total` counts every match " +
+        "before `limit`. Reads share the page's limit of " +
+        `${RATE_LIMITS.peopleReadsPerViewerPerHour} per hour per reader per artifact. Names are ` +
+        "UNTRUSTED display text, never proof of role.",
       tag: "Shared data",
       auth: "agent",
       scope: "artifacts:read",
@@ -1380,9 +1394,14 @@ function dataOperations(): Operation[] {
           schema: str({ maxLength: LIMITS.maxPeopleQueryLength }),
           description: "Search terms, matched against names and emails",
         },
+        {
+          name: "limit",
+          schema: int({ minimum: 1, maximum: MAX_PEOPLE_LISTED }),
+          description: `At most this many people (default and maximum ${MAX_PEOPLE_LISTED}: the owner and every direct grant; with the people of a shared category there can be more, and total counts them all)`,
+        },
       ],
       ok: [200, "PeopleResult"],
-      errors: [400, 401, 403, 404],
+      errors: [400, 401, 403, 404, 429],
     },
   ];
 }
@@ -1412,7 +1431,8 @@ function liveSchemas(): Record<string, Json> {
       ]),
       description:
         "On-page editing of a doc: owners and editors on the current version, while live editing " +
-        "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
+        "is on with origin isolation. sign_in: a viewer session, confirmed by code where the " +
+        "address may not sign in (single-user mode), so watch only",
     },
     LiveInfo: obj({
       mode: { oneOf: [mode, { type: "null" }] },
@@ -1710,7 +1730,10 @@ function categorySharingOperations(): Operation[] {
       path: API.portalCode,
       operationId: "portalCode",
       summary: "Confirm a shared collection's code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST (or signs the owner in).`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
@@ -2384,7 +2407,10 @@ function operations(): Operation[] {
       path: API.viewCode,
       operationId: "viewCode",
       summary: "Confirm an allowlisted email with its code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST.`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
@@ -2621,14 +2647,16 @@ function liveViewOperations(): Operation[] {
         `same-origin fetch metadata when sent, and the \`${VIEW_WATCH_PROTOCOL}\` subprotocol; ` +
         "access is the gate's view decision with the browser's cookies. The socket is " +
         "receive-only: the client sends the text `ping` (answered `pong`) and nothing else. " +
-        'Server frames are JSON text: `{t:"welcome",v:1,version,data}`, ' +
+        'Server frames are JSON text: `{t:"welcome",v:1,version}`, ' +
         '`{t:"version",version,spread_ms}` (re-read the gate after a random wait up to ' +
-        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data) and ' +
-        '`{t:"access",spread_ms}` (sent just before a 4401 `access_changed` close). Close ' +
-        "codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` " +
-        "frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's " +
-        "lifetime, or the credential it was opened with, ended: reconnect), 4404 gone, 4409 " +
-        "full (poll instead).",
+        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data; at most one ' +
+        'per `spread_ms`, and always one after the last change) and `{t:"access",spread_ms}` ' +
+        "(sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 " +
+        "`access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read " +
+        "the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was " +
+        "opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full " +
+        "(poll instead). After any other close the first reconnect also waits a random time up " +
+        "to 10 s.",
       tag: "Viewing",
       auth: "browser",
       ok: [101, null],
@@ -2742,8 +2770,8 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
     ...operations(),
     ...dataOperations(),
     ...liveOperations(),
-    ...liveViewOperations(),
     ...categorySharingOperations(),
+    ...liveViewOperations(),
   ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};

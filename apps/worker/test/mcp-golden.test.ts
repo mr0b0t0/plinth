@@ -4,14 +4,14 @@
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
-// publish note, the type and content descriptions and the instructions' deck sentence), so did
-// comments from the page (the page anchor note in list_comments and list_mentions), so did who
-// is viewing (names and the people list in list_artifact_data's description), so did the
-// slides .pptx download (its clause in the slides publish note), so did the design type
-// (its publish note, the type, content, update and get_artifact descriptions and the
-// instructions' design sentence), so did the sheet type (read_sheet and edit_sheet, the
-// publish, update and get_artifact notes, the content and content_format descriptions, the
-// untrusted note's sheet sentence and the instructions' sheet sentence), and so did live sheets
+// publish note, the type and content descriptions and the instructions' deck sentence), comments
+// from the page (the page anchor note in list_comments and list_mentions), the slides .pptx
+// download (its clause in the slides publish note), the design type (its publish note, the
+// type, content, update and get_artifact descriptions and the instructions' design sentence),
+// the sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the
+// content and content_format descriptions, the untrusted note's sheet sentence, the instructions'
+// sheet sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default),
+// who is viewing (names and the people list in list_artifact_data's description), and live sheets
 // (the live_draft sentences of the publish notes and get_artifact name sheets as well as docs,
 // and say a sheet's page edits are always reviewed, never merged).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
@@ -75,7 +75,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "8af74f8e28875fcafa2dac1800bf5afab1330fc1fa8cadb94d120e31fd3b7224",
+      tools: "024adfa4e6c2f543094f19d8dc3ba7371df4763b6410a405687733c356511783",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -85,7 +85,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "2bfd96421d510855cd1bbaf041e6499195b8c240c6ef757a44d5fdd361cc6ddc",
+      tools: "1fa87b153e9eb765b8eb26b0432995e384af4e46911363e13994d6b96bc4b642",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -97,7 +97,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "39b1ac1a243f495b0257e8f59858de77bf9c8d73fecf6a1a272d2b43e46911f0",
+      tools: "fec23edabee11c6ee41f551240adc8b93258b5fd78d2a15c9427527c241296b1",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -107,7 +107,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "89a3f68d22816b612d1257d7204fd65b5aaec38b2de654163874f76cd03c32d3",
+      tools: "3d23d3c05bca253d32eedb6fc8fa6a0ec43116cc12512e3b4a8303ea3ea93d07",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "7d2ffb9394f0d902e2ddbf6b052d5f89e40a06129bfb7389ef8c7fcff8b126c5",

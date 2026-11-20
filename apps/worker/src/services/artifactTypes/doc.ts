@@ -8,7 +8,7 @@ import type { TypeHooks } from "../artifactTypes.ts";
 import { liveAfterCommit } from "./live.ts";
 
 /** A whole HTML document sent where Markdown (or another typed format) belongs. */
-const HTML_DOCUMENT_RE = /^\s*(<!doctype html|<html[\s>])/i;
+export const HTML_DOCUMENT_RE = /^\s*(<!doctype html|<html[\s>])/i;
 
 /** The first non-empty "# " heading in the first 200 lines, or null. */
 export function markdownTitle(text: string): string | null {

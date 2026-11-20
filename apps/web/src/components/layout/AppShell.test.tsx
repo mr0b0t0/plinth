@@ -100,6 +100,44 @@ describe("AppShell", () => {
     expect(screen.getByRole("dialog", { name: "Your name" })).toBeTruthy();
   });
 
+  it("shows a saved name from the save's answer, without fetching the account again", async () => {
+    const gets: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith("/config")) return json({ single_user_mode: false });
+        if (url.endsWith("/me") && method === "PATCH") {
+          const { name } = JSON.parse(String(init?.body)) as { name: string };
+          return json({ id: "u1", email: "ada@example.org", name });
+        }
+        if (url.endsWith("/me")) {
+          gets.push(url);
+          return json({ id: "u1", email: "ada@example.org", name: "Ada" });
+        }
+        return json({}, 404);
+      }),
+    );
+    vi.spyOn(document, "cookie", "get").mockReturnValue("__Host-plinth_csrf=tok; plinth_csrf=tok");
+    const { AppShell } = await loadShell();
+    const user = userEvent.setup();
+    render(
+      <AppShell>
+        <p>Page body</p>
+      </AppShell>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Account: Ada" }));
+    await user.click(screen.getByRole("menuitem", { name: "Your name…" }));
+    const before = gets.length;
+    const field = screen.getByRole("textbox", { name: "Name" });
+    await user.clear(field);
+    await user.type(field, "Ada Lovelace");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("button", { name: "Account: Ada Lovelace" })).toBeTruthy();
+    expect(gets.length).toBe(before);
+  });
+
   it("gives admins Stats and Reports, once each, and nobody else either", async () => {
     const stub = (isAdmin: boolean) =>
       vi.stubGlobal(

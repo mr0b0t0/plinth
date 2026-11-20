@@ -196,7 +196,9 @@ no room and stores nothing.
   request when it connects (again after 12 hours, or after its tab was hidden for a minute), and
   every new version, shared-data write, sharing change, takedown or delete is one notify call to
   the artifact's object, for every artifact. Hibernated watch sockets accrue no duration and their
-  keep-alive is answered without waking the object. In return an idle open view stops reading its
+  keep-alive is answered without waking the object, but while an artifact has an open view (tabs
+  hidden for a minute close theirs) its object wakes once a minute for the re-check alarm, one D1
+  read each. In return an idle open view stops reading its
   gate and the shared-data change counter every 15 s ([spec.md](spec.md#costs)).
 - **Off switch.** `ALLOW_LIVE_VIEWS=false` ([self-hosting.md](self-hosting.md#settings)): pages poll
   as before, and artifacts without a room never get an object. Without the binding live views are

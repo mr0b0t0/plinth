@@ -70,9 +70,9 @@ api.route("/", dataApi);
 api.route("/", liveApi);
 api.route("/", uploadsApi);
 api.route("/", designSystemsApi);
-api.route("/", sheetsApi);
 api.route("/", categorySharesApi);
 api.route("/", portalsApi);
+api.route("/", sheetsApi);
 
 api.all("*", () => {
   throw new ApiError("not_found", "No such API endpoint");

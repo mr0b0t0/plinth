@@ -47,7 +47,7 @@ import {
   type RoomConnect,
 } from "../rooms/ArtifactRoom.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
-import { namesByEmail } from "../services/users.ts";
+import { nameByEmail } from "../services/users.ts";
 import { applyContentHeaders } from "./csp.ts";
 import type { HostRoute } from "./serve.ts";
 import { readContentPass } from "./serve.ts";
@@ -105,11 +105,6 @@ async function loadRoomTarget(env: Bindings, artifactId: string): Promise<RoomTa
   };
 }
 
-/** One person's display name, as pages see it (displayName.ts), or null. */
-async function nameOf(env: Bindings, email: string): Promise<string | null> {
-  return (await namesByEmail(env.DB, [email])).get(email) ?? null;
-}
-
 /** The room part of GET /__plinth/api/v1/room, after the data API's caller checks passed. */
 export async function roomInfo(
   request: Request,
@@ -144,7 +139,7 @@ export async function roomInfo(
       viewer: pass.claim.viewerId,
       role: pass.claim.role,
       email: access.seeIdentity ? pass.claim.email : null,
-      name: access.seeIdentity ? await nameOf(env, pass.claim.email) : null,
+      name: access.seeIdentity ? await nameByEmail(env.DB, pass.claim.email) : null,
     },
     can_emit: access.emit,
     open_topics: access.openTopics,
@@ -243,7 +238,8 @@ async function upgrade(
   // The display name, read live only for a socket whose identity peers may see on a page room
   // (a refused upgrade never reads it; a doc socket shows emails only). A rename reaches the room
   // on the next connect.
-  const name = kind === "page" && access.seeIdentity ? await nameOf(env, pass.claim.email) : null;
+  const name =
+    kind === "page" && access.seeIdentity ? await nameByEmail(env.DB, pass.claim.email) : null;
 
   const connect: RoomConnect = {
     artifactId,

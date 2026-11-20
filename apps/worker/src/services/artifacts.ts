@@ -11,12 +11,13 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
+  pageDisplayName,
   type Role,
   readStoredCapabilities,
   type VersionInfo,
   type Visibility,
 } from "@plinth/shared";
-import { and, desc, eq, inArray, isNull, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, or, type SQL, sql } from "drizzle-orm";
 import { appUrl, contentOrigin, thumbnailsActive } from "../config.ts";
 import {
   type ArtifactRow,
@@ -48,6 +49,7 @@ import {
   seesPeople,
   seesPersonalCategory,
   seesThumbnails,
+  type VersionWriter,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
@@ -203,7 +205,12 @@ export async function accessFactsFor(ctx: Ctx, a: ArtifactRow): Promise<AccessFa
   return {
     grantRole: g.direct?.role ?? null,
     categoryGrant: g.category
-      ? { shareId: g.category.shareId, shareKey: g.category.shareKey, role: g.category.role }
+      ? {
+          shareId: g.category.shareId,
+          shareOwnerId: g.category.shareOwnerId,
+          shareKey: g.category.shareKey,
+          role: g.category.role,
+        }
       : null,
     categorySharing: ctx.config.allowCategorySharing,
     passwordPassed: ctx.passwordPasses.get(a.id) === a.accessEpoch,
@@ -329,9 +336,10 @@ export function toSummary(
     url: appUrl(ctx.config, `/a/${a.slug}`),
     content_url: `${contentOrigin(ctx.config, a.id)}/`,
     // Link viewers (no role) and tokens bound to one artifact do not learn the owner's address or id.
+    // The name cleaned on every read (displayName.ts pageDisplayName), as pages and rooms get it.
     owner: seesPeople(ctx.principal, role)
-      ? { id: owner.id, email: owner.email, name: owner.name }
-      : { id: null, email: null, name: owner.name },
+      ? { id: owner.id, email: owner.email, name: pageDisplayName(owner.name) }
+      : { id: null, email: null, name: pageDisplayName(owner.name) },
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
     role: role ?? "viewer",
     taken_down: !!a.takenDownAt,
@@ -395,6 +403,30 @@ export function versionCapabilities(
 ): Capabilities | null {
   if (!row?.capabilities) return null;
   return readStoredCapabilities(row.capabilities);
+}
+
+/**
+ * Who wrote the versions the content host serves (1 to the current one; a leftover row above it is
+ * never served): each distinct pair of `versions.created_by_user` and the connection's
+ * `artifact_id` once (policy.ts VersionWriter), the input of policy.ts peopleListOffered. The
+ * connection row stays after a revoke, so a bound token's versions keep their bound artifact.
+ * Empty when the artifact has no version (or does not exist).
+ */
+export async function servedVersionWriters(
+  d1: D1Database,
+  artifactId: string,
+): Promise<VersionWriter[]> {
+  const { results } = await d1
+    .prepare(
+      `SELECT DISTINCT v.created_by_user AS writer_user, c.artifact_id AS writer_bound
+         FROM versions v
+         JOIN artifacts a ON a.id = v.artifact_id
+         LEFT JOIN agent_connections c ON c.id = v.created_by_connection
+        WHERE v.artifact_id = ?1 AND v.number <= a.current_version`,
+    )
+    .bind(artifactId)
+    .all<{ writer_user: string | null; writer_bound: string | null }>();
+  return results.map((r) => ({ userId: r.writer_user, boundArtifactId: r.writer_bound }));
 }
 
 export async function getVersionRow(
@@ -681,51 +713,20 @@ export async function listArtifacts(
   // A token limited to one artifact lists that one at most, and never the owner's categories.
   const bound = boundArtifactOf(ctx.principal);
   if (bound !== null) return listBound(ctx, bound, filter);
-  const shared = ctx.db
-    .select({ id: accessGrants.artifactId })
-    .from(accessGrants)
-    .where(eq(accessGrants.email, email));
   const categories = await ownerCategories(ctx, uid);
   // The signed-in person's own categories for artifacts shared with them (never for agents).
   const mine =
     ctx.principal.kind === "user" ? { my_categories: await personalCategoriesOf(ctx, uid) } : {};
   // limit 0: the names only, the cheap read agents make before they publish.
   if (filter.limit === 0) return { items: [], categories, ...mine };
-  let inCategory: ReturnType<typeof and> | undefined;
+  let inCategory: SQL | undefined;
   // An empty filter is no filter.
   if (filter.category?.trim()) {
     const spellings = await matchingSpellings(ctx, uid, filter.category);
     if (spellings.length === 0) return { items: [], categories, ...mine };
     inCategory = and(eq(artifacts.ownerId, uid), inArray(artifacts.category, spellings));
   }
-  // The third arm (docs/spec.md "Category sharing and personal categories"): artifacts the owner
-  // reviewed as shared into a share whose grants hold the caller's email, never taken down. The
-  // SQL mirrors policy.ts categoryRoleOf; the per-row check below has the final word.
-  const viaCategory = ctx.config.allowCategorySharing
-    ? sql`(${artifacts.categoryReview} = 'shared' AND ${artifacts.takenDownAt} IS NULL AND EXISTS (
-          SELECT 1 FROM category_shares s JOIN category_grants g ON g.share_id = s.id
-           WHERE s.id = ${artifacts.categoryReviewShare} AND s.owner_id = ${artifacts.ownerId}
-             AND s.category_key = ${artifacts.categoryKey} AND g.email = ${email}))`
-    : undefined;
-  const q = filter.query?.trim().toLowerCase();
-  const rows = await ctx.db
-    .select({ a: artifacts, owner: users })
-    .from(artifacts)
-    .innerJoin(users, eq(users.id, artifacts.ownerId))
-    .where(
-      and(
-        isNull(artifacts.deletedAt),
-        or(eq(artifacts.ownerId, uid), inArray(artifacts.id, shared), viaCategory),
-        q
-          ? or(like(sql`lower(${artifacts.title})`, `%${q}%`), like(artifacts.slug, `%${q}%`))
-          : undefined,
-        inCategory,
-        filter.type ? eq(artifacts.type, filter.type) : undefined,
-      ),
-    )
-    .orderBy(desc(artifacts.updatedAt))
-    .limit(filter.limit ?? 500)
-    .all();
+  const rows = await listQuery(ctx, uid, email, filter, inCategory).all();
   if (rows.length === 0) return { items: [], categories, ...mine };
   const ids = rows.map((r) => r.a.id);
   const counts = await ctx.db
@@ -790,6 +791,52 @@ export async function listArtifacts(
 }
 
 /**
+ * The rows list_artifacts reads: the caller's own, those granted to their email, and (the third
+ * arm, docs/spec.md "Category sharing and personal categories") those the owner reviewed as shared
+ * into a share whose grants hold the caller's email, never taken down. The third arm mirrors
+ * policy.ts categoryRoleOf; the per-row check in listArtifacts has the final word. Every arm is
+ * an `id IN (...)` or an indexed equality, so SQLite answers the OR from indexes instead of
+ * scanning artifacts (a correlated EXISTS in the OR made it scan the whole table).
+ */
+export function listQuery(
+  ctx: Ctx,
+  uid: string,
+  email: string,
+  filter: { query?: string; limit?: number; type?: ArtifactType },
+  inCategory?: SQL,
+) {
+  const shared = ctx.db
+    .select({ id: accessGrants.artifactId })
+    .from(accessGrants)
+    .where(eq(accessGrants.email, email));
+  const viaCategory = ctx.config.allowCategorySharing
+    ? sql`${artifacts.id} IN (SELECT a2.id FROM category_grants g
+          JOIN category_shares s ON s.id = g.share_id
+          JOIN artifacts a2 ON a2.category_review_share = s.id AND a2.owner_id = s.owner_id
+           AND a2.category_key = s.category_key
+         WHERE g.email = ${email} AND a2.category_review = 'shared' AND a2.taken_down_at IS NULL)`
+    : undefined;
+  const q = filter.query?.trim().toLowerCase();
+  return ctx.db
+    .select({ a: artifacts, owner: users })
+    .from(artifacts)
+    .innerJoin(users, eq(users.id, artifacts.ownerId))
+    .where(
+      and(
+        isNull(artifacts.deletedAt),
+        or(eq(artifacts.ownerId, uid), inArray(artifacts.id, shared), viaCategory),
+        q
+          ? or(like(sql`lower(${artifacts.title})`, `%${q}%`), like(artifacts.slug, `%${q}%`))
+          : undefined,
+        inCategory,
+        filter.type ? eq(artifacts.type, filter.type) : undefined,
+      ),
+    )
+    .orderBy(desc(artifacts.updatedAt))
+    .limit(filter.limit ?? 500);
+}
+
+/**
  * list_artifacts for a token bound to one artifact: that artifact when the policy lets it view it
  * (and it matches `query` and `type`), with no categories. A category filter returns nothing: a
  * filter on the owner's names would let the token probe the bound artifact's category.
@@ -835,13 +882,18 @@ export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]
           label: conn.label,
           user_id: people ? v.createdByUser : null,
           connection_id: people ? conn.id : null,
+          is_owner: v.createdByUser !== null && v.createdByUser === artifact.ownerId,
         }
       : {
           kind: "user",
           // Link viewers see a name or the address's local part, never the full email.
-          label: user?.name || (people ? user?.email : user?.email?.split("@")[0]) || "Unknown",
+          label:
+            pageDisplayName(user?.name) ||
+            (people ? user?.email : user?.email?.split("@")[0]) ||
+            "Unknown",
           user_id: people ? v.createdByUser : null,
           connection_id: null,
+          is_owner: v.createdByUser !== null && v.createdByUser === artifact.ownerId,
         };
     return {
       number: v.number,

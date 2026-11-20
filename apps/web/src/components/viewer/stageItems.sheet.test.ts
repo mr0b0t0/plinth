@@ -1,5 +1,6 @@
 // A sheet edited on its page has one way into editing: the Edit toggle (or, at phone width, "Edit
-// on the page" in the ⋯ menu). The source editor's entry is not offered beside it.
+// on the page" in the ⋯ menu). A sheet has no source editor, so there is no Edit source beside it,
+// and without on-page editing there is no Edit at all.
 import { describe, expect, it } from "vitest";
 import type { StageContext } from "./stageItems.tsx";
 import { MENU_ITEMS } from "./stageItems.tsx";
@@ -26,9 +27,10 @@ describe("the ⋯ menu's edit entries", () => {
     expect(l).not.toContain("Edit source");
   });
 
-  it("a sheet without on-page editing keeps the source editor as its Edit", () => {
+  it("a sheet without on-page editing has no Edit: agents change it", () => {
     const l = labels(context("sheet", { available: false, merges: false }));
-    expect(l).toContain("Edit");
+    expect(l).not.toContain("Edit");
+    expect(l).not.toContain("Edit source");
     expect(l).not.toContain("Edit on the page");
   });
 

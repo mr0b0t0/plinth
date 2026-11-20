@@ -12,6 +12,7 @@ import {
   type DataPage,
   type DataSummary,
   type EffectiveRole,
+  MAX_PEOPLE_LISTED,
   type PeopleResult,
 } from "@plinth/shared";
 import { sharedDataActive } from "../config.ts";
@@ -25,6 +26,7 @@ import {
   grantFor,
   loadArtifactDetail,
   requireArtifact,
+  servedVersionWriters,
   versionCapabilities,
 } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
@@ -43,7 +45,7 @@ import {
   toAgentPerson,
   unavailableReason,
 } from "./data.ts";
-import { matchPeople, peopleWithAccess } from "./people.ts";
+import { countPeopleRead, matchPeople, PEOPLE_WRITER_REFUSED, peopleWithAccess } from "./people.ts";
 import { namesByEmail } from "./users.ts";
 
 /** Carried by every read result, so the warning travels with the data. */
@@ -66,9 +68,14 @@ async function capsAt(ctx: Ctx, artifactId: string, version: number) {
   return versionCapabilities(row);
 }
 
-/** The artifact as the data service sees it: the current version's declaration governs. */
+/**
+ * The artifact as the data service sees it: the current version's declaration governs, and on a
+ * page that declares `people` the writers of every served version (policy.ts peopleListOffered).
+ */
 async function targetOf(ctx: Ctx, a: ArtifactRow): Promise<DataTarget> {
-  return { id: a.id, ownerId: a.ownerId, caps: await capsAt(ctx, a.id, a.currentVersion) };
+  const caps = await capsAt(ctx, a.id, a.currentVersion);
+  const writers = caps?.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
+  return { id: a.id, ownerId: a.ownerId, caps, writers };
 }
 
 /**
@@ -135,28 +142,42 @@ export async function listArtifactData(
 
 /**
  * GET /api/v1/artifacts/:ref/people: everyone with access (owner or editor, policy action
- * `people`), optionally filtered by `q`, the same list list_artifact_data's summary carries. Only
- * while the page offers it (policy.ts peopleListOffered): otherwise 403 `feature_disabled` with the
- * reason, as the page route gives.
+ * `people`), optionally filtered by `q` and cut to `limit` (1 to MAX_PEOPLE_LISTED, the whole list
+ * by default), the same list list_artifact_data's summary carries. Only while the page offers it
+ * (policy.ts peopleListOffered): otherwise 403 `feature_disabled` with the reason, as the page
+ * route gives. Reads share the page route's limit (RATE_LIMITS.peopleReadsPerViewerPerHour per
+ * reader per artifact), so a script gets no more than the page would.
  */
 export async function listArtifactPeople(
   ctx: Ctx,
-  input: { id: string; q?: string },
+  input: { id: string; q?: string; limit?: number },
 ): Promise<PeopleResult> {
   const { artifact } = await requireArtifact(ctx, input.id, "people");
-  const { caps } = await targetOf(ctx, artifact);
-  if (!peopleListOffered(caps, sharedDataActive(ctx.config))) {
-    const reason = unavailableReason(ctx.config, caps) ?? "not_declared";
-    throw new ApiError("feature_disabled", "This artifact does not list its people", { reason });
+  const { caps, writers } = await targetOf(ctx, artifact);
+  if (!peopleListOffered(caps, sharedDataActive(ctx.config), writers ?? null)) {
+    const declared = caps?.viewer === true && caps.people;
+    const reason = unavailableReason(ctx.config, caps) ?? (declared ? null : "not_declared");
+    if (reason) {
+      throw new ApiError("feature_disabled", "This artifact does not list its people", { reason });
+    }
+    // Declared and on, but a served version's writer may not read the list (the page route
+    // answers the same).
+    throw new ApiError("forbidden", PEOPLE_WRITER_REFUSED);
   }
+  const reader = principalEmail(ctx.principal);
+  if (!reader) throw new ApiError("forbidden", "Only the owner and editors can see who has access");
+  await countPeopleRead(ctx.env.DB, artifact.id, reader);
   const people = await peopleWithAccess(
     ctx.env.DB,
     ctx.config.tokenSigningKey,
     artifact.id,
-    principalEmail(ctx.principal),
+    reader,
+    ctx.config.allowCategorySharing,
   );
+  const matched = matchPeople(people, input.q);
   return {
-    people: matchPeople(people, input.q).map(toAgentPerson),
+    people: matched.slice(0, input.limit ?? MAX_PEOPLE_LISTED).map(toAgentPerson),
+    total: matched.length,
     untrusted: PEOPLE_UNTRUSTED_FIELD,
   };
 }

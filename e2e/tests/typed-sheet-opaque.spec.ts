@@ -38,9 +38,9 @@ test("the grid renders and CSV downloads from the menu", async ({ page }) => {
   await page.getByRole("button", { name: "Artifact actions" }).click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
-    page.getByRole("menuitem", { name: "Download as CSV" }).click(),
+    page.getByRole("menuitem", { name: "Download .csv" }).click(),
   ]);
   expect(download.suggestedFilename()).toBe("Opaque fruit.csv");
   const text = readFileSync((await download.path()) as string, "utf8");
-  expect(text).toBe("﻿Item,Qty\r\nApples,3\r\nPears,6\r\n");
+  expect(text).toBe('﻿"Item","Qty"\r\n"Apples",3\r\n"Pears",6\r\n');
 });

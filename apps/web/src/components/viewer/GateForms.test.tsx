@@ -2,7 +2,7 @@ import type { ViewGate } from "@plinth/shared";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EmailForm, PasswordForm } from "./GateForms.tsx";
+import { codeLead, codeSignsInFor, EmailForm, PasswordForm } from "./GateForms.tsx";
 import { apiError, json, stubApi } from "./test-utils.ts";
 
 const OK: ViewGate = {
@@ -86,17 +86,49 @@ describe("EmailForm", () => {
     expect(calls.filter((c) => c.path === "/view/s1/code").at(-1)).toMatchObject({
       body: { email: "guest@example.org", code: "123456" },
     });
-    // A confirmed code may have signed the owner in, so the session is reloaded.
+    // A confirmed code signs the address in, so the session is reloaded.
     expect(calls.at(-1)).toMatchObject({ method: "GET", path: "/me" });
   });
 
-  it("tells a signed-in person their address is not on the list", () => {
+  it("tells a signed-in person their address has no access", () => {
     stubApi();
     render(
       <EmailForm artifactRef="s1" query={{}} onGate={() => {}} signedInEmail="ada@example.org" />,
     );
     expect(screen.getByText(/You are signed in as/).textContent).toContain(
-      "ada@example.org, which is not on the list",
+      "ada@example.org, which has no access.",
+    );
+    // Confirming another address signs in with it instead.
+    expect(screen.getByText(/You are signed in as/).textContent).toContain(
+      "Confirming another address switches you to it.",
+    );
+  });
+
+  it("on a single-user instance, a code for another address leaves the session as it is", () => {
+    stubApi();
+    render(
+      <EmailForm
+        artifactRef="s1"
+        query={{}}
+        onGate={() => {}}
+        signedInEmail="ada@example.org"
+        codeSignsIn={false}
+      />,
+    );
+    const text = screen.getByText(/You are signed in as/).textContent ?? "";
+    expect(text).toContain("You can confirm another address below.");
+    expect(text).not.toContain("switches");
+  });
+});
+
+describe("codeLead", () => {
+  it("says a code signs the address in, except on a single-user instance", () => {
+    expect(codeLead(codeSignsInFor({ single_user_mode: false }))).toBe(
+      "Sign in with a one-time code.",
+    );
+    expect(codeLead(codeSignsInFor(null))).toContain("Sign in");
+    expect(codeLead(codeSignsInFor({ single_user_mode: true }))).toBe(
+      "Confirm your email with a one-time code. You do not need an account.",
     );
   });
 });

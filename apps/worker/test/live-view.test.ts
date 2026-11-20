@@ -7,6 +7,7 @@ import { env } from "cloudflare:workers";
 import { COOKIES, LIVE_VIEW_LIMITS, spreadMs } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { watchCloseAt } from "../src/api/watch.ts";
 import { parseConfig } from "../src/config.ts";
 import { artifacts, sessions } from "../src/db/schema.ts";
 import { hashToken, newToken, signToken } from "../src/lib/crypto.ts";
@@ -104,6 +105,16 @@ async function refused(id: string, cookie: string | null, vars?: Vars) {
 
 const sessionCookie = (p: { session: { cookie: string } }) => p.session.cookie;
 
+/** The data right of each watch socket the artifact's room holds, false first. */
+async function dataRights(id: string): Promise<boolean[]> {
+  const rights = await runInDurableObject(stubFor(id), async (_room, state) =>
+    state
+      .getWebSockets("k:watch")
+      .map((s) => (s.deserializeAttachment() as { data: boolean }).data),
+  );
+  return rights.sort((a, b) => Number(a) - Number(b));
+}
+
 /** The spread every frame carries on the test instance (LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT 1000). */
 const SPREAD = spreadMs(1000);
 
@@ -169,7 +180,7 @@ describe("live views: the handshake", () => {
     const ws = res.webSocket as WebSocket;
     ws.accept();
     const c = client(ws);
-    expect(await c.next()).toEqual({ t: "welcome", v: 1, version: 1, data: false });
+    expect(await c.next()).toEqual({ t: "welcome", v: 1, version: 1 });
     c.send("ping");
     expect(await c.next()).toBe("pong");
     ws.close(1000);
@@ -272,7 +283,7 @@ describe("live views: the handshake", () => {
     // Unlisted: anyone with the link, anonymously.
     const { body: open } = await publish(a.auth, { html: PLAIN, visibility: "unlisted" });
     const anon = await watch(open.id, null);
-    expect(anon.welcome).toEqual({ t: "welcome", v: 1, version: 1, data: false });
+    expect(anon.welcome).toEqual({ t: "welcome", v: 1, version: 1 });
     anon.ws.close(1000);
     // Password: refused without the pass, opened with it.
     const { body: pw } = await publish(a.auth, {
@@ -309,19 +320,21 @@ describe("live views: the handshake", () => {
   it("gives the data right only to an HTML page that declares `data`", async () => {
     const { id, ownerP } = await setup(POLL);
     const w = await watch(id, sessionCookie(ownerP));
-    expect(w.welcome).toEqual({ t: "welcome", v: 1, version: 1, data: true });
-    w.ws.close(1000);
+    // The welcome says nothing about it; the room keeps it in the socket's state.
+    expect(w.welcome).toEqual({ t: "welcome", v: 1, version: 1 });
+    expect(await dataRights(id)).toEqual([true]);
     const room = await setup(roomPage());
     const r = await watch(room.id, sessionCookie(room.ownerP));
-    expect(r.welcome.data).toBe(false);
+    expect(await dataRights(room.id)).toEqual([false]);
     r.ws.close(1000);
     const doc = await setup(undefined, docBody("# Notes\n"));
     const d = await watch(doc.id, sessionCookie(doc.ownerP));
-    expect(d.welcome.data).toBe(false);
+    expect(await dataRights(doc.id)).toEqual([false]);
     d.ws.close(1000);
     // Shared data off on the instance: no data right.
     const off = await watch(id, sessionCookie(ownerP), { vars: { ALLOW_SHARED_DATA: "false" } });
-    expect(off.welcome.data).toBe(false);
+    expect(await dataRights(id)).toEqual([false, true]);
+    w.ws.close(1000);
     off.ws.close(1000);
   });
 
@@ -400,10 +413,14 @@ describe("live views: signals", () => {
   it("page writes (POST, PUT, DELETE) and agent and app writes send `data`", async () => {
     const { id, ownerP, owner } = await setup(POLL);
     const ed = await person(id, "editor");
-    const w = await watch(id, sessionCookie(ownerP));
+    // A cap of 50 (spread_ms 100), so the writes in a row, each one data frame window apart at
+    // most (coalescing), fit the test's time.
+    const w = await watch(id, sessionCookie(ownerP), {
+      vars: { LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: "50" },
+    });
     const created = await pageWrite(id, ed.cookie, "POST", "/data/votes", { data: { n: 1 } });
     expect(created.status).toBe(201);
-    expect(await w.next()).toEqual({ t: "data", spread_ms: SPREAD });
+    expect(await w.next()).toEqual({ t: "data", spread_ms: spreadMs(50) });
     const doc = await json(created);
     const put = await pageWrite(id, ed.cookie, "PUT", `/data/votes/${doc.id}`, { data: { n: 2 } });
     expect(put.status).toBe(200);
@@ -439,7 +456,7 @@ describe("live views: signals", () => {
   it("a version that drops `data` takes the data right away; later writes send nothing", async () => {
     const { id, ownerP, owner } = await setup(POLL);
     const w = await watch(id, sessionCookie(ownerP));
-    expect(w.welcome.data).toBe(true);
+    expect(await dataRights(id)).toEqual([true]);
     expect((await update(owner, id, PLAIN, 1)).status).toBe(200);
     expect(await w.next()).toMatchObject({ t: "version", version: 2 });
     const rest = await run(`${APP}/api/v1/artifacts/${id}/data`, {
@@ -457,7 +474,7 @@ describe("live views: signals", () => {
     expect(await stubFor(id).dataChanged()).toBe(0);
     expect(w.pending()).toEqual([]);
     const again = await watch(id, sessionCookie(ownerP));
-    expect(again.welcome.data).toBe(true);
+    expect(await dataRights(id)).toEqual([false, true]);
     w.ws.close(1000);
     again.ws.close(1000);
   });
@@ -536,6 +553,54 @@ describe("live views: signals", () => {
       { t: "data", spread_ms: SPREAD },
     ]);
     for (const w of tabs) w.ws.close(1000);
+  });
+
+  it("data frames are coalesced: at most one per spread_ms, and the last write is always followed by one", async () => {
+    // A cap of 250 makes spread_ms 500.
+    const vars = { LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: "250" };
+    const window = spreadMs(250);
+    const frame = { t: "data", spread_ms: window };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const { id, ownerP } = await setup(POLL);
+    const w = await watch(id, sessionCookie(ownerP), { vars });
+    const stub = stubFor(id);
+    // Ten writes inside one window: one frame at once, then exactly one at the window's end.
+    const t0 = Date.now();
+    for (let i = 0; i < 10; i++) expect(await stub.dataChanged()).toBe(1);
+    expect(await w.next(300)).toEqual(frame);
+    expect(w.pending()).toEqual([]);
+    expect(await w.next(window + 1000)).toEqual(frame);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(window - 50);
+    await sleep(window + 300);
+    expect(w.pending()).toEqual([]);
+    // A write after a quiet window: a new frame at once.
+    expect(await stub.dataChanged()).toBe(1);
+    expect(await w.next(300)).toEqual(frame);
+    await sleep(window + 100);
+    // Writes that keep coming, across windows: still at most one frame per window...
+    const t1 = Date.now();
+    for (let i = 0; i < 5; i++) {
+      await stub.dataChanged();
+      await sleep(150);
+    }
+    let frames = 0;
+    while (w.pending().length) {
+      await w.next();
+      frames++;
+    }
+    expect(frames).toBeLessThanOrEqual(Math.ceil((Date.now() - t1) / window) + 1);
+    // ...and the last one is followed by a frame.
+    await stub.dataChanged();
+    expect(await w.next(window + 1000)).toEqual(frame);
+    await sleep(window + 300);
+    expect(w.pending()).toEqual([]);
+    // A page write goes the same way.
+    const ed = await person(id, "editor");
+    expect((await pageWrite(id, ed.cookie, "POST", "/data/votes", { data: { n: 1 } })).status).toBe(
+      201,
+    );
+    expect(await w.next()).toEqual(frame);
+    w.ws.close(1000);
   });
 });
 
@@ -625,12 +690,52 @@ describe("live views: closing", () => {
     const withPass = await watch(pw.id, `${COOKIES.passwordPassPrefix}${pw.id}=${token}`);
     expect(await passExps(pw.id)).toEqual([exp]);
     withPass.ws.close(1000);
-    // Anonymous on a link: a content pass's lifetime.
+    // Anonymous on a link: a content pass's lifetime, less up to lifetimeJitterS.
     const { body: open } = await publish(a.auth, { html: PLAIN, visibility: "unlisted" });
     const anon = await watch(open.id, null);
     const [aExp] = await passExps(open.id);
-    expect(aExp).toBeGreaterThan(lifetime() - 60_000);
+    expect(aExp).toBeGreaterThan(lifetime() - LIVE_VIEW_LIMITS.lifetimeJitterS * 1000 - 60_000);
+    expect(aExp).toBeLessThanOrEqual(lifetime());
     anon.ws.close(1000);
+  });
+
+  it("sockets opened together reach their lifetime spread out, never later than it", async () => {
+    const jitterMs = LIVE_VIEW_LIMITS.lifetimeJitterS * 1000;
+    const ttlMs = LIVE_VIEW_LIMITS.socketTtlS * 1000;
+    // The rule, with random() at its ends and between.
+    expect(watchCloseAt(1000, null, () => 0)).toBe(1000 + ttlMs);
+    expect(watchCloseAt(1000, null, () => 0.5)).toBe(1000 + ttlMs - jitterMs / 2);
+    expect(watchCloseAt(1000, null, () => 0.999_999)).toBe(1000 + ttlMs - jitterMs + 1);
+    for (const r of [0, 0.3, 0.999_999, 1, -1, 2]) {
+      const at = watchCloseAt(1000, null, () => r);
+      expect(at).toBeLessThanOrEqual(1000 + ttlMs);
+      expect(at).toBeGreaterThanOrEqual(1000 + ttlMs - jitterMs);
+    }
+    // A credential's own expiry is kept exactly when it comes first, and never passed.
+    expect(watchCloseAt(1000, 61_000, () => 0.5)).toBe(61_000);
+    expect(watchCloseAt(1000, 1000 + ttlMs - 1, () => 0)).toBe(1000 + ttlMs - 1);
+    expect(watchCloseAt(1000, 1000 + ttlMs * 2, () => 0)).toBe(1000 + ttlMs);
+    // Real handshakes: one wave of anonymous views on one link.
+    const a = await agent();
+    const { body: open } = await publish(a.auth, { html: PLAIN, visibility: "unlisted" });
+    const before = Date.now();
+    const views = [];
+    for (let i = 0; i < 12; i++) views.push(await watch(open.id, null, from("198.51.100.77")));
+    const after = Date.now();
+    const exps = await runInDurableObject(stubFor(open.id), async (_room, state) =>
+      state
+        .getWebSockets("k:watch")
+        .map((s) => (s.deserializeAttachment() as { passExp: number }).passExp),
+    );
+    expect(exps).toHaveLength(12);
+    for (const exp of exps) {
+      expect(exp).toBeLessThanOrEqual(after + ttlMs);
+      expect(exp).toBeGreaterThanOrEqual(before + ttlMs - jitterMs);
+    }
+    // Spread, not one moment: at least two different alarms (60 s apart) close them.
+    const minutes = new Set(exps.map((e) => Math.floor(e / 60_000)));
+    expect(minutes.size).toBeGreaterThan(1);
+    for (const v of views) v.ws.close(1000);
   });
 
   it("revocation reaches watch sockets under opaque isolation too, where rooms are off", async () => {
@@ -787,7 +892,7 @@ describe("live views: the gate's `watch`", () => {
     const vars = { CONTENT_ISOLATION: "opaque" };
     const { id, ownerP, owner } = await setup(POLL);
     const w = await watch(id, sessionCookie(ownerP), { vars });
-    expect(w.welcome).toEqual({ t: "welcome", v: 1, version: 1, data: false });
+    expect(w.welcome).toEqual({ t: "welcome", v: 1, version: 1 });
     const upd = await run(
       `${APP}/api/v1/artifacts/${id}`,
       {

@@ -1,9 +1,9 @@
 // Who is viewing (docs/spec.md "Who is viewing: names and the people list"), end to end: the owner
 // sets a name from the account menu; a page that declares `data viewer people` shows the viewer's
 // name, lists everyone with access for the owner and an editor, and names the authors of its
-// sign-ups; a viewer confirmed by code (no account) has no name and gets `forbidden` from the list
-// but is told about it; an anonymous link viewer sees no viewer, no authors and no list; and in a
-// live room a peer's cursor is labelled with their name.
+// sign-ups; a viewer confirmed by code (signed in by it, with no name set) has no name and gets
+// `forbidden` from the list but is told about it; an anonymous link viewer sees no viewer, no
+// authors and no list; and in a live room a peer's cursor is labelled with their name.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
@@ -133,7 +133,8 @@ test("names and the people list on a page shared with a team", async ({ page, br
   await expect(page.getByText(owner, { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // 2. The owner's agent publishes the page and shares it: an editor, and a viewer with no account.
+  // 2. The owner's agent publishes the page and shares it: an editor, and a viewer with no
+  // account yet.
   const art = await publishArtifact(page.request, token, {
     title: "Team list",
     html: TEAM_HTML,
@@ -193,7 +194,8 @@ test("names and the people list on a page shared with a team", async ({ page, br
     await expect(frame(page).locator("#people")).toContainText("Bo Editor · editor");
     await expect(frame(page).locator("#signups")).toContainText("Bo Editor");
 
-    // 5. The viewer confirms by code: no account, so no name; no list, but they are told.
+    // 5. The viewer confirms by code, which signs them in with a new account and no name; no
+    // list, but they are told.
     const vw = await listedViewer(browser, art.url, viewer);
     pages.push(vw);
     await expect(frame(vw).locator("#me")).toHaveText(viewer);
