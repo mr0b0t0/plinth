@@ -221,7 +221,11 @@ function paraOf(c: SlideCtx, el: Element, runs: Run[], o: Partial<Para> = {}): P
   };
 }
 
-/** A list's items as paragraphs, nested lists one level deeper. */
+/**
+ * A list's items as paragraphs, nested lists one level deeper. The space above each item is the
+ * gap the screen shows: an item's top margin, and for a nested list's first item the list's own.
+ * The top-level list's margin is outside its box, so its first item has none.
+ */
 function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void {
   const bullet = list.localName === "ol" ? "number" : "disc";
   let first = true;
@@ -229,7 +233,10 @@ function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void
     if (li.localName !== "li") continue;
     const runs = lines(c, li).flatMap((line, i) => (i > 0 ? [{ text: " " }, ...line] : line));
     if (runs.length > 0) {
-      const spaceBefore = first ? 0 : round(px(c.g.style(li).marginTop) * PT_PER_PX, 1);
+      let margin = "0";
+      if (!first) margin = c.g.style(li).marginTop;
+      else if (level > 0) margin = c.g.style(list).marginTop;
+      const spaceBefore = round(px(margin) * PT_PER_PX, 1);
       out.push(paraOf(c, li, runs, { level, bullet, spaceBefore }));
     }
     first = false;

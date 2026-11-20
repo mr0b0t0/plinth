@@ -2,9 +2,9 @@
 // lazy writer from its own origin under the shell's script-src 'self', builds the file from the
 // slides it shows and downloads it. Checked here: a download event with the deck's title as the
 // file name; the file unzips with one slide per slide, the deck's text, the notes and both images
-// (the PNG as is, the SVG drawn to PNG); no CSP violation and no request to another host; and the
-// app's toast, the only notice: the frame adds none. The opaque case is in
-// typed-slides-pptx-opaque.spec.ts.
+// (the PNG as is, the SVG drawn to PNG); no CSP violation and no request to another host; and no
+// notice for a clean export, from the app or the frame: the browser shows the download. The opaque
+// case, where the app's toast says images were left out, is in typed-slides-pptx-opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
@@ -125,7 +125,12 @@ test("Download .pptx gives the deck as an editable file, built in the frame", as
     await page.getByRole("button", { name: "Artifact actions" }).click();
     await page.getByRole("menuitem", { name: "Download .pptx" }).click();
     const download = await downloaded;
-    await expect(page.getByText("Downloaded the .pptx")).toBeVisible();
+    // The export is over (the menu item works again), and a clean one adds no notice of its own:
+    // the browser shows the download.
+    await page.getByRole("button", { name: "Artifact actions" }).click();
+    await expect(page.getByRole("menuitem", { name: "Download .pptx" })).toBeEnabled();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".pl-toast")).toHaveCount(0);
 
     const file = await readPptx(download);
     expect(file.name).toBe(`${TITLE}.pptx`);
@@ -165,7 +170,7 @@ test("Download .pptx gives the deck as an editable file, built in the frame", as
     );
     expect(await frame.evaluate(() => (window as { __pwned?: unknown }).__pwned)).toBeUndefined();
 
-    // The toast is the only notice: the frame shows none of its own.
+    // The frame shows no notice of its own either.
     await expect(
       page.frameLocator(CURRENT_FRAME).getByRole("button", { name: "Download" }),
     ).toHaveCount(0);

@@ -469,7 +469,8 @@ What is new:
   No rule is relaxed for the export.
 - **The download stays in the frame.** The frame saves the file with an `<a download>` click on a
   `blob:` URL; both frame sandboxes already include `allow-downloads`. The frame shows no UI of
-  its own for it (the app's toast reports the result), and the blob URL is released a minute
+  its own for it (the browser shows the download; the app's toast reports only a failure or
+  images left out), and the blob URL is released a minute
   after the save. The file name is the deck's title reduced to letters, digits,
   spaces, dots, dashes and underscores, at most 80 characters. Links in the file keep only what the
   doc's URL rules allow (web and mail links, and `#N` as a link to a slide of the deck).

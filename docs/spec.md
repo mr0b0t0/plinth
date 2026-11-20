@@ -909,9 +909,11 @@ source editor work as for docs. A deck is not edited on its page.
   file once however many slides use it. Code blocks keep their blank lines, and characters an
   XML file cannot hold (control characters other than tab and line breaks, such as a pasted
   terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
-  file without repairing it. The browser saves the file from the frame, and the app's toast is the
-  only notice (the frame shows none of its own); while the file is being made the menu item reads
-  "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
+  file without repairing it. Lines are spaced in exact points, the line height on screen, so each
+  box holds its text at the height measured on screen. The browser saves the file from the frame
+  and shows its own download; the app adds a toast only when images were left out or the file
+  could not be made, and the frame shows no notice of its own. While the file is being made the
+  menu item reads "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
   one: that one answers the newer request. If the deck's frame is replaced while it makes
   the file (a newer version, review mode), the app stops waiting at once and says to download
   again if no file was saved. Nothing is sent to the server, and the file holds only

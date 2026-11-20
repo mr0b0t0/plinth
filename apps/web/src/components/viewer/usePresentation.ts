@@ -78,16 +78,19 @@ export const EXPORT_INTERRUPTED_TOAST = {
   tone: "warning",
 } as const;
 
-/** The toast for a finished export. Exported for tests. */
+/**
+ * The toast for a finished export, or null for a clean one: the browser shows its own download.
+ * Exported for tests.
+ */
 export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: boolean }): {
   title: string;
   description?: string;
-  tone: "success" | "warning" | "danger";
-} {
+  tone: "warning" | "danger";
+} | null {
   if (!m.ok) {
     return { title: "The .pptx could not be made", tone: "danger" };
   }
-  if (m.images_skipped === 0) return { title: "Downloaded the .pptx", tone: "success" };
+  if (m.images_skipped === 0) return null;
   if (m.opaque) {
     return {
       title: "Downloaded the .pptx",
@@ -260,7 +263,8 @@ export function usePresentation(o: PresentationOptions): Presentation {
         clearTimeout(pending.timer);
         pendingExport.current = null;
         setExporting(false);
-        showToast(exportedToast(m));
+        const toast = exportedToast(m);
+        if (toast) showToast(toast);
         return;
       }
       if (m.type === "view") {

@@ -151,6 +151,15 @@ describe("buildPptx", () => {
     expect(slide).toContain('algn="r"');
   });
 
+  it("spaces lines in exact points, as on screen, and keeps the gap above an item", async () => {
+    const { text } = await files();
+    const slide = text("ppt/slides/slide1.xml");
+    // 22.5 pt at line height 1.35 is 30.4 pt (30.375 rounded), never a multiple of the font's own.
+    expect(slide).toContain('<a:lnSpc><a:spcPts val="3040"/></a:lnSpc>');
+    expect(slide).not.toContain("<a:spcPct");
+    expect(slide).toContain('<a:spcBef><a:spcPts val="680"/></a:spcBef>');
+  });
+
   it("keeps a one-line item (the footer, the number) from wrapping, and wraps the rest", async () => {
     const one: DeckModel = {
       ...MODEL,
