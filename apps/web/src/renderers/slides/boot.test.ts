@@ -465,7 +465,8 @@ describe("boot", () => {
     expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - 2 * GUTTER));
     expect(root().style.getPropertyValue("--deck-top")).toBe("");
     expect(root().style.getPropertyValue("--deck-bottom")).toBe("");
-    // The controls sit just inside the slide's bottom edge.
+    // The controls' bottom edge sits one gutter above the slide's.
+    expect(CONTROLS_INSET).toBe(GUTTER);
     expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${GUTTER + CONTROLS_INSET}px`);
     // A tall frame: the width decides, with the same gutter at the sides.
     f.size.h = 1400;

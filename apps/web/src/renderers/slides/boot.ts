@@ -159,7 +159,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       root.style.removeProperty("--controls-bottom");
     } else {
       // The slide is centred with the stage's gutter on every side, full screen too; the controls
-      // show just inside its bottom edge, wherever the letterbox puts it.
+      // show one gutter above its bottom edge, wherever the letterbox puts it.
       const s = fitScale(
         win.innerWidth - 2 * GUTTER,
         win.innerHeight - 2 * GUTTER,

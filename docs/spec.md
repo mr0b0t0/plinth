@@ -688,10 +688,11 @@ source editor work as for docs. A deck is not edited on its page.
 - **Viewing.** Keys (arrows, Page Up and Down, Space, Home, End, a number then Enter), clicks or
   taps on the outer thirds, swipes, `#N` links and a control pill page the deck. The pill
   (previous, next and an overview toggle, with a `3 / 20` count only when the deck shows no page
-  numbers of its own, so one counter is on screen) floats over the bottom centre of the slide on a
-  translucent surface; it shows on a pointer move, a tap or a key, stays while hovered or focused,
+  numbers of its own, so one counter is on screen) floats over the bottom centre of the slide, its
+  bottom edge 16 px above the slide's, on a translucent surface; it shows on a pointer move, a tap or a key, stays while hovered or focused,
   hides after 2 s idle and reserves no room. The slide is centred with one 16 px gutter on every
-  side, full screen too, the same in the overview and presenter view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
+  side, full screen too, the same in the overview and presenter view, and has square corners in
+  every view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
   700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
   the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
   and the editor preview keep it in one column, without the pill. The app keeps the slide in its

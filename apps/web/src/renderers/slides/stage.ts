@@ -8,8 +8,8 @@
  * the overview's thumbnails, and around presenter view. Full screen keeps it too.
  */
 export const GUTTER = 16;
-/** How far inside the slide's bottom edge the controls sit in deck view, in CSS pixels. */
-export const CONTROLS_INSET = 8;
+/** How far the controls' bottom edge sits above the slide's in deck view: the gutter again. */
+export const CONTROLS_INSET = GUTTER;
 /** From this frame width the overview is a grid of thumbnails; below it, one column. */
 export const OVERVIEW_GRID_MIN = 700;
 /** From this frame width the grid has four columns instead of three. */

@@ -424,10 +424,9 @@ body {
   overflow: hidden;
 }
 
-/* One card edge for both slide panes and the notes. */
+/* One card edge for both slide panes and the notes: square, as the slide is in every view. */
 .plinth-slides__pane .plinth-slides__canvas,
 .plinth-slides__notes {
-  border-radius: 8px;
   box-shadow: 0 0 0 1px var(--slides-rule);
 }
 
@@ -597,7 +596,6 @@ body {
 }
 
 .plinth-slides[data-mode="overview"] .plinth-slides__canvas {
-  border-radius: 6px;
   box-shadow:
     0 0 0 1px var(--slides-rule),
     0 2px 8px rgb(0 0 0 / 0.08);
@@ -636,7 +634,7 @@ body {
 
 .plinth-slides__controls {
   position: fixed;
-  bottom: var(--controls-bottom, 24px);
+  bottom: var(--controls-bottom, 16px);
   left: 50%;
   display: flex;
   gap: 2px;
@@ -831,7 +829,6 @@ body {
   html .plinth-slides[data-mode] .plinth-slides__canvas {
     width: var(--w);
     height: var(--h);
-    border-radius: 0;
     box-shadow: none;
   }
 
