@@ -18,10 +18,16 @@ import type { Anchor } from "./schemas.ts";
 
 export interface Author {
   kind: "user" | "connection";
-  /** Person's name or email, or the connection label. */
+  /** Person's name or email, or the connection label. Display text, never proof of role. */
   label: string;
   user_id: string | null;
   connection_id: string | null;
+  /**
+   * The artifact's owner wrote it (in person or through one of their agents), as the server knows
+   * it, never from the label. The app marks the owner's versions with it, so a name chosen to look
+   * like the owner's visibly lacks the mark. The Worker always sends it; absent reads as false.
+   */
+  is_owner?: boolean;
 }
 
 export interface ArtifactSummary {
@@ -255,6 +261,12 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
+  /**
+   * The display name of the account with this email, shown to the owner only once its holder has
+   * taken part in the artifact (a comment, a shared-data entry or a version; policy.ts
+   * accessListShowsName). Null until then, and for an address with no account or no name.
+   */
+  name: string | null;
 }
 
 export interface SharingSettings {
@@ -269,7 +281,12 @@ export interface CommentInfo {
   artifact_id: string;
   version_number: number;
   parent_id: string | null;
-  author: { email: string | null; connection_id: string | null; label: string };
+  /**
+   * `label` is display text, never proof of role. `is_owner`: the artifact's owner wrote it (in
+   * person or through one of their agents), as the server knows it; the app marks the owner's
+   * comments with it. The Worker always sends it; absent reads as false.
+   */
+  author: { email: string | null; connection_id: string | null; label: string; is_owner?: boolean };
   body: string;
   anchor: Anchor | null;
   status: CommentStatus;
@@ -462,6 +479,11 @@ export type ViewGate =
        * and of shared-data changes, as they happen. Absent: poll as before.
        */
       watch?: true;
+      /**
+       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
+       * the people it is shared with. Absent when there is nothing to tell.
+       */
+      people?: ViewGatePeople;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -527,6 +549,17 @@ export interface ViewGateData {
    * declares `room` and `viewer`, rooms are active and the viewer is identified.
    */
   room_email?: string;
+}
+
+/** What the viewer is told about names and the people list (docs/spec.md "Who is viewing"). */
+export interface ViewGatePeople {
+  /**
+   * The viewer's display name, which the page sees and shows wherever it sees their email (the
+   * `email` or `room_email` of the data block). Absent without a name.
+   */
+  name?: string;
+  /** The page declares `people`: its owner and editors can list everyone it is shared with. */
+  list?: true;
 }
 
 export interface ViewArtifactStub {

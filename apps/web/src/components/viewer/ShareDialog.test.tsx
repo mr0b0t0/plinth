@@ -13,6 +13,7 @@ const summary = (docs: number, bytes: number, caps: DataSummary["capabilities"] 
     usage: { docs, bytes },
     limits: { max_doc_bytes: 16384, max_docs: 1000, max_bytes: 1048576 },
     collections: [],
+    people: [],
     untrusted: "UNTRUSTED",
   }) satisfies DataSummary;
 

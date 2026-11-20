@@ -40,8 +40,14 @@ import {
 import { type Bindings, type Config, contentOrigin, liveEditMode, roomsActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { roomAccess } from "../policy.ts";
-import { ROOM_CONNECT_HEADER, ROOM_CONNECT_URL, type RoomConnect } from "../rooms/ArtifactRoom.ts";
+import {
+  encodeConnect,
+  ROOM_CONNECT_HEADER,
+  ROOM_CONNECT_URL,
+  type RoomConnect,
+} from "../rooms/ArtifactRoom.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
+import { nameByEmail } from "../services/users.ts";
 import { applyContentHeaders } from "./csp.ts";
 import type { HostRoute } from "./serve.ts";
 import { readContentPass } from "./serve.ts";
@@ -133,6 +139,7 @@ export async function roomInfo(
       viewer: pass.claim.viewerId,
       role: pass.claim.role,
       email: access.seeIdentity ? pass.claim.email : null,
+      name: access.seeIdentity ? await nameByEmail(env.DB, pass.claim.email) : null,
     },
     can_emit: access.emit,
     open_topics: access.openTopics,
@@ -228,6 +235,11 @@ async function upgrade(
   // 9. Policy.
   const access = roomAccess(pass.claim, target.caps, kind, { active: true, type: target.type });
   if (!access.join) return refuse(config, 403, "forbidden");
+  // The display name, read live only for a socket whose identity peers may see on a page room
+  // (a refused upgrade never reads it; a doc socket shows emails only). A rename reaches the room
+  // on the next connect.
+  const name =
+    kind === "page" && access.seeIdentity ? await nameByEmail(env.DB, pass.claim.email) : null;
 
   const connect: RoomConnect = {
     artifactId,
@@ -238,6 +250,7 @@ async function upgrade(
     viewer: pass.claim.viewerId,
     role: pass.claim.role,
     email: pass.claim.email,
+    name,
     seeIdentity: access.seeIdentity,
     emit: access.emit,
     openTopics: access.openTopics,
@@ -252,7 +265,7 @@ async function upgrade(
   const ns = env.ROOMS!;
   const res = await ns.get(ns.idFromName(artifactId)).fetch(
     new Request(ROOM_CONNECT_URL, {
-      headers: { Upgrade: "websocket", [ROOM_CONNECT_HEADER]: JSON.stringify(connect) },
+      headers: { Upgrade: "websocket", [ROOM_CONNECT_HEADER]: encodeConnect(connect) },
     }),
   );
   if (res.status !== 101 || !res.webSocket) {

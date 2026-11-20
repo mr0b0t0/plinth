@@ -59,6 +59,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   text, and a semicolon-separated file reads decimal commas. A downloaded CSV quotes every text
   value, so Excel in a semicolon locale never splits a cell into a formula.
   `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.26.0.
+- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
+  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
+  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
+  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
+  line under the bar tells every invited viewer. On such a page their agents get the same list in
+  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
+  page. The list and the owner's sharing settings name a person once they have commented, entered
+  something or published a version there, so adding an address never reveals whether it has an
+  account. Names are display text: no `@`, no invisible or blank-only characters, never a role;
+  the owner's own comments and versions carry a quiet "Owner" mark (`is_owner`), so a name chosen
+  to look like the owner's visibly lacks it. Once a token limited to one artifact has
+  published a version of a page, that page lists nobody. Plugin 0.27.0.
 
 ## 0.6.0 (2026-11-20)
 

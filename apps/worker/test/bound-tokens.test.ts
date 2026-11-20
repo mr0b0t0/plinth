@@ -29,7 +29,8 @@ import {
   serviceCtxFor,
   tool,
 } from "./helpers.ts";
-import { upgrade } from "./room-helpers.ts";
+import { api, errOf, peoplePage, setName } from "./people-helpers.ts";
+import { cookieFor, grant, upgrade } from "./room-helpers.ts";
 
 const DATA_PAGE = `<!doctype html><title>Report</title>
 <meta name="plinth-capabilities" content="data">
@@ -227,6 +228,8 @@ describe("using a token limited to one artifact", () => {
         label: editor.email.split("@")[0],
         user_id: null,
         connection_id: null,
+        // An editor wrote it: no owner's mark (from ids, never from the label).
+        is_owner: false,
       });
       expect(byNumber(1).author).toMatchObject({
         kind: "connection",
@@ -632,6 +635,241 @@ describe("a token limited to one artifact never sees the page run with its data"
     expect(ws.status).toBe(403);
     expect(ws.webSocket).toBeFalsy();
     expect(await ws.text()).toContain("preview");
+  });
+});
+
+describe("a token limited to one artifact never learns who has access", () => {
+  /** A page that lists its people, the owner named, an editor with a grant, and a bound token. */
+  async function peopleSetup() {
+    const owner = await agent();
+    expect((await setName(owner.user.id, "Olive Owner")).status).toBe(200);
+    const h = await signedIn(owner.user.id);
+    const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
+    expect(page.res.status).toBe(201);
+    const id = page.body.id as string;
+    const other = await publish(owner.auth, { title: "Other team", html: peoplePage() });
+    expect(other.res.status).toBe(201);
+    const editor = await createUser();
+    await grant(id, editor.email, "editor");
+    await grant(other.body.id, editor.email, "editor");
+    // A named entry, so documents carry the owner's name to anyone who may read them.
+    const w = await req("POST", `/artifacts/${id}/data`, owner.auth, {
+      ops: [{ op: "set", collection: "votes", doc_id: "a", data: { n: 1 }, if_rev: 0 }],
+    });
+    expect(w.status).toBe(200);
+    return { owner, h, id, otherId: other.body.id as string, editor, t: await boundToken(h, id) };
+  }
+
+  /** Nothing in a refusal names a person on the artifact. */
+  function namesNobody(body: unknown, s: Awaited<ReturnType<typeof peopleSetup>>, what: string) {
+    const text = JSON.stringify(body);
+    for (const leak of [s.owner.user.email, s.editor.email, "Olive Owner"]) {
+      expect(text, `${what}: ${leak}`).not.toContain(leak);
+    }
+  }
+
+  it("GET /people is token_bound on its artifact and a 404 elsewhere; the owner's own token reads it", async () => {
+    const s = await peopleSetup();
+    const mine = await req("GET", `/artifacts/${s.id}/people`, s.owner.auth);
+    expect(mine.status).toBe(200);
+    expect(JSON.stringify(mine.body)).toContain(s.editor.email);
+    const its = await req("GET", `/artifacts/${s.id}/people`, s.t.auth);
+    expect(its.status).toBe(403);
+    expect(its.body.error.details.reason).toBe("token_bound");
+    namesNobody(its.body, s, "people");
+    const searched = await req("GET", `/artifacts/${s.id}/people?q=olive`, s.t.auth);
+    expect(searched.status).toBe(403);
+    namesNobody(searched.body, s, "people search");
+    const elsewhere = await req("GET", `/artifacts/${s.otherId}/people`, s.t.auth);
+    expect(elsewhere.status).toBe(404);
+    namesNobody(elsewhere.body, s, "other people");
+  });
+
+  it("list_artifact_data (summary, collection, document) and the viewer gate refuse it", async () => {
+    const s = await peopleSetup();
+    const c = await mcpClient(s.t.token);
+    for (const args of [
+      { id: s.id },
+      { id: s.id, collection: "votes" },
+      { id: s.id, collection: "votes", doc_id: "a" },
+    ]) {
+      const r = await tool(c, "list_artifact_data", args);
+      expect(r.isError, r.text).toBe(true);
+      expect(r.data.error.details.reason, r.text).toBe("token_bound");
+      namesNobody(r.data, s, `list_artifact_data ${JSON.stringify(args)}`);
+    }
+    const elsewhere = await tool(c, "list_artifact_data", { id: s.otherId });
+    expect(elsewhere.data.error.code).toBe("not_found");
+    await c.close();
+    // REST: the same refusals, and the gate (which would carry `people`) gives no pass.
+    for (const path of [`/artifacts/${s.id}/data`, `/artifacts/${s.id}/data/votes/a`]) {
+      const r = await req("GET", path, s.t.auth);
+      expect(r.status, path).toBe(403);
+      expect(r.body.error.details.reason, path).toBe("token_bound");
+      namesNobody(r.body, s, path);
+    }
+    const gate = await req("GET", `/view/${s.id}`, s.t.auth);
+    expect(gate.status).toBe(403);
+    expect(gate.body.error.details.reason).toBe("token_bound");
+    expect(gate.body.people).toBeUndefined();
+    namesNobody(gate.body, s, "gate");
+    // The owner's own gate in a browser does carry the block, so the refusal is the binding's.
+    const own = await req("GET", `/view/${s.id}`, s.h);
+    expect(own.body.status).toBe("ok");
+    expect(own.body.people).toMatchObject({ list: true });
+  });
+
+  it("its in-chat preview lists nobody and names nobody in a room", async () => {
+    const s = await peopleSetup();
+    const c = await mcpClient(s.t.token);
+    const up = await tool(c, "update_artifact", {
+      id: s.id,
+      html: peoplePage({ room: true }),
+      base_version: 1,
+    });
+    expect(up.isError, up.text).toBe(false);
+    const link = await tool(c, "preview_artifact", { id: s.id });
+    expect(link.isError, link.text).toBe(false);
+    await c.close();
+    const enter = await call(link.data.preview_url, { headers: { "sec-fetch-dest": "iframe" } });
+    const cookie = (enter.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    expect(cookie).toContain("=");
+    for (const path of ["/people", "/people/u_0123456789abcdef01234567", "/data/votes"]) {
+      const res = await api(s.id, path, { cookie });
+      expect(res.status, path).toBe(403);
+      const e = await errOf(res);
+      expect(e.details?.reason, path).toBe("preview");
+      namesNobody(e, s, path);
+    }
+    const ws = await upgrade(s.id, cookie);
+    expect(ws.status).toBe(403);
+    expect(ws.webSocket).toBeFalsy();
+  });
+});
+
+describe("a version a token limited to one artifact wrote never lists the people", () => {
+  /** What the owner gets from each way to read the list while the current version is shown. */
+  async function ownerReads(id: string, h: Record<string, string>, token: string) {
+    const cookie = await cookieFor(id, h);
+    const session = await json(await api(id, "/session", { cookie }));
+    const page = await api(id, "/people", { cookie });
+    const one = await api(id, "/people/u_0123456789abcdef01234567", { cookie });
+    const rest = await req("GET", `/artifacts/${id}/people`, { Authorization: `Bearer ${token}` });
+    const c = await mcpClient(token);
+    const summary = await tool(c, "list_artifact_data", { id });
+    await c.close();
+    const gate = await req("GET", `/view/${id}`, h);
+    return { session, page, one, rest, summary, gate };
+  }
+
+  /** Every way in refuses the list and names nobody. */
+  async function expectNoList(after: Awaited<ReturnType<typeof ownerReads>>, email: string) {
+    expect(after.session.can_list_people).toBe(false);
+    for (const [what, res] of [
+      ["page", after.page],
+      ["one", after.one],
+    ] as const) {
+      expect(res.status, what).toBe(403);
+      const text = await res.text();
+      expect(text, what).not.toContain(email);
+      expect(JSON.parse(text).error, what).toMatchObject({
+        code: "forbidden",
+        message: expect.stringMatching(/token limited to one artifact/),
+      });
+    }
+    expect(after.rest.status).toBe(403);
+    expect(after.rest.body.error.code).toBe("forbidden");
+    expect(after.rest.body.error.message).toMatch(/token limited to one artifact/);
+    expect(JSON.stringify(after.rest.body)).not.toContain(email);
+    expect(after.summary.isError, after.summary.text).toBe(false);
+    expect(after.summary.data.people).toBeUndefined();
+    expect(after.summary.text).not.toContain(email);
+    expect(after.gate.body.status).toBe("ok");
+    expect(after.gate.body.people?.list).toBeUndefined();
+  }
+
+  it("the owner opening it gets no list from the runtime, REST, MCP or the gate, even after a person's newer version", async () => {
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
+    expect(page.res.status).toBe(201);
+    const id = page.body.id as string;
+    const editor = await createUser();
+    await grant(id, editor.email, "editor");
+
+    // v1, written by the owner's account-wide token: every way in lists the people.
+    const before = await ownerReads(id, h, owner.token);
+    expect(before.session.can_list_people).toBe(true);
+    expect(before.page.status).toBe(200);
+    expect(JSON.stringify(await json(before.page))).toContain(editor.email);
+    expect(before.rest.status).toBe(200);
+    expect(before.summary.isError, before.summary.text).toBe(false);
+    expect(JSON.stringify(before.summary.data.people)).toContain(editor.email);
+    expect(before.gate.body.people).toMatchObject({ list: true });
+
+    // v2, the same page published by a leaked CI token: nothing lists the people.
+    const t = await boundToken(h, id);
+    const c = await mcpClient(t.token);
+    const up = await tool(c, "update_artifact", {
+      id,
+      html: peoplePage().replace("<p>team</p>", "<p>team v2</p>"),
+      base_version: 1,
+    });
+    expect(up.isError, up.text).toBe(false);
+    await c.close();
+    await expectNoList(await ownerReads(id, h, owner.token), editor.email);
+
+    // v3, the owner publishes again. v2 is still served at /__plinth/v/2/ on the same origin and
+    // pass, and nothing on a request says which version's code made it, so the list stays off.
+    const again = await req("PUT", `/artifacts/${id}`, owner.auth, {
+      html: peoplePage(),
+      base_version: 2,
+    });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    const later = await ownerReads(id, h, owner.token);
+    await expectNoList(later, editor.email);
+
+    // The owner opens v2 from History: the gate sends them to /__plinth/v/2/, which serves the
+    // token's page, and that page's own call to the people route is refused.
+    const gate = await req("GET", `/view/${id}?version=2`, h);
+    expect(gate.body.status).toBe("ok");
+    expect(gate.body.people?.list).toBeUndefined();
+    const cookie = await cookieFor(id, h);
+    const old = await call(`${contentOrigin(id)}/__plinth/v/2/`, { headers: { Cookie: cookie } });
+    expect(old.status).toBe(200);
+    expect(await old.text()).toContain("team v2");
+    const fromOld = await api(id, "/people", { cookie });
+    expect(fromOld.status).toBe(403);
+    expect(await fromOld.text()).not.toContain(editor.email);
+
+    // Restoring the token's v2 as v4 does not turn it back on either.
+    const restored = await req("POST", `/artifacts/${id}/versions/2/restore`, owner.auth, {});
+    expect(restored.status, JSON.stringify(restored.body)).toBe(201);
+    expect(restored.body.version).toBe(4);
+    await expectNoList(await ownerReads(id, h, owner.token), editor.email);
+  });
+
+  it("versions written by the owner and by an editor's account-wide agent keep the list", async () => {
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
+    expect(page.res.status).toBe(201);
+    const id = page.body.id as string;
+    const editor = await agent();
+    await grant(id, editor.user.email, "editor");
+    const up = await req("PUT", `/artifacts/${id}`, editor.auth, {
+      html: peoplePage().replace("<p>team</p>", "<p>team v2</p>"),
+      base_version: 1,
+    });
+    expect(up.status, JSON.stringify(up.body)).toBe(200);
+    const reads = await ownerReads(id, h, owner.token);
+    expect(reads.session.can_list_people).toBe(true);
+    expect(reads.page.status).toBe(200);
+    expect(JSON.stringify(await json(reads.page))).toContain(editor.user.email);
+    expect(reads.rest.status).toBe(200);
+    expect(reads.summary.isError, reads.summary.text).toBe(false);
+    expect(JSON.stringify(reads.summary.data.people)).toContain(editor.user.email);
+    expect(reads.gate.body.people).toMatchObject({ list: true });
   });
 });
 

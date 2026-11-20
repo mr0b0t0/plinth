@@ -39,6 +39,7 @@ const ACTIONS = Object.keys({
   data_clear: true,
   views: true,
   live_edit: true,
+  people: true,
   comments_read: true,
   enter: true,
 } satisfies Record<ArtifactAction, true>) as ArtifactAction[];
@@ -302,6 +303,7 @@ describe("policy: a token bound to one artifact", () => {
       room: false,
       roomOpen: [],
       comments: false,
+      people: false,
     };
     expect(pageDataAccess(null, caps, true)).toEqual({
       read: true,

@@ -14,6 +14,7 @@ import {
   SHA256_RE,
   VISIBILITIES,
 } from "./constants.ts";
+import { displayNameProblem, normalizeDisplayName } from "./displayName.ts";
 import {
   PAGE_ANCHOR_DATA_KEY_RE,
   PAGE_ANCHOR_KEY_RE,
@@ -442,12 +443,19 @@ export const reviewLoginInput = z.object({
 });
 export const updateProfileInput = z.object({
   // No "@": a display name must not look like an email address (or an agent mention) to agents
-  // reading comment authors.
+  // reading comment authors. No control, bidi or zero-width characters either (displayName.ts);
+  // the check is a refinement, so the JSON Schema stays a plain length-limited string.
   name: z
     .string()
     .trim()
-    .max(100)
-    .refine((n) => !n.includes("@"), "A name cannot contain @"),
+    .max(
+      LIMITS.maxDisplayNameLength,
+      `A name is at most ${LIMITS.maxDisplayNameLength} characters.`,
+    )
+    .superRefine((n, ctx) => {
+      const problem = displayNameProblem(normalizeDisplayName(n));
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
 });
 
 export const createTokenInput = z.object({

@@ -151,6 +151,11 @@ export interface RoomConnect {
   viewer: string;
   role: EffectiveRole;
   email: string;
+  /**
+   * The display name read at connect (displayName.ts pageDisplayName), shown beside the email;
+   * null without one, and on doc sockets.
+   */
+  name: string | null;
   /** Peers see this socket's email and role (the page declares `viewer`, or a doc socket). */
   seeIdentity: boolean;
   /** all (owners, editors), open (commenters: openTopics), none (viewers, doc sockets). */
@@ -179,6 +184,36 @@ const ROLES: ReadonlySet<string> = new Set(["owner", "editor", "commenter", "vie
 const DOC_RIGHTS: ReadonlySet<string> = new Set(["none", "watch", "write"]);
 const EMIT_RIGHTS: ReadonlySet<string> = new Set(["all", "open", "none"]);
 
+/**
+ * UTF-8 bytes a socket's display name may take in its attachment: 64 code points of at most 4
+ * bytes each (LIMITS.maxPageDisplayNameLength), so a socket stays under ROOM_LIMITS.attachmentBytes.
+ */
+export const ROOM_NAME_BYTES = 256;
+
+/**
+ * A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. A
+ * missing name reads as null, so a Worker isolate still running the release before names (whose
+ * header has no `name`) can connect while a deploy rolls out; a present but invalid one is refused.
+ */
+function validName(n: unknown): boolean {
+  return (
+    n === undefined ||
+    n === null ||
+    (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
+  );
+}
+
+/**
+ * The header value for a connect: JSON with every non-ASCII character escaped (\uXXXX), since a
+ * header value must be ASCII and a display name need not be. JSON.parse reads it back unchanged.
+ */
+export function encodeConnect(c: RoomConnect): string {
+  return JSON.stringify(c).replace(
+    /[\u007f-\uffff]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 /** The header, checked for shape (it is the Worker's own, but a room never trusts a bad one). */
 export function parseConnect(raw: string | null): RoomConnect | null {
   if (!raw || raw.length > 4096) return null;
@@ -202,6 +237,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
     typeof c.role === "string" &&
     ROLES.has(c.role) &&
     typeof c.email === "string" &&
+    validName(c.name) &&
     typeof c.seeIdentity === "boolean" &&
     typeof c.emit === "string" &&
     EMIT_RIGHTS.has(c.emit) &&
@@ -217,7 +253,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
     int(l.maxConnections) &&
     int(l.maxMessageBytes) &&
     int(l.messagesPerSecond);
-  return ok ? (c as unknown as RoomConnect) : null;
+  return ok ? ({ ...c, name: c.name ?? null } as unknown as RoomConnect) : null;
 }
 
 const encoder = new TextEncoder();
@@ -518,20 +554,24 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
   }
 
-  /** Who `p` is to `to`: email and role only when both may see identities. */
+  /** Who `p` is to `to`: email, name and role only when both may see identities. */
   private identity(p: SocketState, to: SocketState): RoomIdentity {
     const out: RoomIdentity = { id: p.id, viewer: p.viewer };
     if (p.seeIdentity && to.seeIdentity) {
       out.role = p.role;
       out.email = p.email;
+      out.name = p.name ?? null;
     }
     return out;
   }
 
-  /** A socket's own identity: its role always, its email only when the page may see it. */
+  /** A socket's own identity: its role always, its email and name only when the page may see them. */
   private you(s: SocketState): RoomIdentity {
     const out: RoomIdentity = { id: s.id, viewer: s.viewer, role: s.role };
-    if (s.seeIdentity) out.email = s.email;
+    if (s.seeIdentity) {
+      out.email = s.email;
+      out.name = s.name ?? null;
+    }
     return out;
   }
 

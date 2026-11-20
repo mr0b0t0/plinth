@@ -606,7 +606,8 @@ function hue(s) {
   return h;
 }
 function personName(p) {
-  return p.you ? "You" : p.email || "Someone";
+  // The display name comes with the email (both only with `viewer`); it may be null.
+  return p.you ? "You" : p.name || p.email || "Someone";
 }
 
 function renderPeers(peers) {

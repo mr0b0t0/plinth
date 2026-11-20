@@ -85,6 +85,7 @@ export const API = {
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
+  people: "/artifacts/:ref/people", // GET everyone with access (owner or editor), ?q=
   // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
   live: "/artifacts/:ref/live", // GET LiveInfo
   liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards

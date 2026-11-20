@@ -268,6 +268,7 @@ describe("createVersion stores capabilities", () => {
       room: false,
       roomOpen: [],
       comments: false,
+      people: false,
     });
     expect(versionCapabilities(null)).toBeNull();
     // Malformed stored values read as nothing declared, never as a crash.
@@ -282,6 +283,7 @@ describe("createVersion stores capabilities", () => {
       room: false,
       roomOpen: [],
       comments: false,
+      people: false,
     });
     // A room declaration, alone or with data; topics that break the rule are dropped.
     expect(
@@ -296,6 +298,7 @@ describe("createVersion stores capabilities", () => {
       room: true,
       roomOpen: ["cursor", "*"],
       comments: false,
+      people: false,
     });
     expect(
       versionCapabilities({ capabilities: '{"data":false,"viewer":false,"room":"yes"}' }),
@@ -312,6 +315,7 @@ describe("createVersion stores capabilities", () => {
       room: false,
       roomOpen: [],
       comments: false,
+      people: false,
     });
   });
 });

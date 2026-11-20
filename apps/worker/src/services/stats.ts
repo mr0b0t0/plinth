@@ -17,6 +17,7 @@ import {
   type ClientType,
   LIMITS,
   type OpenRole,
+  pageDisplayName,
   type StatsDay,
   type StatsRange,
   VISIBILITIES,
@@ -329,7 +330,7 @@ export async function artifactStats(
     series,
     people: peopleRows.map(
       (r): ArtifactStatsPerson => ({
-        name: typeof r.person_name === "string" && r.person_name ? r.person_name : null,
+        name: pageDisplayName(typeof r.person_name === "string" ? r.person_name : null),
         email: String(r.email),
         kind: r.viewer_kind === "user" ? "user" : "email",
         role: typeof r.role === "string" ? (r.role as OpenRole) : null,

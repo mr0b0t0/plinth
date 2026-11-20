@@ -205,8 +205,9 @@ describe("runtime: ready", () => {
     expect(s).toEqual({
       available: true,
       reason: null,
-      viewer: { id: SESSION.viewer.id, email: "ann@example.com", role: "commenter" },
+      viewer: { id: SESSION.viewer.id, email: "ann@example.com", name: null, role: "commenter" },
       canWrite: true,
+      canListPeople: false,
       capabilities: ["data", "viewer"],
       shared: [],
       limits: { maxDocBytes: 16384, maxDocs: 1000, maxBytes: 1048576 },
@@ -815,6 +816,7 @@ describe("runtime: plinth.room", () => {
         you: true,
         role: "commenter",
         email: YOU.email,
+        name: null,
         presence: {},
       },
       { id: "s_bo", viewer: "u_bo", you: false, presence: { x: 1 } },
