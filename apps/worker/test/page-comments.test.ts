@@ -1,13 +1,16 @@
 // Comments from the page (docs/spec.md "Comments from the page"): the server side. Page anchors
 // are stored and read back through the anchor schema, on REST and MCP and in mention tasks; the
-// gate says when the current version declares `comments` and then never asks for review mode; a
+// gate says when the shown version declares `comments` and then never asks for review mode; a
 // comments-only page has no shared data and no room; content responses and reserved paths are
 // unchanged.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { computeGate } from "../src/api/view.ts";
 import { contentCsp } from "../src/content/csp.ts";
 import { runtimeScript } from "../src/content/runtime.ts";
 import { RESERVED_PATHS } from "../src/content/serve.ts";
+import { getDb } from "../src/db/client.ts";
+import type { Principal } from "../src/policy.ts";
 import {
   APP,
   agent,
@@ -19,6 +22,7 @@ import {
   json,
   mcpClient,
   publish,
+  serviceCtxFor,
   tool,
 } from "./helpers.ts";
 import { info, run } from "./room-helpers.ts";
@@ -156,12 +160,12 @@ describe("page anchors on comments", () => {
 });
 
 describe("the gate for a page that declares comments", () => {
-  it("says page_comments only for the current version of an HTML artifact", async () => {
+  it("says page_comments for the version being shown, on an HTML artifact", async () => {
     const { a, p, headers } = await owned();
     expect((await gate(headers, p.id)).page_comments).toBe(true);
     // A comments-only page tells the viewer nothing about shared data.
     expect((await gate(headers, p.id)).data).toBeUndefined();
-    // The current version's declaration governs, also for an old version's link.
+    // The version being shown decides: it only drives what the app shows for that page.
     const update = await call(`/api/v1/artifacts/${p.id}`, {
       method: "PUT",
       headers: { ...a.auth, "Content-Type": "application/json" },
@@ -169,7 +173,8 @@ describe("the gate for a page that declares comments", () => {
     });
     expect(update.status).toBe(200);
     expect((await gate(headers, p.id)).page_comments).toBeUndefined();
-    expect((await gate(headers, p.id, "?version=1")).page_comments).toBeUndefined();
+    expect((await gate(headers, p.id, "?version=1")).page_comments).toBe(true);
+    expect((await gate(headers, p.id, "?version=2")).page_comments).toBeUndefined();
 
     const plain = await owned(PLAIN);
     expect((await gate(plain.headers, plain.p.id)).page_comments).toBeUndefined();
@@ -190,6 +195,87 @@ describe("the gate for a page that declares comments", () => {
     const plainEnter = await call(reviewed.enter_url);
     expect(plainEnter.headers.get("location") ?? "").toContain("plinth-review=1");
   });
+
+  it("follows the shown version both ways; shared data keeps the current version's", async () => {
+    const reviewOf = async (headers: Record<string, string>, ref: string, query: string) => {
+      const g = await gate(headers, ref, query);
+      const enter = await call(g.enter_url);
+      return {
+        page_comments: g.page_comments,
+        data: g.data,
+        review: (enter.headers.get("location") ?? "").includes("plinth-review=1"),
+      };
+    };
+    const put = (auth: Record<string, string>, id: string, html: string, base: number) =>
+      call(`/api/v1/artifacts/${id}`, {
+        method: "PUT",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ html, base_version: base }),
+      });
+    const WITH_DATA = PAGE.replace('content="comments"', 'content="data comments"');
+
+    // v1 declares comments (and data), v2 declares nothing.
+    const dropped = await owned(WITH_DATA);
+    expect((await put(dropped.a.auth, dropped.p.id, PLAIN, 1)).status).toBe(200);
+    const oldDeclared = await reviewOf(dropped.headers, dropped.p.id, "?version=1&review=1");
+    expect(oldDeclared).toMatchObject({ page_comments: true, review: false });
+    // Shared data follows the current version, which dropped it.
+    expect(oldDeclared.data).toBeUndefined();
+    expect(await reviewOf(dropped.headers, dropped.p.id, "?review=1")).toMatchObject({
+      page_comments: undefined,
+      review: true,
+    });
+
+    // v1 declares nothing, v2 declares comments.
+    const added = await owned(PLAIN);
+    expect((await put(added.a.auth, added.p.id, WITH_DATA, 1)).status).toBe(200);
+    const oldPlain = await reviewOf(added.headers, added.p.id, "?version=1&review=1");
+    expect(oldPlain).toMatchObject({ page_comments: undefined, review: true });
+    expect(oldPlain.data?.capabilities).toEqual(["data", "comments"]);
+    expect(await reviewOf(added.headers, added.p.id, "?review=1")).toMatchObject({
+      page_comments: true,
+      review: false,
+    });
+  });
+
+  it("reads the version declarations with one D1 query per gate", async () => {
+    const { a, p } = await owned();
+    expect((await put2(a.auth, p.id)).status).toBe(200);
+    for (const opts of [{}, { version: 1, review: true }, { version: 2 }]) {
+      const queries: string[] = [];
+      const counting = new Proxy(env.DB, {
+        get(target, key) {
+          if (key === "prepare") {
+            return (sql: string) => {
+              queries.push(sql);
+              return target.prepare(sql);
+            };
+          }
+          const v = Reflect.get(target, key);
+          return typeof v === "function" ? v.bind(target) : v;
+        },
+      });
+      const ctx = { ...serviceCtxFor(userPrincipal(a.user)), db: getDb(counting) };
+      const g = await computeGate(ctx, p.id, opts);
+      expect(g.status).toBe("ok");
+      expect(queries.filter((q) => /from "versions"/i.test(q)).length).toBe(1);
+    }
+  });
+});
+
+function put2(auth: Record<string, string>, id: string) {
+  return call(`/api/v1/artifacts/${id}`, {
+    method: "PUT",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ html: PLAIN, base_version: 1 }),
+  });
+}
+
+const userPrincipal = (u: { id: string; email: string }): Principal => ({
+  kind: "user",
+  userId: u.id,
+  email: u.email,
+  isAdmin: false,
 });
 
 describe("a page that declares only comments", () => {

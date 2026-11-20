@@ -62,6 +62,20 @@ async function reopen(page: Page): Promise<Frame> {
   return readyFrame(page);
 }
 
+/** The checklist's progress line (the total) and how many items of each side count as done. */
+async function expectProgress(
+  frame: ReturnType<typeof inFrame>,
+  text: string,
+  done: { client: number; team: number },
+) {
+  await expect(frame.locator("#progress")).toHaveText(text);
+  for (const side of ["client", "team"] as const) {
+    await expect(frame.locator(`li[data-side="${side}"][data-done="true"]`)).toHaveCount(
+      done[side],
+    );
+  }
+}
+
 /** Publish an example as the owner's agent and share it by email (set_visibility replaces the list). */
 async function publishFor(client: Client, title: string, html: string, emails: string[]) {
   const pub = await tool<Published>(client, "publish_artifact", { title, html });
@@ -111,7 +125,8 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     await readyFrame(pageA);
     const fa = inFrame(pageA);
     await expect(fa.locator("body")).toHaveAttribute("data-can-write", "true");
-    await expect(fa.locator("#me")).toHaveText(`Signing as ${a}`);
+    // Nothing to withdraw before signing; Plinth's bar, not the page, says who is signing.
+    await expect(fa.locator("#withdraw")).toBeHidden();
     await fa.getByLabel("Note (needed to request changes)").fill("Looks good to me.");
     await fa.getByRole("button", { name: "Approve" }).click();
     await expect(fa.locator("#status")).toHaveText("1 of 2 approvals on revision 1");
@@ -131,6 +146,9 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     await fb.getByRole("button", { name: "Request changes" }).click();
     await expect(fb.locator("#status")).toHaveText("Changes requested by 1 person");
     await expect(fb.locator("#msg")).toHaveText("");
+    // Signed: the box is free for a new note, and the person's own decision sits above it.
+    await expect(fb.getByLabel("Note (needed to request changes)")).toHaveValue("");
+    await expect(fb.locator("#mine")).toHaveText("You requested changes · Withdraw");
     await shot(pageB, "approval-approver");
 
     // The owner sees both, by email.
@@ -144,7 +162,7 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     // B withdraws, then approves: approved.
     await fb.getByRole("button", { name: "Withdraw" }).click();
     await expect(fb.locator("#list li")).toHaveCount(1);
-    await expect(fb.getByRole("button", { name: "Withdraw" })).toBeDisabled();
+    await expect(fb.locator("#withdraw")).toBeHidden();
     await fb.getByRole("button", { name: "Approve" }).click();
     await expect(fb.locator("#status")).toHaveText("Approved: 2 of 2 on revision 1");
 
@@ -268,7 +286,7 @@ test("client intake: answers by code, the owner's responses, new questions, clos
     pages.push(pc);
     const frame = await readyFrame(pc);
     const fc = inFrame(pc);
-    await expect(fc.locator("#me")).toHaveText(`Answering as ${visitor}`);
+    await expect(fc.locator("body")).toHaveAttribute("data-can-write", "true");
     await expect(fc.locator("#responses")).toBeHidden();
     // Over-long text is cut to the field's limit before it is written (the value is set by
     // script, which maxlength does not stop).
@@ -371,13 +389,17 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     pages.push(pc);
     const frame = await readyFrame(pc);
     const fc = inFrame(pc);
-    await expect(fc.locator("#progress")).toHaveText("0 of 7 done (client 0 of 4, team 0 of 3)");
+    await expectProgress(fc, "0 of 7 done", { client: 0, team: 0 });
     await fc.locator("#i-brand-assets").check();
     const brand = fc.locator('li[data-item="brand-assets"]');
     await expect(brand.locator(".state")).toContainText(`Done by ${visitor}`);
-    await expect(fc.locator("#progress")).toHaveText("1 of 7 done (client 1 of 4, team 0 of 3)");
-    // Team items are the team's: the client's checkbox is off.
+    await expectProgress(fc, "1 of 7 done", { client: 1, team: 0 });
+    // Team items are the team's: the client gets a status mark, not a checkbox.
     await expect(fc.locator("#i-kickoff-call")).toBeDisabled();
+    await expect(fc.locator("#i-kickoff-call")).toBeHidden();
+    await expect(
+      fc.locator('li[data-item="kickoff-call"] .mark[role="img"][aria-label="Not done"]'),
+    ).toBeVisible();
     // The collection is shared, so the server takes a forced tick; the page does not count it.
     const forced = await frame.evaluate(() =>
       (window as any).plinth.db
@@ -396,7 +418,7 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     await expect(kickoff.locator(".state")).toHaveText(
       `Marked done by ${visitor}; waiting for the team to confirm`,
     );
-    await expect(fo.locator("#progress")).toHaveText("1 of 7 done (client 1 of 4, team 0 of 3)");
+    await expectProgress(fo, "1 of 7 done", { client: 1, team: 0 });
     await expect(fo.locator('li[data-item="brand-assets"] .state')).toContainText(
       `Done by ${visitor}`,
     );
@@ -406,21 +428,31 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     await expect(fo.locator("#i-kickoff-call")).toBeEnabled();
     await fo.locator("#i-kickoff-call").check();
     await expect(kickoff.locator(".state")).toContainText(`Done by ${owner}`);
-    await expect(fo.locator("#progress")).toHaveText("2 of 7 done (client 1 of 4, team 1 of 3)");
+    await expectProgress(fo, "2 of 7 done", { client: 1, team: 1 });
 
     // The client adds a note to that team item: notes are their own documents, so the tick keeps
     // the owner's stamp and still counts.
     await reopen(pc);
     const clientKickoff = fc.locator('li[data-item="kickoff-call"]');
-    await clientKickoff.locator("summary").click();
-    await clientKickoff.getByLabel("Note on Kickoff call booked").fill("Booked for Tuesday");
+    // Only items with a note show an "Edit note"; every other item offers "Add note".
+    await expect(fc.getByRole("button", { name: /^Edit note/ })).toHaveCount(0);
+    await clientKickoff.getByRole("button", { name: "Add note on Kickoff call booked" }).click();
+    await clientKickoff
+      .getByLabel("Note on Kickoff call booked", { exact: true })
+      .fill("Booked for Tuesday");
     await clientKickoff.getByRole("button", { name: "Save note" }).click();
     await expect(clientKickoff.locator(".note")).toHaveText("Note: Booked for Tuesday");
+    await expect(
+      clientKickoff.getByLabel("Note on Kickoff call booked", { exact: true }),
+    ).toBeHidden();
+    await expect(
+      clientKickoff.getByRole("button", { name: "Edit note on Kickoff call booked" }),
+    ).toBeVisible();
     await reopen(page);
     await expect(kickoff.locator(".state")).toContainText(`Done by ${owner}`);
     await expect(kickoff.locator(".note")).toHaveText("Note: Booked for Tuesday");
     await expect(kickoff).toContainText(`Note by ${visitor}`);
-    await expect(fo.locator("#progress")).toHaveText("2 of 7 done (client 1 of 4, team 1 of 3)");
+    await expectProgress(fo, "2 of 7 done", { client: 1, team: 1 });
 
     // A tick the client forced on a team item stays unconfirmed when the owner only adds a note.
     const forcedLaunch = await (await readyFrame(pc)).evaluate(() =>
@@ -438,15 +470,15 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     await expect(launch.locator(".state")).toHaveText(
       `Marked done by ${visitor}; waiting for the team to confirm`,
     );
-    await launch.locator("summary").click();
-    await launch.getByLabel("Note on Site launched").fill("Scheduled for Friday");
+    await launch.getByRole("button", { name: "Add note on Site launched" }).click();
+    await launch.getByLabel("Note on Site launched", { exact: true }).fill("Scheduled for Friday");
     await launch.getByRole("button", { name: "Save note" }).click();
     await expect(launch.locator(".note")).toHaveText("Note: Scheduled for Friday");
     await reopen(page);
     await expect(launch.locator(".state")).toHaveText(
       `Marked done by ${visitor}; waiting for the team to confirm`,
     );
-    await expect(fo.locator("#progress")).toHaveText("2 of 7 done (client 1 of 4, team 1 of 3)");
+    await expectProgress(fo, "2 of 7 done", { client: 1, team: 1 });
 
     // The agent removes an item in a new version: its tick is ignored, the total drops.
     await agentEdit(
@@ -457,7 +489,7 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     );
     await reopen(page);
     await expect(fo.locator('li[data-item="brand-assets"]')).toHaveCount(0);
-    await expect(fo.locator("#progress")).toHaveText("1 of 6 done (client 0 of 3, team 1 of 3)");
+    await expectProgress(fo, "1 of 6 done", { client: 0, team: 1 });
 
     // The owner's agent ticks a team item when asked: stamped as the owner, via agent, counted.
     const written = await tool<{ results: { ok: boolean }[] }>(client, "write_artifact_data", {
@@ -486,7 +518,7 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     await expect(staging.locator(".state")).toContainText(`Done by ${owner}`);
     await expect(staging.locator(".state")).toContainText("via agent");
     await expect(staging.locator(".note")).toHaveText("Note: Staging is up.");
-    await expect(fo.locator("#progress")).toHaveText("2 of 6 done (client 0 of 3, team 2 of 3)");
+    await expectProgress(fo, "2 of 6 done", { client: 0, team: 2 });
 
     // A link viewer gets no stamps, so the page cannot tell who ticked a team item: it counts only
     // the client items and says why.
@@ -511,7 +543,7 @@ test("client checklist: client ticks count, team ticks need the team, items chan
   }
 });
 
-test("the Connections page shows the handle a label becomes", async ({ page }) => {
+test("the Connections page warns when a label cannot be mentioned", async ({ page }) => {
   const owner = uniqueEmail("handles");
   await seedToken(owner, { label: "Claude Code", clientType: "claude" });
   await seedToken(owner, { label: "claude-code", clientType: "other" });
@@ -520,9 +552,13 @@ test("the Connections page shows the handle a label becomes", async ({ page }) =
   await page.goto("/connections");
   const rows = page.locator(".pl-acct-conn");
   await expect(rows).toHaveCount(3);
-  await expect(rows.filter({ hasText: "Mention as @claude-code" })).toHaveCount(1);
-  await expect(page.getByText("@claude-code reaches “Claude Code” instead")).toBeVisible();
+  // A row that mentions reach shows no handle; only the two names that cannot be reached warn.
+  await expect(rows.filter({ hasText: "Mention as" })).toHaveCount(0);
+  await expect(page.locator(".pl-acct-conn__mention")).toHaveCount(2);
   await expect(
-    page.getByText("@claude always means your Claude connections, so this name does not reach it."),
+    page.getByText("@claude-code reaches “Claude Code” instead. Rename one of them."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("@claude means your Claude connections. Pick another name."),
   ).toBeVisible();
 });

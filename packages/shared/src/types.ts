@@ -14,16 +14,22 @@ import type {
   Role,
   Visibility,
 } from "./constants.ts";
+import type { InvitationReport } from "./invitations.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
-import type { DictationAccess } from "./voice.ts";
 
 export interface Author {
   kind: "user" | "connection";
-  /** Person's name or email, or the connection label. */
+  /** Person's name or email, or the connection label. Display text, never proof of role. */
   label: string;
   user_id: string | null;
   connection_id: string | null;
+  /**
+   * The artifact's owner wrote it (in person or through one of their agents), as the server knows
+   * it, never from the label. The app marks the owner's versions with it, so a name chosen to look
+   * like the owner's visibly lacks the mark. The Worker always sends it; absent reads as false.
+   */
+  is_owner?: boolean;
 }
 
 export interface ArtifactSummary {
@@ -155,6 +161,12 @@ export interface PublishResult {
    * so a new filing is `pending` until the owner reviews it in the app (`review_url`).
    */
   category_share?: CategoryShareResult;
+  /**
+   * A whiteboard publish or update that carried a starting board: how many blocks and arrows were
+   * written to its shared data. Absent otherwise, and when the board was not seeded (the result
+   * then has the warning board_not_seeded).
+   */
+  board?: { blocks: number; arrows: number };
 }
 
 /** Where an artifact stands in its shared category, for its owner's own results. */
@@ -207,6 +219,10 @@ export interface InstanceLimits {
   max_bundle_bytes: number;
   /** One file in a bundle. */
   max_bundle_file_bytes: number;
+  /** A sheet's JSON lines (sheet.jsonl), its data rows and its columns. */
+  max_sheet_bytes: number;
+  max_sheet_rows: number;
+  max_sheet_columns: number;
 }
 
 /** POST /api/v1/uploads and the start_upload MCP tool. */
@@ -283,7 +299,11 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
-  /** The display name of the account with this email, if it has one (shown to the owner). */
+  /**
+   * The display name of the account with this email, shown to the owner only once its holder has
+   * taken part in the artifact (a comment, a shared-data entry or a version; policy.ts
+   * accessListShowsName). Null until then, and for an address with no account or no name.
+   */
   name: string | null;
 }
 
@@ -297,6 +317,8 @@ export interface SharingSettings {
    * artifact through it, once it is `shared`.
    */
   category_share?: SharingCategoryShare | null;
+  /** PUT only, when it asked to `notify`: who was emailed (docs/spec.md "Invitation emails"). */
+  invitations?: InvitationReport;
 }
 
 /** A category share as an artifact's sharing settings show it. */
@@ -312,7 +334,12 @@ export interface CommentInfo {
   artifact_id: string;
   version_number: number;
   parent_id: string | null;
-  author: { email: string | null; connection_id: string | null; label: string };
+  /**
+   * `label` is display text, never proof of role. `is_owner`: the artifact's owner wrote it (in
+   * person or through one of their agents), as the server knows it; the app marks the owner's
+   * comments with it. The Worker always sends it; absent reads as false.
+   */
+  author: { email: string | null; connection_id: string | null; label: string; is_owner?: boolean };
   body: string;
   anchor: Anchor | null;
   status: CommentStatus;
@@ -458,15 +485,32 @@ export interface AppConfig {
   /** How long an upload ticket from start_upload stays valid, in seconds. */
   upload_ticket_ttl_s: number;
   /**
-   * Dictation is offered on this instance (ALLOW_DICTATION, with origin isolation): pages that
-   * declare `dictation` may receive words the viewer speaks, recognized by the app.
+   * The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is
+   * on: the sign-in page links to /login/review. Off on almost every instance.
    */
-  dictation: boolean;
+  review_login: boolean;
+  /**
+   * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, for the privacy
+   * notice and the owner's stats (docs/spec.md "Artifact stats").
+   */
+  view_log_retention_days: number;
   /**
    * Owners may share a category with people (ALLOW_CATEGORY_SHARING). The Worker always sends it;
    * absent reads as off.
    */
   category_sharing?: boolean;
+  /**
+   * Every artifact type, and whether this instance publishes it now: a whiteboard needs shared
+   * data on and origin isolation. The Worker always sends it; absent reads as every type available.
+   */
+  artifact_types?: { id: ArtifactType; available: boolean }[];
+  /**
+   * Owners may have Plinth email the people they add (docs/spec.md "Invitation emails"): false when
+   * the operator set INVITATION_EMAILS_PER_DAY=0, with EMAIL_PROVIDER=console outside development,
+   * and in SINGLE_USER_MODE (config.ts invitationEmailsActive). The Worker always sends it; absent
+   * reads as on.
+   */
+  invitation_emails?: boolean;
 }
 
 export interface OperatorInfo {
@@ -496,50 +540,25 @@ export type ViewGate =
        */
       live?: ViewGateLive;
       /**
-       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
-       * the people it is shared with. Absent when there is nothing to tell.
-       */
-      people?: ViewGatePeople;
-      /**
-       * The current version declares `comments` (HTML only): the page may open the comment
+       * The version being shown declares `comments` (HTML only): the page may open the comment
        * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
        */
       page_comments?: true;
-      /** Dictation for this page: present only when the current version declares `dictation`. */
-      voice?: ViewGateVoice;
       /**
        * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
        * and of shared-data changes, as they happen. Absent: poll as before.
        */
       watch?: true;
+      /**
+       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
+       * the people it is shared with. Absent when there is nothing to tell.
+       */
+      people?: ViewGatePeople;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
   | { status: "not_found" }
   | { status: "taken_down"; artifact: ViewArtifactStub };
-
-/**
- * Dictation on this page (GET /view/:ref), decided by policy.ts dictationAccess. The app enforces
- * it: it runs the recognizer and posts only words to the frame, which never gets the microphone.
- */
-export interface ViewGateVoice {
-  dictation: DictationAccess;
-  /**
-   * This viewer's id on this page (the `u_` id their shared data writes carry), only when they
-   * may dictate: the app binds this browser's consent to it, so another person on the same
-   * browser is asked again.
-   */
-  viewer_id?: string;
-}
-
-/**
- * GET /api/v1/view/:ref/dictation: who wrote the page, for the dictation consent dialog. Only for
- * viewers who may dictate, and fetched only when the dialog opens.
- */
-export interface DictationOwner {
-  /** The owner's email: the dialog names the owner by it, never by the chosen display name. */
-  owner_email: string;
-}
 
 /** How an owner or editor may edit this doc on its page (GET /view/:ref). */
 export interface ViewGateLive {
@@ -683,15 +702,111 @@ export interface AdminStats {
   series: StatsDay[];
 }
 
-/** GET /api/v1/artifacts/:ref/views: the owner's open counts. No viewer data. */
-export interface ArtifactViews {
+/** The windows an owner's artifact stats cover, in UTC days (GET /api/v1/artifacts/:ref/stats). */
+export type StatsRange = 7 | 30 | 90 | 365;
+
+/**
+ * How a counted open's viewer is known (artifact_opens.viewer_kind). `user`: signed in to an
+ * account. `email`: confirmed an allowlisted email by code, without an account. `anonymous`: a link,
+ * public or password visitor. `unknown`: counted before viewers were recorded, or the person was
+ * erased since.
+ */
+export type OpenViewerKind = "user" | "email" | "anonymous" | "unknown";
+
+/** The role an open was made with: a grant's role, or how the page was reached without one. */
+export type OpenRole = "editor" | "commenter" | "viewer" | "public" | "link" | "password";
+
+/** One identified person in an artifact's stats, over the window. */
+export interface ArtifactStatsPerson {
+  /** The account's display name; null for an email viewer or an account without one. */
+  name: string | null;
+  email: string;
+  /** `user` when their last open was signed in, `email` when by an emailed code. */
+  kind: "user" | "email";
+  /** The role of their last open in the window. */
+  role: OpenRole | null;
+  /** Their first and last open in the window (UTC ISO). */
+  first_opened_at: string;
+  last_opened_at: string;
+  opens: number;
+  /** The version their last open showed; null for opens counted before versions were recorded. */
+  last_version_seen: number | null;
+}
+
+/** One UTC day of an artifact's opens. `viewers` counts people and anonymous visitors. */
+export interface ArtifactStatsDay {
+  day: string;
+  opens: number;
+  viewers: number;
+}
+
+/** Opens of one version over the window. */
+export interface ArtifactStatsVersion {
+  version: number;
+  opens: number;
+  viewers: number;
+}
+
+/**
+ * GET /api/v1/artifacts/:ref/stats and get_artifact_stats with an id: one artifact's opens, for its
+ * owner only. "Viewers" are the distinct people plus the distinct anonymous visitors.
+ */
+export interface ArtifactStats {
+  /** Whether this instance records opens (VIEW_COUNTS). */
   enabled: boolean;
-  total: number;
-  /** The first UTC day with a counted open (`total` counts from it), or null when there is none. */
-  since: string | null;
-  last_7: number;
-  last_30: number;
-  days: { day: string; views: number }[];
+  days: StatsRange;
+  /** VIEW_LOG_RETENTION_DAYS: opens older than this keep only their count. */
+  retention_days: number;
+  current_version: number;
+  totals: {
+    opens: number;
+    viewers: number;
+    /** Distinct identified people (accounts and confirmed emails). */
+    people: number;
+    /** Distinct anonymous visitors: browsers, approximate (docs/spec.md "Artifact stats"). */
+    anonymous_visitors: number;
+    anonymous_opens: number;
+    /** Every counted open, including those older than the log keeps. */
+    all_time_opens: number;
+    /** The first UTC day with a counted open (`all_time_opens` counts from it), or null. */
+    since: string | null;
+  };
+  /** One entry per UTC day of the window, oldest first, zero-filled. */
+  series: ArtifactStatsDay[];
+  /** People who opened it in the window, last opened first, at most LIMITS.maxStatsPeople. */
+  people: ArtifactStatsPerson[];
+  /** How many people opened it in the window (`people` may be cut to the limit). */
+  people_total: number;
+  /** Versions opened in the window, newest first. */
+  versions: ArtifactStatsVersion[];
+}
+
+/** One of the caller's artifacts in their stats summary. */
+export interface ArtifactStatsSummaryItem {
+  id: string;
+  slug: string;
+  title: string;
+  type: ArtifactType;
+  visibility: Visibility;
+  current_version: number;
+  opens_7d: number;
+  opens_30d: number;
+  viewers_7d: number;
+  viewers_30d: number;
+  all_time_opens: number;
+  /** The last counted open the log still holds (UTC ISO), or null. */
+  last_opened_at: string | null;
+}
+
+/**
+ * GET /api/v1/stats/artifacts and get_artifact_stats without an id: the caller's own live artifacts
+ * (not deleted, not taken down), most recently opened first.
+ */
+export interface ArtifactStatsSummary {
+  enabled: boolean;
+  retention_days: number;
+  generated_at: string;
+  items: ArtifactStatsSummaryItem[];
 }
 
 export interface Paged<T> {
@@ -813,6 +928,8 @@ export interface CategoryReviewResult {
 export interface CategoryShareWriteResult {
   share: CategoryShareSummary;
   review: CategoryReviewResult | null;
+  /** When the request asked to `notify`: who was emailed (docs/spec.md "Invitation emails"). */
+  invitations?: InvitationReport;
 }
 
 /** GET /api/v1/portals item: a collection someone shared with the caller. */
@@ -887,4 +1004,52 @@ export interface DesignSystemRead {
   /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
   problems: { path: string; message: string }[];
   untrusted: true;
+}
+
+// ---------- sheets (read_sheet, edit_sheet) ----------
+
+/** A computed value: an error is { error: "#DIV/0!" } and the like. */
+export type SheetReadValue = null | number | boolean | string | { error: string };
+
+/** A cell as read_sheet returns it: a literal, or a formula with its computed value. */
+export type SheetReadCell = null | number | boolean | string | { f: string; v?: SheetReadValue };
+
+export interface SheetReadColumn {
+  letter: string;
+  name: string;
+  type: string;
+  format?: { style: string; decimals?: number; currency?: string; grouping?: boolean };
+  options?: string[];
+}
+
+/** read_sheet and GET /api/v1/artifacts/:ref/sheet. */
+export interface SheetRead {
+  id: string;
+  slug: string;
+  type: "sheet";
+  title: string;
+  version: number;
+  current_version: number;
+  columns: SheetReadColumn[];
+  /** Data rows (the header is row 1 and not counted). */
+  row_count: number;
+  /** The range the rows cover, or null when it holds no cells. */
+  range: string | null;
+  rows: { row: number; cells: SheetReadCell[] }[];
+  truncated: boolean;
+  /** The range to read next when truncated, else null. */
+  next_range: string | null;
+  warnings: { code: "eval_budget"; message: string }[];
+  untrusted: true;
+}
+
+/** edit_sheet and POST /api/v1/artifacts/:ref/sheet/edits. */
+export interface SheetEditResult extends PublishResult {
+  changed: {
+    cells: number;
+    rows_inserted: number;
+    rows_deleted: number;
+    columns_inserted: number;
+    columns_deleted: number;
+  };
 }

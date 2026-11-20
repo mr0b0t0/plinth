@@ -1,19 +1,24 @@
 // The MCP surface agents see (tools/list with descriptions, input schemas, annotations and _meta;
 // resources/list and the preview resource; the server instructions) is pinned by hash to the
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
-// no byte of it. A change that means to alter the surface updates the hashes here, on purpose
-// (viewer identity: names on document authors and the people list; page comments: the anchor note
-// in list_comments and list_mentions; the design_system type: get_design_system, list_artifacts'
-// type filter, the publish and update notes, and the server instructions' design system sentence;
-// the slides type: its publish note, the type and content descriptions and the instructions' deck
-// sentence; publishing from CI: the instructions' sentence on tokens limited to one artifact; the
-// design type: its publish note, the type, content, update and get_artifact descriptions and the
-// instructions' design sentence; the slides .pptx download: its clause in the slides publish note;
-// project files: the publish, update and upload recipe, the mention note, the sensitive_file
-// sentences and the UNTRUSTED_NOTE sentence that nothing on Plinth chooses local files).
+// no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
+// the design_system type (get_design_system, list_artifacts' type filter, the publish and update
+// notes, and the server instructions' design system sentence) did, so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence), comments
+// from the page (the page anchor note in list_comments and list_mentions), the slides .pptx
+// download (its clause in the slides publish note), the design type (its publish note, the
+// type, content, update and get_artifact descriptions and the instructions' design sentence),
+// the sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the
+// content and content_format descriptions, the untrusted note's sheet sentence, the instructions'
+// sheet sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default),
+// who is viewing (names and the people list in list_artifact_data's description), and the
+// whiteboard type (its publish and update note, the type, content and get_artifact descriptions,
+// list_artifact_data's whiteboard sentence and the instructions' whiteboard sentence, and its
+// default edit setting).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
+// Invitation emails add set_visibility's `notify` input and its sentence in the description.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -54,14 +59,17 @@ const NAMES = [
   "claim_mention",
   "reply_comment",
   "start_upload",
+  "get_artifact_stats",
   "list_artifact_data",
   "write_artifact_data",
   "preview_artifact",
   "get_design_system",
+  "read_sheet",
+  "edit_sheet",
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "a5a39f25abf388894305e3e51cc29f7871154f59383053a2b49606cf393e64ef";
+const INSTRUCTIONS = "ab97877c49ee7ea237d6ebfb16e54edec8553b614e7ac8c834b16b2695edd8eb";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -69,7 +77,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "938623ebfe594e182d0762cddb882390848adaf2c845167289eff9ce1fc1b4a7",
+      tools: "714a5fe96f10d238b4875062b3338eae23e6082ffe3c6aadb31770218bd3a238",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -79,7 +87,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "90513fb51c310573182caf6b2c1029439ab1e844f1bb59f0d03242602b9ec2ff",
+      tools: "00bab2554e2f8327de53f6bb61602ca373aa7599938beeb694660748471fc0bd",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -91,7 +99,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "f4a38b9a800dca19316f1764d08fa67016c65cfe95060d19d456dac5105369c0",
+      tools: "95235c97134fc0f405cc782d34497f41aeb6df729cd81b3f9c76132cf2488e61",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -101,10 +109,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "22656a265bc052e5395b9fc5ee29e22002458dbcf0b2740824076702895cbab3",
+      tools: "186378511589dfa04c34481a477589d81854065fcd008c7049d0f404c7c17740",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "3346fab342081e300522e5901b6f701a3e690d95145ddf12a8c5ea5777951390",
+      instructions: "dcf077349eac3dad2bcd66acfd1cfa4a6dd4da4ede190eb983d35fc4e3aff528",
     });
   });
 });

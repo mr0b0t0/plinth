@@ -12,6 +12,7 @@ import {
   type CommentStatus,
   MENTION_AGENT_NAMES,
   mentionHandle,
+  pageDisplayName,
   parseMentions,
   RATE_LIMITS,
 } from "@plinth/shared";
@@ -19,6 +20,7 @@ import { and, asc, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
 import {
   type ArtifactRow,
   agentConnections,
+  artifacts,
   type CommentRow,
   comments,
   type MentionTaskRow,
@@ -81,6 +83,8 @@ export interface LoadedComment {
   userName: string | null;
   userEmail: string | null;
   connLabel: string | null;
+  /** The artifact's owner, so the author's ownership comes from ids, never from the label. */
+  ownerId: string | null;
 }
 
 export async function loadComments(ctx: Ctx, where: SQL | undefined): Promise<LoadedComment[]> {
@@ -90,8 +94,10 @@ export async function loadComments(ctx: Ctx, where: SQL | undefined): Promise<Lo
       userName: users.name,
       userEmail: users.email,
       connLabel: agentConnections.label,
+      ownerId: artifacts.ownerId,
     })
     .from(comments)
+    .leftJoin(artifacts, eq(artifacts.id, comments.artifactId))
     .leftJoin(users, eq(users.id, comments.authorUserId))
     .leftJoin(agentConnections, eq(agentConnections.id, comments.authorConnection))
     .where(where)
@@ -120,9 +126,12 @@ async function tasksFor(ctx: Ctx, commentIds: string[]): Promise<Map<string, Men
   return by;
 }
 
-/** Display label for a comment's author: connection label, else name, else email. */
+/**
+ * Display label for a comment's author: connection label, else name (cleaned on every read,
+ * displayName.ts pageDisplayName, so a name stored before the rules shows cleaned too), else email.
+ */
 export function authorLabel(l: LoadedComment): string {
-  return l.connLabel ?? l.userName ?? l.c.authorEmail ?? l.userEmail ?? "Unknown";
+  return l.connLabel ?? pageDisplayName(l.userName) ?? l.c.authorEmail ?? l.userEmail ?? "Unknown";
 }
 
 /**
@@ -148,7 +157,9 @@ export function readAnchor(raw: string | null): Anchor | null {
 function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean): CommentInfo {
   const { c } = l;
   let label = authorLabel(l);
-  if (!revealEmail && !l.connLabel && !l.userName) label = label.split("@")[0] || "Someone";
+  if (!revealEmail && !l.connLabel && !pageDisplayName(l.userName)) {
+    label = label.split("@")[0] || "Someone";
+  }
   return {
     id: c.id,
     artifact_id: c.artifactId,
@@ -158,6 +169,7 @@ function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean)
       email: revealEmail ? c.authorEmail : null,
       connection_id: c.authorConnection,
       label,
+      is_owner: c.authorUserId !== null && c.authorUserId === l.ownerId,
     },
     body: c.body,
     anchor: readAnchor(c.anchor),

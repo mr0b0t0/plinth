@@ -32,10 +32,14 @@ const config: AppConfig = {
     max_request_bytes: 41943040,
     max_bundle_bytes: 60817408,
     max_bundle_file_bytes: 26214400,
+    max_sheet_bytes: 1048576,
+    max_sheet_rows: 10000,
+    max_sheet_columns: 100,
   },
   cdn_allowlist: ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"],
   upload_ticket_ttl_s: 1800,
-  dictation: false,
+  review_login: false,
+  view_log_retention_days: 365,
 };
 
 describe("gate query and paths", () => {

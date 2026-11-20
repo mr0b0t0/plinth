@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "19 November 2026";
+export const LEGAL_UPDATED = "20 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);
@@ -27,11 +27,17 @@ export interface LegalDoc {
   sections: LegalSection[];
 }
 
+/** Days an open is kept with who made it when the instance does not say (VIEW_LOG_RETENTION_DAYS). */
+export const DEFAULT_VIEW_LOG_RETENTION_DAYS = 365;
+
 /** The instance settings the pages use. */
 export type LegalConfig = Pick<
   AppConfig,
-  "operator" | "email_provider" | "max_artifacts_per_user" | "dictation" | "category_sharing"
->;
+  "operator" | "email_provider" | "max_artifacts_per_user" | "category_sharing" | "single_user_mode"
+> & {
+  /** VIEW_LOG_RETENTION_DAYS; DEFAULT_VIEW_LOG_RETENTION_DAYS when absent. */
+  view_log_retention_days?: number;
+};
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
   sendgrid: "Twilio SendGrid",
@@ -155,6 +161,7 @@ function terms(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
 
 function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
   const emailService = EMAIL_SERVICE[cfg.email_provider];
+  const openDays = cfg.view_log_retention_days ?? DEFAULT_VIEW_LOG_RETENTION_DAYS;
   return {
     title: "Privacy notice",
     summary: "What personal data this Plinth service keeps, why, and what you can ask for.",
@@ -173,12 +180,14 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
         body: (
           <ul>
             <li>
-              <strong>Your email address</strong>, and a name if you add one: to sign you in, to
-              show who owns, edits or comments on an artifact and, on pages that show who is
-              viewing, to the page and the people it is shared with. A page can also let its owner,
-              its editors and their agents see everyone it is shared with, by email address and
-              role, and by name once that person has commented, entered something or published a
-              version on it.
+              <strong>Your email address</strong>, and a name if you add one: to sign you in and to
+              show who owns, edits or comments on an artifact. On pages that show who is viewing,
+              they are also shown to the page and to the people it is shared with. A page can also
+              let its owner, its editors and their agents see everyone it is shared with, by email
+              address and role, and by name once that person has commented, entered something or
+              published a version on it.
+              {!cfg.single_user_mode &&
+                " When someone shares an artifact or a category with your address, confirming the code we email you signs you in and creates a Plinth account for that address if it has none."}
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
@@ -192,20 +201,6 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               one, to the page, its owner and the agents the owner connects. Only people the owner
               invited can enter anything.
             </li>
-            {cfg.dictation && (
-              <li>
-                <strong>Dictation</strong>: some pages let you dictate instead of typing. Dictation
-                starts only when you choose to start it, and only after you allow it for that page.
-                Your browser turns your speech into text using its own speech service: Chrome sends
-                the audio to Google, Edge to Microsoft and Safari to Apple, under their own terms,
-                unless the browser does it on your device. We do not receive or keep the audio. The
-                words go to the page you are dictating into. If the page saves them, we keep them as
-                that page's shared data, as described above. The question that asks you to allow
-                dictation names the page's owner by their email address, so if you publish a page
-                that takes dictation, the people you share it with see your email address when they
-                first start dictating on it.
-              </li>
-            )}
             <li>
               <strong>Sharing settings</strong>: the email addresses you give access to, and a
               scrambled (hashed) password if you set one.
@@ -213,10 +208,28 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             {cfg.category_sharing && (
               <li>
                 <strong>Shared categories</strong>: when you share a category, the email addresses
-                of the people you share it with and their roles, the name they see for it, and which
-                of its artifacts you chose to show them. They see that name and those artifacts,
-                never the category's own name. If you are one of those people, the owner sees your
-                email address and role, as for an artifact shared with you.
+                of the people you share it with and their roles, the title they see for it, and
+                which of its artifacts you chose to show them. The title is the category's name
+                unless you change it. Renaming the category later does not change the title. They
+                see the title, those artifacts, and your name and email address. If you are one of
+                those people, the owner sees your email address and role, as for an artifact shared
+                with you.
+              </li>
+            )}
+            {!cfg.single_user_mode && (
+              <li>
+                <strong>Invitations</strong>: when an owner gives you access to an artifact
+                {cfg.category_sharing ? " or a shared category" : ""} and chooses to notify you, we
+                email you on their behalf: their name and email address, the artifact's title
+                {cfg.category_sharing ? " (or the name they chose for the category)" : ""}, your
+                role and the link. When you notify the people you add, we send them those details
+                about you. So that nobody gets the same invitation twice, we keep a scrambled
+                (hashed) form of the address for up to three days. If you turn invitation emails off
+                (the link at the end of each one), we keep a scrambled form of your address so that
+                none reach you, until you turn them back on. It also covers the same inbox under
+                another form of the address (with a +tag, or for Gmail with dots). An owner who
+                later shares with you is told only that you turned these emails off, which also
+                tells them that someone signed in to Plinth with your address.
               </li>
             )}
             <li>
@@ -231,11 +244,16 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               they gave one.
             </li>
             <li>
-              <strong>How often pages are opened</strong>: one number per page per day, counting
-              opens by people other than the page's owner. Nothing about who opened a page is kept
-              with it: no email address, IP address or browser details. The page's owner sees these
-              numbers for their own pages, and the people who run this service see totals across all
-              pages, never page by page.
+              <strong>Who opened a page</strong>: when someone other than its owner opens a page, we
+              record when, which version, and who it was: the name and email address of people
+              signed in to this service
+              {cfg.single_user_mode
+                ? ", and the email address of viewers who confirmed it with a code."
+                : ", including anyone who confirmed their address with a code we emailed them."}{" "}
+              Anyone else is recorded only by a random id in their viewing cookie, so the owner sees
+              an approximate number of anonymous visitors, never who they are. No IP address or
+              browser details are kept with an open. The page's owner sees this for their own pages,
+              and the people who run this service see only totals across all pages.
             </li>
             <li>
               <strong>Unsaved page edits</strong>: when you edit a document on its page, we keep the
@@ -256,9 +274,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <p>
             To run the service you asked for, to keep it secure and free of abuse (our legitimate
             interest), and to handle reports of illegal content as the law requires. We do not sell
-            your data, show ads, or use third-party analytics or tracking cookies. The open counts
-            above are kept by the service itself, to show owners how often their pages are opened
-            and us how the service is used.
+            your data, show ads, or use third-party analytics or tracking cookies. Opens are
+            recorded by the service itself, to show owners who opened their pages and us how the
+            service is used.
           </p>
         ),
       },
@@ -283,7 +301,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               What people enter on shared pages: until the page's owner clears it or deletes the
               page.
             </li>
-            <li>How often a page was opened: until the page's stored copy is erased.</li>
+            <li>
+              Who opened a page: {openDays} days, then only the number of opens, until the page's
+              stored copy is erased. Erasing a person also removes who they were from these records.
+            </li>
             <li>
               Unsaved page drafts: until saved or discarded, or 30 days after the last change.
             </li>
@@ -293,6 +314,16 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             </li>
             <li>When you ask us to close your account, we erase it with everything above.</li>
             <li>Sign-in and viewing codes: 15 minutes. Technical logs: a few days.</li>
+            {!cfg.single_user_mode && (
+              <>
+                <li>The scrambled record that an invitation was sent: up to three days.</li>
+                <li>
+                  The scrambled record that you turned invitation emails off: until you turn them
+                  back on. It stays when your account is closed, so that invitations do not start
+                  again.
+                </li>
+              </>
+            )}
           </ul>
         ),
       },
@@ -304,8 +335,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             requests, proof that you entered an artifact's password or confirmed your email, and a
             viewing cookie for each artifact you open. On a page that saves what its viewers enter,
             that cookie also says who you are, so the page cannot pretend to be someone else. The
-            viewing cookie also notes whether your open of that page was already counted, so opening
-            it again within 12 hours is not counted twice; it adds nothing else about you.
+            viewing cookie also holds a random visitor id, so opening the page again within 12 hours
+            is not counted twice and anonymous visitors can be counted. It lasts up to 30 days and
+            adds nothing else about you.
           </p>
         ),
       },

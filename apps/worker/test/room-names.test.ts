@@ -99,13 +99,16 @@ describe("room names", () => {
   it("parseConnect takes a null name or one of at most 256 bytes without @", () => {
     expect(parseConnect(JSON.stringify(CONNECT))).toEqual(CONNECT);
     expect(parseConnect(JSON.stringify({ ...CONNECT, name: null }))).not.toBeNull();
+    // A Worker still on the release before names sends no `name`: it reads as null, for now.
+    const { name: _omitted, ...before } = CONNECT;
+    expect(parseConnect(JSON.stringify(before))).toEqual({ ...CONNECT, name: null });
     const max = "\u{1F600}".repeat(ROOM_NAME_BYTES / 4);
     expect(parseConnect(JSON.stringify({ ...CONNECT, name: max }))).not.toBeNull();
     // The gate sends it ASCII-only (a header value), and the room reads the same name back.
     const encoded = encodeConnect({ ...CONNECT, name: `Zoë ${max.slice(0, 8)}` });
     expect(/^[\x20-\x7e]*$/.test(encoded)).toBe(true);
     expect(parseConnect(encoded)?.name).toBe(`Zoë ${max.slice(0, 8)}`);
-    for (const name of [`${max}a`, "ana@example.com", 7, undefined, {}]) {
+    for (const name of [`${max}a`, "ana@example.com", 7, {}, []]) {
       const raw = JSON.stringify({ ...CONNECT, name });
       expect(parseConnect(raw), JSON.stringify(name)).toBeNull();
     }

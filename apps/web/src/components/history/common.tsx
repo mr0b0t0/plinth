@@ -122,7 +122,10 @@ export function AccessProblem({
   );
 }
 
-/** Person or agent, with an icon that tells them apart (and words for screen readers). */
+/**
+ * Person or agent, with an icon that tells them apart (and words for screen readers), and "Owner"
+ * beside the owner's own versions. The mark comes from the server (is_owner), never from the name.
+ */
 export function AuthorLabel({ author }: { author: Author }) {
   const isAgent = author.kind === "connection";
   const AuthorIcon = isAgent ? RobotIcon : UserIcon;
@@ -131,6 +134,7 @@ export function AuthorLabel({ author }: { author: Author }) {
       <AuthorIcon size={ICON_SIZE.sm} aria-hidden="true" />
       <span className="visually-hidden">{isAgent ? "Agent: " : "Person: "}</span>
       <span className="hx-author__label">{author.label}</span>
+      {!isAgent && author.is_owner && <span className="hx-author__owner">Owner</span>}
     </span>
   );
 }

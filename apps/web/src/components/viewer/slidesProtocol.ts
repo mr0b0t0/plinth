@@ -8,7 +8,7 @@
 // fallback), identified by its window (frameGuard.ts acceptFrom). That is acceptable because only
 // Plinth's renderer runs on a deck's origin (script-src 'self', and a deck's files run no script),
 // and the worst a forged message could do is move the app's slide number, switch its presenter
-// strip, ask for full screen, which the browser grants only with the person's own activation, or
+// mode, ask for full screen, which the browser grants only with the person's own activation, or
 // show a wrong toast about an export the app itself asked for (the nonce must match).
 import {
   isSlideNumber,

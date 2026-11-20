@@ -22,6 +22,7 @@ import {
   type SlidesPosition,
   type SlidesServerFrame,
 } from "@plinth/shared";
+import { el } from "./dom.ts";
 import type { DeckController } from "./nav.ts";
 
 // ROOM_LIMITS' backoffS, hiddenCloseS and pingIntervalS, repeated here (as the doc socket does) so
@@ -303,18 +304,6 @@ export class FollowClient {
 }
 
 // ---------- the deck's side ----------
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const e = doc.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
 
 export interface FollowOptions {
   win: Window;

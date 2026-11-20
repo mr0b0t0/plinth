@@ -6,10 +6,11 @@ import {
   type Capabilities,
   type CategoryRole,
   type ClientType,
-  type DictationAccess,
   type EffectiveRole,
+  hasPageCapabilities,
   isPersonalDocId,
   type LiveViewPool,
+  pageDataOf,
   type Role,
   type RoomDocRight,
   type RoomEmitRight,
@@ -17,6 +18,7 @@ import {
   type RoomSlidesRight,
   type Scope,
   TYPE_REGISTRY,
+  typeDef,
   type Visibility,
 } from "@plinth/shared";
 
@@ -65,7 +67,10 @@ export type ArtifactAction =
   | "data_write"
   /** Delete all of an artifact's shared data: the owner, signed in, never an agent. */
   | "data_clear"
-  /** Read the artifact's open counts: the owner only. */
+  /**
+   * Read the artifact's stats (who opened it, when, how often, which version): the owner only. An
+   * agent needs artifacts:read. The name predates the stats; other code enumerates it.
+   */
   | "views"
   /**
    * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.
@@ -78,7 +83,13 @@ export type ArtifactAction =
    * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
    * token bound to one artifact never may.
    */
-  | "comments_read";
+  | "comments_read"
+  /**
+   * See the page as it runs: an enter URL for the content host (the viewer gate), or a picture of
+   * it running (a thumbnail). As view, except that a token bound to one artifact never may: a pass
+   * reads the page's shared data, and a capture can draw it.
+   */
+  | "enter";
 
 export interface ArtifactFacts {
   id: string;
@@ -146,6 +157,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   live_edit: "artifacts:write",
   people: "artifacts:read",
   comments_read: "artifacts:read",
+  enter: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -169,8 +181,10 @@ export function roleOf(
 ): EffectiveRole | null {
   const uid = principalUserId(p);
   if (uid && uid === artifact.ownerId) return "owner";
-  // The direct grant, or a category grant that counts for this artifact (the filing safeguard).
-  return principalEmail(p) ? grantedRole(artifact, access) : null;
+  if (!principalEmail(p)) return null;
+  // The direct grant, or a category grant that counts for this artifact (the filing safeguard). A
+  // token limited to one artifact holds the direct grant only (seesCategorySharing).
+  return seesCategorySharing(p) ? grantedRole(artifact, access) : access.grantRole;
 }
 
 const deny = (reason: DenyReason, role: EffectiveRole | null = null): Decision => ({
@@ -207,7 +221,7 @@ export function decide(
     // Only the owner may still manage or delete it; an admin may look at it to review a report.
     if (role === "owner" && (action === "manage" || action === "delete"))
       return { allow: true, role };
-    if (isAdmin && action === "view") return { allow: true, role };
+    if (isAdmin && (action === "view" || action === "enter")) return { allow: true, role };
     return deny("taken_down", role);
   }
 
@@ -215,6 +229,7 @@ export function decide(
     case "view":
     case "report":
     case "comments_read":
+    case "enter":
       return canView(p, artifact, access, role, isAdmin);
     case "comment":
     case "mention": {
@@ -297,20 +312,34 @@ export interface PageClaim {
   account?: boolean;
 }
 
+/** The kind of content pass a page runs under, as far as shared data cares. */
+export interface PagePassFacts {
+  /** An in-chat preview pass (any framer, one look at the page). */
+  preview?: boolean;
+  /** A thumbnail capture whose version's writer may not read the data (captureReadsData). */
+  noData?: boolean;
+}
+
 /**
- * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config).
- * Anyone with a content pass may read once the current version declares `data`; only identified
- * viewers write; authors and the viewer's email are visible only to identified viewers on a page
- * that also declares `viewer`.
+ * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config);
+ * `type` the artifact's stored type. Anyone with a content pass may read once the current version
+ * declares `data`, except an in-chat preview and a capture of a version whose writer may not read
+ * the data (captureReadsData); identified viewers at or above the write floor write
+ * (pageWriteFloor: any identified viewer on an HTML page, commenters or editors on a whiteboard);
+ * authors and the viewer's email are visible to identified viewers on a page that also declares
+ * `viewer`.
  */
 export function pageDataAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   enabled: boolean,
+  type: string,
+  pass: PagePassFacts = {},
 ): { read: boolean; write: boolean; seeIdentity: boolean } {
-  const read = enabled && caps?.data === true;
-  const write = read && claim !== null;
-  return { read, write, seeIdentity: write && caps?.viewer === true };
+  const read = enabled && caps?.data === true && !pass.preview && !pass.noData;
+  const identified = read && claim !== null;
+  const write = identified && meetsFloor(claim.role, pageWriteFloor(type, caps));
+  return { read, write, seeIdentity: identified && caps?.viewer === true };
 }
 
 /**
@@ -370,8 +399,9 @@ const NO_ROOM: RoomAccess = {
  * May this viewer join the artifact's room, and what may they do there? `active` is
  * roomsActive(config, env); `caps` the current version's declaration; `type` the artifact's type.
  * Only identified viewers join (no anonymous link viewers in v1). A page room needs an HTML
- * artifact that declares `room`: everyone identified joins and sets presence; owners and editors
- * emit any topic, commenters only the page's open topics, and viewers never emit (as Claude's
+ * artifact that declares `room`, or a whiteboard (fixed capabilities): everyone identified joins
+ * and sets presence; owners and editors emit any topic, commenters only the page's open topics
+ * (none on a whiteboard only editors may change: pageWriteFloor), and viewers never emit (as Claude's
  * artifact `room` capability, which never lets a plain viewer emit). Identities show only with
  * `viewer`. A doc socket is Plinth's own editing channel for types with liveEdit: owners and
  * editors only, who see each other's emails; signed-in ones write, ones confirmed by code watch.
@@ -396,11 +426,18 @@ export function roomAccess(
       doc: claim.account === true ? "write" : "watch",
     };
   }
-  if (ctx.type !== "html" || caps?.room !== true) return NO_ROOM;
+  if (!hasPageCapabilities(typeDef(ctx.type)) || caps?.room !== true) return NO_ROOM;
+  // A whiteboard whose settings let only editors change it gives commenters nothing to emit.
+  const floor = pageWriteFloor(ctx.type, caps);
   return {
     join: true,
-    emit: editor ? "all" : claim.role === "commenter" ? "open" : "none",
-    openTopics: [...caps.roomOpen],
+    emit: editor
+      ? "all"
+      : claim.role === "commenter" && meetsFloor("commenter", floor)
+        ? "open"
+        : "none",
+    // None on a board whose floor is above commenters, a stored row with no floor included.
+    openTopics: meetsFloor("commenter", floor) ? roomOpenTopics(caps) : [],
     seeIdentity: caps.viewer === true,
     doc: "none",
   };
@@ -463,30 +500,64 @@ export function isAdmin(p: Principal): boolean {
 // ---------- who is viewing: the people list on the page ----------
 
 /**
- * Does the artifact offer its people list at all: its current version declares `data viewer
- * people` while shared data is active (`active`: sharedDataActive(config))? This one answer governs
- * every way to read the list: the page (pagePeopleAccess), owners' and editors' agents
- * (list_artifact_data's summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice
- * under the bar tells every identified viewer exactly when it is true. Without it nobody but the
- * owner (in the sharing settings) sees the access list.
+ * Who wrote a version: the person, and the artifact its agent token was limited to (null for a
+ * person, or an agent acting for them account-wide). Read from `versions.created_by_user` and the
+ * connection's `artifact_id`, the same facts the thumbnail capture uses (captureReadsData).
  */
-export function peopleListOffered(caps: Capabilities | null, active: boolean): boolean {
-  return active && caps?.data === true && caps.viewer && caps.people;
+export interface VersionWriter {
+  userId: string | null;
+  boundArtifactId: string | null;
+}
+
+/**
+ * Does the artifact offer its people list at all: its current version declares `data viewer
+ * people` while shared data is active (`active`: sharedDataActive(config)), and every version the
+ * content host serves (1 to the current one, `writers`: their distinct writers) was written by
+ * someone who may read the list (captureReadsData: a person or an agent acting for them
+ * account-wide, never a token limited to one artifact nor a writer whose account is gone)? A bound
+ * token may not read the list, so a page it wrote must not read it through the owner's or an
+ * editor's session either. Every version, not only the current one: the content host serves each
+ * at /__plinth/v/<n>/ on the artifact's one origin under the same pass, so a bound token's old
+ * version opened from History (or still open in a tab, or framing `/`) would call the people route
+ * with the reader's claim, and nothing on a request says which version's code made it. Versions are
+ * never deleted, so once a bound token has published one the artifact lists nobody. `writers` null
+ * or empty (not loaded, or no version) offers nothing. This one answer governs every way to read
+ * the list: the page (pagePeopleAccess), owners' and editors' agents (list_artifact_data's
+ * summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice under the bar tells every
+ * identified viewer exactly when it is true. Without it nobody but the owner (in the sharing
+ * settings) sees the access list.
+ */
+export function peopleListOffered(
+  caps: Capabilities | null,
+  active: boolean,
+  writers: readonly VersionWriter[] | null,
+): boolean {
+  return (
+    active &&
+    caps?.data === true &&
+    caps.viewer &&
+    caps.people &&
+    writers !== null &&
+    writers.length > 0 &&
+    writers.every(captureReadsData)
+  );
 }
 
 /**
  * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
- * with an identity claim, on a page that offers the list (peopleListOffered). Commenters, viewers
- * and anonymous link viewers never: the list holds every grant holder's email. The role comes from
- * the claim, sealed at the current access epoch, so a demoted editor's pass stops working at once.
+ * with an identity claim, on a page that offers the list (peopleListOffered, with the writers of
+ * every served version). Commenters, viewers and anonymous link viewers never: the list holds every
+ * grant holder's email. The role comes from the claim, sealed at the current access epoch, so a
+ * demoted editor's pass stops working at once.
  */
 export function pagePeopleAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   active: boolean,
+  writers: readonly VersionWriter[] | null,
 ): { list: boolean } {
   const editor = claim?.role === "owner" || claim?.role === "editor";
-  return { list: editor && peopleListOffered(caps, active) };
+  return { list: editor && peopleListOffered(caps, active, writers) };
 }
 
 /**
@@ -531,29 +602,72 @@ export function mayCreateArtifacts(p: Principal): boolean {
   return boundArtifactOf(p) === null;
 }
 
-// ---------- voice: dictation on the page (app host, the viewer gate) ----------
+/**
+ * May this principal read the stats summary across its person's artifacts (every artifact they
+ * own, with ids, slugs, titles and opens)? Not a token bound to one artifact: the summary would list
+ * the artifacts the binding hides. One artifact's stats go through decide(views) as usual.
+ */
+export function mayReadStatsSummary(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
 
 /**
- * May this viewer dictate into this page? There is no server resource behind dictation: the
- * decision travels in the gate and the app (Plinth's own code on APP_HOST) enforces it, while the
- * app's Permissions-Policy keeps every frame away from the microphone whatever the page does.
- * `identity` is the gate's identified viewer (the owner, or a grant holder confirmed by sign-in or
- * email code), null for anonymous link viewers and admins without a role; `active` is
- * dictationActive(config); `caps` the current version's declaration. Rules, in order: an HTML page
- * that declares `dictation`; origin isolation; the switch; an identified viewer.
+ * Does the thumbnail capture of a version read the page's shared data, as a signed-out link viewer
+ * would? Only when a person, or an agent acting for them account-wide, wrote that version: they can
+ * read the data already, so the page they wrote learns nothing new by running with it. Never for a
+ * version written by a token limited to one artifact: that token may not read the data, and its
+ * page would run with it unattended in Plinth's own browser. Nor for a version whose writer is gone
+ * (an erased account), since nobody can say who wrote it.
  */
-export function dictationAccess(
-  identity: { email: string; role: EffectiveRole } | null,
+export function captureReadsData(writer: {
+  userId: string | null;
+  boundArtifactId: string | null;
+}): boolean {
+  return writer.userId !== null && writer.boundArtifactId === null;
+}
+
+/**
+ * Does a summary built for this principal (one that may view the artifact) carry `thumbnail_url`?
+ * Not for a token bound to one artifact, which decide(enter) refuses the thumbnail itself, so the
+ * link would only answer 403. Wherever decide(view) allows, this equals decide(enter).allow.
+ */
+export function seesThumbnails(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
+
+// ---------- live views: pushed versions and data changes (app host, the watch socket) ----------
+
+/**
+ * May this principal hold a watch socket on the artifact, and does it get `data` signals? `d` is
+ * the view decision (the gate's, `decideFor(ctx, a, "view")`); `active` is liveViewsActive(config,
+ * env); `sharedData` is sharedDataActive(config); `caps` the current version's declaration. Anyone
+ * who may open the artifact may watch (anonymous link viewers included: a watch socket joins no
+ * room, sees no peers and carries no identity), never an agent, which publishes and never pulls.
+ * Data signals follow pageDataAccess's read rule: an HTML page (or a whiteboard) whose current
+ * version declares `data`, with shared data active. The gate and the handshake both ask this, so
+ * the decision lives here.
+ */
+export function liveViewAccess(
+  p: Principal,
+  d: Decision,
   caps: Capabilities | null,
-  ctx: { active: boolean; isolation: "origin" | "opaque"; type: ArtifactType },
-): DictationAccess {
-  if (ctx.type !== "html" || caps?.dictation !== true) {
-    return { available: false, reason: "not_declared" };
-  }
-  if (ctx.isolation !== "origin") return { available: false, reason: "opaque_isolation" };
-  if (!ctx.active) return { available: false, reason: "disabled" };
-  if (!identity) return { available: false, reason: "not_identified" };
-  return { available: true, reason: null };
+  o: { active: boolean; sharedData: boolean; type: ArtifactType },
+): { watch: boolean; data: boolean } {
+  const watch = o.active && d.allow && p.kind !== "agent";
+  const page = hasPageCapabilities(typeDef(o.type));
+  return { watch, data: watch && page && caps?.data === true && o.sharedData };
+}
+
+/**
+ * Which cap pool a watch socket counts in (LiveViewPool, packages/shared/src/liveView.ts): `member`
+ * when the view decision has a role (the owner, or a grant to the viewer's email), `open` for
+ * everyone else it lets in (public and unlisted link viewers, signed in or not, password holders,
+ * an admin reviewing a report). The pools never affect each other, so a full `open` pool, the only
+ * one an outsider can fill, says nothing about whether the owner or a collaborator has the
+ * artifact open.
+ */
+export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
+  return d.role === null ? "open" : "member";
 }
 
 // ---------- category sharing (docs/spec.md "Category sharing and personal categories") ----------
@@ -568,9 +682,17 @@ export interface ArtifactCategoryFacts {
   reviewShareId: string | null;
 }
 
+/**
+ * The artifact facts the category rules read: its owner and its category review. Every
+ * ArtifactFacts is one; the people list (services/people.ts) reads just these from its own query.
+ */
+export type CategoryArtifactFacts = Pick<ArtifactFacts, "ownerId" | "categoryShare">;
+
 /** A person's grant on the share of an owner's category key, as the loader found it. */
 export interface CategoryGrantFacts {
   shareId: string;
+  /** category_shares.owner_id: the grant counts only on that owner's artifacts. */
+  shareOwnerId: string;
   shareKey: string;
   role: CategoryRole;
 }
@@ -590,19 +712,34 @@ export function strongerRole(a: Role | null, b: Role | null): Role | null {
  * share is the one on the artifact's current key and the feature is on. Pending, private, moved,
  * stale or unbackfilled artifacts give the category's people nothing. Never more than commenter.
  */
-export function categoryRoleOf(artifact: ArtifactFacts, access: AccessFacts): CategoryRole | null {
+export function categoryRoleOf(
+  artifact: CategoryArtifactFacts,
+  access: AccessFacts,
+): CategoryRole | null {
   const c = artifact.categoryShare;
   const g = access.categoryGrant;
   if (access.categorySharing !== true || !c || !g) return null;
   if (c.review !== "shared" || c.key === null) return null;
   if (c.reviewShareId !== g.shareId || c.key !== g.shareKey) return null;
+  // The share is the artifact owner's own: another owner's share never reaches this artifact.
+  if (g.shareOwnerId !== artifact.ownerId) return null;
   // A stray value (a hand-edited row) clamps to the weakest role.
   return g.role === "commenter" ? "commenter" : "viewer";
 }
 
 /** The grant role that counts: the stronger of the direct grant and categoryRoleOf. */
-export function grantedRole(artifact: ArtifactFacts, access: AccessFacts): Role | null {
+export function grantedRole(artifact: CategoryArtifactFacts, access: AccessFacts): Role | null {
   return strongerRole(access.grantRole, categoryRoleOf(artifact, access));
+}
+
+/**
+ * Category shares, portals and personal categories are the app's, and a token limited to one
+ * artifact never sees or manages them: their endpoints refuse it with 403 `token_bound` before
+ * anything else (the switch, the id), and roleOf gives it no role through a category grant, so it
+ * opens its artifact with its person's direct rights only.
+ */
+export function seesCategorySharing(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
 }
 
 /**
@@ -643,38 +780,85 @@ export function seesPersonalCategory(p: Principal, role: EffectiveRole | null): 
   return p.kind === "user" && role !== null && role !== "owner";
 }
 
-// ---------- live views: pushed versions and data changes (app host, the watch socket) ----------
+// ---------- whiteboards: the write floor on fixed capabilities ----------
+
+const EFFECTIVE_RANK: Record<EffectiveRole, number> = {
+  viewer: 0,
+  commenter: 1,
+  editor: 2,
+  owner: 3,
+};
 
 /**
- * May this principal hold a watch socket on the artifact, and does it get `data` signals? `d` is
- * the view decision (the gate's, `decideFor(ctx, a, "view")`); `active` is liveViewsActive(config,
- * env); `sharedData` is sharedDataActive(config); `caps` the current version's declaration. Anyone
- * who may open the artifact may watch (anonymous link viewers included: a watch socket joins no
- * room, sees no peers and carries no identity), never an agent, which publishes and never pulls.
- * Data signals follow pageDataAccess's read rule: an HTML page whose current version declares
- * `data`, with shared data active. The gate and the handshake both ask this, so the decision lives
- * here.
+ * The lowest role that may write shared data from the page, or emit a board's open topics. A type
+ * whose page declares its own capabilities (an HTML page) keeps the rule it always had: any
+ * identified viewer. Every other type fails closed: the stored `writers` (set by the server for a
+ * whiteboard, read back by versionCapabilities), or "editor" when it is missing or unknown, as a
+ * board's default is (commenters change a board only when its settings say so). An unknown type
+ * (a newer Worker's row after a rollback) counts as fixed.
  */
-export function liveViewAccess(
-  p: Principal,
-  d: Decision,
-  caps: Capabilities | null,
-  o: { active: boolean; sharedData: boolean; type: ArtifactType },
-): { watch: boolean; data: boolean } {
-  const watch = o.active && d.allow && p.kind !== "agent";
-  return { watch, data: watch && o.type === "html" && caps?.data === true && o.sharedData };
+export function pageWriteFloor(type: string, caps: Capabilities | null): EffectiveRole {
+  const w = caps?.writers;
+  if (w === "commenter" || w === "editor") return w;
+  const def = typeDef(type);
+  return def && pageDataOf(def) === "declared" ? "viewer" : "editor";
+}
+
+/** Whether `role` is at or above `floor` (viewer < commenter < editor < owner). */
+export function meetsFloor(role: EffectiveRole, floor: EffectiveRole): boolean {
+  return EFFECTIVE_RANK[role] >= EFFECTIVE_RANK[floor];
 }
 
 /**
- * Which cap pool a watch socket counts in (LiveViewPool, packages/shared/src/liveView.ts): `member`
- * when the view decision has a role (the owner, or a grant to the viewer's email), `open` for
- * everyone else it lets in (public and unlisted link viewers, signed in or not, password holders,
- * an admin reviewing a report). The pools never affect each other, so a full `open` pool, the only
- * one an outsider can fill, says nothing about whether the owner or a collaborator has the
- * artifact open.
+ * The open topics a page room grants commenters: the declared ones, or none when only editors may
+ * write (a whiteboard whose settings say "editors"). rooms/notify.ts roomDeclaration compares
+ * these, so a version that changes them reconnects the room's sockets at once.
  */
-export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
-  return d.role === null ? "open" : "member";
+export function roomOpenTopics(caps: Pick<Capabilities, "roomOpen" | "writers"> | null): string[] {
+  return !caps || caps.writers === "editor" ? [] : [...caps.roomOpen];
+}
+
+// ---------- invitation emails (docs/spec.md "Invitation emails") ----------
+
+/**
+ * May this sharing change email the people it adds? Only when the request asked (`notify`, which
+ * agents leave false unless the user asked), only for the owner acting on their own artifact or
+ * share (the signed-in owner or the owner's own agent; never an editor, a viewer or an admin acting
+ * on someone else's), only while the owner's address is verified, and never for a taken-down
+ * artifact. Who among the people is emailed (only new grants, never the owner's own address, the
+ * de-dupe and the rate limits) is the invitations service's part.
+ */
+export function mayEmailInvitations(f: {
+  notify: boolean;
+  principal: Principal;
+  ownerId: string;
+  ownerVerified: boolean;
+  takenDown: boolean;
+}):
+  | { allow: true }
+  | { allow: false; reason: "not_requested" | "not_owner" | "owner_unverified" | "taken_down" } {
+  if (!f.notify) return { allow: false, reason: "not_requested" };
+  const p = f.principal;
+  if ((p.kind !== "user" && p.kind !== "agent") || p.userId !== f.ownerId) {
+    return { allow: false, reason: "not_owner" };
+  }
+  if (!f.ownerVerified) return { allow: false, reason: "owner_unverified" };
+  if (f.takenDown) return { allow: false, reason: "taken_down" };
+  return { allow: true };
+}
+
+/**
+ * May this caller read or change whether invitation emails reach an address
+ * (GET and PUT /me/invitation-emails)? Only a signed-in person (session), and only for their own
+ * address, which the route takes from the principal: never an agent, a viewer cookie or anyone
+ * anonymous, so the page cannot turn off someone else's emails or say whether they did.
+ */
+export function mayManageInvitationEmails(
+  p: Principal,
+): { allow: true; email: string } | { allow: false; reason: "unauthenticated" | "not_a_person" } {
+  if (p.kind === "user") return { allow: true, email: p.email };
+  if (p.kind === "agent") return { allow: false, reason: "not_a_person" };
+  return { allow: false, reason: "unauthenticated" };
 }
 
 // ---------- slides: follow the presenter (docs/spec.md "Slides") ----------

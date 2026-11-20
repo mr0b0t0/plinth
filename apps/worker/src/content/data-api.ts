@@ -40,7 +40,7 @@ import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../
 import { ApiError } from "../lib/errors.ts";
 import { type PageClaim, pageDataAccess } from "../policy.ts";
 import { notifyViewers } from "../rooms/notify.ts";
-import { versionCapabilities } from "../services/artifacts.ts";
+import { servedVersionWriters, versionCapabilities } from "../services/artifacts.ts";
 import {
   changes,
   createDoc,
@@ -175,10 +175,14 @@ function intParam(v: string | null, name: string, min: number, max: number): num
   return n;
 }
 
-/** Check 7: the artifact and its current version's declaration, in one query. */
+/**
+ * Check 7: the artifact and its current version's declaration, in one query, and on a page that
+ * declares `people` the writers of every version this origin serves (policy.ts peopleListOffered:
+ * any of them may be the code calling, since all share the origin and the pass).
+ */
 async function loadTarget(env: Bindings, artifactId: string) {
   const row = await env.DB.prepare(
-    `SELECT a.id, a.owner_id, a.access_epoch, a.taken_down_at, v.capabilities
+    `SELECT a.id, a.owner_id, a.type, a.access_epoch, a.taken_down_at, v.capabilities
        FROM artifacts a
        LEFT JOIN versions v ON v.artifact_id = a.id AND v.number = a.current_version
       WHERE a.id = ?1 AND a.deleted_at IS NULL`,
@@ -187,18 +191,22 @@ async function loadTarget(env: Bindings, artifactId: string) {
     .first<{
       id: string;
       owner_id: string;
+      type: string;
       access_epoch: number;
       taken_down_at: string | null;
       capabilities: string | null;
     }>();
   if (!row || row.taken_down_at) return null;
+  const caps = versionCapabilities(row);
   return {
     id: row.id,
     accessEpoch: row.access_epoch,
     target: {
       id: row.id,
       ownerId: row.owner_id,
-      caps: versionCapabilities(row),
+      caps,
+      writers: caps?.people ? await servedVersionWriters(env.DB, row.id) : null,
+      type: row.type,
     } satisfies DataTarget,
   };
 }
@@ -478,20 +486,27 @@ async function handle(
   }
 
   // 9. Declaration. An in-chat preview (an MCP host's frame, any framer) never reads or writes
-  // shared data: its pass carries no identity and is meant for one look at the page.
-  const reason = pass.preview ? "preview" : unavailableReason(config, target.caps);
+  // shared data: its pass carries no identity and is meant for one look at the page. Nor does the
+  // thumbnail capture of a version whose writer may not read the data (policy.captureReadsData).
+  const reason = pass.preview
+    ? "preview"
+    : pass.noData
+      ? "capture"
+      : unavailableReason(config, target.caps);
   if (reason) {
     if (route.reportsUnavailable) return respond(config, 200, { available: false, reason });
     const message =
       reason === "preview"
         ? "Shared data is not available in a preview"
-        : "This page does not use shared data";
+        : reason === "capture"
+          ? "Shared data is not available in this capture"
+          : "This page does not use shared data";
     throw new ApiError("feature_disabled", message, { reason });
   }
 
   // 10. Policy, then the service (rate limits, quotas, guarded writes).
   const { claim } = pass;
-  const access = pageDataAccess(claim, target.caps, sharedDataActive(config));
+  const access = pageDataAccess(claim, target.caps, sharedDataActive(config), target.type, pass);
   if (!access.read) throw new ApiError("feature_disabled", "Shared data is not available here");
   const writer: DataWriter | null =
     access.write && claim

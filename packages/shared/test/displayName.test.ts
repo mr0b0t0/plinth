@@ -56,6 +56,44 @@ describe("display names", () => {
     }
   });
 
+  it("refuse on write, and read as null, a name that shows nothing", () => {
+    // Hangul fillers (letters that render as nothing), blank Braille, and combining marks alone.
+    const blanks = ["\u3164", "\u115F", "\u1160", "\uFFA0", "\u2800"];
+    for (const b of blanks) {
+      for (const name of [b, b.repeat(5), `${b} ${b}`]) {
+        expect(displayNameProblem(name), JSON.stringify(name)).toMatch(/you can see/);
+        expect(updateProfileInput.safeParse({ name }).success, JSON.stringify(name)).toBe(false);
+        expect(pageDisplayName(name), JSON.stringify(name)).toBeNull();
+      }
+      // Beside something visible they are just characters.
+      expect(displayNameProblem(`Ana${b}`), JSON.stringify(b)).toBeNull();
+    }
+    for (const name of [
+      "\u0301",
+      "\u0301\u0302\u0303",
+      "\u20DD",
+      "\u0301 \u0302",
+      "\u3164\u0301",
+    ]) {
+      expect(displayNameProblem(name), JSON.stringify(name)).toMatch(/you can see/);
+      expect(pageDisplayName(name), JSON.stringify(name)).toBeNull();
+    }
+    // A stored name that is blank once the refused characters are dropped reads as null too.
+    expect(pageDisplayName("\u202E\u3164\u200B")).toBeNull();
+    // Letters, numbers, symbols and punctuation all count.
+    for (const name of ["José", "7", "\u{1F98A}", "\u2014", "e\u0301"]) {
+      expect(displayNameProblem(name), JSON.stringify(name)).toBeNull();
+      expect(pageDisplayName(name), JSON.stringify(name)).toBe(name.normalize("NFC"));
+    }
+  });
+
+  it("messages are full sentences, the same in the app and the API", () => {
+    expect(displayNameProblem("a@b")).toBe("A name cannot contain @.");
+    for (const bad of ["a@b", "Ana\u202E", "x".repeat(101), "\u3164"]) {
+      expect(displayNameProblem(bad), JSON.stringify(bad)).toMatch(/\.$/);
+    }
+  });
+
   it("updateProfileInput applies the rules and stays a plain string schema", () => {
     expect(updateProfileInput.safeParse({ name: "  Ana  " })).toMatchObject({
       success: true,

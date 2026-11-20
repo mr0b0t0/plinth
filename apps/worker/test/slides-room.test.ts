@@ -66,16 +66,9 @@ async function epochOf(id: string): Promise<number> {
   return row?.accessEpoch ?? 0;
 }
 
-/** A content cookie of another kind, signed as Plinth signs one. */
+/** A content cookie of another kind for version 1, signed as Plinth signs one. */
 async function passCookie(id: string, kind: "preview" | "capture"): Promise<string> {
-  const value = await signContentCookie(
-    config(),
-    id,
-    await epochOf(id),
-    undefined,
-    kind,
-    kind === "preview" ? 1 : undefined,
-  );
+  const value = await signContentCookie(config(), id, await epochOf(id), undefined, kind, 1);
   return `${contentCookieName(config(), new URL(contentOrigin(id)))}=${value}`;
 }
 
@@ -267,7 +260,7 @@ describe("slides socket: the room's header", () => {
 
   it("refuses an unknown type or kind, and a right on the wrong kind", () => {
     const bad = [
-      { ...good, type: "sheet" },
+      { ...good, type: "spreadsheet" },
       { ...good, type: "__proto__" },
       { ...good, kind: "deck" },
       { ...good, kind: "watch" },

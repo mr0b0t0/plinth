@@ -17,8 +17,10 @@ import {
   type CategoryShareSummary,
   type CategoryShareWriteResult,
   categoryKey,
+  type InvitationReport,
   LIMITS,
   normalizeCategory,
+  pageDisplayName,
   type ReviewSkipReason,
   type SharingCategoryShare,
 } from "@plinth/shared";
@@ -27,10 +29,16 @@ import type { ArtifactRow, CategoryShareRow } from "../db/schema.ts";
 import { newId } from "../lib/crypto.ts";
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
-import { type CategoryGrantFacts, mayManageCategoryShares } from "../policy.ts";
+import {
+  type CategoryGrantFacts,
+  mayManageCategoryShares,
+  type Principal,
+  seesCategorySharing,
+} from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { matchingSpellings, prunePersonalCategories } from "./categories.ts";
 import type { Ctx } from "./context.ts";
+import { newInvitees, sendInvitations } from "./invitations.ts";
 import { artifactLimitFor, getUserById } from "./users.ts";
 
 export interface ReviewItem {
@@ -57,18 +65,31 @@ export async function categoryGrantFor(
     return null;
   const marks = emails.map((_, i) => `?${i + 3}`).join(", ");
   const { results } = await ctx.env.DB.prepare(
-    `SELECT s.id AS share_id, s.category_key AS share_key, g.role AS role, g.email AS email
+    `SELECT s.id AS share_id, s.owner_id AS owner_id, s.category_key AS share_key, g.role AS role,
+            g.email AS email
        FROM category_shares s JOIN category_grants g ON g.share_id = s.id
       WHERE s.owner_id = ?1 AND s.category_key = ?2 AND g.email IN (${marks})`,
   )
     .bind(a.ownerId, a.categoryKey, ...emails)
-    .all<{ share_id: string; share_key: string; role: CategoryRole; email: string }>();
+    .all<{
+      share_id: string;
+      owner_id: string;
+      share_key: string;
+      role: CategoryRole;
+      email: string;
+    }>();
   let best: (CategoryGrantFacts & { email: string }) | null = null;
   for (const r of results) {
     const stronger = !best || (r.role === "commenter" && best.role === "viewer");
     const tie = best && r.role === best.role && r.email === own;
     if (stronger || tie) {
-      best = { shareId: r.share_id, shareKey: r.share_key, role: r.role, email: r.email };
+      best = {
+        shareId: r.share_id,
+        shareOwnerId: r.owner_id,
+        shareKey: r.share_key,
+        role: r.role,
+        email: r.email,
+      };
     }
   }
   return best;
@@ -94,6 +115,7 @@ export async function callerCategoryGrants(
   for (const r of results) {
     out.set(`${r.owner_id}\n${r.share_key}`, {
       shareId: r.share_id,
+      shareOwnerId: r.owner_id,
       shareKey: r.share_key,
       role: r.role,
     });
@@ -127,13 +149,29 @@ export async function shareIdForKey(
   return r?.id ?? null;
 }
 
-/** The owner's share names (their spelling), to snap new filings onto. */
-export async function ownerShareNames(d1: D1Database, ownerId: string): Promise<string[]> {
+/** The owner's shares, each with its key and the owner's spelling, in one read. */
+export async function ownerShares(
+  d1: D1Database,
+  ownerId: string,
+): Promise<{ id: string; key: string; name: string }[]> {
   const { results } = await d1
-    .prepare("SELECT name FROM category_shares WHERE owner_id = ?1")
+    .prepare("SELECT id, category_key AS key, name FROM category_shares WHERE owner_id = ?1")
     .bind(ownerId)
-    .all<{ name: string }>();
-  return results.map((r) => r.name);
+    .all<{ id: string; key: string; name: string }>();
+  return results;
+}
+
+/** The owner's spelling of the share on `key`, or null (a filing snaps onto it). */
+export async function shareNameForKey(
+  d1: D1Database,
+  ownerId: string,
+  key: string,
+): Promise<string | null> {
+  const r = await d1
+    .prepare("SELECT name FROM category_shares WHERE owner_id = ?1 AND category_key = ?2")
+    .bind(ownerId, key)
+    .first<{ name: string }>();
+  return r?.name ?? null;
 }
 
 const reviewUrl = (config: Config, shareId: string) =>
@@ -235,8 +273,25 @@ function toRow(s: ShareSql): CategoryShareRow {
   };
 }
 
+/**
+ * A token limited to one artifact gets 403 `token_bound` from every share, portal and
+ * personal-category endpoint, first, so the answer is the same whatever the switch or the id.
+ */
+export function refuseBoundToken(p: Principal): void {
+  if (seesCategorySharing(p)) return;
+  throw new ApiError(
+    "forbidden",
+    "This token is limited to one artifact and has no category shares",
+    {
+      reason: "token_bound",
+      next: "Category shares are managed in the app; use the app, or a token without that limit",
+    },
+  );
+}
+
 /** The signed-in owner, with the feature on. Agents and bearer tokens get 403, never a write. */
 function requireShareOwner(ctx: Ctx): { userId: string; email: string } {
+  refuseBoundToken(ctx.principal);
   if (!ctx.config.allowCategorySharing) {
     throw new ApiError("feature_disabled", "Sharing categories is not enabled on this instance");
   }
@@ -421,7 +476,8 @@ async function shareArtifacts(ctx: Ctx, share: CategoryShareRow): Promise<Catego
       r.category_review_share === share.id && r.category_review ? r.category_review : "pending",
     taken_down: r.taken_down_at !== null,
     updated_at: r.updated_at,
-    last_author: r.conn_label ?? r.user_name ?? r.user_email ?? null,
+    // The name cleaned on read (displayName.ts pageDisplayName), as everywhere else it shows.
+    last_author: r.conn_label ?? pageDisplayName(r.user_name) ?? r.user_email ?? null,
   }));
 }
 
@@ -598,6 +654,8 @@ export async function createShare(
     title?: string;
     people: CategoryPerson[];
     review: ReviewItem[];
+    /** Email the people (docs/spec.md "Invitation emails"). Default false. */
+    notify?: boolean;
   },
 ): Promise<CategoryShareWriteResult> {
   const { userId, email } = requireShareOwner(ctx);
@@ -667,7 +725,9 @@ export async function createShare(
     returnedIds(results[3]),
     returnedIds(results[4]),
   );
-  return { share: await summaryOf(ctx, share), review };
+  const invitations = await inviteSharePeople(ctx, share, input.notify, [], people);
+  const out = { share: await summaryOf(ctx, share), review };
+  return invitations ? { ...out, invitations } : out;
 }
 
 /**
@@ -679,7 +739,13 @@ export async function createShare(
 export async function updateShare(
   ctx: Ctx,
   id: string,
-  input: { title?: string; people?: CategoryPerson[]; review?: ReviewItem[] },
+  input: {
+    title?: string;
+    people?: CategoryPerson[];
+    review?: ReviewItem[];
+    /** Email the people this adds (docs/spec.md "Invitation emails"). Default false. */
+    notify?: boolean;
+  },
 ): Promise<CategoryShareWriteResult> {
   const { userId, email } = requireShareOwner(ctx);
   if (input.people !== undefined && input.review === undefined) {
@@ -717,6 +783,8 @@ export async function updateShare(
   const people = cleanPeople(input.people, email);
   const review = input.review ?? [];
   await checkReview(ctx, userId, review);
+  // Who held a grant before, so that only people this change adds are emailed (`notify`).
+  const before = input.notify ? (await peopleOf(DB, id)).map((p) => p.email) : [];
   const items = JSON.stringify(review);
   const owned = "EXISTS (SELECT 1 FROM category_shares WHERE id = ?1 AND owner_id = ?2)";
   const results = await DB.batch([
@@ -750,7 +818,29 @@ export async function updateShare(
     returnedIds(results[4]),
     returnedIds(results[5]),
   );
-  return { share: await summaryOf(ctx, await ownShare(ctx, userId, id)), review: outcome };
+  const fresh = await ownShare(ctx, userId, id);
+  const invitations = await inviteSharePeople(ctx, fresh, input.notify, before, people);
+  const out = { share: await summaryOf(ctx, fresh), review: outcome };
+  return invitations ? { ...out, invitations } : out;
+}
+
+/** Invitation emails for the people a share's change added, when it asked to `notify`. */
+async function inviteSharePeople(
+  ctx: Ctx,
+  share: CategoryShareRow,
+  notify: boolean | undefined,
+  before: readonly string[],
+  people: readonly CategoryPerson[],
+): Promise<InvitationReport | undefined> {
+  if (!notify) return undefined;
+  const owner = await getUserById(ctx.db, share.ownerId);
+  return sendInvitations(ctx, {
+    notify,
+    owner,
+    // The people see the share's title (the category's name unless the owner changed it).
+    target: { kind: "category", id: share.id, title: share.title },
+    invitees: newInvitees(before, people, owner?.email ?? null),
+  });
 }
 
 /**

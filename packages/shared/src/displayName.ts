@@ -19,6 +19,21 @@ const REFUSED_ALL = new RegExp(REFUSED_CHARS.source, "gu");
 const AT_SIGN = /[@\uFE6B\uFF20]/u;
 const AT_SIGN_ALL = new RegExp(AT_SIGN.source, "gu");
 
+/**
+ * Characters that are letters but render as nothing: the Hangul fillers (U+115F, U+1160, U+3164,
+ * U+FFA0). With the blank Braille pattern (U+2800, a symbol) they never count as visible.
+ */
+const BLANK_CHARS = /[\u115F\u1160\u3164\uFFA0\u2800]/gu;
+
+/**
+ * Does the name show anything: at least one letter, number, symbol or punctuation mark that is
+ * not a blank one (BLANK_CHARS)? A name made only of fillers, blank Braille, spaces or combining
+ * marks would show as nothing beside a comment, and hide who wrote it.
+ */
+function visible(s: string): boolean {
+  return /[\p{L}\p{N}\p{S}\p{P}]/u.test(s.replace(BLANK_CHARS, ""));
+}
+
 /** Stored form: NFC, every whitespace run (line breaks and separators included) -> one space, trimmed. */
 export function normalizeDisplayName(s: string): string {
   return s.normalize("NFC").replace(/\s+/gu, " ").trim();
@@ -27,21 +42,25 @@ export function normalizeDisplayName(s: string): string {
 /**
  * Why a (normalised) name is refused on write, or null: longer than LIMITS.maxDisplayNameLength,
  * containing "@" or a character that renders as one (it must not look like an email address or an
- * agent mention), or containing control or format (invisible, bidi) characters. Empty is allowed: it clears the name.
+ * agent mention), containing control or format (invisible, bidi) characters, or showing nothing
+ * (no visible character: only fillers, blank Braille or combining marks). Empty is allowed: it
+ * clears the name. The message is a full sentence, shown as it is by the app and the API.
  */
 export function displayNameProblem(s: string): string | null {
   if (s.length > LIMITS.maxDisplayNameLength) {
-    return `A name is at most ${LIMITS.maxDisplayNameLength} characters`;
+    return `A name is at most ${LIMITS.maxDisplayNameLength} characters.`;
   }
-  if (AT_SIGN.test(s)) return "A name cannot contain @";
-  if (REFUSED_CHARS.test(s)) return "A name cannot contain control or invisible characters";
+  if (AT_SIGN.test(s)) return "A name cannot contain @.";
+  if (REFUSED_CHARS.test(s)) return "A name cannot contain control or invisible characters.";
+  if (s !== "" && !visible(s)) return "A name needs a letter, number or symbol you can see.";
   return null;
 }
 
 /**
- * The name as a page, a room or an agent sees it: normalised, refused characters and every "@"
- * (AT_SIGN) dropped, cut to LIMITS.maxPageDisplayNameLength code points (never inside a surrogate
- * pair); null when nothing is left. Applied on every read, so names stored before these rules are cleaned too.
+ * The name as a page, a room, an agent or the app sees it: normalised, refused characters and every
+ * "@" (AT_SIGN) dropped, cut to LIMITS.maxPageDisplayNameLength code points (never inside a
+ * surrogate pair); null when nothing visible is left (see displayNameProblem). Applied on every
+ * read, so names stored before these rules are cleaned too.
  */
 export function pageDisplayName(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") return null;
@@ -50,5 +69,5 @@ export function pageDisplayName(raw: string | null | undefined): string | null {
     normalizeDisplayName(raw).replace(REFUSED_ALL, "").replace(AT_SIGN_ALL, ""),
   );
   const cut = Array.from(cleaned).slice(0, LIMITS.maxPageDisplayNameLength).join("").trim();
-  return cut === "" ? null : cut;
+  return cut === "" || !visible(cut) ? null : cut;
 }

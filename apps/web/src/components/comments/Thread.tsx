@@ -83,6 +83,8 @@ export function CommentItem({
         <span className="cm-author">
           <span className="cm-author__name">{comment.author.label}</span>
           {isAgent && <span className="cm-agent">Agent</span>}
+          {/* From the server, never the name: a name chosen to look like the owner's lacks it. */}
+          {!isAgent && comment.author.is_owner && <span className="cm-agent">Owner</span>}
         </span>
         <time
           className="cm-time"
@@ -177,9 +179,14 @@ export function Thread({
               <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
               <span className="cm-anchor__text">
                 <span className="visually-hidden">Pinned to </span>
-                {root.anchor.text?.trim() || isPageAnchor(root.anchor)
-                  ? `“${anchorLabel(root.anchor)}”`
-                  : "Pinned to an element"}
+                {root.anchor.text?.trim() || isPageAnchor(root.anchor) ? (
+                  // Isolated, so the page's text cannot reorder what is around it.
+                  <>
+                    “<bdi>{anchorLabel(root.anchor)}</bdi>”
+                  </>
+                ) : (
+                  "Pinned to an element"
+                )}
               </span>
             </span>
           )}

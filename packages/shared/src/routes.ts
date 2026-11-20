@@ -33,10 +33,14 @@ export const API_PREFIX = "/api/v1";
 export const API = {
   config: "/config",
   me: "/me",
+  /** GET or PUT whether the signed-in person's own address gets invitation emails (session only). */
+  invitationEmails: "/me/invitation-emails",
   // auth (people)
   loginRequest: "/auth/login",
   loginVerifyCode: "/auth/verify-code",
   loginVerifyLink: "/auth/verify-link",
+  /** The one review account's password sign-in; 404 unless REVIEW_LOGIN_* are set. */
+  loginReview: "/auth/review-login",
   logout: "/auth/logout",
   /** Development only (ENVIRONMENT=development and DEV_OUTBOX=true): emails the console sent. */
   devOutbox: "/__dev/outbox",
@@ -54,6 +58,8 @@ export const API = {
   restore: "/artifacts/:ref/versions/:n/restore", // POST restore_version
   visibility: "/artifacts/:ref/visibility", // PUT set_visibility
   designSystem: "/artifacts/:ref/design-system", // GET get_design_system
+  sheet: "/artifacts/:ref/sheet", // GET read_sheet
+  sheetEdits: "/artifacts/:ref/sheet/edits", // POST edit_sheet
   sharing: "/artifacts/:ref/sharing", // GET settings, PUT grants
   // categories (the caller's own names; rename and merge for the signed-in owner only)
   categories: "/categories", // GET names with counts
@@ -74,7 +80,6 @@ export const API = {
   viewPassword: "/view/:ref/password",
   viewEmail: "/view/:ref/email",
   viewCode: "/view/:ref/code",
-  viewDictation: "/view/:ref/dictation", // GET the owner's email for the dictation consent dialog
   viewWatch: "/view/:ref/watch", // GET WebSocket upgrade (plinth.view.v1): live views, the app only
   // comments and mentions
   comments: "/artifacts/:ref/comments",
@@ -87,7 +92,8 @@ export const API = {
   adminReports: "/admin/reports",
   adminReport: "/admin/reports/:id",
   adminStats: "/admin/stats", // GET instance aggregates (admins only)
-  artifactViews: "/artifacts/:ref/views", // GET open counts (the owner only)
+  artifactStats: "/artifacts/:ref/stats", // GET who opened it, ?days=7|30|90|365 (the owner only)
+  statsArtifacts: "/stats/artifacts", // GET opens across the caller's own artifacts
   // shared data (mirror list_artifact_data and write_artifact_data; DELETE clears, owner only)
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
@@ -108,8 +114,11 @@ export const APP_ROUTES = {
   home: "/",
   login: "/login",
   magic: "/login/magic",
+  /** Password sign-in for the one review account (REVIEW_LOGIN_*); a 404 when it is off. */
+  reviewLogin: "/login/review",
   dashboard: "/dashboard",
   connections: "/connections",
+  /** Stats across the owner's artifacts. */
   consent: "/oauth/consent",
   artifact: "/a/:slug",
   artifactVersion: "/a/:slug/v/:n",
@@ -117,6 +126,8 @@ export const APP_ROUTES = {
   compare: "/a/:slug/compare",
   editor: "/a/:slug/edit",
   settings: "/a/:slug/settings",
+  /** One artifact's stats, for its owner. */
+  artifactStats: "/a/:slug/stats",
   open: "/open/:id",
   portal: "/p/:id",
   report: "/a/:slug/report",
@@ -126,6 +137,8 @@ export const APP_ROUTES = {
   terms: "/legal/terms",
   privacy: "/legal/privacy",
   acceptableUse: "/legal/acceptable-use",
+  /** Turn invitation emails to your own address off or on again (the emails' footer and header). */
+  invitationEmails: "/invitation-emails",
 } as const;
 
 /** Fill `:params` in a route pattern. */

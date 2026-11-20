@@ -44,6 +44,7 @@ describe("MCP endpoint", () => {
       [
         "claim_mention",
         "get_artifact",
+        "get_artifact_stats",
         "get_design_system",
         "list_artifact_data",
         "list_artifacts",
@@ -59,6 +60,8 @@ describe("MCP endpoint", () => {
         "start_upload",
         "update_artifact",
         "write_artifact_data",
+        "read_sheet",
+        "edit_sheet",
       ].sort(),
     );
     for (const name of names) {
@@ -85,6 +88,25 @@ describe("MCP endpoint", () => {
     // Writes that only add a version stay non-destructive; the two that can remove data are not.
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
     expect(destructive.sort()).toEqual(["set_visibility", "write_artifact_data"]);
+  });
+
+  it("get_artifact_stats is a read-only owner tool that keeps the people list to the owner", async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "get_artifact_stats");
+    expect(t?.annotations).toEqual({
+      title: "Get artifact stats",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(t?.description).toMatch(/owner only/i);
+    expect(t?.description).toMatch(/people list is the owner's private data/);
+    expect(t?.description?.endsWith(UNTRUSTED_NOTE)).toBe(true);
+    const schema = (t?.inputSchema ?? {}) as { properties?: object };
+    expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["days", "id"]);
   });
 
   it("start_upload says where its requests may come from; publish and update point to it", async () => {

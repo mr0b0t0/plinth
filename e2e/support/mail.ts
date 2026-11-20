@@ -14,7 +14,12 @@ export interface MailOptions {
   since?: string;
   /** How long to poll before failing. Default 10 s. */
   timeoutMs?: number;
+  /** Only emails this accepts (for example, skip an invitation while waiting for a code). */
+  match?: (m: OutboxItem) => boolean;
 }
+
+/** Sign-in and viewing-code emails ("Your Plinth sign-in code: ...", "Your Plinth viewing code"). */
+const isCodeEmail = (m: OutboxItem) => /^Your .*\bcode\b/.test(m.subject);
 
 /** All outbox emails to an address, newest first. */
 export async function outbox(request: APIRequestContext, to: string): Promise<OutboxItem[]> {
@@ -31,20 +36,25 @@ export async function latestEmail(
 ): Promise<OutboxItem> {
   const deadline = Date.now() + (opts.timeoutMs ?? 10_000);
   for (;;) {
-    const item = (await outbox(request, to)).find((m) => !opts.since || m.created_at >= opts.since);
+    const item = (await outbox(request, to)).find(
+      (m) => (!opts.since || m.created_at >= opts.since) && (!opts.match || opts.match(m)),
+    );
     if (item) return item;
     if (Date.now() > deadline) throw new Error(`No email to ${to} in the dev outbox`);
     await new Promise((r) => setTimeout(r, 250));
   }
 }
 
-/** The six-digit code in the newest email to an address. */
+/**
+ * The six-digit code in the newest code email to an address. Other emails (an invitation the owner
+ * sent when adding the address) are passed over, so a test never reads one as the code.
+ */
 export async function latestCode(
   request: APIRequestContext,
   to: string,
   opts: MailOptions = {},
 ): Promise<string> {
-  const mail = await latestEmail(request, to, opts);
+  const mail = await latestEmail(request, to, { match: isCodeEmail, ...opts });
   const code = /\b(\d{6})\b/.exec(mail.text)?.[1];
   if (!code) throw new Error(`No six-digit code in the email to ${to}: ${mail.subject}`);
   return code;

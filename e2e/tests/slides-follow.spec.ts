@@ -132,9 +132,9 @@ test("a presenter's audience window follows its presenter window and shows no no
   await ready(page);
   await page.keyboard.press("s");
   await expect(root(page)).toHaveAttribute("data-mode", "presenter");
-  const strip = page.getByRole("region", { name: "Presenter view" });
   const opened = context.waitForEvent("page");
-  await strip.getByRole("button", { name: "Audience window" }).click();
+  await page.getByRole("button", { name: "Present" }).click();
+  await page.getByRole("menuitem", { name: "Audience window" }).click();
   const audience = await opened;
   try {
     await expect(deck(audience).locator('html[data-ready="ok"]')).toHaveCount(1, {

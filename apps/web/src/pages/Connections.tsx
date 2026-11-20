@@ -1,7 +1,8 @@
 // Page: /connections (?connect=1 opens the Connect panel). The agents (OAuth connections and
 // personal access tokens) that can act for the signed-in person: connect a new one, rename,
 // revoke. While the Connect panel is open the list refreshes itself, so a newly approved agent
-// shows up with a first prompt to try. Tokens sit under Advanced, for scripts and CI.
+// shows up with a first prompt to try. Tokens sit under Advanced, for scripts and CI, with the
+// tokens limited to one artifact listed there: they are not agents.
 import { PlugIcon, PlusIcon } from "@phosphor-icons/react";
 import { API, type ConnectionInfo, type Paged } from "@plinth/shared";
 import { useEffect, useRef, useState } from "react";
@@ -15,7 +16,7 @@ import { useConnectionPoll } from "../components/account/useConnectionPoll.ts";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import { focusElement } from "../components/ui/focus.ts";
 import { Button, EmptyState, Skeleton } from "../components/ui/index.ts";
-import { publishAgents } from "../lib/agents.ts";
+import { isAgent, publishAgents } from "../lib/agents.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
 import { useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
@@ -71,7 +72,7 @@ export default function Connections() {
   }, [me, state]);
   useEffect(() => {
     if (panelOpen !== null || state.status !== "ready") return;
-    setPanelOpen(!state.items.some((c) => !c.revoked_at));
+    setPanelOpen(!state.items.some(isAgent));
   }, [panelOpen, state]);
 
   useEffect(() => {
@@ -103,7 +104,8 @@ export default function Connections() {
   if (redirect) return redirect;
 
   const items = state.status === "ready" ? state.items : [];
-  const active = items.filter((c) => !c.revoked_at);
+  const active = items.filter(isAgent);
+  const limited = items.filter((c) => !c.revoked_at && c.artifact);
   const revoked = items.filter((c) => c.revoked_at);
   const update = (next: ConnectionInfo) =>
     setState((s) =>
@@ -221,6 +223,16 @@ export default function Connections() {
               New token
             </Button>
           </div>
+          {limited.length > 0 && (
+            <ul
+              className="pl-acct-list pl-acct-advanced__list"
+              aria-label="Tokens for one artifact"
+            >
+              {limited.map((c) => (
+                <ConnectionItem key={c.id} connection={c} now={now} onChanged={update} />
+              ))}
+            </ul>
+          )}
         </details>
       </div>
 

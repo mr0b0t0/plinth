@@ -1,7 +1,7 @@
 // The design renderer, booted from a real shell's payload in a modelled frame: the canvas and its
 // board frames (sandbox, loader, the ready/render handshake), virtualization, interact mode, the
-// review mode that keeps covers on, printing, and one board alone. Board frames are modelled too:
-// each gets its own window that records what the shell posts to it.
+// review mode that keeps covers on, printing, and the version a board's files come from. Board
+// frames are modelled too: each gets its own window that records what the shell posts to it.
 import {
   BOARD_IFRAME_SANDBOX,
   BOARD_MESSAGE_SOURCE,
@@ -29,8 +29,15 @@ const DESIGN = [
   "<a href='https://example.com'>Try</a>",
 ].join("\n");
 
-function mount(text = DESIGN) {
-  const html = typedShellHtml(TYPE_REGISTRY.design, { title: "T", text, base: "", appOrigin: APP });
+/** A shell as the content host serves it: `version` is the one it shows (null: none). */
+function mount(text = DESIGN, version: number | null = 2) {
+  const html = typedShellHtml(TYPE_REGISTRY.design, {
+    title: "T",
+    text,
+    base: "",
+    appOrigin: APP,
+    ...(version !== null ? { version } : {}),
+  });
   const main = /<main [^>]*><\/main>/.exec(html)?.[0];
   const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0];
   if (!main || !data) throw new Error("unexpected shell");
@@ -160,14 +167,21 @@ describe("boot", () => {
     expect(label?.querySelector(".plinth-design__label-name")?.textContent).toBe(
       "Home <img src=x onerror=window.__pwned=1>",
     );
-    expect(label?.textContent).toContain("393 × 852");
+    // The label is the name and Interact: no size, no section headings, no Boards list.
+    expect(label?.textContent).toBe("Home <img src=x onerror=window.__pwned=1>Interact");
     // Nothing of the fragments or the shared section is in the shell's DOM.
     expect(document.getElementById("frag")).toBeNull();
     expect(document.querySelectorAll("img")).toHaveLength(0);
     expect(document.body.querySelectorAll("script:not([type])")).toHaveLength(0);
     expect(html().dataset.shared).toBeUndefined();
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
-    expect(document.querySelectorAll(".plinth-design__section")).toHaveLength(2);
+    expect(document.querySelectorAll("h2, [role=menu]")).toHaveLength(0);
+    expect(
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>(".plinth-design__toolbar button"),
+        (b) => (b.hidden ? null : b.getAttribute("aria-label")),
+      ).filter((l) => l !== null),
+    ).toEqual(["Zoom out", "Zoom to 100%", "Zoom in", "Fit all boards"]);
   });
 
   it("mounts each board in an opaque sandboxed frame at the loader, its size and name", () => {
@@ -298,6 +312,26 @@ describe("boot", () => {
 });
 
 describe("interact mode", () => {
+  const labelOf = (id: string) =>
+    document.querySelector(`.plinth-design__label[data-board="${id}"]`) as HTMLElement;
+  const interactWith = (id: string) =>
+    (labelOf(id).querySelector(".plinth-design__label-interact") as HTMLButtonElement).click();
+
+  it("marks the board zoomed to by its name as the one offering Interact, until Fit", () => {
+    mount();
+    handle = start(framed());
+    expect(document.querySelectorAll(".plinth-design__label[data-active]")).toHaveLength(0);
+    (labelOf("post").querySelector(".plinth-design__label-name") as HTMLButtonElement).click();
+    expect(labelOf("post").hasAttribute("data-active")).toBe(true);
+    (labelOf("home").querySelector(".plinth-design__label-name") as HTMLButtonElement).click();
+    expect(labelOf("post").hasAttribute("data-active")).toBe(false);
+    expect(labelOf("home").hasAttribute("data-active")).toBe(true);
+    (
+      document.querySelector('.plinth-design__btn[aria-label="Fit all boards"]') as HTMLElement
+    ).click();
+    expect(document.querySelectorAll(".plinth-design__label[data-active]")).toHaveLength(0);
+  });
+
   it("takes the cover off one board only, and Done or a background click puts it back", () => {
     mount();
     const f = framed();
@@ -309,13 +343,27 @@ describe("interact mode", () => {
     expect(cover("post").hidden).toBe(true);
     expect(cover("home").hidden).toBe(false);
     expect(frameFor("post")?.tabIndex).toBe(0);
-    const done = document.querySelector(".plinth-design__done") as HTMLButtonElement;
-    expect(done.hidden).toBe(false);
+    // One control for the state: the board's label drops Interact, and the toolbar holds only
+    // Done in place of the zoom controls.
+    expect(labelOf("post").hasAttribute("data-interacting")).toBe(true);
+    const bar = document.querySelector(".plinth-design__toolbar") as HTMLElement;
+    const shown = () =>
+      Array.from(bar.querySelectorAll("button"))
+        .filter((b) => !b.hidden)
+        .map((b) => b.getAttribute("aria-label"));
+    expect(shown()).toEqual(["Done interacting"]);
+    expect(document.querySelectorAll(".plinth-design__done")).toHaveLength(1);
+    const done = bar.querySelector(".plinth-design__done") as HTMLButtonElement;
     done.click();
     expect(cover("post").hidden).toBe(false);
     expect(done.hidden).toBe(true);
+    expect(labelOf("post").hasAttribute("data-interacting")).toBe(false);
+    expect(shown()).toEqual(["Zoom out", "Zoom to 100%", "Zoom in", "Fit all boards"]);
 
+    // A double click is not a way in: Interact is.
     cover("home").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(cover("home").hidden).toBe(false);
+    interactWith("home");
     expect(cover("home").hidden).toBe(true);
     canvas().dispatchEvent(
       new PointerEvent("pointerdown", {
@@ -335,7 +383,8 @@ describe("interact mode", () => {
     );
     expect(cover("home").hidden).toBe(false);
 
-    cover("mrec").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    interactWith("mrec");
+    expect(cover("mrec").hidden).toBe(true);
     canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(cover("mrec").hidden).toBe(false);
   });
@@ -409,23 +458,80 @@ describe("printing", () => {
   });
 });
 
-describe("one board alone", () => {
-  it("shows ?plinth-board=<id> alone with no canvas or cover", () => {
-    mount();
-    const f = framed("?plinth-board=post");
+describe("where a board's files come from", () => {
+  const baseOf = (f: Framed, id: string) => {
+    const w = winOf(f, id);
+    fromWindow(f, w, boardMsg("ready"));
+    const msg = w.postMessage.mock.calls[0]?.[0] as { html: string } | undefined;
+    return /<base href="([^"]*)">/.exec(msg?.html ?? "")?.[1];
+  };
+
+  it("pins boards to the shown version at the artifact root, not the current one", () => {
+    // v1 opened at /: the root serves whatever is current when a board mounts, so the base is
+    // v1's own path, and a board that mounts after v2 is published still loads v1's files.
+    mount(DESIGN, 1);
+    const f = framed("", "/");
     handle = start(f);
-    expect(document.getElementById("__plinth-design")?.getAttribute("data-mode")).toBe("solo");
-    expect(document.querySelectorAll(".plinth-design__board")).toHaveLength(1);
-    expect(frameFor("post")).not.toBeNull();
-    expect(cover("post")).toBeNull();
-    expect(document.querySelector(".plinth-design__canvas")).toBeNull();
-    expect(html().getAttribute("data-zoom")).toBe("100");
+    expect(baseOf(f, "post")).toBe(`${ORIGIN}/__plinth/v/1/`);
   });
 
-  it("falls back to the canvas for an unknown board id", () => {
+  it("keeps the pinned version when a board falls out of the live frames and comes back", () => {
+    mount(DESIGN, 1);
+    const f = framed("", "/");
+    handle = start(f, { maxLive: 1 });
+    const frames = handle.frames;
+    if (!frames) throw new Error("no frames");
+    frames.show(["post"]);
+    const first = frameFor("post");
+    expect(first).not.toBeNull();
+    frames.show(["home"]);
+    expect(frameFor("post")).toBeNull();
+    frames.show(["post"]);
+    const again = frameFor("post");
+    expect(again).not.toBeNull();
+    expect(again).not.toBe(first);
+    expect(baseOf(f, "post")).toBe(`${ORIGIN}/__plinth/v/1/`);
+  });
+
+  it("keeps the artifact's path prefix under the path fallback", () => {
+    const id = "abcdefghij0123456789";
+    mount(DESIGN, 3);
+    const f = framed("", `/__content/${id}/`);
+    handle = start(f);
+    expect(baseOf(f, "post")).toBe(`${ORIGIN}/__content/${id}/__plinth/v/3/`);
+  });
+
+  it.each([
+    ["no version", null],
+    ["version 0", 0],
+    ["a negative version", -1],
+    ["a fraction", 1.5],
+    ["ten digits", 1_000_000_000],
+  ])("mounts no board and shows the error for %s", (_label, version) => {
+    mount(DESIGN, version);
+    const f = framed("", "/");
+    handle = start(f);
+    expect(html().getAttribute("data-ready")).toBe("error");
+    expect(document.body.textContent).toContain(FALLBACK);
+    expect(f.created).toHaveLength(0);
+  });
+
+  it("refuses a version that is not a number", () => {
+    mount(DESIGN, 1);
+    const data = document.getElementById("__plinth-content");
+    if (!data) throw new Error("no payload");
+    data.textContent = JSON.stringify({ ...JSON.parse(data.textContent ?? "{}"), version: "1" });
+    const f = framed("", "/");
+    handle = start(f);
+    expect(html().getAttribute("data-ready")).toBe("error");
+    expect(f.created).toHaveLength(0);
+  });
+
+  it("has no single-board view: ?plinth-board=<id> still shows the canvas", () => {
     mount();
-    handle = start(framed("?plinth-board=nope"));
+    handle = start(framed("?plinth-board=post"));
     expect(document.getElementById("__plinth-design")?.getAttribute("data-mode")).toBe("canvas");
     expect(document.querySelectorAll(".plinth-design__board")).toHaveLength(3);
+    expect(cover("post")).not.toBeNull();
   });
 });

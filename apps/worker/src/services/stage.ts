@@ -27,7 +27,14 @@ import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
 import { notifyRoom, notifyViewers } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
-import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import {
+  checkAsset,
+  requireTypeDef,
+  resolveSource,
+  typeHooks,
+  typePublishWarnings,
+  typeSourceWarnings,
+} from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
   attemptCutoff,
@@ -600,6 +607,18 @@ export class VersionStager implements Stager {
     await this.put(path, bytes, contentType);
   }
 
+  /** Put the canonical form of a source candidate in place of the bytes that arrived. */
+  private async replacePending(e: Entry, text: string): Promise<void> {
+    const bytes = encoder.encode(text);
+    if (bytes.byteLength > this.def.maxSourceBytes) {
+      throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
+    }
+    this.logicalBytes += bytes.byteLength - e.size_bytes;
+    e.size_bytes = bytes.byteLength;
+    e.sha256 = await sha256Hex(bytes);
+    e.pending = bytes;
+  }
+
   /** The type's source text (inline publish, update and restore). */
   async addSource(text: string | Uint8Array): Promise<void> {
     const bytes = typeof text === "string" ? encoder.encode(text) : text;
@@ -786,9 +805,11 @@ export class VersionStager implements Stager {
     if (source.size_bytes > def.maxSourceBytes) {
       throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, source.size_bytes);
     }
-    const sourceText = decoder.decode(source.pending);
-    // A doc's source must be Markdown, never a whole HTML document (the bundle path included).
-    resolveSource({ type: def.id, [def.sourceField]: sourceText }, null);
+    const sentText = decoder.decode(source.pending);
+    // A doc's source must be Markdown, never a whole HTML document (the bundle path included). A
+    // type that stores one canonical spelling (a sheet) stores that, here as inline.
+    const sourceText = resolveSource({ type: def.id, [def.sourceField]: sentText }, null).text;
+    if (sourceText !== sentText) await this.replacePending(source, sourceText);
 
     // The source under its own prefix; other source candidates under their final path.
     source.content_type = def.contentType;
@@ -852,10 +873,9 @@ export class VersionStager implements Stager {
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
       // reference warnings: the type's own source checks first (sourceWarnings), the ones that
       // read other artifacts after the reference warnings (publishWarnings).
-      const typeWarnings = typeHooks(def).publishWarnings;
-      const extra = typeWarnings
-        ? await typeWarnings(this.ctx, { def, text: sourceText, paths: manifestPaths })
-        : [];
+      // Both are advisory: a hook that throws becomes a not_scanned note, never a failed publish.
+      const typedSource = { def, text: sourceText, paths: manifestPaths };
+      const extra = await typePublishWarnings(this.ctx, typedSource);
       warnings = scanPublish({
         files,
         manifestPaths,
@@ -867,7 +887,7 @@ export class VersionStager implements Stager {
         sent: [...this.sentPaths].map((p) => byRaw.get(p) ?? p),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
-        typed: typeHooks(def).sourceWarnings?.(def, sourceText, manifestPaths),
+        typed: typeSourceWarnings(typedSource),
         extra,
       });
       this.scanText.clear();

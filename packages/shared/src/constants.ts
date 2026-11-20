@@ -42,7 +42,7 @@ export const PUBLISH_WARNING_CODES = [
   "ds_deprecated_alias",
   "design_system_unavailable",
   "design_system_outdated",
-  "blocked_feature",
+  "board_not_seeded",
   "sensitive_file",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
@@ -207,13 +207,6 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
-  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
-  /** A display name as stored (users.name, PATCH /api/v1/me). */
-  maxDisplayNameLength: 100,
-  /** Code points of a display name as pages, rooms and agents see it. */
-  maxPageDisplayNameLength: 64,
-  /** The `q` of a people search. */
-  maxPeopleQueryLength: 100,
   /** Bytes of design HTML (design.html) per version of a design artifact. */
   maxDesignBytes: 2 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
@@ -242,6 +235,85 @@ export const LIMITS = {
     /** Errors parseDesignSystem reports, at most. */
     maxErrors: 50,
   },
+  /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
+  maxStatsPeople: 500,
+  // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
+  /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
+  maxSheetBytes: 1 * MB,
+  /** Data rows (lines after the header). */
+  maxSheetRows: 10_000,
+  /** Columns, A to CV. */
+  maxSheetColumns: 100,
+  /** Bytes of one row line. */
+  maxSheetRowBytes: 32 * KB,
+  /** Characters in one cell. */
+  maxSheetCellChars: 4_000,
+  /** Characters in one formula, its = included. */
+  maxSheetFormulaChars: 2_000,
+  /** Formula cells in one sheet. */
+  maxSheetFormulaCells: 50_000,
+  /** Parentheses, calls and signs nested in one formula. */
+  maxSheetFormulaDepth: 32,
+  /** Ops in one edit_sheet call. */
+  maxSheetOps: 200,
+  /** Cells one edit_sheet call writes. */
+  maxSheetOpCells: 10_000,
+  /**
+   * Empty rows one edit_sheet set may add between the sheet's last row and the row it writes
+   * (a set at B5000 on a sheet of 10 data rows would add 4,988). Past it the op is refused with
+   * reason "too_far_past_end": append_rows or insert_rows add rows on purpose.
+   */
+  maxSheetSetGapRows: 1_000,
+  /**
+   * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
+   * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
+   * four passes over a sheet that is all formulas.
+   */
+  maxSheetOpShiftChars: 4 * MB,
+  /** Cells one read_sheet call returns, at most. */
+  maxSheetReadCells: 10_000,
+  /** Cells read_sheet returns when the call names no limit. */
+  defaultSheetReadCells: 2_000,
+  /** Formula steps the renderer spends on one sheet (the Worker uses SHEET_EVAL_BUDGET). */
+  sheetEvalBrowserBudget: 20_000_000,
+  /** Bytes of a CSV or .xlsx file a publish or update imports. */
+  maxSheetImportBytes: 2 * MB,
+  /** Bytes an .xlsx import may decompress in all (its parts' XML). */
+  maxSheetImportInflatedBytes: 24 * MB,
+  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
+  /** A display name as stored (users.name, PATCH /api/v1/me). */
+  maxDisplayNameLength: 100,
+  /** Code points of a display name as pages, rooms and agents see it. */
+  maxPageDisplayNameLength: 64,
+  /** The `q` of a people search. */
+  maxPeopleQueryLength: 100,
+  /**
+   * Bytes of JSON (board.json) a publish or update of a whiteboard may send: its settings and, on
+   * a new or empty board, its starting blocks and arrows (packages/shared/src/whiteboard.ts).
+   */
+  maxBoardBytes: 512 * KB,
+} as const;
+
+/** The windows an owner can pick for one artifact's stats, in UTC days. */
+export const STATS_RANGES = [7, 30, 90, 365] as const;
+
+/**
+ * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, before the cron
+ * folds it into the artifact's all-time count. The minimum keeps the 90-day trends whole.
+ */
+export const VIEW_LOG_DEFAULTS = { retentionDays: 365 } as const;
+export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] } as const;
+
+/**
+ * Invitation emails an instance sends per UTC day (docs/spec.md "Invitation emails"), set by the
+ * operator because they share the email provider's quota with sign-in and viewing codes.
+ * `perDay` (INVITATION_EMAILS_PER_DAY): every owner together; 0 turns invitation emails off.
+ * `perOwnerPerDay` (INVITATION_EMAILS_PER_OWNER_PER_DAY): one owner's sharing changes.
+ */
+export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 20 } as const;
+export const INVITATION_BOUNDS = {
+  perDay: [0, 1_000_000],
+  perOwnerPerDay: [1, 10_000],
 } as const;
 
 export const TTL = {
@@ -253,6 +325,12 @@ export const TTL = {
   viewerTokenMs: 60 * 1000,
   /** Host-only viewer cookie on one artifact's content subdomain. */
   contentCookieS: 12 * 60 * 60,
+  /**
+   * How long the content cookie stays in the browser while VIEW_COUNTS is on, so its anonymous
+   * visitor id outlives the 12-hour pass (docs/spec.md "Artifact stats"). The pass inside still
+   * expires after contentCookieS; past that the cookie only carries the visitor id.
+   */
+  visitorIdS: 30 * 24 * 60 * 60,
   /**
    * An in-chat preview's content cookie (MCP Apps, docs/spec.md "In-chat previews"): one look at
    * one version in an agent's thread. Each render mints a fresh one, so it is kept short.
@@ -284,6 +362,13 @@ export const RATE_LIMITS = {
   loginPerEmailPerHour: 5,
   loginPerIpPerHour: 20,
   codeAttemptsPerEmailPerHour: 10,
+  /** Review-account password sign-ins (REVIEW_LOGIN_*) from one address, right or wrong. */
+  reviewLoginAttemptsPerIpPerHour: 10,
+  /**
+   * Wrong review-account passwords across all addresses before that sign-in locks for the rest of
+   * the hour, so guessing cannot be spread over many IPs.
+   */
+  reviewLoginFailuresPerHour: 20,
   passwordAttemptsPerArtifactPerIpPerHour: 10,
   /** Across all addresses, so guessing cannot be spread over many IPs. */
   passwordAttemptsPerArtifactPerHour: 100,
@@ -299,6 +384,15 @@ export const RATE_LIMITS = {
   uploadMissesPerIpPerHour: 60,
   /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
   peopleReadsPerViewerPerHour: 600,
+  /** Invitation emails one sharing change may send, so one request stays within Worker limits. */
+  invitationsPerChange: 40,
+  /** Invitation emails one address may receive, from every owner together. */
+  invitationsPerRecipientPerDay: 10,
+  /**
+   * Invitation emails one owner may send one address, below invitationsPerRecipientPerDay, so one
+   * account cannot use up an address's daily invitations for everyone else.
+   */
+  invitationsPerOwnerPerRecipientPerDay: 3,
 } as const;
 
 export const DEFAULTS = {
@@ -329,6 +423,8 @@ export const DEFAULTS = {
     writesPerViewerPerHour: 300,
     writesPerArtifactPerHour: 2000,
   },
+  /** Formula steps one read_sheet call may spend (SHEET_EVAL_BUDGET, 10,000 to 20,000,000). */
+  sheetEvalBudget: 200_000,
 } as const;
 
 /**
@@ -379,19 +475,16 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
  *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
- * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
- * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
- * shared data, not a room, and never the microphone.
+ * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
-  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
-  { token: "dictation", declares: true, needs: [], stored: "declared" },
+  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;
@@ -410,6 +503,10 @@ export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 /** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
 export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
 export const RENDERER_PROTOCOL_VERSION = 1;
+
+/** The files a sheet's frame builds when the app asks it to (the renderer message `export`). */
+export const SHEET_EXPORT_FORMATS = ["csv", "xlsx"] as const;
+export type SheetExportFormat = (typeof SHEET_EXPORT_FORMATS)[number];
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an

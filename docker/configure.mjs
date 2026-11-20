@@ -55,13 +55,16 @@ const WORKER_VARS = [
   // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
   "ALLOW_ROOMS",
   "ALLOW_LIVE_EDITING",
-  // Dictation run by the app (docs/docker.md#settings); off unless set to "true".
-  "ALLOW_DICTATION",
-  // Owners may share a category with people (docs/docker.md#settings); on unless set to "false".
-  "ALLOW_CATEGORY_SHARING",
   // Live views (docs/docker.md#settings): open pages follow new versions over a socket on the app
   // host, through the same ROOMS binding.
   "ALLOW_LIVE_VIEWS",
+  // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
+  "SHEET_EVAL_BUDGET",
+  // Owners may share a category with people (docs/docker.md#settings); on unless set to "false".
+  "ALLOW_CATEGORY_SHARING",
+  // Invitation emails per UTC day for the instance (0 turns them off) and for one owner.
+  "INVITATION_EMAILS_PER_DAY",
+  "INVITATION_EMAILS_PER_OWNER_PER_DAY",
   // Following the presenter in a deck (docs/docker.md#settings), through the same live rooms.
   "ALLOW_SLIDES_FOLLOW",
 ];
