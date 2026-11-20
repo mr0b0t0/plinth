@@ -82,6 +82,20 @@ async function editRow(c: Socket, line: number, text: string, rev: number) {
 
 const peek = async (id: string) => (await stubFor(id).docPeek(id))?.text;
 
+/** The draft's D1 row (null when there is none). */
+const liveRow = (id: string) =>
+  env.DB.prepare("SELECT base_version, content, rev FROM live_drafts WHERE artifact_id = ?1")
+    .bind(id)
+    .first<{ base_version: number; content: string; rev: number }>();
+
+/** The room's checkpoint lock and the snapshots it still holds as being saved. */
+const pending = (id: string) =>
+  runInDurableObject(stubFor(id), async (room) => {
+    const doc = (room as unknown as { doc: { lock: { id: string } | null; saving: unknown[] } })
+      .doc;
+    return { lock: doc.lock?.id ?? null, saving: doc.saving.length };
+  });
+
 describe("sheet socket: rows", () => {
   it("sends the sheet's canonical lines; a row lease and a valid row edit are applied and broadcast", async () => {
     const { id, ownerP } = await sheetSetup(SHEET);
@@ -833,6 +847,96 @@ describe("sheet socket: versions published from outside", () => {
         conflict_version: 3,
         text: pears,
       });
+      a.ws.close(1000);
+    });
+
+    /**
+     * Apples edited and snapshotted; the lock runs out; Apples put back, so the draft is v1 again
+     * while v2 (Apples 4) is being written; then the room is evicted.
+     */
+    async function undoWhileSaving() {
+      const s = await sheetSetup(SHEET);
+      const a = await connectDoc(s.id, s.ownerP.cookie);
+      const rev = await editRow(a, 1, '["Apples",4,true]', 0);
+      const stub = stubFor(s.id);
+      const snap = await stub.docSnapshot(s.id);
+      expect(snap).toMatchObject({ state: "ready", rev });
+      await expire(s.id);
+      const back = await editRow(a, 1, '["Apples",3,true]', rev);
+      return { ...s, a, stub, snap, back };
+    }
+
+    it("an undo made while it saves survives an eviction: the wake on its notify keeps Apples put back over v2", async () => {
+      const { id, a, stub, snap, back, put } = await (async () => {
+        const u = await undoWhileSaving();
+        await evictDurableObject(u.stub);
+        const put = () =>
+          call(u.id, u.owner.auth, "", {
+            method: "PUT",
+            body: { content: u.snap.text, base_version: 1 },
+          });
+        return { ...u, put };
+      })();
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: back });
+      // v2 holds Apples 4; the draft is what the page shows, Apples 3, unsaved on top of v2.
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: SHEET,
+      });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: back,
+        dirty: true,
+      });
+      expect(await liveRow(id)).toMatchObject({ base_version: 2, content: SHEET });
+      // The next save publishes the undo as v3.
+      expect(await stub.docSnapshot(id)).toMatchObject({
+        state: "ready",
+        base_version: 2,
+        text: SHEET,
+      });
+      a.ws.close(1000);
+    });
+
+    it("an undo made while it saves survives an eviction: its finish arriving first on the wake keeps Apples put back", async () => {
+      const { id, owner, a, stub, snap, back } = await undoWhileSaving();
+      await evictDurableObject(stub);
+      // v2 lands with no notify (rooms off for that request); the finish wakes the room.
+      const put = await run(
+        `${APP}/api/v1/artifacts/${id}`,
+        {
+          method: "PUT",
+          headers: { ...owner.auth, "Content-Type": "application/json" },
+          body: JSON.stringify({ content: snap.text, base_version: 1 }),
+        },
+        { ALLOW_ROOMS: "false" },
+      );
+      expect(put.status).toBe(200);
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: back,
+        dirty: true,
+      });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: SHEET,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a draft put back to its base keeps its row while the save runs, and loses it when the save gives up", async () => {
+      const { id, a, stub, snap, back } = await undoWhileSaving();
+      expect(await liveRow(id)).toEqual({ base_version: 1, content: SHEET, rev: back });
+      // Not even an eviction and a wake take it while the snapshot is pending.
+      await evictDurableObject(stub);
+      expect(await stub.docPeek(id)).toMatchObject({ base_version: 1, text: SHEET, rev: back });
+      expect(await liveRow(id)).toEqual({ base_version: 1, content: SHEET, rev: back });
+      // The save gives up (a stager refusal): the last pending snapshot is gone, and so is the row.
+      await stub.docAbort(snap.lock);
+      expect(await pending(id)).toEqual({ lock: null, saving: 0 });
+      expect(await liveRow(id)).toBeNull();
+      expect(await stub.docPeek(id)).toMatchObject({ base_version: 1, text: SHEET });
       a.ws.close(1000);
     });
 

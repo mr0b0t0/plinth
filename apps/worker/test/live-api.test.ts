@@ -442,6 +442,37 @@ describe("live API: checkpoints", () => {
       a.ws.close(1000);
     });
 
+    it("an undo made while it saves survives an eviction: the line put back stays the draft over v2", async () => {
+      const s = await docSetup(BASE);
+      const a = await connectDoc(s.id, s.ownerP.cookie);
+      await editLines(a, 2, 3, "First, edited.");
+      const stub = stubFor(s.id);
+      const snap = await stub.docSnapshot(s.id);
+      expect(snap).toMatchObject({ state: "ready", rev: 1 });
+      await expire(s.id);
+      // The line put back: the draft is v1 again while v2 is being written, then an eviction.
+      await editLines(a, 2, 3, "First.", 1);
+      await evictDurableObject(stub);
+      const put = await api(`/artifacts/${s.id}`, s.ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+      });
+      expect(put.status).toBe(200);
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      expect(await stub.docFinish(s.id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: 2,
+        dirty: true,
+      });
+      // v2 holds the edit; the draft is the undo, unsaved on top of it.
+      expect(await stub.docPeek(s.id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: BASE,
+      });
+      expect(await draft(s.id)).toMatchObject({ base_version: 2, content: BASE });
+      a.ws.close(1000);
+    });
+
     it("after the next save took the lock and gave up, its own version is still recognized", async () => {
       const { id, ownerP, a, stub, snap } = await slowSave();
       const next = await stub.docSnapshot(id);

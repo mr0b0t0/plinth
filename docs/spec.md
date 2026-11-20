@@ -600,7 +600,9 @@ forge edits that the editor's session would then save.
 - **Drafts are not versions.** The draft is one `live_drafts` row per doc, written by the room at
   most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a save).
   It never moves backwards, never comes back after a delete or takedown, and an owner keeps at most
-  20. A draft back at its base is deleted.
+  20. A draft back at its base is deleted, once no save of an earlier draft is still running
+  (until then its row stays, so a room woken meanwhile reloads that base rather than the save's
+  version).
 - **Checkpoints.** Save (Cmd/Ctrl+S), Done, or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet
   (from the client that made the last edit, while it is editing; no sooner than
   `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an autosave asked

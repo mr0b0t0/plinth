@@ -15,7 +15,9 @@
 // epoch and the checkpoint snapshots still being saved (their hash, rev, base, lock and whether
 // they save a resolution). An idle room is evicted while a slow save runs (its sockets hibernate),
 // and the record lets the next wake still know that save's version as its own and finish onto
-// the same lines, instead of freezing the draft against it.
+// the same lines, instead of freezing the draft against it. While any snapshot is pending, the
+// D1 row stays even when the draft is back at its base, so the wake reloads that base and those
+// lines rather than taking the save's version as the draft.
 //
 // The room never creates a version. Checkpoints run on the app host (services/live.ts) through the
 // stager, with this draft's base_version; when a version is published from outside, the draft is
@@ -289,8 +291,8 @@ export class LiveDoc {
     if (this.kept?.artifactId === artifactId) {
       // The lines are the ones last flushed under this epoch (every replacement writes a new one).
       doc.epoch = this.kept.epoch;
-      // A rev never comes back below a pending snapshot's (the draft row is deleted once back at
-      // its base, which reloads at rev 0): a snapshot's rev is matched only by its own lines.
+      // A rev never comes back below a pending snapshot's (a draft with no row, never durable at
+      // the owner's limit, reloads at rev 0): a snapshot's rev is matched only by its own lines.
       const floor = Math.max(0, ...this.saving.map((r) => r.rev));
       if (doc.rev < floor) {
         doc.rev = floor + 1;
@@ -663,8 +665,12 @@ export class LiveDoc {
     const DB = this.host.env.DB;
     const rev = doc.rev;
     const text = this.text(doc);
-    if (text === doc.baseText && doc.conflictVersion === null) {
-      // Equal to its base: there is no draft.
+    const atBase = text === doc.baseText && doc.conflictVersion === null;
+    // Equal to its base: there is no draft, and a reload takes "no row" as the current version.
+    // Not while a snapshot is still being saved: its version would load as the base and the
+    // finish drop the snapshot as already in it, losing an undo made during the save. The row is
+    // kept (at its base) until the last pending snapshot is done with (settle).
+    if (atBase && !this.saving.length) {
       await DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1 AND rev <= ?2")
         .bind(doc.artifactId, Math.max(rev, 1))
         .run();
@@ -716,7 +722,7 @@ export class LiveDoc {
         }
         if (why.rev === null) {
           // The owner's drafts are at the limit: edits stay live here but are not durable.
-          for (const { ws } of this.host.sockets()) this.error(ws, "draft_limit");
+          if (!atBase) for (const { ws } of this.host.sockets()) this.error(ws, "draft_limit");
           return;
         }
         // A newer rev is already stored: nothing to do.
@@ -766,6 +772,17 @@ export class LiveDoc {
     if (!rec || !this.saving.includes(rec)) return;
     this.saving = this.saving.filter((r) => r !== rec);
     this.persist();
+    this.settle();
+  }
+
+  /**
+   * The last pending snapshot is done with: a draft kept at its base for it (write) has no row
+   * any more. The flush deletes it (a no-op when there was none).
+   */
+  private settle(): void {
+    const doc = this.loaded;
+    if (this.saving.length || !doc || doc.conflictVersion !== null) return;
+    if (this.text(doc) === doc.baseText) this.scheduleFlush();
   }
 
   /**
@@ -780,6 +797,7 @@ export class LiveDoc {
     if (live.length === this.saving.length) return;
     this.saving = live;
     this.persist(doc);
+    this.settle();
   }
 
   private async outside(doc: Loaded, n: number, hash: string | null): Promise<void> {
@@ -1051,7 +1069,10 @@ export class LiveDoc {
   async abortCheckpoint(lockId: string): Promise<void> {
     await this.restore();
     if (this.lock?.id === lockId) this.lock = null;
-    this.dropSaving(this.saving.find((r) => r.id === lockId) ?? null);
+    const rec = this.saving.find((r) => r.id === lockId) ?? null;
+    this.dropSaving(rec);
+    // The last one gone: a draft kept at its base for it loses its row now (settle).
+    if (rec && !this.saving.length && this.needsFlush) await this.flushNow();
     if (this.loaded) await this.releaseIfIdle(this.loaded);
   }
 
