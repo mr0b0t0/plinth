@@ -1,6 +1,8 @@
 // The checked-in migrations (migrations/*.sql, as the test pool reads them): numbers are unique,
-// and no migration uses a table that only a higher-numbered migration creates, so they apply in
-// number order on every instance. Gaps in the numbers are fine (0003 was never used).
+// and no migration uses a table that only a higher-numbered migration creates. Wrangler applies
+// the files an instance has not run yet, sorted by file name; with four-digit numbers that is
+// number order. An instance that already ran a higher number still runs a lower one that merged
+// after it, later, out of number order. Gaps in the numbers are fine (0003 was never used).
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
@@ -25,7 +27,7 @@ function numbered() {
 }
 
 describe("migrations", () => {
-  it("are named NNNN_name.sql with unique numbers, applied in number order", () => {
+  it("are named NNNN_name.sql with unique numbers, so name order is number order", () => {
     const all = numbered();
     expect(all.length).toBeGreaterThan(5);
     for (const m of all) expect(Number.isInteger(m.n), m.name).toBe(true);

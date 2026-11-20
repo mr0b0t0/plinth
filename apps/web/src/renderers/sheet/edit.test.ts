@@ -11,6 +11,7 @@ import {
 } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
+import { notKept } from "./edit.ts";
 import { cellFromInput, inputText, numberLocale, parseLocaleNumber, parseTsv } from "./input.ts";
 
 const APP = "https://plinth.example.com";
@@ -129,6 +130,18 @@ afterEach(() => {
   FakeSocket.all = [];
   document.body.innerHTML = "";
   vi.useRealTimers();
+});
+
+describe("dropped text in a notice", () => {
+  it("is quoted whole when short, and cut to 40 characters with an ellipsis when long", () => {
+    expect(notKept("12", "B3")).toBe('Not kept in B3: "12"');
+    expect(notKept("  two\n lines ")).toBe('Not kept: "two lines"');
+    // At a space when one is near the cut, else mid-word.
+    expect(notKept("Conference travel, Lisbon and Porto, incl. the two train passes", "A4")).toBe(
+      'Not kept in A4: "Conference travel, Lisbon and Porto…"',
+    );
+    expect(notKept("x".repeat(100))).toBe(`Not kept: "${"x".repeat(39)}…"`);
+  });
 });
 
 describe("typed values", () => {
@@ -287,17 +300,49 @@ describe("solo editing", () => {
   it("inserts and deletes rows and columns, moving formulas", async () => {
     const f = start();
     cell("A3").focus();
-    button("Row above").click();
+    button("Insert above").click();
     expect(document.documentElement.getAttribute("data-rows")).toBe("4");
     expect((await collected(f)).split("\n")[4]).toBe('["Total","=SUM(B2:B4)","=B2*C2+B4*C4"]');
     cell("B2").focus();
-    button("Column left").click();
+    button("Insert left").click();
     expect(text("B1")).toBe("Column 6");
     button("Delete column").click();
     expect(text("B1")).toBe("Qty");
     cell("A3").focus();
     button("Delete row").click();
     expect((await collected(f)).split("\n")).toEqual(LINES);
+  });
+
+  it("offers rows and columns in two menus, by keyboard too", () => {
+    start();
+    const strip = document.querySelector(".plinth-sheet__strip") as HTMLElement;
+    // In the bar beside the filter, not a toolbar of their own.
+    expect(strip.closest(".plinth-sheet__bar")).not.toBeNull();
+    const menus = [...strip.querySelectorAll<HTMLButtonElement>("[aria-haspopup=menu]")];
+    expect(menus.map((b) => b.textContent)).toEqual(["Row", "Column"]);
+    expect(strip.textContent).not.toContain("Double-click");
+    const [row] = menus as [HTMLButtonElement];
+    const list = document.getElementById(row.getAttribute("aria-controls") ?? "") as HTMLElement;
+    expect(list.hidden).toBe(true);
+    // On the header row, a row cannot go above it or be deleted.
+    cell("A1").focus();
+    key(row, "ArrowDown");
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(list.hidden).toBe(false);
+    expect(document.activeElement?.textContent).toBe("Insert below");
+    key(document.activeElement as Element, "ArrowDown");
+    expect(document.activeElement?.textContent).toBe("Insert below");
+    key(document.activeElement as Element, "Escape");
+    expect(list.hidden).toBe(true);
+    expect(document.activeElement).toBe(row);
+    cell("A3").focus();
+    row.click();
+    expect(document.activeElement?.textContent).toBe("Insert above");
+    key(document.activeElement as Element, "End");
+    expect(document.activeElement?.textContent).toBe("Delete row");
+    (document.activeElement as HTMLButtonElement).click();
+    expect(list.hidden).toBe(true);
+    expect(document.documentElement.getAttribute("data-rows")).toBe("2");
   });
 
   it("renames by typing in the header, and refuses a type the cells do not fit", async () => {
@@ -310,7 +355,7 @@ describe("solo editing", () => {
     key(input, "Enter");
     expect(text("A1")).toBe("Fruit");
     cell("B2").focus();
-    button("Column settings").click();
+    button("Column settings…").click();
     const form = document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
     const typeSelect = form.querySelectorAll("select")[0] as HTMLSelectElement;
     typeSelect.value = "checkbox";
@@ -320,6 +365,37 @@ describe("solo editing", () => {
     expect(notice()).toContain("Some cells do not fit");
     expect((await collected(f)).split("\n")[0]).toContain('"Fruit"');
     expect((await collected(f)).split("\n")[0]).toContain('{"name":"Qty","type":"number"}');
+  });
+
+  it("opens column settings as a popover that Escape closes", () => {
+    start();
+    cell("B2").focus();
+    button("Column settings…").click();
+    const form = document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
+    // Over the grid, not a strip above it; Cancel before the primary Apply.
+    expect(form.closest(".plinth-sheet__slot")).toBeNull();
+    expect(form.getAttribute("aria-label")).toBe("Column B settings");
+    const actions = [...form.querySelectorAll("button")].map((b) => b.textContent);
+    expect(actions).toEqual(["Cancel", "Apply"]);
+    // The selects show words, and keep the stored values.
+    const [types, formats] = [...form.querySelectorAll("select")];
+    expect([...(types?.options ?? [])].map((o) => [o.value, o.text])).toEqual([
+      ["text", "Text"],
+      ["number", "Number"],
+      ["date", "Date"],
+      ["checkbox", "Checkbox"],
+      ["select", "Select"],
+      ["url", "URL"],
+    ]);
+    expect([...(formats?.options ?? [])].map((o) => o.text)).toEqual([
+      "Automatic",
+      "Plain",
+      "Percent",
+      "Currency",
+    ]);
+    key(form.querySelector("input") as HTMLInputElement, "Escape");
+    expect(document.querySelector(".plinth-sheet__panel")).toBeNull();
+    expect(document.activeElement).toBe(cell("B2"));
   });
 });
 
@@ -385,8 +461,16 @@ describe("room editing", () => {
     const { ws } = start();
     ws.frame({ t: "leased", lease: "l9", start: 1, end: 2, holder: "s2", by: "bo@example.org" });
     await tick();
-    const tag = cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder");
-    expect(tag?.textContent).toBe("bo@example.org is editing");
+    // The row is tinted, with no badge; its number names the holder for a pointer and a screen
+    // reader.
+    const held = cell("A2").closest("tr");
+    expect(held?.classList.contains("plinth-sheet__row--held")).toBe(true);
+    const num = held?.querySelector("th.plinth-sheet__rownum");
+    expect(num?.getAttribute("title")).toBe("Bo is editing");
+    expect(num?.querySelector(".plinth-sheet__holder.plinth-sheet__sr")?.textContent).toBe(
+      "Bo is editing",
+    );
+    expect(num?.textContent).toBe("2Bo is editing");
     // Their typing arrives.
     ws.frame({
       t: "op",
@@ -402,9 +486,21 @@ describe("room editing", () => {
     await tick();
     expect(text("A2")).toBe("Apricots");
     const before = ws.sent.length;
+    // The double-click's second press selects no words in the held cell.
+    const press = (el: Element, detail: number) => {
+      const e = new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail });
+      el.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(press(cell("A2"), 1)).toBe(false);
+    expect(press(cell("A2"), 2)).toBe(true);
     dbl(cell("A2"));
     expect(ws.sent.length).toBe(before);
-    expect(notice()).toContain("bo@example.org is editing this row.");
+    // The tint already shows it: no notice on screen, a screen reader is told.
+    expect(notice()).toBe("");
+    expect(document.querySelector(".plinth-sheet__sr[role=status]")?.textContent).toBe(
+      "Bo is editing this row.",
+    );
     cell("A3").focus();
     button("Delete row").click();
     expect(ws.sent.length).toBe(before);
@@ -412,13 +508,81 @@ describe("room editing", () => {
     ws.frame({ t: "released", lease: "l9" });
     await tick();
     expect(cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder")).toBeNull();
-    button("Row below").click();
+    expect(cell("A2").closest("tr")?.querySelector("th")?.hasAttribute("title")).toBe(false);
+    button("Insert below").click();
     const op = { op: "insert_rows", before: 4, count: 1 };
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 4, op });
     ws.frame({ t: "struct", gen: "g1", rev: 5, op, by: "s1" });
     await tick();
     expect(document.documentElement.getAttribute("data-rows")).toBe("4");
     expect(text("A5")).toBe("Total");
+  });
+
+  it("a freeze that closes the cell quotes what the room did not get, and only that", async () => {
+    const { ws } = start();
+    dbl(cell("B3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    // Typed within the last moments before the freeze: not sent yet.
+    type(field() as HTMLInputElement, "6");
+    ws.frame({ t: "conflict", version: 4 });
+    ws.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    await tick();
+    expect(field()).toBeNull();
+    expect(notice()).toContain('Paused. Not kept in B3: "6"');
+  });
+
+  it("the notice quotes a long unsent text on one line, cut to 40 characters", async () => {
+    const { ws } = start();
+    dbl(cell("A3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    const long = "Pears from the market on Saturday, the big green ones, two boxes";
+    type(field() as HTMLInputElement, long);
+    // Inside the open field a double-click still selects a word.
+    const twice = new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 2 });
+    field()?.dispatchEvent(twice);
+    expect(twice.defaultPrevented).toBe(false);
+    ws.frame({ t: "conflict", version: 4 });
+    ws.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    await tick();
+    const shown = document.querySelector(".plinth-sheet__notice > span") as HTMLElement;
+    expect(shown.textContent).toBe(
+      'Paused. Not kept in A3: "Pears from the market on Saturday, the…"',
+    );
+    // The whole text stays on the notice for a pointer, so it can be typed again.
+    expect(shown.title).toBe(long);
+  });
+
+  it("typing the room already applied is not quoted when the cell is closed", async () => {
+    const next = start();
+    dbl(cell("B3"));
+    next.ws.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "7");
+    next.ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l2",
+      start: 2,
+      del: 1,
+      ins: '["Pears",7,0.5,false]',
+      by: "s1",
+      seq: 1,
+    });
+    next.ws.frame({ t: "lease_lost", lease: "l2", reason: "takeover" });
+    await tick();
+    expect(field()).toBeNull();
+    expect(notice()).toContain("Someone else took over this row.");
+    expect(notice()).not.toContain("not kept");
+  });
+
+  it("hides the Row and Column menus while the draft waits for a review", async () => {
+    const { ws } = start();
+    const strip = document.querySelector(".plinth-sheet__strip") as HTMLElement;
+    expect(strip.hidden).toBe(false);
+    ws.frame({ t: "conflict", version: 4 });
+    await tick();
+    await tick();
+    expect(strip.hidden).toBe(true);
   });
 
   it("aims a struct refused as stale at the row chosen, or drops it when that row is gone", async () => {
@@ -464,7 +628,7 @@ describe("room editing", () => {
     });
     await tick();
     cell("A3").focus();
-    button("Row below").click();
+    button("Insert below").click();
     expect(ws.sent.at(-1)).toEqual({
       t: "struct",
       rev: 6,
@@ -599,6 +763,6 @@ describe("room editing", () => {
     button("Delete column").click();
     expect(ws.sent.at(-1)).toMatchObject({ t: "struct", op: { op: "delete_columns" } });
     ws.frame({ t: "struct_denied", reason: "held", by: "bo@example.org" });
-    expect(notice()).toContain("bo@example.org is editing");
+    expect(notice()).toContain("Bo is editing. Rows and columns change once they finish.");
   });
 });

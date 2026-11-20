@@ -14,20 +14,18 @@ import {
   contentNote,
   PLUGIN_NOTE,
   SENSITIVE_INSTRUCTION,
-  SOURCES_INSTRUCTION,
   TYPES_NOTE,
-  UNTRUSTED_NOTE,
+  UNTRUSTED_FILES_NOTE,
 } from "./notes.ts";
 import { PREVIEW_TOOL_META, previewSupported } from "./preview.ts";
 import { registerArtifactTools } from "./tools/artifacts.ts";
 import { registerCommentTools } from "./tools/comments.ts";
 import type { ToolRegistrar } from "./tools/context.ts";
 import { registerDataTools } from "./tools/data.ts";
-import { registerDataSourceTools } from "./tools/dataSources.ts";
 import { registerDesignSystemTools } from "./tools/designSystems.ts";
-import { registerFileTools } from "./tools/files.ts";
 import { registerPreviewTools } from "./tools/preview.ts";
 import { registerSheetTools } from "./tools/sheets.ts";
+import { registerStatsTools } from "./tools/stats.ts";
 import { registerUploadTools } from "./tools/uploads.ts";
 
 export * from "./catalog.ts";
@@ -41,12 +39,11 @@ export const MCP_TOOL_FILES: readonly ToolRegistrar[] = [
   registerArtifactTools,
   registerCommentTools,
   registerUploadTools,
+  registerStatsTools,
   registerDataTools,
   registerPreviewTools,
   registerDesignSystemTools,
   registerSheetTools,
-  registerFileTools,
-  registerDataSourceTools,
 ];
 
 export function buildMcpServer(ctx: Ctx): McpServer {
@@ -70,13 +67,12 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "copy, and the link stays the same. Change who can view it with set_visibility only when the " +
         "user asks. A page can keep shared data (polls, sign-up sheets, trackers among invited people): " +
         "read it with list_artifact_data and change it with write_artifact_data. " +
-        `${SOURCES_INSTRUCTION} ` +
         "For a build folder or more than ~1 MB, call start_upload instead of inline assets. " +
         "Results list warnings; fix them before handing over the link (not_scanned and live_draft need no action). " +
         `${SENSITIVE_INSTRUCTION} ` +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
-        "them with resolve_comment; requests addressed to you (from comments or from pages) arrive " +
-        `through list_mentions and claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
+        "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
+        `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_FILES_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
     },
   );
 

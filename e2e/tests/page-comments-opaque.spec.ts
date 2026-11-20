@@ -58,7 +58,7 @@ test("comments from the page work with an opaque-origin frame", async ({ page })
     .locator("canvas")
     .click({ position: { x: 150, y: 90 } });
   const panel = page.getByRole("region", { name: "Comments" });
-  await expect(panel.locator(".cm-anchor-chip")).toContainText("Placed by the page:");
+  await expect(panel.locator(".cm-anchor-chip")).toContainText("Pinned to Point");
   await panel.getByRole("textbox", { name: "New comment" }).fill("An opaque dot");
   await panel.getByRole("button", { name: "Comment", exact: true }).click();
   await expect(board(page).locator("#status")).toHaveText("Comment posted.");
@@ -71,5 +71,8 @@ test("comments from the page work with an opaque-origin frame", async ({ page })
   const pin = page.locator('[data-testid="comment-pins"] button');
   await expect(pin).toHaveCount(1);
   await pin.click();
-  await expect(board(page).locator("#focused")).toHaveText(threadId ?? "");
+  // The page heard which thread: its marker for that thread is the focused one.
+  await expect(
+    board(page).locator(`.marker[data-thread-id="${threadId}"][data-focused]`),
+  ).toHaveCount(1);
 });

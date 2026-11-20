@@ -66,16 +66,9 @@ async function epochOf(id: string): Promise<number> {
   return row?.accessEpoch ?? 0;
 }
 
-/** A content cookie of another kind, signed as Plinth signs one. */
+/** A content cookie of another kind for version 1, signed as Plinth signs one. */
 async function passCookie(id: string, kind: "preview" | "capture"): Promise<string> {
-  const value = await signContentCookie(
-    config(),
-    id,
-    await epochOf(id),
-    undefined,
-    kind,
-    kind === "preview" ? 1 : undefined,
-  );
+  const value = await signContentCookie(config(), id, await epochOf(id), undefined, kind, 1);
   return `${contentCookieName(config(), new URL(contentOrigin(id)))}=${value}`;
 }
 
@@ -261,7 +254,7 @@ describe("slides socket: the room's header", () => {
     expect(parseConnect(JSON.stringify(good))).toEqual(good);
     expect(parseConnect(JSON.stringify({ ...good, slides: "present" }))).not.toBeNull();
     // Every registry type is a type, not only html and doc.
-    for (const type of ["html", "doc", "design", "design_system", "sheet"])
+    for (const type of ["html", "doc", "design", "design_system"])
       expect(parseConnect(JSON.stringify({ ...good, type })), type).not.toBeNull();
   });
 

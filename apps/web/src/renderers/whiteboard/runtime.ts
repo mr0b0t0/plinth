@@ -72,6 +72,30 @@ export interface PlinthRuntime {
   room: RuntimeRoom;
 }
 
+/** The page's shared-data API on its own origin, as the runtime calls it. */
+const SESSION_PATH = "/__plinth/api/v1/session";
+
+/**
+ * The session's can_write as the server says it now, or null when it could not be read. The
+ * runtime reads the session once, at load; a board reads it again when its room reconnects after
+ * a settings version, with the same request the runtime makes (same origin, the x-plinth-data
+ * header, no body), so it passes every check the data API makes.
+ */
+export async function readSessionCanWrite(win: Window): Promise<boolean | null> {
+  try {
+    const res = await win.fetch(SESSION_PATH, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "x-plinth-data": "1" },
+    });
+    if (!res.ok) return null;
+    const s = (await res.json()) as { available?: unknown; can_write?: unknown } | null;
+    return s?.available === true ? s.can_write === true : null;
+  } catch {
+    return null;
+  }
+}
+
 /** window.plinth when it is the runtime's object, read once at boot; null otherwise. */
 export function runtimeOf(win: Window): PlinthRuntime | null {
   const p = (win as unknown as { plinth?: unknown }).plinth;

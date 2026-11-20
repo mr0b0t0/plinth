@@ -31,7 +31,7 @@ export const ARTIFACT_TYPES = [
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /** The languages the source editor holds. The web app has a Monaco setup for each one. */
-export type EditorLanguage = "html" | "markdown" | "json" | "plaintext";
+export type EditorLanguage = "html" | "markdown" | "json";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -59,7 +59,11 @@ export interface ArtifactTypeDef {
    * content pass, never from the web build.
    */
   renderer: RendererFiles | null;
-  editor: { language: EditorLanguage; wordWrap: "on" | "off" };
+  /**
+   * The source editor's settings, or null for a type people never see the source of (a sheet or a design):
+   * the app then offers no Edit and no source diff, and agents change it.
+   */
+  editor: { language: EditorLanguage; wordWrap: "on" | "off" } | null;
   /**
    * How people change it in the app. "live": owners and editors edit it on its rendered page, live
    * with each other (#36; isLiveType). Only types whose page is Plinth's own renderer: page scripts
@@ -103,6 +107,12 @@ export interface ArtifactTypeDef {
   assets?: false;
   /** False: no bundle upload (start_upload); the source goes inline. Absent means allowed. */
   upload?: false;
+  /**
+   * "settings": a version holds only the artifact's settings, not what people see on it (a
+   * whiteboard, whose board is shared data), so the history offers "Restore settings" and says a
+   * restore leaves the rest as it is. Absent: a version holds the whole artifact.
+   */
+  versions?: "settings";
 }
 
 /**
@@ -126,13 +136,12 @@ export function hasPageCapabilities(def: ArtifactTypeDef | null): boolean {
 /** A file a renderer builds in the frame for the viewer to download. */
 export type FileExport = "pptx";
 
-/**
- * A renderer's files: one script and one style, plus scripts it loads only when needed and, for a
- * type with opaqueFrames, the fixed page it frames.
- */
+/** A renderer's files: one script and one style, plus scripts it loads only when needed. */
 export interface RendererFiles {
   script: string;
   style: string;
+  /** A fixed Plinth page the renderer frames (see ArtifactTypeDef.renderer). */
+  frame?: string;
   /**
    * Scripts the renderer adds to its own page only when someone uses a feature that needs them
    * (a deck's .pptx writer), so the first view never downloads them. Each is built from `entry`
@@ -140,8 +149,6 @@ export interface RendererFiles {
    * served at /__plinth/types/<id>/<file> under the same guard as the script.
    */
   lazy?: readonly { file: string; entry: string }[];
-  /** A fixed Plinth page the renderer frames, at /__plinth/frames/<id>/ (opaqueFrames only). */
-  frame?: string;
   /**
    * The shell loads the page runtime (/__plinth/runtime.js) right before the renderer: a type whose
    * page uses shared data and the live room (pageData "fixed").
@@ -237,19 +244,18 @@ export interface TypedPayload {
    */
   view?: "overview";
   /**
+   * The version number this shell shows, set only for a type with opaque frames (a design): its
+   * boards load their files from /__plinth/v/<version>/, never from the current version, which a
+   * later publish replaces. Absent otherwise, so every other shell is unchanged.
+   */
+  version?: number;
+  /**
    * Set only for a type with `follow`, for an identified viewer on the current version while rooms
    * and following are active: the renderer opens the `slides` socket, as a presenter (`present`,
    * owners and editors) or to follow one (`watch`). Absent otherwise, so every other shell is
    * unchanged.
    */
   follow?: "present" | "watch";
-  /**
-   * Set only by the app's editor preview (previewDocument): the renderer then makes no
-   * shared-data or room call and shows only the draft. The Worker never sets it, so a served shell
-   * has today's bytes. It only narrows what Plinth's own renderer does: no server decision reads
-   * it, so a forged flag grants nothing.
-   */
-  preview?: true;
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -293,8 +299,8 @@ export function typedShellHtml(
     appOrigin: string;
     live?: "room";
     view?: "overview";
+    version?: number;
     follow?: "present" | "watch";
-    preview?: true;
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
@@ -307,8 +313,8 @@ export function typedShellHtml(
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
+    ...(o.version !== undefined ? { version: o.version } : {}),
     ...(o.follow ? { follow: o.follow } : {}),
-    ...(o.preview ? { preview: true as const } : {}),
   };
   // The page runtime, right before the renderer, for a type whose page uses it (renderer.runtime).
   const runtime = def.renderer.runtime

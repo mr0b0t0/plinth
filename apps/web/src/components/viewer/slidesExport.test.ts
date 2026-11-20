@@ -1,7 +1,7 @@
 // The app's side of a deck's .pptx download: the export request carries only the app's own nonce,
 // the frame's answer is accepted only from the deck's frame (exact origin, or "null" plus its
 // window under opaque isolation) with the nonce the app is waiting for and well-formed fields, and
-// each outcome has its toast. Nothing happens for an artifact that is not a deck.
+// each outcome but a clean one has its toast. Nothing happens for an artifact that is not a deck.
 import type { ViewGate } from "@plinth/shared";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -111,18 +111,16 @@ describe("the export messages", () => {
     }
   });
 
-  it("has a toast for each outcome", () => {
-    expect(exportedToast({ ok: true, images_skipped: 0, opaque: false })).toEqual({
-      title: "Downloaded the .pptx",
-      tone: "success",
-    });
-    expect(exportedToast({ ok: true, images_skipped: 3, opaque: true }).description).toBe(
-      "Images were left out: this Plinth instance serves decks with opaque origins.",
+  it("has a toast for each outcome but a clean one", () => {
+    // A clean export shows nothing: the browser shows its own download.
+    expect(exportedToast({ ok: true, images_skipped: 0, opaque: false })).toBeNull();
+    expect(exportedToast({ ok: true, images_skipped: 3, opaque: true })?.description).toBe(
+      "Images were left out.",
     );
-    expect(exportedToast({ ok: true, images_skipped: 1, opaque: false }).description).toBe(
+    expect(exportedToast({ ok: true, images_skipped: 1, opaque: false })?.description).toBe(
       "1 image could not be added.",
     );
-    expect(exportedToast({ ok: true, images_skipped: 2, opaque: false }).description).toBe(
+    expect(exportedToast({ ok: true, images_skipped: 2, opaque: false })?.description).toBe(
       "2 images could not be added.",
     );
     expect(exportedToast({ ok: false, images_skipped: 0, opaque: false })).toMatchObject({
@@ -182,6 +180,17 @@ describe("usePresentation exportPptx", () => {
     expect(toast).toHaveBeenCalledTimes(1);
   });
 
+  it("ends a clean export without a toast", () => {
+    const toast = vi.spyOn(ui, "showToast");
+    const f = fakeFrame();
+    const { result } = hook(f);
+    act(() => result.current.exportPptx());
+    const [message] = f.contentWindow.postMessage.mock.calls.at(-1) ?? [];
+    fromFrame(f.contentWindow, exported({ nonce: (message as { nonce: string }).nonce }));
+    expect(result.current.exporting).toBe(false);
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it("posts to * under opaque isolation", () => {
     const f = fakeFrame();
     const { result } = hook(f, "slides", { ...CONFIG, content_isolation: "opaque" });
@@ -228,6 +237,12 @@ describe("usePresentation exportPptx", () => {
     rerender({ f: second });
     expect(result.current.exporting).toBe(false);
     expect(toast).toHaveBeenCalledExactlyOnceWith(EXPORT_INTERRUPTED_TOAST);
+    // The app cannot tell whether the old frame saved the file, so the toast says what to do.
+    expect(EXPORT_INTERRUPTED_TOAST).toEqual({
+      title: "The .pptx download was interrupted",
+      description: "If no file was saved, download it again.",
+      tone: "warning",
+    });
     // The old timeout does not fire a second toast, and the menu item works again.
     act(() => {
       vi.advanceTimersByTime(EXPORT_TIMEOUT_MS);

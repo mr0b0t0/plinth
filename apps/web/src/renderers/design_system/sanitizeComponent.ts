@@ -8,6 +8,8 @@
 // unknown elements are unwrapped (their children stay). The result is the serialization of the
 // walked DOM, so the frame parses exactly what this pass kept.
 
+import { cssUrlArgs, isPlainRelativeUrl } from "@plinth/shared";
+
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -123,7 +125,16 @@ const SVG_TAGS = new Set([
   "desc",
 ]);
 
-/** Removed with everything inside them. Any other unknown element is unwrapped. */
+/**
+ * SVG elements kept as text only. Their content is parsed as HTML (they are HTML integration
+ * points), so after the walk their children are replaced by their text.
+ */
+const SVG_TEXT_ONLY = new Set(["title", "desc"]);
+
+/**
+ * Removed with everything inside them. Any other unknown element is unwrapped. `title` here is the
+ * HTML element; SVG's `title` is kept as text (SVG_TEXT_ONLY).
+ */
 const DROP = new Set([
   "script",
   "style",
@@ -275,7 +286,6 @@ const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 const INVISIBLE_RE = /[\s​-‏⁠﻿]/g;
 const DATA_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp|avif);base64,[a-z0-9+/=]*$/i;
 /** CSS functions that can load a URL: url() is checked, the others are never kept. */
-const STYLE_URL_RE = /url\(\s*([^)]*)\)/gi;
 const STYLE_BAD_RE = /\\|image-set\(|image\(|cross-fade\(|element\(|expression\(|@import|src\(/i;
 const FRAGMENT_URL_RE = /^url\(#[A-Za-z][\w-]*\)$/;
 
@@ -298,13 +308,26 @@ function safeSrcset(value: string): boolean {
   return candidates.length > 0 && candidates.every((u) => u !== "" && isSafePreviewSrc(u));
 }
 
+/**
+ * Whether a style attribute may stay: no escapes or URL-taking functions other than url(), and
+ * every url() read as the browser reads it (cssUrlArgs) and holding a plain relative path to the
+ * artifact's own files or an inline raster image. A url() that cannot be read plainly drops it.
+ */
 function safeStyle(value: string): boolean {
   if (STYLE_BAD_RE.test(value)) return false;
-  for (const m of value.matchAll(STYLE_URL_RE)) {
-    const raw = (m[1] ?? "").trim().replace(/^(["'])(.*)\1$/, "$2");
-    if (!isSafePreviewSrc(raw)) return false;
-  }
-  return true;
+  const urls = cssUrlArgs(value);
+  if (urls === null) return false;
+  return urls.every((u) => (isPlainRelativeUrl(u) || DATA_IMAGE_RE.test(u)) && isSafePreviewSrc(u));
+}
+
+/**
+ * Whether an SVG attribute's value may stay. Presentation attributes (fill, mask, clip-path...) are
+ * CSS values, so the same escapes and URL-taking functions are refused as in style, and a url()
+ * may only name a fragment of this document: url(#grad).
+ */
+function safePresentation(value: string): boolean {
+  if (STYLE_BAD_RE.test(value)) return false;
+  return !/url\(/i.test(value) || FRAGMENT_URL_RE.test(value.trim());
 }
 
 /** Whether attribute `name` with `value` may stay on `el`. href and src are rewritten by the caller. */
@@ -318,9 +341,7 @@ function allowed(el: Element, name: string, value: string): boolean {
   if (name === "srcset") return safeSrcset(value);
   if (name === "open") return el.localName === "details";
   const svg = el.namespaceURI === SVG_NS;
-  if (svg && SVG_ATTRS.has(name)) {
-    return !value.toLowerCase().includes("url(") || FRAGMENT_URL_RE.test(value.trim());
-  }
+  if (svg && SVG_ATTRS.has(name)) return safePresentation(value);
   return GLOBAL_ATTRS.has(name);
 }
 
@@ -356,7 +377,11 @@ function cleanChildren(parent: ParentNode): void {
     }
     const el = node as Element;
     const tag = el.localName.toLowerCase();
-    if (DROP.has(tag) || (el.namespaceURI !== HTML_NS && el.namespaceURI !== SVG_NS)) {
+    const svgText = el.namespaceURI === SVG_NS && SVG_TEXT_ONLY.has(tag);
+    if (
+      (DROP.has(tag) && !svgText) ||
+      (el.namespaceURI !== HTML_NS && el.namespaceURI !== SVG_NS)
+    ) {
       el.remove();
       continue;
     }
@@ -369,6 +394,11 @@ function cleanChildren(parent: ParentNode): void {
     cleanAttributes(el);
     if (tag === "dialog") el.removeAttribute("open");
     cleanChildren(el);
+    // Text only: whatever markup survived the walk inside it becomes its text.
+    if (svgText) {
+      const text = el.textContent ?? "";
+      el.textContent = text;
+    }
   }
 }
 

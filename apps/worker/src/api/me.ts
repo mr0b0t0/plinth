@@ -1,11 +1,13 @@
 import {
+  API,
   type AppConfig,
   ARTIFACT_TYPES,
   type BoundMe,
+  type InvitationEmailSettings,
+  invitationEmailsInput,
   type Me,
   type MeConnection,
   normalizeDisplayName,
-  PAGE_REQUEST_LIMITS,
   pageDataOf,
   REPO_URL,
   TTL,
@@ -15,18 +17,16 @@ import {
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import {
-  designExportActive,
-  dictationActive,
-  filesActive,
   instanceLimits,
+  invitationEmailsActive,
   liveEditMode,
-  pageRequestsActive,
   sharedDataActive,
 } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
-import { boundArtifactOf } from "../policy.ts";
+import { boundArtifactOf, mayManageInvitationEmails } from "../policy.ts";
 import { decideFor, findArtifact } from "../services/artifacts.ts";
+import { receivesInvitations, setReceivesInvitations } from "../services/invitations.ts";
 import { artifactLimitFor, getUserById } from "../services/users.ts";
 import {
   type AppContext,
@@ -56,26 +56,17 @@ meApi.get("/config", (c) => {
     limits: instanceLimits(config),
     cdn_allowlist: [...config.cdnAllowlist],
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
-    dictation: dictationActive(config),
+    review_login: config.reviewLogin !== null,
+    view_log_retention_days: config.viewLogRetentionDays,
     category_sharing: config.allowCategorySharing,
-    live_views: config.allowLiveViews,
-    files: filesActive(config),
     // A type with fixed page capabilities (a whiteboard) keeps its board in shared data.
     artifact_types: ARTIFACT_TYPES.map((id) => ({
       id,
       available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
     })),
-    design_export: designExportActive(config, c.env),
     inline_editing: liveEditMode(config, c.env),
-    page_requests: {
-      enabled: pageRequestsActive(config),
-      per_viewer_per_hour: config.pageRequests.perViewerPerHour,
-      per_artifact_per_hour: config.pageRequests.perArtifactPerHour,
-      max_open_per_artifact: config.pageRequests.maxOpenPerArtifact,
-      max_open_per_requester: PAGE_REQUEST_LIMITS.maxOpenPerRequester,
-      max_body_chars: PAGE_REQUEST_LIMITS.maxBodyChars,
-      max_data_bytes: PAGE_REQUEST_LIMITS.maxDataBytes,
-    },
+    invitation_emails: invitationEmailsActive(config),
+    live_views: config.allowLiveViews,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);
@@ -90,7 +81,9 @@ meApi.patch("/me", async (c) => {
   const p = c.get("principal");
   if (p.kind === "agent") throw new ApiError("forbidden", "Agents cannot change the profile");
   if (p.kind !== "user") throw unauthorized();
-  const { name } = await parseBody(c, updateProfileInput);
+  const { name } = await parseBody(c, updateProfileInput).catch((e: unknown) => {
+    throw withIssueMessage(e);
+  });
   await c
     .get("db")
     .update(users)
@@ -101,6 +94,19 @@ meApi.patch("/me", async (c) => {
 });
 
 meApi.get("/me", (c) => meResponse(c));
+
+/**
+ * A refused name says why (displayName.ts displayNameProblem: one sentence, the same the app shows
+ * before it sends), instead of the generic "Invalid input". Any other error passes through.
+ */
+function withIssueMessage(e: unknown): unknown {
+  if (!(e instanceof ApiError) || e.code !== "invalid_input") return e;
+  const issues = (e.details as { issues?: { message?: unknown }[] } | undefined)?.issues;
+  const message = issues?.[0]?.message;
+  return typeof message === "string" && message
+    ? new ApiError("invalid_input", message, e.details)
+    : e;
+}
 
 async function meResponse(c: AppContext) {
   const p = c.get("principal");
@@ -152,3 +158,36 @@ async function meConnection(c: AppContext): Promise<MeConnection | null> {
   }
   return { id: p.connectionId, label: p.connectionLabel, bound: bound !== null, artifact };
 }
+
+// ---------- Invitation emails (docs/spec.md "Invitation emails") ----------
+
+/**
+ * Whether the signed-in person's own address gets invitation emails, and turning them off or on.
+ * The address is the session's, never a parameter, so nobody can change or learn it for another
+ * address. People only (policy.ts mayManageInvitationEmails); writes carry the CSRF pair.
+ */
+function invitationEmailsOwner(c: AppContext): string {
+  const may = mayManageInvitationEmails(c.get("principal"));
+  if (may.allow) return may.email;
+  if (may.reason === "not_a_person") {
+    throw new ApiError("forbidden", "Only the person can change their invitation emails");
+  }
+  throw unauthorized();
+}
+
+meApi.get(API.invitationEmails, async (c) => {
+  const email = invitationEmailsOwner(c);
+  const body: InvitationEmailSettings = {
+    email,
+    receive: await receivesInvitations(c.env.DB, email),
+  };
+  return c.json(body);
+});
+
+meApi.put(API.invitationEmails, async (c) => {
+  const email = invitationEmailsOwner(c);
+  const { receive } = await parseBody(c, invitationEmailsInput);
+  await setReceivesInvitations(c.env.DB, email, receive);
+  const body: InvitationEmailSettings = { email, receive };
+  return c.json(body);
+});

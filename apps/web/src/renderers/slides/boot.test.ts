@@ -9,9 +9,19 @@ import {
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
-import { formatElapsed, type PresenterClock } from "./presenter.ts";
+import {
+  CURRENT_MAX_SHARE,
+  formatElapsed,
+  PRESENTER_BAR,
+  PRESENTER_CAPTION,
+  PRESENTER_COLUMN_GAP,
+  PRESENTER_ROW_GAP,
+  type PresenterClock,
+  presenterLayout,
+} from "./presenter.ts";
 import { PAGE_STYLE_ID, pageRule, printDeck } from "./print.ts";
 import { readSlidesAppMessage } from "./protocol.ts";
+import { CONTROLS_INSET, GUTTER, overviewColumns, overviewScale } from "./stage.ts";
 
 const APP = "https://plinth.example.com";
 const DECK = [
@@ -92,13 +102,13 @@ const clock = (): PresenterClock & { t: number; tick?: () => void } => {
     t: 0,
     tick: undefined as (() => void) | undefined,
     now: () => c.t,
+    time: (at: number) => `T${at}`,
     every: (_ms: number, fn: () => void) => {
       c.tick = fn;
       return () => {
         c.tick = undefined;
       };
     },
-    time: () => "10:00",
   };
   return c;
 };
@@ -260,8 +270,6 @@ describe("boot", () => {
     stop = boot(f.win);
     key(f, "o");
     expect(root().getAttribute("data-mode")).toBe("overview");
-    key(f, "ArrowRight");
-    expect(slide()).toBe("1");
     key(f, "Escape");
     expect(root().getAttribute("data-mode")).toBe("deck");
     key(f, "o");
@@ -279,6 +287,9 @@ describe("boot", () => {
     const f = framed();
     stop = boot(f.win);
     expect(root().getAttribute("data-mode")).toBe("overview");
+    // Nothing to open and no current slide: no click cursor, no ring.
+    expect(root().hasAttribute("data-fixed")).toBe(true);
+    expect(root().hasAttribute("data-mark")).toBe(false);
     key(f, "Escape");
     key(f, "o");
     key(f, "s");
@@ -309,11 +320,9 @@ describe("boot", () => {
     key(f, "Escape");
     key(f, "o");
     key(f, "o");
-    (document.querySelector('[aria-label="Presenter view"]') as HTMLElement).click();
-    const exit = Array.from(document.querySelectorAll(".plinth-slides__presenter button")).find(
-      (x) => x.textContent === "Exit presenter view",
-    ) as HTMLElement;
-    exit.click();
+    (document.querySelector('[aria-label="Overview"]') as HTMLElement).click();
+    key(f, "s");
+    (document.querySelector('[aria-label="Exit presenter view"]') as HTMLElement).click();
     appMessage(f, msg({ type: "view", mode: "presenter" }));
     // The view it already shows: nothing to report.
     appMessage(f, msg({ type: "view", mode: "presenter" }));
@@ -322,6 +331,7 @@ describe("boot", () => {
       "deck",
       "overview",
       "deck",
+      "overview",
       "presenter",
       "deck",
       "presenter",
@@ -345,6 +355,138 @@ describe("boot", () => {
     f.size.h = 740;
     stop = boot(f.win);
     expect(root().getAttribute("data-mode")).toBe("overview");
+    // Nobody chose this overview: no slide is marked as the current one.
+    expect(root().hasAttribute("data-mark")).toBe(false);
+  });
+
+  it("marks the current slide in an overview the person opened", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "o");
+    expect(root().getAttribute("data-mode")).toBe("overview");
+    expect(root().hasAttribute("data-mark")).toBe(true);
+    expect(root().hasAttribute("data-fixed")).toBe(false);
+  });
+
+  it("lays the overview out as a grid on a wide frame, and moves the selection with the arrows", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "o");
+    expect(root().style.getPropertyValue("--cols")).toBe("4");
+    const thumb = Math.round(overviewScale(1280, 1280, 4) * 10000) / 10000;
+    expect(root().style.getPropertyValue("--s")).toBe(String(thumb));
+    key(f, "ArrowRight");
+    expect(slide()).toBe("2");
+    expect(root().getAttribute("data-mode")).toBe("overview");
+    // Down moves a row of four, clamped to the deck; Home goes back to the first.
+    key(f, "ArrowDown");
+    expect(slide()).toBe("5");
+    key(f, "Home");
+    expect(slide()).toBe("1");
+    key(f, "ArrowRight");
+    key(f, "Enter");
+    expect(root().getAttribute("data-mode")).toBe("deck");
+    expect(slide()).toBe("2");
+  });
+
+  it("keeps a fixed overview in one column", () => {
+    mount(DECK, "overview");
+    const f = framed();
+    stop = boot(f.win);
+    expect(root().style.getPropertyValue("--cols")).toBe("1");
+    key(f, "ArrowRight");
+    expect(slide()).toBe("1");
+  });
+
+  it("has icon controls with names, and presses the overview button while the overview is on", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    const controls = document.querySelector(".plinth-slides__controls") as HTMLElement;
+    const names = Array.from(controls.querySelectorAll("button")).map((b) => [
+      b.getAttribute("aria-label"),
+      b.dataset.tip,
+      b.querySelector("svg") !== null,
+    ]);
+    expect(names).toEqual([
+      ["Previous slide", "Previous slide", true],
+      ["Next slide", "Next slide", true],
+      ["Overview", "Overview", true],
+    ]);
+    // The slides show their own numbers, so the pill has no count.
+    expect(controls.querySelector(".plinth-slides__counter")).toBeNull();
+    const overview = controls.querySelector('[aria-label="Overview"]') as HTMLElement;
+    expect(overview.getAttribute("aria-pressed")).toBe("false");
+    overview.click();
+    expect(overview.getAttribute("aria-pressed")).toBe("true");
+    overview.click();
+    expect(overview.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("counts slides in the pill when the deck shows no page numbers", () => {
+    mount(`---\npaginate: false\n---\n${DECK}`);
+    const f = framed();
+    stop = boot(f.win);
+    const counter = () =>
+      document.querySelector(".plinth-slides__controls .plinth-slides__counter");
+    expect(counter()?.textContent).toBe("1 / 5");
+    key(f, "ArrowRight");
+    expect(counter()?.textContent).toBe("2 / 5");
+  });
+
+  it("shows the controls on input and hides them after two idle seconds", () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      const f = framed();
+      stop = boot(f.win);
+      expect(root().hasAttribute("data-controls")).toBe(false);
+      f.target.dispatchEvent(new Event("pointermove"));
+      expect(root().getAttribute("data-controls")).toBe("on");
+      vi.advanceTimersByTime(1999);
+      expect(root().getAttribute("data-controls")).toBe("on");
+      vi.advanceTimersByTime(1);
+      expect(root().hasAttribute("data-controls")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fits the slide inside the gutter on every side, full screen too", () => {
+    mount();
+    const f = framed();
+    f.size.h = 700;
+    stop = boot(f.win);
+    // 1280x700 less the gutter on all four sides: the height decides. No room is kept for the
+    // controls, which show over the slide.
+    const scaled = (h: number) => String(Math.round((h / 720) * 10000) / 10000);
+    expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - 2 * GUTTER));
+    expect(root().style.getPropertyValue("--deck-top")).toBe("");
+    expect(root().style.getPropertyValue("--deck-bottom")).toBe("");
+    // The controls' bottom edge sits one gutter above the slide's.
+    expect(CONTROLS_INSET).toBe(GUTTER);
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${GUTTER + CONTROLS_INSET}px`);
+    // A tall frame: the width decides, with the same gutter at the sides.
+    f.size.h = 1400;
+    f.target.dispatchEvent(new Event("resize"));
+    expect(root().style.getPropertyValue("--s")).toBe(
+      String(Math.round(((1280 - 2 * GUTTER) / 1280) * 10000) / 10000),
+    );
+    const tall = ((1280 - 2 * GUTTER) / 1280) * 720;
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(
+      `${Math.floor((1400 - tall) / 2) + CONTROLS_INSET}px`,
+    );
+    // The frame fills the screen (Present's full screen): the same gutter, the same pill place.
+    f.size.h = 700;
+    (f.win as unknown as { screen: { width: number; height: number } }).screen = {
+      width: 1280,
+      height: 700,
+    };
+    f.target.dispatchEvent(new Event("resize"));
+    expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - 2 * GUTTER));
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${GUTTER + CONTROLS_INSET}px`);
   });
 
   it("asks the app for full screen on f", () => {
@@ -369,12 +511,13 @@ describe("presenter view", () => {
     expect(p.querySelector(".plinth-slides__pane--next")?.textContent).toContain("Two");
     expect(p.querySelector(".plinth-slides__pane--next")?.hasAttribute("inert")).toBe(true);
     expect(p.querySelector(".plinth-slides__notes strong")?.textContent).toBe("bold");
-    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("Slide 1 of 5");
+    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("1 / 5");
     expect(p.querySelector("[id]")).toBeNull();
 
     key(f, "ArrowRight");
-    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("Slide 2 of 5");
-    expect(p.querySelector(".plinth-slides__notes")?.textContent).toBe("No notes for this slide.");
+    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("2 / 5");
+    // A slide without notes leaves the pane empty.
+    expect(p.querySelector(".plinth-slides__notes")?.textContent).toBe("");
     key(f, "End");
     expect(p.querySelector(".plinth-slides__pane--next")?.textContent).toBe("End of deck");
 
@@ -382,29 +525,149 @@ describe("presenter view", () => {
     c.t = 65_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
-    const [pause, reset] = Array.from(p.querySelectorAll("button"));
-    pause?.click();
+    expect(p.querySelector(".plinth-slides__clock")?.textContent).toBe("T65000");
+    // Pause holds the timer, Resume carries on from there.
+    const pause = p.querySelector('[aria-label="Pause timer"]') as HTMLElement;
+    pause.click();
+    expect(pause.getAttribute("aria-label")).toBe("Resume timer");
     c.t = 125_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
-    pause?.click();
+    pause.click();
+    expect(pause.getAttribute("aria-label")).toBe("Pause timer");
     c.t = 130_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:10");
-    reset?.click();
-    expect(timer.textContent).toBe("0:00");
     key(f, "Escape");
     expect(document.querySelector(".plinth-slides__presenter")).toBeNull();
+    // The timer starts again each time presenter view opens.
+    key(f, "s");
+    expect(document.querySelector(".plinth-slides__timer")?.textContent).toBe("0:00");
   });
 
-  it("warns when the current slide overflows", () => {
+  it("pages with its own previous and next buttons, for touch screens", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "s");
+    const bar = document.querySelector(".plinth-slides__pbar") as HTMLElement;
+    const names = Array.from(bar.querySelectorAll("button")).map((b) =>
+      b.getAttribute("aria-label"),
+    );
+    expect(names).toEqual(["Pause timer", "Previous slide", "Next slide", "Exit presenter view"]);
+    (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
+    (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
+    expect(slide()).toBe("3");
+    (bar.querySelector('[aria-label="Previous slide"]') as HTMLElement).click();
+    expect(slide()).toBe("2");
+    expect(bar.querySelector(".plinth-slides__count")?.textContent).toBe("2 / 5");
+  });
+
+  it("puts the bar under the current slide, with Next and Notes beside them, or all in one column", () => {
+    mount();
+    const f = framed();
+    f.size.w = 1280;
+    f.size.h = 732;
+    stop = boot(f.win);
+    key(f, "s");
+    const p = document.querySelector(".plinth-slides__presenter") as HTMLElement;
+    const order = () =>
+      Array.from(
+        p.querySelectorAll(".plinth-slides__pane, .plinth-slides__pbar, .plinth-slides__notes"),
+      ).map((e) => e.className.replace(/plinth-slides__(pane )?/g, "").trim());
+    // Current, bar, next, notes: the bar sits in the current slide's column, right under it.
+    expect(order()).toEqual(["pane--current", "pbar", "pane--next", "notes"]);
+    expect(p.querySelector(".plinth-slides__main")?.children[1]?.className).toBe(
+      "plinth-slides__pbar",
+    );
+    expect(p.hasAttribute("data-narrow")).toBe(false);
+    const l = presenterLayout(1280, 732, { width: 1280, height: 720 });
+    expect(p.style.getPropertyValue("--pcol")).toBe(`${l.column}px`);
+    // Both columns are as tall as the slide and its bar; the "Next" caption has the row above.
+    expect(p.style.getPropertyValue("--prow")).toBe(`${l.row}px`);
+    expect(Array.from(p.children, (c) => c.className)).toEqual([
+      "plinth-slides__main",
+      "plinth-slides__caption plinth-slides__caption--next",
+      "plinth-slides__side",
+    ]);
+    const current = p.querySelector(".plinth-slides__pane--current") as HTMLElement;
+    expect(current.style.getPropertyValue("--s")).toBe(
+      String(Math.round(l.current * 10000) / 10000),
+    );
+    // A phone in portrait: one column, the same order.
+    f.size.w = 360;
+    f.size.h = 660;
+    f.target.dispatchEvent(new Event("resize"));
+    expect(p.hasAttribute("data-narrow")).toBe(true);
+    expect(p.style.getPropertyValue("--pcol")).toBe("");
+    expect(p.style.getPropertyValue("--prow")).toBe("");
+    expect(order()).toEqual(["pane--current", "pbar", "pane--next", "notes"]);
+  });
+
+  it("sizes two columns to fit the height, and one column as wide as the frame", () => {
+    const canvas = { width: 1280, height: 720 };
+    for (const [w, h] of [
+      [1280, 732],
+      [1920, 1080],
+      [1024, 700],
+      [800, 450],
+    ] as const) {
+      const l = presenterLayout(w, h, canvas);
+      expect(l.narrow).toBe(false);
+      const column = l.column ?? 0;
+      // The caption row, the current slide and the bar under it fit the height; Next and Notes
+      // keep a third or so, and the columns are the slide and the bar tall.
+      const row = Math.ceil((column * 720) / 1280) + PRESENTER_ROW_GAP + PRESENTER_BAR;
+      expect(l.row).toBe(row);
+      expect(PRESENTER_CAPTION + row).toBeLessThanOrEqual(h - 2 * GUTTER + 1);
+      expect(l.next * 720).toBeLessThan(row);
+      expect(column).toBeLessThanOrEqual(
+        CURRENT_MAX_SHARE * (w - 2 * GUTTER - PRESENTER_COLUMN_GAP),
+      );
+      expect(l.current).toBeCloseTo(column / 1280, 6);
+      const side = w - 2 * GUTTER - PRESENTER_COLUMN_GAP - column;
+      expect(l.next * 1280).toBeLessThanOrEqual(side + 0.5);
+    }
+    // A wide frame: as wide as the share allows. A short one: as tall as the height allows.
+    expect(presenterLayout(1280, 900, canvas).column).toBe(
+      Math.floor(CURRENT_MAX_SHARE * (1280 - 2 * GUTTER - PRESENTER_COLUMN_GAP)),
+    );
+    expect(presenterLayout(1600, 500, canvas).column).toBe(
+      Math.floor(
+        ((500 - 2 * GUTTER - PRESENTER_CAPTION - PRESENTER_BAR - PRESENTER_ROW_GAP) * 1280) / 720,
+      ),
+    );
+    const phone = presenterLayout(360, 660, canvas);
+    expect(phone).toMatchObject({ narrow: true, column: null, row: null });
+    expect(phone.current).toBeCloseTo((360 - 2 * GUTTER) / 1280, 6);
+    expect(phone.next).toBe(phone.current);
+    expect(presenterLayout(560, 400, canvas).narrow).toBe(true);
+    expect(presenterLayout(1024, 1366, canvas).narrow).toBe(true);
+  });
+
+  it("marks the current slide when it overflows, on the pane only", () => {
     mount();
     const f = framed();
     stop = boot(f.win, { measure: () => true });
     key(f, "s");
-    const warning = document.querySelector(".plinth-slides__warning") as HTMLElement;
-    expect(warning.hidden).toBe(false);
-    expect(warning.textContent).toBe("This slide overflows");
+    const current = document.querySelector(
+      ".plinth-slides__pane--current .plinth-slides__slide",
+    ) as HTMLElement;
+    expect(current.getAttribute("data-overflow")).toBe("true");
+    expect(document.querySelector(".plinth-slides__warning")).toBeNull();
+  });
+
+  it("picks three or four overview columns by width, one when narrow or fixed", () => {
+    expect(overviewColumns(360)).toBe(1);
+    expect(overviewColumns(699)).toBe(1);
+    expect(overviewColumns(700)).toBe(3);
+    expect(overviewColumns(1099)).toBe(3);
+    expect(overviewColumns(1100)).toBe(4);
+    expect(overviewColumns(1600, true)).toBe(1);
+    // Each column's width, less the gutters, never above the canvas.
+    expect(overviewScale(1280, 1280, 4)).toBeCloseTo((1280 - 32 - 48) / 4 / 1280, 6);
+    expect(overviewScale(360, 1280)).toBeCloseTo((360 - 32) / 1280, 6);
+    expect(overviewScale(4000, 1280)).toBe(1);
   });
 
   it("formats elapsed time", () => {
@@ -467,6 +730,20 @@ describe("printing", () => {
     key(f, "p", { ctrlKey: true });
     await vi.waitFor(() => expect(f.print).toHaveBeenCalledTimes(2));
   });
+
+  it("prints the handout with the notes from presenter view", async () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "s");
+    appMessage(f, msg({ type: "print" }));
+    await vi.waitFor(() => expect(f.print).toHaveBeenCalledTimes(1));
+    expect(root().getAttribute("data-print")).toBe("handout");
+    f.target.dispatchEvent(new Event("afterprint"));
+    key(f, "p", { ctrlKey: true });
+    await vi.waitFor(() => expect(f.print).toHaveBeenCalledTimes(2));
+    expect(root().getAttribute("data-print")).toBe("handout");
+  });
 });
 
 describe("readSlidesAppMessage", () => {
@@ -476,16 +753,18 @@ describe("readSlidesAppMessage", () => {
     expect(readSlidesAppMessage({ ...msg({ type: "paired" }), v: 2 })).toBeNull();
   });
 
+  it("accepts lead, which carries nothing", () => {
+    expect(readSlidesAppMessage(msg({ type: "lead" }))).toEqual({ type: "lead" });
+    expect(readSlidesAppMessage({ type: "lead" })).toBeNull();
+    expect(readSlidesAppMessage({ ...msg({ type: "lead" }), v: 2 })).toBeNull();
+  });
+
   it("accepts goto, view and print, and nothing malformed", () => {
     expect(readSlidesAppMessage(msg({ type: "goto", slide: 2 }))).toEqual({
       type: "goto",
       slide: 2,
     });
-    expect(readSlidesAppMessage(msg({ type: "print" }))).toEqual({ type: "print", notes: false });
-    expect(readSlidesAppMessage(msg({ type: "print", notes: true }))).toEqual({
-      type: "print",
-      notes: true,
-    });
+    expect(readSlidesAppMessage(msg({ type: "print" }))).toEqual({ type: "print" });
     expect(readSlidesAppMessage(msg({ type: "view", mode: "presenter" }))).toEqual({
       type: "view",
       mode: "presenter",
@@ -497,7 +776,6 @@ describe("readSlidesAppMessage", () => {
       { ...msg({ type: "goto", slide: 1 }), v: 2 },
       msg({ type: "goto", slide: 1.5 }),
       msg({ type: "goto", slide: 501 }),
-      msg({ type: "print", notes: "yes" }),
       msg({ type: "view", mode: "edit" }),
       msg({ type: "edit", on: true }),
     ]) {

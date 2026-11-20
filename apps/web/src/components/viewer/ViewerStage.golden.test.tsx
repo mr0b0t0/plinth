@@ -118,6 +118,12 @@ const SCENARIOS: Scenario[] = [
     compact: true,
   },
   {
+    name: "whiteboard, owner, wide",
+    gate: { role: "owner", artifact: BOARD },
+    signedIn: true,
+    compact: false,
+  },
+  {
     name: "whiteboard, editor, wide",
     gate: { role: "editor", artifact: BOARD },
     signedIn: true,

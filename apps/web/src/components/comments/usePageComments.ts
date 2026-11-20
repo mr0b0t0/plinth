@@ -10,7 +10,10 @@
 // answered exactly once (`composed`) whatever happens to it. `open` obeys the same visibility and
 // dialog rules, and a request that would open a closed panel (compose or open) is accepted at
 // most once a second. No page request moves focus: the person clicks or tabs into the composer,
-// so keystrokes meant for the page never land in a comment.
+// so keystrokes meant for the page never land in a comment. `hello` is answered at most once a
+// second (each answer carries the thread list), and position reports are coalesced to 20 a second
+// before they are parsed (pageChannel.ts). Positions reach React state only while the panel is
+// open, the only time pins are drawn; the latest one is kept for when it opens.
 import {
   type CommentInfo,
   PAGE_COMMENT_LIMITS,
@@ -44,6 +47,11 @@ export interface UsePageCommentsOptions {
   blocked: boolean;
   /** Whether the comments panel is open now (read when a request arrives). */
   panelOpen: () => boolean;
+  /**
+   * The pins are drawn (the panel is open). While false, position reports are kept aside instead
+   * of re-rendering the stage, and the latest is shown when it turns true. Default true.
+   */
+  showPins?: boolean;
   /** An accepted compose request: open the panel with this anchor. */
   onCompose: (request: PageCompose) => void;
   /** The page asked to show this thread (a known root). */
@@ -63,32 +71,46 @@ export interface PageComments {
   settle: (req: string, result: PageComposeResult) => void;
 }
 
-const POSITIONS_WINDOW_MS = 1000;
+/** `hello` is answered at most this often: each answer carries the whole thread list. */
+const HELLO_MIN_INTERVAL_MS = 1000;
+const NO_POSITIONS = new Map<string, PinPosition>();
 
 export function usePageComments(opts: UsePageCommentsOptions): PageComments {
   const { frame, contentOrigin, opaque, enabled, items, blocked, win } = opts;
-  const [positions, setPositions] = useState<Map<string, PinPosition>>(() => new Map());
+  const showPins = opts.showPins !== false;
+  const [positions, setPositions] = useState<Map<string, PinPosition>>(NO_POSITIONS);
   const channelRef = useRef<PageChannel | null>(null);
   const helloRef = useRef(false);
+  const lastHelloRef = useRef(Number.NEGATIVE_INFINITY);
   const pendingRef = useRef<Set<string>>(new Set());
   const lastComposeRef = useRef(Number.NEGATIVE_INFINITY);
   const lastOpenRef = useRef(Number.NEGATIVE_INFINITY);
   const lastReopenRef = useRef(Number.NEGATIVE_INFINITY);
-  const positionTimesRef = useRef<number[]>([]);
+  // The latest reported positions, whether or not they are shown yet.
+  const latestPositionsRef = useRef<Map<string, PinPosition>>(NO_POSITIONS);
+  const showPinsRef = useRef(showPins);
+  showPinsRef.current = showPins;
 
   const threads = useMemo(() => buildThreads(items ?? []), [items]);
   const payload = useMemo(() => pageThreadItems(threads), [threads]);
-  const payloadKey = JSON.stringify(payload);
+  const payloadKey = useMemo(() => JSON.stringify(payload), [payload]);
   // Latest values for the message handler, which is set up once per frame.
   const live = useRef({ enabled, blocked, payload, threads, opts });
   live.current = { enabled, blocked, payload, threads, opts };
 
   const now = useCallback(() => (live.current.opts.now ?? Date.now)(), []);
 
+  // The panel opened: show the latest positions the page reported while it was closed.
+  useEffect(() => {
+    if (showPins) setPositions(latestPositionsRef.current);
+  }, [showPins]);
+
   useEffect(() => {
     helloRef.current = false;
+    lastHelloRef.current = Number.NEGATIVE_INFINITY;
     pendingRef.current = new Set();
-    setPositions(new Map());
+    latestPositionsRef.current = NO_POSITIONS;
+    setPositions(NO_POSITIONS);
     if (!frame || !contentOrigin) return;
     const onMessage = (msg: PageFrameMessage) => {
       const cur = live.current;
@@ -102,11 +124,17 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
         if (!cur.opts.panelOpen()) lastReopenRef.current = t;
       };
       switch (msg.type) {
-        case "hello":
+        case "hello": {
+          // The runtime says hello again only while unanswered, once a second: one answer a
+          // second is enough for it, and bounds what a page that floods hellos makes the app send.
+          const t = now();
+          if (t - lastHelloRef.current < HELLO_MIN_INTERVAL_MS) return;
+          lastHelloRef.current = t;
           helloRef.current = true;
           channel.post({ type: "welcome", available: cur.enabled });
           if (cur.enabled) channel.post({ type: "threads", items: cur.payload });
           return;
+        }
         case "compose": {
           const refuse = () => channel.post({ type: "composed", req: msg.req, status: "closed" });
           if (!cur.enabled || !helloRef.current || cur.blocked) return void refuse();
@@ -136,24 +164,19 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
           return;
         }
         case "positions": {
+          // Already at most 20 a second, the latest kept (pageChannel.ts).
           if (!cur.enabled || !helloRef.current) return;
-          const t = now();
-          const recent = positionTimesRef.current.filter((x) => t - x < POSITIONS_WINDOW_MS);
-          if (recent.length >= PAGE_COMMENT_LIMITS.positionsPerSecond) {
-            positionTimesRef.current = recent;
-            return;
-          }
-          positionTimesRef.current = [...recent, t];
           // Only threads the app told the page about, open and anchored.
           const known = new Set(cur.payload.filter((p) => p.status === "open").map((p) => p.id));
           const next = new Map<string, PinPosition>();
           for (const item of msg.items) if (known.has(item.id)) next.set(item.id, item);
-          setPositions(next);
+          latestPositionsRef.current = next;
+          if (showPinsRef.current) setPositions(next);
           return;
         }
       }
     };
-    const channel = connectPageChannel(frame, contentOrigin, onMessage, { opaque, win });
+    const channel = connectPageChannel(frame, contentOrigin, onMessage, { opaque, win, now });
     channelRef.current = channel;
     return () => {
       // Anything still open is answered: the frame is going away or the page changed.
@@ -243,6 +266,7 @@ export function useStagePageComments(o: StagePageCommentsOptions): StagePageComm
     items: o.items,
     blocked: o.blocked,
     panelOpen,
+    showPins: o.commentsOpen,
     onCompose: (request) => {
       setPageCompose(request);
       ensureOpen();

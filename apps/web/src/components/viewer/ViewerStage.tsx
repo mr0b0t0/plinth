@@ -22,8 +22,6 @@ import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
-import { DictationConsent } from "./DictationConsent.tsx";
-import { ExportDialog } from "./ExportDialog.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { newFrameKey, withFrameKey } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
@@ -35,7 +33,6 @@ import {
   type StageContext,
   type StageItem,
 } from "./stageItems.tsx";
-import { useDictation } from "./useDictation.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
@@ -67,6 +64,15 @@ export interface ViewerStageProps {
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
   /**
+   * The edit bar names a version the bar's picker does not show yet (one saved from the page, or
+   * published meanwhile): the page reads its gate now, so both name the same version.
+   */
+  onVersionSeen?: () => void;
+  /** The frame is in review mode (the comment-anchoring frame). */
+  review?: boolean;
+  /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
+  onLeaveReview?: () => void;
+  /**
    * Live views: whether signals are pushed, and a count that moves each time the page's shared
    * data changed; the frame's runtime is told both (useLiveDataRelay).
    */
@@ -76,8 +82,6 @@ export interface ViewerStageProps {
    * the page swaps the frame itself, as before.
    */
   update?: UpdateHandlers;
-  /** Review mode is on (the frame carries the comment-anchoring bridge). */
-  review?: boolean;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -110,32 +114,15 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  onVersionSeen,
+  review,
+  onLeaveReview,
   liveData,
   update: updateHandlers,
-  review = false,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
-  // The owner's link to review data sources (set_data_sources' confirm_url, ?sources=review) opens
-  // the share dialog, where they are reviewed and confirmed.
-  const [shareOpen, setShareOpen] = useState(
-    () =>
-      gate.role === "owner" &&
-      new URLSearchParams(window.location.search).get("sources") === "review",
-  );
-  // The flag is used once: a reload or a shared copy of the address opens the page as usual.
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("sources") !== "review") return;
-    url.searchParams.delete("sources");
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `${url.pathname}${url.search}${url.hash}`,
-    );
-  }, []);
-  // A design's PNG and PDF export dialog (designItems.ts offers it).
-  const [exportOpen, setExportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   // The STAGE_DIALOGS entry open now, by id (Board settings), or null.
   const [dialog, setDialog] = useState<string | null>(null);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
@@ -157,6 +144,7 @@ export function ViewerStage({
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
   const settingsHref = route(APP_ROUTES.settings, { slug });
+  const statsHref = route(APP_ROUTES.artifactStats, { slug });
 
   // The open-thread count on the Comments toggle. The panel reports it while open; while closed
   // it is read once (and again after the panel closes). Failures just hide the number.
@@ -214,11 +202,18 @@ export function ViewerStage({
     editing && live.phase === "conflict"
       ? live.review?.base || live.status?.base_version || artifact.version
       : artifact.version;
-  // Presenting a deck: the slide, full screen, presenter view and its audience window.
-  const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
+  // Presenting a deck: the slide, full screen, presenter view and its audience window. Present in
+  // review mode leaves review mode first.
+  const present = usePresentation({
+    gate,
+    frame,
+    contentOrigin,
+    config,
+    slug,
+    review,
+    leaveReview: onLeaveReview,
+  });
   const pause: WatchPause = live.pause ?? present.pause;
-  // Dictation run by the app, for the main artifact frame only (never a preview or a compare).
-  const dictation = useDictation({ frame, contentOrigin, gate, config });
   // Live views: shared-data changes reach the page's runtime (origin isolation only).
   useLiveDataRelay({
     frame,
@@ -242,7 +237,7 @@ export function ViewerStage({
     gate,
     pinned,
     pause,
-    review,
+    review: review === true,
     handlers: updateHandlers,
   });
   // A version published while presenting waits; once presenting ends, the deck catches up.
@@ -257,6 +252,11 @@ export function ViewerStage({
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
+  // The version the edit bar names (saved as, or published meanwhile) and the picker agree.
+  const named = Math.max(live.savedVersion ?? 0, live.status?.conflict_version ?? 0);
+  useEffect(() => {
+    if (!pinned && named > artifact.version) onVersionSeen?.();
+  }, [named, pinned, artifact.version, onVersionSeen]);
 
   // The toggle gets focus back when the panel closes.
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -317,7 +317,6 @@ export function ViewerStage({
     live,
     editing,
     present,
-    dictation,
     update,
     hrefs: {
       current: currentHref,
@@ -325,6 +324,7 @@ export function ViewerStage({
       history: historyHref,
       report: reportHref,
       settings: settingsHref,
+      stats: statsHref,
       signIn: signInHref,
     },
     comments: {
@@ -343,7 +343,6 @@ export function ViewerStage({
       finishEditing: () => void finishEditing(),
       refocusAfterNotice: () => refocusIfLost(focusEditEntry),
       reload: () => onReload?.(),
-      openExport: () => setExportOpen(true),
       openDialog: setDialog,
     },
   };
@@ -352,7 +351,7 @@ export function ViewerStage({
     <IconProvider>
       <SkipLink />
       <div
-        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
+        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}${present.paired ? " pl-viewer--audience" : ""}`}
       >
         <header className="pl-viewer__bar" ref={headerRef}>
           <div className="pl-viewer__crumbs">
@@ -449,7 +448,6 @@ export function ViewerStage({
             <Fragment key={d.id}>{d.render(stage, () => setDialog(null))}</Fragment>
           ),
       )}
-      <DictationConsent request={dictation.consent} />
       <ShareDialog
         open={shareOpen}
         onClose={() => setShareOpen(false)}
@@ -457,17 +455,7 @@ export function ViewerStage({
         slug={slug}
         visibility={artifact.visibility}
         isOwner={isOwner}
-        onSourcesChange={() => onReload?.()}
-        hasSources={(gate.sources?.length ?? 0) > 0}
       />
-      {artifact.type === "design" && (
-        <ExportDialog
-          open={exportOpen}
-          onClose={() => setExportOpen(false)}
-          artifactRef={artifact.id || slug}
-          version={artifact.version}
-        />
-      )}
       <Toaster />
     </IconProvider>
   );

@@ -9,8 +9,15 @@
 // that was leading takes the lead again after a reconnect, unless someone else leads by then, and
 // sends the slide it moved to while its `start` was on the way.
 //
+// The app replaces a deck's frame for a newer version or a sharing change (outside full screen and
+// presenter view), and the old frame's socket closes with it. So the frame tells the app whether
+// the person leads (`leading`), and the app asks the new frame to lead again (`lead`): that resume
+// takes the lead even if the room still lists the old frame's socket as leading, since the person
+// never stopped. A lead that ends because the socket closed for good is not reported, so the next
+// frame leads again; one that the person stopped, or another presenter took over, is.
+//
 // Follow is the deck's side: it moves the deck to the leader's slide while following, pauses when
-// the person pages by hand ("Back to the presenter (slide 7)"), and, for a presenter, sends `start`,
+// the person pages by hand ("Back to slide 7"), and, for a presenter, sends `start`,
 // `goto` on every change and `stop`. An audience window (the app's `paired`) detaches it: its
 // presenter window moves it instead. Only slide numbers go in and out; every element is made with
 // createElement and textContent.
@@ -22,6 +29,7 @@ import {
   type SlidesPosition,
   type SlidesServerFrame,
 } from "@plinth/shared";
+import { el } from "./dom.ts";
 import type { DeckController } from "./nav.ts";
 
 // ROOM_LIMITS' backoffS, hiddenCloseS and pingIntervalS, repeated here (as the doc socket does) so
@@ -46,6 +54,11 @@ export interface FollowClientOptions {
   win: Window;
   /** Something the deck shows changed: the leader, the audience, the lead, the connection. */
   changed(): void;
+  /**
+   * The person's lead changed: on (they led), or off (they stopped, another presenter took over,
+   * or they may no longer present). Never called when the socket closes for good.
+   */
+  leadChanged?: (on: boolean) => void;
   /** For tests: makes the socket. */
   connect?: (url: string, protocols: string[]) => FollowSocket;
   /** For tests: the random part of the backoff (0 to 1). */
@@ -77,6 +90,8 @@ export class FollowClient {
   private ping: ReturnType<typeof setInterval> | null = null;
   /** The slide this socket last showed, for `start` after a reconnect. */
   private slide = 1;
+  /** A lead the frame this one replaced had: the next welcome takes it whoever the room lists. */
+  private resuming = false;
 
   constructor(private readonly opts: FollowClientOptions) {}
 
@@ -109,21 +124,38 @@ export class FollowClient {
     this.connected = false;
   }
 
-  /** Lead the others from `slide`. */
-  lead(slide: number): void {
+  /**
+   * Lead the others from `slide`. `resume`: the frame this one replaced was leading, so a welcome
+   * still to come takes the lead even if the room lists someone leading (most likely that frame's
+   * socket, not yet gone).
+   */
+  lead(slide: number, resume = false): void {
     this.slide = slide;
     this.wantLead = true;
     this.takenOver = false;
+    this.resuming = resume && !this.connected;
     this.send({ t: "start", slide });
+    this.opts.leadChanged?.(true);
     this.opts.changed();
   }
 
   /** Stop leading. */
   unlead(): void {
     this.wantLead = false;
+    this.resuming = false;
     this.audience = 0;
     this.send({ t: "stop" });
+    this.opts.leadChanged?.(false);
     this.opts.changed();
+  }
+
+  /** The lead ended without the person asking: another presenter, or no right to present. */
+  private lostLead(takenOver: boolean): void {
+    this.wantLead = false;
+    this.resuming = false;
+    this.takenOver = takenOver;
+    this.audience = 0;
+    this.opts.leadChanged?.(false);
   }
 
   /** The deck moved to `slide`: the others follow while this socket leads. */
@@ -251,13 +283,13 @@ export class FollowClient {
           }
         }, FOLLOW_PING_MS);
         if (this.wantLead) {
-          // Back after a reconnect: lead again, unless someone else leads now.
-          if (f.at === null && f.you.present) this.send({ t: "start", slide: this.slide });
-          else {
-            this.wantLead = false;
-            this.takenOver = f.at !== null;
-          }
+          // Back after a reconnect: lead again, unless someone else leads now. A resumed lead
+          // takes it whoever leads: the person never stopped.
+          if (f.you.present && (f.at === null || this.resuming)) {
+            this.send({ t: "start", slide: this.slide });
+          } else this.lostLead(f.at !== null);
         }
+        this.resuming = false;
         break;
       }
       case "at": {
@@ -272,9 +304,7 @@ export class FollowClient {
         if (!mine && this.wantLead && this.at?.by === this.you?.id) {
           // Another presenter started after this one: it leads now, and this one stops for good,
           // so the room never hands the lead back to it unasked.
-          this.wantLead = false;
-          this.takenOver = true;
-          this.audience = 0;
+          this.lostLead(true);
           this.send({ t: "stop" });
         }
         this.at = { slide: f.slide, by: f.by };
@@ -288,13 +318,10 @@ export class FollowClient {
         break;
       case "error":
         if (f.code === "not_leading" && this.wantLead) {
-          this.wantLead = false;
-          this.takenOver = true;
-          this.audience = 0;
+          this.lostLead(true);
           this.send({ t: "stop" });
-        } else if (f.code === "forbidden") {
-          this.wantLead = false;
-          this.audience = 0;
+        } else if (f.code === "forbidden" && this.wantLead) {
+          this.lostLead(false);
         }
         break;
     }
@@ -304,38 +331,28 @@ export class FollowClient {
 
 // ---------- the deck's side ----------
 
-function el<K extends keyof HTMLElementTagNameMap>(
-  doc: Document,
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const e = doc.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
 export interface FollowOptions {
   win: Window;
   root: HTMLElement;
   deck: DeckController;
   right: "present" | "watch";
+  /** The person's lead changed (FollowClientOptions.leadChanged): the deck tells the app. */
+  onLead?: (on: boolean) => void;
   /** For tests: makes the socket. */
   connect?: FollowClientOptions["connect"];
   random?: () => number;
 }
 
-/** The text of a presenter's Lead viewers toggle. */
+/** The text of a presenter's Lead viewers toggle: pressed, it shows how many follow, if any. */
 export function leadLabel(leading: boolean, audience: number): string {
   if (!leading) return "Lead viewers";
-  return audience === 1 ? "Leading · 1 following" : `Leading · ${audience} following`;
+  return audience > 0 ? `${audience} following` : "Leading";
 }
 
 /**
- * Following and leading for one deck. `pill` is the follower's status (shown while someone else
- * leads, or after access changed); `leadButton()` makes a Lead viewers toggle for the controls and
- * one for presenter view, kept in step.
+ * Following and leading for one deck. `pill` is the follower's status, one item at the end of the
+ * deck's controls (shown while someone else leads, or after access changed); `leadButton()` makes a
+ * Lead viewers toggle for the controls and one for presenter view, kept in step.
  */
 export class Follow {
   readonly client: FollowClient;
@@ -353,18 +370,20 @@ export class Follow {
 
   constructor(private readonly o: FollowOptions) {
     const doc = o.win.document;
-    this.pill = el(doc, "div", "plinth-slides__follow");
+    this.pill = el(doc, "span", "plinth-slides__follow");
     this.pill.setAttribute("role", "status");
-    this.pill.dataset.plinthControl = "";
     this.pill.hidden = true;
     this.pillText = el(doc, "span", "plinth-slides__follow-text");
     this.pillButton = el(doc, "button", "plinth-slides__btn");
     this.pillButton.type = "button";
-    this.pillButton.addEventListener("click", () => this.togglePause());
+    this.pillButton.addEventListener("click", () => this.resume());
     this.pill.append(this.pillText, this.pillButton);
     this.client = new FollowClient({
       win: o.win,
       changed: () => this.sync(),
+      leadChanged: (on) => {
+        if (!this.detached) o.onLead?.(on);
+      },
       ...(o.connect ? { connect: o.connect } : {}),
       ...(o.random ? { random: o.random } : {}),
     });
@@ -419,8 +438,20 @@ export class Follow {
     }
   }
 
-  private togglePause(): void {
-    this.following = !this.following;
+  /**
+   * The app says the frame this one replaced was leading (and the person never stopped): lead
+   * again from the slide on screen, which the app has just sent.
+   */
+  resumeLead(): void {
+    if (this.o.right !== "present" || this.detached || this.client.wantLead) return;
+    if (this.client.ended) return;
+    this.following = true;
+    this.client.lead(this.o.deck.current, true);
+  }
+
+  /** Back to the leader's slide after paging by hand. */
+  private resume(): void {
+    this.following = true;
     this.sync();
   }
 
@@ -454,10 +485,10 @@ export class Follow {
     }
     const root = this.o.root;
     if (c.ended === "unauthorized") {
-      this.showPill("Your access changed. Reload to keep following.", null);
+      this.showPill("Your access changed. Reload the page.", null);
     } else if (leader && !c.wantLead) {
-      if (this.following) this.showPill("Following the presenter", "Stop");
-      else this.showPill("", `Back to the presenter (slide ${leader.slide})`);
+      if (this.following) this.showPill("Following", null);
+      else this.showPill("", `Back to slide ${leader.slide}`);
     } else {
       this.pill.hidden = true;
     }

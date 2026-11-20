@@ -4,10 +4,13 @@
 // an unverified owner or for a taken-down artifact, within a per-owner and a per-recipient daily
 // limit. The message carries the one link and the role; titles and names are cleaned and escaped.
 import { env } from "cloudflare:workers";
-import { RATE_LIMITS } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
+import { INVITATION_DEFAULTS, RATE_LIMITS } from "@plinth/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConfigError, invitationEmailsActive, parseConfig } from "../src/config.ts";
+import { type EmailAdapter, type EmailMessage, EmailSendError } from "../src/email/index.ts";
 import { escapeHtml, invitationEmail } from "../src/email/templates.ts";
 import {
+  deliverInvitations,
   invitationAddressHash,
   newInvitees,
   pruneInvitationMarks,
@@ -40,7 +43,11 @@ const putSharing = (
   grants: { email: string; role: string }[],
   extra: Record<string, unknown> = {},
   headers: Record<string, string> = o.session,
-) => send("PUT", `/api/v1/artifacts/${id}/sharing`, headers, { grants, ...extra });
+  vars: Record<string, unknown> = {},
+) => send("PUT", `/api/v1/artifacts/${id}/sharing`, headers, { grants, ...extra }, vars);
+
+/** An owner limit above invitationsPerChange, for tests about the per-change cap. */
+const ROOMY_OWNER = { INVITATION_EMAILS_PER_OWNER_PER_DAY: "200" };
 
 const DAY = 86_400;
 const windowStart = (now = Date.now()) => {
@@ -65,8 +72,12 @@ describe("invitation emails: the sharing list", () => {
     expect(mail[0]?.subject).toBe(`${o.user.email} shared "Q3 plan" with you`);
     expect(mail[0]?.text).toContain(`${APP}/a/${a.slug}`);
     expect(mail[0]?.text).toContain("You can view it and comment on it.");
-    // One link, and no code or token of any kind.
-    expect(mail[0]?.text.match(/https?:\/\//g)).toHaveLength(1);
+    // Two links, both on the app host: the artifact and the page that turns these emails off,
+    // which carries no token or address. No code or token of any kind.
+    expect(mail[0]?.text.match(/https?:\/\/\S+/g)).toEqual([
+      `${APP}/a/${a.slug}`,
+      `${APP}/invitation-emails`,
+    ]);
     expect(mail[0]?.text).not.toMatch(/\b\d{6}\b/);
     expect(mail[0]?.text).not.toContain("plinth_");
   });
@@ -187,7 +198,7 @@ describe("invitation emails: the sharing list", () => {
     const o = await owner();
     const a = await artifactOf(o);
     await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
-      .bind(`invite:owner:${o.user.id}`, windowStart(), RATE_LIMITS.invitationsPerOwnerPerDay)
+      .bind(`invite:owner:${o.user.id}`, windowStart(), INVITATION_DEFAULTS.perOwnerPerDay)
       .run();
     const bo = uniqueEmail("bo");
     const capped = await json(
@@ -221,7 +232,9 @@ describe("invitation emails: the sharing list", () => {
       email: uniqueEmail(`many${i}-`),
       role: "viewer",
     }));
-    const res = await json(await putSharing(o, a.id, people, { notify: true }));
+    const res = await json(
+      await putSharing(o, a.id, people, { notify: true }, o.session, ROOMY_OWNER),
+    );
     expect(res.grants).toHaveLength(n);
     expect(res.invitations.emailed).toEqual(
       people.slice(0, RATE_LIMITS.invitationsPerChange).map((p) => p.email),
@@ -306,7 +319,7 @@ const counterOf = async (key: string) =>
 describe("invitation emails: limits hold under parallel changes", () => {
   it("parallel changes never pass the owner's daily limit, and give back what they did not use", async () => {
     const o = await owner();
-    const start = RATE_LIMITS.invitationsPerOwnerPerDay - 40;
+    const start = Math.max(0, INVITATION_DEFAULTS.perOwnerPerDay - 40);
     await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
       .bind(`invite:owner:${o.user.id}`, windowStart(), start)
       .run();
@@ -321,14 +334,12 @@ describe("invitation emails: limits hold under parallel changes", () => {
       arts.map(async (a, i) => json(await putSharing(o, a.id, lists[i] ?? [], { notify: true }))),
     );
     const emailed = bodies.flatMap((b) => b.invitations.emailed as string[]);
-    expect(emailed).toHaveLength(RATE_LIMITS.invitationsPerOwnerPerDay - start);
+    expect(emailed).toHaveLength(INVITATION_DEFAULTS.perOwnerPerDay - start);
     for (const b of bodies) {
       const reasons = new Set((b.invitations.skipped as { reason: string }[]).map((x) => x.reason));
       for (const r of reasons) expect(r).toBe("owner_limit");
     }
-    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(
-      RATE_LIMITS.invitationsPerOwnerPerDay,
-    );
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(INVITATION_DEFAULTS.perOwnerPerDay);
     // Someone who was not emailed gets their recipient counters back.
     const notSent = lists.flat().find((p) => !emailed.includes(p.email));
     expect(notSent).toBeDefined();
@@ -421,6 +432,188 @@ describe("invitation emails: limits hold under parallel changes", () => {
   });
 });
 
+describe("invitation emails: the operator's limits", () => {
+  const sharingWith = (o: Owner, id: string, emails: string[], vars: Record<string, string>) =>
+    send(
+      "PUT",
+      `/api/v1/artifacts/${id}/sharing`,
+      o.session,
+      { grants: emails.map((email) => ({ email, role: "viewer" })), notify: true },
+      vars,
+    );
+
+  it("INVITATION_EMAILS_PER_DAY counts every owner together, and gives back what it did not use", async () => {
+    const used = await counterOf("invite:instance");
+    const vars = { INVITATION_EMAILS_PER_DAY: String(used + 2) };
+    const o1 = await owner();
+    const a1 = await artifactOf(o1);
+    const bo = uniqueEmail("bo");
+    const first = await json(await sharingWith(o1, a1.id, [bo], vars));
+    expect(first.invitations).toEqual({ emailed: [bo], skipped: [] });
+
+    // Another owner, well under their own limit, gets the one email left.
+    const o2 = await owner();
+    const a2 = await artifactOf(o2);
+    const cy = uniqueEmail("cy");
+    const di = uniqueEmail("di");
+    const res = await sharingWith(o2, a2.id, [cy, di], vars);
+    expect(res.status).toBe(200);
+    const second = await json(res);
+    expect(second.grants).toHaveLength(2);
+    expect(second.invitations).toEqual({
+      emailed: [cy],
+      skipped: [{ email: di, reason: "instance_limit" }],
+    });
+    expect(await outboxFor(di)).toHaveLength(0);
+    expect(await counterOf("invite:instance")).toBe(used + 2);
+    expect(await counterOf(`invite:owner:${o2.user.id}`)).toBe(1);
+    expect(await counterOf(`invite:to:${await addressHash(di)}`)).toBe(0);
+
+    const o3 = await owner();
+    const a3 = await artifactOf(o3);
+    const ed = uniqueEmail("ed");
+    const third = await json(await sharingWith(o3, a3.id, [ed], vars));
+    expect(third.invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: ed, reason: "instance_limit" }],
+    });
+    expect(await outboxFor(ed)).toHaveLength(0);
+    expect(await counterOf("invite:instance")).toBe(used + 2);
+  });
+
+  it("parallel changes from many owners never pass INVITATION_EMAILS_PER_DAY", async () => {
+    const used = await counterOf("invite:instance");
+    const left = 3;
+    const vars = { INVITATION_EMAILS_PER_DAY: String(used + left) };
+    const owners = await Promise.all([1, 2, 3, 4].map(() => owner()));
+    const arts = await Promise.all(owners.map((o) => artifactOf(o)));
+    const bodies = await Promise.all(
+      owners.map(async (o, i) =>
+        json(
+          await sharingWith(
+            o,
+            arts[i]?.id ?? "",
+            [uniqueEmail(`inst${i}a-`), uniqueEmail(`inst${i}b-`)],
+            vars,
+          ),
+        ),
+      ),
+    );
+    const emailed = bodies.flatMap((b) => b.invitations.emailed as string[]);
+    expect(emailed).toHaveLength(left);
+    for (const b of bodies) {
+      for (const s of b.invitations.skipped as { reason: string }[]) {
+        expect(s.reason).toBe("instance_limit");
+      }
+    }
+    expect(await counterOf("invite:instance")).toBe(used + left);
+    const owned = await Promise.all(owners.map((o) => counterOf(`invite:owner:${o.user.id}`)));
+    expect(owned.reduce((x, y) => x + y, 0)).toBe(left);
+  });
+
+  it("INVITATION_EMAILS_PER_OWNER_PER_DAY sets one owner's daily limit", async () => {
+    const vars = { INVITATION_EMAILS_PER_OWNER_PER_DAY: "2" };
+    const o = await owner();
+    const a = await artifactOf(o);
+    const people = [uniqueEmail("p1-"), uniqueEmail("p2-"), uniqueEmail("p3-")];
+    const res = await json(await sharingWith(o, a.id, people, vars));
+    expect(res.invitations).toEqual({
+      emailed: people.slice(0, 2),
+      skipped: [{ email: people[2], reason: "owner_limit" }],
+    });
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(2);
+    expect(await outboxFor(people[2] ?? "")).toHaveLength(0);
+  });
+
+  it("INVITATION_EMAILS_PER_DAY=0 turns them off: nobody is emailed, nothing is counted", async () => {
+    const off = { INVITATION_EMAILS_PER_DAY: "0" };
+    expect((await json(await send("GET", "/api/v1/config", {}))).invitation_emails).toBe(true);
+    expect(
+      (await json(await send("GET", "/api/v1/config", {}, undefined, off))).invitation_emails,
+    ).toBe(false);
+
+    const used = await counterOf("invite:instance");
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("bo");
+    const res = await sharingWith(o, a.id, [bo], off);
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.grants).toEqual([expect.objectContaining({ email: bo, role: "viewer" })]);
+    expect(body.invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: bo, reason: "invitations_off" }],
+    });
+
+    // set_visibility and a category share say the same.
+    const client = await mcpClient(o.token, off);
+    try {
+      const cy = uniqueEmail("cy");
+      const vis = await tool(client, "set_visibility", {
+        id: a.id,
+        visibility: "allowlist",
+        emails: [bo, cy],
+        notify: true,
+      });
+      expect(vis.isError).toBe(false);
+      expect(vis.data.invitations).toEqual({
+        emailed: [],
+        skipped: [{ email: cy, reason: "invitations_off" }],
+      });
+      expect(await outboxFor(cy)).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+    await filed(o, "Delta", "Plan");
+    const dee = uniqueEmail("dee");
+    const share = await send(
+      "POST",
+      "/api/v1/category-shares",
+      o.session,
+      {
+        category: "delta",
+        people: [{ email: dee, role: "viewer" }],
+        review: reviewOf(await rowsOf(o, "delta"), () => true),
+        notify: true,
+      },
+      off,
+    );
+    expect(share.status).toBe(201);
+    expect((await json(share)).invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: dee, reason: "invitations_off" }],
+    });
+
+    expect(await outboxFor(bo)).toHaveLength(0);
+    expect(await outboxFor(dee)).toHaveLength(0);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(0);
+    expect(await counterOf("invite:instance")).toBe(used);
+  });
+
+  it("parses INVITATION_EMAILS_PER_DAY and INVITATION_EMAILS_PER_OWNER_PER_DAY within bounds", () => {
+    const vars = { ...(env as unknown as Record<string, unknown>) };
+    expect(parseConfig(vars).invitations).toEqual({
+      perDay: INVITATION_DEFAULTS.perDay,
+      perOwnerPerDay: INVITATION_DEFAULTS.perOwnerPerDay,
+    });
+    const set = parseConfig({
+      ...vars,
+      INVITATION_EMAILS_PER_DAY: "0",
+      INVITATION_EMAILS_PER_OWNER_PER_DAY: "25",
+    });
+    expect(set.invitations).toEqual({ perDay: 0, perOwnerPerDay: 25 });
+    expect(invitationEmailsActive(set)).toBe(false);
+    for (const bad of ["-1", "1.5", "lots", "1000001"]) {
+      expect(() => parseConfig({ ...vars, INVITATION_EMAILS_PER_DAY: bad })).toThrow(ConfigError);
+    }
+    for (const bad of ["0", "10001"]) {
+      expect(() => parseConfig({ ...vars, INVITATION_EMAILS_PER_OWNER_PER_DAY: bad })).toThrow(
+        ConfigError,
+      );
+    }
+  });
+});
+
 describe("invitation emails: set_visibility", () => {
   it("REST PUT /visibility emails people the allowlist adds when asked", async () => {
     const o = await owner();
@@ -480,7 +673,7 @@ describe("invitation emails: set_visibility", () => {
 });
 
 describe("invitation emails: category shares", () => {
-  it("a new share with notify emails its people the share's name and the portal link", async () => {
+  it("a new share with notify emails its people the share's title and the portal link", async () => {
     const o = await owner();
     await filed(o, "Zeta", "Q3 report");
     const client = uniqueEmail("client");
@@ -497,7 +690,7 @@ describe("invitation emails: category shares", () => {
     expect(mail[0]?.subject).toBe(`${o.user.email} shared "Client reports" with you`);
     expect(mail[0]?.text).toContain(`${APP}/p/${made.share.id}`);
     expect(mail[0]?.text).toContain("comment on them");
-    // The people see the share's name, never the category's.
+    // The people see the share's title; the owner changed it, so the category's name never shows.
     expect(mail[0]?.text).not.toContain("Zeta");
   });
 
@@ -524,6 +717,257 @@ describe("invitation emails: category shares", () => {
     expect(await outboxFor(first)).toHaveLength(0);
     expect(await outboxFor(second)).toHaveLength(1);
   });
+
+  it("a token limited to one artifact gets token_bound with notify, and nobody is emailed", async () => {
+    const o = await owner();
+    const a = await filed(o, "Gamma", "Board deck");
+    const first = uniqueEmail("first");
+    const made = await shareCategory(o, "gamma", [{ email: first, role: "viewer" }]);
+    const minted = await send("POST", "/api/v1/connections", o.session, {
+      label: "CI: deck",
+      artifact: a.id,
+    });
+    expect(minted.status).toBe(201);
+    const bound = { Authorization: `Bearer ${(await json(minted)).token}` };
+    const fresh = uniqueEmail("fresh");
+    const people = [
+      { email: first, role: "viewer" },
+      { email: fresh, role: "viewer" },
+    ];
+    const calls: [string, string, unknown][] = [
+      ["POST", "/api/v1/category-shares", { category: "Other", people, review: [], notify: true }],
+      ["PATCH", `/api/v1/category-shares/${made.share.id}`, { people, review: [], notify: true }],
+      // On its own artifact the token may view and edit, never manage, so sharing is refused too.
+      ["PUT", `/api/v1/artifacts/${a.id}/sharing`, { grants: people, notify: true }],
+      [
+        "PUT",
+        `/api/v1/artifacts/${a.id}/visibility`,
+        { visibility: "allowlist", emails: [fresh], notify: true },
+      ],
+    ];
+    for (const [method, path, body] of calls) {
+      const res = await send(method, path, bound, body);
+      const out = await json(res);
+      expect(res.status, `${method} ${path}: ${JSON.stringify(out)}`).toBe(403);
+      expect(out.error.details?.reason, `${method} ${path}`).toBe("token_bound");
+    }
+    expect(await outboxFor(fresh)).toHaveLength(0);
+    expect(await outboxFor(first)).toHaveLength(0);
+  });
+});
+
+describe("invitation emails: the provider's request rate", () => {
+  const RESEND = { EMAIL_PROVIDER: "resend", RESEND_API_KEY: "re_test_invitations" };
+
+  /**
+   * Resend at the HTTP layer, limiting requests the way its per-team rate does: past `perWindow`
+   * requests it answers 429 (the window never ends within a test). `answer` overrides the reply.
+   */
+  function fakeResend(opts: { perWindow?: number; answer?: (n: number) => Response | null } = {}) {
+    const real = globalThis.fetch;
+    const accepted: string[] = [];
+    const requests: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const req = new Request(input as RequestInfo, init);
+      if (new URL(req.url).host !== "api.resend.com") return real(input, init);
+      requests.push(new URL(req.url).pathname);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        const body = (await req.json()) as { to: string[] } | { to: string[] }[];
+        await new Promise((r) => setTimeout(r, 1));
+        const own = opts.answer?.(requests.length);
+        if (own) return own;
+        if (requests.length > (opts.perWindow ?? 2)) {
+          return Response.json(
+            { name: "rate_limit_exceeded", message: "Too many requests" },
+            { status: 429, headers: { "retry-after": "0" } },
+          );
+        }
+        for (const m of Array.isArray(body) ? body : [body]) accepted.push(...m.to);
+        return Response.json({ data: [] });
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    return { accepted, requests, maxInFlight: () => maxInFlight };
+  }
+
+  const shareWith = (o: Owner, id: string, emails: string[]) =>
+    send(
+      "PUT",
+      `/api/v1/artifacts/${id}/sharing`,
+      o.session,
+      { grants: emails.map((email) => ({ email, role: "viewer" })), notify: true },
+      RESEND,
+    );
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("twenty people at once stay within a provider that allows two requests at a time", async () => {
+    const resend = fakeResend({ perWindow: 2 });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const people = Array.from({ length: 20 }, (_, i) => uniqueEmail(`rate${i}-`));
+    const body = await json(await shareWith(o, a.id, people));
+    expect(body.invitations).toEqual({ emailed: people, skipped: [] });
+    // One batch request carries them all: nothing is refused, and no burst takes the room sign-in
+    // codes need.
+    expect(resend.requests).toEqual(["/emails/batch"]);
+    expect(resend.maxInFlight()).toBe(1);
+    expect(resend.accepted.sort()).toEqual([...people].sort());
+  });
+
+  it("a 429 is tried again after Retry-After, and the counters stay used", async () => {
+    let first = true;
+    const resend = fakeResend({
+      perWindow: 10,
+      answer: () => {
+        if (!first) return null;
+        first = false;
+        return Response.json(
+          { message: "Too many requests" },
+          { status: 429, headers: { "retry-after": "0" } },
+        );
+      },
+    });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("retry-bo");
+    const body = await json(await shareWith(o, a.id, [bo]));
+    expect(body.invitations).toEqual({ emailed: [bo], skipped: [] });
+    expect(resend.requests).toEqual(["/emails/batch", "/emails/batch"]);
+    expect(resend.accepted).toEqual([bo]);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+    expect(await counterOf(`invite:sent:a:${a.id}:${await addressHash(bo)}`)).toBe(1);
+  });
+
+  it("what the provider refuses gets its mark and counters back, so adding the person again emails them", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const used = await counterOf("invite:instance");
+    let refuse = true;
+    const resend = fakeResend({
+      perWindow: 10,
+      answer: () =>
+        refuse
+          ? Response.json(
+              { message: "Too many requests" },
+              { status: 429, headers: { "retry-after": "0" } },
+            )
+          : null,
+    });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("refused-bo");
+    const h = await addressHash(bo);
+    const body = await json(await shareWith(o, a.id, [bo]));
+    expect(body.invitations).toEqual({ emailed: [bo], skipped: [] });
+    // Tried three times, then given up on, logged without the address.
+    expect(resend.requests).toHaveLength(3);
+    expect(resend.accepted).toEqual([]);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("1 of 1 not sent"));
+    expect(JSON.stringify(err.mock.calls)).not.toContain(bo);
+    expect(await counterOf(`invite:sent:a:${a.id}:${h}`)).toBe(0);
+    expect(await counterOf(`invite:to:${h}`)).toBe(0);
+    expect(await counterOf(`invite:pair:${o.user.id}:${h}`)).toBe(0);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(0);
+    expect(await counterOf("invite:instance")).toBe(used);
+
+    // Removed and added back once the provider takes mail again: the email goes.
+    refuse = false;
+    await send("PUT", `/api/v1/artifacts/${a.id}/sharing`, o.session, { grants: [] }, RESEND);
+    const again = await json(await shareWith(o, a.id, [bo]));
+    expect(again.invitations).toEqual({ emailed: [bo], skipped: [] });
+    expect(resend.accepted).toEqual([bo]);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+  });
+
+  it("a send whose outcome is unknown keeps its counters", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fakeResend({ answer: () => Response.json({ message: "upstream" }, { status: 503 }) });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("unknown-bo");
+    await shareWith(o, a.id, [bo]);
+    expect(await counterOf(`invite:sent:a:${a.id}:${await addressHash(bo)}`)).toBe(1);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+  });
+});
+
+describe("invitation emails: handing messages to the provider", () => {
+  const message = (i: number): EmailMessage => ({
+    to: `p${i}@example.org`,
+    subject: "s",
+    text: "t",
+  });
+
+  /** A provider without a batch endpoint that records how many sends overlap. */
+  function oneByOne(refuse: (to: string, attempt: number) => EmailSendError | null = () => null) {
+    const sent: string[] = [];
+    const attempts = new Map<string, number>();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const adapter: EmailAdapter = {
+      name: "test",
+      async send(m) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        try {
+          await new Promise((r) => setTimeout(r, 1));
+          const n = (attempts.get(m.to) ?? 0) + 1;
+          attempts.set(m.to, n);
+          const e = refuse(m.to, n);
+          if (e) throw e;
+          sent.push(m.to);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    };
+    return { adapter, sent, maxInFlight: () => maxInFlight };
+  }
+
+  it("sends one at a time when the provider has no batch endpoint", async () => {
+    const p = oneByOne();
+    const messages = Array.from({ length: 12 }, (_, i) => message(i));
+    const out = await deliverInvitations(p.adapter, messages, async () => undefined);
+    expect(out).toEqual({ refused: [], unknown: [], why: null });
+    expect(p.maxInFlight()).toBe(1);
+    expect(p.sent).toEqual(messages.map((m) => m.to));
+  });
+
+  it("waits as Retry-After says, at most five seconds, and stops when the rate does not clear", async () => {
+    const waits: number[] = [];
+    const p = oneByOne((to) =>
+      to === "p1@example.org" ? new EmailSendError("test", 429, null, 60) : null,
+    );
+    const messages = [message(0), message(1), message(2), message(3)];
+    const out = await deliverInvitations(p.adapter, messages, async (ms) => {
+      waits.push(ms);
+    });
+    expect(waits).toEqual([5000, 5000]);
+    expect(p.sent).toEqual(["p0@example.org"]);
+    // The one refused and the two not tried are all refused: none of them was sent.
+    expect(out.refused).toEqual([1, 2, 3]);
+    expect(out.unknown).toEqual([]);
+    expect(out.why).toContain("429");
+  });
+
+  it("a refusal is not tried again and the rest still go; an unknown outcome is kept apart", async () => {
+    const p = oneByOne((to) => {
+      if (to === "p0@example.org") return new EmailSendError("test", 422, "invalid");
+      if (to === "p1@example.org") return new EmailSendError("test", null);
+      return null;
+    });
+    const out = await deliverInvitations(p.adapter, [message(0), message(1), message(2)]);
+    expect(out.refused).toEqual([0]);
+    expect(out.unknown).toEqual([1]);
+    expect(p.sent).toEqual(["p2@example.org"]);
+  });
 });
 
 describe("invitation emails: the message", () => {
@@ -535,9 +979,10 @@ describe("invitation emails: the message", () => {
     title: "Plan",
     role: "viewer" as const,
     link: "https://app.example/a/abc",
+    optOutLink: "https://app.example/invitation-emails",
   };
 
-  it("escapes titles and names in HTML and offers no link but the artifact's", () => {
+  it("escapes titles and names in HTML and offers no link but the artifact's and the opt-out page", () => {
     const m = invitationEmail({
       ...base,
       ownerName: 'Eve "Admin" <b>visit https://phish.example</b>',
@@ -546,8 +991,10 @@ describe("invitation emails: the message", () => {
     expect(m.html).not.toContain("<img");
     expect(m.html).not.toContain("<b>");
     expect(m.html).toContain("&lt;img src=x onerror=alert(1)&gt;");
-    expect(m.html?.match(/<a /g)).toHaveLength(1);
-    expect(m.html).toContain(`<a href="${escapeHtml(base.link)}">`);
+    expect(m.html?.match(/<a href="[^"]*"/g)).toEqual([
+      `<a href="${escapeHtml(base.link)}"`,
+      `<a href="${escapeHtml(base.optOutLink)}"`,
+    ]);
     for (const body of [m.text, m.html ?? "", m.subject]) {
       expect(body).not.toContain("https://evil.example");
       expect(body).not.toContain("https://phish.example");
@@ -555,7 +1002,7 @@ describe("invitation emails: the message", () => {
     }
     expect(m.text).toContain("https[:]//evil.example/login");
     expect(m.text).toContain("www[.]evil.example");
-    expect(m.text.match(/https?:\/\//g)).toEqual(["https://"]);
+    expect(m.text.match(/https?:\/\/\S+/g)).toEqual([base.link, base.optOutLink]);
     // Who shared it is named with the address, so a name cannot pass for someone else.
     expect(m.text).toContain("(ada@example.org) shared");
     expect(m.text).toContain("written by the person who shared it");

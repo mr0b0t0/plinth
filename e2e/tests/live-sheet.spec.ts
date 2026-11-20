@@ -103,19 +103,21 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(field).toHaveValue("3");
   await field.fill("30");
 
-  // The editor sees the row held, with the owner's email, and the value as it arrives.
-  await expect(
-    frameOf(other).locator("tr.plinth-sheet__row--held .plinth-sheet__holder"),
-  ).toHaveText(`${s.owner} is editing`);
+  // The editor sees the row held (tinted, the owner named on its number), and the value as it
+  // arrives.
+  const held = frameOf(other).locator("tr.plinth-sheet__row--held th.plinth-sheet__rownum");
+  await expect(held).toHaveAttribute("title", "Sheet is editing");
+  await expect(held.locator(".plinth-sheet__holder")).toHaveText("Sheet is editing");
   await expect(cell(other, "B2")).toHaveText("30");
   await expect(cell(other, "B5")).toHaveText("37");
   await expect(other.getByRole("region", { name: "Editing on the page" })).toContainText(s.owner);
-  // Opening a cell of that row does not open it.
+  // Opening a cell of that row does not open it; a screen reader is told why, and nothing pops up.
   await cell(other, "A2").dblclick();
   await expect(frameOf(other).locator(".plinth-sheet__input")).toHaveCount(0);
-  await expect(frameOf(other).locator(".plinth-sheet__notice")).toContainText(
-    `${s.owner} is editing this row.`,
+  await expect(frameOf(other).locator(".plinth-sheet__sr[role=status]")).toHaveText(
+    "Sheet is editing this row.",
   );
+  await expect(frameOf(other).locator(".plinth-sheet__notice")).toHaveCount(0);
 
   // The editor edits another row at the same time, by typing into a selected cell.
   await cell(other, "A3").click();
@@ -138,7 +140,8 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
 
   // A row inserted above Plums: both pages show it, and the totals' ranges grow.
   await cell(page, "A4").click();
-  await frameOf(page).getByRole("button", { name: "Row above" }).click();
+  await frameOf(page).getByRole("button", { name: "Row", exact: true }).click();
+  await frameOf(page).getByRole("menuitem", { name: "Insert above" }).click();
   await expect(frameOf(page).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(frameOf(other).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(cell(other, "A6")).toHaveText("Total");
@@ -207,6 +210,10 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await expect(bar).toContainText("v2 was published while you edited", {
     timeout: 10_000,
   });
+  // No toast repeats it, and nothing in the menus works while the draft waits for the review, so
+  // they are not shown.
+  await expect(page.getByText(/^Updated to v/)).toHaveCount(0);
+  await expect(frameOf(page).getByRole("toolbar", { name: "Rows and columns" })).toBeHidden();
   await bar.getByRole("button", { name: "Review changes" }).click();
   // The review is in the page itself: both grids, and what each side changed.
   const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
@@ -239,6 +246,8 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
   await expect(review).toHaveCount(0);
   await expect(bar).toContainText("Published as v3", { timeout: 10_000 });
+  await expect(page.locator(".hx-picker__shown")).toHaveText("v3");
+  await expect(page.getByText(/^Updated to v/)).toHaveCount(0);
   const v3 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
   expect(v3.split("\n").slice(1, 3)).toEqual(['["Apples",4,1.5,true]', '["Pears",5,0.5,false]']);
   const versions = await apiGet(page.request, `/artifacts/${s.id}/versions`);

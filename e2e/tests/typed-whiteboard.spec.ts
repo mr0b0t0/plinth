@@ -1,11 +1,14 @@
 // Whiteboards (type "whiteboard") in the browser: a board published over MCP with a starting set of
-// blocks and an arrow, its blocks in shared data. The owner and a commenter see each other's
+// blocks and an arrow, its blocks in shared data. On a board open to commenters (`edit:
+// "commenters"`; the default is editors only), the owner and a commenter see each other's
 // cursors, a drag shows live and is saved; a person with view access gets a read-only board whose
 // direct writes the server refuses; a settings version that makes the board editors-only turns
-// the commenter's board read-only as their socket reconnects; an agent's block shows up; export
-// downloads a PNG and an SVG; the keyboard moves a block; the page fits a phone; the editor's
-// preview draws only the draft, with no write and no room; and Board settings in the ⋯ menu saves
-// a settings version, and after a newer version shows that version's settings instead.
+// the commenter's board read-only as their socket reconnects; an agent's block shows up; the
+// artifact menu downloads a PNG and an SVG and offers no source editor; the keyboard moves a block
+// and zooms; the page fits a phone; and the ⋯ menu's one Settings item (the owner's settings page,
+// the editor's dialog) saves settings versions, and after a newer version shows that version's
+// settings and loads it behind the dialog instead; History offers Restore settings, and Compare
+// lists the settings that changed in the dialog's words.
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Frame, type Page, test } from "@playwright/test";
@@ -14,7 +17,6 @@ import { seedSession, seedToken } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 
 const BOARD = JSON.stringify({
   v: 1,
@@ -35,13 +37,14 @@ async function boardFrame(page: Page): Promise<Frame> {
   return frame;
 }
 
-async function publishBoard(page: Page, owner: string) {
+/** Publish the board; `edit` "commenters" opens it to commenters (the default is editors only). */
+async function publishBoard(page: Page, owner: string, edit?: "commenters") {
   const { token } = await seedToken(owner, { label: "Board agent", clientType: "claude" });
   const client = await mcpClient(token);
   const r = await tool(client, "publish_artifact", {
     title: "Launch board",
     type: "whiteboard",
-    content: BOARD,
+    content: edit ? JSON.stringify({ ...JSON.parse(BOARD), edit }) : BOARD,
   });
   expect(r.isError, r.text).toBe(false);
   expect(r.data.board).toEqual({ blocks: 3, arrows: 1 });
@@ -72,6 +75,9 @@ const write = (frame: Frame, method: string, path: string, body?: unknown) =>
     [method, path, body] as const,
   );
 
+/** A cursor's tag shows the email's local part, as the people list does at phone width. */
+const tag = (email: string) => email.split("@")[0] ?? email;
+
 const leftOf = (frame: Frame, label: RegExp) =>
   frame
     .getByRole("group", { name: label })
@@ -85,7 +91,7 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
   const owner = uniqueEmail("wb-owner");
   const guest = uniqueEmail("wb-guest");
   const watcher = uniqueEmail("wb-watcher");
-  const { token, client, id, slug } = await publishBoard(page, owner);
+  const { token, client, id, slug } = await publishBoard(page, owner, "commenters");
   const shared = await apiPut(
     page.request,
     `/artifacts/${id}/sharing`,
@@ -112,8 +118,10 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     await expect(o.frame.locator(".wb-block b")).toHaveCount(0);
     await expect(c.frame.getByRole("button", { name: "Add note" })).toBeEnabled();
 
-    // The viewer: read-only, and the server refuses a direct write from their frame.
-    await expect(v.frame.getByRole("button", { name: "Add note" })).toBeDisabled();
+    // The viewer: read-only (no edit tools, one short line), and the server refuses a direct
+    // write from their frame.
+    await expect(v.frame.getByRole("button", { name: "Add note" })).toBeHidden();
+    await expect(v.frame.locator(".wb-banner")).toHaveText("View only");
     await expect(v.frame.locator("html")).toHaveAttribute("data-readonly", "true");
     const block = { kind: "note", x: 0, y: 480, w: 200, h: 140, text: "x" };
     expect(await write(v.frame, "POST", "/data/blocks", { data: block })).toBe(403);
@@ -123,16 +131,22 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     if (!area) throw new Error("no frame");
     await o.page.mouse.move(area.x + area.width - 40, area.y + area.height - 40);
     await o.page.mouse.move(area.x + area.width - 30, area.y + area.height - 30, { steps: 3 });
-    await expect(c.frame.locator(".wb-cursor span").filter({ hasText: owner })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(c.frame.locator(".wb-cursor span").filter({ hasText: tag(owner) })).toHaveCount(
+      1,
+      {
+        timeout: 10_000,
+      },
+    );
     const vArea = await v.page.locator(CURRENT_FRAME).boundingBox();
     if (!vArea) throw new Error("no frame");
     await v.page.mouse.move(vArea.x + vArea.width - 50, vArea.y + vArea.height - 50);
     await v.page.mouse.move(vArea.x + vArea.width - 40, vArea.y + vArea.height - 40, { steps: 3 });
-    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: watcher })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: tag(watcher) })).toHaveCount(
+      1,
+      {
+        timeout: 10_000,
+      },
+    );
 
     // The commenter drags the note: the owner sees it move before the drop, and it is saved.
     const note = c.frame.getByRole("group", { name: /^Note: Ship v2/ });
@@ -197,7 +211,7 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
     await expect(cBoard.locator("html")).toHaveAttribute("data-room", "open", {
       timeout: 15_000,
     });
-    await expect(cBoard.getByRole("button", { name: "Add note" })).toBeDisabled();
+    await expect(cBoard.getByRole("button", { name: "Add note" })).toBeHidden();
     expect(
       await write(await boardFrame(c.page), "PUT", "/data/blocks/agent-note", { data: block }),
     ).toBe(403);
@@ -212,9 +226,12 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
       await c.page.mouse.move(cArea.x + cArea.width - 50 - nudge, cArea.y + cArea.height - 50, {
         steps: 3,
       });
-      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: guest })).toHaveCount(1, {
-        timeout: 2_000,
-      });
+      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: tag(guest) })).toHaveCount(
+        1,
+        {
+          timeout: 2_000,
+        },
+      );
     }).toPass({ timeout: 20_000 });
     // The owner still edits.
     await expect(oBoard.getByRole("button", { name: "Add note" })).toBeEnabled();
@@ -225,18 +242,36 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
   }
 });
 
-test("export, the keyboard, zoom, phone width and axe", async ({ page }) => {
+/** Pick an item in the artifact's ⋯ menu. */
+async function menuItem(page: Page, name: string) {
+  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await page.getByRole("menuitem", { name }).click();
+}
+
+test("export from the menu, the keyboard, zoom, phone width and axe", async ({ page }) => {
   test.setTimeout(90_000);
   const owner = uniqueEmail("wb-export");
   const { client, id, slug } = await publishBoard(page, owner);
   try {
     await page.goto(`/a/${slug}`);
-    const frame = await boardFrame(page);
+    let frame = await boardFrame(page);
     await expect(frame.locator(".wb-block")).toHaveCount(3);
+
+    // One way to change a board: on its page. The menu has no source editor, and the editor's
+    // address goes back to the board.
+    await page.getByRole("button", { name: "Artifact actions" }).click();
+    await expect(page.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    if (test.info().project.name !== "mobile") {
+      await page.goto(`/a/${slug}/edit`);
+      await expect(page).toHaveURL(new RegExp(`/a/${slug}$`), { timeout: 15_000 });
+      frame = await boardFrame(page);
+      await expect(frame.locator(".wb-block")).toHaveCount(3);
+    }
 
     // SVG: a file with the board's text, escaped, and nothing that runs or loads.
     const svgDownload = page.waitForEvent("download");
-    await frame.getByRole("button", { name: "Export as SVG" }).click();
+    await menuItem(page, "Download as SVG");
     const svgFile = await svgDownload;
     expect(svgFile.suggestedFilename()).toBe("launch-board.svg");
     const svg = await readFile(await svgFile.path(), "utf8");
@@ -251,7 +286,7 @@ test("export, the keyboard, zoom, phone width and axe", async ({ page }) => {
 
     // PNG: a real PNG file.
     const pngDownload = page.waitForEvent("download");
-    await frame.getByRole("button", { name: "Export as PNG" }).click();
+    await menuItem(page, "Download as PNG");
     const pngFile = await pngDownload;
     expect(pngFile.suggestedFilename()).toBe("launch-board.png");
     const png = await readFile(await pngFile.path());
@@ -270,141 +305,169 @@ test("export, the keyboard, zoom, phone width and axe", async ({ page }) => {
       )
       .toBe(10);
 
-    // Zoom in and fit: the world layer's scale follows.
+    // Zoom in with the keyboard, then fit: the world layer's scale follows.
     const scale = () =>
       frame.locator(".wb-world").evaluate((el) => (el as HTMLElement).style.transform);
     const before = await scale();
-    await frame.getByRole("button", { name: "Zoom in" }).click();
+    await frame.locator(".wb-viewport").focus();
+    await page.keyboard.press("+");
     await expect.poll(scale).not.toBe(before);
     await frame.getByRole("button", { name: "Fit the board" }).click();
 
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
 
-    // At 390 px: the toolbar wraps and nothing scrolls sideways.
+    // At 390 px, with a block selected: its controls take the add buttons' place, the bar stays
+    // one row (the colours scroll inside it), Delete and Fit are in view, and the page itself
+    // never scrolls sideways.
     await page.setViewportSize({ width: 390, height: 800 });
+    await frame.getByRole("group", { name: /^Note: Ship v2/ }).focus();
+    await expect(frame.getByRole("button", { name: "Delete" })).toBeVisible();
+    await expect(frame.getByRole("button", { name: "Add note" })).toBeHidden();
     await expect
       .poll(() =>
         frame.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
       )
       .toBe(true);
-    const toolbar = await frame.locator(".wb-toolbar").boundingBox();
-    expect(toolbar?.height ?? 0).toBeGreaterThan(48);
+    const row = await frame.locator(".wb-toolbar").evaluate((bar) => {
+      const box = bar.getBoundingClientRect();
+      const fit = bar.querySelector('[aria-label="Fit the board"]')?.getBoundingClientRect();
+      const del = [...bar.querySelectorAll("button")]
+        .find((b) => b.textContent === "Delete")
+        ?.getBoundingClientRect();
+      return {
+        oneRow: box.height <= 48,
+        inView: !!fit && !!del && fit.right <= innerWidth && del.right <= innerWidth,
+      };
+    });
+    expect(row).toEqual({ oneRow: true, inView: true });
   } finally {
     await client.close();
   }
 });
 
-test("the editor preview draws only the draft and never writes or joins the room", async ({
+test("Board settings: one Settings item; the owner's page and the editor's dialog save versions, a newer one is shown", async ({
   page,
+  browser,
 }) => {
-  test.setTimeout(90_000);
-  test.skip(test.info().project.name === "mobile", "the editor needs a wide screen");
-  const owner = uniqueEmail("wb-editor");
-  const { client, id, slug } = await publishBoard(page, owner);
-  const seen: string[] = [];
-  page.on("request", (r) => {
-    if (r.url().includes("/__plinth/api/") && r.method() !== "GET") {
-      seen.push(`${r.method()} ${r.url()}`);
-    }
-  });
-  page.on("websocket", (ws) => {
-    if (ws.url().includes("/__plinth/room/")) seen.push(`ws ${ws.url()}`);
-  });
-  try {
-    const before = await tool(client, "list_artifact_data", { id });
-    await page.goto(`/a/${slug}/edit`);
-    await expect(page.getByText("Editing v1")).toBeVisible({ timeout: 15_000 });
-    const preview = page.frameLocator(PREVIEW_FRAME);
-    await expect(preview.locator(".wb-banner")).toHaveText(
-      "Preview: the board's blocks are not shown here; settings apply.",
-      { timeout: 15_000 },
-    );
-    // The stored board.json has settings only, so the live blocks never appear here.
-    await expect(preview.locator(".wb-block")).toHaveCount(0);
-    await expect(preview.getByRole("button", { name: "Add note" })).toBeDisabled();
-    await page.waitForTimeout(1500);
-    expect(seen).toEqual([]);
-    const after = await tool(client, "list_artifact_data", { id });
-    expect(after.data.usage).toEqual(before.data.usage);
-  } finally {
-    await client.close();
-  }
-});
-
-test("Board settings: the ⋯ dialog saves a version, and a newer version is shown, not overwritten", async ({
-  page,
-}) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const owner = uniqueEmail("wb-settings");
-  const { client, id, slug } = await publishBoard(page, owner);
+  const editor = uniqueEmail("wb-settings-ed");
+  const { token, client, id, slug } = await publishBoard(page, owner);
+  const shared = await apiPut(
+    page.request,
+    `/artifacts/${id}/sharing`,
+    { grants: [{ email: editor, role: "editor" }] },
+    { token },
+  );
+  expect(shared.status, JSON.stringify(shared.body)).toBe(200);
+  const editorPage = await (await browser.newContext()).newPage();
   try {
+    // The owner: the ⋯ menu has one Settings item, the settings page, and no source editor.
     await page.goto(`/a/${slug}`);
     const frame = await boardFrame(page);
     await expect(frame.locator(".wb-viewport")).toHaveAttribute("data-bg", "dots");
-
-    // The menu offers Board settings and no source editor.
     await page.getByRole("button", { name: "Artifact actions" }).click();
     const menu = page.getByRole("menu");
-    await expect(menu.getByRole("menuitem", { name: "Board settings" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: /settings/i })).toHaveCount(1);
     await expect(menu.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
-    await menu.getByRole("menuitem", { name: "Board settings" }).click();
+    await menu.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page).toHaveURL(new RegExp(`/a/${slug}/settings$`));
 
-    const dialog = page.getByRole("dialog", { name: "Board settings" });
-    await expect(dialog.getByRole("radio", { name: /^Dots/ })).toBeChecked();
-    await expect(dialog.getByRole("radio", { name: /^Commenters and editors/ })).toBeChecked();
-    await expect(dialog.getByRole("textbox")).toHaveCount(0);
-    // Let the dialog's entrance animation settle so axe sees its final colours.
-    await page.waitForFunction(() =>
-      document.getAnimations().every((a) => a.playState !== "running"),
-    );
-    const results = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
-    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
-
-    // Save: v2 holds the new settings, and the page shows it.
-    await dialog.getByRole("radio", { name: /^Grid/ }).check();
-    await dialog.getByRole("button", { name: "Save" }).click();
-    await expect(dialog).toHaveCount(0);
+    // Its Board section saves v2 with the new background.
+    const section = page.locator("section", {
+      has: page.getByRole("heading", { name: "Board", exact: true }),
+    });
+    await expect(section.getByRole("radio", { name: "Dots" })).toBeChecked();
+    // The default: only editors change the board.
+    await expect(section.getByRole("radio", { name: "Editors only" })).toBeChecked();
+    await section.getByRole("radio", { name: "Grid" }).check();
+    await section.getByRole("button", { name: "Save board" }).click();
     await expect(page.getByText("Saved as v2")).toBeVisible();
-    await expect(page.frameLocator(CURRENT_FRAME).locator(".wb-viewport")).toHaveAttribute(
-      "data-bg",
-      "grid",
-      { timeout: 15_000 },
-    );
     const v2 = await tool(client, "get_artifact", { id });
     expect(v2.data.version).toBe(2);
-    expect(JSON.parse(v2.data.content)).toEqual({ v: 1, background: "grid", edit: "commenters" });
-    // The blocks stay: a settings version never touches the board's shared data.
-    await expect(page.frameLocator(CURRENT_FRAME).locator(".wb-block")).toHaveCount(3);
+    expect(JSON.parse(v2.data.content)).toEqual({ v: 1, background: "grid", edit: "editors" });
 
-    // The dialog reads v2; an agent publishes v3 meanwhile; the save is refused and v3 is shown.
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menu").getByRole("menuitem", { name: "Board settings" }).click();
-    await expect(dialog.getByRole("radio", { name: /^Grid/ })).toBeChecked();
+    // The editor: one Settings item, which opens the dialog over the board.
+    await seedSession(editorPage.context(), editor);
+    await editorPage.goto(`/a/${slug}`);
+    const edFrame = await boardFrame(editorPage);
+    await expect(edFrame.locator(".wb-viewport")).toHaveAttribute("data-bg", "grid");
+    // The blocks stay: a settings version never touches the board's shared data.
+    await expect(edFrame.locator(".wb-block")).toHaveCount(3);
+    await editorPage.getByRole("button", { name: "Artifact actions" }).click();
+    const edMenu = editorPage.getByRole("menu");
+    await expect(edMenu.getByRole("menuitem", { name: /settings/i })).toHaveCount(1);
+    await edMenu.getByRole("menuitem", { name: "Settings" }).click();
+    const dialog = editorPage.getByRole("dialog", { name: "Board settings" });
+    await expect(dialog.getByRole("radio", { name: "Grid" })).toBeChecked();
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    // Let the dialog's entrance animation settle so axe sees its final colours.
+    await editorPage.waitForFunction(() =>
+      document.getAnimations().every((a) => a.playState !== "running"),
+    );
+    const results = await new AxeBuilder({ page: editorPage }).include('[role="dialog"]').analyze();
+    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+
+    // An agent publishes v3 meanwhile; the save is refused, the dialog shows v3's settings, and
+    // the page behind it loads v3 (its version and its background).
     const v3 = await tool(client, "update_artifact", {
       id,
-      content: '{"v":1,"background":"plain","edit":"editors"}',
+      content: '{"v":1,"background":"plain","edit":"commenters"}',
       base_version: 2,
     });
     expect(v3.isError, v3.text).toBe(false);
-    await dialog.getByRole("radio", { name: /^Dots/ }).check();
+    await dialog.getByRole("radio", { name: "Dots" }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(
-      dialog.getByText("v3 changed the board settings. Here they are now."),
+      dialog.getByText("v3 was published meanwhile. These are its settings."),
     ).toBeVisible();
-    await expect(dialog.getByRole("radio", { name: /^Plain/ })).toBeChecked();
-    await expect(dialog.getByRole("radio", { name: /^Editors only/ })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "Plain" })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "Commenters and editors" })).toBeChecked();
     await expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+    await expect(editorPage.getByTitle("Launch board, version 3")).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    await expect(editorPage.frameLocator(CURRENT_FRAME).locator(".wb-viewport")).toHaveAttribute(
+      "data-bg",
+      "plain",
+      { timeout: 15_000 },
+    );
     expect((await tool(client, "get_artifact", { id })).data.version).toBe(3);
 
     // Saving again goes against v3.
-    await dialog.getByRole("radio", { name: /^Commenters and editors/ }).check();
+    await dialog.getByRole("radio", { name: "Editors only" }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(dialog).toHaveCount(0);
     const v4 = await tool(client, "get_artifact", { id });
     expect(v4.data.version).toBe(4);
-    expect(JSON.parse(v4.data.content)).toEqual({ v: 1, background: "plain", edit: "commenters" });
+    expect(JSON.parse(v4.data.content)).toEqual({ v: 1, background: "plain", edit: "editors" });
+
+    // History offers Restore settings, and Compare lists the settings that changed in the
+    // dialog's words.
+    await page.goto(`/a/${slug}/history`);
+    const v1Row = page.locator('li[data-version="1"]');
+    await v1Row.getByRole("button", { name: "More actions for v1" }).click();
+    await expect(page.getByRole("menuitem", { name: "Restore settings" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await v1Row.getByRole("checkbox", { name: "Select v1 to compare" }).check();
+    await page
+      .locator('li[data-version="3"]')
+      .getByRole("checkbox", { name: "Select v3 to compare" })
+      .check();
+    await page.getByRole("button", { name: "Compare selected" }).click();
+    await expect(page).toHaveURL(new RegExp(`/a/${slug}/compare\\?from=1&to=3$`));
+    const items = page.getByRole("region", { name: "Changes" }).getByRole("listitem");
+    await expect(items).toHaveText([
+      "Background: Dots → Plain",
+      "Who can change the board: Editors only → Commenters and editors",
+    ]);
+    await page.goto(`/a/${slug}/compare?from=3&to=4`);
+    await expect(items).toHaveText([
+      "Who can change the board: Commenters and editors → Editors only",
+    ]);
   } finally {
+    await editorPage.context().close();
     await client.close();
   }
 });

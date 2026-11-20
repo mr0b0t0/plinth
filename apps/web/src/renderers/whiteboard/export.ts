@@ -2,7 +2,7 @@
 // with Canvas 2D), downloaded through a blob: link, which the frame's allow-downloads permits. All
 // in the frame, from the model: nothing is fetched, no image is loaded, no foreignObject, no link.
 // Attribute values come only from numbers and fixed lists; text only goes in as text nodes.
-import { arrowEndpoints, type BlockKind, type BoardColor } from "@plinth/shared";
+import { arrowEndpoints, arrowLabelAt, type BlockKind, type BoardColor } from "@plinth/shared";
 import type { BoardModel, Bounds } from "./model.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -188,11 +188,18 @@ export function boardSvg(
     if (head === "both") line.setAttribute("marker-start", "url(#head)");
     svg.append(line);
     if (a.label) {
+      // A halo in the background colour keeps the label clear of the line it sits beside.
+      const at = arrowLabelAt(p);
       const t = el("text", {
-        x: (p.x1 + p.x2) / 2,
-        y: (p.y1 + p.y2) / 2 - 6,
-        "text-anchor": "middle",
+        x: at.x,
+        y: at.y,
+        "text-anchor": at.anchor,
+        "dominant-baseline": "central",
         fill: theme.text,
+        stroke: theme.background,
+        "stroke-width": 4,
+        "stroke-linejoin": "round",
+        "paint-order": "stroke",
       });
       t.textContent = a.label;
       svg.append(t);
@@ -289,10 +296,16 @@ export function drawPng(
     if (head !== "none") arrowHead(ctx, p.x1, p.y1, p.x2, p.y2);
     if (head === "both") arrowHead(ctx, p.x2, p.y2, p.x1, p.y1);
     if (a.label) {
+      const at = arrowLabelAt(p);
+      ctx.textAlign = at.anchor === "middle" ? "center" : at.anchor === "end" ? "right" : "left";
+      ctx.textBaseline = "middle";
+      ctx.strokeStyle = theme.background;
+      ctx.lineWidth = 4;
+      ctx.lineJoin = "round";
+      ctx.strokeText(a.label, at.x, at.y);
+      ctx.lineWidth = 2;
       ctx.fillStyle = theme.text;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillText(a.label, (p.x1 + p.x2) / 2, (p.y1 + p.y2) / 2 - 6);
+      ctx.fillText(a.label, at.x, at.y);
     }
   }
 

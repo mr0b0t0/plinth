@@ -2,7 +2,6 @@
 import {
   ArrowBendUpLeftIcon,
   ArrowCounterClockwiseIcon,
-  BrowserIcon,
   CheckIcon,
   ClockCounterClockwiseIcon,
   MapPinIcon,
@@ -84,6 +83,8 @@ export function CommentItem({
         <span className="cm-author">
           <span className="cm-author__name">{comment.author.label}</span>
           {isAgent && <span className="cm-agent">Agent</span>}
+          {/* From the server, never the name: a name chosen to look like the owner's lacks it. */}
+          {!isAgent && comment.author.is_owner && <span className="cm-agent">Owner</span>}
         </span>
         <time
           className="cm-time"
@@ -108,23 +109,6 @@ export function CommentItem({
   );
 }
 
-/** Shown above the reply box of a page-request thread: where a typed reply goes. */
-export const PAGE_REQUEST_REPLY_HINT =
-  "The page shows its requester only this request's state and your agents' answers, not replies typed here.";
-
-/**
- * The JSON a page attached to its request, collapsed, as text: never through renderMarkdown, and
- * never as HTML. Untrusted (the page's code wrote it).
- */
-function RequestData({ data }: { data: Record<string, unknown> }) {
-  return (
-    <details className="cm-request-data">
-      <summary>Data the page attached</summary>
-      <pre>{JSON.stringify(data, null, 2)}</pre>
-    </details>
-  );
-}
-
 export interface ThreadProps {
   thread: ThreadData;
   slug: string;
@@ -132,8 +116,6 @@ export interface ThreadProps {
   active: boolean;
   /** Writing is blocked (signed out or no comment right): hide the controls. */
   readOnly: boolean;
-  /** The viewer is the owner or an editor: a page request is dismissed, not withdrawn. */
-  moderator?: boolean;
   onActivate: (id: string) => void;
   onReply: (rootId: string, body: string) => Promise<boolean>;
   onSetStatus: (rootId: string, status: "open" | "resolved") => Promise<void>;
@@ -145,13 +127,11 @@ export function Thread({
   version,
   active,
   readOnly,
-  moderator = false,
   onActivate,
   onReply,
   onSetStatus,
 }: ThreadProps) {
   const { root, replies, pin } = thread;
-  const pageRequest = root.kind === "page_request";
   const [replying, setReplying] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -189,14 +169,8 @@ export function Thread({
         {pin ? `Comment ${pin}` : "Comment"} by {root.author.label}
         {resolved ? ", resolved" : ""}
       </h3>
-      {(pin || resolved || pageRequest) && (
+      {(pin || resolved) && (
         <div className="cm-thread__tags">
-          {pageRequest && (
-            <span className="cm-from-page">
-              <BrowserIcon size={ICON_SIZE.sm} aria-hidden="true" />
-              Sent from the page
-            </span>
-          )}
           {pin && root.anchor && (
             <span className="cm-anchor">
               <span className="cm-pin-num" aria-hidden="true">
@@ -205,9 +179,14 @@ export function Thread({
               <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
               <span className="cm-anchor__text">
                 <span className="visually-hidden">Pinned to </span>
-                {root.anchor.text?.trim() || isPageAnchor(root.anchor)
-                  ? `“${anchorLabel(root.anchor)}”`
-                  : "Pinned to an element"}
+                {root.anchor.text?.trim() || isPageAnchor(root.anchor) ? (
+                  // Isolated, so the page's text cannot reorder what is around it.
+                  <>
+                    “<bdi>{anchorLabel(root.anchor)}</bdi>”
+                  </>
+                ) : (
+                  "Pinned to an element"
+                )}
               </span>
             </span>
           )}
@@ -220,7 +199,6 @@ export function Thread({
         </div>
       )}
       <CommentItem comment={root} slug={slug} version={version} />
-      {pageRequest && root.request_data && <RequestData data={root.request_data} />}
       {replies.length > 0 && (
         <ol className="cm-replies" aria-label="Replies">
           {replies.map((r) => (
@@ -232,7 +210,6 @@ export function Thread({
       )}
       {!readOnly && replying && (
         <div className="cm-reply">
-          {pageRequest && <p className="cm-hint">{PAGE_REQUEST_REPLY_HINT}</p>}
           <MentionTextarea
             label="Reply"
             hideLabel
@@ -292,13 +269,7 @@ export function Thread({
               setStatusBusy(false);
             }}
           >
-            {resolved
-              ? "Reopen"
-              : pageRequest
-                ? moderator
-                  ? "Dismiss request"
-                  : "Withdraw request"
-                : "Resolve"}
+            {resolved ? "Reopen" : "Resolve"}
           </Button>
         </div>
       )}

@@ -119,6 +119,9 @@ describe("ArtifactPage", () => {
     expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe(
       "/a/garden-plan/settings",
     );
+    expect(screen.getByRole("menuitem", { name: "Stats" }).getAttribute("href")).toBe(
+      "/a/garden-plan/stats",
+    );
     expect(screen.queryByRole("menuitem", { name: "Report" })).toBeNull();
     await user.keyboard("{Escape}");
     expect(screen.getByText("Visibility:")).toBeTruthy();
@@ -328,7 +331,7 @@ describe("ArtifactPage", () => {
       expect(sockets).toHaveLength(1);
       expect(sockets[0]?.url).toMatch(/\/api\/v1\/view\/art123\/watch$/);
       const frame = (f: unknown) => act(() => sockets[0]?.onmessage?.({ data: JSON.stringify(f) }));
-      frame({ t: "welcome", v: 1, version: 3, data: false });
+      frame({ t: "welcome", v: 1, version: 3 });
       // While the socket is open, the gate is not read on the 15 s pace.
       await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 2);
       expect(reads).toHaveLength(1);
@@ -340,6 +343,13 @@ describe("ArtifactPage", () => {
       expect(await screen.findByText("Updated to v4")).toBeTruthy();
       // The same socket stays open for the new version.
       expect(sockets).toHaveLength(1);
+      // Another version right after: its notice replaces the last one; they never stack.
+      current = 5;
+      frame({ t: "version", version: 5, spread_ms: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await screen.findByText("Updated to v5")).toBeTruthy();
+      expect(screen.queryByText("Updated to v4")).toBeNull();
+      expect(screen.getAllByText(/^Updated to v/)).toHaveLength(1);
     });
 
     it("keeps a permanent version link on its version and points to the new current one", async () => {
@@ -777,7 +787,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
-      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.frame({ t: "welcome", v: 1, version: 3 });
       roomStatus(frame, true);
       ws.revoke();
       await act(async () => {
@@ -810,7 +820,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
-      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.frame({ t: "welcome", v: 1, version: 3 });
       roomStatus(frame, true);
       ws.revoke();
       await waitFor(() => expect(screen.queryByTitle("Plan, version 3")).toBeNull());
@@ -828,7 +838,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       await screen.findByTitle("Plan, version 3");
-      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.frame({ t: "welcome", v: 1, version: 3 });
       ws.revoke();
       const fresh = await waitFor(() => {
         const f = [...document.querySelectorAll("iframe")].find((x) => srcOf(x) === ENTER(2));

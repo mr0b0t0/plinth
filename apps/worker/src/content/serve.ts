@@ -9,6 +9,7 @@ import {
   HOST_COOKIE_PREFIX,
   isLiveType,
   REVIEW_MODE_PARAM,
+  TTL,
   typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
@@ -26,12 +27,11 @@ import { openJson, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
-import { isCountableRequest, recordView } from "../services/views.ts";
+import { isCountableRequest, recordOpen } from "../services/views.ts";
 import { serveBoardLoader } from "./boardLoader.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { serveDataApi } from "./data-api.ts";
-import { serveFile } from "./files.ts";
 import { servePreviewLoader } from "./preview.ts";
 import { roomSocketSource, serveRoomUpgrade } from "./room.ts";
 import { serveRuntimeScript } from "./runtime.ts";
@@ -39,12 +39,15 @@ import {
   consumeNonce,
   IDENTITY_CLAIM_INFO,
   isVersion,
+  newVisitorId,
+  openOpener,
   type PassKind,
   passMaxAgeS,
   safeNext,
   signContentCookie,
   verifyContentCookie,
   verifyEnterToken,
+  visitorIdIn,
 } from "./tokens.ts";
 import {
   rendererRequest,
@@ -186,8 +189,16 @@ const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
 type ContentPass = {
   claim: PageClaim | null;
   capture: boolean;
+  /**
+   * Set only on a capture pass that reads no shared data: its version's writer may not read the
+   * data (policy.captureReadsData). Absent on every other pass.
+   */
+  noData?: true;
   preview: boolean;
-  /** The one version a preview pass opens; null for every other pass. */
+  /**
+   * The one version a preview or capture pass opens; null for a view pass. A capture pass is
+   * served that version on every path, the artifact's root included.
+   */
   version: number | null;
   /** This browser's open was already counted at this epoch (a view pass carrying `w`). */
   counted: boolean;
@@ -206,13 +217,16 @@ async function openPass(
   const capture = pass.c === 1;
   const preview = pass.p === 1;
   if (capture && preview) return null;
-  if (preview !== isVersion(pass.v)) return null;
+  if ((preview || capture) !== isVersion(pass.v)) return null;
+  if (pass.d !== undefined && (pass.d !== 1 || !capture)) return null;
+  const noData = pass.d === 1 ? ({ noData: true } as const) : {};
   // Only a view pass is ever marked counted (signContentCookie refuses the others).
   if (pass.w !== undefined && (pass.w !== 1 || capture || preview)) return null;
   const counted = pass.w === 1;
-  const version = preview ? (pass.v as number) : null;
+  const version = preview || capture ? (pass.v as number) : null;
   const exp = pass.exp;
-  if (pass.x === undefined) return { claim: null, capture, preview, version, counted, exp };
+  if (pass.x === undefined)
+    return { claim: null, capture, ...noData, preview, version, counted, exp };
   // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
   if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
@@ -262,11 +276,13 @@ export async function readContentPass(
   for (const value of cookieValues(request.headers.get("cookie"), name)) {
     const pass = await openPass(config, artifact, value);
     if (!pass) continue;
-    // A preview pass may be framed by anyone, so it never mixes with another kind.
+    // A preview pass may be framed by anyone, so it never mixes with another kind, and a capture
+    // pass that reads no shared data never mixes with one that does.
     if (
       found &&
       (!sameClaim(found.claim, pass.claim) ||
         found.preview !== pass.preview ||
+        found.noData !== pass.noData ||
         found.version !== pass.version)
     )
       return null;
@@ -274,6 +290,24 @@ export async function readContentPass(
     found ??= pass;
   }
   return found;
+}
+
+/**
+ * This browser's anonymous visitor id for the artifact (artifact stats): the first one any of its
+ * content cookies for this artifact carries, whatever their epoch, or null. Approximate by design:
+ * it lives in one partitioned cookie and is lost when the browser drops it.
+ */
+async function readVisitorId(
+  request: Request,
+  config: Config,
+  artifactId: string,
+): Promise<string | null> {
+  const name = contentCookieName(config, new URL(request.url));
+  for (const value of cookieValues(request.headers.get("cookie"), name)) {
+    const id = await visitorIdIn(config, artifactId, value);
+    if (id) return id;
+  }
+  return null;
 }
 
 /** Whether this request carries a valid capture pass for the live artifact (top-level loads). */
@@ -389,21 +423,7 @@ export const RESERVED_PATHS: readonly ReservedPath[] = [
   { path: `${CONTENT_RESERVED_PREFIX}types/`, stage: "static", serve: serveRenderer },
   // A type's framed page, a design's board loader (content/boardLoader.ts): behind the pass.
   { path: TYPE_FRAMES_PREFIX, stage: "pass", serve: serveTypeFrame },
-  // Files people add to a page (content/files.ts): read-only bytes behind the pass.
-  { path: `${CONTENT_RESERVED_PREFIX}files/`, stage: "pass", serve: serveFileRow },
 ];
-
-/** A file people added to the page, for a request with this artifact's content pass. */
-function serveFileRow(
-  request: Request,
-  env: Bindings,
-  config: Config,
-  route: ContentRoute,
-  gate?: PassGate,
-): Response | Promise<Response> {
-  if (!gate) return text(config, 404, "Not found");
-  return serveFile(request, env, config, route.path, gate);
-}
 
 function serveBridge(_r: Request, _e: Bindings, config: Config): Response {
   return serveBridgeScript(config);
@@ -540,7 +560,8 @@ async function serve(
     const preview = payload.p === 1;
     if ((capture || preview) && x !== undefined) return expired();
     if (capture && preview) return expired();
-    if (preview !== isVersion(payload.v)) return expired();
+    if ((preview || capture) !== isVersion(payload.v)) return expired();
+    if (payload.d !== undefined && (payload.d !== 1 || !capture)) return expired();
     // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
     if (preview && base) return expired();
     const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
@@ -550,11 +571,16 @@ async function serve(
     // not, so reloads, second tabs and the editor's preview count nothing more while the pass
     // lives. It reads the incoming cookies, before the new one, and changes nothing else about
     // the response below.
+    // While counting is on, every view cookie also carries this browser's anonymous visitor id
+    // (from any earlier cookie for this artifact, even one past its pass or epoch, else a new
+    // one), and lives TTL.visitorIdS so the id outlives the pass; the pass inside still expires.
     let seen = false;
     let countNow = false;
+    let visitor: string | undefined;
     if (kind === "view" && config.viewCounts) {
       seen = (await readContentPass(request, config, current))?.counted === true;
       countNow = !seen && payload.w === 1 && isCountableRequest(request);
+      visitor = (await readVisitorId(request, config, artifactId)) ?? newVisitorId();
     }
     const value = await signContentCookie(
       config,
@@ -562,8 +588,10 @@ async function serve(
       payload.e,
       x,
       kind,
-      preview ? (payload.v as number) : undefined,
+      preview || capture ? (payload.v as number) : undefined,
       seen || countNow,
+      visitor,
+      payload.d === 1,
     );
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`, enterOpts);
@@ -577,11 +605,22 @@ async function serve(
         sameSite: "None",
         partitioned: true,
         path: cookiePath,
-        maxAge: passMaxAgeS(kind),
+        maxAge: visitor !== undefined ? TTL.visitorIdS : passMaxAgeS(kind),
       }),
     );
     if (countNow) {
-      const write = recordView(env.DB, artifactId, Date.now());
+      const nowMs = Date.now();
+      const write = openOpener(config, artifactId, payload.o)
+        .catch(() => null)
+        .then((opener) =>
+          recordOpen(env.DB, {
+            artifactId,
+            version: current.currentVersion,
+            opener,
+            visitor: visitor ?? null,
+            nowMs,
+          }),
+        );
       if (defer) defer(write);
       else await write;
     }
@@ -636,6 +675,14 @@ async function serve(
   }
   // A preview pass opens its one version's URLs and nothing else, not even the current path.
   if (pass.preview && (!vm || versionNumber !== pass.version)) return fail(404, "Not found");
+  // A capture pass is bound to the version it pictures: another version's path answers 404, and
+  // every other path (the root, a root-relative script, a frame, a redirect's target) is served
+  // from the captured version, never the current one, whose code another writer may own (a token
+  // limited to the artifact) and would run under this pass, which may read the shared data.
+  if (pass.capture && pass.version !== null) {
+    if (vm && versionNumber !== pass.version) return fail(404, "Not found");
+    versionNumber = pass.version;
+  }
   if (versionNumber < 1 || versionNumber > artifact.currentVersion)
     return fail(404, "No such version");
 
@@ -656,8 +703,12 @@ async function serve(
   const def = typeDef(artifact.type);
   if (!def) return unsupportedType(config);
   if (def.renderer && rel === "index.html") {
-    // serveTypedEntry reads only the version's prefix (its source file is always under it).
-    const version = { r2Prefix: v.r2Prefix } as Pick<VersionRow, "r2Prefix"> as VersionRow;
+    // serveTypedEntry reads only the version's prefix (its source file is always under it) and
+    // number (a design's boards load their files from that version's path).
+    const version = { r2Prefix: v.r2Prefix, number: versionNumber } as Pick<
+      VersionRow,
+      "r2Prefix" | "number"
+    > as VersionRow;
     // On-page editing (#36): only an owner's or editor's view pass, on the current version's own
     // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
     const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";
@@ -767,8 +818,6 @@ export function appPageFor(config: Config, artifactId: string, path: string, url
   const version = /^\/__plinth\/v\/(\d{1,9})\/?$/.exec(path);
   if (version) return `${page}/v/${version[1]}`;
   if (path === "/" || path === "" || path === "/index.html") return page;
-  // A pasted link to a file people added opens the page it belongs to, never a frame on the file.
-  if (path.startsWith(`${CONTENT_RESERVED_PREFIX}files/`)) return page;
   const search = new URLSearchParams(url.search);
   search.delete(REVIEW_MODE_PARAM);
   const rest = search.toString();

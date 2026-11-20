@@ -152,11 +152,7 @@ function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): Revi
         return null;
       }
       const ev = evaluate(p.sheet);
-      const grid = buildGrid(doc, p.sheet, ev, {
-        title: "",
-        onDownload: () => undefined,
-        exhausted: ev.exhausted,
-      });
+      const grid = buildGrid(doc, p.sheet, ev, { title: "", exhausted: ev.exhausted });
       el.replaceChildren(grid.el);
       const was = base === null ? null : parseSheet(base);
       if (was?.ok) {
@@ -234,8 +230,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   let ev: SheetEvaluation = evaluate(sheet);
   let shownText = payload.text;
   const download = (format: "csv" | "xlsx") => exportSheet(win, sheet, ev, title, format);
-  const build = () =>
-    buildGrid(doc, sheet, ev, { title, onDownload: download, exhausted: ev.exhausted });
+  const build = () => buildGrid(doc, sheet, ev, { title, exhausted: ev.exhausted });
   let grid: Grid = build();
   root.replaceChildren(grid.el);
   const mark = () => {
@@ -248,6 +243,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   let editor: SheetEditor | null = null;
   /** Show these lines (the live draft): in place when the shape is the same, rebuilt otherwise. */
+  // Each shown change parses the whole sheet and evaluates every formula again (a cell edit too).
+  // Evaluating only a changed formula's dependents would need a dependency graph kept across
+  // changes, so it is left out; a full pass is bounded by LIMITS.maxSheetFormulaCells and the
+  // browser's step budget.
   const show = (text: string) => {
     if (text === shownText) return;
     const p = parseSheet(text);
@@ -311,6 +310,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         publishable: RULES?.unpublishable(local ? local.text : (c?.text ?? "")) === null,
       };
       post({ type: "live", ...s });
+      editor?.sync();
     };
     const status = () => {
       if (queued) return;

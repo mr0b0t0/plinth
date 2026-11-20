@@ -91,8 +91,6 @@ export interface TypeHooks {
   /**
    * Per-type publish warnings about the staged source, before the commit (never on a restore).
    * `paths` are every file of the version, the source included. Advisory: never blocks a publish.
-   * Unlike sourceWarnings it may read other artifacts (a design system a page names); its warnings
-   * come after the reference warnings, inside the same cap.
    */
   publishWarnings?(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]>;
   /** Extra fields of get_artifact for a version of this type, read as the caller. */
@@ -139,7 +137,7 @@ export interface PreparedSource {
   afterCommit?(result: PublishResult): Promise<PublishResult>;
 }
 
-/** A version's source as publishWarnings sees it, before the commit. */
+/** A version's source as the warning hooks see it, before the commit. */
 export interface StagedSource {
   def: ArtifactTypeDef;
   text: string;
@@ -167,6 +165,55 @@ const TYPED_CHOICES = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].sourceField 
   .map((t) => `"${t}"`)
   .join(", ")
   .replace(/, ([^,]*)$/, " or $1");
+
+/**
+ * A type's publish warnings for a staged source. The hook is advisory, so an error inside it (a D1
+ * read that fails) never fails the publish: it is logged by name only and becomes one
+ * `not_scanned` note saying the type's checks did not run.
+ */
+export async function typePublishWarnings(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]> {
+  const hook = typeHooks(v.def).publishWarnings;
+  if (!hook) return [];
+  try {
+    return await hook(ctx, v);
+  } catch (e) {
+    console.error(
+      "publish warnings hook failed:",
+      v.def.id,
+      e instanceof Error ? e.name : "unknown",
+    );
+    return [typeChecksSkipped(v.def)];
+  }
+}
+
+/** The note that a type's own checks did not run: the version is published without them. */
+function typeChecksSkipped(def: ArtifactTypeDef): PublishWarning {
+  return {
+    code: "not_scanned",
+    file: def.sourcePath,
+    message: `The ${def.id} checks of ${def.sourcePath} did not run (a temporary error), so warnings they give may be missing. The version is published. No action needed`,
+  };
+}
+
+/**
+ * A type's warnings about its own source (TypeHooks.sourceWarnings), advisory in the same way: an
+ * error inside the hook never fails the publish. It is logged by name only and becomes the same
+ * `not_scanned` note.
+ */
+export function typeSourceWarnings(v: StagedSource): PublishWarning[] {
+  const hook = typeHooks(v.def).sourceWarnings;
+  if (!hook) return [];
+  try {
+    return hook(v.def, v.text, v.paths);
+  } catch (e) {
+    console.error(
+      "source warnings hook failed:",
+      v.def.id,
+      e instanceof Error ? e.name : "unknown",
+    );
+    return [typeChecksSkipped(v.def)];
+  }
+}
 
 function refuse(def: ArtifactTypeDef, field: string, message: string): ApiError {
   return new ApiError("invalid_input", message, { type: def.id, field });

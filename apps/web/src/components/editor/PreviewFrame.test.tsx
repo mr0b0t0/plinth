@@ -36,7 +36,8 @@ const config: AppConfig = {
   },
   cdn_allowlist: ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"],
   upload_ticket_ttl_s: 1800,
-  dictation: false,
+  review_login: false,
+  view_log_retention_days: 365,
 };
 const opaqueConfig: AppConfig = { ...config, content_isolation: "opaque" };
 const ENTER = `${ORIGIN}/__plinth/enter?t=one-time&next=%2F__plinth%2Fpreview`;

@@ -1,8 +1,11 @@
-// The sheet's DOM: a toolbar (title, row count, filter, downloads), a formula bar, then the grid,
-// a <table> with the column letters and the header row in a sticky <thead>, frozen columns kept
-// in view by left offsets, and the data rows in <tbody> chunks of 200 that the browser skips
-// laying out while they are off screen (content-visibility), so comment pins, find in page, print
-// and screen readers still see every cell.
+// The sheet's DOM: the title (for print and screen readers; the app's bar shows it on screen), one
+// bar with the selected cell's address and raw text on the left and the filter on the right, then
+// the grid, a <table> with the column letters and the header row in a sticky <thead>, frozen
+// columns kept in view by left offsets (unless they would take more than half the frame), and the
+// data rows in <tbody> chunks of 200 that the browser skips laying out while they are off screen
+// (content-visibility), so comment pins, find in page, print and screen readers still see every
+// cell. Downloads and print are in the app's
+// artifact menu, which asks the frame (boot.ts).
 //
 // Built with createElement and textContent only: no data string is ever parsed as HTML. The only
 // attributes taken from data are href (a link that passes isSheetLinkUrl again here), title (an
@@ -11,8 +14,9 @@
 //
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
 // cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
-// with the view carried over), setHolders() marks the rows other people hold with their email,
-// and the edit strip (rows, columns) sits in the slot between the formula bar and the cells.
+// with the view carried over), setHolders() tints the rows other people hold (the holder named on
+// the row number for a pointer and a screen reader), the editor's Row and Column menus sit in the bar (`tools`), and the slot
+// between the bar and the cells is kept for what the editor adds there.
 import {
   a1,
   type Cell,
@@ -25,7 +29,6 @@ import {
   type Value,
 } from "@plinth/shared";
 import { type Display, displayValue } from "./format.ts";
-import type { SheetExportFormat } from "./protocol.ts";
 import { nextSort, rowMatches, type SortState, sortedOrder } from "./view.ts";
 
 export const CHUNK_ROWS = 200;
@@ -36,7 +39,6 @@ const MAX_WIDTH = 800;
 
 export interface GridOptions {
   title: string;
-  onDownload: (format: SheetExportFormat) => void;
   /** Some formulas were not computed within the browser's budget. */
   exhausted: boolean;
 }
@@ -45,8 +47,10 @@ export interface Grid {
   el: HTMLElement;
   /** The cells' table, for the editor's listeners. */
   table: HTMLTableElement;
-  /** Between the formula bar and the cells: the editor's strip goes here. */
+  /** Between the bar (and its note) and the cells. */
   slot: HTMLElement;
+  /** In the bar, before the filter: the editor's Row and Column menus go here. */
+  tools: HTMLElement;
   select(row: number, col: number): void;
   /** The selected cell's A1 row and column. */
   selected(): { row: number; col: number };
@@ -64,7 +68,7 @@ export interface Grid {
   update(sheet: Sheet, ev: SheetEvaluation): boolean;
   /** Paint a cell again from its computed value (after its field closed). */
   repaint(row: number, col: number): void;
-  /** Rows other people hold: A1 row to the holder's email. */
+  /** Rows other people hold: A1 row to the holder's email (tinted, the name on the row number). */
   setHolders(rows: ReadonlyMap<number, string>): void;
   /** Cells the grid must not repaint (the one being edited). */
   setLocked(locked: (td: HTMLElement) => boolean): void;
@@ -94,6 +98,17 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
+/** "ana.costa-x1@example.com" -> "Ana": a first name from an email, for short notes. */
+export function personName(email: string): string {
+  const first = email
+    .replace(/@.*$/, "")
+    .split(/[\s._+-]+/)
+    .find((w) => /^\p{L}/u.test(w));
+  if (!first) return email;
+  const [head = "", ...rest] = Array.from(first);
+  return head.toLocaleUpperCase() + rest.join("");
+}
+
 /** A column's width in pixels, clamped. */
 export function columnWidth(c: SheetColumn): number {
   const w = typeof c.width === "number" && Number.isFinite(c.width) ? c.width : DEFAULT_WIDTH;
@@ -109,6 +124,14 @@ export function frozenOffsets(columns: readonly SheetColumn[], freeze: number): 
     x += columnWidth(columns[i] as SheetColumn);
   }
   return out;
+}
+
+/** The width of the first `freeze` columns, row numbers not included. */
+export function frozenWidthOf(columns: readonly SheetColumn[], freeze: number): number {
+  let w = 0;
+  for (let i = 0; i < Math.min(freeze, columns.length); i++)
+    w += columnWidth(columns[i] as SheetColumn);
+  return w;
 }
 
 /** The text the formula bar shows for a stored cell: exactly what the sheet holds. */
@@ -166,52 +189,34 @@ export function buildGrid(
   const lefts = frozenOffsets(cols, freeze);
   const root = el(doc, "div", "plinth-sheet__page");
 
-  // ---------- toolbar ----------
-  const bar = el(doc, "div", "plinth-sheet__bar");
+  // ---------- title and bar ----------
   const heading = el(doc, "h1", "plinth-sheet__title", opts.title || "Sheet");
-  const count = el(doc, "span", "plinth-sheet__count");
-  count.setAttribute("aria-live", "polite");
-  const filterLabel = el(doc, "label", "plinth-sheet__filter");
-  const filterText = el(doc, "span", "plinth-sheet__filter-label", "Filter");
-  const filterInput = el(doc, "input", "plinth-sheet__filter-input");
-  filterInput.type = "search";
-  filterInput.autocomplete = "off";
-  filterInput.spellcheck = false;
-  filterLabel.append(filterText, filterInput);
-  const downloads = el(doc, "div", "plinth-sheet__downloads");
-  downloads.setAttribute("role", "group");
-  downloads.setAttribute("aria-label", "Download");
-  downloads.append(el(doc, "span", "plinth-sheet__downloads-label", "Download"));
-  for (const [format, label, name] of [
-    ["csv", "CSV", "Download as CSV"],
-    ["xlsx", "Excel", "Download as Excel (.xlsx)"],
-  ] as const) {
-    const b = el(doc, "button", "plinth-sheet__btn", label);
-    b.type = "button";
-    b.setAttribute("aria-label", name);
-    b.dataset.format = format;
-    b.addEventListener("click", () => opts.onDownload(format));
-    downloads.append(b);
-  }
-  bar.append(heading, count, filterLabel, downloads);
-  if (opts.exhausted) {
-    bar.append(
-      el(
-        doc,
-        "p",
-        "plinth-sheet__note",
-        "Some formulas were not calculated in the browser (#LIMIT!): this sheet needs more steps than a page may spend. A download opened in a spreadsheet app calculates them.",
-      ),
-    );
-  }
-
-  // ---------- formula bar ----------
+  const bar = el(doc, "div", "plinth-sheet__bar");
   const fx = el(doc, "div", "plinth-sheet__fx");
   fx.setAttribute("role", "group");
   fx.setAttribute("aria-label", "Selected cell");
   const fxAddr = el(doc, "span", "plinth-sheet__fx-addr");
   const fxRaw = el(doc, "span", "plinth-sheet__fx-raw");
   fx.append(fxAddr, fxRaw);
+  // Shown only while a filter is set: "3 of 40 rows".
+  const count = el(doc, "span", "plinth-sheet__count");
+  count.setAttribute("aria-live", "polite");
+  const filterInput = el(doc, "input", "plinth-sheet__filter-input");
+  filterInput.type = "search";
+  filterInput.placeholder = "Filter";
+  filterInput.setAttribute("aria-label", "Filter rows");
+  filterInput.autocomplete = "off";
+  filterInput.spellcheck = false;
+  const tools = el(doc, "div", "plinth-sheet__tools");
+  bar.append(fx, count, tools, filterInput);
+  const note = opts.exhausted
+    ? el(
+        doc,
+        "p",
+        "plinth-sheet__note",
+        "Some formulas were not calculated here (#LIMIT!). A download calculates them.",
+      )
+    : null;
 
   // ---------- grid ----------
   const scroll = el(doc, "div", "plinth-sheet__scroll");
@@ -234,12 +239,17 @@ export function buildGrid(
   table.style.width = `${total}px`;
   table.append(colgroup);
 
+  // Each frozen cell once (a repainted cell is frozen again), and whether the frame is too narrow
+  // for them to stay (set below).
+  const frozenCells = new Map<HTMLElement, number>();
+  let unfrozen = false;
   const freezeCell = (cell: HTMLElement, c: number) => {
     const left = lefts[c];
     if (left === undefined) return;
     cell.classList.add("plinth-sheet__frozen");
     if (c === freeze - 1) cell.classList.add("plinth-sheet__frozen--last");
-    cell.style.left = `${left}px`;
+    cell.style.left = unfrozen ? "" : `${left}px`;
+    frozenCells.set(cell, left);
   };
 
   const thead = el(doc, "thead");
@@ -272,6 +282,7 @@ export function buildGrid(
     b.addEventListener("click", () => grid.sortBy(i));
     th.append(b);
     if (c.type === "number" || c.type === "date") th.classList.add("plinth-sheet__name--num");
+    if (c.type === "checkbox") th.classList.add("plinth-sheet__name--check");
     headers.push(th);
     names.append(th);
   });
@@ -343,7 +354,7 @@ export function buildGrid(
     const shown = rows.filter((tr) => !tr.hidden).length;
     const all = rows.length;
     const noun = all === 1 ? "row" : "rows";
-    count.textContent = filterValue.trim() ? `${shown} of ${all} ${noun}` : `${all} ${noun}`;
+    count.textContent = filterValue.trim() ? `${shown} of ${all} ${noun}` : "";
   };
   updateCount();
 
@@ -360,6 +371,7 @@ export function buildGrid(
     el: root,
     table,
     slot: el(doc, "div", "plinth-sheet__slot"),
+    tools,
     selected: () => ({ row: selRow, col: selCol }),
     cell: (row, col) => byAddress.get(a1(row, col)) ?? null,
     select(row, col) {
@@ -371,11 +383,14 @@ export function buildGrid(
       selCol = col;
       cell.classList.add("plinth-sheet__selected");
       fxAddr.textContent = a1(row, col);
-      fxRaw.textContent =
-        row === 1 ? (cols[col]?.name ?? "") : rawText((current.rows[row - 2] ?? [])[col] ?? null);
+      const stored = row === 1 ? null : ((current.rows[row - 2] ?? [])[col] ?? null);
+      fxRaw.textContent = row === 1 ? (cols[col]?.name ?? "") : rawText(stored);
+      // Monospace only for a formula, so a plain value reads as it does in the grid.
+      fxRaw.classList.toggle("plinth-sheet__fx-raw--formula", isFormula(stored));
     },
     showRaw(text) {
       fxRaw.textContent = text;
+      fxRaw.classList.toggle("plinth-sheet__fx-raw--formula", isFormula(text));
     },
     sortBy(col) {
       sort = nextSort(sort, col);
@@ -441,6 +456,7 @@ export function buildGrid(
     setHolders(held) {
       for (const [row, tag] of holderTags) {
         if (held.has(row)) continue;
+        tag.parentElement?.removeAttribute("title");
         tag.remove();
         holderTags.delete(row);
         const tr = row === 1 ? names : rows[row - 2];
@@ -453,11 +469,15 @@ export function buildGrid(
         tr.classList.add("plinth-sheet__row--held");
         let tag = holderTags.get(row);
         if (!tag) {
-          tag = el(doc, "span", "plinth-sheet__holder");
+          tag = el(doc, "span", "plinth-sheet__holder plinth-sheet__sr");
           holderTags.set(row, tag);
           num.append(tag);
         }
-        tag.textContent = `${email} is editing`;
+        // The tint is the one cue on screen; the row number names the holder for a pointer and a
+        // screen reader (the edit bar lists who is editing).
+        const said = `${personName(email)} is editing`;
+        tag.textContent = said;
+        num.title = said;
       }
     },
     setLocked(fn) {
@@ -530,10 +550,39 @@ export function buildGrid(
   const first = rows[0]?.cells[1];
   if (first) first.tabIndex = 0;
 
-  root.append(bar, fx, grid.slot, scroll);
+  // Frozen columns wider than half the frame would leave a phone almost nothing to scroll, so
+  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen). A grid that was replaced
+  // (a live sheet whose shape changed) stops listening the next time the width crosses the line.
+  const frozenWidth = freeze > 0 ? ROW_NUMBER_WIDTH + frozenWidthOf(cols, freeze) : 0;
+  const narrow =
+    frozenWidth > 0 ? doc.defaultView?.matchMedia?.(`(max-width: ${frozenWidth * 2}px)`) : null;
+  if (narrow) {
+    let applied = false;
+    const apply = () => {
+      if (applied && !root.isConnected) {
+        narrow.removeEventListener?.("change", apply);
+        return;
+      }
+      applied = true;
+      unfrozen = narrow.matches;
+      root.classList.toggle("plinth-sheet--unfrozen", unfrozen);
+      for (const [cell, left] of frozenCells) cell.style.left = unfrozen ? "" : `${left}px`;
+    };
+    apply();
+    narrow.addEventListener?.("change", apply);
+  }
+
+  root.append(heading, bar);
+  if (note) root.append(note);
+  root.append(grid.slot, scroll);
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;
+}
+
+/** Stored text that is a formula (the formula bar shows it in monospace). */
+function isFormula(v: Cell | string): boolean {
+  return typeof v === "string" && v.startsWith("=");
 }
 
 /** The same computed value (an error by its code). */

@@ -1,5 +1,5 @@
 // /p/:id: email_required asks for an email and a code against the portal endpoints; ok lists the
-// collection's artifacts, each linking to its page; an empty collection says so; 404 is not found.
+// shared category's artifacts, each linking to its page; an empty one says so; 404 is not found.
 import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe("Portal", () => {
-  it("lists the collection's artifacts with who shared it", async () => {
+  it("lists the shared category's artifacts with who shared it", async () => {
     stubApi({ handle: (c) => (c.path === `/portals/${ID}` ? json(OK) : undefined) });
     const Portal = await loadPage();
     render(<Portal params={{ id: ID }} />);
@@ -58,6 +58,17 @@ describe("Portal", () => {
     );
   });
 
+  it("labels the owner's own view a preview", async () => {
+    stubApi({
+      handle: () => json({ ...OK, portal: { ...OK.portal, role: "owner" } }),
+    });
+    const Portal = await loadPage();
+    render(<Portal params={{ id: ID }} />);
+    expect(await screen.findByRole("heading", { name: "Acme Corp: reports" })).toBeTruthy();
+    expect(screen.getByText("Preview")).toBeTruthy();
+    expect(screen.queryByText("Shared by Ana")).toBeNull();
+  });
+
   it("says when nothing is in it yet", async () => {
     stubApi({ handle: () => json({ ...OK, items: [] }) });
     const Portal = await loadPage();
@@ -65,7 +76,7 @@ describe("Portal", () => {
     expect(await screen.findByText("Nothing here yet.")).toBeTruthy();
   });
 
-  it("asks for an email and a code, then shows the collection", async () => {
+  it("asks for an email and a code, then shows the shared category", async () => {
     let confirmed = false;
     const api = stubApi({
       handle: (c) => {
@@ -82,10 +93,14 @@ describe("Portal", () => {
     const Portal = await loadPage();
     const user = userEvent.setup();
     render(<Portal params={{ id: ID }} />);
-    await screen.findByRole("heading", { name: "Confirm your email" });
+    await screen.findByRole("heading", { name: "Sign in" });
+    expect(screen.getByText("Enter your email to get a one-time code.")).toBeTruthy();
+    expect(screen.queryByText(/collection/i)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "Email" }), "client@example.org");
     await user.click(screen.getByRole("button", { name: "Send code" }));
     await user.type(await screen.findByRole("textbox", { name: "Six-digit code" }), "123456");
+    // The sent-code line is the only text above the code field.
+    expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Confirm code" }));
     expect(await screen.findByRole("heading", { name: "Acme Corp: reports" })).toBeTruthy();
     const code = api.calls.find((c) => c.path === `/portals/${ID}/code`);
@@ -104,8 +119,13 @@ describe("Portal", () => {
     render(<Portal params={{ id: ID }} />);
     const notice = await screen.findByText(/You are signed in as/);
     expect(notice.textContent).toBe(
-      "You are signed in as ada@example.org, which is not on the list for this collection. If another address of yours is, confirm it below: you will then be signed in with that address instead.",
+      "You are signed in as ada@example.org, which has no access. Confirming another address switches you to it.",
     );
+    // The notice is the only explanation: no lead asking a signed-in person to sign in.
+    expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
+    // Nor a heading that does: the person is signed in already.
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
   });
 
   it("on a single-user instance, the notice does not say the code switches accounts", async () => {
@@ -120,9 +140,9 @@ describe("Portal", () => {
     const Portal = await loadPage();
     render(<Portal params={{ id: ID }} />);
     const notice = await screen.findByText(/You are signed in as/);
-    expect(notice.textContent).toContain("If another address of yours is, confirm it below.");
-    expect(notice.textContent).not.toContain("instead");
-    expect(screen.getByText(/You do not need an account\./)).toBeTruthy();
+    expect(notice.textContent).toContain("You can confirm another address below.");
+    expect(notice.textContent).not.toContain("switches");
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
   });
 
   it("an unknown portal is not found", async () => {

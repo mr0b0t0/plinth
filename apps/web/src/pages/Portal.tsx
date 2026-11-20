@@ -1,15 +1,17 @@
-// Page: /p/:id. A collection someone shared with you through a category (docs/spec.md "Category
-// sharing and personal categories"): its title, who shared it, and the artifacts the owner chose to
-// show, each opening on its own page. Someone not yet known confirms their email by a one-time code
+// Page: /p/:id. A category someone shared with you (docs/spec.md "Category sharing and personal
+// categories"): the name they gave it, who shared it, and the artifacts the owner chose to show,
+// each opening on its own page. Someone not yet known confirms their email by a one-time code
 // first, as on a private artifact, which signs them in with it; that one confirmation then opens
 // every artifact listed here.
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type PortalGate, route } from "@plinth/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { CardThumb } from "../components/account/ArtifactRow.tsx";
+import "../components/account/dashboard.css";
 import { formatDateTime, formatRelativeShort } from "../components/account/format.ts";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, ICON_SIZE, Input, Spinner, Stack } from "../components/ui/index.ts";
-import { codeLead, codeSignsInFor, SignedInNotice } from "../components/viewer/GateForms.tsx";
+import { type CodeStep, codeSignsInFor, SignedInNotice } from "../components/viewer/GateForms.tsx";
 import { gateErrorMessage } from "../components/viewer/gate.ts";
 import "../components/viewer/viewer.css";
 import { ApiRequestError, api } from "../lib/api.ts";
@@ -28,6 +30,7 @@ export function PortalEmailForm({
   onGate,
   signedInEmail,
   codeSignsIn = true,
+  onStep,
 }: {
   id: string;
   onGate: (gate: PortalGate) => void;
@@ -35,8 +38,11 @@ export function PortalEmailForm({
   signedInEmail?: string | null;
   /** Confirming the code signs the address in (every instance but a single-user one). */
   codeSignsIn?: boolean;
+  /** Told the step whenever it changes, so the page can drop its lead on the code step. */
+  onStep?: (step: CodeStep) => void;
 }) {
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [step, setStep] = useState<CodeStep>("email");
+  useEffect(() => onStep?.(step), [step, onStep]);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -144,9 +150,7 @@ export function PortalEmailForm({
   return (
     <form onSubmit={askCode} noValidate>
       <Stack gap={4}>
-        {signedInEmail && (
-          <SignedInNotice email={signedInEmail} what="collection" codeSignsIn={codeSignsIn} />
-        )}
+        {signedInEmail && <SignedInNotice email={signedInEmail} codeSignsIn={codeSignsIn} />}
         <Input
           ref={emailRef}
           label="Email"
@@ -172,6 +176,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
   const [now] = useState(() => Date.now());
   const { me, config } = useSession();
   const codeSignsIn = codeSignsInFor(config);
+  const [step, setStep] = useState<CodeStep>("email");
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -192,7 +197,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
   const title =
     state.status === "gate" && state.gate.status === "ok" ? state.gate.portal.title : null;
   useEffect(() => {
-    document.title = title ? `${title} · Plinth` : "Shared collection · Plinth";
+    document.title = title ? `${title} · Plinth` : "Shared category · Plinth";
   }, [title]);
 
   if (state.status === "not_found") return <NotFound />;
@@ -208,7 +213,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
       <PublicShell centered width="reading">
         <section className="pl-gate pl-gate--notice" aria-labelledby="portal-title">
           <h1 id="portal-title" className="pl-gate__title">
-            Could not load this collection
+            Could not load this category
           </h1>
           <p className="pl-gate__lead">{state.message}</p>
         </section>
@@ -222,19 +227,20 @@ export default function Portal({ params }: { params: Record<string, string> }) {
       <PublicShell centered>
         <section className="pl-gate" aria-labelledby="portal-title">
           <FolderSimpleIcon size={ICON_SIZE.xl} aria-hidden="true" className="pl-gate__icon" />
-          <p className="pl-gate__eyebrow">Shared collection</p>
           <h1 id="portal-title" className="pl-gate__title">
-            Confirm your email
+            {/* Neutral for a signed-in person: the notice under it says who they are. */}
+            {codeSignsIn && !me?.email ? "Sign in" : "Confirm your email"}
           </h1>
-          <p className="pl-gate__lead">
-            Only the people this collection is shared with can open it. Confirm your email address
-            with a one-time code. {codeLead(codeSignsIn)}
-          </p>
+          {/* One explanation at a time: none beside the signed-in notice or the sent-code line. */}
+          {step === "email" && !me?.email && (
+            <p className="pl-gate__lead">Enter your email to get a one-time code.</p>
+          )}
           <PortalEmailForm
             id={id}
             onGate={(g) => setState({ status: "gate", gate: g })}
             signedInEmail={me?.email ?? null}
             codeSignsIn={codeSignsIn}
+            onStep={setStep}
           />
         </section>
       </PublicShell>
@@ -245,16 +251,15 @@ export default function Portal({ params }: { params: Record<string, string> }) {
     <PublicShell width="content">
       <section className="pl-portal" aria-labelledby="portal-title">
         <header className="pl-portal__head">
-          <p className="pl-gate__eyebrow">
-            {gate.portal.role === "owner"
-              ? "Your shared collection (preview)"
-              : "Shared collection"}
-          </p>
           <h1 id="portal-title" className="pl-portal__title">
             {gate.portal.title}
           </h1>
-          {gate.portal.owner_name && gate.portal.role !== "owner" && (
-            <p className="text-muted">Shared by {gate.portal.owner_name}</p>
+          {gate.portal.role === "owner" ? (
+            <p className="text-muted">Preview</p>
+          ) : (
+            gate.portal.owner_name && (
+              <p className="text-muted">Shared by {gate.portal.owner_name}</p>
+            )
           )}
         </header>
         {gate.items.length === 0 ? (
@@ -263,18 +268,8 @@ export default function Portal({ params }: { params: Record<string, string> }) {
           <ul className="pl-portal__items">
             {gate.items.map((a) => (
               <li key={a.id} className="pl-portal__item">
+                <CardThumb title={a.title} url={a.thumbnail_url} />
                 <Link to={route(APP_ROUTES.artifact, { slug: a.slug })} className="pl-portal__link">
-                  {a.thumbnail_url && (
-                    <img
-                      src={a.thumbnail_url}
-                      alt=""
-                      loading="lazy"
-                      className="pl-portal__thumb"
-                      onError={(e) => {
-                        e.currentTarget.hidden = true;
-                      }}
-                    />
-                  )}
                   <span className="pl-portal__item-title">{a.title}</span>
                 </Link>
                 <span className="pl-portal__meta text-muted" title={formatDateTime(a.updated_at)}>

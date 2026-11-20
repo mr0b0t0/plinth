@@ -1,31 +1,39 @@
 // Boots a whiteboard: reads the payload the shell embeds (typedShellHtml in @plinth/shared) and the
-// board's settings, then shows the board in one of three ways.
+// board's settings, then shows the board in one of two ways.
 //
-// - Preview (payload.preview, set only by the app's editor preview): no shared-data or room call at
-//   all. Only the draft's own starting blocks are drawn, read-only, under a banner.
 // - Without the runtime, or when the runtime says shared data is unavailable: an empty, read-only
 //   board that says why.
 // - Live: the board's blocks and arrows from shared data (snapshots, with writes through BoardSync)
-//   and the room for cursors and drags (Live).
+//   and, for a viewer the board can identify, the room for cursors and drags (Live).
+//
+// Either way the app's menu may ask for a PNG or SVG download (protocol.ts).
 //
 // window.plinth is read once, before any DOM is built, so nothing the page draws later can stand
 // in for it. html[data-ready="ok"|"error"] is set for thumbnails and end-to-end tests.
-import {
-  parseBoardContent,
-  parseBoardSettings,
-  TYPED_PAYLOAD_VERSION,
-  type TypedPayload,
-} from "@plinth/shared";
+import { parseBoardSettings, TYPED_PAYLOAD_VERSION, type TypedPayload } from "@plinth/shared";
 import { Board } from "./board.ts";
 import { loadCamera } from "./camera.ts";
 import { Live } from "./live.ts";
-import { type PlinthRuntime, type RoomStatus, type RuntimeError, runtimeOf } from "./runtime.ts";
+import { fromApp, readBoardAppMessage } from "./protocol.ts";
+import {
+  type PlinthRuntime,
+  type RoomStatus,
+  type RuntimeError,
+  readSessionCanWrite,
+  runtimeOf,
+} from "./runtime.ts";
 import { BoardSync, READ_ONLY_TEXT } from "./sync.ts";
 
 const ROOT_ID = "__plinth-whiteboard";
 const DATA_ID = "__plinth-content";
 
-export const PREVIEW_TEXT = "Preview: the board's blocks are not shown here; settings apply.";
+/**
+ * Why a commenter's board is read-only, after "View only" (on a board only editors may change),
+ * for screen readers only.
+ */
+export const EDITORS_ONLY_WHY = ": editors can change this board";
+/** The standing line for a commenter on a board only editors may change. */
+export const EDITORS_ONLY_TEXT = `${READ_ONLY_TEXT}${EDITORS_ONLY_WHY}`;
 
 /** Why the board's blocks are not available, after "The board is not available here: ". */
 export const DATA_WHY: Record<string, string> = {
@@ -51,9 +59,10 @@ export const ROOM_WHY: Record<string, string> = {
   network: "the connection failed",
 };
 
+/** The room's state, shown only when it is not the usual one (open says nothing). */
 const STATUS_TEXT: Record<RoomStatus, string> = {
   connecting: "Connecting…",
-  open: "Live",
+  open: "",
   reconnecting: "Reconnecting…",
   closed: "Offline",
   unavailable: "Live cursors off",
@@ -95,12 +104,13 @@ export function boot(win: Window): Board | null {
   }
   const settings = parseBoardSettings(payload.text);
   const board = new Board({ win, root, title: doc.title, settings });
+  // The app's menu asks for a download; only the app page that frames the board may ask.
+  win.addEventListener("message", (e) => {
+    if (!root.isConnected || !fromApp(e, win, payload.app_origin)) return;
+    const m = readBoardAppMessage(e.data);
+    if (m) void board.exportAs(m.format);
+  });
 
-  if (payload.preview === true) {
-    showPreview(board, payload.text);
-    html.setAttribute("data-ready", "ok");
-    return board;
-  }
   if (!runtime) {
     board.banner("This board's blocks are not available here: the page runtime did not load.");
     board.setStatus(STATUS_TEXT.unavailable, "unavailable");
@@ -109,23 +119,6 @@ export function boot(win: Window): Board | null {
   }
   void startLive(win, board, runtime);
   return board;
-}
-
-/** The editor preview: the draft's starting blocks, read-only, and nothing from the server. */
-function showPreview(board: Board, text: string): void {
-  try {
-    const { seed } = parseBoardContent(text);
-    for (const s of seed) {
-      if (s.collection === "blocks") board.model.upsertBlock(s.id, s.data, 0);
-      else board.model.upsertArrow(s.id, s.data, 0);
-    }
-  } catch {
-    // A draft that does not parse yet: the editor lists its problems.
-  }
-  board.banner(PREVIEW_TEXT);
-  board.setStatus("Preview", "preview");
-  board.setReadOnly(true);
-  if (board.model.blocks.size > 0) board.fitBoard();
 }
 
 async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Promise<void> {
@@ -139,6 +132,10 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     html.setAttribute("data-ready", "ok");
     return;
   }
+  // Someone the board cannot identify (a link viewer who is not signed in, or a thumbnail
+  // capture) never joins the room and cannot change the board: they see it as it is, with no
+  // toolbar, "View only" or live-cursor status and no notice about either.
+  if (session.viewer === null) board.hideToolbar();
   const blocks = runtime.db.collection("blocks");
   const arrows = runtime.db.collection("arrows");
   board.sync = new BoardSync({
@@ -190,11 +187,13 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     }
   }, onError);
 
-  if (!session.canWrite) {
-    board.banner(
-      "You can view this board and see who is here. Only people it lets edit can change it.",
-    );
+  if (!session.viewer) {
+    board.setStatus("", "unavailable");
+    return;
   }
+  // A commenter is read-only only because the board's settings let editors alone change it.
+  const why = session.viewer.role === "commenter" ? EDITORS_ONLY_WHY : "";
+  if (!session.canWrite) board.banner(READ_ONLY_TEXT, why);
   board.setStatus(STATUS_TEXT.connecting, "connecting");
   const live = new Live(runtime.room, session.canWrite, {
     peers: (list) => board.setPeers(list),
@@ -203,10 +202,10 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     status: (s) => board.setStatus(STATUS_TEXT[s], s),
     canWrite: (may) => {
       board.setReadOnly(!may);
-      if (!may && session.canWrite) {
-        board.banner("You can view this board and see who is here. Only editors can change it.");
-      } else if (may) board.banner("");
+      if (may) board.banner("");
+      else board.banner(READ_ONLY_TEXT, why);
     },
+    recheck: () => readSessionCanWrite(win),
   });
   board.live = live;
   const ready = await live.start();

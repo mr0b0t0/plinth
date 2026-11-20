@@ -57,7 +57,8 @@ export async function readLiveDraftInfo(
   if (!r) return null;
   return {
     base_version: r.base_version,
-    // A draft equal to its base is deleted, so a row is always unsaved edits.
+    // A draft equal to its base is deleted, so a row is unsaved edits. The one exception is
+    // kept only while a save of earlier edits runs: once that version lands, the row is them.
     dirty: true,
     conflict_version: r.conflict_version,
     updated_at: r.updated_at,
@@ -275,6 +276,7 @@ export async function liveCheckpoint(
         snap.text,
         snap.lock,
         snap.epoch,
+        snap.rev,
         reviewed !== undefined,
       );
       break;

@@ -32,6 +32,8 @@ export const LIVE_DOC = {
   editDebounceMs: 250,
   /** A checkpoint snapshot holds the draft this long at most. */
   checkpointLockS: 30,
+  /** Checkpoint snapshots a room keeps for recognizing their versions (the oldest goes first). */
+  maxPendingCheckpoints: 8,
   /** A diff with more edits than this is a conflict rather than a merge. */
   maxMergeEdits: 5000,
   /** Co-editors a status lists. */

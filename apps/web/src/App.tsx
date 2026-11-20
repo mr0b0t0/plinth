@@ -11,6 +11,7 @@ const page = (load: () => Promise<{ default: ComponentType<any> }>) => lazy(load
 const Home = page(() => import("./pages/Home.tsx"));
 const Login = page(() => import("./pages/Login.tsx"));
 const Magic = page(() => import("./pages/Magic.tsx"));
+const ReviewLogin = page(() => import("./pages/ReviewLogin.tsx"));
 const Dashboard = page(() => import("./pages/Dashboard.tsx"));
 const Connections = page(() => import("./pages/Connections.tsx"));
 const Consent = page(() => import("./pages/Consent.tsx"));
@@ -19,6 +20,7 @@ const History = page(() => import("./pages/History.tsx"));
 const Compare = page(() => import("./pages/Compare.tsx"));
 const Editor = page(() => import("./pages/Editor.tsx"));
 const Settings = page(() => import("./pages/Settings.tsx"));
+const ArtifactStats = page(() => import("./pages/ArtifactStats.tsx"));
 const Open = page(() => import("./pages/Open.tsx"));
 const Portal = page(() => import("./pages/Portal.tsx"));
 const Report = page(() => import("./pages/Report.tsx"));
@@ -26,12 +28,14 @@ const AdminReports = page(() => import("./pages/AdminReports.tsx"));
 const AdminStats = page(() => import("./pages/AdminStats.tsx"));
 const Design = page(() => import("./pages/Design.tsx"));
 const Legal = page(() => import("./pages/Legal.tsx"));
+const InvitationEmails = page(() => import("./pages/InvitationEmails.tsx"));
 const NotFound = page(() => import("./pages/NotFound.tsx"));
 
 export const ROUTES: [string, Page][] = [
   [APP_ROUTES.home, Home],
   [APP_ROUTES.login, Login],
   [APP_ROUTES.magic, Magic],
+  [APP_ROUTES.reviewLogin, ReviewLogin],
   [APP_ROUTES.dashboard, Dashboard],
   [APP_ROUTES.connections, Connections],
   [APP_ROUTES.consent, Consent],
@@ -41,6 +45,7 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.compare, Compare],
   [APP_ROUTES.editor, Editor],
   [APP_ROUTES.settings, Settings],
+  [APP_ROUTES.artifactStats, ArtifactStats],
   [APP_ROUTES.open, Open],
   [APP_ROUTES.portal, Portal],
   [APP_ROUTES.report, Report],
@@ -48,6 +53,7 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.adminStats, AdminStats],
   [APP_ROUTES.design, Design],
   ["/legal/:doc", Legal],
+  [APP_ROUTES.invitationEmails, InvitationEmails],
 ];
 
 export function App() {

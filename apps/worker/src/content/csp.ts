@@ -36,11 +36,9 @@ export interface ContentCspOptions {
   /**
    * Add the opaque sandbox (OPAQUE_SANDBOX) whatever the instance's isolation mode, once: the
    * document gets an opaque origin even under origin isolation. For a design's board loader, whose
-   * artboard documents must never have the artifact's real origin. `"strict"`: a bare `sandbox`
-   * directive with no flags instead (an opaque origin, no scripts, no forms, no popups, no
-   * plugins), for the files people add to a page (content/files.ts), which never run anything.
+   * artboard documents must never have the artifact's real origin.
    */
-  sandbox?: boolean | "strict";
+  sandbox?: boolean;
   /**
    * The response is read by documents with an opaque origin (a design's artboards): it gets
    * `Cross-Origin-Resource-Policy: cross-origin`, as every file does under opaque isolation.
@@ -122,8 +120,7 @@ export function contentCsp(config: Config, opts: ContentCspOptions = {}): string
     "form-action 'self'",
   ];
   if (opts.framing !== "any") directives.push(`frame-ancestors 'self' ${config.appOrigin}`);
-  if (opts.sandbox === "strict") directives.push("sandbox");
-  else if (config.contentIsolation === "opaque" || opts.sandbox) directives.push(OPAQUE_SANDBOX);
+  if (config.contentIsolation === "opaque" || opts.sandbox) directives.push(OPAQUE_SANDBOX);
   return directives.join("; ");
 }
 

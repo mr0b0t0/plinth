@@ -2,8 +2,7 @@
 // (All / Mine / Shared, a category, sort, list or grid), search (kept in ?q=, the category in
 // ?category=), and the artifact quota. A category is the owner's own on their artifacts and the
 // person's own on artifacts shared with them (issue #42). With category sharing on, the owner shares
-// a category from here, reviews what waits in a shared one (?review=<share id>), and the Shared tab
-// links the collections other people shared with them.
+// a category from here and reviews what waits in a shared one (?review=<share id>).
 import {
   ArrowsDownUpIcon,
   FolderSimpleIcon,
@@ -22,8 +21,6 @@ import {
   type CategoryCount,
   type CategoryShareSummary,
   categoryKey,
-  type PortalSummary,
-  route,
 } from "@plinth/shared";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import "../components/account/account.css";
@@ -47,7 +44,6 @@ import {
   useSignOut,
 } from "../components/account/hooks.tsx";
 import { MyCategoryDialog } from "../components/account/MyCategoryDialog.tsx";
-import { Note } from "../components/account/Note.tsx";
 import { CONNECT_AGENT_HREF } from "../components/account/nav.ts";
 import { RenameCategoryDialog } from "../components/account/RenameCategoryDialog.tsx";
 import { ShareCategoryDialog } from "../components/account/ShareCategoryDialog.tsx";
@@ -63,7 +59,7 @@ import {
   Tooltip,
 } from "../components/ui/index.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
-import { Link, useLocation } from "../lib/router.tsx";
+import { useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 
 type ListState =
@@ -78,8 +74,7 @@ type ListState =
       query: string;
     };
 
-/** "design_system": the design systems the person can build with (shown when there is one). */
-type Filter = "all" | "mine" | "shared" | "design_system";
+type Filter = "all" | "mine" | "shared";
 type Sort = "updated" | "created" | "title";
 /** The category filter: null shows every category, "" the owner's artifacts with none. */
 export type CategoryFilter = string | null;
@@ -135,6 +130,16 @@ export function filterByCategory(
     if (category === "") return name === null && (a.role === "owner") !== shared;
     return name !== null && categoryKey(name) === key;
   });
+}
+
+/**
+ * The dashboard's one review line: how many artifacts wait, and in which shared category when only
+ * one has any.
+ */
+export function reviewText(waiting: readonly { category: string; pending: number }[]): string {
+  const total = waiting.reduce((n, s) => n + s.pending, 0);
+  const only = waiting.length === 1 ? waiting[0] : undefined;
+  return only ? `${total} to review in ${only.category}` : `${total} to review`;
 }
 
 /** One list of names from two (counts summed by key, the first list's spelling kept). */
@@ -207,7 +212,6 @@ export default function Dashboard() {
   /** The shared artifact being filed under the person's own category. */
   const [filing, setFiling] = useState<ArtifactSummary | null>(null);
   const [shares, setShares] = useState<CategoryShareSummary[]>([]);
-  const [portals, setPortals] = useState<PortalSummary[]>([]);
   const [shareReload, setShareReload] = useState(0);
   const categorySharing = config?.category_sharing === true;
   const barRef = useRef<HTMLDivElement>(null);
@@ -259,17 +263,14 @@ export default function Dashboard() {
     return () => ctrl.abort();
   }, [settled, pending, reload]);
 
-  // The owner's shares (for the review banner and the Share button) and the collections shared with
-  // them, only where the instance offers category sharing.
+  // The owner's shares (for the review banner and the Share button), only where the instance offers
+  // category sharing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `shareReload` re-runs the fetch
   useEffect(() => {
     if (pending || !categorySharing) return;
     const ctrl = new AbortController();
     api<{ items: CategoryShareSummary[] }>(API.categoryShares, { signal: ctrl.signal })
       .then((r) => setShares(r.items))
-      .catch(() => undefined);
-    api<{ items: PortalSummary[] }>(API.portals, { signal: ctrl.signal })
-      .then((r) => setPortals(r.items))
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [pending, categorySharing, shareReload, reload]);
@@ -301,7 +302,6 @@ export default function Dashboard() {
         ? ownCategories
         : mergeCategories(ownCategories, myCategories);
   const hasShared = items.some((a) => a.role !== "owner");
-  const hasDesignSystems = items.some((a) => a.type === "design_system");
   // Under Shared the filter and its menu are the person's own categories; with none, both are off.
   const byCategory = category !== null && (filter !== "shared" || myCategories.length > 0);
   const shown = useMemo(() => {
@@ -310,9 +310,7 @@ export default function Dashboard() {
         ? items.filter((a) => a.role === "owner")
         : filter === "shared"
           ? items.filter((a) => a.role !== "owner")
-          : filter === "design_system"
-            ? items.filter((a) => a.type === "design_system")
-            : items;
+          : items;
     return sortArtifacts(
       filterByCategory(picked, byCategory ? category : null, filter === "shared"),
       sort,
@@ -362,9 +360,6 @@ export default function Dashboard() {
     { value: "all", label: "All" },
     { value: "mine", label: "Mine" },
     ...(hasShared || filter === "shared" ? [{ value: "shared" as const, label: "Shared" }] : []),
-    ...(hasDesignSystems || filter === "design_system"
-      ? [{ value: "design_system" as const, label: "Design systems" }]
-      : []),
   ];
 
   const emptyFilter =
@@ -381,11 +376,7 @@ export default function Dashboard() {
           ? searching
             ? "None of your artifacts match."
             : "You have not published anything yet."
-          : filter === "design_system"
-            ? searching
-              ? "No design systems match."
-              : "No design systems yet."
-            : "Nothing has been shared with you."
+          : "Nothing has been shared with you."
       : null;
 
   const categoryLabel =
@@ -397,17 +388,32 @@ export default function Dashboard() {
   const showCategoryMenu =
     filter === "shared" ? myCategories.length > 0 : categories.length > 0 || category !== null;
   // Renaming the selected name renames the owner's category, or under Shared (or when only the
-  // person's own list has it) their own category for shared artifacts.
-  const selectedOwn =
-    selected !== null &&
-    filter !== "shared" &&
-    ownCategories.some((c) => categoryKey(c.name) === categoryKey(selected.name));
+  // person's own list has it) their own category for shared artifacts. Under All a name can be
+  // both: the action then targets the owner's category, with that kind's own count, and says so.
+  const sameKey = (c: CategoryCount) =>
+    selected !== null && categoryKey(c.name) === categoryKey(selected.name);
+  const selectedOwn = selected !== null && filter !== "shared" && ownCategories.some(sameKey);
   const renamePersonal = selected !== null && !selectedOwn;
+  const renameTarget = selected
+    ? ((renamePersonal ? myCategories : ownCategories).find(sameKey) ?? selected)
+    : null;
+  /** Under All, a name that is both kinds: the rename dialog names whose artifacts it changes. */
+  const renameBoth =
+    selected !== null &&
+    filter === "all" &&
+    ownCategories.some(sameKey) &&
+    myCategories.some(sameKey);
   const selectedShare =
     selectedOwn && selected
       ? (shares.find((s) => categoryKey(s.category) === categoryKey(selected.name)) ?? null)
       : null;
-  const waiting = shares.filter((s) => s.counts.pending > 0);
+  // The review line: on All and Mine with no category picked, every share with waiting artifacts;
+  // with a category picked, only that category's share.
+  const waiting = shares.filter(
+    (s) =>
+      s.counts.pending > 0 &&
+      (byCategory ? selectedShare?.id === s.id : filter !== "shared" && category === null),
+  );
   const byName = [...categories].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
@@ -507,31 +513,17 @@ export default function Dashboard() {
       )}
 
       {waiting.length > 0 && (
-        <div className="pl-dash__notices">
-          {waiting.map((s) => (
-            <Note key={s.id} tone="warning">
-              <span>
-                {`${s.counts.pending} ${s.counts.pending === 1 ? "artifact waits" : "artifacts wait"} for your review before ${s.category}'s people can see ${s.counts.pending === 1 ? "it" : "them"}.`}
-              </span>{" "}
-              <Button size="sm" onClick={() => setReviewing(s.id)}>
-                Review
-              </Button>
-            </Note>
-          ))}
-        </div>
-      )}
-      {filter === "shared" && portals.length > 0 && (
-        <nav className="pl-dash__portals" aria-label="Collections shared with you">
-          <span className="pl-dash__portals-label">Collections:</span>
-          <ul>
-            {portals.map((p) => (
-              <li key={p.id}>
-                <Link to={route(APP_ROUTES.portal, { id: p.id })}>{p.title}</Link>{" "}
-                <span className="text-muted">({p.count})</span>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        <p className="pl-dash__review">
+          {reviewText(waiting.map((s) => ({ category: s.category, pending: s.counts.pending })))}
+          <span aria-hidden="true"> · </span>
+          <button
+            type="button"
+            className="pl-dash__review-link"
+            onClick={() => setReviewing(waiting[0]?.id ?? null)}
+          >
+            Review
+          </button>
+        </p>
       )}
 
       {pending || list.status === "loading" ? (
@@ -624,14 +616,15 @@ export default function Dashboard() {
         <p className="pl-dash__quota">{quotaText(me.artifact_count, me.artifact_limit)}</p>
       )}
 
-      {renaming && selected && (
+      {renaming && renameTarget && (
         <RenameCategoryDialog
-          category={selected}
+          category={renameTarget}
           categories={renamePersonal ? myCategories : ownCategories}
           personal={renamePersonal}
+          whose={renameBoth ? "own" : undefined}
           onClose={() => setRenaming(false)}
           onDone={(stored) => {
-            const from = selected;
+            const from = renameTarget;
             setRenaming(false);
             if (!renamePersonal) {
               setList((l) =>
@@ -639,7 +632,9 @@ export default function Dashboard() {
               );
             }
             if (stored === null) {
-              // Show where those artifacts went; the menu stays, and takes the focus.
+              // Show where those artifacts went; the menu stays, and takes the focus. Under All,
+              // "No category" lists the owner's own, so a personal one cleared there goes to Shared.
+              if (renamePersonal && filter === "all") setFilter("shared");
               setCategory("");
               setFocusCategoryMenu(true);
             } else {
@@ -656,6 +651,7 @@ export default function Dashboard() {
         <ShareCategoryDialog
           category={selected.name}
           shareId={selectedShare?.id ?? null}
+          invitations={config?.invitation_emails !== false}
           onClose={() => setSharing(false)}
           onDone={() => {
             setSharing(false);
@@ -665,7 +661,7 @@ export default function Dashboard() {
         />
       )}
 
-      {reviewing && (
+      {reviewing && categorySharing && (
         <CategoryReviewDialog
           shareId={reviewing}
           onClose={() => {

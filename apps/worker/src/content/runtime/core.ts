@@ -100,19 +100,6 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
     };
     if (d.created_by) out.createdBy = author(d.created_by);
     if (d.updated_by) out.updatedBy = author(d.updated_by);
-    if (d.source) out.source = docSource(d.source);
-    return out;
-  }
-  // Where a document's figures came from, as the server stamped it (only on stamped documents).
-  function docSource(s) {
-    var out = {
-      id: s.id,
-      label: s.label,
-      connector: s.connector,
-      ref: typeof s.ref === "string" ? s.ref : null,
-      fetchedAt: s.fetched_at,
-    };
-    if (s.agent !== undefined) out.agent = typeof s.agent === "string" ? s.agent : null;
     return out;
   }
 

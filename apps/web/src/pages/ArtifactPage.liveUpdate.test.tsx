@@ -141,6 +141,9 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
     const notice = await screen.findByText(/is available/);
     expect(notice.textContent).toContain("v4 is available");
+    // It is a toast, in the slot of "Updated to vN": nothing is added above the frame.
+    expect(notice.closest(".pl-toast")).not.toBeNull();
+    expect(document.querySelector(".pl-viewer__notice")).toBeNull();
     // The page on view stays, with its enter URL; the bar knows v4 exists.
     expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
     expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
@@ -154,7 +157,29 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     const next = await screen.findByTitle("Garden plan, version 4");
     fireEvent.load(next);
     expect(next.getAttribute("src")).toBe(ENTER(s.reads.length));
-    expect(await screen.findByText("Updated to v4")).toBeTruthy();
+    // The viewer chose it: the new version on screen is the only sign, no "Updated" toast.
+    expect(screen.queryByText(/is available/)).toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(screen.queryByText("Updated to v4")).toBeNull();
+  });
+
+  it("shows one notice: a held version's toast gives way to the next update's", async () => {
+    const s = server({ hold: true });
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+    focusInto(frame);
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect((await screen.findByText(/is available/)).textContent).toContain("v4 is available");
+
+    // Focus leaves the page; v5 replaces it, and its toast takes the held one's place.
+    vi.restoreAllMocks();
+    delete (document as unknown as { activeElement?: unknown }).activeElement;
+    s.current = 5;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect(await screen.findByTitle("Garden plan, version 5")).toBeTruthy();
+    expect(await screen.findByText("Updated to v5")).toBeTruthy();
     expect(screen.queryByText(/is available/)).toBeNull();
   });
 

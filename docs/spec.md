@@ -39,20 +39,14 @@ account.
 
 - Per-artifact server code. Artifacts are static HTML plus assets; the only server behaviour a
   page can reach is Plinth's fixed shared-data service (see
-  [Shared data and viewer identity](#shared-data-and-viewer-identity)), its live room at
-  `/__plinth/room/` (see [Live rooms](#live-rooms)) and the files it stored at `/__plinth/files/`
-  (see [Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)), and the
-  requests it hands to the owner's agent through that same service (see
-  [Page requests](#page-requests-decided-2026-11-19)).
+  [Shared data and viewer identity](#shared-data-and-viewer-identity)) and its live room at
+  `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts and designs (docs and sheets are edited on the page; HTML and
-  designs in the source editor).
+- On-page editing of HTML artifacts (docs and sheets are edited on the page; HTML in the source
+  editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
-- Pages calling connectors or other hosts. Live figures come from the owner's agents, which fetch
-  with their own connectors and push them into shared data; Plinth holds no connector credentials
-  (see [Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19)).
 - Team workspaces and billing. Planned, but after the core works.
 
 ## Users and core use cases
@@ -156,15 +150,15 @@ least one live artifact uses it. It is artifact metadata, never versioned, and r
 owner (`category` is null for everyone else). The Worker validates and normalises the text
 (`packages/shared/src/categories.ts`); the columns have no CHECK constraint.
 
-**View counts** (migration `0010_view_counts.sql`) adds two tables. They hold aggregate numbers
-only: no IP address, email, user, session or user agent. Both cascade from `artifacts`, so
-erasing an artifact or its owner removes them (see
-[Admin stats and view counts](#admin-stats-and-view-counts)):
+**Artifact stats** (migrations `0010_view_counts.sql` and `0020_artifact_opens.sql`) keep one row
+per counted open with who opened it, and an all-time count per artifact. Both cascade from
+`artifacts`, so erasing an artifact or its owner removes them (see
+[Artifact stats](#artifact-stats)):
 
 | Table | Key fields | Notes |
 | --- | --- | --- |
-| `artifact_view_days` | artifact_id, day (UTC, `YYYY-MM-DD`), views | One row per artifact per UTC day it was opened. Key (artifact_id, day), `WITHOUT ROWID`, no secondary index, so a counted open writes one row |
-| `artifact_view_totals` | artifact_id, views, first_day | Opens on days older than the daily window, folded into one row per artifact; `first_day` is the earliest day folded in |
+| `artifact_opens` | id (integer), artifact_id, version, opened_at (UTC ISO), viewer_kind (`user`, `email`, `anonymous`, `unknown`), user_id, email, visitor, role | One row per counted open, kept for `VIEW_LOG_RETENTION_DAYS`. `user_id` (signed in; `ON DELETE SET NULL`), `email` (an allowlisted email confirmed by code) and `visitor` (a random id from the content cookie) each belong to their own kind only (CHECK constraints). `version` is NULL for opens migrated from daily counts. Indexes: (artifact_id, opened_at), (opened_at), and partial ones on user_id and email. No IP address or user agent |
+| `artifact_view_totals` | artifact_id, views, first_day | Opens older than the retention, folded into one count per artifact; `first_day` is the earliest day folded in |
 
 **Live rooms and on-page doc editing** (issue #36, migration `0011_live_drafts.sql`) add one table
 and two fields to the stored declaration:
@@ -197,6 +191,16 @@ one field to the stored declaration and a second kind of comment anchor:
 | --- | --- | --- |
 | `agent_connections.artifact_id` | artifact id or NULL | The one artifact a personal access token is limited to ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)). NULL is an account-wide token or an OAuth connection; a CHECK refuses it on an OAuth row. Set at creation and never changed: to change the limit, revoke the token and make another. Deleting or taking down the artifact revokes its bound tokens in the same batch; erasing the artifact (or its owner) removes them (`ON DELETE CASCADE`, never `SET NULL`, so a bound token can never become an account-wide one). A partial index covers bound rows |
 
+**Live views** ([below](#live-views-decided-2026-11-19), no migration) store nothing and add two
+settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+10000, half for the people an artifact is shared with and half for everyone else). Fixed: 32
+watch sockets per client and 60 connects per client per minute on one artifact, a socket lifetime
+of 12 hours less up to 5 minutes at random (the content pass's, or less when the session or
+password pass it was opened with ends sooner), a spread of 2 ms per socket the cap allows (at most
+10 s, 2 s at the default), at most one data signal per spread, a first reconnect within 10 s,
+backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
+60 s closes its socket.
+
 **Category sharing and personal categories** ([below](#category-sharing-and-personal-categories-decided-2026-11-19),
 issue #42, migration `0013_category_sharing.sql`) add three tables and five columns:
 
@@ -215,26 +219,18 @@ Setting: `ALLOW_CATEGORY_SHARING` (on). Fixed: 100 shares per owner (checked in 
 inserts the share), 200 people per share, a title
 of at most 200 characters, review items up to the owner's artifact limit, 500 artifacts per portal.
 
-**Dictation** ([below](#voice-dictation-and-text-to-speech-decided-2026-11-19), no migration) adds one
-field to the stored declaration, `versions.capabilities.dictation`, written only when the page
-declares `dictation` (a row without it reads as no dictation), and one setting, `ALLOW_DICTATION`
-(off). Fixed: 60 s per start, results of at most 2,000 characters, 1 s between starts, 10 s after
-the viewer's Stop, three Stops per page load, and a consent dialog armed after 500 ms. A viewer's
-consent lives in their browser, not in D1.
+**Whiteboards** ([below](#whiteboards-decided-2026-11-19), no migration) keep their board in the
+existing shared-data tables (collections `blocks` and `arrows`) and add one field to the stored
+declaration:
 
-**Live views** ([below](#live-views-decided-2026-11-19), no migration) store nothing and add two
-settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
-10000, half for the people an artifact is shared with and half for everyone else). Fixed: 32
-watch sockets per client and 60 connects per client per minute on one artifact, a socket lifetime
-of 12 hours (the content pass's, or less when the session or password pass it was opened with ends
-sooner), a spread of 2 ms per socket the cap allows (at most 10 s, 2 s at the default),
-backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
-60 s closes its socket.
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `versions.capabilities` | adds `writers` (`commenter` or `editor`) | Set by the server for a whiteboard's versions only, from the board's `edit` setting; never read from a page, so no HTML declaration can carry it and every other declaration is stored exactly as before. Read back through one function (`versionCapabilities`), which keeps only `commenter` or `editor`. On any type whose capabilities its page does not declare, a missing or unknown value counts as `editor` (a board's default), never as "any viewer" |
 
-**Following the presenter** ([Slides](#slides-decided-2026-11-19), no migration) stores nothing
-and adds one setting, `ALLOW_SLIDES_FOLLOW` (on), in effect only where live rooms are. Fixed: a
-slides-socket frame of 128 bytes; the room's other caps (`ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, 8
-sockets per viewer, 20 connects per viewer per minute, the message rate) apply unchanged.
+Fixed: board.json of at most 512 KiB on input; a starting board of at most 500 blocks and arrows;
+block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characters, arrow labels up
+to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolation, and its board
+counts toward the `DATA_*` limits like any page's shared data.
 
 **Keeping state across versions** ([below](#live-views-decided-2026-11-19), no migration) adds one
 field to the stored declaration, `versions.capabilities.hold`, written only when the page declares
@@ -243,57 +239,10 @@ field to the stored declaration, `versions.capabilities.hold`, written only when
 to show a version in place, 16 KiB of carried state, read within 30 s. Carried state lives in the
 viewer's browser (the content origin's `sessionStorage`), not in D1.
 
-**Files people add to a page** ([below](#files-people-add-to-a-page-decided-2026-11-19), migration `0014_artifact_files.sql`) add two tables,
-and one field to the stored declaration, `versions.capabilities.files`, written only when the page
-declares `files` (a row without it reads as no files):
-
-| Table | Columns | Notes |
-| --- | --- | --- |
-| `artifact_files` | id, artifact_id, r2_key, name, content_type, size_bytes, state (`pending`, `ready`, `deleting`), parts, parts_done, part_etags, multipart_id, created_by_email/role, created_via (`page`), created_at, completed_at, expires_at, claimed_at | One file people uploaded from the page. Its bytes are at `artifacts/<artifact_id>/files/<id>` in R2, under the artifact's root. `content_type` is one of the twelve types the server proves from the bytes (CHECK); `name` is cleaned display text. A `deleting` row is a tombstone that counts toward nothing until the sweep clears its object. Cascades from `artifacts`; `erase-user` tombstones a person's uploads on other people's pages and clears their name and address |
-| `artifact_file_usage` | artifact_id, files, bytes, seq | Exact totals per artifact (pending and ready rows) kept by SQLite triggers on `artifact_files`, for one-row quota checks. `seq` moves when a file becomes ready or goes, and is what pages poll. Deleted with the artifact and on takedown |
-
-**Whiteboards** ([below](#whiteboards-decided-2026-11-19), no migration) keep their board in the
-existing shared-data tables (collections `blocks` and `arrows`) and add one field to the stored
-declaration:
-
-| Table or column | Key fields | Notes |
-| --- | --- | --- |
-| `versions.capabilities` | adds `writers` (`commenter` or `editor`) | Set by the server for a whiteboard's versions only, from the board's `edit` setting; never read from a page, so no HTML declaration can carry it and every other declaration is stored exactly as before. Read back through one function (`versionCapabilities`), which keeps only `commenter` or `editor`. On any type whose capabilities its page does not declare, a missing or unknown value counts as `commenter`, never as "any viewer" |
-
-Fixed: board.json of at most 512 KiB on input; a starting board of at most 500 blocks and arrows;
-block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characters, arrow labels up
-to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolation, and its board
-counts toward the `DATA_*` limits like any page's shared data.
-
-**Design export** ([Designs](#designs-decided-2026-11-19), no migration) stores nothing: every
-file is rendered on request and never kept. It adds two settings, `DESIGN_EXPORT` (on, in effect
-only with a `BROWSER` binding) and `DESIGN_EXPORTS_PER_HOUR` (30, from 1 to 1000), counted in
-`rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most 33,554,432 device pixels; 25
-seconds per render, of which at most 10 waiting for the boards to load; two exports at once per
-instance, each holding a lease row in `rate_limits` that names no person until its browser closes.
-
-**Live data from the owner's agents** ([below](#live-data-from-the-owners-agents-decided-2026-11-19),
-migration `0015_data_sources.sql`) add two tables, six columns on `artifact_docs` and one field to
-the stored declaration:
-
-| Table or column | Key fields | Notes |
-| --- | --- | --- |
-| `data_sources` | artifact_id, source_id (key together), label, connector, recipe, collection, every_minutes, requestable_by, target_client_type, target_connection, pin_lost_at, config_hash, confirmed_hash, confirmed_at, last_fetched_at, last_finished_at, last_outcome, last_error, created_by_connection, created_at, updated_at | Where a page's figures come from. A source counts as confirmed only while `confirmed_hash = config_hash`, which only the signed-in owner can make true. `target_client_type` is always set (copied from a pinned connection); `target_connection` and `created_by_connection` reference `agent_connections` with `ON DELETE SET NULL`. Cascades from `artifacts`; kept on delete and takedown |
-| `data_refresh_tasks` | id, artifact_id, source_id, config_hash, reason (`request`, `schedule`), requested_by_email/role, requested_via (`page`, `app`, `agent`, `schedule`), state (`pending`, `claimed`, `done`, `failed`, `expired`), claimed_by, claimed_at, finished_at, result_version, created_at, expires_at | The refresh queue, for the refresh change on the roadmap: nothing creates a task yet. One open task per source (a unique partial index). Cascades from its source; deleted with the artifact and on takedown; `erase-user` clears the requester |
-| `artifact_docs.source_id`, `source_label`, `source_connector`, `source_ref`, `fetched_at`, `source_connection` | text or NULL | A document's provenance: set only by an owner's agent write with `source`, all NULL after any other write. `source_connection` has no foreign key (deleting a connection must not update documents) and is never sent to pages. Counted in neither `size_bytes` nor the quotas |
-| `versions.capabilities` | adds `sourced` | Written only when the page declares `plinth-data-sourced` names with `data`, so every other declaration is stored exactly as before |
-
-**Page requests** ([below](#page-requests-decided-2026-11-19), migration `0016_page_requests.sql`) add
-no table: a request is a root comment with exactly one mention task. Two columns on `comments`, one
-index, and two fields of the stored declaration, `versions.capabilities.requests` and
-`requestsTo`, written only when the page declares `requests` (a row without them reads as no
-requests):
-
-| Column | Values | Notes |
-| --- | --- | --- |
-| `comments.kind` | `comment` (default) or `page_request` (CHECK) | `page_request` only on a root a page filed; replies are always `comment` |
-| `comments.request_data` | JSON object or NULL | What the page attached (at most 8 KiB, nesting 16), page requests only. Untrusted |
-| index `comments_page_requests` | `(artifact_id, author_email, created_at) WHERE kind = 'page_request'` | The requester's own list, the open-request caps and `erase-user` by email |
+**Following the presenter** ([Slides](#slides-decided-2026-11-19), no migration) stores nothing
+and adds one setting, `ALLOW_SLIDES_FOLLOW` (on), in effect only where live rooms are. Fixed: a
+slides-socket frame of 128 bytes; the room's other caps (`ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, 8
+sockets per viewer, 20 connects per viewer per minute, the message rate) apply unchanged.
 
 ## Auth and permissions
 
@@ -313,13 +262,27 @@ CI](#publishing-from-ci-decided-2026-11-19)). It always holds `artifacts:read` a
 `artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the person's
 current rights) and publish new versions of it, and nothing else: no new artifacts, no other
 artifact (404 for every action, whatever its scopes), no sharing, title, category, restore, delete,
-comments (reading or writing them), shared data, view counts or mentions (403 `token_bound` on its
+comments (reading or writing them), shared data, the people list, stats (its own artifact's, or
+the summary across its person's artifacts, which is always refused) or mentions (403 `token_bound` on its
 own artifact while it may view it; once its person may not, every action answers as viewing does).
 It is never the target of an `@<label>` mention. It does not see the artifact's category, its
-shared-data usage or the owner's category names; it does see the version list and `live_draft`
+shared-data usage or the owner's category names, and never sees or manages category sharing (no
+role through a category grant, no share state, 403 `token_bound` from the share, portal and
+personal-category routes: [Category sharing](#category-sharing-and-personal-categories-decided-2026-11-19)); it does see the version list and `live_draft`
 metadata, as an editor's agent does, but sees the people only as a link viewer does: the owner by
 name, with no id or email, and each version's author by name or the address's local part, with no
-ids, even when the token is the owner's. Only the artifact's owner or an editor can make one. The limit
+ids, even when the token is the owner's. Design systems are other artifacts too: `get_design_system`
+answers 404 for every one but its own artifact, unlisted and public ones included, so a page it publishes that
+names one gets `design_system_unavailable` and `get_artifact` shows `design_system: null` to it.
+It never gets a content pass of its own, which reads the page's shared data: the viewer gate
+(`GET /api/v1/view/:ref`, and its password route) answers 403 `token_bound` on its artifact
+instead of an enter URL, and so does the thumbnail (a capture runs the page, which may draw its
+shared data), whose `thumbnail_url` is null for it. The capture of a version it wrote reads no
+shared data either, so its page cannot run unattended with the data in Plinth's own browser
+([Thumbnails and link previews](#thumbnails-and-link-previews)). Its in-chat preview
+(`preview_artifact`) stays, since a preview pass reads no shared data and joins no room. It reads
+the page through the API.
+Only the artifact's owner or an editor can make one. The limit
 never widens; deleting or taking down the artifact revokes it, and removing the person's grant stops
 it.
 
@@ -359,19 +322,17 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
+| `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
 | `list_mentions(state?)` | Pending requests addressed to this agent |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
-| `reply_comment(comment_id, body, result_version?, done?, failed?)` | Answer in the thread and complete the claimed task: `result_version` (done with a version), `done` (done without one) or `failed`, at most one. On a page request, the requester's page shows the reply text, with no author |
-| `list_comments(id)` | Every comment thread on an artifact, for addressing feedback. A thread whose root has `kind: "page_request"` is listed only for the owner, editors and its requester |
+| `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
+| `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
 | `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
 | `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
-| `list_artifact_files(id, limit?, cursor?)` | The files people uploaded from a page (owner or editor): id, name, type, size, state, who uploaded each and when, with usage and limits. Metadata only, never the bytes; names are untrusted |
-| `delete_artifact_file(id, file_id)` | Delete one ready file people uploaded (owner or editor). Files are not versioned |
-| `set_data_sources(id, sources)` | Replace the artifact's data sources (owner only, at most 10): where its figures come from. New or changed sources wait until the signed-in owner confirms them in the app (`confirm_url`); there is no tool to confirm. A `write_artifact_data` set may carry `source` to stamp a document (the owner's agent only), and `get_artifact` returns `data_sources`. See [Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19) |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
@@ -417,8 +378,9 @@ and `404` from the source endpoint, identical in every case. `/a/...` pages send
 `X-Robots-Tag: noindex, nofollow` except a public artifact on an instance with public visibility
 on. The app host also serves `/llms.txt` (built from config, with every MCP tool), an MCP Server
 Card (SEP-2127) at `/mcp/server-card` (also at `/.well-known/mcp.json` and
-`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`;
-other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
+`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`,
+plus `/.well-known/openai-apps-challenge` (OpenAI's domain verification token as plain text) when
+`OPENAI_APPS_CHALLENGE` is set; other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
 `docs/agents.md#agent-discovery`; design:
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 
@@ -470,13 +432,14 @@ The third is `design_system` (decided 2026-11-19): design tokens, guidelines and
 JSON, which agents read with `get_design_system` to build other pages; see
 [Design systems](#design-systems-decided-2026-11-19). The fourth is `design` (decided 2026-11-19,
 [Designs](#designs-decided-2026-11-19)): artboards on a canvas in `design.html`, each rendered alone
-at its size in a nested frame with an opaque origin. The fifth is `sheet` (decided 2026-11-19): a
-table as JSON lines in `sheet.jsonl`, rendered as a spreadsheet with formulas computed by Plinth's
-own engine, CSV and .xlsx downloads built in the frame, and `read_sheet` and `edit_sheet` for
-agents; see [Sheets](#sheets-decided-2026-11-19). The sixth is `whiteboard` (decided 2026-11-19,
-[Whiteboards](#whiteboards-decided-2026-11-19)): a board of notes, shapes and arrows whose blocks
-live in shared data, while its versions hold only the board's settings (`board.json`); its renderer
-loads the page runtime, and its capabilities are fixed by the server. Every type is a row of one registry
+at its size in a nested frame with an opaque origin. The fifth is `sheet` (decided 2026-11-19):
+a table as JSON lines in `sheet.jsonl`, rendered as a spreadsheet with formulas computed by
+Plinth's own engine, CSV and .xlsx downloads built in the frame, and `read_sheet` and `edit_sheet`
+for agents; see [Sheets](#sheets-decided-2026-11-19). The sixth is `whiteboard` (decided
+2026-11-19, [Whiteboards](#whiteboards-decided-2026-11-19)): a board of notes, shapes and arrows
+whose blocks live in shared data, while its versions hold only the board's settings
+(`board.json`); its renderer loads the page runtime, and its capabilities are fixed by the server.
+Every type is a row of one registry
 (`packages/shared/src/artifactTypes.ts`). A deck downloads as an editable `.pptx`, built in the
 viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` export. Design:
 `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
@@ -500,14 +463,22 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
 
 - After a version commits, the Worker asks Cloudflare Browser Rendering (a `BROWSER` binding the
   operator adds) to open that exact version on its content origin with a one-time enter token
-  that carries no identity, so the page sees a signed-out viewer. It stores a 1200x630 JPEG at
+  that carries no identity, so the page sees a signed-out viewer. A version written by a token
+  limited to one artifact, or by an account since erased, is captured with a pass that reads no
+  shared data (the data API answers `reason: "capture"`), and every capture's browser aborts any
+  request or navigation outside the artifact's own origin and the hosts its CSP allows, aborts any
+  navigation to another version or a Plinth helper path, and closes any window the page opens. The
+  capture's pass names its version, and the content host serves that version on every path under
+  it (the root and root-relative files included), never the current one
+  (docs/security.md#thumbnails-and-link-previews). It stores a 1200x630 JPEG at
   `artifacts/<id>/thumbs/v<n>.jpg`. The capture runs after the response (`waitUntil`) and never
   delays a publish; at most two run at once, a failed one is retried after a day, and a reader
   that finds none starts one, which backfills older versions. Migration `0008_thumbnails.sql`
   adds `versions.thumbnail` and `thumbnail_at` to coordinate this.
 - Dashboard cards show the current version's thumbnail from
   `GET /api/v1/artifacts/:ref/thumbnail`, which uses the same access check as reading the
-  artifact (`thumbnail_url` on summaries; null when the instance takes none). The initials
+  artifact (`thumbnail_url` on summaries; null when the instance takes none), except that a token
+  limited to one artifact gets none (the policy action `enter`). The initials
   placeholder stays until the image loads.
 - Link previews: `/a/...` pages carry Open Graph and Twitter tags. Unfurlers fetch without
   credentials, so they get what a signed-out visitor may see: an artifact anyone with the link
@@ -518,62 +489,103 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
   thumbnails are never served. `THUMBNAILS=false`, or no `BROWSER` binding, turns the feature off:
   cards keep the placeholder and previews have no image.
 
-### Admin stats and view counts
+### Artifact stats
 
-Plinth counts how often each artifact is opened, as one number per artifact per UTC day. It never
-records who opened it.
+Owners see who opened their artifacts, when, how often and which version. One row per counted open
+goes into `artifact_opens`, kept with who opened it for `VIEW_LOG_RETENTION_DAYS`; after that only
+the count survives.
 
 - **Where an open is counted.** At the content host's one-time `/__plinth/enter` exchange, never
   at the gate: the app polls the gate, and previews, history and agents call it too. When the gate
   answers `ok` for a normal open of the live page, it seals a signed one-bit `w` flag into the enter
-  token. Enter records an open only after every existing check passed (signature, artifact,
-  access epoch, takedown, nonce), and only when all of these hold: the pass is a view pass, the
-  token carries `w`, `VIEW_COUNTS` is on, the request has `Sec-Fetch-Dest: iframe`, the user agent
-  does not look like a bot, and the browser's view pass for that artifact (if any) is not already
-  marked counted. The response (status, `Location`, cookie attributes, CSP) is the same whether or
-  not it counted.
+  token, and beside it `o`, the opener (below), AES-GCM sealed and bound to the artifact id like the
+  identity claim, because the enter token travels in a URL. Enter records an open only after every
+  existing check passed (signature, artifact, access epoch, takedown, nonce), and only when all of
+  these hold: the pass is a view pass, the token carries `w`, `VIEW_COUNTS` is on, the request has
+  `Sec-Fetch-Dest: iframe`, the user agent does not look like a bot, and the browser's view pass
+  for that artifact (if any) is not already marked counted. The response (status, `Location`,
+  cookie attributes, CSP) is the same whether or not it counted.
 - **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
   (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
   Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
   previews (their tokens refuse `w`), replayed or expired tokens, requests without
   `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
   token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
-  model does not count as one). Link
-  unfurlers never run the app, so they never reach the gate or enter. Editors, commenters,
-  allowlist and password viewers, link visitors and deep links to normal paths count.
+  model does not count as one). Link unfurlers never run the app, so they never reach the gate or
+  enter. Editors, commenters, allowlist and password viewers, link visitors and deep links to
+  normal paths count.
+- **Who is recorded.** The gate decides, from the principal that produced the `ok` gate. Anyone
+  signed in to an account is recorded by user id (`viewer_kind = 'user'`), whatever the
+  visibility, so a signed-in reader of a public page is named to its owner, and so is someone
+  signed in by confirming an allowlisted email's code. A viewer session (that code confirmed where
+  the address may not sign in, as in single-user mode) is recorded by its email (`'email'`) when it
+  holds a grant on the artifact. Everyone else (link, public and password visitors) is
+  `'anonymous'`. Each row also has the role of the open (`editor`, `commenter` or `viewer` from a
+  grant; otherwise `public`, `link` or `password` from the visibility) and the version served (the
+  current one, since explicit versions never count). No IP address or user agent is stored. A
+  token with `w` but no readable opener records `'unknown'`.
+- **Anonymous visitors.** While `VIEW_COUNTS` is on, every view cookie carries `i`, a random
+  22-character visitor id, signed with the rest of the cookie. Enter takes it from any content
+  cookie the browser holds for that artifact (whatever its epoch, and up to 30 days after its pass
+  expired), or mints a new one, and the cookie is set to last 30 days (`TTL.visitorIdS`) instead of
+  12 hours; the pass inside it still expires after 12 hours, so access is unchanged. The id is
+  stored only on anonymous rows. "Anonymous visitors" counts distinct ids: approximate, because a
+  browser that drops partitioned cookies, a private window or a second browser is a new visitor,
+  and one who returns after 30 days without opening the page is too.
 - **Dedupe.** At most once per browser per artifact per content pass: a sliding 12 hours, reset by
   an access-epoch change (any grant, visibility or password change), so the same browser can count
   again sooner after one. A counted enter marks the content cookie it sets with one signed bit
   (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
   editor who moves between the editor preview, history and the live page counts once, and an
   uncounted pass (the preview, history, review mode) never stops a later live open from counting.
-  There is no new cookie, storage or identifier. Browsers that drop partitioned cookies count
-  every open, so counts are "opens", indicative, never unique people.
-- **Storage.** One D1 upsert per counted open into `artifact_view_days`, written after the
-  response (`waitUntil`). A failed write never fails the open. The hourly cron, at 03 UTC, folds
-  days older than 90 into `artifact_view_totals` in one transaction, so the daily table stays
-  bounded and all-time totals survive. Instances without a cron (local, tunnel, Docker) keep their
-  daily rows, and every total stays correct.
-- **`VIEW_COUNTS`** (default on) turns recording off. Stored counts are kept, and the fold still
-  runs.
-- **Owners see their own counts.** The Share dialog shows "Opened N times in the last 30 days · N
-  since <first counted day>" ("No opens counted yet." before the first one: opens from before the
-  instance began counting are not known), and `GET /api/v1/artifacts/:ref/views` returns the last
-  7 and 30 days, a 30-day daily series, the total and `since`, the first day with a counted open. It goes through the policy action `views`: the owner only (an
-  agent needs `artifacts:read`); editors, viewers and an admin without a role are denied, and a
-  taken-down artifact answers `taken_down`. Counts are not in `ArtifactSummary`, MCP or anything
-  the app host answers without signing in.
+  Browsers that drop partitioned cookies count every open.
+- **Storage.** One D1 insert per counted open into `artifact_opens`, written after the response
+  (`waitUntil`). A failed write never fails the open and logs a fixed string. The hourly cron, at
+  03 UTC, folds opens older than `VIEW_LOG_RETENTION_DAYS` (default 365, from 90 to 3650; whole
+  UTC days) into `artifact_view_totals` and deletes them, in one transaction, so who opened a page
+  is kept only that long and all-time counts survive. The cron reads the setting on its own and
+  folds nothing when it is set to a value the Worker refuses. Instances without a cron (local,
+  tunnel, Docker) keep every row, and every total stays correct. Migration
+  `0020_artifact_opens.sql` turned each old daily count into that many `'unknown'` opens at 00:00
+  UTC of its day (no version, viewer or role) and dropped `artifact_view_days`.
+- **Erasure.** Erasing an artifact or its owner removes its rows by cascade. `erase-user` turns the
+  person's opens of other people's artifacts into `'unknown'` rows (no user id, email, visitor or
+  role), so the owners' counts stay right; deleting a user row also clears `user_id`.
+- **`VIEW_COUNTS`** (default on) is the switch: off stops recording (no flag, no opener, no visitor
+  id, the 12-hour cookie as before). What was recorded stays, owners still see it, and the fold
+  still runs.
+- **Owners see their artifacts' stats.** `GET /api/v1/artifacts/:ref/stats?days=7|30|90|365`
+  (default 30) returns `totals` (opens, viewers, people, anonymous visitors and opens, all-time
+  opens and `since`, the first day with a counted open), a zero-filled daily series (opens and
+  viewers), `people` (per person: display name if the account has one, email, kind, the role and
+  version of their last open, first and last open in the window and opens; last opened first, at
+  most 500, with `people_total`) and per-version opens and viewers. A person is one email: an
+  account and the same email confirmed by code count once. "Viewers" are distinct people plus
+  distinct anonymous visitors; `'unknown'` opens count as opens, never as viewers, and have no
+  version. It goes through the policy action `views`: the owner only (an agent needs
+  `artifacts:read`); editors, viewers and an admin without a role are denied, and a taken-down
+  artifact answers `taken_down`. `GET /api/v1/stats/artifacts` lists the caller's own artifacts
+  that are not deleted or taken down with opens and viewers over 7 and 30 days, all-time opens and
+  `last_opened_at`, most recently opened first. The MCP tool `get_artifact_stats` returns either
+  (with or without `id`). The app shows them at `/a/:slug/stats` (range picker, opens and viewers
+  charts, people and version tables; a person whose last version seen is older than the current one
+  is marked "Not the latest version"), linked from the artifact's menu, the dashboard row menu and
+  the Share dialog ("See who opened it"). The list across artifacts is for agents (the MCP tool and
+  the API); the app has no separate page for it. Stats
+  are not in `ArtifactSummary` or anything the app host answers without signing in.
 - **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
   default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents
   included, gets the same 404. It shows people, live artifacts by visibility and taken down,
   versions and agent versions, storage, shared data, agent connections by client (and how many
   were used in the window, including any revoked since), open reports and opens, with daily series
   over the window (UTC days, zero-filled). Tiles whose figure covers the window say so in their
-  label. It names no artifact,
-  owner or viewer and has no top-N list, so it is no way around "admins view only reported
-  artifacts". Storage, artifact, version and shared-data totals count live artifacts only (as
-  the quota does); opens of deleted and taken-down artifacts stay in the view totals until a hard
-  erase, and the daily series count activity, including artifacts deleted since.
+  label. Opens come from `artifact_opens` plus the folded totals. It names no artifact, owner or
+  viewer and has no top-N list, so it is no way around "admins view only reported artifacts".
+  Storage, artifact, version and shared-data totals count live artifacts only (as the quota does);
+  opens of deleted and taken-down artifacts stay in the totals until a hard erase, and the daily
+  series count activity, including artifacts deleted since.
+- **Later.** Time on page and scroll depth are not recorded; they would need a beacon from the
+  page and are left for their own design.
 
 ### Editing
 
@@ -582,16 +594,16 @@ records who opened it.
 - Editors are the owner plus anyone granted the editor role.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
-- The source editor stays for every type until each type's editing on the page covers what it
-  does; for docs and sheets both work.
+- The source editor stays for the types that have one until each type's editing on the page
+  covers what it does; for docs both work. Sheets, designs and whiteboards have no source editor.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
 the draft's files decided 2026-11-19). Owners and editors edit a doc or a sheet right on its
 rendered page, and the other editors with the page open see the changes as they are typed. The
 registry says which types are edited this way (`edit: "live"`: docs and sheets); HTML pages,
-designs, decks and design systems are edited in the source editor only (`edit: "ask"`), because
-an HTML page's own scripts share the frame's origin and could forge edits that the editor's
-session would then save; a whiteboard is always live on its page through shared data (`edit:
+decks and design systems are edited in the source editor only and designs by agents only (`edit:
+"ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
+the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
 page shows the strip and makes the REST calls, and renders no content.
@@ -623,7 +635,9 @@ page shows the strip and makes the REST calls, and renders no content.
 - **Drafts are not versions.** The draft is one `live_drafts` row per artifact, written by the room
   at most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a
   save). It never moves backwards, never comes back after a delete or takedown, and an owner keeps
-  at most 20. A draft back at its base is deleted.
+  at most 20. A draft back at its base is deleted, once no save of an earlier draft is still
+  running (until then its row stays, so a room woken meanwhile reloads that base rather than the
+  save's version).
 - **The draft's files are its base version's.** A person's page edit never adds, removes or
   replaces a file (images are agent-only), so a draft is its text plus the files of the version it
   is based on. Every page Publish stages exactly that: the text, and every file of the draft's base
@@ -722,9 +736,9 @@ page shows the strip and makes the REST calls, and renders no content.
   changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
   held, the app sends that copy with the review, and Publish your changes and Discard your changes
   act on it); under opaque
-  isolation and the path fallback there is no editing on the page, and docs and sheets are edited
-  in the source editor only. `ALLOW_LIVE_EDITING=false` turns
-  it off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
+  isolation and the path fallback there is no editing on the page: docs are edited in the source
+  editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
+  off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
 - **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
   source") turns edit mode on; a strip under the bar says what is happening ("Draft saved",
   "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
@@ -767,7 +781,8 @@ Owners publish many artifacts for different projects, so each artifact can carry
 short name for the project, repo or client it belongs to. It is the owner's private organisation:
 `category` is null for every caller but the owner, and no anonymous surface, upload status, email
 or log carries it, nor any share state, except to the owner. A shared category's people see the
-share's title, never the name. A collaborator files artifacts shared with them under categories of
+share's title, which is the category's name unless the owner changes it (a later rename leaves the
+title as it was). A collaborator files artifacts shared with them under categories of
 their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)).
 
 - **Agents set it.** `publish_artifact`, `start_upload`, `POST /api/v1/artifacts` and
@@ -804,8 +819,9 @@ their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)
   rename (409, `reason: "sharing_changed"`). With `personal: true` it renames the caller's own
   categories for artifacts shared with them instead.
 - **In the app.** The dashboard has a Category menu beside All / Mine / Shared (kept in
-  `?category=`, an empty value meaning no category; hidden under Shared), a category badge on the
-  owner's rows and cards, a Rename category dialog (rename, merge or remove) and "Move to
+  `?category=`, an empty value meaning no category; hidden under Shared), the owner's category
+  as a badge beside a row's title (on phones, plain text on the row's second line) and as plain
+  text on a card's info line, a Rename category dialog (rename, merge or remove) and "Move to
   category…" in the row menu, which opens the Category section of the artifact's Settings.
 - **CLI and skill.** `plinth publish --category C` sets it on a new publish or, for the owner, on
   an update (`--id`); the CLI never infers it. The agent skill (plugin 0.12.0) tells agents to set
@@ -832,11 +848,6 @@ A page that declares `comments` places its own anchors instead (a point on a can
 node in a diagram): it opens the composer, and the person writes and posts the comment. See
 [Comments from the page](#comments-from-the-page-decided-2026-11-19). Agents read either kind of
 anchor in `list_comments` and in mention tasks, as untrusted data like the comment text.
-
-A page that declares `requests` files tasks into the same pull queue from its own code, for the
-people who could mention the agent themselves: see
-[Page requests](#page-requests-decided-2026-11-19). Such a task says `source: "page"` and carries no
-owner authority.
 
 ### Shared data and viewer identity
 
@@ -868,10 +879,6 @@ Decided 2026-11-14 (issue #1). Design:
   be changed by its creator, the owner and editors, or by any writer in a declared shared
   collection; a personal document (`~me`, id `u_` + a per-artifact hash of the email) only by its
   person, with the owner and editors able to moderate.
-- **Sourced collections.** `<meta name="plinth-data-sourced" content="issues">` names collections
-  whose figures come from the owner's agents: only the owner and editors write there, from every
-  channel, and commenter- and viewer-role writers are refused. See
-  [Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19).
 - **The write floor.** Who may write from the page is `policy.ts pageWriteFloor`: on an HTML page,
   any identified viewer, as above; on a [whiteboard](#whiteboards-decided-2026-11-19), the role its
   version's `writers` names (commenters, or editors only), and commenter when that is missing or
@@ -883,8 +890,8 @@ Decided 2026-11-14 (issue #1). Design:
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
   content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
   request whose valid passes disagree on who is viewing has none). Only identified viewers get a
-  claim, and only while shared data, [files](#files-people-add-to-a-page-decided-2026-11-19), [live rooms](#live-rooms) or [page requests](#page-requests-decided-2026-11-19) are active;
-  everyone else is anonymous to the page.
+  claim, and only while shared data or [live rooms](#live-rooms) are active; everyone else is
+  anonymous to the page.
   `window.plinth.viewer` is `{ id, email, role }` or null; `email` is set only when the page
   declares `viewer`, and `id` is opaque and different on every artifact. The app tells the viewer
   in one line under the bar what the page saves and whether it can see who they are.
@@ -917,10 +924,6 @@ Decided 2026-11-14 (issue #1). Design:
 - **Agents.** `list_artifact_data` and `write_artifact_data` (MCP) and REST mirrors under
   `/api/v1/artifacts/:ref/data` for the owner and editors. Viewer-written data is untrusted input,
   and the tool descriptions say so.
-- **The runtime script.** `/__plinth/runtime.js` is the same file for every artifact on an
-  instance and holds no secrets and no artifact data. Since dictation it embeds one public value,
-  the instance's app origin, to address and authenticate its messages to the app that frames the
-  page ([Voice](#voice-dictation-and-text-to-speech-decided-2026-11-19)).
 
 ### Live rooms
 
@@ -958,9 +961,9 @@ late joiner reads it. Plinth's own on-page editing of docs and sheets is the roo
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
   `/__plinth/room/v1/doc` (on-page editing of docs and sheets) and `/__plinth/room/v1/slides`
-  (following the presenter in a deck) the same way. The handshake is checked in
-  order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
-  the artifact, the content pass with its identity claim at the current epoch, the kind the path
+  (following the presenter in a deck) the same way. The handshake is checked in order: method,
+  exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active, the artifact, the
+  content pass with its identity claim at the current epoch, the kind the path
   names (after the pass, so a caller without one learns nothing about the declaration), and policy
   (`roomAccess` in `policy.ts`); see [docs/security.md](security.md#live-rooms).
   `GET /__plinth/api/v1/room` (behind the data API's caller checks) tells the runtime first
@@ -988,148 +991,6 @@ late joiner reads it. Plinth's own on-page editing of docs and sheets is the roo
   to anyone, and counts toward the room's caps like any other room socket. See
   [Slides](#slides-decided-2026-11-19), "Following the presenter".
 
-### Who is viewing: names and the people list (decided 2026-11-19)
-
-A page that may see who is viewing also sees each person's display name, and a page whose owner
-and editors need to see who has access can list them. The access list is never a visit log and
-never a directory.
-
-- **Display names.** `users.name` is the person's display name, set in the app ("Your name…" in
-  the account menu) or with `PATCH /api/v1/me`. On write it is stored NFC with whitespace runs
-  collapsed and trimmed, at most 100 characters, with no `@`, no character whose compatibility
-  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one) and no control, format (bidi,
-  zero-width) or separator characters; an empty name clears it. Pages, rooms and agents get it
-  cleaned on every read (refused characters and every form of `@` dropped, at most 64 code points, `null` when
-  nothing is left), so names stored before these rules comply too. People with a viewer session
-  (confirmed by code where they may not sign in) have no name, and an account a code created has
-  none until its person sets one. A name is display text, never authority: `role` stays
-  server-derived beside it.
-- **Read live, never sealed.** The name is read from `users` by the identity email (the owner's
-  own, or the one holding the grant) whenever a response needs it. It is not in the content pass or
-  stored with shared data, so a rename shows on the next read (in a room, on the next connect) and
-  `erase-user` removes it everywhere.
-- **Where a page sees it.** Exactly where it sees an email, under the same rule (`viewer` declared,
-  reader identified): `plinth.viewer` is `{ id, email, name, role }`; document authors
-  (`createdBy`, `updatedBy`) are `{ email, name, role, via }`; room peers, event senders and
-  `room.ready.you` carry `name` beside `email`. Link viewers, previews and captures see none.
-- **People list.** `people` in `<meta name="plinth-capabilities">` (`content="data viewer
-  people"`) lets the owner and editors list everyone the artifact is shared with: the owner, then
-  every grant by email, each with its `u_` id, email, name and role. It counts only with `data` and
-  `viewer` and declares nothing on its own; it is stored in `versions.capabilities` only when
-  declared, so every other declaration is stored as before. `GET /__plinth/api/v1/people?q=&limit=`
-  returns `{ people, total }` (`limit` 1 to 201; `q`, at most 100 characters, keeps people whose
-  name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or 404
-  when the id is nobody with access now. Each entry has `you` on the reader's own row. The
-  runtime adds `plinth.canListPeople` (from the session's `can_list_people`) and
-  `plinth.people.list({ q, limit })` and `plinth.people.get(id)`. Commenters, viewers, link
-  viewers, previews and captures are refused (`forbidden`, or `unavailable` with `not_identified`,
-  `not_declared`, `preview`, `disabled` or `opaque_isolation`); reads are limited to 600 per hour
-  per reader per artifact. The routes are entries of the shared-data route table, so the data API's
-  ten checks run first (see [docs/security.md](security.md#the-people-list)). Search runs only over
-  that one list: nothing takes an arbitrary email or name and says whether it has an account.
-- **Names on the access list.** The owner types every grant's address and its holder is not told,
-  so an access list (the people list for the page, agents and REST, and the owner's sharing
-  settings) shows a grant holder's name only once that person has taken part in the artifact:
-  written a comment, a shared-data entry or a version of it, each of which already shows their name
-  to the people who can read the list. The owner's name and the reader's own row are always shown.
-  Until then the entry has `name: null`, exactly like an address with no account, and `q` does not
-  match the name, so adding addresses never tells the owner which have an account or what they are
-  called (`policy.ts accessListShowsName`).
-- **Telling the viewer.** The gate's `people` block (`name`, `list`) adds to the line under the
-  bar: the name the page sees beside the email, and, on a page that declares `people`, "The owner
-  and editors can see everyone this page is shared with", shown to every identified viewer since
-  their address is on the list.
-- **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
-  agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
-  person can create it). The access list reaches agents only where the page offers it: when the
-  current version declares `data viewer people` and shared data is on (`policy.ts
-  peopleListOffered`, the same answer the page route and the notice use), `list_artifact_data`
-  without a collection also returns `people` (`{ viewer_id, email, name, role }`, the same list),
-  and `GET /api/v1/artifacts/:ref/people?q=` mirrors it (policy action `people`: owners and
-  editors, `artifacts:read`; 403 `feature_disabled` with the reason otherwise). Without the
-  declaration only the owner sees the access list, in the sharing settings, as before; the owner's
-  `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant under the rule above. Names are
-  untrusted for agents and the tool descriptions say so.
-- **Availability.** With shared data: under opaque isolation, or with `ALLOW_SHARED_DATA` off, the
-  people routes refuse and the session reports `can_list_people: false`. Names follow identity
-  claims (`ALLOW_SHARED_DATA` or `ALLOW_ROOMS`). There is no switch of its own: the list is opt-in
-  per page and shown only to the people who already run the page.
-### Comments from the page (decided 2026-11-19)
-
-A page whose things have no stable element (a point on a `<canvas>`, a WebGL scene, a slide, a node
-in a pan-and-zoom diagram) can take comments on them: its own code opens Plinth's comment composer
-with an anchor it chose, and learns which threads are anchored where, so it can draw its own
-markers and tell Plinth where to draw its pins.
-
-- **Declaration.** `comments` in `<meta name="plinth-capabilities">` (for example
-  `content="comments"`), HTML artifacts only. It is neither shared data nor a room: a page that
-  declares only `comments` has no store and no room. The current version's declaration governs, as
-  for data and rooms, and the viewer gate says so with `page_comments: true`.
-- **Page API.** `window.plinth.comments` in `/__plinth/runtime.js`. Nothing is sent until the page
-  first uses it.
-  - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
-    direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
-    in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
-  - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
-    `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
-    `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). An
-    optional field set to `undefined` counts as absent. Each request settles when the app answers
-    it: a later `compose` does not end an earlier one, since the app may refuse the later one and
-    keep the earlier anchor in the composer (an accepted later request replaces an earlier one
-    that nobody wrote for, which then settles `closed`).
-  - `onThreads(fn)` gets the page-anchored threads, oldest first: `{ id, pin, status, anchor }`,
-    resolved ones included, as frozen copies, and is called at once with the latest list.
-  - `locate(fn)` says where an anchor is now, as a point `{ x, y }` or a box
-    `{ left, top, width, height }` in the frame's viewport, or null. Without it Plinth draws no pin
-    for page anchors.
-  - `refresh()` runs `locate` again after the page moved things (coalesced, at most 20 a second).
-  - `open(id)` shows a thread in the panel.
-  - `onFocus(fn)` hears when the person picks a page-anchored thread in the panel or by its pin.
-- **The person posts.** A page never posts a comment and cannot fill in its text: the person writes
-  it and presses Comment, through the comments API with their own session, rate limit and role. A
-  link viewer still sees "Sign in to comment". So page code cannot turn into mention tasks under a
-  collaborator's name. The page learns `posted` only after a comment was posted and `busy` only
-  while someone writes one. A request from a viewer who cannot comment is held like any other and
-  ends `closed` only when the panel closes or a later request replaces it, as for a commenter who
-  has written nothing, so neither the answer nor its timing says whether the viewer can comment.
-  No page request moves focus: the panel opens, or shows the thread, with focus where it was, and
-  the person clicks or tabs into the composer. Keystrokes meant for the page never land in a
-  comment, and where focus goes says nothing about the viewer's role.
-- **No comment text in the frame.** Plinth tells the page thread ids, pin numbers, status and
-  anchors (a page anchor's key, coordinates and data, or an element's selector) and request ids.
-  Never comment bodies, authors, emails, roles, mention state, an anchor's label or an element's
-  text excerpt. A page anchor's key, coordinates and data are written by the page's code or by any
-  commenter (the comments API takes page anchors from anyone who may comment), so they are
-  untrusted input for the page too: render them as text, never as HTML.
-- **Page anchors.** `{ kind: "page", key, x?, y?, text?, data? }`: `key` names what the page anchors
-  to in its own terms (`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`), `x` and `y` are page coordinates
-  (finite, within ±10⁹), `text` is a label of at most 120 characters for the composer's chip, and
-  `data` holds at most 16 flat page-defined fields (keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`; strings of
-  at most 200 characters, finite numbers, booleans or null; 1 KiB as JSON). The schema is strict:
-  anything that says `kind: "page"` is a valid page anchor or is refused. Element anchors keep their
-  shape and are stored without `kind`. The server accepts page anchors on any comment its author may
-  post, with or without the declaration, as it accepts element anchors outside review mode; both
-  are untrusted data.
-- **No review-mode reload.** For a declaring page the app does not enter review mode: opening the
-  panel does not reload the frame, so a canvas, a zoom level or form input survives, and the gate
-  ignores `review` (so `?comments` deep links stay reload-free too). The bridge is not injected, the
-  runtime positions element anchors itself, and "Pin to an element" is hidden.
-- **Limits in the app.** At most one compose a second is accepted, only after the page said hello,
-  while the tab is visible and no dialog is open; a compose while someone is writing is `busy` and
-  leaves the draft and its anchor alone. `open` is refused while the tab is hidden or a dialog is
-  open. A request that would open a closed panel, compose or `open`, is accepted at most once a
-  second, the two together. No page request moves focus. At most 4 `open` and 20 position reports
-  a second, and 500 threads. A page can at worst reopen a panel the person closed, once a second;
-  the report link covers a page that abuses it.
-- **Availability.** Origin and opaque isolation alike: the app identifies the frame by its window
-  (and, under origin isolation, its exact origin) and posts to it with the exact content origin, or
-  `"*"` under opaque isolation, which is safe because the messages hold nothing the framed document
-  may not see. The runtime posts only to `window.parent` at the instance's app origin and listens
-  only to it. Not under the staging path fallback, where `/__plinth/runtime.js` does not load.
-- **Agents.** No new tool. `list_comments`, `list_mentions` and the REST comment routes return page
-  anchors with `kind: "page"`; agents read `key`, `x`, `y` and `data` to find what a thread is
-  about, and treat every anchor as untrusted.
-- **Settings.** None: the feature adds no server behaviour, cost or quota beyond the comment API's.
 ### Design systems (decided 2026-11-19)
 
 A design system is a reference artifact that later work is built on: design tokens, components with
@@ -1153,10 +1014,16 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   `invalid_input` and up to 50 problems, each with its path into the JSON. Every string that
   reaches CSS passes one value grammar (no `;`, braces, angle brackets, backslash, `@`, quotes or
   line breaks; no `url(`, `expression(` or comments; at most 256 characters), font family names are
-  quoted by Plinth, and the `css` blocks may not hold `<` or `@import`, because the compiled CSS is
-  copied into other pages. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
-  holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme` and
-  `ds_deprecated_alias`. They count toward the publish's cap of 50 warnings with the reference
+  quoted by Plinth, and the `css` blocks may not hold `<`, a backslash (so no CSS escape such as
+  `@\69mport`), `@import`, `image-set()`, `image()`, `src()`, `cross-fade()`, `element()` or
+  `expression()` (vendor-prefixed forms such as `-webkit-cross-fade()` included), and each `url()` in them, read as a browser's CSS tokenizer reads it, must be a
+  plain relative path (letters, digits, `._~-` and `/`, no `..`, an optional query and fragment), a
+  `#fragment` or a raster `data:image` URL, because the compiled CSS is copied into other pages.
+  These checks are defence in depth; the content CSP of the page the CSS ends up in is what stops
+  loads from other hosts. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
+  holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme`,
+  `ds_deprecated_alias`, and `missing_file` with the block's `path` for a CSS block's `url()` that
+  names a file the version does not have. They count toward the publish's cap of 50 warnings with the reference
   warnings. Restore copies stored files without checking them again, as for docs.
 - **Typography.** A typography token compiles to one variable per part
   (`--<prefix>-<path>-font-size` and so on) and a `font` shorthand that reads them. When
@@ -1164,13 +1031,21 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   set in both themes, to `normal` where that theme has no value (what its shorthand resets the part
   to), so neither theme's shorthand reads a variable the other alone defines.
 - **The site.** A fixed Plinth renderer on the artifact's own origin (`/__plinth/types/design_system/`,
-  `script-src 'self'`, like a doc) shows the overview and guidelines, the tokens by kind (colors,
-  typography, spacing and sizes, radii, shadows, motion, others) with light and dark samples, CSS
-  variable names and copy buttons, and every component with live previews in light, dark or both at
-  360 px, 768 px or full width, beside its HTML and CSS. Guidelines, descriptions and usage follow
-  the doc type's Markdown rules. The site's own chrome uses Plinth's neutral styles; the design
-  system's tokens and CSS apply only to samples and previews. Navigation is by hash
-  (`#tokens/color`, `#components/button`).
+  `script-src 'self'`, like a doc) shows the guidelines, the tokens by kind (colors, typography,
+  spacing and sizes, radii, shadows, motion, others) with their samples (light and dark side by
+  side when the values differ, labelled once above the group, otherwise one sample in the reader's
+  color scheme; every sample one size, in one column, above the text on a phone), CSS variable
+  names, which copy when clicked ("Copied" shows in the name's place), and values, and every
+  component's description, usage and a live preview of each example in the reader's color scheme.
+  The site shows no source code: agents read the examples' HTML and the CSS with
+  `get_design_system`. The guidelines open the page under the name and description, with no
+  heading of their own. Guidelines, descriptions and usage follow
+  the doc type's Markdown rules, without heading anchors or heading rules, so the site's own
+  section headings stay the only ones. The site's own chrome uses Plinth's neutral
+  styles; the design system's tokens and CSS apply only to samples and previews. Navigation is by
+  hash (`#tokens/color`, `#components/button`) from a sidebar that marks the section in view: on a phone, one
+  row that scrolls sideways and fades at its edges. JSON that does not parse shows one line, "This design system
+  could not be shown."
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1199,10 +1074,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   unclosed comment or tag runs to the end, so nothing after it counts), and a page that never
   mentions `plinth-design-system` is not scanned at all.
 - **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
-  JSON Schema, shows the parser's problems under the editor and keeps Save off until there are
-  none. The dashboard shows a "Design system" badge and a "Design systems" filter when there is
-  one. The artifact menu's "Copy for an agent" copies a line with the design system's link and id,
-  never its title.
+  JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
+  keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
+  link (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
 - **Uploads and the CLI.** `start_upload` with `type: "design_system"` (or the `id` of a design
   system) takes a folder with `system.json` and its images and fonts at its top. The Plinth CLI
   publishes such a folder as a design system (`plinth publish <dir>`), updates one with the JSON in
@@ -1211,6 +1085,7 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
   origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
   no themes other than `dark`, and no copying of font or image files between artifacts.
+
 ### Slides (decided 2026-11-19)
 
 A presentation is a deck: the agent writes Markdown, Plinth renders fixed slides. It is the second
@@ -1238,73 +1113,110 @@ source editor work as for docs. A deck is not edited on its page.
   dark or `auto` (the viewer's scheme on screen, light in print), system fonts, slide numbers and
   the footer.
 - **Viewing.** Keys (arrows, Page Up and Down, Space, Home, End, a number then Enter), clicks or
-  taps on the outer thirds, swipes and `#N` links page the deck; `o` shows every slide stacked (the
-  overview), which is also what phones in portrait, review mode (so comment pins anchor to every
-  slide) and the editor preview show. The app keeps the slide in its URL fragment (`#slide=N`,
-  never sent to the server), so a reload or a shared link opens the same slide, and a newer
-  version's frame is sent back to it.
-- **Presenting.** Present (in the bar) puts the app's own frame full screen; the frame gets no
-  fullscreen permission of its own, and presenter view stays presenter view when it goes full
-  screen. Presenter view (in the menu, or `s`) shows, inside the frame,
-  the current slide, the next one, the notes, an elapsed timer with pause and reset, the clock and
-  the slide count. The frame tells the app each view it switches to, so the app's presenter strip,
-  the paused version swap and the audience window follow the deck however presenter view was
-  opened or left (the menu, the strip's Exit, `s`, Escape or the frame's own controls). Review mode
-  keeps the overview whatever asks for another view. "Audience window" opens a second app window that follows the presenter's slide
-  through a `BroadcastChannel` on the app origin in the same browser, in every isolation mode; only
-  slide numbers cross it. While the deck is full screen or in presenter view, a newer version does
-  not replace the frame: the strip says it was published and Show loads it on the same slide, and
-  the deck catches up when presenting ends. A permanent version link (`/a/<slug>/v/<n>`) stays on
-  its version: its strip never offers a newer one, and its audience window opens that same version.
-- **Printing.** "Print or save as PDF" prints one slide per page at the deck's size (an `@page`
-  size in inches); "Print with speaker notes" prints a handout with each slide over its notes. The
-  frame prints itself, after its images have decoded. Browsers that ignore `@page` sizes print on
-  their own paper size, one slide per page.
-- **Download as .pptx (decided 2026-11-19).** "Download .pptx" in the menu saves the deck as an
+  taps on the outer thirds, swipes, `#N` links and a control pill page the deck. The pill
+  (previous, next and an overview toggle, with a `3 / 20` count only when the deck shows no page
+  numbers of its own, so one counter is on screen) floats over the bottom centre of the slide, its
+  bottom edge 16 px above the slide's, on a translucent surface; it shows on a pointer move, a tap or a key, stays while hovered or focused,
+  hides after 2 s idle and reserves no room. The slide is centred with one 16 px gutter on every
+  side, full screen too, the same in the overview and presenter view, and has square corners in
+  every view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
+  700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
+  the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
+  and the editor preview keep it in one column, without the pill. The app keeps the slide in its
+  URL fragment (`#slide=N`, never sent to the server), so a reload or a shared link opens the same
+  slide, and a newer version's frame is sent back to it.
+- **Presenting.** Present is one control in the bar, a menu with two items. "Full screen" puts
+  the app's own frame full screen; the frame gets no fullscreen permission of its own, and
+  presenter view stays presenter view when it goes full screen. "Presenter view" (or `s`) shows,
+  inside the frame, two columns that fit the frame's height: on the left the current slide as
+  large as fits, with one bar directly under it (the elapsed timer with pause, which starts again
+  each time presenter view opens; previous and next around the same `3 / 20` count, since
+  presenter view takes no swipes or taps and touch screens page here; the clock; Exit); on the
+  right the next slide, its top level with the current slide's and its "Next" caption above it,
+  and the notes down to the bar's bottom edge, the two columns centred in the frame's height
+  together. Below 600 px wide or in portrait it is one column: current, bar, next, notes. Exit, Escape or `s` leave it. A
+  slide without notes leaves the notes pane empty. The frame tells the app each view it switches
+  to, so the Present menu and the paused version swap follow the deck however presenter view was
+  opened or left. While presenter view is on, the Present menu offers "Audience window" in its
+  place; the ⋯ menu has no present item. Review mode keeps the overview whatever asks for another
+  view, and stays on after the comments panel closes, so choosing either Present item (or `f`)
+  there first leaves review mode: the comments panel closes, the deck loads again without it, and
+  the new frame goes full screen or into presenter view. "Audience window" opens a second app window on the permanent link of the version the
+  presenter's window shows (`/a/<slug>/v/<n>`), paired with it through a `BroadcastChannel` on
+  the app origin in the same browser, in every isolation mode; only slide and version numbers
+  cross it. The audience window shows exactly the presenter's current slide of that version,
+  fitted to the window at any size (never the stacked overview), sends its own frame back to that
+  slide and to the deck view whatever paged or switched it, and loads another version only when
+  the presenter's window shows one. It follows the presenter's window, in presenter view or not,
+  until either window closes; a second audience window joins the same pair. Once it has heard
+  from its presenter it shows the deck alone, without the bar or the banner; a link with a pair id
+  and no presenter window in that browser keeps the whole page. While the deck is full screen or
+  in presenter view, a newer version does not replace the frame (the bar's version notice says an
+  older one is on view); the deck catches up on the same slide when presenting ends, and its
+  audience window with it. A permanent version link stays on its version.
+- **Printing.** "Print or save as PDF" (or Ctrl+P in the deck) prints one slide per page at the
+  deck's size (an `@page` size in inches); from presenter view it prints a handout with each slide
+  over its notes. The frame prints itself, after its images have decoded. Browsers that ignore
+  `@page` sizes print on their own paper size, one slide per page.
+- **Download as .pptx (decided 2026-11-19).** "Download .pptx" in the ⋯ menu saves the deck as an
   editable PowerPoint file, which Keynote and Google Slides open too. The frame builds it in the
   viewer's browser from the slides as they are rendered, so the file matches the screen: one slide
   per slide at 13.333x7.5 in (16:9) or 10.667x8 in (4:3), each heading, paragraph, list (with its
   levels), code block, quote and table as editable text in a box where the screen shows it, at
   the size the slide was fitted to, in the colours of the theme on screen (`auto` follows the
   viewer's scheme), with Arial and Courier New; web and mail links, `#N` links to slides, the
-  footer, the slide numbers, the images and the speaker notes. The writer (PptxGenJS 4.0.1, about
+  footer and the slide numbers (each on one line, as on screen), the images and the speaker
+  notes. The writer (PptxGenJS 4.0.1, about
   370 kB) is a second renderer file, `/__plinth/types/slides/slides-pptx.js`, which the deck
   loads from its own origin only when someone downloads, so a first view never fetches it. Images
-  are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
-  to PNG; under opaque isolation and the path fallback the frame cannot read its own files, so
+  are the deck's own files, read by the frame from its own origin, at most four at a time, with
+  SVG, WebP and AVIF drawn to PNG (an image the browser cannot draw is left out and counted);
+  under opaque isolation and the path fallback the frame cannot read its own files, so
   file images are left out (inline `data:` images stay) and the app says so, counting each image
   file once however many slides use it. Code blocks keep their blank lines, and characters an
   XML file cannot hold (control characters other than tab and line breaks, such as a pasted
   terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
-  file without repairing it. The browser saves the
-  file from the frame; the frame also shows a Download button for 30 seconds, for a browser that
-  only saves from a click inside the frame. Asking again while a file is being made makes no
-  second one: that one answers the newer request. If the deck's frame is replaced while it makes
+  file without repairing it. Lines are spaced in exact points, the line height on screen, so each
+  box holds its text at the height measured on screen. A table right under text keeps the gap
+  the screen shows (PowerPoint draws a line's text lower in it than a browser does, so the table
+  moves down by half that line's leading), and its cells keep the screen's top and bottom
+  padding. The browser saves the file from the frame
+  and shows its own download; the app adds a toast only when images were left out or the file
+  could not be made, and the frame shows no notice of its own. While the file is being made the
+  menu item reads "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
+  one: that one answers the newer request. If the deck's frame is replaced while it makes
   the file (a newer version, review mode), the app stops waiting at once and says to download
   again if no file was saved. Nothing is sent to the server, and the file holds only
   what the viewer can already read, notes included. There is no switch: it is part of the deck
   type, and costs the instance nothing.
 - **Following the presenter (decided 2026-11-19).** Where live rooms run (origin isolation,
   `ALLOW_ROOMS`, the `ROOMS` binding) and `ALLOW_SLIDES_FOLLOW` is on (the default), an owner or
-  editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view, sends
-  each slide they show to the identified viewers who have the deck open (the owner and people it
-  is shared with, signed in or confirmed by code), whose decks follow it, with a "Following the
-  presenter" note and Stop. Paging by hand pauses following ("Back to the presenter (slide 7)"
-  returns to it), and someone who opens the deck mid-talk lands on the presenter's slide. The
-  toggle shows how many other people have the deck open ("Leading · 3 following": people, not
-  tabs). The last presenter to turn it on leads; an earlier one stops leading and follows.
+  editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view (where,
+  at phone width, it takes the wall clock's place and paging moves to a second row), sends each
+  slide they show to the identified viewers who have the deck open (the owner and people it is
+  shared with, signed in or confirmed by code), whose decks follow it, with "Following" at the end
+  of the deck's controls. Paging by hand pauses following ("Back to slide 7" in its place returns
+  to it), and someone who opens the deck mid-talk lands on the presenter's slide. While on, the
+  toggle shows how many other people have the deck open ("3 following": people, not tabs), or
+  "Leading" while nobody does. The toggle and the follower's status keep one width across their
+  labels, so the arrows beside them never move. The last presenter
+  to turn it on leads; an earlier one stops leading and follows.
   Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
   and no one learns who else is watching or who leads, only the slide. It runs entirely in the
   deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)), and the slide in each
-  viewer's URL fragment follows as for any paging. The app is involved only for a presenter's
+  viewer's URL fragment follows as for any paging. The app is involved for a presenter's
   audience window: it tells that window's frame it is paired (`paired`), and the frame closes its
-  socket and shows no note or toggle, since its presenter window moves it. While a deck follows,
+  socket and shows no note or toggle, since its presenter window moves it. It also keeps a lead
+  across a new frame: the deck's frame says whether the person leads (`leading { on }`), and when
+  the app replaces the frame (a newer version, a sharing change, review mode ending, all outside
+  full screen and presenter view) it asks the new one to lead again (`lead`, after the slide), so
+  the audience keeps following; it is remembered for the open page only. While a deck follows,
   the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
   room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
   thumbnail captures, review mode, the editor preview and a permanent version link never follow
   or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
-  closes every socket on the deck (followers see "Your access changed. Reload to keep
-  following."), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
+  closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
+  other pages), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
   between reconnects, stops retrying) and catches up when shown, while a leader's stays
   connected. Nothing is stored: the presenter's slide lives only in the room's memory of the
   presenter's socket.
@@ -1322,13 +1234,209 @@ source editor work as for docs. A deck is not edited on its page.
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
-  (renderer protocol version 1: `goto`, `view`, `print { notes }`, `export { format, nonce }` and
-  `paired` from the app; `ready`, `position`, `view`, `fullscreen` and
-  `exported { nonce, ok, images_skipped, opaque }` from the frame); see
+  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }` and
+  `paired` and `lead` from the app; `ready`, `position`, `view`, `fullscreen`,
+  `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
   viewers only); transitions, builds, custom themes and fonts, math, diagrams and video are not
   planned for slides, and a `.pptx` is never imported.
+
+### Comments from the page (decided 2026-11-19)
+
+A page whose things have no stable element (a point on a `<canvas>`, a WebGL scene, a slide, a node
+in a pan-and-zoom diagram) can take comments on them: its own code opens Plinth's comment composer
+with an anchor it chose, and learns which threads are anchored where, so it can draw its own
+markers and tell Plinth where to draw its pins.
+
+- **Declaration.** `comments` in `<meta name="plinth-capabilities">` (for example
+  `content="comments"`), HTML artifacts only. It is neither shared data nor a room: a page that
+  declares only `comments` has no store and no room. Unlike data and rooms, which follow the
+  current version's declaration, the declaration of the version being shown decides, because it
+  only changes what the app shows for that page; the viewer gate says so with
+  `page_comments: true`. An old version that does not declare it keeps review mode and "Pin to an
+  element".
+- **Page API.** `window.plinth.comments` in `/__plinth/runtime.js`. A page whose own
+  `<meta name="plinth-capabilities">` lists `comments` starts it as the runtime loads (or once that
+  meta is parsed), so Plinth's pins for its threads work however late the page first calls the
+  API, or if it never does; calling it again starts nothing twice. On any other page nothing is
+  sent until the page first uses it.
+  - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
+    direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
+    in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
+  - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
+    `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
+    `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). An
+    optional field set to `undefined` counts as absent. Each request settles when the app answers
+    it: a later `compose` does not end an earlier one, since the app may refuse the later one and
+    keep the earlier anchor in the composer (an accepted later request replaces an earlier one
+    that nobody wrote for, which then settles `closed`).
+  - `onThreads(fn)` gets the page-anchored threads, oldest first: `{ id, pin, status, anchor }`,
+    resolved ones included, as frozen copies, and is called at once with the latest list.
+  - `locate(fn)` says where an anchor is now, as a point `{ x, y }` or a box
+    `{ left, top, width, height }` in the frame's viewport, or null. Without it Plinth draws no pin
+    for page anchors.
+  - `refresh()` runs `locate` again after the page moved things (coalesced, at most 20 a second).
+    The runtime also measures again on window scroll and resize, on `load` and whenever the
+    document's size changes (`ResizeObserver`), and reports positions only when they changed.
+  - `open(id)` shows a thread in the panel.
+  - `onFocus(fn)` hears when the person picks a page-anchored thread in the panel or by its pin.
+- **The person posts.** A page never posts a comment and cannot fill in its text: the person writes
+  it and presses Comment, through the comments API with their own session, rate limit and role. A
+  link viewer still sees "Sign in to comment". So page code cannot turn into mention tasks under a
+  collaborator's name. The page learns `posted` only after a comment was posted and `busy` only
+  while someone writes one. A request from a viewer who cannot comment is held like any other and
+  ends `closed` only when the panel closes or a later request replaces it, as for a commenter who
+  has written nothing, so neither the answer nor its timing says whether the viewer can comment.
+  No page request moves focus: the panel opens, or shows the thread, with focus where it was, and
+  the person clicks or tabs into the composer. Keystrokes meant for the page never land in a
+  comment, and where focus goes says nothing about the viewer's role.
+- **No comment text in the frame.** Plinth tells the page thread ids, pin numbers, status and
+  anchors (a page anchor's key, coordinates and data, or an element's selector) and request ids.
+  Never comment bodies, authors, emails, roles, mention state, an anchor's label or an element's
+  text excerpt. A page anchor's key, coordinates and data are written by the page's code or by any
+  commenter (the comments API takes page anchors from anyone who may comment), so they are
+  untrusted input for the page too: render them as text, never as HTML.
+- **Page anchors.** `{ kind: "page", key, x?, y?, text?, data? }`: `key` names what the page anchors
+  to in its own terms (`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`), `x` and `y` are page coordinates
+  (finite, within ±10⁹), `text` is a label of at most 120 characters for the composer's chip, and
+  `data` holds at most 16 flat page-defined fields (keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`; strings of
+  at most 200 characters, finite numbers, booleans or null; 1 KiB as JSON). `text` and `data`
+  strings may not hold control or format characters (Unicode `Cc` and `Cf`: newlines, bidi
+  overrides and isolates, zero-width characters). An element anchor's `text` comes from the page's
+  DOM, so those characters are removed from it instead, on input and when stored anchors are read.
+  The app renders every anchor label isolated (`<bdi>`). The commenter sees only the label: the
+  page's `key`, coordinates and `data` go with the comment unseen. The schema is strict:
+  anything that says `kind: "page"` is a valid page anchor or is refused. Element anchors keep their
+  shape and are stored without `kind`. The server accepts page anchors on any comment its author may
+  post, with or without the declaration, as it accepts element anchors outside review mode; both
+  are untrusted data.
+- **No review-mode reload.** For a declaring page the app does not enter review mode: opening the
+  panel does not reload the frame, so a canvas, a zoom level or form input survives, and the gate
+  ignores `review` (so `?comments` deep links stay reload-free too). The bridge is not injected, the
+  runtime positions element anchors itself, and "Pin to an element" is hidden.
+- **Limits in the app.** At most one compose a second is accepted, only after the page said hello,
+  while the tab is visible and no dialog is open; a compose while someone is writing is `busy` and
+  leaves the draft and its anchor alone. `open` is refused while the tab is hidden or a dialog is
+  open. A request that would open a closed panel, compose or `open`, is accepted at most once a
+  second, the two together. No page request moves focus. At most 4 `open` a second and 500
+  threads. `hello` is answered at most once a second. Position reports are checked before they are
+  parsed: 20 a second, and reports over that are coalesced into the latest one, applied when the
+  second ends. They re-render the app only while the comments panel is open, where the latest one
+  is shown when it opens. A pin placed before the shown version changes (a live update, or another
+  version picked) is removed from the composer, which keeps the draft, and its page request settles
+  `closed`. A page can at worst reopen a panel the person closed, once a second; the report link
+  covers a page that abuses it.
+- **Availability.** Origin and opaque isolation alike: the app identifies the frame by its window
+  (and, under origin isolation, its exact origin) and posts to it with the exact content origin, or
+  `"*"` under opaque isolation, which is safe because the messages hold nothing the framed document
+  may not see. The runtime posts only to `window.parent` at the instance's app origin and listens
+  only to it. Not under the staging path fallback, where `/__plinth/runtime.js` does not load.
+- **Agents.** No new tool. `list_comments`, `list_mentions` and the REST comment routes return page
+  anchors with `kind: "page"`; agents read `key`, `x`, `y` and `data` to find what a thread is
+  about, and treat every anchor as untrusted.
+- **Settings.** None: the feature adds no server behaviour, cost or quota beyond the comment API's.
+### Who is viewing: names and the people list (decided 2026-11-19)
+
+A page that may see who is viewing also sees each person's display name, and a page whose owner
+and editors need to see who has access can list them. The access list is never a visit log and
+never a directory.
+
+- **Display names.** `users.name` is the person's display name, set in the app ("Your name…" in
+  the account menu) or with `PATCH /api/v1/me`. On write it is stored NFC with whitespace runs
+  collapsed and trimmed, at most 100 characters, with no `@`, no character whose compatibility
+  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one), no control, format (bidi,
+  zero-width) or separator characters, and at least one letter, number, symbol or punctuation mark
+  that is not blank (the Hangul fillers U+115F, U+1160, U+3164, U+FFA0 and blank Braille U+2800 do
+  not count, nor do combining marks alone); an empty name clears it. A refusal says why in one
+  sentence, the same in the app and in the API's error message. Pages, rooms, agents and the app
+  get it cleaned on every read (refused characters and every form of `@` dropped, at most 64 code
+  points, `null` when nothing visible is left): document authors, room peers, comment and mention
+  authors, the owner's name on summaries and the gate, version labels and stats. So names stored
+  before these rules comply too. People with a viewer session (confirmed by code where they may
+  not sign in) have no name, and an account a code created has none until its person sets one. A
+  name is display text, never authority: `role` stays
+  server-derived beside it.
+- **Read live, never sealed.** The name is read from `users` by the identity email (the owner's
+  own, or the one holding the grant) whenever a response needs it. It is not in the content pass or
+  stored with shared data, so a rename shows on the next read (in a room, on the next connect) and
+  `erase-user` removes it everywhere.
+- **Where a page sees it.** Exactly where it sees an email, under the same rule (`viewer` declared,
+  reader identified): `plinth.viewer` is `{ id, email, name, role }`; document authors
+  (`createdBy`, `updatedBy`) are `{ email, name, role, via }`; room peers, event senders and
+  `room.ready.you` carry `name` beside `email`. Link viewers, previews and captures see none.
+- **People list.** `people` in `<meta name="plinth-capabilities">` (`content="data viewer
+  people"`) lets the owner and editors list everyone the artifact is shared with: the owner, then
+  every grant by email, each with its `u_` id, email, name and role. With `ALLOW_CATEGORY_SHARING`
+  on, "every grant" includes the people the artifact reaches through its shared category
+  ([below](#category-sharing-and-personal-categories-decided-2026-11-19)): a grant on the current
+  share of the owner's category key counts exactly when `policy.ts categoryRoleOf` lets it (the
+  owner reviewed this artifact as `shared` into that very share, the share is the owner's own, and
+  never above commenter), so a pending or private artifact, or one filed elsewhere, lists none of
+  them. Each person appears once, at the stronger of a direct grant and a category grant. With the
+  switch off the list is the direct grants alone. The owner, at most 200 direct grants and one
+  share's 200 people make the longest list 401 entries; `limit` keeps its bounds, so `total` says
+  when there are more than one page shows. It counts only with `data` and
+  `viewer` and declares nothing on its own; it is stored in `versions.capabilities` only when
+  declared, so every other declaration is stored as before. The list is offered only while every
+  version the content host serves (1 to the current one) was written by a person or their
+  account-wide agent: once a token limited to one artifact (a CI token) has published a version, or
+  a version's writer's account is gone, the artifact lists nobody to anyone, the owner included
+  (`policy.ts peopleListOffered`, by the writer facts thumbnails use). Every version counts, not
+  only the current one, because each is served at `/__plinth/v/<n>/` on the same origin under the
+  same pass, and nothing on a request says which version's code made it.
+  `GET /__plinth/api/v1/people?q=&limit=` returns `{ people, total }` (`limit` 1 to 201, all by
+  default; `total` counts every match before `limit`; `q`, at most 100 characters, keeps people
+  whose name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or
+  404 when the id is nobody with access now. Each entry has `you` on the reader's own row. The
+  runtime adds `plinth.canListPeople` (from the session's `can_list_people`) and
+  `plinth.people.list({ q, limit })` (an array that also carries `total`) and
+  `plinth.people.get(id)`. Commenters, viewers, link
+  viewers, previews and captures are refused (`forbidden`, or `unavailable` with `not_identified`,
+  `not_declared`, `preview`, `disabled` or `opaque_isolation`); reads are limited to 600 per hour
+  per reader per artifact. The routes are entries of the shared-data route table, so the data API's
+  ten checks run first (see [docs/security.md](security.md#the-people-list)). Search runs only over
+  that one list: nothing takes an arbitrary email or name and says whether it has an account.
+- **Names on the access list.** The owner types every grant's address and its holder is not told,
+  so an access list (the people list for the page, agents and REST, and the owner's sharing
+  settings) shows a grant holder's name, a category grant's holder included, only once that person
+  has taken part in the artifact:
+  written a comment, a shared-data entry or a version of it, each of which already shows their name
+  to the people who can read the list. The owner's name and the reader's own row are always shown.
+  Until then the entry has `name: null`, exactly like an address with no account, and `q` does not
+  match the name, so adding addresses never tells the owner which have an account or what they are
+  called (`policy.ts accessListShowsName`).
+- **Telling the viewer.** With the gate's `people` block (`name`, `list`), the line under the bar
+  says in two sentences who the page sees, what it saves and who sees what: "This page sees you as
+  {name} ({email}) and saves what you enter. People with access see entries and who wrote them; the
+  owner and editors see who has access." The email stands alone without a name, the list clause is
+  there only on a page that declares `people` (shown to every identified viewer, since their
+  address is on the list), and a live room says it "shows it to the other people who have it
+  open". Without the block the line reads as before.
+- **In the app.** Once a name is set, the account chip at the foot of the sidebar shows it, and
+  the account menu's "Signed in as" header keeps the email. Since anyone may choose any name, the
+  owner's own comments and versions carry a quiet "Owner" mark (in a comment's header, beside a
+  version's author in History, "(owner)" in the version picker), from `is_owner`, which the server
+  derives from ids (`author.is_owner` on comments and versions, in REST and MCP alike), never from
+  the name: someone who names themself after the owner visibly lacks it. An agent's comment or
+  version keeps its "Agent" mark instead.
+- **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
+  agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
+  person can create it). The access list reaches agents only where the page offers it: when the
+  current version declares `data viewer people` and shared data is on (`policy.ts
+  peopleListOffered`, the same answer the page route and the notice use), `list_artifact_data`
+  without a collection also returns `people` (`{ viewer_id, email, name, role }`, the same list),
+  and `GET /api/v1/artifacts/:ref/people?q=&limit=` mirrors it with `total` (policy action
+  `people`: owners and editors, `artifacts:read`; 403 `feature_disabled` with the reason
+  otherwise, or `forbidden` on an artifact one of whose versions a token limited to one artifact
+  wrote, as the page route answers; the page route's 600 reads per hour per reader per artifact, counted together). Without the
+  declaration only the owner sees the access list, in the sharing settings, as before; the owner's
+  `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant under the rule above. Names are
+  untrusted for agents and the tool descriptions say so.
+- **Availability.** With shared data: under opaque isolation, or with `ALLOW_SHARED_DATA` off, the
+  people routes refuse and the session reports `can_list_people: false`. Names follow identity
+  claims (`ALLOW_SHARED_DATA` or `ALLOW_ROOMS`). There is no switch of its own: the list is opt-in
+  per page and shown only to the people who already run the page.
 
 ### Publishing from CI (decided 2026-11-19)
 
@@ -1342,12 +1450,16 @@ keeps every run. Guide: `docs/ci.md`.
   app. It is a JavaScript action (`node24`) that imports the CLI client from the same commit
   (`packages/cli/bin/client`, no dependencies and no build), so a tag or SHA pin pins everything and
   nothing is fetched from a registry at run time. Linux and macOS runners.
-- **Inputs**: `token` (a secret), `path` (a build folder, or one `.html`/`.md` file), `id`, `url`
+- **Inputs**: `token` (a secret), `path` (a build folder with the type's source at its top:
+  `index.html`, `content.md`, `slides.md`, or `system.json` to update a design system; or one
+  `.html`/`.md` file), `id`, `url`
   (the instance, hosted by default), `title` and `category` (a new artifact only), `note`,
   `link-run`, `base-version`, `include-maps`, `dry-run`, `fail-on-warnings`, `summary`. **Outputs**:
   `id`, `slug`, `version`, `url`, `version-url`, `compare-url`, `outcome` (`published`,
   `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error`),
-  `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`). The
+  `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`).
+  `outcome` is read from the CLI's JSON object (a dry run prints one too), and an exit 0 without
+  one it can read is `unknown`. `compare-url` is empty for v1 and for `nothing_to_publish`. The
   step's exit code is the CLI's (3 on a conflict, never retried); `fail-on-warnings` turns a
   published run with warnings into 1. `not_scanned` and `live_draft` need no action: they get no
   annotation and are not counted by `warnings` or `fail-on-warnings`. On a conflict the summary
@@ -1375,92 +1487,410 @@ keeps every run. Guide: `docs/ci.md`.
   for the workflow too: `docs/ci.md` passes them to scripts through `env:`. The token is masked and
   reaches the client only in its environment, never in argv, outputs or the summary.
 - **Tokens limited to one artifact** ([Auth and permissions](#auth-and-permissions)) are the
-  recommended credential: the artifact's Settings page has **Publish from CI**, which makes one and
-  shows the workflow step with the id filled in. The Connections page can make one too ("Limit to
-  one artifact"), and lists a bound token as "Only <title>".
+  recommended credential: the Connections page's New token dialog makes one ("Limit to one
+  artifact", then the artifact) and then shows the workflow step with the id filled in, on
+  unwrapped lines that fit a phone (a longer one scrolls sideways and fades at the edge), and a
+  `path:` that fits the type (`content.md` for a doc, a folder otherwise). The choice is one
+  select of what the person owns or edits, most recent first, which stays in its place whatever
+  the state; a title that another one shares shows the random end of its slug after a dot (`Weekly
+  report · 1sxs6tzyab`). When the list comes back at its maximum (500), a search box above it
+  finds older ones by title or slug. With nothing to choose the select is disabled ("No artifact
+  yet") and its hint links the guide's "No artifact yet?" section; a failed load is the select's
+  error, with Try again. A bound token is not an agent: the page lists it under Advanced, beside
+  New token, with a key for a mark, no kind or client badge, and one line naming the artifact and
+  what it may do there ("<title> · Publish new versions", or "<title> · Read only"); the Connected
+  agents count and the sidebar's agents leave it out.
 - **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
   publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
 
-### Voice: dictation and text to speech (decided 2026-11-19)
+### Live views (decided 2026-11-19)
 
-A page can take words the viewer speaks, and speak itself. What it can never have is the
-microphone.
+An open artifact page picks up a newly published version by itself within seconds, and a page that
+keeps [shared data](#shared-data-and-viewer-identity) learns that it changed without waiting for
+its poll. Plinth pushes signals, never content: the page still loads every version and every
+document through the gate and the shared-data API, with all of their checks.
 
-| Feature | Offered to pages? | How |
-| --- | --- | --- |
-| Text to speech (`speechSynthesis`) | Yes, in every artifact frame, with no switch | The browser's own API. No Permissions-Policy feature governs it, so Plinth cannot turn it off; the browser refuses `speak()` until the frame has had a click |
-| The frame gets the microphone (`allow="microphone"`, `getUserMedia` or a recognizer in the artifact) | No, never | The browser keeps a microphone grant for the top-level origin (the app), so one "Allow" on a friendly page would open the microphone to every artifact the viewer later opens, with no further prompt. Frames keep `allow=""` and the content host keeps `microphone=()` |
-| Dictation run by the app | Yes, behind `ALLOW_DICTATION` (off) | Plinth's own code on `APP_HOST` runs the browser's speech recognizer and posts only words to the frame |
+- **Who.** Anyone who can open the artifact (the owner, people it is shared with, and anonymous
+  viewers of an unlisted, password or public link), never agents. A watch socket joins no
+  [room](#live-rooms), sees no peers and carries no identity, so it shows nobody to anybody; it
+  tells a viewer only what the gate and the change counter already tell them, sooner.
+- **Transport.** The app page, never the artifact, opens one receive-only WebSocket on the app host,
+  `wss://<APP_HOST>/api/v1/view/<artifact id>/watch`, with the app's own cookies, when its gate
+  says `watch: true`. The handshake is checked in order: method and upgrade, `Origin` exactly the
+  app's origin (absent and `null` refused, so no artifact can open one), same-origin fetch
+  metadata when sent, the `plinth.view.v1` subprotocol, no bearer token, live views active, the
+  artifact by id, the gate's view decision (any refusal is one identical 404), and policy
+  (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
+  served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
+  names its own `wss:` origin and nothing else.
+- **Signals.** JSON frames the room builds from integers: `welcome` (the current version),
+  `version` (a version was published: by an agent, the
+  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
+  a write from the page, an agent or the app, or the owner's "Delete all shared data"; at most one
+  per `spread_ms` per artifact: a write in a quiet window sends it at once, and the writes after
+  it share one frame at the window's end, so the last write is always followed by one) and
+  `access` (sent just before a sharing change closes the socket). The client
+  sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
+  instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
+  at the default). Each open view waits a random time up to it before it acts, so at most about
+  500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
+  top bound), however fast its data is written, and no frame says anything about who else has the
+  artifact open.
+- **What the page does.** On `version` the app re-reads its own gate at once and shows the new
+  version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
+  One such notice shows at a time: a newer version's replaces the last, so versions published in
+  a row never stack. While someone edits on the page, or the frame is held (a doc or sheet edited
+  on its page, a deck presented), no notice shows: the version picker takes the new number, and
+  the edit strip says what happened.
+  On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
+  content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
+  `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
+  "push"`), and while they are the runtime polls only every 60 s. Both messages are hints: page
+  script can forge them on its own window, and the worst a forged one does is make the page
+  re-read its own data or change its own poll.
+- **Data signals** need an HTML page whose current version declares `data`, with shared data active
+  (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
+  and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
+  nothing is posted to frames.
+- **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
+  sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
+  then re-reads its gate and reconnects. A sharing change ends every content pass of the
+  artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
+  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc or a
+  sheet is edited on its page the frame stays, as it does for a new version, and is renewed once
+  that ends. A takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, less
+  a random time up to 5 minutes so that sockets opened together do not all close together, or
+  earlier when the app session, viewer session or password pass it was opened with expires (4401,
+  reason `expired`), and the page reconnects after a random time up to 10 s, which decides again.
+  While
+  sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
+  `version` whose notify was lost, and takes the data right away when the current version no
+  longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
+- **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
+  WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
+  counter every 15 s, as before. While the socket is open the app still reads its gate every
+  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes. A dropped one
+  (a lost network, or a Worker deploy, which closes every socket on the instance at once) first
+  reconnects after a random time up to 10 s, so the views do not all come back in the same
+  second, then after 1, 2, 5, 10 and 30 s while it keeps failing.
+- **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+  10000), counted apart from room sockets so viewers never crowd out a room, and split into two
+  pools of half each that never affect each other: one for the owner and the people the artifact
+  is shared with, one for everyone else the gate lets in. Someone the artifact is not shared with
+  can fill only the second, so a full pool never tells them whether the owner or a collaborator
+  has it open. Over a cap the socket is closed with 4409 and the page polls. Fixed: 32 sockets and
+  60 connects a minute per client (an account, a confirmed email, or for anonymous viewers one
+  network, an IPv4 address or an IPv6 /64, kept only as an HMAC).
+- **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
+  origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
+  signals also need shared data. Without the binding live views are off, never a configuration
+  error.
 
-- **Declaration.** A page opts in with `dictation` in `<meta name="plinth-capabilities">` and loads
-  `/__plinth/runtime.js`. `dictation` is not shared data and not a room: a page that declares only
-  `dictation` has neither. It is stored in `versions.capabilities` only when declared, so every
-  other declaration is stored as before. The current version's declaration governs, also for old
-  version URLs. Only HTML pages; never a doc.
-- **Who gets it.** Identified viewers only: the owner and people with a grant (viewer, commenter or
-  editor), signed in or confirmed by code, the same people who write shared data or join a room.
-  Anonymous link viewers (unlisted, password, public) never do. The gate's `voice.dictation` says
-  `{ available, reason }`, decided by `dictationAccess` in `policy.ts` (`not_declared`,
-  `opaque_isolation`, `disabled`, `not_identified`). When it is available, `voice.viewer_id` is
-  the viewer's id on the page (the `u_` id their shared data writes carry), which the app binds
-  this browser's consent to. The gate never carries the owner's email: the consent dialog fetches
-  it from `GET /api/v1/view/:ref/dictation` when it opens, and that answers 404 to anyone who may
-  not dictate on the page.
-- **Page API.** `window.plinth.dictation`: `ready` (resolves `{ available, reason }`, never rejects;
-  `reason` adds `unsupported` for a browser without a recognizer and `no_host` when the page is
-  not framed by the Plinth viewer: an in-chat preview, a thumbnail, the editor preview, or opened on
-  its own), `start({ lang, interim })` (call it straight from a click; rejects with `PlinthError`
-  `unavailable`, `no_activation`, `not_granted`, `dismissed`, `busy`, `rate_limited`, `invalid` or
-  `network`), `stop()` (resolves once the app reports idle after the last words, or after 2 s;
-  the app waits at most 1.5 s for the recognizer, so the page hears both first), `onPartial(fn)`,
-  `onFinal(fn)` and `onState(fn)` (`idle`, `starting`,
-  `listening`; on idle a reason: `stopped`, `viewer_stopped`, `silence`, `time_limit`, `hidden`,
-  `blurred`, `frame_reloaded`, `error`, `not_granted`). The names follow Claude's `dictation`
-  capability. Nothing is posted until the page reads `ready` or calls `start()`. The page never
-  reaches audio.
-- **Recognition.** The app runs the browser's Web Speech recognizer, in continuous mode, and posts
-  each partial and final result (cut to 2,000 characters) to the frame by `postMessage` at the
-  frame's exact content origin, never `"*"`. The browser's speech service does the work: Chrome
-  sends the audio to Google, Edge to Microsoft, Safari to Apple, unless the browser recognizes on
-  the device, which the app uses where the browser offers it without installing anything. Plinth
-  never receives audio, and receives words only when the page saves them (as shared data).
-- **Every start.** The app acts on a start only when it comes from the frame's window at its
-  exact content origin and parses, dictation is offered (instance and gate), the app has a fresh
-  click or key press (`navigator.userActivation`, which a click inside the frame gives its
-  ancestors) with focus inside the frame (a click on the app's own chrome, or on the link that
-  opened the page, does not count), the tab is visible and focused, nothing is already listening,
-  the last start was at least 1 s ago and the viewer's last Stop at least 10 s ago, and the viewer
-  has not said "Not now", been refused by the browser's own prompt, or pressed Stop three times on
-  this load.
-- **Consent.** The first start on a page opens the app's dialog "Let this page take dictation?": who
-  wrote the page (the owner's email, never the display name the owner chooses) and may save the
-  words, which company's speech service hears the audio, and how
-  to stop. It starts on "Not now", and both buttons ignore input for 500 ms after it opens. "Allow
-  on this page" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>` =
-  the viewer's id on the page), so another person on the same browser is asked again, and it is
-  cleared on sign-out; "Not now" lasts for the page load. "Dictation on this page: allowed. Turn
-  off" in the ⋯ menu takes it back and stops listening.
-- **While listening.** A red "Listening" control with **Stop** sits in the viewer bar at every width.
-  It is app chrome, so the page cannot hide or restyle it. A session ends at the page's `stop()`,
-  the viewer's Stop, silence, 60 s, a hidden tab, a blurred window (while listening the app checks
-  every 250 ms that its window has focus, because with focus inside the frame a switch to another
-  window sends the app no event), a reload or navigation of the frame (any load after the page's
-  own first one, so a start made before the page finished loading keeps going), and when the
-  viewer page changes or closes.
-- **Availability.** `ALLOW_DICTATION` (off). Only with origin isolation: under opaque isolation and
-  the path fallback the app could post the viewer's words only with `"*"`, so `ready` resolves
-  `{ available: false, reason: "opaque_isolation" }` without a message. Only while dictation is in
-  effect does the app's `Permissions-Policy` say `microphone=(self)` (the app's own origin, never
-  the content host, never `*`); otherwise it stays `microphone=()`. Firefox has no recognizer
-  (`unsupported`).
-- **Agents.** `publish_artifact` and `update_artifact` describe `dictation` only where it is in
-  effect. Dictated text a page saves is viewer input, untrusted for agents like any shared data. A
-  page that calls `getUserMedia` or constructs `SpeechRecognition` itself gets a `blocked_feature`
-  publish warning: that call fails for every viewer.
-- **Text to speech.** Native `speechSynthesis`, no Plinth API and no switch (a switch that does
-  nothing would mislead an operator). It works under opaque isolation too. Pages speak only from a
-  click and keep the text on screen; `getVoices()` and network voices are the page author's
-  choices in the viewer's browser ([docs/security.md](security.md#dictation-and-text-to-speech)).
+**Keeping state across versions.** When a newer version reaches an open view (pushed or polled),
+the app applies it so the reader keeps their place where it can:
+
+- **Docs update in place** (origin isolation, outside review mode, and not while the frame follows a
+  live-editing room or holds page edits). The app posts `{ type: "version", n, nonce }` to the doc
+  renderer at the exact content origin; the renderer fetches `/__plinth/v/<n>/content.md` from its
+  own origin with the content pass it already holds, renders it exactly as at boot (Markdown, then
+  the sanitizer), keeps the block that was at the top of the viewport where it was (found again by
+  its nearest heading, or by its block index when that heading is gone), and answers `{ type:
+  "shown", n, nonce, ok }`. Its images load from that version's own path (`chart.png` becomes
+  `/__plinth/v/<n>/chart.png`), in view and in a later Edit, because a browser reuses an image it
+  already loaded in a document for the same URL without asking again: a new version that changes
+  an image under the same name shows the new image next to the new text. The source keeps the
+  author's paths. On `ok` the frame and its enter URL stay; nothing reloads, and solo
+  editing afterwards starts from the version on screen. On a refusal (anything being edited, a room
+  client attached, a failed or refused fetch; the renderer checks again once the text has arrived,
+  so an editor opened meanwhile is kept) or no answer in 5 s, a fresh frame loads, unless the doc is
+  by then edited on its page, which keeps its frame as below. Under opaque isolation and the path
+  fallback docs always load a fresh frame.
+- **Pages that load `/__plinth/runtime.js`** keep their scroll position, their place inside the
+  artifact (sub-page, query and hash) and any state they hand over, with no declaration. The runtime
+  says `hello` to the app when framed; before the swap the app posts `{ type: "update", from, to,
+  nonce, force }` at the exact content origin, the runtime calls the page's `plinth.onVersion`
+  handlers (800 ms for all of them), writes one record (`from`, `to`, the time, scroll, path, and
+  the page's `{ state }` when its JSON is at most 16 KiB) to its own origin's `sessionStorage` and
+  answers `update:ok` with its path, without the hash. The app re-reads its gate with that path as
+  `next` and `carried=1` (the server passes it through `safeNext`) and loads the new version there;
+  when the new version has no file at that path (a `pushState` route, a page renamed or removed), the
+  gate lands it on the root instead of the content host's "Not found". The hash never
+  goes into a request URL: it stays in the record, and the new version's runtime puts it back with
+  `history.replaceState` when it landed on the same path with no hash of its own. The new version's
+  runtime reads and removes the record at start, before the page's own scripts after the runtime
+  tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
+  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
+  the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
+  records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
+  Opaque isolation has no runtime handshake.
+- **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
+  content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
+  it, with or without the runtime: when the new version arrives with focus inside its frame, or
+  focus moves there while the runtime answers, only the count of versions moves on and the page
+  raises a "v5 is available" toast with Update, in the slot of the "Updated to vN" toast and never
+  beside it, so the frame does not move; dismissed, the bar's "v4 of 5" still says it. The runtime
+  is asked only when the viewer chooses Update. Update reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime), with no
+  "Updated to vN" toast after it: one notice per update. A
+  version that arrives while focus is elsewhere replaces the page as before. `hold` is not shared
+  data and not a room, works under every isolation mode, and is stored only when declared. **Every
+  other page is replaced at once, as before** (the 2026-11-14 "follows new versions live"
+  behaviour): the hold rule is opt-in.
+- **What crosses.** App to frame: version numbers and the app's own nonces. Frame to app: `hello`, a
+  nonce, `ok` or a hold, and one path that is checked (one leading `/`, at most 2,048 characters, no
+  backslash or control character, never `/__plinth/`, its hash dropped) and only becomes the gate's
+  `next`. The app accepts these only from the frame it holds at its exact content origin. Page state
+  stays in the content origin's `sessionStorage`: one tab, one artifact, never the app, another
+  artifact or another viewer. No script is injected into artifact HTML.
+- **Off.** With `ALLOW_LIVE_VIEWS=false` (the app config says `live_views: false`) and the gate
+  without `hold`, every update replaces the frame, as before. Permanent version links, a deck being
+  presented and a doc edited on its page keep their frame as before.
+
+### Designs (decided 2026-11-19)
+
+A visual composition at fixed sizes is a design: artboards on a canvas (app screens, landing page
+mockups, posters, social posts, ads and banners, business cards, variants side by side). It is the
+fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_upload` take
+`type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
+versions, `base_version` conflicts, restore, history, comments, thumbnails and in-chat previews
+work as for every type. People see a design, never its source: the app has no editor for it (no
+Edit in any menu; its editor address opens the design), and Compare shows two versions as rendered
+pages with a list of what changed, as for every type
+([Comparing versions](#comparing-versions-decided-2026-11-19)). Agents change it, and each change
+is a new version, which owners and editors can revert by restoring an older one.
+
+- **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
+  then artboards. Each artboard starts with a whole line
+  `<!-- artboard id="home" name="Home" size="iphone" section="Mobile" -->` and its HTML fragment is
+  every line up to the next marker. Attributes are `name` (required, up to 80 characters), `id`
+  (`a-z`, `0-9` and `-`, up to 40; derived from the name when absent), a size (`size="<preset>"`,
+  `size="<w>x<h>"`, or `width` and `height`, 16 to 4096 CSS px a side), `background` (a hex color,
+  `transparent` or a color name; white by default) and `section` (a section's boards stay
+  together on one row when they fit). Presets cover phones and desktops, social posts, IAB ads,
+  print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
+  At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
+  bad marker is refused with a fix-it message for the first problem and every problem with its
+  line in `details.issues`. The title is the shared section's `<title>`, else the first board's
+  name. One parser for the Worker and the renderer.
+- **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
+  relative path. Font files and data files (JSON, text) are refused with what to do instead
+  (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
+  opaque origin, and those loads need CORS, which the content host never sends. Publish warnings
+  read a design's artboards as opaque documents on every instance: `opaque_module` names module
+  scripts, `crossorigin` links, imports and web fonts that load the design's own files (relative
+  or root-absolute URLs). The same loads from a CDN that answers with CORS (Google Fonts' own
+  embed, unpkg) and `data:` fonts work in an artboard and get no warning.
+- **The canvas.** A fixed Plinth renderer on the artifact's own origin
+  (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
+  out in rows with the board's name over each; the name zooms to its board. Rows are packed for
+  the screen: consecutive sections share a row, a wider gap between sections than between boards,
+  and the row width is the one at which every board shows at the largest scale, so the first view
+  fills the screen. Fit keeps every board clear of the toolbar at the bottom. Drag, the
+  wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
+  toolbar (Zoom out, the zoom level, which goes to 100%, Zoom in and Fit) and `+`, `-`, `0` (Fit)
+  and `1` (100%) zoom between 5% and 400%. After Fit
+  (the button or `0`) the canvas lays the rows out again and fits when its frame is resized, until
+  the view is moved or zoomed. Each board is
+  covered so the canvas can be dragged; Interact, on the label of the board last zoomed to (and on
+  a label that is hovered or focused), takes that board's cover off so its links, buttons and
+  scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
+  Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  they come back (a board's own state starts again then).
+- **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
+  at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
+  document over itself when the renderer posts it: Plinth's base URL (the shown version's own
+  path, `/__plinth/v/<n>/`, whose number the content host puts in the shell, so a board that
+  mounts after a newer version is published still loads its own version's files; a shell without
+  a valid number shows an error and no board), viewport and reset, then the shared section, then the fragment. The loader is served only with
+  this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
+  plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, with
+  `frame-ancestors 'self' <app>` under origin isolation (none under opaque isolation or for an
+  in-chat preview pass, whose shell no source can name), and the renderer
+  frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
+  no storage and no access to the shell, the app or another board, and it cannot navigate any of
+  them (links may open a new tab, as on every artifact).
+  The shell's own DOM never holds author markup. A design's files are served with
+  `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
+  never run script; its `design.html`, which no board loads, is served as text with
+  `same-origin`.
+- **Print or save as PDF** is in the artifact menu: every board is mounted and laid out at 100%,
+  printing waits for them to load (at most 10 seconds), and each board prints on its own page of
+  exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
+  other than Chromium may ignore per-board page sizes.
+- **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
+  (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
+  stays the same.
+- **Uploads and the CLI.** `start_upload` with `type: "design"` (or the `id` of a design) takes a
+  folder with `design.html` and its assets at its top; the Plinth CLI publishes such a folder as a
+  design and checks `design.html` against the fixed 2 MB limit.
+- **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
+  sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
+  artboard can and cannot load. Design content is untrusted like artifact HTML.
+- **Not yet.** Server-rendered PNG and PDF export through Browser Rendering is a separate change.
+  Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode and deep links to
+  one board from the app are not offered.
+- **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
+  loads the version top level, and a board's requests (an opaque document) fall in another cookie
+  partition than the enter's, so for a design the Worker also gives that browser the same capture
+  pass for the boards' partition before the page loads, through the DevTools protocol, never in a
+  URL: bound to the captured version and reading no shared data when the enter's pass reads none.
+  The capture browser's guard lets the boards' frames open the board loader, the one Plinth path
+  besides the captured version it lets a design navigate to (docs/security.md, Designs).
+
+### Sheets (decided 2026-11-19)
+
+A table people sort, filter, calculate with or download (a budget, a tracker, a list of records,
+a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a spreadsheet. It is the
+fifth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
+`update_artifact` take `type: "sheet"` with the source in `content`, a version stores
+`sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
+restore and history work as for docs. People never see the JSON lines: a sheet has no source
+editor (its registry row's `editor` is null), so the app offers no source Edit, the editor's address
+goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
+added or removed) above the two versions rendered side by side, never a source diff. Cells are
+versioned content, never shared data: every change, an agent's or a person's, is a new version
+anyone can revert. Owners and editors also edit a sheet on its page, live with each other
+([Live sheets](#live-sheets-decided-2026-11-19)); the Edit toggle there is the only way a person
+edits one.
+
+- **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
+  and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
+  row 1 and data starts at row 2, so A1 references mean the same in Plinth and in Excel. A column has a
+  `name` (1 to 100 characters, no control or invisible characters), a `type` (`text`, the default,
+  `number`, `date`, `checkbox`, `select` or `url`), an optional `width` (40 to 800 pixels), a
+  `format` for numbers (`style` `plain`, `percent` or `currency`, `decimals` 0 to 10, `currency` an
+  ISO 4217 code, `grouping`) and `options` for a select (1 to 100 distinct strings). `freeze.cols`
+  keeps 0 to 5 columns in view; the header row always stays. Unknown keys are refused. A cell is
+  `null`, a finite number, a boolean or a string; a string starting with `=` is a formula and a
+  leading `'` keeps the rest literal (`"'=x"` shows `=x`). Literal cells must fit their column: a
+  number in a number column, `YYYY-MM-DD` (1900-03-01 to 9999-12-31) in a date column, a boolean
+  in a checkbox column, one of the options in a select column, an absolute `http:`, `https:` or
+  `mailto:` link of at most 2,000 characters with no whitespace in a url column; a text column
+  takes any cell. Formulas are allowed in every column. No blank lines; one final newline is
+  dropped. The parser is one module (`packages/shared/src/sheet/`) for the Worker, the renderer
+  and the editor.
+- **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
+  a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
+  Each row therefore has one spelling, and a version's file differs from the last only in the
+  rows that changed, so Compare lists only those rows. This
+  holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it by
+  comparing the stored sheet with the folder's in that canonical spelling, never by skipping it.
+- **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
+  the same code in the Worker and in the browser: A1 references (`B7`, `$B$7`), ranges (`A1:B5`,
+  `B:B`, `2:5`), Excel's operators and precedence (`-2^2` is 4), and these functions, each with
+  Excel's meaning: SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTBLANK, COUNTIF, COUNTIFS, SUMIF,
+  SUMIFS, AVERAGEIF, AVERAGEIFS, PRODUCT, MEDIAN, STDEV, ROUND, ROUNDUP, ROUNDDOWN, INT, ABS, MOD,
+  POWER, SQRT, CEILING, FLOOR, IF, IFS, IFERROR, IFNA, AND, OR, NOT, XOR, SWITCH, ISBLANK, ISNUMBER,
+  ISTEXT, ISERROR, ISNA, CONCAT, CONCATENATE, TEXTJOIN, LEN, LEFT, RIGHT, MID, UPPER, LOWER, PROPER,
+  TRIM, SUBSTITUTE, REPT, FIND, SEARCH, VALUE, EXACT, VLOOKUP, HLOOKUP, XLOOKUP, INDEX, MATCH, DATE,
+  YEAR, MONTH, DAY, WEEKDAY, EDATE, EOMONTH, DAYS and TODAY. Any other name is refused at publish
+  with the list; there are no other sheets, external references, defined names, arrays or `@`, and
+  nothing that reaches a network, another artifact or the clock beyond today's UTC date (no
+  HYPERLINK, WEBSERVICE, INDIRECT, OFFSET, NOW or RAND). Dates are 1900-system serials (a date
+  column's literal is its serial in formulas); numbers show rounded to 15 significant digits.
+  A formula whose result is an empty cell (`=B2` on an empty B2, or an `IF` or `INDEX` that
+  returns one) shows blank, as in Google Sheets, where Excel shows 0; in arithmetic, text and
+  comparisons an empty cell is 0 or `""`, as in both.
+  Errors are Excel's (`#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`, `#NUM!`) plus `#CYCLE!`
+  for every cell on a circular reference and `#LIMIT!` for a cell not computed within the step
+  budget. Each formula is computed once, in dependency order, with an explicit stack; one step is
+  charged per expression node and per cell a range visits, text a function makes costs its
+  length, and text a function or comparison reads (to walk, search, compare, lowercase or trim
+  it) costs a step per 32 characters, so one long text read many times is paid for each time;
+  SUBSTITUTE also costs a step per match it replaces. Text
+  longer than 1,024 characters is never read as a number or a boolean (`#VALUE!`), and numeric
+  text is matched by a pattern with one way to read each character, so a conversion is linear in
+  its length. A publish
+  parses formulas and never evaluates them.
+- **Viewing.** The page shows one bar (the selected cell's address and its raw text, and a filter
+  field with the shown row count beside it while a filter is set) and the grid: column letters and
+  the header row stay at the top, frozen columns at the left (in a frame less than twice as wide
+  as the row numbers and frozen columns together, a phone mostly, they scroll with the rest),
+  numbers right-aligned in their
+  format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
+  a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
+  back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter
+  are the viewer's only and never saved. Arrow keys move between cells. Rows are in chunks of 200
+  that the browser lays out only on screen, so 10,000 rows stay usable while find in page, comment
+  pins (cell ids `__plinth-cell-B7`), print and screen readers see every cell. Light and dark,
+  phone width (the grid scrolls in its own box), and print (the title instead of the bar, the
+  header row repeats on every page). The browser spends at most 20,000,000 steps; a sheet past
+  that shows `#LIMIT!` in the cells it did not compute, with a one-line note.
+- **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx from the artifact
+  menu (Print or save as PDF, then Download .xlsx and Download .csv, labelled like a deck's
+  Download .pptx); the frame has no buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
+  UTF-8 with a BOM, CRLF, RFC 4180 quoting with every text value quoted (column names too, so
+  Excel with a semicolon or tab list separator still reads each as one cell, and the file never
+  starts with Excel's `sep=` directive), text starting with `=`, `+`, `-`, `@`, tab or carriage
+  return written with a leading `'`, and a `'` before `=`, `+`, `-` or `@` right after a comma,
+  semicolon or tab inside text (numbers never are). The .xlsx is SpreadsheetML
+  written by Plinth and zipped with fflate 0.8.3: one worksheet named after the title, the header
+  in bold, column widths, the frozen pane, number formats from the column formats, text as inline
+  strings (text starting with `=` stays text), formulas with Plinth's computed values cached
+  (`fullCalcOnLoad`, so Excel computes its own; newer functions carry Excel's `_xlfn.` prefix), the
+  title as its only document property, no macros and no external relationships.
+- **Imports.** `content_format` on `publish_artifact` and `update_artifact` (type sheet only) takes
+  `"csv"` (CSV text) or `"xlsx"` (an .xlsx file in base64, at most 2 MB, of which at most 24 MB of
+  its parts is ever decompressed) instead of JSON lines; `"jsonl"` is the default. The first row
+  names the columns and each column's type is inferred from its values (all numbers, all dates,
+  all TRUE or FALSE, all links, else text); a text column keeps every CSV field as written. A CSV
+  field is a number only when no digit is lost or invented: no leading zero but `0` itself
+  (`00123` stays text), no leading `+` (`+351912345678` stays text) and at most 15 significant
+  digits (a 20-digit id stays text). The decimal mark is a point, or a comma in a file separated
+  by semicolons (`1,50`); thousands separators are read only where they cannot be the decimal
+  mark (`1,234.50`, `1.234,50`, `1,234,567`), so `1,500` in a comma file and `1.500` in a
+  semicolon file stay text. A CSV never makes a formula: text starting with `=`
+  stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
+  (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
+  value is used, and number formats, column widths and frozen columns carry over where they map.
+  Rows are bounded as they are read: a worksheet row or cell reference below row 10,001 is
+  refused before anything is built, and a blank row the file leaves out stays an empty row.
+  Cells are bounded the same way: each cell with a value counts at least two bytes of JSON lines
+  (and a data row's text its length: a kept formula's source, or the cached value a dropped one
+  falls back to), and a file past 1 MB by that count is refused before its table is built; a
+  CSV's rows past 10,000 are counted, not kept. A column name is read from the first 1,000
+  characters of its header cell (and keeps at most 100). Column widths come from at most
+  100 `<col>` ranges and only for columns A to CV, a number format code longer than Excel's 255
+  characters reads as General, and XML whose tag, comment, CDATA section or processing
+  instruction never ends is refused as damaged.
+  The import is checked like any sheet and stored as JSON lines. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
+  `--id`.
+- **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
+  their letters, types and formats) and the cells of an A1 range (default every data row), a
+  formula as `{f, v}`, every other cell as itself, at most `limit_cells` cells (default 2,000, at
+  most 10,000) with `next_range` to continue. It evaluates only the requested formulas and what
+  they depend on, within `SHEET_EVAL_BUDGET` steps (default 200,000); past it the result carries an
+  `eval_budget` warning and those cells are `#LIMIT!`. It is the `view` action, like `get_artifact`.
+  `edit_sheet(id, base_version, ops, note?)` applies 1 to 200 ops (at most 10,000 cells written)
+  to `base_version` in order and publishes one new version through `update_artifact`, or nothing:
+  `set` (a block of raw cells from a cell, growing the sheet past its end by at most 1,000 empty
+  rows before the block, else refused with `details.reason` `"too_far_past_end"`; every row it adds
+  counts in `changed.rows_inserted`), `append_rows`, `insert_rows`, `delete_rows`, `set_column`
+  (name, type, format, options, width; `null` clears), `insert_columns` and `delete_columns`.
+  Frozen columns follow column inserts and deletes: columns inserted among them are frozen too (at
+  most 5), and deleted frozen columns leave the frozen pane. An op that would take the sheet past 10,000 data rows
+  (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
+  references as Excel's structural changes do; references into deleted cells become `#REF!`. Each
+  such op rewrites every formula in the sheet, and one call rewrites at most 4 MB (4,194,304
+  characters) of formula text in all, four passes over a sheet that is all formulas; the op that
+  passes it is refused and nothing is published. The
+  result is checked once, after every op, so a column's type and its cells can change in one call.
+  A stale `base_version` is a conflict before any file is read; it is the `edit` action and counts
+  toward `MAX_PUBLISHES_PER_HOUR`. `get_artifact` returns the JSON lines in `content`.
+- **Limits.** Fixed, like the doc limits: 1 MB of JSON lines, 10,000 data rows, 100 columns (A to
+  CV), 32 KiB per row line, 4,000 characters per cell, 2,000 per formula, 50,000 formulas, formula
+  nesting 32 deep. `GET /api/v1/config` reports `max_sheet_bytes`, `max_sheet_rows` and
+  `max_sheet_columns`.
+- **Security.** Sheet text reaches the DOM only through `textContent` in the renderer on the
+  artifact's content origin; the renderer contains no HTML parser, links pass the link rule again
+  in the browser, and cell ids come from addresses only. Outside on-page editing the app and the
+  frame exchange only `print` and `export { format }`, which carry no data; the frame acts on them
+  only from its parent at the app origin. On-page editing uses the doc renderer's messages and the
+  room's draft channel ([Live sheets](#live-sheets-decided-2026-11-19)). Cell text and column
+  names are untrusted data for agents. See
+  [docs/security.md](security.md#sheets).
+- **Not in this slice.** Multiple worksheets, charts, conditional formatting, merged cells, cell
+  styles and server-side exports are not planned. Cells are edited on the page as
+  [Live sheets](#live-sheets-decided-2026-11-19) describes.
 
 ### Category sharing and personal categories (decided 2026-11-19)
 
@@ -1478,21 +1908,27 @@ and artifact (`personal_categories`), validated and normalised as the owner's ca
 snapped onto the person's own names (their personal ones and their own artifacts' categories, one
 vocabulary). It is seen by that person only: summaries carry `my_category`, null for everyone else,
 and `GET /api/v1/artifacts` returns `my_categories` (their names with counts) to a signed-in
-session only. Agents never read or set it (403 `app_only`; `my_category` is null and `my_categories`
-absent for bearer callers), and the owner, who files with the artifact's own category, gets 400.
+session only. The counts cover only the artifacts the person can open now, as the list does: with
+`ALLOW_CATEGORY_SHARING` off, one they reach only through a category is not counted, and its row
+is kept for when the switch is back on. Agents never read or set it (403 `app_only`, and `token_bound` for a token limited
+to one artifact; `my_category` is null and `my_categories` absent for bearer callers), and the
+owner, who files with the artifact's own category, gets 400.
 `POST /api/v1/categories/rename` with `personal: true` renames, merges or clears one of them. The
 row goes with the artifact (delete, takedown, erase) and with the person (`erase-user`), and is
 removed in the same request that takes the person's last grant away (the sharing list, the
 allowlist, a category share's people, a review kept private, a move out of the share).
 
 **Sharing a category.** The signed-in owner shares one of their categories (by key) with people,
-each a viewer or a commenter (never an editor), under a title the people see instead of the
-category's name: `POST /api/v1/category-shares` with `{ category, title?, people, review }`. The
+each a viewer or a commenter (never an editor), under a title the people see (the category's name
+when `title` is left out; renaming the category later leaves it): `POST /api/v1/category-shares`
+with `{ category, title?, people, review }`. The
 share's id is the portal link (`/p/<id>`) and never changes. `PATCH` changes the title or the
 people (a people change always carries a `review`: 400 `review_required` without one), `DELETE`
 stops sharing, and `GET /api/v1/category-shares/:id` lists every artifact of the category with its
 state. Session only, with CSRF and exact `Origin`: bearer tokens, agents and the `ADMIN_TOKEN` get
-403 (`reason: "app_only"`), and no MCP tool shares or reviews.
+403 (`reason: "app_only"`), and no MCP tool shares or reviews. A token limited to one artifact gets
+403 `token_bound` from every share, portal and personal-category route, before its body, the
+switch or the id is looked at (`policy.ts seesCategorySharing`).
 
 **The filing safeguard.** Filing an artifact under a shared category never shares it. Every artifact
 filed there (by `publish_artifact`, `start_upload`, `update_artifact`, `PUT`, `PATCH`, a rename, or
@@ -1520,8 +1956,12 @@ any visibility, comments and mentions agents as a commenter, writes shared data 
 allows identified writers, joins rooms as viewer or commenter. A category grant never reaches
 edit, restore, manage, data read over MCP or REST, live editing or view counts, and a takedown or a
 delete beats it. `list_artifacts` lists the artifacts shared with the caller through a category
-(never taken-down ones; owner and direct-grant rows list as before), with the role it gives. The
-people list a page may show (`data viewer people`) holds the owner and the direct grants only.
+(never taken-down ones; owner and direct-grant rows list as before), with the role it gives. A
+token limited to one artifact never holds a role through a category grant: it opens its artifact
+with its person's direct grant only (`roleOf`), so once that grant goes it answers as viewing does,
+even while the person still sees the artifact through the category in the app. On a page that
+offers its people list, the owner and editors see category grantees on it like direct grantees,
+under the same name rule ([The people list](#who-is-viewing-names-and-the-people-list-decided-2026-11-19)).
 
 **Access ends at once.** Every change that can take access away (people removed, a share deleted, an
 artifact kept private, a key change away from a shared review, a rename or clear) gives the
@@ -1536,13 +1976,16 @@ key moves it with its people, link and reviews, and clearing the category leaves
 another existing category (409 `category_shared`), and artifacts merged into a shared category
 arrive pending (`pending: n`). The rename's batch is guarded on the owner's `category_share_rev`, so
 a share created, deleted or moved after the rename read its decision makes the rename change
-nothing (409 `sharing_changed`).
+nothing (409 `sharing_changed`). With `ALLOW_CATEGORY_SHARING` off a share still follows its
+category, so turning the switch on finds it on the current key; a merge then goes through (the owner
+cannot stop sharing first) and leaves the share empty, as clearing does, and `pending` is left out.
 
 **Portals.** `GET /api/v1/portals/:id` answers `ok` with the share's title, the owner's name, the
 caller's role and the artifacts they may open (live, published, not taken down, reviewed as shared
 into this share; at most 500, newest first), shaped as summaries with `category` and
 `category_share` null; `email_required` to anyone else for a share that exists; and 404 for an
-unknown id or with the switch off. The owner gets `ok` as a preview. Agents get 404. Someone not
+unknown id or with the switch off. The owner gets `ok` as a preview. Agents get 404 (a token
+limited to one artifact `token_bound`). Someone not
 yet known confirms their email with `POST .../email` and `POST .../code`, which mirror the allowlist
 code flow: the same answer whether or not the address holds a grant, the same rate limits, a
 single-use six-digit code hashed with the share bound into it (useless on an artifact's code route,
@@ -1566,242 +2009,299 @@ mention or page.
 **In the app.** The dashboard's category menu covers the owner's categories under Mine, the
 person's own under Shared, and both under All; a shared row shows the person's own category, and
 its menu's "Move to category…" sets it. With sharing on, a selected owner category offers "Share
-category" (title, people with roles, the artifacts to show, the portal link, Stop sharing), a
-banner names each share with artifacts waiting for review, `?review=<share id>` opens the review,
-rows carry "Shared" or "Waiting for review", and the Shared tab links the collections shared with
-the person. The Settings page warns before filing under a shared category and its People section
-names who else sees the artifact through one. `/p/<id>` is the portal (never stored or indexed).
+category" (people with roles, the artifacts to show, the name people see, the portal link, Stop
+sharing); its list leaves out artifacts waiting for review, and a people change leaves them
+waiting. The one way into a review is the dashboard: one quiet line on All and Mine, or on the
+shared category's own view ("2 to review in Acme", or "5 to review" across several, with a Review
+link), and `?review=<share id>` for the link agents are given. The review applies Share or Keep
+private per artifact at once and closes after the last one. Rows carry no review badge. Dialogs
+name the owner's category ("Share “Acme”", "Review “Acme”"); only the portal shows the name people
+see. The Settings page's category hint says when the name typed is a shared category, and its
+People section names how many people see the artifact through it, in one line with a link to the
+category on the dashboard. The dashboard does not list the categories shared with the person;
+they reach `/p/<id>` from the link the owner sends, and every artifact shared with them is under
+Shared. `/p/<id>` is the portal (never stored or indexed); its email gate asks for an email in one
+line, and its cards use the dashboard's previews.
 
-### Live views (decided 2026-11-19)
+### Invitees get an account (decided 2026-11-19)
 
-An open artifact page picks up a newly published version by itself within seconds, and a page that
-keeps [shared data](#shared-data-and-viewer-identity) learns that it changed without waiting for
-its poll. Plinth pushes signals, never content: the page still loads every version and every
-document through the gate and the shared-data API, with all of their checks.
+Someone an artifact or a category is shared with by email opens the link and confirms their
+address with the six-digit code Plinth mails them. That code is the same proof of the mailbox as
+the sign-in code, so confirming it signs them in to the app with that address, as it already did
+for the owner's own address (2026-11-16). They then find what is shared with them under Shared on
+the dashboard, set a name, connect agents and comment or edit live as their role allows, like
+anyone signed in.
 
-- **Who.** Anyone who can open the artifact (the owner, people it is shared with, and anonymous
-  viewers of an unlisted, password or public link), never agents. A watch socket joins no
-  [room](#live-rooms), sees no peers and carries no identity, so it shows nobody to anybody; it
-  tells a viewer only what the gate and the change counter already tell them, sooner.
-- **Transport.** The app page, never the artifact, opens one receive-only WebSocket on the app host,
-  `wss://<APP_HOST>/api/v1/view/<artifact id>/watch`, with the app's own cookies, when its gate
-  says `watch: true`. The handshake is checked in order: method and upgrade, `Origin` exactly the
-  app's origin (absent and `null` refused, so no artifact can open one), same-origin fetch
-  metadata when sent, the `plinth.view.v1` subprotocol, no bearer token, live views active, the
-  artifact by id, the gate's view decision (any refusal is one identical 404), and policy
-  (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
-  served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
-  names its own `wss:` origin and nothing else.
-- **Signals.** JSON frames the room builds from integers: `welcome` (the current version, and
-  whether this socket gets data signals), `version` (a version was published: by an agent, the
-  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
-  a write from the page, an agent or the app, or the owner's "Delete all shared data") and `access`
-  (sent just before a sharing change closes the socket). The client
-  sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
-  instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
-  at the default). Each open view waits a random time up to it before it acts, so at most about
-  500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
-  top bound), and no frame says anything about who else has the artifact open.
-- **What the page does.** On `version` the app re-reads its own gate at once and shows the new
-  version as it did after a poll ("Updated to vN", except while editing on the page, where the
-  edit strip says it; a pinned `/v/n` link only learns the number).
-  On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
-  content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
-  `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
-  "push"`), and while they are the runtime polls only every 60 s. Both messages are hints: page
-  script can forge them on its own window, and the worst a forged one does is make the page
-  re-read its own data or change its own poll.
-- **Data signals** need an HTML page whose current version declares `data`, with shared data active
-  (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
-  and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
-  nothing is posted to frames.
-- **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
-  sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
-  then re-reads its gate and reconnects. A sharing change ends every content pass of the
-  artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
-  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
-  on its page the frame stays, as it does for a new version, and is renewed once that ends. A
-  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, or
-  earlier when the app session, viewer session or password pass it was opened with expires (4401,
-  reason `expired`), and the page reconnects, which decides again. While
-  sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
-  `version` whose notify was lost, and takes the data right away when the current version no
-  longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
-- **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
-  WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
-  counter every 15 s, as before. While the socket is open the app still reads its gate every
-  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes; a dropped one
-  reconnects after 1, 2, 5, 10 and 30 s.
-- **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
-  10000), counted apart from room sockets so viewers never crowd out a room, and split into two
-  pools of half each that never affect each other: one for the owner and the people the artifact
-  is shared with, one for everyone else the gate lets in. Someone the artifact is not shared with
-  can fill only the second, so a full pool never tells them whether the owner or a collaborator
-  has it open. Over a cap the socket is closed with 4409 and the page polls. Fixed: 32 sockets and
-  60 connects a minute per client (an account, a confirmed email, or for anonymous viewers one
-  network, an IPv4 address or an IPv6 /64, kept only as an HMAC).
-- **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
-  origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
-  signals also need shared data. Without the binding live views are off, never a configuration
-  error.
+- **The session.** `POST /api/v1/view/:ref/code` and `POST /api/v1/portals/:id/code`, once the
+  code checks out and the address still holds a grant (or is the owner's), start a normal user
+  session (`__Host-plinth_session`, 30 days): the owner's account for the owner's address, and for
+  any other address the account `getOrCreateUser` finds or creates, marked verified, exactly as
+  sign-in does. The app session the browser held before is ended in the same request, so a person
+  signed in with one address who confirms another is then signed in with the second; the gate says
+  so before they ask for the code. Nothing else changes in the code flow: the same answer whether
+  or not the address is listed, the same rate limits, five attempts per code, single use, the
+  grant checked again after use, and no account for an address whose code fails. Because the code
+  now signs people in, each guess also counts against the sign-in code's per-address limit (10 an
+  hour), so the sign-in page, the gate and the portal share one guess budget per address.
+- **The fallback.** Where `maySignIn` refuses the address (single-user mode, for any address but
+  `ADMIN_EMAIL`), the code starts a viewer session (`__Host-plinth_viewer`, 7 days, principal kind
+  `viewer`) as before. Viewer sessions started before this change keep working until they expire.
+  Everything that only applies to viewer sessions stays, and now applies only to them: such a
+  session is not an account (`/api/v1/me` answers 401), an editor holding one watches live edits
+  and is asked to sign in (`account_required`), a signed-in person can hold one for another
+  address beside their session (the gate and the identity claim then use that address),
+  and its email opens an artifact but never files it under a personal category (`no_grant`).
+- **What people are told.** The gate and the portal say, before the code is asked for, that
+  confirming it signs the person in: the artifact gate's lead ends "Sign in with a one-time code.",
+  and the portal's heading is "Sign in". A signed-in person whose own address has no access is
+  told instead, on both, that confirming another address signs them in with it, and reads no
+  invitation to sign in beside that: the portal's heading for them is "Confirm your email". On the
+  code step the line saying where the code went is the only text above the field. The code's
+  email is then a sign-in email: subject "Your Plinth sign-in code", the sign-in sentence first
+  (it says an account is created for the address if it has none, so that is said before the code
+  is typed), a warning to type the code only into Plinth's own sign-in form, never into a page
+  being viewed, and never give it to anyone or reply with it, and only then the artifact's title
+  (or the sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too.
+  The title or name is quoted on one line: its line breaks and other whitespace become single
+  spaces and invisible characters are dropped, so it cannot start lines that read as Plinth's. On a
+  single-user instance they say that no account is needed, and the email stays the "viewing code"
+  email, as before.
+- **Not a sign-up path.** A code goes only to an address that holds a grant on that artifact or
+  share (or is the owner's), and an account exists only once its person has typed the code. No
+  setting turns this off apart from single-user mode: an instance that lets an address sign in
+  lets it sign in by either code.
 
-**Keeping state across versions.** When a newer version reaches an open view (pushed or polled),
-the app applies it so the reader keeps their place where it can:
+### Whiteboards (decided 2026-11-19)
 
-- **Docs update in place** (origin isolation, outside review mode, and not while the frame follows a
-  live-editing room or holds page edits). The app posts `{ type: "version", n, nonce }` to the doc
-  renderer at the exact content origin; the renderer fetches `/__plinth/v/<n>/content.md` from its
-  own origin with the content pass it already holds, renders it exactly as at boot (Markdown, then
-  the sanitizer), keeps the block that was at the top of the viewport where it was (found again by
-  its nearest heading, or by its block index when that heading is gone), and answers `{ type:
-  "shown", n, nonce, ok }`. On `ok` the frame and its enter URL stay; nothing reloads, and solo
-  editing afterwards starts from the version on screen. On a refusal (anything being edited, a room
-  client attached, a failed or refused fetch; the renderer checks again once the text has arrived,
-  so an editor opened meanwhile is kept) or no answer in 5 s, a fresh frame loads, unless the doc is
-  by then edited on its page, which keeps its frame as below. Under opaque isolation and the path
-  fallback docs always load a fresh frame.
-- **Pages that load `/__plinth/runtime.js`** keep their scroll position, their place inside the
-  artifact (sub-page, query and hash) and any state they hand over, with no declaration. The runtime
-  says `hello` to the app when framed; before the swap the app posts `{ type: "update", from, to,
-  nonce, force }` at the exact content origin, the runtime calls the page's `plinth.onVersion`
-  handlers (800 ms for all of them), writes one record (`from`, `to`, the time, scroll, path, and
-  the page's `{ state }` when its JSON is at most 16 KiB) to its own origin's `sessionStorage` and
-  answers `update:ok` with its path, without the hash. The app re-reads its gate with that path as
-  `next` and `carried=1` (the server passes it through `safeNext`) and loads the new version there;
-  when the new version has no file at that path (a `pushState` route, a page renamed or removed), the
-  gate lands it on the root instead of the content host's "Not found". The hash never
-  goes into a request URL: it stays in the record, and the new version's runtime puts it back with
-  `history.replaceState` when it landed on the same path with no hash of its own. The new version's
-  runtime reads and removes the record at start, before the page's own scripts after the runtime
-  tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
-  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
-  the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
-  records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
-  Opaque isolation has no runtime handshake.
-- **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
-  content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
-  it, with or without the runtime: when the new version arrives with focus inside its frame, or
-  focus moves there while the runtime answers, only the count of versions moves on and the stage
-  shows "v5 is available · Update"; the runtime is asked only when the viewer chooses Update. Update
-  reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime). A
-  version that arrives while focus is elsewhere replaces the page as before. `hold` is not shared
-  data and not a room, works under every isolation mode, and is stored only when declared. **Every
-  other page is replaced at once, as before** (the 2026-11-14 "follows new versions live"
-  behaviour): the hold rule is opt-in.
-- **What crosses.** App to frame: version numbers and the app's own nonces. Frame to app: `hello`, a
-  nonce, `ok` or a hold, and one path that is checked (one leading `/`, at most 2,048 characters, no
-  backslash or control character, never `/__plinth/`, its hash dropped) and only becomes the gate's
-  `next`. The app accepts these only from the frame it holds at its exact content origin. Page state
-  stays in the content origin's `sessionStorage`: one tab, one artifact, never the app, another
-  artifact or another viewer. No script is injected into artifact HTML.
-- **Off.** With `ALLOW_LIVE_VIEWS=false` (the app config says `live_views: false`) and the gate
-  without `hold`, every update replaces the frame, as before. Permanent version links, a deck being
-  presented and a doc edited on its page keep their frame as before.
+A board of notes, text, shapes and arrows that people edit together (a brainstorm, a map, a
+retro) is a whiteboard: the sixth artifact type, `whiteboard`. Its board lives in the artifact's
+[shared data](#shared-data-and-viewer-identity), so the people it is shared with change it from
+its page without a new version each time, and agents add and move blocks with
+`write_artifact_data`. Its versions hold only the board's settings.
 
-### Designs (decided 2026-11-19)
+- **Settings, in versions.** A version stores one file, `board.json`:
+  `{"v": 1, "background": "dots" | "grid" | "plain", "edit": "commenters" | "editors"}`, stored as
+  canonical JSON. `edit` is the lowest role that may change the board from its page: `editors`
+  by default, so a commenter's role means what it says (view and comment) until the board's
+  settings open it with `commenters`; viewers never may. Unknown keys are refused, and a setting
+  left out takes its default. The title is the publish's `title`. Settings changes are versions
+  with `base_version`, and restore brings old settings back (the history calls it Restore
+  settings: the board's blocks and arrows are not in versions and stay as they are).
+- **The board, in shared data.** Two collections, both shared (any permitted writer may move any
+  block): `blocks`, each `{ kind: "note" | "text" | "rect" | "ellipse", x, y, w, h, text,
+  color?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", z? }` (whole numbers; `x` and
+  `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 2,000
+  characters), and `arrows`, each `{ from, to, label?, style?: "solid" | "dashed", head?: "end" |
+  "both" | "none" }` (`from` and `to` two different block ids, a label up to 120 characters). Draw
+  order is `z`, then id. An arrow whose block is gone is not drawn and is never deleted on its own.
+  The server checks every whiteboard write against these shapes, from the page, agents and the
+  app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
+  versioned (shared data never is); every write is stamped with who made it.
+- **A starting board.** A publish, or an update of a board whose shared data has no blocks or
+  arrows, may add `blocks` and `arrows` lists (each item with its `id`) to board.json: ids unique
+  across both, no `u_` ids, every arrow naming blocks in the same input, at most 500 items. They
+  are never stored in the version. Before anything is staged, Plinth decides `data_write` for the
+  caller (on the facts of the artifact about to be created, or on the artifact) and checks the
+  shared-data quotas; once the version has committed it decides again on the artifact as it now is
+  and writes every item in one guarded statement, all or none, stamped with that role and channel
+  and counted as one write against the rate limits. The result carries `board: { blocks, arrows }`,
+  or the warning `board_not_seeded` when the items were not written (access lost meanwhile,
+  someone added blocks first, the quota, the rate limit); the version stays published either way.
+  An update with blocks on a board that has some is refused (`board_not_empty`) before any version
+  is written. A restore never seeds.
+- **Fixed capabilities.** The server derives a version's `versions.capabilities` from its settings,
+  never from the page: shared data with both collections shared, `viewer` (cursors and the people
+  list show names, and the line under the bar tells every viewer so), the room with the board's
+  topics (`block.move`, `block.saved`, `arrow.saved`) open to commenters on a `commenters` board,
+  and the write floor `writers` ([write floor](#shared-data-and-viewer-identity)). A settings
+  version that changes `edit` reconnects the board's room sockets as it commits, so a commenter's
+  board turns read-only at once, or editable when the version opens it to commenters (the page
+  reads its session again on the reconnect); the data API refuses a write below the floor in any
+  case.
+- **The renderer.** Plinth's own renderer on the artifact's origin
+  (`/__plinth/types/whiteboard/`), under the strict typed shell (`script-src 'self'`). The shell
+  loads `/__plinth/runtime.js` right before it, and the renderer reads `window.plinth` before
+  building any DOM. It pans, zooms (10% to 400%: drag, wheel, pinch, `+`, `-`, `0` to fit), adds
+  notes, text, boxes and ellipses, moves, resizes, edits (double click or Enter), colours,
+  connects and deletes blocks (with an undo), and moves a focused block with the arrow keys (Shift
+  for bigger steps). Writes go at the rev they read. On a conflict the renderer reads the newer
+  copy and puts on it only the fields the viewer changed (a move, a size, the text, a colour); a
+  field the other writer changed too keeps their value, and the viewer is told. Live cursors,
+  who is here, peers' selections and a block moving while it is dragged go through the room; a
+  peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
+  the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
+  save never takes a drop back to where the block started. Text is written at the rev its edit
+  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
+  "Use mine" button that writes theirs over it. A
+  viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
+  others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
+  and follows on the shared-data poll. Block text is only ever drawn as text.
+- **The toolbar shows only what applies**, in one row on the board's own background. The add
+  buttons show to people who may change the board; a selected block's colours, Connect (which
+  starts from that block) and Delete show only while something is selected. On the right: the
+  other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
+  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons,
+  at every width (for a commenter on an `editors` board, screen readers also hear ": editors can
+  change this board").
+  Under 560 px a selection's controls take the add buttons' place and the row scrolls sideways
+  if it must, the colours are one swatch in the block's colour that opens the six under the bar
+  (closed by a pick, Escape or a tap on the board), the people here are coloured dots (the full
+  name on hover and for screen readers), and Fit zooms out no further than 75% so text stays
+  readable, starting from the board's top-left.
+- **History.** A board's versions hold only its settings, so the history's restore is "Restore
+  settings", and its header says only "Tick two versions to compare them."
+- **On the board.** A cursor's tag and the people list show a person's name, or their email's local
+  part, with the full one on hover. A tag near the viewport's right edge sits on the pointer's
+  left. An arrow's label sits beside its line with a halo in the board's colour, on the board and
+  in both exports. A block being written in has a ring inside its edge.
+- **Export.** Download as PNG and Download as SVG in the artifact's ⋯ menu, for everyone who can
+  view the board. The app asks the frame with a renderer message that names only the format (the
+  frame acts only on its parent at the app origin); the frame draws the whole board, PNG on a
+  canvas at 2x (at most 8,192 px a side and 32 megapixels) and SVG built from the board (text as
+  text nodes, no scripts, links or embedded content), and downloads it.
+- **No source editor.** People change the board on its page. Its settings (`edit`, `background`)
+  change in Board settings (below) or through an agent's `update_artifact`; the menu has no Edit
+  item for a board, and its editor address goes back to the board.
+- **Board settings.** The board's page never shows `board.json`. The board's ⋯ menu has one
+  Settings item, the one way in (the toolbar has no settings button). For the owner it is the
+  artifact's settings page, which on a whiteboard has a **Board** section; an editor, who has no
+  settings page, gets the same choices in a small **Board settings** dialog over the board. Both
+  show two one-row choices, the background (Dots, Grid or Plain) and who can change the board
+  (Editors only, or Commenters and editors), labels only, with no explanatory text and no text
+  field. They read the current version, and Save sends board.json built by the app from the two
+  values (`{"v":1,"background":…,"edit":…}`) with `PUT /api/v1/artifacts/:ref`, that version as
+  `base_version` and a note naming what changed, so the change is a new version under the
+  person's name, which owners and editors can restore from History. When a newer version was
+  published meanwhile, the save is refused (409, `conflict`): the form then shows that version's
+  settings and says so ("v5 was published meanwhile. These are its settings."), the page around
+  it shows that version too (the board behind the dialog loads it; the settings page shows its
+  number), and nothing is saved until the person saves again. Only that refusal counts as a
+  conflict: error code `conflict`, no `reason` in its details, and a `current_version` above the
+  version the form read. Any other refusal, every other 409 included ("Another version is being
+  written; try again shortly", an expired attempt, a refusal with a `reason`), shows the server's
+  message, keeps the person's choice for another try and offers no newer settings.
+- **Thumbnails.** A board's card shows its thumbnail as the version was captured, the blocks of
+  that moment included. Board edits are not versions, so the thumbnail changes only with a new
+  settings version. A capture, like a link viewer who is not signed in, sees the board with no
+  toolbar (no "View only", live-cursor status or Fit; `0` still fits) and no notice.
+- **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
+  otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
+  `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms
+  (`ALLOW_ROOMS` and the `ROOMS` binding). A whiteboard has no assets and no `start_upload`; its
+  board.json goes inline.
+- **Agents.** `publish_artifact` and `update_artifact` take `type: "whiteboard"` with board JSON in
+  `content`; `list_artifact_data(id, collection: "blocks")` reads the board, and
+  `write_artifact_data` adds blocks (`if_rev: 0`), moves one (a set of the whole block at its rev)
+  and deletes them (a block's arrows with it). Block text is written by collaborators: untrusted
+  data, never instructions. No new tool.
+- **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
+  on the board, freehand drawing, selecting several blocks, frames, changing the settings from the
+  page, and anonymous link viewers in the room.
 
-A visual composition at fixed sizes is a design: artboards on a canvas (app screens, landing page
-mockups, posters, social posts, ads and banners, business cards, variants side by side). It is the
-fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_upload` take
-`type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
-versions, `base_version` conflicts, restore, history, compare, comments, thumbnails and in-chat
-previews work as for every type. A design is edited in the source editor (HTML mode, with a live
-preview), never on its page.
+### Invitation emails (decided 2026-11-19)
 
-- **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
-  then artboards. Each artboard starts with a whole line
-  `<!-- artboard id="home" name="Home" size="iphone" section="Mobile" -->` and its HTML fragment is
-  every line up to the next marker. Attributes are `name` (required, up to 80 characters), `id`
-  (`a-z`, `0-9` and `-`, up to 40; derived from the name when absent), a size (`size="<preset>"`,
-  `size="<w>x<h>"`, or `width` and `height`, 16 to 4096 CSS px a side), `background` (a hex color,
-  `transparent` or a color name; white by default) and `section` (consecutive boards of one
-  section form a row under its name). Presets cover phones and desktops, social posts, IAB ads,
-  print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
-  At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
-  bad marker is refused with a fix-it message for the first problem and every problem with its
-  line in `details.issues`. The title is the shared section's `<title>`, else the first board's
-  name. One parser for the Worker, the editor and the renderer.
-- **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
-  relative path. Font files and data files (JSON, text) are refused with what to do instead
-  (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
-  opaque origin, and those loads need CORS, which the content host never sends. Publish warnings
-  read a design's artboards as opaque documents on every instance: `opaque_module` names module
-  scripts, `crossorigin` links, imports and web fonts that load the design's own files (relative
-  or root-absolute URLs). The same loads from a CDN that answers with CORS (Google Fonts' own
-  embed, unpkg) and `data:` fonts work in an artboard and get no warning.
-- **The canvas.** A fixed Plinth renderer on the artifact's own origin
-  (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
-  out in rows by section with a label over each (name, size). Drag, the wheel and the arrow keys
-  pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the toolbar and `+`, `-`, `0`
-  (Fit) and `1` (100%) zoom between 5% and 400%; the Boards list zooms to one board. After Fit
-  (the button or `0`) the canvas fits again when its frame is resized, until the view is moved or
-  zoomed. Each board is
-  covered so the canvas can be dragged; Interact (or a double click or tap) takes one board's cover
-  off so its links, buttons and scripts can be used, and Done, Escape or a click outside puts it
-  back. At most 24 board frames are alive at once; boards far off screen are placeholders until
-  they come back (a board's own state starts again then). `?plinth-board=<id>` shows one board
-  alone at 100%.
-- **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
-  at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
-  document over itself when the renderer posts it: Plinth's base URL (the version's directory),
-  viewport and reset, then the shared section, then the fragment. The loader is served only with
-  this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
-  plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, with
-  `frame-ancestors 'self' <app>` under origin isolation (none under opaque isolation or for an
-  in-chat preview pass, whose shell no source can name), and the renderer
-  frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
-  no storage and no access to the shell, the app or another board, and it cannot navigate any of
-  them (links may open a new tab, as on every artifact).
-  The shell's own DOM never holds author markup. A design's files are served with
-  `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
-  never run script; its `design.html`, which no board loads, is served as text with
-  `same-origin`.
-- **Print or save as PDF** is in the artifact menu: every board is mounted and laid out at 100%,
-  printing waits for them to load (at most 10 seconds), and each board prints on its own page of
-  exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
-  other than Chromium may ignore per-board page sizes.
-- **Download PNG or PDF** (decided 2026-11-19), where the instance has a Browser Rendering
-  binding (`BROWSER`) and `DESIGN_EXPORT` is on (the default): the artifact menu's "Download PNG or
-  PDF…" picks a board and a format, and the server renders the version on screen in Cloudflare
-  Browser Rendering. A PNG is one board at 1x or 2x (at most 33,554,432 device pixels, so a
-  4096 px board only at 1x), transparent where the board is; a PDF is every board, or one, each on
-  a page of exactly its size. REST: `GET /api/v1/artifacts/:ref/export/options?version=` lists the
-  version's boards, and `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=`
-  returns the file as an attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view
-  the artifact may export it (the `view` action; strangers get 404), at most
-  `DESIGN_EXPORTS_PER_HOUR` times an hour per person (per confirmed email, or signed out per
-  client network, an IPv6 /64 counting as one client); a refused request (a bad board or scale)
-  is not counted. At most two exports render at once across the instance, beside the thumbnails'
-  two; a request that finds both busy answers 503 `unavailable` with `Retry-After: 10` and is not
-  counted either. The browser opens the exact
-  version as a thumbnail capture does: a one-time capture pass with no identity, the boards'
-  cookie partition given the same pass through the DevTools protocol, at `?plinth-print=1` (with
-  `&plinth-board=<id>` for one board), where the renderer lays the boards out at 100% with no
-  chrome or covers, mounts every one and counts them as they load; the Worker waits for them (at
-  most 10 seconds, then renders what loaded) and prints the page or takes the board's box. The
-  whole render has 25 seconds, and every wait ends 7 seconds before that so a slow board still
-  leaves a file of the boards that loaded; a render past its 25 seconds is stopped and its browser
-  closed. A failure answers 503 `unavailable`, an instance without the binding
-  or with `DESIGN_EXPORT` off answers 403 `feature_disabled` and its menu has only Print. Agents
-  have no export tool; the endpoint takes their bearer tokens like the thumbnail's. Each export
-  spends Browser Rendering time, which Cloudflare bills per browser hour.
-- **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
-  (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
-  stays the same.
-- **Uploads and the CLI.** `start_upload` with `type: "design"` (or the `id` of a design) takes a
-  folder with `design.html` and its assets at its top; the Plinth CLI publishes such a folder as a
-  design and checks `design.html` against the fixed 2 MB limit.
-- **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
-  sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
-  artboard can and cannot load. Design content is untrusted like artifact HTML.
-- **Not yet.** Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode,
-  deep links to one board from the app and an MCP tool that returns a board's picture to the agent
-  are not offered.
-- **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
-  loads the version top level, and a board's requests (an opaque document) fall in another cookie
-  partition than the enter's, so for a design the Worker also gives that browser the same capture
-  pass for the boards' partition before the page loads, through the DevTools protocol, never in a
-  URL (docs/security.md, Designs).
+When an owner gives someone access, Plinth can email that person the link, so the owner does not
+have to send it themselves. It never emails anyone unless the request asks, and an agent asks only
+when the user told it to.
+
+- **When.** A sharing change emails the people it adds when it carries `notify: true`:
+  `PUT /api/v1/artifacts/:ref/sharing` (`{ grants, notify? }`), `set_visibility` over MCP and
+  `PUT /api/v1/artifacts/:ref/visibility` (the people `emails` adds), and a category share's
+  `POST /api/v1/category-shares` and `PATCH /api/v1/category-shares/:id` with people. `notify`
+  defaults to `false` everywhere. In the app, the People section of an artifact's settings and the
+  Share category dialog have a **Notify people** box, ticked by default: adding a person then sends
+  `notify: true` (role changes, removals and Undo never do). `publish_artifact`'s `emails` never
+  emails anyone; an agent that should notify people publishes without `emails` and adds them with
+  `set_visibility`.
+- **Who is emailed.** Only a new grant: an address that held no grant on the artifact (or the
+  share) before the change. Re-saving a list, changing a role or adding someone who already had
+  access emails nobody, and the owner's own address is never emailed. The decision is
+  `policy.ts mayEmailInvitations`: the request asked, the caller is the owner acting on their own
+  artifact or share (the signed-in owner or the owner's own agent), the owner's address is verified,
+  and the artifact is not taken down.
+- **Turning them off.** Every invitation's footer and its `List-Unsubscribe` header point to the
+  app's `/invitation-emails` page, whose URL holds no token and no address. After the usual email
+  code sign-in, the person turns invitation emails to their own address off with one button
+  (**Stop these emails**), and back on from the same page (`GET` and `PUT
+  /api/v1/me/invitation-emails`, `{ receive }`, signed-in people only, never agents; the address is
+  always the session's). Off is kept as a hash of the address in `invitation_opt_outs` (migration
+  `0021_invitation_opt_outs.sql`, the same hash the counters use), never the address, and an
+  account's erasure keeps it, since dropping it would let invitations reach the inbox again. The
+  opt-out covers the inbox, not only the address typed: the hash is of the address's mailbox
+  (`services/invitations.ts invitationMailbox`: lowercased, a `+tag` dropped from the local part,
+  and for `gmail.com` and `googlemail.com` the dots too, both read as `gmail.com`), so turning
+  them off as `bo@gmail.com` stops `bo+x@gmail.com`, `b.o@gmail.com` and `bo@googlemail.com`. An
+  owner who shares with that address still gives it access; the person is reported as
+  `opted_out` ("They turned these emails off"). That answer costs what an email would: a place
+  in the change's `invitationsPerChange` and one of the owner's
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY`, and it is given only while those and the instance's
+  `INVITATION_EMAILS_PER_DAY` have room (otherwise the reason is the limit's); the person's own
+  counters and the instance's are not used. Since only someone signed in as the address can turn
+  them off, `opted_out` tells the owner that the address has signed in to this instance; the cost
+  bounds how many addresses an owner can learn that about, to their daily cap. There is no
+  `List-Unsubscribe-Post` (RFC 8058 one-click): that request arrives with no session, so it would
+  need a token in the URL saying whose address to stop.
+- **Bounds.** At most one invitation per artifact (or share) and mailbox within a day, counted
+  across the previous and the current UTC day, so removing and re-adding someone does not email
+  them again; two addresses of one mailbox in one change are emailed once, and the other is
+  reported with the first one's outcome (`already_emailed` when it was emailed). At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change, and per UTC
+  day `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20) per owner, `INVITATION_EMAILS_PER_DAY` (1000)
+  for the whole instance, every owner together,
+  `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
+  `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together. Each limit is reserved before an email goes (the counter is raised, then checked, and what
+  was not used is given back), so parallel changes cannot pass it. The counters sit in
+  `rate_limits` under keys holding the hash of the address's mailbox (the opt-out's hash), never
+  the address, so a `+tag` or Gmail's dots do not get an inbox fresh limits; they are read and written
+  in a fixed number of statements whatever the number of people, and the hourly cron deletes them
+  two days after their day. Nothing else is stored, apart from the opt-outs above. Sign-in and
+  viewing codes have counters of their own (`login:` keys), so a used-up invitation budget never
+  holds back a code.
+- **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
+  addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
+  `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
+  `recipient_limit`, which covers both per-address limits, `instance_limit`,
+  `invitations_off` and `opted_out`). Without it, the result is exactly as
+  before. A skipped invitation never fails the change: the grants are
+  saved either way. The app names the people it did not email, and why, in the change's one toast
+  (a warning in place of the success toast).
+- **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
+  alone when the owner has no display name; the body names the
+  owner by display name and address, the title (for a category, the name its people see, never the
+  category's own name), the role in plain words, the link (`/a/<slug>`, or the portal
+  `/p/<id>` for a category share), a line saying the title and name were written by the person who
+  shared it, why the recipient got it, and one footer line linking `/invitation-emails` to stop
+  these emails. It carries no code, token or other secret: the person
+  still confirms their address when the link asks. Titles and names are untrusted: control and
+  format characters and line breaks are removed, they are shortened, and anything that reads as a
+  web address is defanged in the subject and both parts: `https[:]//`, `www[.]`, and every host
+  name whose last labels are a public suffix the pinned `tldts` knows (ICANN or the list's private
+  part) with each dot written `[.]` (`office365-reset[.]co`, `bob@evil[.]com`), while dotted words
+  whose last label is no suffix (`Node.js`, `v1.2.3`, `e.g.`) stay as written. The HTML part
+  escapes every value and has two links, both on the app host: the artifact's and the opt-out
+  page. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
+  console provider in development) after the response, and a provider failure is logged without
+  the address, the title or the message. Providers limit requests per second, and sign-in and
+  viewing codes share that limit, so a change's invitations never go all at once: in one batch
+  request where the provider has one (Resend's `/emails/batch`, up to 100), one at a time
+  otherwise. A 429 is tried again after the provider's `Retry-After` (1 second when it does not
+  say, at most 5), twice; if that does not clear it, the rest of the change is not tried. An
+  invitation the provider refused (an HTTP 4xx answer, or not tried) gets its de-dupe mark and
+  every counter back, so adding the person again emails them; one whose outcome is unknown (no
+  answer, or a 5xx) keeps them, since it may have gone. `emailed` is decided before that and names
+  who was handed over.
+- **Settings.** Invitations go through the email provider sign-in and viewing codes use, and share
+  its daily quota, so the operator sets how many go out: `INVITATION_EMAILS_PER_DAY` (default
+  1000, `0` to `1000000`) caps the whole instance per UTC day, every owner together, and `0`
+  turns invitation emails off; `INVITATION_EMAILS_PER_OWNER_PER_DAY` (default 20, `1` to
+  `10000`) caps one owner, low enough that a handful of new accounts cannot use up the instance
+  cap for everyone. An operator sets the instance cap well under the provider's daily quota, so
+  codes always have room. Invitation emails are also off with `EMAIL_PROVIDER=console` outside
+  development (that provider only writes to the log, so nobody would be emailed) and in
+  `SINGLE_USER_MODE` (only the admin can sign in, so nobody else could turn them off). Off, the
+  app has no **Notify people** box (`GET /api/v1/config` says `invitation_emails: false`), a
+  request with `notify: true` still applies, and every person added is reported as
+  `invitations_off`; nothing is counted. In development the console provider prints invitations
+  to the log, and `emailed` names who was handed to it.
 
 ### Project files for a page (decided 2026-11-19)
 
@@ -1826,14 +2326,19 @@ live read, and the feature adds no tool, route, env var or stored state.
   no exception; with no one to ask, the agent fails the task with `reply_comment` and
   `failed: true`. Paths come from the user's words, a list the agent shows and the user confirms,
   or the local record below, and every read drops dot segments, keys and credential files,
-  Git-ignored files and anything outside the project after symlinks are resolved. The record
-  itself is the one dot-segment file the agent reads, and it is never sent.
-- **Served as data.** A project file is served by its extension on the artifact's origin like any
-  asset, so an `.html`, `.htm`, `.svg` or `.xml` file runs as a document there when a viewer opens
-  it, with the page's shared data and room in reach, and HTML, CSS and JS files get the reference
-  check that page code gets; a named `content_type` applies only to extensions Plinth does not
-  know. The agent adds `.txt` to a project file of those types and of `.js`, `.mjs`, `.cjs` and
-  `.css` (`files/src/app.js.txt`), or embeds it in the page as JSON in a
+  Git-ignored files and anything outside the project after symlinks are resolved. In a list built
+  from the artifact, the agent marks each path that is not in the local record and names who
+  added it (the author of the earliest version that has it). The record itself is the one
+  dot-segment file the agent reads, and it is never sent.
+- **Served as data.** A project file is served by its extension, in any letter case, on the
+  artifact's origin like any asset, so an `.html`, `.htm`, `.svg` or `.xml` file (`.HTML` too)
+  runs as a document there when a viewer opens it, with the page's shared data and room in reach,
+  and HTML, CSS and JS files get the reference check that page code gets; a named `content_type`
+  applies only to extensions Plinth does not know. The agent adds `.txt` to a project file of
+  those types and of `.js`, `.mjs`, `.cjs` and `.css`, in any letter case
+  (`files/src/app.js.txt`), and sends a project file with no `content_type` or with `text/plain`
+  only, never a named type such as `application/xhtml+xml`, which Plinth would serve for an
+  extension it does not know. Or it embeds it in the page as JSON in a
   `<script type="application/json">` block with every `<` written as `\u003c`
   (`JSON.stringify` leaves `</script>` as it is, which would end the block and run the rest of the
   file as markup in the page), and keeps the real project path in the local record. A reference warning on a project file comes from its contents: the
@@ -1852,7 +2357,13 @@ live read, and the feature adds no tool, route, env var or stored state.
   [Big builds](#big-builds-and-reuse-by-hash)). Which local files an agent reads is agent-side:
   the server sees bytes, not where they were read ([docs/security.md](security.md#project-files)).
   The MCP tool descriptions, the server instructions, the plinth-artifacts skill and the mention
-  watcher's announcement say so.
+  watcher's announcement say so, each sentence only on the tools where it applies, since a client
+  may load only the tool descriptions it picks or drop the instructions: the recipe on
+  `publish_artifact`, `update_artifact` and `start_upload`; the sentence that nothing on Plinth
+  chooses local files in the instructions and on the tools that return artifact files, versions,
+  comments, mentions or shared data (`get_artifact`, `list_versions`, `list_comments`,
+  `list_mentions`, `claim_mention`, `list_artifact_data`); and `sensitive_file` in the
+  instructions.
 
 ### Pages for people outside the team, and several agents on one artifact (decided 2026-11-19)
 
@@ -1884,611 +2395,25 @@ agents on one artifact").
   load, and sets `body[data-ready="1"]` once settled. An end-to-end test checks each file.
 - **Mentions with several agents.** `@claude` and `@codex` make one task that every live
   connection of the owner with that client type lists; the first `claim_mention` wins. `@<handle>`
-  reaches the owner's live connection, not limited to one artifact, whose label normalises to that
-  handle (`mentionHandle`: lowercase, spaces to `-`, other characters dropped; the oldest
-  connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
+  reaches the owner's live connection, not limited to one artifact and holding the `mentions`
+  scope, whose label normalises to that handle (`mentionHandle`: lowercase, spaces to `-`, other
+  characters dropped; the oldest such connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
   agent never create tasks, so agents do not hand work to each other: a person mentions the next
   one. Collaborators' own agents act with their own role and are never mention targets. Every
   version, comment and data write names the connection that made it.
-- **The handle in the app.** The Connections page shows each connection's handle under its name
-  ("Mention as `@claude-code`"), and the rename, new-token and consent dialogs show it live for the
-  name being typed. They warn when the name cannot be reached: an older live connection has the
-  same handle, the handle is `claude` or `codex` on a connection of another client type, the name
-  has no letter or digit to start a handle with, the token lacks the `mentions` scope, or it is
-  limited to one artifact. Only the owner sees these pages, and only their own labels; the comment
-  composer's suggestions for collaborators stay `@claude` and `@codex`.
-### Sheets (decided 2026-11-19)
-
-A table people sort, filter, calculate with or download (a budget, a tracker, a list of records,
-a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a spreadsheet. It is the
-fourth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
-`update_artifact` take `type: "sheet"` with the source in `content`, a version stores
-`sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
-restore, history, Compare and the source editor work as for docs. Cells are versioned content, never
-shared data: every change, an agent's or a person's, is a new version anyone can revert. Owners and
-editors also edit a sheet on its page, live with each other
-([Live sheets](#live-sheets-decided-2026-11-19)).
-
-- **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
-  and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
-  row 1 and data starts at row 2, so formulas mean the same in Plinth and in Excel. A column has a
-  `name` (1 to 100 characters, no control or invisible characters), a `type` (`text`, the default,
-  `number`, `date`, `checkbox`, `select` or `url`), an optional `width` (40 to 800 pixels), a
-  `format` for numbers (`style` `plain`, `percent` or `currency`, `decimals` 0 to 10, `currency` an
-  ISO 4217 code, `grouping`) and `options` for a select (1 to 100 distinct strings). `freeze.cols`
-  keeps 0 to 5 columns in view; the header row always stays. Unknown keys are refused. A cell is
-  `null`, a finite number, a boolean or a string; a string starting with `=` is a formula and a
-  leading `'` keeps the rest literal (`"'=x"` shows `=x`). Literal cells must fit their column: a
-  number in a number column, `YYYY-MM-DD` (1900-03-01 to 9999-12-31) in a date column, a boolean
-  in a checkbox column, one of the options in a select column, an absolute `http:`, `https:` or
-  `mailto:` link of at most 2,000 characters with no whitespace in a url column; a text column
-  takes any cell. Formulas are allowed in every column. No blank lines; one final newline is
-  dropped. The parser is one module (`packages/shared/src/sheet/`) for the Worker, the renderer
-  and the editor.
-- **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
-  a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
-  Each row therefore has one spelling, and Compare lists only the rows that changed. This
-  holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it.
-- **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
-  the same code in the Worker and in the browser: A1 references (`B7`, `$B$7`), ranges (`A1:B5`,
-  `B:B`, `2:5`), Excel's operators and precedence (`-2^2` is 4), and these functions, each with
-  Excel's meaning: SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTBLANK, COUNTIF, COUNTIFS, SUMIF,
-  SUMIFS, AVERAGEIF, AVERAGEIFS, PRODUCT, MEDIAN, STDEV, ROUND, ROUNDUP, ROUNDDOWN, INT, ABS, MOD,
-  POWER, SQRT, CEILING, FLOOR, IF, IFS, IFERROR, IFNA, AND, OR, NOT, XOR, SWITCH, ISBLANK, ISNUMBER,
-  ISTEXT, ISERROR, ISNA, CONCAT, CONCATENATE, TEXTJOIN, LEN, LEFT, RIGHT, MID, UPPER, LOWER, PROPER,
-  TRIM, SUBSTITUTE, REPT, FIND, SEARCH, VALUE, EXACT, VLOOKUP, HLOOKUP, XLOOKUP, INDEX, MATCH, DATE,
-  YEAR, MONTH, DAY, WEEKDAY, EDATE, EOMONTH, DAYS and TODAY. Any other name is refused at publish
-  with the list; there are no other sheets, external references, defined names, arrays or `@`, and
-  nothing that reaches a network, another artifact or the clock beyond today's UTC date (no
-  HYPERLINK, WEBSERVICE, INDIRECT, OFFSET, NOW or RAND). Dates are 1900-system serials (a date
-  column's literal is its serial in formulas); numbers show rounded to 15 significant digits.
-  Errors are Excel's (`#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`, `#NUM!`) plus `#CYCLE!`
-  for every cell on a circular reference and `#LIMIT!` for a cell not computed within the step
-  budget. Each formula is computed once, in dependency order, with an explicit stack; one step is
-  charged per expression node and per cell a range visits, text a function makes costs its
-  length, and text a function or comparison reads (to walk, search, compare, lowercase or trim
-  it) costs a step per 32 characters, so one long text read many times is paid for each time;
-  SUBSTITUTE also costs a step per match it replaces. Text
-  longer than 1,024 characters is never read as a number or a boolean (`#VALUE!`), and numeric
-  text is matched by a pattern with one way to read each character, so a conversion is linear in
-  its length. A publish
-  parses formulas and never evaluates them.
-- **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
-  formula bar with the selected cell's address and its raw text, and the grid: column letters and
-  the header row stay at the top, frozen columns at the left, numbers right-aligned in their
-  format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
-  a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
-  back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter
-  are the viewer's only and never saved. Arrow keys move between cells. Rows are in chunks of 200
-  that the browser lays out only on screen, so 10,000 rows stay usable while find in page, comment
-  pins (cell ids `__plinth-cell-B7`), print and screen readers see every cell. Light and dark,
-  phone width (the grid scrolls in its own box), and print (no toolbar, the header row repeats on
-  every page). The browser spends at most 20,000,000 steps; a sheet past that shows `#LIMIT!` in
-  the cells it did not compute, with a note.
-- **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx, from the artifact
-  menu or the frame's own toolbar. The frame builds the file and hands it to the browser from a
-  `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
-  UTF-8 with a BOM, CRLF, RFC 4180 quoting, and text starting with `=`, `+`, `-`, `@`, tab or
-  carriage return written with a leading `'` (numbers never are). The .xlsx is SpreadsheetML
-  written by Plinth and zipped with fflate 0.8.3: one worksheet named after the title, the header
-  in bold, column widths, the frozen pane, number formats from the column formats, text as inline
-  strings (text starting with `=` stays text), formulas with Plinth's computed values cached
-  (`fullCalcOnLoad`, so Excel computes its own; newer functions carry Excel's `_xlfn.` prefix), the
-  title as its only document property, no macros and no external relationships.
-- **Imports.** `content_format` on `publish_artifact` and `update_artifact` (type sheet only) takes
-  `"csv"` (CSV text) or `"xlsx"` (an .xlsx file in base64, at most 2 MB, of which at most 24 MB of
-  its parts is ever decompressed) instead of JSON lines; `"jsonl"` is the default. The first row
-  names the columns and each column's type is inferred from its values (all numbers, all dates,
-  all TRUE or FALSE, all links, else text). A CSV never makes a formula: text starting with `=`
-  stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
-  (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
-  value is used, and number formats, column widths and frozen columns carry over where they map.
-  Rows are bounded as they are read: a worksheet row or cell reference below row 10,001 is
-  refused before anything is built, and a blank row the file leaves out stays an empty row.
-  Cells are bounded the same way: each cell with a value counts at least two bytes of JSON lines
-  (and a data row's text its length: a kept formula's source, or the cached value a dropped one
-  falls back to), and a file past 1 MB by that count is refused before its table is built; a
-  CSV's rows past 10,000 are counted, not kept. A column name is read from the first 1,000
-  characters of its header cell (and keeps at most 100). Column widths come from at most
-  100 `<col>` ranges and only for columns A to CV, a number format code longer than Excel's 255
-  characters reads as General, and XML whose tag, comment, CDATA section or processing
-  instruction never ends is refused as damaged.
-  The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
-  .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
-  until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
-  `--id`.
-- **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
-  their letters, types and formats) and the cells of an A1 range (default every data row), a
-  formula as `{f, v}`, every other cell as itself, at most `limit_cells` cells (default 2,000, at
-  most 10,000) with `next_range` to continue. It evaluates only the requested formulas and what
-  they depend on, within `SHEET_EVAL_BUDGET` steps (default 200,000); past it the result carries an
-  `eval_budget` warning and those cells are `#LIMIT!`. It is the `view` action, like `get_artifact`.
-  `edit_sheet(id, base_version, ops, note?)` applies 1 to 200 ops (at most 10,000 cells written)
-  to `base_version` in order and publishes one new version through `update_artifact`, or nothing:
-  `set` (a block of raw cells from a cell, growing the sheet past its end), `append_rows`,
-  `insert_rows`, `delete_rows`, `set_column` (name, type, format, options, width; `null` clears),
-  `insert_columns` and `delete_columns`. An op that would take the sheet past 10,000 data rows
-  (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
-  references as Excel's structural changes do; references into deleted cells become `#REF!`. Each
-  such op rewrites every formula in the sheet, and one call rewrites at most 4 MB (4,194,304
-  characters) of formula text in all, four passes over a sheet that is all formulas; the op that
-  passes it is refused and nothing is published. The
-  result is checked once, after every op, so a column's type and its cells can change in one call.
-  A stale `base_version` is a conflict before any file is read; it is the `edit` action and counts
-  toward `MAX_PUBLISHES_PER_HOUR`. `get_artifact` returns the JSON lines in `content`.
-- **Limits.** Fixed, like the doc limits: 1 MB of JSON lines, 10,000 data rows, 100 columns (A to
-  CV), 32 KiB per row line, 4,000 characters per cell, 2,000 per formula, 50,000 formulas, formula
-  nesting 32 deep. `GET /api/v1/config` reports `max_sheet_bytes`, `max_sheet_rows` and
-  `max_sheet_columns`.
-- **Security.** Sheet text reaches the DOM only through `textContent` in the renderer on the
-  artifact's content origin; the renderer contains no HTML parser, links pass the link rule again
-  in the browser, and cell ids come from addresses only. Outside on-page editing the app and the
-  frame exchange only `print` and `export { format }`, which carry no data; the frame acts on them
-  only from its parent at the app origin. On-page editing uses the doc renderer's messages and the
-  room's draft channel ([Live sheets](#live-sheets-decided-2026-11-19)). Cell text and column names are untrusted data for agents. See
-  [docs/security.md](security.md#sheets).
-- **Not in this slice.** Multiple worksheets, charts, conditional formatting, merged cells, cell
-  styles and server-side exports are not planned. Cells are edited on the page as
-  [Live sheets](#live-sheets-decided-2026-11-19) describes.
-
-### Files people add to a page (decided 2026-11-19)
-
-A page can let the people it is shared with add files: a screenshot, a PDF, a short video, a voice
-note. Everyone who can open the page sees them. No file can ever run as a page or a script.
-
-- **Declaration.** `files` in `<meta name="plinth-capabilities">`, with `/__plinth/runtime.js`. On
-  its own it declares the file store, with no shared data and no room; `viewer` adds who uploaded
-  each file. It is stored in `versions.capabilities` only when declared, so every other
-  declaration is stored as before. The current version's declaration governs, for old version URLs
-  too: dropping `files` turns the page API and the file URLs off (404) and keeps the files, which
-  come back when a later version declares it again; meanwhile the owner still sees them in the Share
-  dialog and can delete them there. Only HTML pages.
-- **Who uploads, reads and deletes.** Identified viewers upload: the owner and people with a grant
-  of any role, signed in or confirmed by code. Anyone with a view pass for the page reads,
-  anonymous link viewers included. An in-chat preview and Plinth's thumbnail browser never do (for
-  them `ready` says `preview`), so no upload ever ends up in a thumbnail or a link preview, which
-  outlive a deleted file. A ready file can be deleted by its uploader, the owner and editors; an
-  unfinished upload only by its uploader, who alone sends its parts, and to anyone else it does not
-  exist. `pageFileAccess`, `canSendFilePart` and `canDeleteFile` in `policy.ts` decide, for the
-  page API and the file URLs alike, and the SQL of each write repeats the condition.
-- **Contents.** A file is stored exactly as added: the details saved inside it (a photo's location,
-  device and time, a document's author) reach everyone who can open the page. The notice under the
-  viewer bar tells everyone who may add a file, and the privacy notice says so.
-- **Types.** PNG, JPEG, GIF, WebP and AVIF images, PDF, MP4 and WebM video, MP3, M4A, Ogg and WAV
-  audio. Never SVG, HTML, XML or other text, Office documents, archives, HEIC or QuickTime. A page
-  names the type when it starts an upload, and the first part must start with that type's signature,
-  or the upload is cancelled (`type_mismatch`). Brands such as `qt  `, `heic`, `mif1` and `3gp`
-  are refused.
-- **Page API.** `window.plinth.files`: `ready` (`{ available, reason, canUpload, accept, limits,
-  usage }`, never rejects; `reason` is `opaque_isolation`, `disabled`, `not_declared`, `preview`,
-  `expired` or `network`), `upload(file, { name, onProgress, signal })`, `list({ limit, cursor,
-  mine })`, `all({ mine })`, `get(id)`, `delete(id)`, `url(id, { download })`, `download(id)` and
-  `onSnapshot(onFiles, onError, { intervalMs, mine })`. A file is `{ id, name, type, size, url,
-  mine, createdAt, uploadedBy? }`; `uploadedBy` (`{ email, role, via }`) only on a page that
-  declares `viewer`, for an identified reader. Nothing is fetched until the page reads `ready` or
-  calls a method. Errors add `unsupported_type`, `type_mismatch` and `aborted` to the shared-data
-  codes, and `quota_exceeded` carries the `limit` that was reached.
-- **Transport.** Under the shared-data API, `/__plinth/api/v1/files...`, behind its caller checks
-  (`x-plinth-data`, same-origin fetch metadata, an exact `Origin` on writes, JSON bodies):
-  `GET files/session`, `GET files/changes`, `GET files` (oldest first), `GET files/<id>`,
-  `POST files` (`{ name, type, size }`, at most 2 KiB), `PUT files/<id>/parts/<n>` and
-  `DELETE files/<id>`. Bytes travel as base64 in parts of exactly 5 MiB (R2's multipart minimum;
-  the last part is shorter), each body exactly `{"data":"<base64>"}`, decoded as it streams in.
-  A body is read only after availability, the artifact, the content pass and the declaration, and a
-  part only for its uploader within the part limits. Parts arrive in order, and the last accepted
-  part may be sent again: it is answered from what was recorded and never stored again. While files
-  are unavailable the session answers `{ available: false, reason }` and every other files route
-  404 with the reason.
-- **Serving.** `GET /__plinth/files/<id>` on the artifact's own origin, behind the content pass,
-  for a fetch destination of `image`, `video`, `audio`, `track`, `empty` or `iframe` (scripts,
-  styles, fonts, workers, objects and manifests get 403; a top-level visit goes to the artifact's
-  page). The answer carries the exact stored type, `nosniff`, CORP `same-origin`, `noindex` even on
-  a public artifact, and the content CSP with `script-src 'none'` and a bare `sandbox`. PDFs, frames
-  and `?download=1` are attachments: sandboxed frames cannot show a PDF, so a page renders one with
-  pdf.js from a fetched blob. `Cache-Control: private, no-cache` with a strong `ETag`, so a deleted
-  file stops showing at the next revalidation, and single byte ranges for video seeking. No route
-  on the app host ever serves a file's bytes.
-- **Names.** The last path segment, without control or bidirectional characters, at most 200
-  characters, with the proven type's extension added when it is missing (`evil.html` becomes
-  `evil.html.png`). Sent in `Content-Disposition` with an ASCII fallback and `filename*`. A name is
-  untrusted display text everywhere: on the page, in the app and for agents.
-- **Limits** (env vars): `ALLOW_FILES` (off), `FILES_MAX_FILE_BYTES` (20 MiB, 1 to 100 MiB),
-  `FILES_MAX_PER_ARTIFACT` (500, 1 to 10,000), `FILES_MAX_BYTES_PER_ARTIFACT` (256 MiB),
-  `FILES_MAX_BYTES_PER_UPLOADER` (64 MiB per person per artifact; the owner is exempt),
-  `FILES_MAX_BYTES_PER_USER` (1 GiB across an owner's live artifacts, apart from their version
-  storage, so uploads never make a publish fail), `FILES_UPLOADS_PER_UPLOADER_PER_HOUR` (60) and
-  `FILES_UPLOADS_PER_ARTIFACT_PER_HOUR` (300). Part requests per hour, per person and per artifact:
-  the upload limit times the parts of a largest file times 4 (a send and three retries). Fixed: 3
-  unfinished uploads per person per artifact, 30 minutes to finish one, 100 files per list page.
-  Every quota is checked in the statement that reserves an upload's bytes, after the owner's
-  uploads past their deadline stop counting in the same batch.
-- **Lifecycle.** Files are not versioned and are kept across new versions and restores. A delete, a
-  cancel, an upload past its deadline, the artifact's deletion or takedown, and `erase-user` turn
-  rows into tombstones that count toward nothing. A takedown deletes the ready files at once (as it
-  wipes shared data); the hourly cron, and on instances without one an upload now and then, deletes
-  the rest, an unfinished upload 15 minutes after its deadline. The owner deletes one file or all
-  of them from the Share dialog.
-- **Agents.** `list_artifact_files` and `delete_artifact_file` (MCP), and REST under
-  `/api/v1/artifacts/:ref/files`, for owners and editors: metadata only, with names marked
-  untrusted. Deleting every file is the signed-in owner's alone, in the app. Agents never upload
-  (they publish versions, whose assets carry their own files) and never read file bytes.
-  `get_artifact` lists `files` among the declared capabilities.
-- **Availability.** Only with origin isolation: under opaque isolation and the path fallback there
-  are no cookies, so `ready` resolves `{ available: false, reason: "opaque_isolation" }` without a
-  request. The notice under the viewer bar tells each person that the page keeps files people add,
-  and who can see who added them.
-
-### Whiteboards (decided 2026-11-19)
-
-A board of notes, text, shapes and arrows that people edit together (a brainstorm, a map, a
-retro) is a whiteboard: the seventh artifact type, `whiteboard`, after `sheet`. Its board lives in the artifact's
-[shared data](#shared-data-and-viewer-identity), so the people it is shared with change it from
-its page without a new version each time, and agents add and move blocks with
-`write_artifact_data`. Its versions hold only the board's settings.
-
-- **Settings, in versions.** A version stores one file, `board.json`:
-  `{"v": 1, "background": "dots" | "grid" | "plain", "edit": "commenters" | "editors"}`, stored as
-  canonical JSON. `edit` is the lowest role that may change the board from its page (commenters by
-  default); viewers never may. Unknown keys are refused. The title is the publish's `title`.
-  Settings changes are versions with `base_version`, and restore brings old settings back.
-- **The board, in shared data.** Two collections, both shared (any permitted writer may move any
-  block): `blocks`, each `{ kind: "note" | "text" | "rect" | "ellipse", x, y, w, h, text,
-  color?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", z? }` (whole numbers; `x` and
-  `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 2,000
-  characters), and `arrows`, each `{ from, to, label?, style?: "solid" | "dashed", head?: "end" |
-  "both" | "none" }` (`from` and `to` two different block ids, a label up to 120 characters). Draw
-  order is `z`, then id. An arrow whose block is gone is not drawn and is never deleted on its own.
-  The server checks every whiteboard write against these shapes, from the page, agents and the
-  app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
-  versioned (shared data never is); every write is stamped with who made it.
-- **A starting board.** A publish, or an update of a board whose shared data has no blocks or
-  arrows, may add `blocks` and `arrows` lists (each item with its `id`) to board.json: ids unique
-  across both, no `u_` ids, every arrow naming blocks in the same input, at most 500 items. They
-  are never stored in the version. Before anything is staged, Plinth decides `data_write` for the
-  caller (on the facts of the artifact about to be created, or on the artifact) and checks the
-  shared-data quotas; once the version has committed it decides again on the artifact as it now is
-  and writes every item in one guarded statement, all or none, stamped with that role and channel
-  and counted as one write against the rate limits. The result carries `board: { blocks, arrows }`,
-  or the warning `board_not_seeded` when the items were not written (access lost meanwhile,
-  someone added blocks first, the quota, the rate limit); the version stays published either way.
-  An update with blocks on a board that has some is refused (`board_not_empty`) before any version
-  is written. A restore never seeds.
-- **Fixed capabilities.** The server derives a version's `versions.capabilities` from its settings,
-  never from the page: shared data with both collections shared, `viewer` (cursors and the people
-  list show names, and the line under the bar tells every viewer so), the room with the board's
-  topics (`block.move`, `block.saved`, `arrow.saved`) open to commenters on a `commenters` board,
-  and the write floor `writers` ([write floor](#shared-data-and-viewer-identity)). A settings
-  version that changes `edit` reconnects the board's room sockets as it commits, so a commenter's
-  board turns read-only at once; the data API refuses their next write in any case.
-- **The renderer.** Plinth's own renderer on the artifact's origin
-  (`/__plinth/types/whiteboard/`), under the strict typed shell (`script-src 'self'`). The shell
-  loads `/__plinth/runtime.js` right before it, and the renderer reads `window.plinth` before
-  building any DOM. It pans, zooms (10% to 400%: drag, wheel, pinch, `+`, `-`, `0` to fit), adds
-  notes, text, boxes and ellipses, moves, resizes, edits (double click or Enter), colours,
-  connects and deletes blocks (with an undo), and moves a focused block with the arrow keys (Shift
-  for bigger steps). Writes go at the rev they read. On a conflict the renderer reads the newer
-  copy and puts on it only the fields the viewer changed (a move, a size, the text, a colour); a
-  field the other writer changed too keeps their value, and the viewer is told. Live cursors,
-  who is here, peers' selections and a block moving while it is dragged go through the room; a
-  peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
-  the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
-  save never takes a drop back to where the block started. Text is written at the rev its edit
-  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
-  "Use mine" button that writes theirs over it. A
-  viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
-  others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
-  and follows on the shared-data poll. Block text is only ever drawn as text.
-- **Export.** PNG (drawn on a canvas at 2x, at most 8,192 px a side and 32 megapixels) and SVG
-  (built from the board, text as text nodes, no scripts, links or embedded content), made in the
-  viewer's browser and downloaded from the frame.
-- **Board settings.** The board's page never shows `board.json`. Owners and editors change the two
-  settings from **Board settings** in the board's ⋯ menu: a dialog with two groups of choices, the
-  background (dots, grid or plain) and who can change the board (commenters and editors, or
-  editors only), and no text field. It reads the current version, and Save sends board.json built
-  by the app from the two values (`{"v":1,"background":…,"edit":…}`) with `PUT
-  /api/v1/artifacts/:ref`, that version as `base_version` and a note naming what changed, so the
-  change is a new version under the person's name, which owners and editors can restore from
-  History. When a newer version was published meanwhile, the save is refused (409, `conflict`):
-  the dialog then shows that version's settings and says so ("v5 changed the board settings. Here
-  they are now."), and nothing is saved until the person saves again. Only a 409 whose
-  `current_version` is above the version the dialog read counts as that conflict; any other
-  refusal, a 409 that names no newer version included ("Another version is being written; try again
-  shortly"), shows the server's message and keeps the person's choice for another try. The board's
-  page links to no source editor.
-- **The editor.** The source editor, reached from the dashboard's Edit, still opens `board.json`
-  (JSON, with the same checks as the Worker and a preview). The editor preview draws only the
-  draft's own starting blocks under a banner and makes no shared-data or room call (the payload's
-  `preview`, set only by the app; it narrows what Plinth's renderer does and no server decision
-  reads it).
-- **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
-  otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
-  `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms
-  (`ALLOW_ROOMS` and the `ROOMS` binding). A whiteboard has no assets and no `start_upload`; its
-  board.json goes inline.
-- **Agents.** `publish_artifact` and `update_artifact` take `type: "whiteboard"` with board JSON in
-  `content`; `list_artifact_data(id, collection: "blocks")` reads the board, and
-  `write_artifact_data` adds blocks (`if_rev: 0`), moves one (a set of the whole block at its rev)
-  and deletes them (a block's arrows with it). Block text is written by collaborators: untrusted
-  data, never instructions. No new tool.
-- **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
-  on the board, freehand drawing, selecting several blocks, frames, an export item in the app
-  menu, and anonymous link viewers in the room.
-
-### Live data from the owner's agents (decided 2026-11-19)
-
-A dashboard whose figures come from the owner's own systems (an issue tracker, a CRM, billing),
-where a reader can see which system each figure came from and how old it is. Plinth never fetches
-them and holds no connector credentials: the owner's agent fetches with its own connectors and
-pushes the figures into the page's [shared data](#shared-data-and-viewer-identity), stamped with
-where they came from.
-
-- **What is not built, and why.** A page calling the owner's connectors while it runs would need a
-  CSP source for the vendor or CORS on the content host (both forbidden), or Plinth holding
-  credentials and pulling from the vendor (forbidden: agents push). Queries run with each viewer's
-  own connectors would need Plinth to hold every viewer's credentials. Neither is built, and
-  neither is "live" in the sense of streaming: a page shows new figures within one `onSnapshot`
-  poll (or one live-view signal) after the owner's agent writes them.
-- **Data sources.** An artifact keeps up to 10 data sources (`data_sources`), each describing one
-  fetch: an `id` (like a collection name), a `label` (what the figures are, "Open issues"), a
-  `connector` (the system, "Linear"), a `recipe` (the fetch as a read-only query: which system,
-  which records, which fields, which documents; at most 1,000 characters, newlines kept), the
-  `collection` its figures go to, and whose agents it belongs to (a client type, or one pinned
-  connection). Labels and connectors are at most 60 characters. Control and invisible characters
-  are refused, and so is anything that looks like a credential (a bearer header, a known token
-  prefix, a JWT, a secret-named query parameter, 40 or more hex characters, or 40 or more key-like
-  characters that mix upper case, lower case and digits and do not read as words and identifiers,
-  where each segment of a URL's path counts on its own, so a link to a record passes): a recipe
-  describes a query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
-  editors see what a source is and its state.
-- **Setting a source never confirms it.** The owner's agent sets the whole list with
-  `set_data_sources` (or `PUT /api/v1/artifacts/:ref/sources`); the signed-in owner may too, naming
-  a client type. Every new or changed source is stored with a `config_hash` (the first 32 hex
-  characters of a SHA-256 over its label, connector, recipe, collection, schedule, who may ask for
-  a refresh, client type and pinned connection) and waits (`awaiting_confirmation`) until the owner
-  confirms it in the app: the Share dialog shows the recipe in full, as text, and Confirm sends the
-  `config_hash` it showed, so a change made in between is refused (`conflict`) and the dialog
-  reloads. Confirming is the signed-in owner's alone (policy `sources_confirm`: a session with the
-  CSRF header; every bearer token is refused whatever its scopes, and there is no MCP tool).
-  Re-setting an unchanged source keeps it confirmed; any change makes it wait again. Removing a
-  source never needs a confirmation. The result of setting gives `confirm_url`
-  (`/a/<slug>?sources=review`, which opens the Share dialog), and the owner's viewer bar says how
-  many sources wait. A source pinned to a connection that is revoked loses its pin in the same
-  batch, records when (`pin_lost_at`), and waits for the owner again instead of moving to any
-  connection of its type; the Share dialog says so. A set that pins a connection and a revocation
-  of it that run at the same time each check again after they commit, so the pin never outlives
-  the revocation.
-- **Stamps on documents.** A `write_artifact_data` set may carry `source: { id, ref?, fetched_at }`.
-  Only the owner's agent stamps (policy `sourcedWrite`: any other writer gets `source_owner_only`);
-  the source must exist on the artifact and name the op's collection; `fetched_at` may be at most
-  5 minutes ahead of the server and 30 days old; `ref` is an optional pointer to the records (a URL
-  keeps only its origin and path, at most 300 characters, refused when it looks like a credential).
-  The server copies the source's label and connector onto the document and records the stamping
-  connection, so removing or renaming a source never changes what an earlier figure claims, and
-  raises the source's `last_fetched_at`. Stamping needs no confirmation: it records the owner's own
-  writes in a session. Any later write without a source (from the page, the app or an agent)
-  clears the stamp in the same statement. A stamp says which of the owner's agents claimed to fetch
-  the figure from which system; Plinth cannot check the vendor.
-- **Sourced collections.** A page may declare `<meta name="plinth-data-sourced" content="issues">`
-  (with `data`, at most 20 names): in those collections only the owner and editors write, from the
-  page, the app or their agents, sets and deletes alike; commenter- and viewer-role writers are
-  refused (`sourced`), so a commenter cannot overwrite a figure. It never stops the owner or an
-  editor from changing or deleting data, and their unstamped changes are counted, below.
-- **What readers see.** Every reader of the page sees a stamped document's `source` (`id`,
-  `label`, `connector`, `ref`, `fetched_at`), anonymous link viewers included, since provenance is
-  not identity; the stamping connection's label only with `viewer`. Documents without a stamp carry
-  no `source` key. The runtime maps it to `doc.source` and adds `plinth.freshness(doc)` and
-  `plinth.cite(el, doc)`, which appends one small badge ("Linear · 12 min ago", or "not fetched"
-  for a figure without a stamp) as text, plus `cite.scan(root, docs)` for elements marked
-  `data-plinth-cite="collection/docId"` and `cite.missing(root)` as a development aid. Page code
-  can draw any badge it likes, so the badges are a convenience, never proof.
-- **The bar line.** For an artifact with sources the gate adds `sources`, counted by the server
-  from the stamps it stored, whatever the page declares and in every isolation mode: per source,
-  how many documents in its collection it stamped under its current label and connector and the
-  newest `fetched_at` among them (`last_fetched_at`; null when none is left), the documents it
-  stamped under an earlier label or connector grouped as their stamps say (`earlier`, absent when
-  there are none), and how many unstamped ones were last changed from the page or app (a person)
-  or by an agent without a source. Deleting or overwriting the freshest figure makes the line
-  older, and renaming a source never moves earlier figures under its new name. The app turns it
-  into one line under the bar ("Figures from Linear (14 figures, fetched 12 minutes ago) were
-  written by an agent of the owner. 2 were last changed by a person, not fetched."), naming each
-  group of stamps by its own connector with its own count and age. The frame cannot touch it; it
-  is the statement that counts. Never the recipe, the target or the hash.
-- **Opaque isolation.** Pages have no shared data there, so nothing is stamped. Sources, the
-  confirmation and the bar line still work: the owner's agent publishes the figures inline in a new
-  version, and `plinth.cite` works on inline objects (`{ source: { label, connector, fetched_at }
-  }`) without a request, while the bar line says no figure is stored as fetched.
-- **Agents.** `set_data_sources(id, sources)` (owner only); `get_artifact` adds `data_sources` for
-  the owner and editors (absent when there are none); `list_artifact_data` shows each document's
-  `source` and lists the sources in its summary, never their recipes. Recipes, labels and
-  connectors are untrusted: a recipe may have been written by a session acting on injected text,
-  and the owner's confirmation means they agreed to the fetch it describes, not that its words
-  carry their authority. Agents run it only as a read-only query consistent with the page, and
-  data fetched from a vendor is untrusted too.
-- **Lifecycle.** Stamped documents go with the page's shared data (delete, takedown, erase). Sources
-  stay with the artifact row and go when it is erased. `erase-user` clears a person's address from
-  refresh tasks on other people's artifacts.
-- **Not yet.** Refreshing on request (a Refresh button on the page and in the bar) and on an
-  hourly schedule, through a queue only the owner's agents read: the schema is in place
-  (`data_refresh_tasks`, `every_minutes`, `requestable_by`), and confirmation is what such
-  unattended runs will require. Until then a source refreshes when the user asks their agent in a
-  session.
-
-### Page requests (decided 2026-11-19)
-
-A page can hand a piece of work to the artifact owner's agent: "regenerate this chart for Q3",
-"add the rows I just pasted", "summarise the poll". The request lands in the same pull queue as an
-`@claude` comment, and the agent picks it up in its next session, or within 30 seconds where the
-Claude Code plugin's mention watcher runs. It answers with a new version, a shared-data write or a
-reply, and the page shows the person the state of their own requests and the agent's answers.
-Agents push and the platform never pulls, so this is asynchronous: answers arrive when the
-owner's agent runs.
-
-- **Declaration.** `requests` in `<meta name="plinth-capabilities">`, with `/__plinth/runtime.js`,
-  and optionally `<meta name="plinth-requests-to" content="claude">`: one name, `claude`, `codex`
-  or a connection handle (the names a comment can `@mention`), the first valid one kept. On its own
-  `requests` declares no shared data and no room. HTML pages only; the current version's
-  declaration governs, for old version URLs too. Dropping it turns the page API off
-  (`not_declared`) and leaves existing requests in the queue and the app.
-- **Who files.** Identified viewers with the mention right: the owner, editors and commenters,
-  signed in or confirmed by code. Viewer-role people, anonymous link viewers, in-chat previews and
-  Plinth's thumbnail browser never file. The server stamps the requester: the email sealed into the
-  content pass (the owner's own, or the one that holds the strongest grant), stored as the root
-  comment's author. A request is not parsed for `@names` (its one target is `to`, or the declared
-  default; with neither it is refused), does not count toward the comment rate, and is a root
-  comment of kind `page_request` with exactly one mention task. `pageRequestAccess` in `policy.ts`
-  decides.
-- **Who sees it.** In the app and over MCP and REST, a request's thread is visible only to the
-  owner, editors and its requester, matched against every email the browser holds (a signed-in
-  account and an email confirmed by code); everyone else gets "not found", whether they list,
-  reply by `parent_id`, reply with `reply_comment` or resolve. In-app visibility follows the
-  identities the browser holds now: if the requester's confirmed email expires while another
-  account stays signed in, the request is hidden until they confirm it again. An agent sees only
-  requests filed under its user's own email, besides those it sees as owner or editor.
-- **What the page sees.** Only its viewer's own requests (`pageSeesRequest`), each with its state,
-  whether it was resolved, its target, its own text and data, the version it was filed on and the
-  one that answered it, timestamps, and the answers written by the owner's agents
-  (`pageSeesAnswer`), the newest five, oldest first. No author of anything, ever: no email, name,
-  connection label or role of anyone, whether or not the page declares `viewer`. Replies people type
-  in the app stay in the app; the reply box on a request's thread says so.
-- **Authority.** A request carries no owner authority, even when the owner's own session filed it.
-  `list_mentions` reports it with `source: "page"`, `comment_author_role: null`, a separate
-  `requester_role` (the role of the person whose session had the page open) and `request_data`
-  (untrusted JSON); `list_comments` and the REST comment routes report `kind: "page_request"`.
-  Agents never put people's names or email addresses into an answer: the page reads it.
-- **Completion.** The agent claims the task, acts with `update_artifact`, `write_artifact_data` or a
-  reply, and answers with `reply_comment`: `result_version` marks it done with that version,
-  `done: true` without one, `failed: true` failed. Resolving a request's thread in the app (the
-  owner and editors dismiss, the requester withdraws) ends its open task as `failed`; reopening the
-  thread does not revive it.
-- **Page API.** `window.plinth.requests`: `ready` (`{ available, reason, canFile, to, limits }`,
-  never rejects; `reason` is `opaque_isolation`, `disabled`, `not_declared`, `preview`,
-  `not_identified`, `expired` or `network`), `file({ body, data?, to? })`, `mine()` (the caller's
-  own, newest first), `get(id)` and `onChange(fn, onError?, { intervalMs })`, which polls every 30 s
-  (at least 15 s) while the tab is visible and one of the caller's requests is open, and at once
-  after `file()`. A request is `{ id, state, resolved, to, body, data, version, resultVersion,
-  createdAt, completedAt, answers: [{ body, createdAt }] }`. Nothing is fetched until the page
-  reads `ready` or calls a method. The runtime has `plinth.requests` only on an instance where page
-  requests are in effect; elsewhere the script is byte for byte what it was before, and pages guard
-  with `window.plinth?.requests`.
-- **Transport.** Under the shared-data API, behind its caller checks (`x-plinth-data`, same-origin
-  fetch metadata, an exact `Origin`, JSON bodies, no CORS), with an `Origin` required on `POST`:
-  `GET /__plinth/api/v1/requests` (200 `{ available, reason, can_file, to, limits, requests }`),
-  `POST /__plinth/api/v1/requests` (`{ body, data?, to? }`, strict, at most 32 KiB on the wire; 201)
-  and `GET /__plinth/api/v1/requests/<id>` (200, or 404 alike for anything that is not one of the
-  caller's own). Errors: 400 `invalid_input` (`no_target`, `unknown_agent`), 403 `forbidden`
-  (`cannot_file`) or `feature_disabled` (the unavailable reason), 401 for a missing or ended pass
-  (never the gate redirect), 429 `rate_limited` with `Retry-After` (`per_viewer`, `per_artifact`,
-  `open_requester`, `open_artifact`).
-- **Limits** (env vars): `ALLOW_PAGE_REQUESTS` (off), `PAGE_REQUESTS_PER_VIEWER_PER_HOUR` (10, 1 to
-  100, per requester per artifact), `PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR` (60, 1 to 1000) and
-  `PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT` (25, 1 to 500, pending or claimed). Fixed: 3 open requests
-  per person per artifact, 4,000 characters of text, 8 KiB of data, 20 listed requests and 5
-  answers each. The open caps and the artifact's access epoch, takedown and deletion are checked in
-  the statement that writes the request.
-- **Lifecycle.** Requests go with the artifact. On a takedown they stay, as comments do, their
-  tasks leave `list_mentions` and new filing gets 404. `erase-user` deletes the requests filed under
-  the person's email, with their tasks and replies.
-- **Availability.** Only with origin isolation, and only while `ALLOW_PAGE_REQUESTS` is on. Turning
-  it on seals the viewer identity claim into identified viewers' content passes even when shared
-  data, files and rooms are off. The notice under the viewer bar tells each person who may file
-  that the page can send requests to the owner's agent as their email, and that the owner, editors
-  and they see them under Comments. When push mode lands, page requests go to push agents too.
-
-### Invitees get an account (decided 2026-11-19)
-
-Someone an artifact or a category is shared with by email opens the link and confirms their
-address with the six-digit code Plinth mails them. That code is the same proof of the mailbox as
-the sign-in code, so confirming it signs them in to the app with that address, as it already did
-for the owner's own address (2026-11-16). They then find what is shared with them under Shared on
-the dashboard, set a name, connect agents and comment or edit live as their role allows, like
-anyone signed in.
-
-- **The session.** `POST /api/v1/view/:ref/code` and `POST /api/v1/portals/:id/code`, once the
-  code checks out and the address still holds a grant (or is the owner's), start a normal user
-  session (`__Host-plinth_session`, 30 days): the owner's account for the owner's address, and for
-  any other address the account `getOrCreateUser` finds or creates, marked verified, exactly as
-  sign-in does. The app session the browser held before is ended in the same request, so a person
-  signed in with one address who confirms another is then signed in with the second; the gate says
-  so before they ask for the code. Nothing else changes in the code flow: the same answer whether
-  or not the address is listed, the same rate limits, five attempts per code, single use, the
-  grant checked again after use, and no account for an address whose code fails. Because the code
-  now signs people in, each guess also counts against the sign-in code's per-address limit (10 an
-  hour), so the sign-in page, the gate and the portal share one guess budget per address.
-- **The fallback.** Where `maySignIn` refuses the address (single-user mode, for any address but
-  `ADMIN_EMAIL`), the code starts a viewer session (`__Host-plinth_viewer`, 7 days, principal kind
-  `viewer`) as before. Viewer sessions started before this change keep working until they expire.
-  Everything that only applies to viewer sessions stays, and now applies only to them: such a
-  session is not an account (`/api/v1/me` answers 401), an editor holding one watches live edits
-  and is asked to sign in (`account_required`), a signed-in person can hold one for another
-  address beside their session (the gate, dictation and the identity claim then use that address),
-  and its email opens an artifact but never files it under a personal category (`no_grant`).
-- **What people are told.** The gate and the portal say, before the code is asked for, that
-  confirming it signs the person in with that address and creates an account for it if it has none.
-  A signed-in person whose own address has no access is told, on both, that confirming another
-  address signs them in with it instead. The code's email is then a sign-in email: subject "Your
-  Plinth sign-in code", the sign-in sentence first, a warning to enter the code only on the app
-  host and never give it to anyone or reply with it, and only then the artifact's title (or the
-  sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too. On a
-  single-user instance they say that no account is needed, and the email stays the "viewing code"
-  email, as before.
-- **Not a sign-up path.** A code goes only to an address that holds a grant on that artifact or
-  share (or is the owner's), and an account exists only once its person has typed the code. No
-  setting turns this off apart from single-user mode: an instance that lets an address sign in
-  lets it sign in by either code.
-
-### Invitation emails (decided 2026-11-19)
-
-When an owner gives someone access, Plinth can email that person the link, so the owner does not
-have to send it themselves. It never emails anyone unless the request asks, and an agent asks only
-when the user told it to.
-
-- **When.** A sharing change emails the people it adds when it carries `notify: true`:
-  `PUT /api/v1/artifacts/:ref/sharing` (`{ grants, notify? }`), `set_visibility` over MCP and
-  `PUT /api/v1/artifacts/:ref/visibility` (the people `emails` adds), and a category share's
-  `POST /api/v1/category-shares` and `PATCH /api/v1/category-shares/:id` with people. `notify`
-  defaults to `false` everywhere. In the app, the People section of an artifact's settings and the
-  Share category dialog have a **Notify people** box, ticked by default: adding a person then sends
-  `notify: true` (role changes, removals and Undo never do). `publish_artifact`'s `emails` never
-  emails anyone; an agent that should notify people publishes without `emails` and adds them with
-  `set_visibility`.
-- **Who is emailed.** Only a new grant: an address that held no grant on the artifact (or the
-  share) before the change. Re-saving a list, changing a role or adding someone who already had
-  access emails nobody, and the owner's own address is never emailed. The decision is
-  `policy.ts mayEmailInvitations`: the request asked, the caller is the owner acting on their own
-  artifact or share (the signed-in owner or the owner's own agent), the owner's address is verified,
-  and the artifact is not taken down.
-- **Bounds.** At most one invitation per artifact (or share) and address within a day, counted
-  across the previous and the current UTC day, so removing and re-adding someone does not email
-  them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change,
-  `RATE_LIMITS.invitationsPerOwnerPerDay` (100) per owner,
-  `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
-  `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together, per UTC
-  day. Each limit is reserved before an email goes (the counter is raised, then checked, and what
-  was not used is given back), so parallel changes cannot pass it. The counters sit in
-  `rate_limits` under keys holding a hash of the address, never the address, are read and written
-  in a fixed number of statements whatever the number of people, and the hourly cron deletes them
-  two days after their day. Nothing else is stored.
-- **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
-  addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
-  `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
-  `recipient_limit`, which covers both per-address limits). Without it, the result is exactly as
-  before. A skipped invitation never fails the change: the grants are
-  saved either way. The app names the people it did not email, and why, in a toast.
-- **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
-  alone when the owner has no display name; the body names the
-  owner by display name and address, the title (for a category, the name its people see, never the
-  category's own name), the role in plain words, the one link (`/a/<slug>`, or the portal
-  `/p/<id>` for a category share), a line saying the title and name were written by the person who
-  shared it, and why the recipient got it. It carries no code, token or other secret: the person
-  still confirms their address when the link asks, and that code signs them in where the address
-  may sign in ([Invitees get an account](#invitees-get-an-account-decided-2026-11-19)). Titles and names are untrusted: control and
-  format characters and line breaks are removed, they are shortened, anything that reads as a web
-  address is defanged (`https[:]//`, `www[.]`), and the HTML part escapes every value and has one
-  link, the artifact's. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
-  console provider in development) after the response, and a provider failure is logged without
-  the address, the title or the message.
-- **No setting.** Invitations go through the email provider sign-in already uses, so there is no
-  new environment variable.
+- **The handle in the app.** The rename, new-token and consent dialogs show the handle of the
+  name being typed in its hint, one sentence that also names `@claude` or `@codex` for a
+  connection of that client type ("Mention as `@laptop` or `@claude`."); the Client field adds
+  none. When no mention can reach the name (an older live connection that holds `mentions` has
+  the same handle, the handle is `claude` or `codex` on a connection of another client type, or
+  the handle does not start and end with a Latin letter or digit: letters of other scripts are
+  dropped from it and a mention drops a final dot), that warning ("Cannot be mentioned: start and
+  end the name with a Latin letter or digit." for the last case) replaces the hint, in the warning colour, and the
+  Connections page shows it as one line on the connection's row. A row that mentions reach shows
+  no handle. A token without the `mentions` scope or limited to one artifact gets neither; its
+  permissions and artifact already say it answers no mentions. Only the owner sees these pages,
+  and only their own labels; the comment composer's suggestions for collaborators stay `@claude`
+  and `@codex`.
 
 ### Live sheets (decided 2026-11-19)
 
@@ -2524,7 +2449,7 @@ and the whole-draft review is the only way on (below).
   socket then applies the same op to the same lines with the same pure function
   (`applySheetStruct`), which moves formula references as `edit_sheet` does.
 - **Versions from elsewhere.** A sheet's draft is never merged with a version published meanwhile
-  (an agent's `edit_sheet` or `update_artifact`, the CLI, REST, the source editor or a restore).
+  (an agent's `edit_sheet` or `update_artifact`, the CLI, REST, a restore or any other way).
   Rows and formulas refer to each other by position, and a line merge cannot tell a row edited in
   place from one deleted and another inserted, so it could put a value or a formula reference where
   neither side wrote it. When such a version vN lands, the room freezes the draft and the editors
@@ -2536,10 +2461,17 @@ and the whole-draft review is the only way on (below).
   draft's base (it changed only the title, or restored the same content), which moves the base
   under the draft's lines as they are, and a version equal to the draft, which ends it. Both
   choices, and the strip's Discard, run under the room's checkpoint lock against the version and
-  revision reviewed, so exactly one of them takes effect. People editing the same draft together
+  revision reviewed, so exactly one of them takes effect. A save that finishes after its lock ran
+  out, onto a draft that a discard or reset replaced meanwhile, is handled as any version published
+  meanwhile instead of becoming the base under the replaced draft. Otherwise the room still knows
+  that save's version as its own (by its content) until it finishes, so the draft moves onto it
+  with the edits made during the save, and it is never frozen against it, also when a later save
+  took the lock and gave up, or the room left memory while the save ran (it keeps each save in
+  progress, by hash and never its text, in its own storage); a finish never puts the saved
+  snapshot back over edits made after it, for docs too. People editing the same draft together
   through the room are not affected.
-  `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report
-  the draft's metadata to owners' and editors' agents.
+  `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` reports the draft's
+  metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a
   field (a list for a select column, a date picker for a date column, a text field otherwise or for
   a formula); Enter, Tab and the up and down arrows commit and move; Escape puts the row back as it
@@ -2547,17 +2479,29 @@ and the whole-draft review is the only way on (below).
   tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
   carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
-  takes 12.5 for 12.5%. A strip under the formula bar inserts a row above or below, deletes the
-  row, inserts a column left or right, deletes the column, and opens the column's settings (name,
-  type, number format, currency, decimals, options). A value the room would refuse stays in its
+  takes 12.5 for 12.5%. Two menus in the bar, beside the filter, act on the selected cell: Row
+  (insert above, insert below, delete) and Column (insert left, insert right, delete, and the
+  column's settings: name, type, number format, currency, decimals, options, in a popover under
+  the column's name that Escape or Cancel closes). A value the room would refuse stays in its
   field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
   came first) is asked for again on the same row or column where it is now, found by the row's
   line or the column's definition under the same columns, and dropped with "The sheet changed
   meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
-  Rows other people hold show their email, and their typing arrives as it is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
-  shows.
+  When a freeze or a takeover closes an open cell, the notice quotes what was typed there and not
+  yet applied, so it can be typed again: one line, at most 40 characters of it, all of it on hover.
+  A double-click outside an open cell never selects words in the grid.
+  Rows other people hold are tinted, with no badge (the holder's name on the row number on hover
+  and for screen readers), and their typing arrives as it is typed. Opening a
+  held row does nothing on screen and tells a screen reader who holds it; a notice with Take over
+  shows only when the holder has gone idle. Sort and filter stay the viewer's own while editing;
+  downloads give what the page shows.
+- **One way in.** The Edit toggle (at phone width, "Edit on the page" in the ⋯ menu) is the only
+  way a person edits a sheet: a sheet has no source editor, so the menu has no source item beside
+  it. Where on-page editing is not available (opaque isolation, the path fallback,
+  `ALLOW_LIVE_EDITING=false`), a sheet has no Edit at all, and agents change it.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
+
 ### Comparing versions (decided 2026-11-19)
 
 History's Compare page says what changed between two versions in plain language and shows both
@@ -2566,41 +2510,81 @@ people work with artifacts as they look, not as their source. Agents, MCP, REST 
 read and write source, and `GET /a/<slug>/source` (plain text for agents and crawlers, linked only
 from discovery tags) stays.
 
-- **The page.** `/a/:slug/compare?from=&to=` shows "What changed from v4 to v5", a list of changes
-  with a "Files" part, then the two versions side by side, each in its own sandboxed frame on the
-  content host through a fresh viewer gate (as before). At phone width the frames show one at a
+- **The page.** `/a/:slug/compare?from=&to=` shows the From and To pickers, then the list of
+  changes with no heading of its own (the pickers say which versions; "Changes" names the region
+  for screen readers), its rows as wide as the frames below, then the two versions side by side,
+  each in its own sandboxed frame on the content host through a fresh viewer gate (as before). At phone width the frames show one at a
   time, with a Before and After switch. There is no source view: a link that still carries
   `view=source` or `view=rendered` lands on the same page.
 - **The list.** It is worked out in the browser, from the two version details Compare already
   fetches (`GET /api/v1/artifacts/:ref/versions/:n`), by pure, zod-free describers in
   `packages/shared/src/changes/` (one per type, keyed by the registry, so a new type must add one).
-  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "Slide
-  3", "Row 7, “Qty”", "Board “Home”"), a short sentence, and the visible text or value before and
-  after. The app holds the two source texts only as the describers' input and renders only their
-  output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
+  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "After
+  “Plot 4”", "Slide 3", "Row 7, “Qty”", "Board “Home”", or nothing when the sentence says it all),
+  a short sentence, and the visible text or value before and after. An item with only one side
+  shows that text alone, green when added and red when removed, with no Before or After label.
+  Within a changed region, headings, paragraphs and other blocks, list items, HTML and board
+  text, slides and boards are paired by the content words they share, never by their place
+  alone. Content words are lowercased (after NFKC), made of letters and digits, three characters
+  or longer, and not one of 50 common English function words ("the", "this", "with"); text in a
+  script written without spaces gives its pairs of characters, and two texts with no content
+  words compare all their words. Two blocks are alike by the Jaccard overlap of those words (a
+  slide by its title and text, a board by its name and text); the region's old and new blocks are
+  aligned in order so that the summed likeness is highest, a pair counting only at 0.3 or more,
+  and blocks with the same content count as fully alike. A matched pair is a change, an old block
+  left over is removed and a new one added: a paragraph inserted next to an edited one reads as
+  added, and an edit that keeps no content word reads as removed and added. A block moved on a
+  page or in a doc, unchanged, is removed at its old place and added at its new one (neither
+  lists moves); a slide or a board moved is listed once as moved. Text with no words at
+  all ("★★★", an emoji) pairs with nothing; only two slides, or two boards, with no words at all
+  (a slide of only an image) may pair, at 0.3 and below any pair that shares a word. A region of
+  more than 40,000 old×new blocks, or one whose cells and word comparisons pass what is left of
+  the 4,000,000 that one change list shares among all its regions, matches equal blocks only and
+  lists the rest as removed or added. A sheet pairs rows in order, preferring one whose
+  first cell is the same, so a row added above another reads as added. The region's items are
+  then listed in the order a person reads the new version (slides included). An item in a region the diff gave up on (below) whose
+  two sides are the same is left out, so only what changed is listed. A slide whose own region has
+  one of its title on the other side changed in place: two same-titled slides edited where they
+  are are not listed as trading places. Bidirectional controls (U+202A to U+202E, U+2066 to
+  U+2069, LRM, RLM and ALM) are dropped from every string of an item, so a version's text cannot
+  reorder how the list reads. The app holds the two source texts
+  only as the describers' input and renders only their output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
   pass the free plan's CPU time per request, and the app has the versions already.
 
 | Type | What the list names |
 | --- | --- |
-| `doc` | Blocks located by the nearest heading above: headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped); formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
+| `doc` | Blocks located by the nearest heading above (a heading after the one before it at its own level, "After “Plot 4”", and under one of a higher level): headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped; a whole list's items set apart with " · "); a changed list's items added, removed or changed one at a time ("List item changed"), never the list as one sentence; formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
 | `slides` | Deck settings (aspect, theme, slide numbers, footer); slides added, removed and moved ("Slide 4 moved to 2"); per slide its title, text, columns, images and speaker notes |
-| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell's "calculation changed", with both results when both versions evaluate within 1,000,000 steps |
+| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell whose calculation changed ("C7 calculation changed"), with both results when both versions evaluate within 1,000,000 steps. A total that only recomputed is left out: its formula is the same, or, when rows or columns were added or removed, it differs only in the cells it refers to (`=SUM(C2:C5)` to `=SUM(C2:C6)` with a row added) |
 | `design_system` | Name, description, prefix, fonts; tokens added, removed and changed, light and dark ("color.brand.500 changed", #3B5BDB → #2F4AC0), their descriptions and deprecation; guidelines (as a doc); shared styles; components added, removed, renamed, their status, description and usage, and "examples or styles changed" (never the code) |
 | `design` | Shared styles or fonts; boards added, removed, renamed, resized, moved, their background and section; per board its visible text, images and styles |
-| `html` | The page title; visible text located by the nearest heading; links, images and forms added or removed (counted); styles and scripts changed (never quoted) |
-| `whiteboard` | The board's settings (background, who can edit). Notes and arrows live in shared data, which versions do not hold |
+| `html` | The page title; visible text located by the nearest heading (a heading after one of its own level, as in a doc); links, images and forms added or removed (counted); styles and scripts changed (never quoted); "Layout or formatting changed" when none of these changed but the markup did (a class, an attribute such as `hidden` or an image's size, bold or italics, a video, frame or SVG shape, spacing in preformatted text) |
+| `whiteboard` | A version holds only the board's settings (its blocks and arrows are shared data, not versioned), so the list names the settings that changed in the Board settings dialog's words: "Background: Dots → Grid", "Who can change the board: Editors only → Commenters and editors". A value outside its list reads as its default, as the board renders it; any other setting that changed is one item, "Other board settings changed", without its name or value; the format version is not a setting. History still offers "Restore settings" for a board's versions |
 
 - **HTML without a DOM.** HTML pages and design boards are read by a string scanner that finds text
   runs, tag names and a few attributes (link targets, image sources, stylesheets, scripts). It
   never builds a document (no DOM, no `DOMParser`), skips comments, scripts, styles and templates,
-  decodes character references once, and is linear in its input.
-- **Files.** Every type lists its files added, removed and replaced, with their sizes. Two files at
+  decodes character references once, and is linear in its input. Two HTML pages look the same to a
+  person when their markup differs only in how it is written: comments, whitespace between tags or
+  folded inside text (not in `pre`, `listing`, `textarea` or `xmp`), the case of tag and attribute
+  names, attribute order and quotes, spacing in a class list, and how characters are encoded.
+- **Files.** Every type lists its files added, removed and replaced as rows at the end of the same
+  list ("File “img/map.png” added", its size beside it), with no part or badge of their own. Two files at
   one path are the same when their `sha256` match, or, when either side was stored before hashes
   were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as
   JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
   review a draft.
 - **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
-  the smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced. The list
+  the smallest set of edits past 4,000 edits or 400 ms, or sooner when the list's one deadline
+  of 1,500 ms is nearer: a version of many changed lists or boards runs one diff for each, and
+  all of them share that deadline. Past it, or once the list holds 200 items, the describers start
+  no more lists, boards or regions (nor the next list inside a region) and the list says it was
+  cut; they stop only after the first change is found, so a cut list is never empty. A diff that
+  stops anchors the region on the blocks
+  found exactly once in each version, keeping the longest run of them in the same order as
+  unchanged (one level of a patience diff, O(n log n)), so a block added or removed does not shift
+  every later pair; what lies between two anchors is aligned as above, the unchanged items left
+  out. The list
   says when it was cut, and the two rendered versions below it always show everything. A version
   the type's checks refuse is not described in detail ("One of the two versions cannot be read in
   detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how
@@ -2677,14 +2661,18 @@ files) and big pages without merging chunks, and an update stores only what chan
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
   Markdown shows that the version does not hold, its path resolved as the browser does: before any
   `?` or `#`, percent-decoded, `.` and `..` segments applied, an `<angle bracket>` destination read
-  whole), `blocked_feature` (once per file, with a count: a script calls `getUserMedia` or
-  constructs `SpeechRecognition`, which fails in every Plinth frame; use `plinth.dictation`) and
+  whole) and
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
-  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
+  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked; and
+  when a type's own checks, such as a page's design system reference or a deck's own warnings,
+  fail on an error,
+  which is logged and never fails the publish). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Sensitive file names.** `sensitive_file` flags a path whose bytes this request sent and whose
-  name usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`…) or is the local
+  name usually holds secrets (`.env`, `.envrc`, `*.pem`, `*.p8`, `id_rsa`, `credentials.json`,
+  `*.tfvars`, `.kube/`, `.docker/config.json`…; the full list is `SENSITIVE_PATH_RULES` in
+  `packages/shared`) or is the local
   `.plinth-files.json` record, whose artifact ids open unlisted artifacts. It checks names, never
   content, over MCP, REST, inline and bundle alike, and it never blocks a publish. It comes before
   every other warning, so the cap never hides it. Paths that are carried forward, reused by
@@ -2793,7 +2781,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   artifact's next version (`--title` and `--category` are then ignored, with a note), and
   `whoami` names the artifact. With `--json`, every failure also prints one object on stdout:
   `{ ok: false, exit_code, outcome: "conflict" | "usage" | "error", message, current_version? }`;
-  the result object carries the artifact's `title` from the read-back. Exit codes: 0 ok, 1
+  the result object carries the artifact's `title` from the read-back. `--json --dry-run` prints
+  `{ outcome: "dry_run", dry_run: true, type, files, bytes, send }`, plus `id`, `slug`,
+  `base_version`, `next_version`, `changed` and `reused` for an update, and its sentence on stderr. Exit codes: 0 ok, 1
   error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
   without sending in exactly two cases and prints which: the current version is N+1 and its files
   equal the folder (already published, by an earlier run whose answer was lost), or it is N and its
@@ -2843,8 +2833,9 @@ options.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Names are display text; the people list is the access list.** Display names have no `@` (nor
-  the small and fullwidth forms that render as one) and no control or invisible characters, and
-  never stand for a role. A page sees them only where it sees an email. Only the owner and editors
+  the small and fullwidth forms that render as one) and no control or invisible characters, must
+  show something, and never stand for a role: the app marks the owner's comments and versions from
+  ids. A page sees them only where it sees an email. Only the owner and editors
   (and their agents) list who has access, on a page that declares `people`, and every identified
   viewer is told; there is no visit log and no directory search. An access list names a grant
   holder only once they have taken part in the artifact, so the addresses an owner adds never
@@ -2854,56 +2845,28 @@ options.
   `decide` before the scope, so a leaked CI secret can read and update one artifact and nothing
   else; the GitHub Action keeps server and artifact text from being read as workflow commands
   ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)).
-- **Frames never get the microphone; dictation runs in the app.** Artifact frames get no powerful
-  feature (`allow=""`, and the content host's `Permissions-Policy` turns them off). The browser
-  keeps a microphone grant for the app's origin, so delegating it to one frame would give it to
-  every artifact. With `ALLOW_DICTATION`, the app runs the recognizer after the viewer's click in
-  the page and their consent, shows a Stop the page cannot cover, and posts only words.
 - **Live views carry only signals.** The watch socket is on the app host and refuses any `Origin`
   but the app's, a missing one and `null`, so no artifact can open it; it refuses bearer tokens,
   takes the gate's view decision, and carries version numbers and change signals made by the
   server, never content or anything a page wrote. The app posts its two hints to a frame only at
   its exact content origin ([Live views](#live-views-decided-2026-11-19)).
+- **Nothing on Plinth chooses the user's local files.** Project files reach a page only as copies
+  the user chose in the session; a mention from any role never makes the owner's agent read one,
+  and `sensitive_file` flags secret-looking names among the files a request sent
+  ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
 - **A new version keeps state only inside its own origin.** A doc shown in place fetches its
   Markdown from its own origin with the pass it holds and renders it through the same sanitizer;
   state a page hands to its next version stays in that content origin's `sessionStorage`. The
   frame tells the app only `hello`, a hold, a nonce and one checked path, which becomes the gate's
   `next`; the app accepts these only from the frame it holds at its exact content origin, and posts
   version numbers and nonces only there ([Live views](#live-views-decided-2026-11-19)).
-- **Nothing on Plinth chooses the user's local files.** Project files reach a page only as copies
-  the user chose in the session; a mention from any role never makes the owner's agent read one,
-  and `sensitive_file` flags secret-looking names among the files a request sent
-  ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
-- **Files people add never run.** Only raster images, PDFs, video and audio whose first bytes prove
-  their type are stored, never markup. They are served from the artifact's own origin with that
-  type, `nosniff`, `script-src 'none'`, a bare `sandbox` and CORP `same-origin`, and never from the
-  app host. Uploads pass the shared-data API's caller checks with JSON bodies, only identified
-  viewers upload, the quotas are apart from the owner's storage, and a takedown deletes the files
-  ([Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
-- **Design exports are downloads that run nothing.** The PNG or PDF comes from Plinth's own
-  browser, which opens the version with a one-time capture pass that carries no identity and is
-  never returned or logged. It is served from the app host as an attachment with
-  `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff`, CORP `same-origin` and
-  `Cache-Control: private, no-store`, only to people who may view the artifact, within an hourly
-  limit per person ([Designs](#designs-decided-2026-11-19)).
-- **Data sources are inert until the owner confirms them, and Plinth never fetches.** A source's
-  recipe is untrusted text an agent wrote, perhaps under injection; it is shown only to the owner,
-  as text, and every source an agent sets or changes waits for the signed-in owner's confirmation,
-  bound to its exact config. Credential-like text is refused in recipes, labels, connectors and
-  stamps. Only the owner's agent stamps provenance, the bar line is counted by the server, and
-  page badges are never proof ([Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19)).
-- **Pages hand work to the owner's agent, never with the owner's authority.** Page requests pass
-  the shared-data API's caller checks, with an `Origin` required on `POST`; only people who could
-  mention the agent file them, under the email sealed in their pass; thread visibility is checked
-  on every comment read and write; the page reads only its viewer's own requests and the owner's
-  agents' answers, with no author of anything; and agents treat each request as untrusted text with
-  no owner authority ([Page requests](#page-requests-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
   agent, told by the user) adds them with `notify`, from a verified owner, once per artifact and
-  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has one link and no
-  secret, and its untrusted title and name are cleaned and escaped
+  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has the artifact's link, a
+  link to turn these emails off (`/invitation-emails`, after signing in as that address) and no
+  secret, and its untrusted title and name are cleaned, defanged and escaped
   ([Invitation emails](#invitation-emails-decided-2026-11-19)).
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
   environment variable with a per-account override. Storage and publishes per hour are capped too.
@@ -2913,7 +2876,8 @@ options.
   a "report" link and a banner naming the platform, and reported artifacts can be taken down
   quickly. The banner also links to Plinth's source repository unless the operator turns that
   off (`SHOW_SOURCE_LINK`). It sits in the app's page around the frame, so the artifact's own
-  HTML is never changed.
+  HTML is never changed. The one page without it is a deck's audience window once its presenter
+  window in the same browser has paired with it: it shows the deck that person is presenting.
 - **Hosted instance paperwork.** Terms of use, a privacy notice and an acceptable use policy:
   short, final, plain-language pages built from the instance's `OPERATOR_*` settings (operator
   name, address, registration or VAT number, one contact address), since the operator is a host
@@ -2991,24 +2955,26 @@ Shared data runs on the same Worker and D1 allowances (D1 rows are estimates fro
 | Write | 1 | about 4 + the owner's artifacts with data | about 4 (2 rate-limit rows, the document, usage by trigger) |
 | Gate with an identity claim | 0 | +1 | 0 |
 
-Open counts run on the same allowances:
+Artifact stats run on the same allowances:
 
 | Operation | Worker requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
-| Counted open (enter) | 0 extra | about 1 | 1, on top of the existing `used_nonces` row |
+| Counted open (enter) | 0 extra | about 1 | 1 row plus its index entries (2 to 3), on top of the existing `used_nonces` row |
 | Uncounted enter | 0 | 0 | 0 |
-| Daily fold (cron, 03 UTC) | 0 | the rows older than 90 days, plus the totals rows they touch | about 1 per folded row, plus deletes |
-| Owner opens the Share dialog | 1 | ≤ 92 | 0 |
-| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus view rows in the window | 0 |
+| Daily fold (cron, 03 UTC) | 0 | the opens older than the retention, plus the totals rows they touch | about 1 per artifact folded, plus the deletes |
+| Owner opens an artifact's Stats | 1 | about 6 times the opens in the window, plus 2 | 0 |
+| Owner opens the Stats list | 1 | the owner's artifacts, plus their opens in the log and in the last 30 days | 0 |
+| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus the opens in the window | 0 |
 
-At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
+At the free tier's 100k rows written a day, an instance can take roughly 25k counted opens a day,
 with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.
 
 Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Free plan). Free:
 100k requests and 13,000 GB-s of duration per day. Workers Paid includes 1M requests and 400k GB-s
 a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
 request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
-are free, and a hibernating room accrues no duration. A room stores nothing.
+are free, and a hibernating room accrues no duration. A room stores almost nothing: its alarm and,
+for a doc or sheet edited on its page, one small record of the saves in progress (never their text).
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
@@ -3060,29 +3026,6 @@ Sheets run on the same Worker allowances:
 On the free plan's 10 ms of CPU per request, the largest sheets may need a lower
 `SHEET_EVAL_BUDGET`, and an operator on Workers Paid can raise it to 20,000,000.
 
-Files people add to a page run on the same Worker and D1 allowances, plus R2 (Class A operations:
-1M a month free, then $4.50 per million; Class B: 10M a month free, then $0.36 per million):
-
-| Operation | Worker requests | D1 rows read | D1 rows written | R2 operations |
-| --- | --- | --- | --- | --- |
-| Small file (one part) | 2 | about 8 | about 5 (2 rate-limit rows, the file, its ready update, usage by trigger) | 1 Class A |
-| File in n parts | n + 1 | about 4 per part | about 2 per part | n + 2 Class A |
-| File view | 1 | about 4 | 0 | 1 Class B, none for a 304 |
-| `onSnapshot` poll | 1 per 15 s per visible tab | 1 | 0 | 0 |
-| Delete, or the sweep clearing one tombstone | 1, or 0 | about 2 | about 2 | 1 Class A |
-
-Stored files are R2 storage like versions ($0.015 per GB-month past 10 GB), counted apart from the
-owner's quota under `FILES_MAX_BYTES_PER_USER`.
-
-Data sources run on the same Worker and D1 allowances and call nothing outside Plinth:
-
-| Operation | Worker requests | D1 rows read | D1 rows written |
-| --- | --- | --- | --- |
-| Viewer gate, any artifact | as before | 1 more (an indexed read of its sources) | 0 |
-| Viewer gate, an artifact with sources | as before | 1 more, plus one aggregate over the sources' collections | 0 |
-| A stamped write | as a write | about 1 more (the source) | 1 more (the source's last fetch) |
-| Set sources, confirm, remove | 1 | about 3 | about 1 per changed source |
-
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month
 ([overview](https://costbench.com/software/developer-tools/vercel/)).
@@ -3104,17 +3047,13 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs (with PNG and PDF export through Browser Rendering), sheets and whiteboards done (2026-11-19); editing a sheet on its page with other editors done (2026-11-19). Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs, sheets and whiteboards done (2026-11-19); editing a sheet on its page with other editors done (2026-11-19). Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category and a
    group-by-category view (personal categories for artifacts shared with you, and sharing a whole
    category, shipped 2026-11-19). Tokens limited
    to a category (declined for now: a category is owner text that is renamed and merged, so the
    limit would move under the token, and such a token could still create artifacts; tokens limited
-   to one artifact cover CI). Server speech (speech to text and voices run by the instance, for
-   browsers without a recognizer), dictation into a doc's on-page editor, and an app "Read aloud"
-   for docs. Refreshing data sources on request and on an hourly schedule through a queue only the
-   owner's agents read, for sources the owner confirmed (data sources, stamps and the bar line
-   shipped 2026-11-19).
+   to one artifact cover CI).
 
 ## Decisions
 
@@ -3122,10 +3061,10 @@ for a single user.
 | --- | --- |
 | License | MIT |
 | Operator of the hosted instance | Aconite Software & Investments, Lda. |
-| Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
+| Sign-in | Email magic link (with a six-digit code), plus an optional password sign-in for one review account: `REVIEW_LOGIN_EMAIL` and the secret `REVIEW_LOGIN_PASSWORD_HASH`, off unless both are set, at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. That account is an ordinary user, never an `ADMIN_EMAIL` address and never on a single-user instance ([security.md](security.md#review-account-sign-in)). Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame; PNG and PDF export rendered by Browser Rendering where the instance has it); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`)); whiteboards 2026-11-19 (settings in `board.json`, the board itself in shared data, capabilities fixed by the server with a write floor that fails closed) |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`); whiteboards 2026-11-19 (settings in `board.json`, the board itself in shared data, capabilities fixed by the server with a write floor that fails closed) |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

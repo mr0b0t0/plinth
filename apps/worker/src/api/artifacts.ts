@@ -1,6 +1,5 @@
 // REST mirror of the artifact MCP tools. Same services, same policy, same validation.
 import {
-  API,
   getArtifactInput,
   listArtifactsInput,
   publishArtifactInput,
@@ -12,7 +11,6 @@ import {
 import { Hono } from "hono";
 import { applyAppHeaders } from "../app/headers.ts";
 import { thumbnailsActive } from "../config.ts";
-import { ApiError } from "../lib/errors.ts";
 import { getArtifactWithData } from "../services/artifactData.ts";
 import {
   deleteArtifact,
@@ -26,7 +24,6 @@ import {
   updateArtifact,
 } from "../services/artifacts.ts";
 import { patchArtifact } from "../services/categories.ts";
-import { designExportOptions, exportDesign } from "../services/designExport.ts";
 import { scheduleThumbnail, thumbnailResponse } from "../services/thumbnails.ts";
 import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 
@@ -108,11 +105,13 @@ artifactsApi.put("/artifacts/:ref/visibility", async (c) => {
 /**
  * A version's thumbnail (the current version without ?version), for anyone who may view the
  * artifact: the same access check as reading it. 404 until the capture lands; a missing one starts
- * a capture, which is how versions published before thumbnails existed get theirs.
+ * a capture, which is how versions published before thumbnails existed get theirs. The action is
+ * `enter`, which is `view` for everyone but a token limited to one artifact: a capture runs the
+ * page, which may draw its shared data, and such a token is refused shared data.
  */
 artifactsApi.get("/artifacts/:ref/thumbnail", async (c) => {
   const ctx = serviceCtx(c);
-  const { artifact } = await requireArtifact(ctx, c.req.param("ref"), "view");
+  const { artifact } = await requireArtifact(ctx, c.req.param("ref"), "enter");
   const q = c.req.query("version");
   const n = q === undefined ? artifact.currentVersion : Number(q);
   const headers = new Headers();
@@ -137,57 +136,4 @@ artifactsApi.get("/artifacts/:ref/thumbnail", async (c) => {
   }
   scheduleThumbnail(ctx, artifact.id, n);
   return missing();
-});
-
-/** A query parameter, or undefined when absent or empty. */
-const queryOf = (c: { req: { query: (k: string) => string | undefined } }, k: string) => {
-  const v = c.req.query(k);
-  return v === undefined || v === "" ? undefined : v;
-};
-/** A query string is text: a non-number fails the schema's integer check (400). */
-const numberOf = (v: string | undefined) => (v === undefined ? undefined : Number(v));
-
-/**
- * A design version's artboards and the formats it downloads as, for anyone who may view it (the
- * app's export dialog). 404 for an artifact of another type. The service checks the query after
- * the access decision.
- */
-artifactsApi.get(API.designExportOptions, async (c) => {
-  return c.json(
-    await designExportOptions(serviceCtx(c), c.req.param("ref"), {
-      version: numberOf(queryOf(c, "version")),
-    }),
-  );
-});
-
-/**
- * A design version as a PNG of one artboard or a PDF (every board, or one), rendered by Browser
- * Rendering, for anyone who may view it. A download, never a page: an attachment with its own
- * CSP that runs nothing.
- */
-artifactsApi.get(API.designExport, async (c) => {
-  const ctx = serviceCtx(c);
-  let file: Awaited<ReturnType<typeof exportDesign>>;
-  try {
-    file = await exportDesign(ctx, c.req.param("ref"), {
-      format: queryOf(c, "format"),
-      version: numberOf(queryOf(c, "version")),
-      board: queryOf(c, "board"),
-      scale: numberOf(queryOf(c, "scale")),
-    });
-  } catch (e) {
-    // Every export slot taken: say when to try again, as the hourly limit's 429 does.
-    if (!(e instanceof ApiError) || e.code !== "unavailable") throw e;
-    const retryAfter = (e.details as { retry_after?: number } | undefined)?.retry_after;
-    if (!retryAfter) throw e;
-    return c.json(e.toBody(), 503, { "Retry-After": String(retryAfter) });
-  }
-  const headers = new Headers();
-  applyAppHeaders(ctx.config, headers);
-  headers.set("Content-Security-Policy", "sandbox; default-src 'none'");
-  headers.set("Content-Type", file.contentType);
-  headers.set("Content-Disposition", `attachment; filename="${file.filename}"`);
-  headers.set("Content-Length", String(file.bytes.byteLength));
-  headers.set("Cache-Control", "private, no-store");
-  return new Response(file.bytes, { status: 200, headers });
 });

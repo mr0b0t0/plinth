@@ -6,6 +6,7 @@
 // retention).
 import {
   createExecutionContext,
+  evictDurableObject,
   runInDurableObject,
   waitOnExecutionContext,
 } from "cloudflare:test";
@@ -355,6 +356,150 @@ describe("live API: checkpoints", () => {
       dirty: true,
     });
     a.ws.close(1000);
+  });
+
+  // A save that outlives its 30 s lock, with the line it saved edited again meanwhile: a merge of
+  // its own version would conflict, so a doc reaches the same freeze as a sheet when the version
+  // is not recognized. Edits made after the snapshot are never replaced by it.
+  describe("a save that outlives its checkpoint lock", () => {
+    // The lock runs out, in memory and in the room's stored record.
+    const expire = (id: string) =>
+      runInDurableObject(stubFor(id), async (room) => {
+        (room as any).doc.lock.until = 0;
+        (room as any).doc.persist();
+      });
+    const LATER = "# Plan\n\nFirst, edited twice.\n\nSecond.\n";
+
+    async function slowSave() {
+      const s = await docSetup(BASE);
+      const a = await connectDoc(s.id, s.ownerP.cookie);
+      await editLines(a, 2, 3, "First, edited.");
+      const stub = stubFor(s.id);
+      const snap = await stub.docSnapshot(s.id);
+      expect(snap).toMatchObject({ state: "ready", rev: 1 });
+      await expire(s.id);
+      await editLines(a, 2, 3, "First, edited twice.", 1);
+      return { ...s, a, stub, snap };
+    }
+
+    it("its own version is recognized by its hash after the lock ran out", async () => {
+      const { id, ownerP, a, stub, snap } = await slowSave();
+      const put = await api(`/artifacts/${id}`, ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+      });
+      expect(put.status).toBe(200);
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: 2,
+        dirty: true,
+      });
+      expect(await draft(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        content: LATER,
+      });
+      a.ws.close(1000);
+    });
+
+    it("the room evicted while it saves still knows its own version on the wake, and keeps the later edit", async () => {
+      const { id, ownerP, a, stub, snap } = await slowSave();
+      // Idle while the stager writes: the object leaves memory, its sockets hibernate.
+      await evictDurableObject(stub);
+      const put = await api(`/artifacts/${id}`, ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+      });
+      expect(put.status).toBe(200);
+      // A merge of v2 would conflict on the line edited twice; it is recognized, so nothing freezes.
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      await evictDurableObject(stub);
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: 2,
+        dirty: true,
+      });
+      expect(await draft(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        content: LATER,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a notify that was lost is recognized by the alarm's catch-up, from the version's text", async () => {
+      const { id, ownerP, a, stub, snap } = await slowSave();
+      await api(`/artifacts/${id}`, ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+        vars: { ALLOW_ROOMS: "false" },
+      });
+      await runInDurableObject(stub, async (room) => {
+        await (room as any).alarm();
+      });
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: LATER,
+      });
+      a.ws.close(1000);
+    });
+
+    it("an undo made while it saves survives an eviction: the line put back stays the draft over v2", async () => {
+      const s = await docSetup(BASE);
+      const a = await connectDoc(s.id, s.ownerP.cookie);
+      await editLines(a, 2, 3, "First, edited.");
+      const stub = stubFor(s.id);
+      const snap = await stub.docSnapshot(s.id);
+      expect(snap).toMatchObject({ state: "ready", rev: 1 });
+      await expire(s.id);
+      // The line put back: the draft is v1 again while v2 is being written, then an eviction.
+      await editLines(a, 2, 3, "First.", 1);
+      await evictDurableObject(stub);
+      const put = await api(`/artifacts/${s.id}`, s.ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+      });
+      expect(put.status).toBe(200);
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      expect(await stub.docFinish(s.id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: 2,
+        dirty: true,
+      });
+      // v2 holds the edit; the draft is the undo, unsaved on top of it.
+      expect(await stub.docPeek(s.id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: BASE,
+      });
+      expect(await draft(s.id)).toMatchObject({ base_version: 2, content: BASE });
+      a.ws.close(1000);
+    });
+
+    it("after the next save took the lock and gave up, its own version is still recognized", async () => {
+      const { id, ownerP, a, stub, snap } = await slowSave();
+      const next = await stub.docSnapshot(id);
+      expect(next).toMatchObject({ state: "ready", rev: 2, text: LATER });
+      // The next save aborts before the slow one's version lands: the slow one's snapshot stays.
+      await stub.docAbort(next.lock);
+      const put = await api(`/artifacts/${id}`, ownerP.session.headers, {
+        method: "PUT",
+        body: { content: snap.text, base_version: 1 },
+      });
+      expect(put.status).toBe(200);
+      // The same line changed on both sides of a merge, yet nothing is frozen: v2 is its own.
+      expect(await a.nextOf("saved")).toEqual({ t: "saved", version: 2, rev: 2 });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: 2,
+        dirty: true,
+      });
+      expect(await draft(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        content: LATER,
+      });
+      a.ws.close(1000);
+    });
   });
 });
 
