@@ -2,7 +2,7 @@
 import { LIMITS, startUploadInput } from "@plinth/shared";
 import { startUpload } from "../../services/uploads.ts";
 import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
-import { CATEGORY_NOTE, UNTRUSTED_NOTE, UPLOAD_NOTE } from "../notes.ts";
+import { CATEGORY_NOTE, categoryShareNote, UNTRUSTED_NOTE, UPLOAD_NOTE } from "../notes.ts";
 import { run, type ToolRegistrar } from "./context.ts";
 
 export const registerUploadTools: ToolRegistrar = ({ server, ctx, opaque }) => {
@@ -34,6 +34,7 @@ export const registerUploadTools: ToolRegistrar = ({ server, ctx, opaque }) => {
         "Call start_upload again (with the same base_version) only when nothing was published. An " +
         "upload never commits twice: sending it again answers upload_used. " +
         CATEGORY_NOTE +
+        categoryShareNote(ctx.config) +
         UPLOAD_NOTE +
         opaque +
         UNTRUSTED_NOTE,

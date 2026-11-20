@@ -63,6 +63,19 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   viewer can never tell from the socket whether the owner or a collaborator has the page open. A
   reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.27.0: the agent's rule
   never to tell people to reload.
+- **Your own categories for artifacts shared with you, and sharing a whole category.** On the
+  dashboard, "Move to category…" now files an artifact someone shared with you under a category of
+  your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
+  one of their categories with people (viewer or commenter) under a name they choose: the people
+  get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
+  once. Filing an artifact under a shared category never shares it: it waits for the owner's review
+  (one "to review" line on the dashboard), and the owner's agent is told so
+  (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from
+  the category's people even when a new version was published while the dialog was open, and a
+  taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it
+  off. A token limited to one artifact never sees or manages category sharing: it holds no role
+  through a category grant, and the share, portal and personal-category routes answer it 403
+  `token_bound`. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
 
 ## 0.6.0 (2026-11-20)
 

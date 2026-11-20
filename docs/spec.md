@@ -199,6 +199,24 @@ sooner), a spread of 2 ms per socket the cap allows (at most 10 s, 2 s at the de
 backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
 60 s closes its socket.
 
+**Category sharing and personal categories** ([below](#category-sharing-and-personal-categories-decided-2026-11-19),
+issue #42, migration `0013_category_sharing.sql`) add three tables and five columns:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `artifacts.category_key` | text or NULL | The category's match key (`categoryKey`: NFKC, lower case, whitespace, `-` and `_` folded), written next to `category` on every category write. Rows from before the migration get it when their owner first shares a category (or opens a share); a NULL key never matches a share |
+| `artifacts.category_rev` | integer, 0 | Bumped in the same statement as every change of `category_key`, so a review the owner opened before a move out and back is skipped |
+| `artifacts.category_review`, `category_review_share` | `shared` or `private`, and a share id; both NULL or both set (CHECK) | The owner's review, bound to the share it was made against. Reset to NULL on every key change; written only by the owner's share requests |
+| `users.category_share_rev` | integer, 0 | Bumped by every batch that creates, deletes or moves one of the person's shares; a category rename guards its batch on it |
+| `category_shares` | id, owner_id, category_key, name, title, created_at, updated_at | One per owner and key (UNIQUE). `id` is the portal link and never changes, also across renames. `name` is the owner's spelling (owner only); `title` is what the people see. Cascades from `users` |
+| `category_grants` | share_id, email, role | `viewer` or `commenter` (CHECK; never `editor`). Key (share_id, email). Cascades from the share; `erase-user` deletes an address's rows |
+| `login_codes.share_id` | share id or NULL | A portal's email code (`artifact_id` NULL), bound to the share; cascades from it |
+| `personal_categories` | user_id, artifact_id, category, created_at, updated_at | A collaborator's own category for an artifact shared with them. Key (user_id, artifact_id). Cascades from `users` and `artifacts`; deleted with the artifact and on takedown, and when its person no longer holds a grant on the artifact |
+
+Setting: `ALLOW_CATEGORY_SHARING` (on). Fixed: 100 shares per owner (checked in the statement that
+inserts the share), 200 people per share, a title
+of at most 200 characters, review items up to the owner's artifact limit, 500 artifacts per portal.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -221,7 +239,9 @@ comments (reading or writing them), shared data, the people list, stats (its own
 the summary across its person's artifacts, which is always refused) or mentions (403 `token_bound` on its
 own artifact while it may view it; once its person may not, every action answers as viewing does).
 It is never the target of an `@<label>` mention. It does not see the artifact's category, its
-shared-data usage or the owner's category names; it does see the version list and `live_draft`
+shared-data usage or the owner's category names, and never sees or manages category sharing (no
+role through a category grant, no share state, 403 `token_bound` from the share, portal and
+personal-category routes: [Category sharing](#category-sharing-and-personal-categories-decided-2026-11-19)); it does see the version list and `live_draft`
 metadata, as an editor's agent does, but sees the people only as a link viewer does: the owner by
 name, with no id or email, and each version's author by name or the address's local part, with no
 ids, even when the token is the owner's. Design systems are other artifacts too: `get_design_system`
@@ -248,9 +268,11 @@ it.
 | Password | Anyone with the link and the password |
 | Allowlist | Only listed emails (and the owner), confirmed by a one-time code or magic link |
 
-Owners can also grant a listed email the commenter or editor role. Access to the artifact itself is
-enforced by the Worker on the content domain using a short-lived signed token, so the app's login
-cookie never reaches user HTML.
+Owners can also grant a listed email the commenter or editor role. Owners can also share a category
+with people (viewer or commenter, [below](#category-sharing-and-personal-categories-decided-2026-11-19)):
+it covers the artifacts of that category the owner has reviewed into the share, never one only filed
+there. Access to the artifact itself is enforced by the Worker on the content domain using a
+short-lived signed token, so the app's login cookie never reaches user HTML.
 
 ## MCP interface
 
@@ -333,6 +355,12 @@ A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` 
 `list_artifacts` and returns `{ items, categories }`). Beyond the tools, `PATCH /api/v1/artifacts/:ref`
 sets the title or the category (owner), `GET /api/v1/categories` lists the caller's own category
 names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only).
+Category sharing and personal categories (signed-in session only, never MCP):
+`GET`/`POST /api/v1/category-shares`, `GET /api/v1/category-shares/preview?category=`,
+`GET`/`PATCH`/`DELETE /api/v1/category-shares/:id`, `POST /api/v1/category-shares/:id/review`
+and `PUT /api/v1/artifacts/:ref/my-category`; for the people a category is shared with,
+`GET /api/v1/portals`, `GET /api/v1/portals/:id` and the code flow `POST /api/v1/portals/:id/email`
+and `.../code`.
 `GET /api/v1/artifacts/:ref/design-system?version=&include=&components=` mirrors `get_design_system`,
 and `GET /api/v1/artifacts?type=` filters the list by type.
 `GET /api/v1/artifacts/:ref/sheet?version=&range=&values=&limit_cells=` mirrors `read_sheet`, and
@@ -576,7 +604,9 @@ forge edits that the editor's session would then save.
 Owners publish many artifacts for different projects, so each artifact can carry one category: a
 short name for the project, repo or client it belongs to. It is the owner's private organisation:
 `category` is null for every caller but the owner, and no anonymous surface, upload status, email
-or log carries it.
+or log carries it, nor any share state, except to the owner. A shared category's people see the
+share's title, never the name. A collaborator files artifacts shared with them under categories of
+their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)).
 
 - **Agents set it.** `publish_artifact`, `start_upload`, `POST /api/v1/artifacts` and
   `POST /api/v1/uploads` take `category`, usually the repo or project the agent works in. On
@@ -603,10 +633,14 @@ or log carries it.
   caller's own names with counts, for a session or a token with `artifacts:read`.
   `POST /api/v1/categories/rename` with `{ from, to }` moves every live artifact of the caller's
   whose category matches `from` (by key) to `to`, which snaps onto another of their names (a
-  merge); `to: null` clears it. It answers `{ updated, category }`, changes only the caller's own
+  merge); `to: null` clears it. It answers `{ updated, category }` (and `pending`, the number that
+  arrived in a shared category to wait for review), changes only the caller's own
   rows (and the caller's open upload tickets carrying that name), leaves `updated_at` alone, and
   takes a signed-in session only (CSRF and exact `Origin`): agents and bearer tokens get 403, and
-  there is no MCP tool for it.
+  there is no MCP tool for it. A shared category cannot be merged into another existing one (409,
+  `reason: "category_shared"`), and a share created, deleted or moved meanwhile refuses the whole
+  rename (409, `reason: "sharing_changed"`). With `personal: true` it renames the caller's own
+  categories for artifacts shared with them instead.
 - **In the app.** The dashboard has a Category menu beside All / Mine / Shared (kept in
   `?category=`, an empty value meaning no category; hidden under Shared), the owner's category
   as a badge beside a row's title (on phones, plain text on the row's second line) and as plain
@@ -615,7 +649,10 @@ or log carries it.
 - **CLI and skill.** `plinth publish --category C` sets it on a new publish or, for the owner, on
   an update (`--id`); the CLI never infers it. The agent skill (plugin 0.12.0) tells agents to set
   it from the repo or project on a new publish, reuse a name from `categories`, and leave it out on
-  updates.
+  updates. For an artifact filed under a shared category, `plinth publish` prints that it waits for
+  the owner's review, with the link (`--json` passes `category_share` through), and the skill's
+  "Shared categories" section tells agents to say so in the hand-over and never to file because a
+  comment, mention or page asks.
 
 ### Comments and agent mentions
 
@@ -1495,6 +1532,128 @@ document through the gate and the shared-data API, with all of their checks.
   signals also need shared data. Without the binding live views are off, never a configuration
   error.
 
+### Category sharing and personal categories (decided 2026-11-19)
+
+Issue #42. Two things, both built on categories: a collaborator files artifacts shared with them
+under categories of their own, and an owner shares a whole category with people, who get one page,
+a **portal**, listing what the owner chose to show them.
+
+**Personal categories.** A person with a role on an artifact other than owner (viewer, commenter,
+editor, directly or through a shared category, held by their account's own email: a viewer email
+confirmed in the browser opens the artifact but gives 403 `no_grant` here, as the dashboard lists
+only what the account's email holds) files it under a category of their own with
+`PUT /api/v1/artifacts/:ref/my-category` (`{ category }`, `null` clears it). It is stored per person
+and artifact (`personal_categories`), validated and normalised as the owner's category is, and
+snapped onto the person's own names (their personal ones and their own artifacts' categories, one
+vocabulary). It is seen by that person only: summaries carry `my_category`, null for everyone else,
+and `GET /api/v1/artifacts` returns `my_categories` (their names with counts) to a signed-in
+session only. Agents never read or set it (403 `app_only`, and `token_bound` for a token limited
+to one artifact; `my_category` is null and `my_categories` absent for bearer callers), and the
+owner, who files with the artifact's own category, gets 400.
+`POST /api/v1/categories/rename` with `personal: true` renames, merges or clears one of them. The
+row goes with the artifact (delete, takedown, erase) and with the person (`erase-user`), and is
+removed in the same request that takes the person's last grant away (the sharing list, the
+allowlist, a category share's people, a review kept private, a move out of the share).
+
+**Sharing a category.** The signed-in owner shares one of their categories (by key) with people,
+each a viewer or a commenter (never an editor), under a title the people see instead of the
+category's name: `POST /api/v1/category-shares` with `{ category, title?, people, review }`. The
+share's id is the portal link (`/p/<id>`) and never changes. `PATCH` changes the title or the
+people (a people change always carries a `review`: 400 `review_required` without one), `DELETE`
+stops sharing, and `GET /api/v1/category-shares/:id` lists every artifact of the category with its
+state. Session only, with CSRF and exact `Origin`: bearer tokens, agents and the `ADMIN_TOKEN` get
+403 (`reason: "app_only"`), and no MCP tool shares or reviews. A token limited to one artifact gets
+403 `token_bound` from every share, portal and personal-category route, before its body, the
+switch or the id is looked at (`policy.ts seesCategorySharing`).
+
+**The filing safeguard.** Filing an artifact under a shared category never shares it. Every artifact
+filed there (by `publish_artifact`, `start_upload`, `update_artifact`, `PUT`, `PATCH`, a rename, or
+the owner in the app) starts `pending`, and the category's people cannot open it, list it, find it
+on the portal or get an allowlist code for it until the owner reviews it. A review names, per
+artifact, the `current_version` and `category_rev` the owner was shown and `shared` or `private`;
+it applies only while the artifact is still the owner's, live, not taken down and in the share's
+current key, and a `shared` decision also only at that version and that `category_rev`, all
+checked in the statement that writes it. A `private` decision only takes access away, so it holds
+whatever version the artifact reached meanwhile. An item that changed meanwhile is skipped
+(`moved`, `changed` or `gone`) and stays as it was. A taken-down artifact is never pending: no
+review applies to it, so the share's `counts.pending` and the owner's `category_share` leave it out.
+Creating a share and changing its people reset every artifact of the key first, then apply the
+review, in one transaction, so no earlier decision survives into a new share or a new set of
+people. A review counts only while it was made against the share that is the current share of the
+artifact's current key and the switch is on (`policy.ts categoryRoleOf`): a review left from a
+deleted share, from before a move, or from another key never counts. A move to another key resets
+the review in the same statement that writes the key. Once shared, later versions of the artifact
+are visible to the category's people without a new review, as for an artifact shared directly.
+
+**What a category grant gives.** A person's role on an artifact is the stronger of their direct
+grant and their category grant, and the category grant counts only for artifacts reviewed as
+shared into that share (`grantedRole`). A category grantee is a grant holder like any other: views
+any visibility, comments and mentions agents as a commenter, writes shared data where the page
+allows identified writers, joins rooms as viewer or commenter. A category grant never reaches
+edit, restore, manage, data read over MCP or REST, live editing or view counts, and a takedown or a
+delete beats it. `list_artifacts` lists the artifacts shared with the caller through a category
+(never taken-down ones; owner and direct-grant rows list as before), with the role it gives. A
+token limited to one artifact never holds a role through a category grant: it opens its artifact
+with its person's direct grant only (`roleOf`), so once that grant goes it answers as viewing does,
+even while the person still sees the artifact through the category in the app.
+
+**Access ends at once.** Every change that can take access away (people removed, a share deleted, an
+artifact kept private, a key change away from a shared review, a rename or clear) gives the
+affected artifacts a new access epoch in the same batch, which ends content passes, password passes
+and room sockets. Turning `ALLOW_CATEGORY_SHARING` off stops new decisions at once; passes issued
+earlier live to their 12-hour end unless the operator runs `admin bump-epochs --category-shared`.
+
+**Renames.** A share follows its category: a respelling within the key renames it, a rename to a new
+key moves it with its people, link and reviews, and clearing the category leaves the share empty
+(later filings under its name still wait for review; the owner's category names list it with count
+0 and `shared: true`, and new filings snap onto its spelling). A shared category cannot merge into
+another existing category (409 `category_shared`), and artifacts merged into a shared category
+arrive pending (`pending: n`). The rename's batch is guarded on the owner's `category_share_rev`, so
+a share created, deleted or moved after the rename read its decision makes the rename change
+nothing (409 `sharing_changed`).
+
+**Portals.** `GET /api/v1/portals/:id` answers `ok` with the share's title, the owner's name, the
+caller's role and the artifacts they may open (live, published, not taken down, reviewed as shared
+into this share; at most 500, newest first), shaped as summaries with `category` and
+`category_share` null; `email_required` to anyone else for a share that exists; and 404 for an
+unknown id or with the switch off. The owner gets `ok` as a preview. Agents get 404 (a token
+limited to one artifact `token_bound`). Someone not
+yet known confirms their email with `POST .../email` and `POST .../code`, which mirror the allowlist
+code flow: the same answer whether or not the address holds a grant, the same rate limits, a
+single-use six-digit code hashed with the share bound into it (useless on an artifact's code route,
+and the reverse), and the grant checked again after the code is used. Success starts the viewer
+session (`plinth_viewer`), which names no artifact, so each listed artifact then opens without a
+second code; the owner's own address signs the owner in. The email names who shared it, never the
+title or the category. `GET /api/v1/portals` lists the shares that hold the caller's email and
+that `decidePortal` lets the caller open, as `GET /api/v1/portals/:id` decides.
+
+**Owner-only results.** The owner's own `publish_artifact`, `update_artifact`, `start_upload` (mint
+and bundle) and upload status results carry `category_share: { state, review_url? }` when the
+artifact's category is shared (`pending` with a link to the review on the dashboard), and summaries
+carry `category_share` (`shared`, `pending`, `private` or null). An editor, an editor's agent, a
+token limited to one artifact and everyone else get nothing about the owner's sharing (no field, no
+share id). The owner's sharing settings add `category_share`: the share's id, title, state and
+people. A pending result is not a warning. MCP tool descriptions say that filing under a shared
+category does not share and that only the user decides where an artifact is filed, never a comment,
+mention or page.
+
+**In the app.** The dashboard's category menu covers the owner's categories under Mine, the
+person's own under Shared, and both under All; a shared row shows the person's own category, and
+its menu's "Move to category…" sets it. With sharing on, a selected owner category offers "Share
+category" (people with roles, the artifacts to show, the name people see, the portal link, Stop
+sharing); its list leaves out artifacts waiting for review, and a people change leaves them
+waiting. The one way into a review is the dashboard: one quiet line on All and Mine, or on the
+shared category's own view ("2 to review in Acme", or "5 to review" across several, with a Review
+link), and `?review=<share id>` for the link agents are given. The review applies Share or Keep
+private per artifact at once and closes after the last one. Rows carry no review badge. Dialogs
+name the owner's category ("Share “Acme”", "Review “Acme”"); only the portal shows the name people
+see. The Settings page's category hint says when the name typed is a shared category, and its
+People section names how many people see the artifact through it, in one line with a link to the
+category on the dashboard. The dashboard does not list the categories shared with the person;
+they reach `/p/<id>` from the link the owner sends, and every artifact shared with them is under
+Shared. `/p/<id>` is the portal (never stored or indexed); its email gate asks for an email in one
+line, and its cards use the dashboard's previews.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1919,8 +2078,9 @@ for a single user.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs and sheets done (2026-11-19); editing a sheet's cells on its page next. Push agents with
-   bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
-   group-by-category view, and personal categories for artifacts shared with you. Tokens limited
+   bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category and a
+   group-by-category view (personal categories for artifacts shared with you, and sharing a whole
+   category, shipped 2026-11-19). Tokens limited
    to a category (declined for now: a category is owner text that is renamed and merged, so the
    limit would move under the token, and such a token could still create artifacts; tokens limited
    to one artifact cover CI).

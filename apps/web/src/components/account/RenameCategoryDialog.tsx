@@ -1,7 +1,10 @@
 // The dashboard's "Rename category" dialog: renames one of the owner's categories on every artifact
 // that has it, merges it into another when the new name matches one (the same snapping the Worker
 // applies), or removes it after a confirmation that names how many artifacts lose it (nothing
-// undoes that). Session only on the Worker (POST /api/v1/categories/rename).
+// undoes that). Session only on the Worker (POST /api/v1/categories/rename). With `personal`, it
+// renames the person's own category for artifacts shared with them (issue #42) instead. A shared
+// category cannot merge into another one (409, its message shown), and artifacts merged into a
+// shared category arrive waiting for the owner's review.
 import {
   API,
   type CategoryCount,
@@ -39,6 +42,7 @@ export function renamePlan(
 export function RenameCategoryDialog({
   category,
   categories,
+  personal = false,
   onClose,
   onDone,
 }: {
@@ -46,6 +50,8 @@ export function RenameCategoryDialog({
   category: CategoryCount;
   /** All of the owner's categories (for the datalist and the merge hint). */
   categories: readonly CategoryCount[];
+  /** The person's own category for artifacts shared with them, not an owner category. */
+  personal?: boolean;
   onClose: () => void;
   /** After a change: the stored name, or null when the category was removed. */
   onDone: (stored: string | null) => void;
@@ -66,12 +72,21 @@ export function RenameCategoryDialog({
   const send = async (to: string | null) => {
     setBusy(to === null ? "remove" : "save");
     try {
-      const res = await api<{ updated: number; category: string | null }>(API.categoryRename, {
-        method: "POST",
-        body: { from: category.name, to },
-      });
+      const res = await api<{ updated: number; category: string | null; pending?: number }>(
+        API.categoryRename,
+        {
+          method: "POST",
+          body: { from: category.name, to, ...(personal ? { personal: true } : {}) },
+        },
+      );
       if (to === null) toast.success("Category removed", category.name);
-      else toast.success(plan.into ? "Categories merged" : "Category renamed", res.category ?? "");
+      else if (res.pending) {
+        toast.success(
+          "Categories merged",
+          `${artifactsText(res.pending)} to review in ${res.category}`,
+        );
+      } else
+        toast.success(plan.into ? "Categories merged" : "Category renamed", res.category ?? "");
       onDone(res.category);
     } catch (err) {
       setBusy(null);

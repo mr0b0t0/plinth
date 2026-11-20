@@ -555,3 +555,168 @@
     height: 96px;
   }
 }
+
+/* ---------- category sharing (docs/spec.md "Category sharing and personal categories") ---------- */
+
+/* The one review line: quiet text and a link, above the list. */
+.pl-dash__review {
+  margin: 0 0 var(--space-3);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+.pl-dash__review-link {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--color-accent-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+.pl-dash__review-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* A quiet action at the start of a dialog's footer, away from Cancel and Save. */
+.pl-dialog-start {
+  margin-right: auto;
+}
+.pl-dialog-start--danger,
+.pl-dialog-start--danger:hover:not(:disabled) {
+  color: var(--color-danger);
+}
+@media (max-width: 30rem) {
+  .pl-dialog__footer > .pl-dialog-start {
+    flex: 0 0 auto;
+  }
+}
+
+.pl-share-cat__people,
+.pl-share-cat__artifacts {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+/* Legends line up with the field labels and read like them. */
+.pl-share-cat__people legend,
+.pl-share-cat__artifacts legend {
+  margin-bottom: var(--space-1-5);
+  padding: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.125rem;
+}
+/* One line per person; a long address ends in "…" (its title has it whole) and never widens the
+   dialog. */
+.pl-share-cat__people .pl-acct-person__email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  contain: inline-size;
+}
+.pl-share-cat__link {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.pl-share-cat__link > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.pl-share-cat__list,
+.pl-review__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The dialog body is the one scroll area: rows fade out at its bottom edge instead of being cut. */
+.pl-share-cat::after,
+.pl-review::after {
+  content: "";
+  position: sticky;
+  bottom: calc(var(--space-1) * -1);
+  display: block;
+  height: var(--space-3);
+  background: linear-gradient(transparent, var(--color-surface-raised));
+  pointer-events: none;
+}
+.pl-review {
+  display: grid;
+  gap: var(--space-3);
+}
+.pl-review::after {
+  margin-top: calc(var(--space-3) * -1);
+}
+.pl-review:focus {
+  outline: none;
+}
+.pl-review__list {
+  gap: 0;
+}
+.pl-review__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.pl-review__row:first-child {
+  border-top: var(--border-width) solid var(--color-border);
+}
+.pl-review__what {
+  display: grid;
+  min-width: 0;
+}
+.pl-review__title {
+  overflow-wrap: anywhere;
+}
+.pl-review__meta {
+  font-size: var(--text-xs);
+}
+.pl-review__actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+/* Phones: a person's role stays on their line, the add row stays one line, and the link is the
+   Copy link button alone. */
+@media (max-width: 40rem) {
+  .pl-share-cat__people .pl-acct-person {
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+  }
+  .pl-share-cat__people .pl-acct-person__email {
+    flex: 1 1 0;
+  }
+  .pl-share-cat__people .pl-acct-person__controls {
+    flex: 0 0 auto;
+    width: auto;
+  }
+  .pl-share-cat__people .pl-acct-person__controls .pl-field {
+    flex: 0 0 auto;
+    width: 7.5rem;
+  }
+  .pl-share-cat__people .pl-acct-add {
+    flex-wrap: nowrap;
+  }
+  .pl-share-cat__people .pl-acct-add__email {
+    flex: 1 1 0;
+  }
+  .pl-share-cat__people .pl-acct-add__role {
+    flex: 0 0 7.5rem;
+  }
+  .pl-share-cat .pl-share-cat__link > .pl-field {
+    display: none;
+  }
+}

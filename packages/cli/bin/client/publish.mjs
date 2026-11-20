@@ -689,6 +689,7 @@ It may have been published. ${rerunWithBase(from)}`,
 function report(result, check, opts, out) {
   if (opts.json) {
     const { id, slug, version, url, content_url, stored, warnings, recovered, category } = result;
+    const share = result.category_share;
     out.stdout(
       JSON.stringify(
         {
@@ -703,6 +704,8 @@ function report(result, check, opts, out) {
           // The artifact's title as the read-back returned it: text its editors wrote.
           ...(typeof check.title === "string" ? { title: check.title } : {}),
           ...(typeof category === "string" ? { category } : {}),
+          // The owner's own publish into a shared category: pending until they review it.
+          ...(share && typeof share === "object" ? { category_share: share } : {}),
           ...(recovered ? { recovered: true } : {}),
         },
         null,
@@ -717,6 +720,8 @@ function report(result, check, opts, out) {
   const under = typeof result.category === "string" ? ` under ${result.category}` : "";
   out.stdout(printable(`Published v${result.version}${under}: ${result.url}`));
   if (result.recovered) out.stdout(LOST_NOTE);
+  const pending = pendingNote(result);
+  if (pending) out.stdout(pending);
   const s = result.stored;
   if (s) {
     out.stdout(
@@ -731,6 +736,22 @@ function report(result, check, opts, out) {
     for (const x of fix) out.stdout(printable(`  ${x.code} ${x.file}: ${x.message}`));
   }
   for (const x of notes) out.stdout(printable(`Note (no action needed): ${x.message}`));
+}
+
+/**
+ * The line for an artifact filed under a shared category: filing never shares, so it waits for the
+ * owner's review in the app (docs/spec.md "Category sharing and personal categories"). Null
+ * otherwise. The category name is the owner's own text, printed without control characters.
+ */
+export function pendingNote(result) {
+  const share = result?.category_share;
+  if (!share || typeof share !== "object" || share.state !== "pending") return null;
+  const who =
+    typeof result.category === "string"
+      ? `the people ${result.category} is shared with`
+      : "the people its category is shared with";
+  const where = typeof share.review_url === "string" ? `: ${share.review_url}` : " in the app";
+  return printable(`Waiting for your review before ${who} can see it${where}`);
 }
 
 /**
@@ -1072,7 +1093,10 @@ export async function publish(dir, givenOpts, ctx) {
 async function storedCategory(api, id) {
   try {
     const a = await api.get(`/artifacts/${encodeURIComponent(id)}`);
-    return typeof a.category === "string" ? { category: a.category } : {};
+    return {
+      ...(typeof a.category === "string" ? { category: a.category } : {}),
+      ...(a.category_share === "pending" ? { category_share: { state: "pending" } } : {}),
+    };
   } catch {
     return {};
   }

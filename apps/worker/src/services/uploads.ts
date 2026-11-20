@@ -37,10 +37,11 @@ import { base64url, hashToken, newId, randomString, timingSafeEqual } from "../l
 import { ApiError, forbidden, notFound, unauthorized } from "../lib/errors.ts";
 import { hit, peek } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import type { Principal } from "../policy.ts";
+import { type Principal, seesOwnerMetadata } from "../policy.ts";
 import { sweepSoon } from "./attempts.ts";
 import { readBundle } from "./bundle.ts";
 import { requireCategoryRight, resolveCategory } from "./categories.ts";
+import { categoryShareResult, filingShareResult } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 import {
   commitStaged,
@@ -248,7 +249,19 @@ export async function startUpload(
 
   const uploadUrl = appUrl(ctx.config, `/api/v1/uploads/${id}/bundle`);
   const npx = npxCommand(PLINTH_VERSION, token, uploadUrl);
+  // A category on the ticket is the owner's (requireCategoryRight passed for an update): say the
+  // state the commit will start in when that category is shared (pending; filing never shares).
+  const share =
+    target.category !== undefined
+      ? await filingShareResult(
+          ctx,
+          update ? update.artifact.ownerId : p.userId,
+          target.category,
+          update ? update.artifact : null,
+        )
+      : undefined;
   return {
+    ...(share ? { category_share: share } : {}),
     upload_id: id,
     upload_token: token,
     expires_at: expiresAt,
@@ -533,10 +546,22 @@ export async function redeemBundle(
       ticketId: ticket.id,
       receivingClaim: claim,
     });
+    // The owner's own upload only: an editor's update ticket carries nothing about the owner's
+    // category sharing.
+    const share = await categoryShareResult(
+      w.env.DB,
+      w.config,
+      result.id,
+      seesOwnerMetadata(
+        fresh.principal,
+        target.mode === "publish" ? "owner" : (target.role ?? null),
+      ),
+    );
     return {
       status: ticket.mode === "publish" ? 201 : 200,
       body: {
         ...result,
+        ...(share ? { category_share: share } : {}),
         // Only the uploader that minted the ticket reads this, and only an owner can set it.
         ...(target.category !== undefined ? { category: target.category } : {}),
         bundle: {
@@ -977,11 +1002,27 @@ export async function uploadStatus(
     (t.mode === "update" ? t.artifact_id : (t.result_artifact_id ?? t.reserved_artifact_id)) ?? "";
   const now = t.db_now;
   let url: string | null = null;
+  let share: UploadStatus["category_share"];
   if (t.state === "used" && t.result_artifact_id) {
-    const a = await w.env.DB.prepare("SELECT slug FROM artifacts WHERE id = ?1")
-      .bind(t.result_artifact_id)
-      .first<{ slug: string }>();
+    const a = await w.env.DB.prepare(
+      `SELECT slug, owner_id,
+              (?2 IS NOT NULL AND EXISTS (SELECT 1 FROM agent_connections
+                                           WHERE id = ?2 AND artifact_id IS NOT NULL)) AS bound
+         FROM artifacts WHERE id = ?1`,
+    )
+      .bind(t.result_artifact_id, t.connection_id)
+      .first<{ slug: string; owner_id: string; bound: number }>();
     url = a ? appUrl(w.config, `/a/${a.slug}`) : null;
+    // Only the owner's own ticket (not an editor's, not a token limited to one artifact) learns
+    // where the artifact stands in the owner's shared category.
+    share = a
+      ? await categoryShareResult(
+          w.env.DB,
+          w.config,
+          t.result_artifact_id,
+          t.user_id === a.owner_id && !a.bound,
+        )
+      : undefined;
   }
   const receiving =
     t.receiving_until !== null && t.receiving_until > now ? t.receiving_until : null;
@@ -1030,5 +1071,6 @@ export async function uploadStatus(
     expires_at: t.expires_at,
     receiving_until: takenDown ? null : receiving,
     next,
+    ...(share ? { category_share: share } : {}),
   };
 }

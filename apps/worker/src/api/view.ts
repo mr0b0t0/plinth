@@ -276,7 +276,7 @@ async function identityFor(
   // `account`: signed in, not confirmed by code. Only then may a doc editor edit on the page.
   const account = p.kind === "user" ? { account: true } : {};
   if (d.role === "owner") return { email: p.email, role: "owner", ...account };
-  const g = await grantFor(ctx, a.id);
+  const g = await grantFor(ctx, a);
   return g ? { email: g.email, role: g.role, ...account } : undefined;
 }
 

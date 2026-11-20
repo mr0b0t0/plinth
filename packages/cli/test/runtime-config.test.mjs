@@ -120,6 +120,8 @@ describe("generated Worker configs carry the flag and the cron", () => {
     // The sheet formula budget ships at its documented default, and the CLI's base copies it.
     assert.equal(repoCfg.vars.SHEET_EVAL_BUDGET, "200000");
     assert.equal(runtimeBase(repoCfg).vars.SHEET_EVAL_BUDGET, "200000");
+    // Category sharing ships on.
+    assert.equal(repoCfg.vars.ALLOW_CATEGORY_SHARING, "true");
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
@@ -336,6 +338,7 @@ await setupInstance(raw, {
         PLINTH_PORT: "9823",
         PLINTH_ALLOW_ROOMS: "false",
         PLINTH_ALLOW_LIVE_EDITING: "false",
+        PLINTH_ALLOW_CATEGORY_SHARING: "false",
       },
       encoding: "utf8",
     });
@@ -343,6 +346,7 @@ await setupInstance(raw, {
     const offCfg = parseJsonc(readFileSync(path.join(data, "plinth", "wrangler.jsonc"), "utf8"));
     assert.equal(offCfg.vars.ALLOW_ROOMS, "false");
     assert.equal(offCfg.vars.ALLOW_LIVE_EDITING, "false");
+    assert.equal(offCfg.vars.ALLOW_CATEGORY_SHARING, "false");
     assertRooms(offCfg, "docker (rooms off)", { vars: false });
   });
 

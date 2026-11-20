@@ -10,6 +10,7 @@ import {
   type ArtifactType,
   type ArtifactTypeDef,
   ASSET_PATH_RE,
+  type EffectiveRole,
   LIMITS,
   type PublishResult,
   type PublishWarning,
@@ -24,7 +25,7 @@ import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/erro
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
-import { notifyViewers } from "../rooms/notify.ts";
+import { notifyRoom, notifyViewers } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
 import {
   checkAsset,
@@ -41,7 +42,13 @@ import {
   forgetAttempt,
   recordAttempt,
 } from "./attempts.ts";
-import { resolveCategory } from "./categories.ts";
+import {
+  CATEGORY_SET,
+  keyOf,
+  leavesShare,
+  prunePersonalCategories,
+  resolveCategory,
+} from "./categories.ts";
 import type { Ctx } from "./context.ts";
 import { scanPublish } from "./publishCheck.ts";
 import {
@@ -72,6 +79,11 @@ export type VersionTarget =
       note?: string;
       /** The resolved category to set with this version (owner only, checked by the caller). */
       category?: string;
+      /**
+       * The caller's role on the artifact (from the edit check): an editor's result carries
+       * nothing about the owner's category sharing.
+       */
+      role?: EffectiveRole | null;
     };
 
 /** A version's files after staging: every object it needs is in R2, nothing is committed. */
@@ -254,7 +266,7 @@ export async function updateTarget(
   ref: string,
   input: { baseVersion?: number; note?: string },
 ): Promise<VersionTarget> {
-  const { artifact } = await requireArtifact(ctx, ref, "edit");
+  const { artifact, role } = await requireArtifact(ctx, ref, "edit");
   requireTypeDef(artifact.type);
   if (input.baseVersion !== undefined && input.baseVersion !== artifact.currentVersion) {
     throw conflictError(input.baseVersion, artifact.currentVersion);
@@ -263,6 +275,7 @@ export async function updateTarget(
   return {
     mode: "update",
     artifact,
+    role,
     ...(input.baseVersion !== undefined ? { baseVersion: input.baseVersion } : {}),
     ...(note ? { note } : {}),
   };
@@ -1200,8 +1213,8 @@ async function commitOnce(
       stmts.push(
         DB.prepare(
           `INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, password_hash,
-             access_epoch, created_at, updated_at, type, category)
-           SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?
+             access_epoch, created_at, updated_at, type, category, category_key)
+           SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?
             WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ? AND deleted_at IS NULL) < ?
               AND ${QUOTA_GUARD}${ticketClause} AND ${ATTEMPT_GUARD}`,
         ).bind(
@@ -1215,6 +1228,9 @@ async function commitOnce(
           now,
           def.id,
           target.category ?? null,
+          // A new artifact is never shared: its review columns start NULL (pending in a shared
+          // category, whoever filed it).
+          keyOf(target.category),
           ownerId,
           artifactLimit,
           ownerId,
@@ -1265,12 +1281,18 @@ async function commitOnce(
     );
     if (target.mode === "update" && target.category !== undefined) {
       // The category commits with the version, behind the same guards: a stale or failed commit
-      // changes neither. Scoped to the actor's own row as well as the policy check before it.
+      // changes neither. Scoped to the actor's own row as well as the policy check before it. A
+      // move to another key leaves the artifact unreviewed (categories.ts CATEGORY_SET): filing
+      // never shares, and the old share's people lose it at once.
       stmts.push(
         DB.prepare(
-          "UPDATE artifacts SET category = ? WHERE id = ? AND owner_id = ? AND EXISTS (SELECT 1 FROM versions WHERE id = ?)",
-        ).bind(target.category, artifactId, actor.userId, versionId),
+          `UPDATE artifacts SET ${CATEGORY_SET}
+            WHERE id = ?3 AND owner_id = ?4 AND EXISTS (SELECT 1 FROM versions WHERE id = ?5)`,
+        ).bind(target.category, keyOf(target.category), artifactId, actor.userId, versionId),
       );
+      if (leavesShare(target.artifact, keyOf(target.category))) {
+        stmts.push(prunePersonalCategories(DB, { artifactId }));
+      }
     }
     if (opts.ticketId) {
       stmts.push(
@@ -1378,7 +1400,17 @@ async function commitOnce(
       });
     }
 
-    if ((results[versionIndex]?.meta.changes ?? 0) === 1) return committed();
+    if ((results[versionIndex]?.meta.changes ?? 0) === 1) {
+      // Over-notifying is harmless: the room re-checks the epoch.
+      if (
+        target.mode === "update" &&
+        target.category !== undefined &&
+        leavesShare(target.artifact, keyOf(target.category))
+      ) {
+        notifyRoom(ctx, artifactId, "revoke");
+      }
+      return committed();
+    }
 
     // Nothing was written. Name the cause.
     if (opts.ticketId) {

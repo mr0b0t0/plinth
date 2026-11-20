@@ -11,6 +11,11 @@ export const users = sqliteTable("users", {
   emailVerifiedAt: text("email_verified_at"),
   isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
+  /**
+   * migrations/0013: bumped by every batch that inserts, deletes or re-keys one of this person's
+   * category shares; a category rename guards its batch on it.
+   */
+  categoryShareRev: integer("category_share_rev").notNull().default(0),
 });
 
 export const agentConnections = sqliteTable("agent_connections", {
@@ -51,6 +56,15 @@ export const artifacts = sqliteTable("artifacts", {
    * metadata, never versioned; toSummary hides it from everyone else (policy.seesOwnerMetadata).
    */
   category: text("category"),
+  /**
+   * migrations/0013 (docs/spec.md "Category sharing and personal categories"): the category's
+   * match key (shared categoryKey), written next to `category`, null while uncategorised or not yet
+   * backfilled; `categoryRev`, bumped on every key change; and the owner's review against a share.
+   */
+  categoryKey: text("category_key"),
+  categoryRev: integer("category_rev").notNull().default(0),
+  categoryReview: text("category_review", { enum: ["shared", "private"] }),
+  categoryReviewShare: text("category_review_share"),
 });
 
 export const versions = sqliteTable("versions", {
@@ -144,6 +158,8 @@ export const loginCodes = sqliteTable("login_codes", {
   expiresAt: text("expires_at").notNull(),
   consumedAt: text("consumed_at"),
   createdAt: text("created_at").notNull(),
+  /** migrations/0013: a portal code names its category share (artifact_id is then null). */
+  shareId: text("share_id"),
 });
 
 export const oauthClients = sqliteTable("oauth_clients", {
@@ -306,6 +322,44 @@ export const liveDrafts = sqliteTable("live_drafts", {
   updatedAt: text("updated_at").notNull(),
 });
 
+// Category sharing (migrations/0013_category_sharing.sql): an owner's share of one category key, and
+// the people on it. Filing never shares: policy.ts categoryRoleOf counts a grant only for an
+// artifact the owner reviewed into this very share.
+export const categoryShares = sqliteTable("category_shares", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  categoryKey: text("category_key").notNull(),
+  name: text("name").notNull(),
+  title: text("title").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const categoryGrants = sqliteTable(
+  "category_grants",
+  {
+    shareId: text("share_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role", { enum: ["viewer", "commenter"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.shareId, t.email] })],
+);
+
+// A collaborator's own category on an artifact shared with them (issue #42), seen by them only.
+export const personalCategories = sqliteTable(
+  "personal_categories",
+  {
+    userId: text("user_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    category: text("category").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.artifactId] })],
+);
+
+export type CategoryShareRow = typeof categoryShares.$inferSelect;
 export type LiveDraftRow = typeof liveDrafts.$inferSelect;
 export type ArtifactDocRow = typeof artifactDocs.$inferSelect;
 export type ArtifactDataUsageRow = typeof artifactDataUsage.$inferSelect;
