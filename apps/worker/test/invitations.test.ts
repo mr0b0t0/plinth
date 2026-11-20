@@ -673,7 +673,7 @@ describe("invitation emails: set_visibility", () => {
 });
 
 describe("invitation emails: category shares", () => {
-  it("a new share with notify emails its people the share's name and the portal link", async () => {
+  it("a new share with notify emails its people the share's title and the portal link", async () => {
     const o = await owner();
     await filed(o, "Zeta", "Q3 report");
     const client = uniqueEmail("client");
@@ -690,7 +690,7 @@ describe("invitation emails: category shares", () => {
     expect(mail[0]?.subject).toBe(`${o.user.email} shared "Client reports" with you`);
     expect(mail[0]?.text).toContain(`${APP}/p/${made.share.id}`);
     expect(mail[0]?.text).toContain("comment on them");
-    // The people see the share's name, never the category's.
+    // The people see the share's title; the owner changed it, so the category's name never shows.
     expect(mail[0]?.text).not.toContain("Zeta");
   });
 

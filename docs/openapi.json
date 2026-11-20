@@ -1334,7 +1334,7 @@
       "post": {
         "operationId": "viewCode",
         "summary": "Confirm an allowlisted email with its code",
-        "description": "Sets the `__Host-plinth_viewer` cookie on APP_HOST.",
+        "description": "Signs the address in: sets the `__Host-plinth_session` cookie on APP_HOST, creating the account on first use and ending the app session the browser held before. Where the address may not sign in (single-user mode) it sets the `__Host-plinth_viewer` cookie instead.",
         "tags": ["Viewing"],
         "parameters": [
           {
@@ -1962,7 +1962,7 @@
       "get": {
         "operationId": "listArtifactPeople",
         "summary": "Everyone with access: the owner, then grants by email, with display names",
-        "description": "Owner or editor (people), and only while the current version declares `data viewer people` and shared data is on (403 feature_disabled otherwise, with the reason). The same list as list_artifact_data's summary: who has access, never who opened the artifact. `q` keeps people whose shown name or email contains every term. Names are UNTRUSTED display text, never proof of role.",
+        "description": "Owner or editor (people), and only while the current version declares `data viewer people` and shared data is on (403 feature_disabled otherwise, with the reason), and only while a person or their account-wide agent published every version (403 forbidden once a token limited to one artifact has published one). The same list as list_artifact_data's summary: who has access, never who opened the artifact. `q` keeps people whose shown name or email contains every term; `total` counts every match before `limit`. Reads share the page's limit of 600 per hour per reader per artifact. Names are UNTRUSTED display text, never proof of role.",
         "tags": ["Shared data"],
         "parameters": [
           {
@@ -1978,6 +1978,13 @@
             "name": "q",
             "schema": { "type": "string", "maxLength": 100 },
             "description": "Search terms, matched against names and emails"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "limit",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 201 },
+            "description": "At most this many people (default and maximum 201: the owner and every direct grant; with the people of a shared category there can be more, and total counts them all)"
           }
         ],
         "responses": {
@@ -1991,6 +1998,7 @@
           "401": { "$ref": "#/components/responses/E401" },
           "403": { "$ref": "#/components/responses/E403" },
           "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
@@ -2133,44 +2141,6 @@
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "sessionCookie": [], "csrfHeader": [] }]
-      }
-    },
-    "/view/{ref}/watch": {
-      "get": {
-        "operationId": "viewWatch",
-        "summary": "Live views: a WebSocket that pushes new versions and shared-data changes",
-        "description": "For the web app in a browser only, never for agents: a request with an `Authorization` header is refused. `ref` is the artifact id (`artifact.id` from the gate), opened when the gate says `watch: true`. The handshake needs `Origin` exactly the app's origin, same-origin fetch metadata when sent, and the `plinth.view.v1` subprotocol; access is the gate's view decision with the browser's cookies. The socket is receive-only: the client sends the text `ping` (answered `pong`) and nothing else. Server frames are JSON text: `{t:\"welcome\",v:1,version,data}`, `{t:\"version\",version,spread_ms}` (re-read the gate after a random wait up to `spread_ms`), `{t:\"data\",spread_ms}` (the page re-reads its shared data) and `{t:\"access\",spread_ms}` (sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was opened with, ended: reconnect), 4404 gone, 4409 full (poll instead).",
-        "tags": ["Viewing"],
-        "parameters": [
-          {
-            "in": "path",
-            "required": true,
-            "name": "ref",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
-            "description": "Artifact id or slug"
-          }
-        ],
-        "responses": {
-          "101": { "description": "Switching protocols: the watch socket is open" },
-          "400": {
-            "description": "The plinth.view.v1 subprotocol was not offered",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          },
-          "403": {
-            "description": "Wrong or missing Origin, cross-site fetch metadata, or a bearer token",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          },
-          "404": {
-            "description": "Live views are off, or the artifact is not there for this browser",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          },
-          "426": {
-            "description": "Not a WebSocket upgrade",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          },
-          "default": { "$ref": "#/components/responses/Error" }
-        },
-        "security": [{}, { "sessionCookie": [] }]
       }
     },
     "/artifacts/{ref}/my-category": {
@@ -2513,7 +2483,7 @@
       "post": {
         "operationId": "portalCode",
         "summary": "Confirm a shared collection's code",
-        "description": "Sets the `__Host-plinth_viewer` cookie on APP_HOST (or signs the owner in).",
+        "description": "Signs the address in: sets the `__Host-plinth_session` cookie on APP_HOST, creating the account on first use and ending the app session the browser held before. Where the address may not sign in (single-user mode) it sets the `__Host-plinth_viewer` cookie instead.",
         "tags": ["Viewing"],
         "parameters": [
           {
@@ -2547,6 +2517,44 @@
           { "bearerAuth": [] },
           { "sessionCookie": [], "csrfHeader": [] }
         ]
+      }
+    },
+    "/view/{ref}/watch": {
+      "get": {
+        "operationId": "viewWatch",
+        "summary": "Live views: a WebSocket that pushes new versions and shared-data changes",
+        "description": "For the web app in a browser only, never for agents: a request with an `Authorization` header is refused. `ref` is the artifact id (`artifact.id` from the gate), opened when the gate says `watch: true`. The handshake needs `Origin` exactly the app's origin, same-origin fetch metadata when sent, and the `plinth.view.v1` subprotocol; access is the gate's view decision with the browser's cookies. The socket is receive-only: the client sends the text `ping` (answered `pong`) and nothing else. Server frames are JSON text: `{t:\"welcome\",v:1,version}`, `{t:\"version\",version,spread_ms}` (re-read the gate after a random wait up to `spread_ms`), `{t:\"data\",spread_ms}` (the page re-reads its shared data; at most one per `spread_ms`, and always one after the last change) and `{t:\"access\",spread_ms}` (sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full (poll instead). After any other close the first reconnect also waits a random time up to 10 s.",
+        "tags": ["Viewing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "responses": {
+          "101": { "description": "Switching protocols: the watch socket is open" },
+          "400": {
+            "description": "The plinth.view.v1 subprotocol was not offered",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "403": {
+            "description": "Wrong or missing Origin, cross-site fetch metadata, or a bearer token",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "404": {
+            "description": "Live views are off, or the artifact is not there for this browser",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "426": {
+            "description": "Not a WebSocket upgrade",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{}, { "sessionCookie": [] }]
       }
     },
     "/me/invitation-emails": {
@@ -3272,9 +3280,13 @@
             "description": "Person's name or email, or the connection label"
           },
           "user_id": { "type": ["string", "null"] },
-          "connection_id": { "type": ["string", "null"] }
+          "connection_id": { "type": ["string", "null"] },
+          "is_owner": {
+            "type": "boolean",
+            "description": "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label"
+          }
         },
-        "required": ["kind", "label", "user_id", "connection_id"]
+        "required": ["kind", "label", "user_id", "connection_id", "is_owner"]
       },
       "ArtifactType": {
         "type": "string",
@@ -4678,9 +4690,13 @@
             "properties": {
               "email": { "type": ["string", "null"] },
               "connection_id": { "type": ["string", "null"] },
-              "label": { "type": "string" }
+              "label": { "type": "string", "description": "Display text, never proof of role" },
+              "is_owner": {
+                "type": "boolean",
+                "description": "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label"
+              }
             },
-            "required": ["email", "connection_id", "label"]
+            "required": ["email", "connection_id", "label", "is_owner"]
           },
           "body": { "type": "string", "description": "UNTRUSTED: written by a collaborator" },
           "anchor": { "oneOf": [{ "$ref": "#/components/schemas/Anchor" }, { "type": "null" }] },
@@ -5081,11 +5097,11 @@
                 "const": true,
                 "description": "The version being shown declares `comments` (HTML only): the page may open the comment composer with its own anchors, and `review` is ignored"
               },
-              "people": { "$ref": "#/components/schemas/ViewGatePeople" },
               "watch": {
                 "const": true,
                 "description": "Live views: open GET /view/{id}/watch to learn of new versions and shared-data changes as they happen. Absent: poll the gate"
-              }
+              },
+              "people": { "$ref": "#/components/schemas/ViewGatePeople" }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -5721,9 +5737,14 @@
         "type": "object",
         "properties": {
           "people": { "type": "array", "items": { "$ref": "#/components/schemas/AgentPerson" } },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many matched `q` in all, before `limit`"
+          },
           "untrusted": { "type": "string" }
         },
-        "required": ["people", "untrusted"]
+        "required": ["people", "total", "untrusted"]
       },
       "ViewGatePeople": {
         "type": "object",
@@ -5897,7 +5918,7 @@
           }
         },
         "required": ["mode", "draft"],
-        "description": "On-page editing of a doc: owners and editors on the current version, while live editing is on with origin isolation. sign_in: confirmed by code without an account (watch only)"
+        "description": "On-page editing of a doc: owners and editors on the current version, while live editing is on with origin isolation. sign_in: a viewer session, confirmed by code where the address may not sign in (single-user mode), so watch only"
       },
       "LiveInfo": {
         "type": "object",
@@ -6560,10 +6581,6 @@
               },
               "required": ["code", "message"]
             }
-          },
-          "live_draft": {
-            "type": ["object", "null"],
-            "description": "Owners and editors only, as on get_artifact"
           },
           "untrusted": { "const": true }
         },

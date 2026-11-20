@@ -83,6 +83,8 @@ export function CommentItem({
         <span className="cm-author">
           <span className="cm-author__name">{comment.author.label}</span>
           {isAgent && <span className="cm-agent">Agent</span>}
+          {/* From the server, never the name: a name chosen to look like the owner's lacks it. */}
+          {!isAgent && comment.author.is_owner && <span className="cm-agent">Owner</span>}
         </span>
         <time
           className="cm-time"

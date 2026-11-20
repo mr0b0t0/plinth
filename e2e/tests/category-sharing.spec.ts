@@ -86,7 +86,7 @@ test("an owner shares a category, the client sees what was ticked, and new filin
   const cp = await clientContext.newPage();
   try {
     await cp.goto(`/p/${share?.id}`);
-    await expect(cp.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
+    await expect(cp.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await axe(cp);
     await confirmOnPortal(cp, cp.request, client);
     await expect(cp.getByRole("heading", { name: "Acme" })).toBeVisible();

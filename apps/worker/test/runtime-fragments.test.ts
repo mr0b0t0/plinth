@@ -3,7 +3,7 @@
 // and people) are pinned. A change that means to alter that script updates the pin here, on
 // purpose: display names and the people fragment (who is viewing) did. Page comments added the app
 // channel and their own fragment; the channel is also tested on its own. Live views add theirs
-// last (live-view tests in runtime-behaviour.test.ts).
+// (live-view tests in runtime-behaviour.test.ts).
 import { describe, expect, it } from "vitest";
 import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
@@ -17,10 +17,10 @@ import { config } from "./helpers.ts";
 /**
  * sha256 and length of the data, room and people fragments assembled without the app channel. At
  * 94ea515, the last commit before the fragments, the script was 409e0c69… (24787 characters);
- * names and plinth.people changed it to this.
+ * names and plinth.people (whose list carries `total`) changed it to this.
  */
-const GOLDEN_SHA256 = "9a9a912c4e45c260f2cd80264adca6f24a578134c2dc0e64b8e53052681c61a3";
-const GOLDEN_LENGTH = 26439;
+const GOLDEN_SHA256 = "4260a2796435408edeaac010214fd45ddeb68c870569c98396a50f8542790700";
+const GOLDEN_LENGTH = 26611;
 
 async function sha256(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -102,20 +102,20 @@ describe("runtime fragments", () => {
       "data",
       "room",
       "comments",
-      "people",
       "live",
+      "people",
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
-    expect(served).toBe(
+    expect(
       assembleRuntime(config(), [
         DATA_FRAGMENT,
         ROOM_FRAGMENT,
         COMMENTS_FRAGMENT,
-        PEOPLE_FRAGMENT,
         LIVE_FRAGMENT,
+        PEOPLE_FRAGMENT,
       ]),
-    );
+    ).toBe(served);
     // Memoized per app origin, which page comments embed.
     expect(runtimeScript(config())).toBe(served);
     expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);

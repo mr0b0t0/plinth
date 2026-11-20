@@ -1,6 +1,6 @@
 // "Share category": the owner shares one of their categories with people (docs/spec.md "Category
-// sharing and personal categories"). The people see the share's title, never the category name,
-// and only the artifacts ticked here. Filing more artifacts under the category later never shares
+// sharing and personal categories"). The people see the share's title (the category's name unless
+// the owner changes it here) and only the artifacts ticked here. Filing more artifacts under the category later never shares
 // them: they wait for the owner's review, which happens only in the review dialog, so an existing
 // share's list leaves waiting rows out. Changing the people re-confirms the listed artifacts in the
 // same request (waiting rows stay waiting). Session only on the Worker (/api/v1/category-shares).
@@ -124,12 +124,20 @@ export interface ShareCategoryDialogProps {
 
 export function ShareCategoryDialog({
   category,
-  shareId,
-  onClose,
+  shareId: givenShareId,
+  onClose: givenOnClose,
   onDone,
   invitations = true,
 }: ShareCategoryDialogProps) {
   const toast = useToast();
+  /**
+   * The share this dialog created, when its review came back with skipped items: the dialog stays
+   * open on that share in edit mode (the preview of a new share would now answer already_shared),
+   * and closing it still tells the parent a share exists.
+   */
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const shareId = givenShareId ?? createdId;
+  const onClose = () => (createdId ? onDone({ id: createdId }) : givenOnClose());
   const formId = useId();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [reload, setReload] = useState(0);
@@ -225,6 +233,7 @@ export function ShareCategoryDialog({
         toast.toast({ title: "No invitation sent", description: notEmailed, tone: "warning" });
       }
       setNote(skipped);
+      if (!shareId) setCreatedId(id);
       setReload((n) => n + 1);
       setBusy(false);
       return;

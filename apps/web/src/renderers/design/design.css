@@ -266,24 +266,6 @@ body {
   color: var(--pd-muted);
 }
 
-/* One board alone at 100% (?plinth-board=<id>). */
-.plinth-design[data-mode="solo"] {
-  min-height: 100vh;
-}
-
-.plinth-design__solo {
-  display: flex;
-  min-height: 100vh;
-  align-items: center;
-  justify-content: center;
-}
-
-.plinth-design__solo .plinth-design__board {
-  position: relative;
-  flex: none;
-  box-shadow: none;
-}
-
 /* The print layout: every board in normal flow at 100%, one per page (print.ts names the pages). */
 .plinth-design[data-print] {
   position: static;

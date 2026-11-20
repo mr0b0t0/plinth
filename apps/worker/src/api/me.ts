@@ -66,7 +66,9 @@ meApi.patch("/me", async (c) => {
   const p = c.get("principal");
   if (p.kind === "agent") throw new ApiError("forbidden", "Agents cannot change the profile");
   if (p.kind !== "user") throw unauthorized();
-  const { name } = await parseBody(c, updateProfileInput);
+  const { name } = await parseBody(c, updateProfileInput).catch((e: unknown) => {
+    throw withIssueMessage(e);
+  });
   await c
     .get("db")
     .update(users)
@@ -77,6 +79,19 @@ meApi.patch("/me", async (c) => {
 });
 
 meApi.get("/me", (c) => meResponse(c));
+
+/**
+ * A refused name says why (displayName.ts displayNameProblem: one sentence, the same the app shows
+ * before it sends), instead of the generic "Invalid input". Any other error passes through.
+ */
+function withIssueMessage(e: unknown): unknown {
+  if (!(e instanceof ApiError) || e.code !== "invalid_input") return e;
+  const issues = (e.details as { issues?: { message?: unknown }[] } | undefined)?.issues;
+  const message = issues?.[0]?.message;
+  return typeof message === "string" && message
+    ? new ApiError("invalid_input", message, e.details)
+    : e;
+}
 
 async function meResponse(c: AppContext) {
   const p = c.get("principal");

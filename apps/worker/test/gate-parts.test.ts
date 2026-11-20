@@ -1,6 +1,6 @@
 // The viewer gate is assembled from gate parts (api/view.ts GATE_PARTS). The wire shape is the
 // same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
-// `page_comments`, then `people`, then `watch` (live views, live-view.test.ts), each only when its
+// `page_comments`, then `watch` (live views, live-view.test.ts), then `people`, each only when its
 // part has something to say.
 import { describe, expect, it } from "vitest";
 import { GATE_PARTS } from "../src/api/view.ts";
@@ -28,7 +28,7 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, then the live part, then page comments, then the people part, then watch", () => {
+  it("runs the data part, the live part, page comments, watch, then the people part", () => {
     expect(GATE_PARTS.length).toBe(5);
   });
 

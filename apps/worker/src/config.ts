@@ -167,11 +167,6 @@ export interface Config {
    */
   reviewLogin: { email: string; passwordHash: string } | null;
   /**
-   * SHEET_EVAL_BUDGET (default 200,000; 10,000 to 20,000,000): formula steps one read_sheet call
-   * may spend. Never affects the browser, which has its own fixed budget.
-   */
-  sheetEvalBudget: number;
-  /**
    * ALLOW_LIVE_VIEWS (default on): open artifact pages get new versions, and pages that keep
    * shared data get its changes, pushed over a watch socket on the app host. Only in effect with a
    * ROOMS binding; see liveViewsActive.
@@ -179,6 +174,11 @@ export interface Config {
   allowLiveViews: boolean;
   /** Live-view limits (LIVE_VIEW_* env vars). */
   liveViews: LiveViewLimits;
+  /**
+   * SHEET_EVAL_BUDGET (default 200,000; 10,000 to 20,000,000): formula steps one read_sheet call
+   * may spend. Never affects the browser, which has its own fixed budget.
+   */
+  sheetEvalBudget: number;
   /**
    * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
    * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
@@ -471,13 +471,6 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
     reviewLogin: parseReviewLogin(env),
-    sheetEvalBudget: boundedInt(
-      env,
-      "SHEET_EVAL_BUDGET",
-      DEFAULTS.sheetEvalBudget,
-      SHEET_EVAL_BUDGET_BOUNDS[0],
-      SHEET_EVAL_BUDGET_BOUNDS[1],
-    ),
     allowLiveViews: boolDefaultOn(env.ALLOW_LIVE_VIEWS),
     liveViews: {
       maxSocketsPerArtifact: boundedInt(
@@ -487,6 +480,13 @@ export function parseConfig(env: Record<string, unknown>): Config {
         ...LIVE_VIEW_BOUNDS.maxSocketsPerArtifact,
       ),
     },
+    sheetEvalBudget: boundedInt(
+      env,
+      "SHEET_EVAL_BUDGET",
+      DEFAULTS.sheetEvalBudget,
+      SHEET_EVAL_BUDGET_BOUNDS[0],
+      SHEET_EVAL_BUDGET_BOUNDS[1],
+    ),
     allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
     invitations: {
       perDay: boundedInt(

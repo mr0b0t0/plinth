@@ -1,6 +1,7 @@
 // "Your name": the signed-in person's display name (PATCH /api/v1/me). It labels their comments and
 // versions, and pages that show who is viewing see it beside their email. The rules are the
-// Worker's (displayName.ts): no "@", no control or invisible characters, at most 100 characters.
+// Worker's (displayName.ts): no "@", no control or invisible characters, something visible, at
+// most 100 characters.
 // Saving an empty field clears it, so there is no separate Clear button.
 import { API, displayNameProblem, LIMITS, type Me, normalizeDisplayName } from "@plinth/shared";
 import { type FormEvent, useId, useState } from "react";
@@ -45,7 +46,7 @@ export function ProfileNameDialog({
     const name = normalizeDisplayName(typed);
     const problem = displayNameProblem(name);
     if (problem) {
-      setError(`${problem}.`);
+      setError(problem);
       return;
     }
     void save(name);

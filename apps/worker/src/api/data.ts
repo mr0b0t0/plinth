@@ -56,6 +56,7 @@ dataApi.get(API.people, async (c) => {
   const input = parseInput(listArtifactPeopleInput, {
     id: c.req.param("ref"),
     q: c.req.query("q"),
+    limit: pageQuery(c).limit,
   });
   return c.json(await listArtifactPeople(serviceCtx(c), input));
 });

@@ -1,7 +1,8 @@
 // Page: /p/:id. A category someone shared with you (docs/spec.md "Category sharing and personal
 // categories"): the name they gave it, who shared it, and the artifacts the owner chose to show,
 // each opening on its own page. Someone not yet known confirms their email by a one-time code
-// first, as on a private artifact; that one confirmation then opens every artifact listed here.
+// first, as on a private artifact, which signs them in with it; that one confirmation then opens
+// every artifact listed here.
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type PortalGate, route } from "@plinth/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -10,11 +11,12 @@ import "../components/account/dashboard.css";
 import { formatDateTime, formatRelativeShort } from "../components/account/format.ts";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, ICON_SIZE, Input, Spinner, Stack } from "../components/ui/index.ts";
+import { type CodeStep, codeSignsInFor, SignedInNotice } from "../components/viewer/GateForms.tsx";
 import { gateErrorMessage } from "../components/viewer/gate.ts";
 import "../components/viewer/viewer.css";
 import { ApiRequestError, api } from "../lib/api.ts";
 import { Link } from "../lib/router.tsx";
-import { refreshSession } from "../lib/session.ts";
+import { refreshSession, useSession } from "../lib/session.ts";
 import NotFound from "./NotFound.tsx";
 
 type State =
@@ -26,11 +28,21 @@ type State =
 export function PortalEmailForm({
   id,
   onGate,
+  signedInEmail,
+  codeSignsIn = true,
+  onStep,
 }: {
   id: string;
   onGate: (gate: PortalGate) => void;
+  /** Shown when a signed-in person's own address has no access to the collection. */
+  signedInEmail?: string | null;
+  /** Confirming the code signs the address in (every instance but a single-user one). */
+  codeSignsIn?: boolean;
+  /** Told the step whenever it changes, so the page can drop its lead on the code step. */
+  onStep?: (step: CodeStep) => void;
 }) {
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [step, setStep] = useState<CodeStep>("email");
+  useEffect(() => onStep?.(step), [step, onStep]);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +150,7 @@ export function PortalEmailForm({
   return (
     <form onSubmit={askCode} noValidate>
       <Stack gap={4}>
+        {signedInEmail && <SignedInNotice email={signedInEmail} codeSignsIn={codeSignsIn} />}
         <Input
           ref={emailRef}
           label="Email"
@@ -161,6 +174,9 @@ export default function Portal({ params }: { params: Record<string, string> }) {
   const id = params.id ?? "";
   const [state, setState] = useState<State>({ status: "loading" });
   const [now] = useState(() => Date.now());
+  const { me, config } = useSession();
+  const codeSignsIn = codeSignsInFor(config);
+  const [step, setStep] = useState<CodeStep>("email");
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -212,10 +228,20 @@ export default function Portal({ params }: { params: Record<string, string> }) {
         <section className="pl-gate" aria-labelledby="portal-title">
           <FolderSimpleIcon size={ICON_SIZE.xl} aria-hidden="true" className="pl-gate__icon" />
           <h1 id="portal-title" className="pl-gate__title">
-            Confirm your email
+            {/* Neutral for a signed-in person: the notice under it says who they are. */}
+            {codeSignsIn && !me?.email ? "Sign in" : "Confirm your email"}
           </h1>
-          <p className="pl-gate__lead">Enter your email to get a one-time code.</p>
-          <PortalEmailForm id={id} onGate={(g) => setState({ status: "gate", gate: g })} />
+          {/* One explanation at a time: none beside the signed-in notice or the sent-code line. */}
+          {step === "email" && !me?.email && (
+            <p className="pl-gate__lead">Enter your email to get a one-time code.</p>
+          )}
+          <PortalEmailForm
+            id={id}
+            onGate={(g) => setState({ status: "gate", gate: g })}
+            signedInEmail={me?.email ?? null}
+            codeSignsIn={codeSignsIn}
+            onStep={setStep}
+          />
         </section>
       </PublicShell>
     );

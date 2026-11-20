@@ -1,11 +1,12 @@
-// The privacy notice's invitations paragraph (docs/spec.md "Invitation emails"): on every instance,
-// naming categories only where category sharing is on, and how long the hashed record is kept.
+// The privacy notice's invitations paragraph (docs/spec.md "Invitation emails"): on every instance
+// that sends invitations (never in single-user mode), naming categories only where category sharing
+// is on, and how long the hashed record is kept.
 import { describe, expect, it } from "vitest";
 import { legalDoc } from "./legalDocs.tsx";
 import { CONFIG } from "./test-utils.ts";
 
-const text = (category_sharing: boolean) =>
-  JSON.stringify(legalDoc("privacy", { ...CONFIG, category_sharing }), (_k, v) =>
+const text = (category_sharing: boolean, single_user_mode = false) =>
+  JSON.stringify(legalDoc("privacy", { ...CONFIG, category_sharing, single_user_mode }), (_k, v) =>
     typeof v === "function" ? "" : v,
   );
 
@@ -34,5 +35,12 @@ describe("privacy notice: invitations", () => {
     expect(text(true)).toContain("(or the name they chose for the category)");
     expect(text(false)).not.toContain(" or a shared category");
     expect(text(false)).not.toContain("the name they chose for the category");
+  });
+
+  it("says nothing about invitations in single-user mode, which sends none", () => {
+    const t = text(false, true);
+    expect(t).not.toContain("Invitations");
+    expect(t).not.toContain("invitation emails off");
+    expect(t).not.toContain("an invitation was sent");
   });
 });

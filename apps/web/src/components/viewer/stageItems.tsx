@@ -130,7 +130,7 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
-/** A type with no source editor (a design) has no Edit: agents change it. */
+/** A type with no source editor (a sheet or a design) has no Edit: agents change it. */
 const editSource: MenuItem = (c) =>
   canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
     ? [
@@ -176,15 +176,18 @@ const downloadPptx: MenuItem = (c) =>
       ]
     : [];
 
-/** A sheet downloads itself: the frame builds the file, the app only names the format. */
+/**
+ * A sheet downloads itself: the frame builds the file, the app only names the format. Two items
+ * labelled like a deck's Download .pptx, not a submenu: the menu has none.
+ */
 const downloadSheet: MenuItem = (c) => [
   {
-    label: "Download as Excel (.xlsx)",
+    label: "Download .xlsx",
     icon: DownloadSimpleIcon,
     onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "xlsx"),
   },
   {
-    label: "Download as CSV",
+    label: "Download .csv",
     icon: DownloadSimpleIcon,
     onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "csv"),
   },
@@ -195,7 +198,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
   design: [printTyped],
-  sheet: [downloadSheet, printTyped],
+  sheet: [printTyped, downloadSheet],
 };
 
 /**

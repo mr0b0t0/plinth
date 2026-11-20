@@ -120,7 +120,7 @@ test("sharing a category with Notify people emails its people the portal link", 
   const mail = await latestEmail(page.request, client);
   expect(mail.subject).toBe(`${owner} shared "Client reports" with you`);
   expect(mail.text).toContain(`${portal}`);
-  // The people see the share's name, never the category's.
+  // The people see the share's title; the owner changed it, so the category's name never shows.
   expect(mail.text).not.toContain("Northwind");
 });
 

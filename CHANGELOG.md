@@ -16,21 +16,26 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   a line of its own, so every card in the grid has the same height; a long name ends in "…" and
   shows in full on hover. On phones the category moves from beside the title to a row's second
   line, and on a card it takes the place of "You".
-- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
-  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
-  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
-  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
-  line under the bar tells every invited viewer. On such a page their agents get the same list in
-  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
-  page. The list and the owner's sharing settings name a person once they have commented, entered
-  something or published a version there, so adding an address never reveals whether it has an
-  account. Names are display text: no `@`, no invisible characters, never a role. Plugin 0.22.0.
 - **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
   PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
   lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
   The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
   On instances with opaque content isolation the file leaves out the deck's image files, and says
   so. Plugin 0.23.0.
+- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
+  agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
+  vN" notice at a time, however many versions arrive in a row), and pages that keep
+  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
+  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
+  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
+  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
+  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
+  pushes, half for the people an artifact is shared with and half for everyone else, so a link
+  viewer can never tell from the socket whether the owner or a collaborator has the page open.
+  After a deploy, open pages reconnect spread over 10 seconds, and a busy shared page sends its
+  views at most one "data changed" signal per spread (2 s at the default). A
+  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.24.0: the agent's rule
+  never to tell people to reload.
 - **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
   posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
   `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
@@ -41,33 +46,36 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   prints or saves the design as PDF one board per page. People see the design, never its source:
   agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
   a folder with `design.html` at its top as a design. Thumbnails show each board
-  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.24.0.
+  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.25.0.
 - **Sheets.** Agents can publish a table people sort, filter, calculate with or download (`type:
   "sheet"`): JSON lines with typed columns (text, number with currency or percent formats, date,
   checkbox, select, link) and Excel formulas (SUM, IF, VLOOKUP, XLOOKUP and 67 more) that Plinth
   computes itself. The page has a frozen header, sort, a filter, a formula bar, print, light and
   dark, and phone width, and anyone who can view it downloads it as CSV or Excel (.xlsx) built in
   the browser. Agents read computed values with `read_sheet` and change cells, rows and columns
-  with `edit_sheet`, one version per call. A CSV or .xlsx file can be published as a sheet
-  (`content_format` or `plinth publish data.csv`).
-  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.25.0.
-- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
-  agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
-  vN" notice at a time, however many versions arrive in a row), and pages that keep
-  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
-  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
-  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
-  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
-  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
-  pushes, half for the people an artifact is shared with and half for everyone else, so a link
-  viewer can never tell from the socket whether the owner or a collaborator has the page open. A
-  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.27.0: the agent's rule
-  never to tell people to reload.
+  with `edit_sheet`, one version per call; people never see the JSON lines (no source editor or
+  source diff: Compare shows the versions rendered). A CSV or .xlsx file can be published as a
+  sheet (`content_format` or `plinth publish data.csv`); ids, phone numbers and leading zeros stay
+  text, and a semicolon-separated file reads decimal commas. A downloaded CSV quotes every text
+  value, so Excel in a semicolon locale never splits a cell into a formula.
+  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.26.0.
+- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
+  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
+  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
+  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
+  line under the bar tells every invited viewer. On such a page their agents get the same list in
+  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
+  page. The list and the owner's sharing settings name a person once they have commented, entered
+  something or published a version there, so adding an address never reveals whether it has an
+  account. Names are display text: no `@`, no invisible or blank-only characters, never a role;
+  the owner's own comments and versions carry a quiet "Owner" mark (`is_owner`), so a name chosen
+  to look like the owner's visibly lacks it. Once a token limited to one artifact has
+  published a version of a page, that page lists nobody. Plugin 0.27.0.
 - **Your own categories for artifacts shared with you, and sharing a whole category.** On the
   dashboard, "Move to category…" now files an artifact someone shared with you under a category of
   your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
-  one of their categories with people (viewer or commenter) under a name they choose: the people
-  get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
+  one of their categories with people (viewer or commenter) under a title, the category's name
+  unless they change it: the people get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
   once. Filing an artifact under a shared category never shares it: it waits for the owner's review
   (one "to review" line on the dashboard), and the owner's agent is told so
   (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from
@@ -75,7 +83,22 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it
   off. A token limited to one artifact never sees or manages category sharing: it holds no role
   through a category grant, and the share, portal and personal-category routes answer it 403
-  `token_bound`. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
+  `token_bound`. On a page that lists who has access, the owner and editors see the category's
+  people too, each once at their highest role. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
+- **People you share with get an account.** Confirming the emailed code at an artifact's gate or
+  a shared collection now signs the person in to Plinth with that address, creating their account
+  the first time, as the owner's own code already did. What is shared with them then shows under
+  Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
+  on its page. The gate and the shared category's page say "Sign in", the email and the privacy
+  notice say that an account is created, and someone already signed in is told instead that
+  confirming another address switches them to it. The privacy notice says their opens are
+  recorded as a signed-in person's.
+  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning to type the code
+  only into Plinth's own sign-in form and never to give it to anyone before it shows the title or name the sharer wrote (on one line, so neither can
+  add lines of its own), and wrong guesses at it count against the same per-address limit as the
+  sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
+  a viewer session without an account, and viewer sessions started earlier keep working until
+  they expire. Plugin 0.29.0.
 - **Email people when you share with them.** Adding someone to an artifact's People, or to a
   shared category, with **Notify people** ticked (the default) emails them that you shared it with
   them, with the title, their role and the link. Only people the change adds are emailed, at most once a
@@ -94,7 +117,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   invitations, as an email would.
   Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
   them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
-  Migration `0021_invitation_opt_outs.sql`.
+  Migration `0021_invitation_opt_outs.sql`. Plugin 0.30.0.
 
 ## 0.6.0 (2026-11-20)
 

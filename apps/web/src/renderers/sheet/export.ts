@@ -1,8 +1,7 @@
 // Downloads, built inside the frame: CSV (toCsv in @plinth/shared) or .xlsx (xlsx.ts), handed to
 // the browser from a blob: URL by a temporary <a download>. Nothing is fetched and no data leaves
 // the frame except as the file the viewer saves; both frame sandboxes allow downloads.
-import { type Sheet, type SheetEvaluation, toCsv } from "@plinth/shared";
-import type { SheetExportFormat } from "./protocol.ts";
+import { type Sheet, type SheetEvaluation, type SheetExportFormat, toCsv } from "@plinth/shared";
 import { buildXlsx } from "./xlsx.ts";
 
 const MIME: Record<SheetExportFormat, string> = {

@@ -166,19 +166,19 @@ async function codeFor(email: string): Promise<string> {
 }
 
 /** Confirm an allowlist email by code; returns the gate the confirm call answers with. */
-async function confirmByCode(ref: string, email: string) {
+async function confirmByCode(ref: string, email: string, vars: Record<string, unknown> = {}) {
   const headers = anonymousBrowser();
-  const ask = await run(`/api/v1/view/${ref}/email`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ email }),
-  });
+  const ask = await run(
+    `/api/v1/view/${ref}/email`,
+    { method: "POST", headers, body: JSON.stringify({ email }) },
+    vars,
+  );
   expect(ask.status).toBe(200);
-  const ok = await run(`/api/v1/view/${ref}/code`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ email, code: await codeFor(email) }),
-  });
+  const ok = await run(
+    `/api/v1/view/${ref}/code`,
+    { method: "POST", headers, body: JSON.stringify({ email, code: await codeFor(email) }) },
+    vars,
+  );
   expect(ok.status).toBe(200);
   return json(ok);
 }
@@ -884,12 +884,32 @@ describe("who is recorded", () => {
     });
   });
 
-  it("an allowlisted email confirmed by code, without an account, is recorded by email", async () => {
+  it("an allowlisted email confirmed by code is signed in by it, and recorded by its account", async () => {
     const owner = await agent();
     const listed = uniqueEmail("listed");
     const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [listed] });
     const gate = await confirmByCode(p.id, listed);
     expect((await redeem(gate.enter_url)).status).toBe(302);
+    const account = await env.DB.prepare("SELECT id FROM users WHERE email = ?")
+      .bind(listed)
+      .first<{ id: string }>();
+    expect(account?.id).toBeTruthy();
+    expect((await opensOf(p.id))[0]).toMatchObject({
+      viewer_kind: "user",
+      user_id: account?.id,
+      email: null,
+      visitor: null,
+      role: "viewer",
+    });
+  });
+
+  it("where the address may not sign in (single-user mode), a code confirmed without an account is recorded by email", async () => {
+    const owner = await agent();
+    const listed = uniqueEmail("listed");
+    const vars = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: uniqueEmail("admin") };
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [listed] });
+    const gate = await confirmByCode(p.id, listed, vars);
+    expect((await redeem(gate.enter_url, { vars })).status).toBe(302);
     expect((await opensOf(p.id))[0]).toMatchObject({
       viewer_kind: "email",
       email: listed,

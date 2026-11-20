@@ -30,6 +30,7 @@ import {
   LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
+  type SheetExportFormat,
 } from "@plinth/shared";
 
 export interface PrintMessage {
@@ -89,7 +90,6 @@ export function viewMessage(mode: DeckView): ViewMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
 }
 
-/** A deck's export: the frame builds its .pptx and answers `exported` with the same nonce. */
 export interface DeckExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
@@ -126,8 +126,6 @@ export function postToDeck(
 }
 
 // ---------- sheets (the sheet type) ----------
-
-export type SheetExportFormat = "csv" | "xlsx";
 
 /** A sheet's export: the frame builds the file and downloads it, and answers nothing. */
 export interface SheetExportMessage {

@@ -23,14 +23,17 @@ and email work is in [deploy-checklist.md](deploy-checklist.md).
 ## Choose a mode
 
 **Multi-user (default).** People sign in with an email magic link or six-digit code. Each person
-connects their own agents and owns their own artifacts. Needs an email provider.
+connects their own agents and owns their own artifacts. Needs an email provider. Someone an
+artifact or a category is shared with by email signs in the same way when they confirm the code
+at its gate: that creates their account if they have none.
 
 **Single-user.** For one person. Set `SINGLE_USER_MODE=true` and exactly one `ADMIN_EMAIL`. Agents
 connect with OAuth as on any instance. Optionally set a secret `ADMIN_TOKEN` of at least 32
 characters: agents and scripts can then also send it as a bearer token and act as `ADMIN_EMAIL`. The web app still signs that one address in by email code. In
 single-user mode production accepts `EMAIL_PROVIDER=console`, which writes the code to the Worker
 log instead of sending mail; read it with `wrangler tail`. Use a real provider if the log is shared
-with anyone else.
+with anyone else. People you share an artifact with by email still confirm their address by code,
+but get a 7-day viewer session instead of an account, since only `ADMIN_EMAIL` may sign in.
 
 **On your own machine.** Either mode can also run on your computer instead of Cloudflare Workers,
 with D1 and R2 on local disk and a Cloudflare Tunnel for access:
@@ -121,7 +124,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `MAX_ASSETS_PER_VERSION` | `511` | Asset files in one version, besides the main document. `1` to `900`. On Workers Free set a small value, for example `20` |
 | `MAX_STORAGE_BYTES_PER_USER` | `1073741824` (1 GiB) | Bytes stored per account across all versions of its artifacts. A file a version reuses from an earlier version of the same artifact is stored, and counted, once |
 | `CDN_ALLOWLIST` | cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com, cdn.plot.ly | Script hosts artifacts may load from, comma or space separated. Empty means the default list |
-| `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL` |
+| `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL`. Only that address signs in: people an artifact is shared with confirm their email by code and get a viewer session, not an account. Off, a confirmed code signs the person in and creates their account if they have none |
 | `OPERATOR_NAME` | empty | Who runs the instance, named in its terms of use and privacy notice. With `OPERATOR_EMAIL`, the instance publishes both pages; without, only the acceptable use policy (right for a personal instance) |
 | `OPERATOR_EMAIL` | empty | The one published contact address (questions, privacy, reports, authorities). A monitored inbox |
 | `OPERATOR_ADDRESS` | empty | Registered address, shown in the terms and privacy notice |
@@ -152,9 +155,9 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `LIVE_DRAFT_FLUSH_S` | `5` | How often, at most, the room writes unsaved page edits to D1, `2` to `60`. A Worker restart can lose up to this much typing, which editors' pages send again |
 | `LIVE_DRAFT_RETENTION_DAYS` | `30` | Unsaved page edits nobody touched for this long are deleted, `1` to `365` |
 | `REVIEW_LOGIN_EMAIL` | empty | With the secret `REVIEW_LOGIN_PASSWORD_HASH`: one account that may also sign in with a password at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. Off (404) unless both are set. Must not be an `ADMIN_EMAIL` address, and is refused on a single-user instance ([security.md](security.md#review-account-sign-in)) |
-| `SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000`: one step per expression and per cell a range visits. Past it, the agent gets the cells it did not reach as `#LIMIT!` with an `eval_budget` warning. Lower it on the Workers Free plan (10 ms of CPU per request) if large sheets time out; raise it on Workers Paid for big sheets. It never changes what viewers see: browsers compute sheets themselves |
 | `ALLOW_LIVE_VIEWS` | `true` | Live views: open artifact pages pick up a new version within seconds, and pages that keep shared data learn of changes without waiting for their 15 s poll, over one WebSocket the app page opens on `APP_HOST` (`/api/v1/view/<id>/watch`). It carries only version numbers and change signals. Needs the `ROOMS` Durable Object binding (the same as live rooms), but neither `ALLOW_ROOMS` nor origin isolation; data signals also need shared data. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off, and pages poll as before. Each open view, version and shared-data write then costs a Durable Object request ([deploy-checklist.md](deploy-checklist.md#live-views)); on the Workers Free plan a busy instance may prefer it off |
 | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` | `1000` | Open views of one artifact that get pushed signals, `10` to `10000`, counted apart from `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`: half for the owner and the people it is shared with, half for everyone else. Views over it poll. It also sets how long open views spread their follow-up requests after a signal: 2 ms per socket, at most 10 s (2 s at the default) |
+| `SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000`: one step per expression and per cell a range visits. Past it, the agent gets the cells it did not reach as `#LIMIT!` with an `eval_budget` warning. Lower it on the Workers Free plan (10 ms of CPU per request) if large sheets time out; raise it on Workers Paid for big sheets. It never changes what viewers see: browsers compute sheets themselves |
 | `ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people, who see the artifacts the owner reviews into it on a portal page (`/p/<id>`); filing an artifact under a shared category never shares it ([spec](spec.md#category-sharing-and-personal-categories-decided-2026-11-19)). Only `false`, `0`, `no` or `off` turns it off: category grants then count for nothing, the share and portal endpoints answer `feature_disabled` or 404, and agents are no longer told about shared categories. Passes issued through a share before you turn it off end within 12 hours; `pnpm --filter @plinth/worker admin -- bump-epochs --category-shared --remote` ends them at once. The privacy notice names shared categories while it is on |
 | `INVITATION_EMAILS_PER_DAY` | `1000` | Invitation emails the whole instance sends per UTC day, `0` to `1000000`. One cap shared by every owner: once it is used up, nobody's invitations go out until the next UTC day (sign-in and viewing codes still do; they count separately). They share your email provider's daily quota with those codes, so keep it well under that quota. `0` turns invitation emails off, as do `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE`: the app shows no **Notify people** box, and a request with `notify: true` still applies but emails nobody ([spec](spec.md#invitation-emails-decided-2026-11-19)) |
 | `INVITATION_EMAILS_PER_OWNER_PER_DAY` | `20` | Invitation emails one owner's sharing changes send per UTC day, `1` to `10000`. Keep it a small share of `INVITATION_EMAILS_PER_DAY`, so a few accounts cannot use up the instance cap for everyone |
@@ -321,6 +324,12 @@ to turn them on or off. See [ci.md](ci.md).
   see [deploy-checklist.md](deploy-checklist.md#live-rooms) for the Free plan, costs and rollback.
   A reverse proxy in front of a container must pass WebSocket upgrades
   ([docker.md](docker.md#what-the-proxy-must-do)).
+- **Live views.** Open artifact pages hold a WebSocket on the app host
+  (`/api/v1/view/<id>/watch`) into the same `ArtifactRoom` object, which pushes new version
+  numbers and "shared data changed" signals; nothing is stored. While they are on, every new
+  version, shared-data write and sharing change calls the artifact's object (one Durable Object
+  request each). `ALLOW_LIVE_VIEWS=false` turns them off: pages then poll every 15 s, as without the
+  binding. A reverse proxy must pass this upgrade too.
 - **Names and the people list.** Pages that declare `viewer` see each person's display name
   (`users.name`, read live) wherever they see their email, and pages that declare `data viewer
   people` let their owner and editors list everyone the artifact is shared with. Neither has a
@@ -328,12 +337,6 @@ to turn them on or off. See [ci.md](ci.md).
   `ALLOW_ROOMS`, with `CONTENT_ISOLATION=origin`), and the people list only while
   `ALLOW_SHARED_DATA` is on, so turning those off turns them off. Nothing is stored: `erase-user`
   removes a name with the account.
-- **Live views.** Open artifact pages hold a WebSocket on the app host
-  (`/api/v1/view/<id>/watch`) into the same `ArtifactRoom` object, which pushes new version
-  numbers and "shared data changed" signals; nothing is stored. While they are on, every new
-  version, shared-data write and sharing change calls the artifact's object (one Durable Object
-  request each). `ALLOW_LIVE_VIEWS=false` turns them off: pages then poll every 15 s, as without the
-  binding. A reverse proxy must pass this upgrade too.
 - **Interrupted publishes.** A version's files go to R2 before its database row, so a publish
   that dies midway (a closed connection, a CPU or memory limit) leaves files no version points to,
   under that attempt's own prefix. Each attempt records that prefix in the `staging_attempts`
