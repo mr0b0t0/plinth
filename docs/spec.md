@@ -588,8 +588,9 @@ or log carries it.
   takes a signed-in session only (CSRF and exact `Origin`): agents and bearer tokens get 403, and
   there is no MCP tool for it.
 - **In the app.** The dashboard has a Category menu beside All / Mine / Shared (kept in
-  `?category=`, an empty value meaning no category; hidden under Shared), a category badge on the
-  owner's rows and cards, a Rename category dialog (rename, merge or remove) and "Move to
+  `?category=`, an empty value meaning no category; hidden under Shared), the owner's category
+  as a badge beside a row's title (on phones, plain text on the row's second line) and as plain
+  text on a card's info line, a Rename category dialog (rename, merge or remove) and "Move to
   category…" in the row menu, which opens the Category section of the artifact's Settings.
 - **CLI and skill.** `plinth publish --category C` sets it on a new publish or, for the owner, on
   an update (`--id`); the CLI never infers it. The agent skill (plugin 0.12.0) tells agents to set
