@@ -308,7 +308,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
-| `set_visibility(id, visibility, emails?, password?)` | Change who can view |
+| `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
 | `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
 | `list_mentions(state?)` | Pending requests addressed to this agent |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
@@ -1937,6 +1937,111 @@ its page without a new version each time, and agents add and move blocks with
   on the board, freehand drawing, selecting several blocks, frames, changing the settings from the
   page, and anonymous link viewers in the room.
 
+### Invitation emails (decided 2026-11-19)
+
+When an owner gives someone access, Plinth can email that person the link, so the owner does not
+have to send it themselves. It never emails anyone unless the request asks, and an agent asks only
+when the user told it to.
+
+- **When.** A sharing change emails the people it adds when it carries `notify: true`:
+  `PUT /api/v1/artifacts/:ref/sharing` (`{ grants, notify? }`), `set_visibility` over MCP and
+  `PUT /api/v1/artifacts/:ref/visibility` (the people `emails` adds), and a category share's
+  `POST /api/v1/category-shares` and `PATCH /api/v1/category-shares/:id` with people. `notify`
+  defaults to `false` everywhere. In the app, the People section of an artifact's settings and the
+  Share category dialog have a **Notify people** box, ticked by default: adding a person then sends
+  `notify: true` (role changes, removals and Undo never do). `publish_artifact`'s `emails` never
+  emails anyone; an agent that should notify people publishes without `emails` and adds them with
+  `set_visibility`.
+- **Who is emailed.** Only a new grant: an address that held no grant on the artifact (or the
+  share) before the change. Re-saving a list, changing a role or adding someone who already had
+  access emails nobody, and the owner's own address is never emailed. The decision is
+  `policy.ts mayEmailInvitations`: the request asked, the caller is the owner acting on their own
+  artifact or share (the signed-in owner or the owner's own agent), the owner's address is verified,
+  and the artifact is not taken down.
+- **Turning them off.** Every invitation's footer and its `List-Unsubscribe` header point to the
+  app's `/invitation-emails` page, whose URL holds no token and no address. After the usual email
+  code sign-in, the person turns invitation emails to their own address off with one button
+  (**Stop these emails**), and back on from the same page (`GET` and `PUT
+  /api/v1/me/invitation-emails`, `{ receive }`, signed-in people only, never agents; the address is
+  always the session's). Off is kept as a hash of the address in `invitation_opt_outs` (migration
+  `0021_invitation_opt_outs.sql`, the same hash the counters use), never the address, and an
+  account's erasure keeps it, since dropping it would let invitations reach the inbox again. The
+  opt-out covers the inbox, not only the address typed: the hash is of the address's mailbox
+  (`services/invitations.ts invitationMailbox`: lowercased, a `+tag` dropped from the local part,
+  and for `gmail.com` and `googlemail.com` the dots too, both read as `gmail.com`), so turning
+  them off as `bo@gmail.com` stops `bo+x@gmail.com`, `b.o@gmail.com` and `bo@googlemail.com`. An
+  owner who shares with that address still gives it access; the person is reported as
+  `opted_out` ("They turned these emails off"). That answer costs what an email would: a place
+  in the change's `invitationsPerChange` and one of the owner's
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY`, and it is given only while those and the instance's
+  `INVITATION_EMAILS_PER_DAY` have room (otherwise the reason is the limit's); the person's own
+  counters and the instance's are not used. Since only someone signed in as the address can turn
+  them off, `opted_out` tells the owner that the address has signed in to this instance; the cost
+  bounds how many addresses an owner can learn that about, to their daily cap. There is no
+  `List-Unsubscribe-Post` (RFC 8058 one-click): that request arrives with no session, so it would
+  need a token in the URL saying whose address to stop.
+- **Bounds.** At most one invitation per artifact (or share) and mailbox within a day, counted
+  across the previous and the current UTC day, so removing and re-adding someone does not email
+  them again; two addresses of one mailbox in one change are emailed once, and the other is
+  reported with the first one's outcome (`already_emailed` when it was emailed). At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change, and per UTC
+  day `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20) per owner, `INVITATION_EMAILS_PER_DAY` (1000)
+  for the whole instance, every owner together,
+  `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
+  `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together. Each limit is reserved before an email goes (the counter is raised, then checked, and what
+  was not used is given back), so parallel changes cannot pass it. The counters sit in
+  `rate_limits` under keys holding the hash of the address's mailbox (the opt-out's hash), never
+  the address, so a `+tag` or Gmail's dots do not get an inbox fresh limits; they are read and written
+  in a fixed number of statements whatever the number of people, and the hourly cron deletes them
+  two days after their day. Nothing else is stored, apart from the opt-outs above. Sign-in and
+  viewing codes have counters of their own (`login:` keys), so a used-up invitation budget never
+  holds back a code.
+- **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
+  addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
+  `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
+  `recipient_limit`, which covers both per-address limits, `instance_limit`,
+  `invitations_off` and `opted_out`). Without it, the result is exactly as
+  before. A skipped invitation never fails the change: the grants are
+  saved either way. The app names the people it did not email, and why, in the change's one toast
+  (a warning in place of the success toast).
+- **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
+  alone when the owner has no display name; the body names the
+  owner by display name and address, the title (for a category, the name its people see, never the
+  category's own name), the role in plain words, the link (`/a/<slug>`, or the portal
+  `/p/<id>` for a category share), a line saying the title and name were written by the person who
+  shared it, why the recipient got it, and one footer line linking `/invitation-emails` to stop
+  these emails. It carries no code, token or other secret: the person
+  still confirms their address when the link asks. Titles and names are untrusted: control and
+  format characters and line breaks are removed, they are shortened, and anything that reads as a
+  web address is defanged in the subject and both parts: `https[:]//`, `www[.]`, and every host
+  name whose last labels are a public suffix the pinned `tldts` knows (ICANN or the list's private
+  part) with each dot written `[.]` (`office365-reset[.]co`, `bob@evil[.]com`), while dotted words
+  whose last label is no suffix (`Node.js`, `v1.2.3`, `e.g.`) stay as written. The HTML part
+  escapes every value and has two links, both on the app host: the artifact's and the opt-out
+  page. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
+  console provider in development) after the response, and a provider failure is logged without
+  the address, the title or the message. Providers limit requests per second, and sign-in and
+  viewing codes share that limit, so a change's invitations never go all at once: in one batch
+  request where the provider has one (Resend's `/emails/batch`, up to 100), one at a time
+  otherwise. A 429 is tried again after the provider's `Retry-After` (1 second when it does not
+  say, at most 5), twice; if that does not clear it, the rest of the change is not tried. An
+  invitation the provider refused (an HTTP 4xx answer, or not tried) gets its de-dupe mark and
+  every counter back, so adding the person again emails them; one whose outcome is unknown (no
+  answer, or a 5xx) keeps them, since it may have gone. `emailed` is decided before that and names
+  who was handed over.
+- **Settings.** Invitations go through the email provider sign-in and viewing codes use, and share
+  its daily quota, so the operator sets how many go out: `INVITATION_EMAILS_PER_DAY` (default
+  1000, `0` to `1000000`) caps the whole instance per UTC day, every owner together, and `0`
+  turns invitation emails off; `INVITATION_EMAILS_PER_OWNER_PER_DAY` (default 20, `1` to
+  `10000`) caps one owner, low enough that a handful of new accounts cannot use up the instance
+  cap for everyone. An operator sets the instance cap well under the provider's daily quota, so
+  codes always have room. Invitation emails are also off with `EMAIL_PROVIDER=console` outside
+  development (that provider only writes to the log, so nobody would be emailed) and in
+  `SINGLE_USER_MODE` (only the admin can sign in, so nobody else could turn them off). Off, the
+  app has no **Notify people** box (`GET /api/v1/config` says `invitation_emails: false`), a
+  request with `notify: true` still applies, and every person added is reported as
+  `invitations_off`; nothing is counted. In development the console provider prints invitations
+  to the log, and `emailed` names who was handed to it.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2187,6 +2292,12 @@ options.
   its exact content origin ([Live views](#live-views-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
+- **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
+  agent, told by the user) adds them with `notify`, from a verified owner, once per artifact and
+  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has the artifact's link, a
+  link to turn these emails off (`/invitation-emails`, after signing in as that address) and no
+  secret, and its untrusted title and name are cleaned, defanged and escaped
+  ([Invitation emails](#invitation-emails-decided-2026-11-19)).
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
   environment variable with a per-account override. Storage and publishes per hour are capped too.
   Rate limits on password attempts and email codes.

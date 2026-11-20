@@ -1098,7 +1098,7 @@
       "put": {
         "operationId": "setVisibility",
         "summary": "Change who can view (owner only)",
-        "description": "`emails` replaces the viewer allowlist; collaborator roles are kept. `password` is required for password visibility unless one is already set.\n\nMirrors the MCP tool `set_visibility`.",
+        "description": "`emails` replaces the viewer allowlist; collaborator roles are kept. `password` is required for password visibility unless one is already set. With `notify: true`, each address `emails` newly adds is emailed a link (`invitations` says who); agents set it only when the user asked.\n\nMirrors the MCP tool `set_visibility`.",
         "tags": ["Artifacts"],
         "parameters": [
           {
@@ -1119,7 +1119,7 @@
           "200": {
             "description": "Success",
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ArtifactSummary" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/VisibilityResult" } }
             }
           },
           "400": { "$ref": "#/components/responses/E400" },
@@ -1165,6 +1165,7 @@
       "put": {
         "operationId": "replaceGrants",
         "summary": "Replace the allowlist and collaborator roles (owner only)",
+        "description": "With `notify: true`, each person who held no grant before is emailed a link and their role on the owner's behalf (`invitations` says who); the app's Notify people box sends it, agents set it only when the user asked. Default false.",
         "tags": ["Sharing"],
         "parameters": [
           {
@@ -2555,6 +2556,56 @@
         },
         "security": [{}, { "sessionCookie": [] }]
       }
+    },
+    "/me/invitation-emails": {
+      "get": {
+        "operationId": "getInvitationEmails",
+        "summary": "Whether your own address gets invitation emails",
+        "tags": ["Account"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InvitationEmailSettings" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      },
+      "put": {
+        "operationId": "setInvitationEmails",
+        "summary": "Turn invitation emails to your own address off or on",
+        "description": "Signed-in people only, for their own address (never agents). Off, an owner who shares with this address, or another address of the same inbox (a +tag, or Gmail's dots), still gives it access, and their result names it `opted_out`, which costs the owner one of their daily invitations.",
+        "tags": ["Account"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InvitationEmailsInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InvitationEmailSettings" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
     }
   },
   "components": {
@@ -2730,7 +2781,12 @@
             "type": "array",
             "items": { "type": "string", "maxLength": 254 }
           },
-          "password": { "type": "string", "minLength": 6, "maxLength": 200 }
+          "password": { "type": "string", "minLength": 6, "maxLength": 200 },
+          "notify": {
+            "default": false,
+            "description": "Email each person this adds a link to it, on the owner's behalf. Default false: set it only when the user asked to notify them",
+            "type": "boolean"
+          }
         },
         "required": ["visibility"]
       },
@@ -2748,6 +2804,11 @@
               },
               "required": ["email", "role"]
             }
+          },
+          "notify": {
+            "default": false,
+            "description": "Email each person this adds a link to it, on the owner's behalf. Default false: set it only when the user asked to notify them",
+            "type": "boolean"
           }
         },
         "required": ["grants"]
@@ -4729,7 +4790,8 @@
           "category_share": {
             "oneOf": [{ "$ref": "#/components/schemas/SharingCategoryShare" }, { "type": "null" }],
             "description": "The share of this artifact's category, when it has one: who else sees it through the category once it is shared"
-          }
+          },
+          "invitations": { "$ref": "#/components/schemas/InvitationReport" }
         },
         "required": ["visibility", "has_password", "grants", "public_allowed", "category_share"]
       },
@@ -5086,6 +5148,10 @@
               "required": ["id", "available"]
             },
             "description": "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation"
+          },
+          "invitation_emails": {
+            "type": "boolean",
+            "description": "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode"
           }
         },
         "required": [
@@ -5107,7 +5173,8 @@
           "review_login",
           "view_log_retention_days",
           "category_sharing",
-          "artifact_types"
+          "artifact_types",
+          "invitation_emails"
         ]
       },
       "LoginResult": {
@@ -6154,6 +6221,11 @@
               },
               "required": ["id", "version", "category_rev", "decision"]
             }
+          },
+          "notify": {
+            "default": false,
+            "description": "Email each person this adds a link to it, on the owner's behalf. Default false: set it only when the user asked to notify them",
+            "type": "boolean"
           }
         },
         "required": ["category", "people", "review"]
@@ -6187,6 +6259,11 @@
               },
               "required": ["id", "version", "category_rev", "decision"]
             }
+          },
+          "notify": {
+            "default": false,
+            "description": "Email each person this adds a link to it, on the owner's behalf. Default false: set it only when the user asked to notify them",
+            "type": "boolean"
           }
         }
       },
@@ -6390,7 +6467,8 @@
           "share": { "$ref": "#/components/schemas/CategoryShareSummary" },
           "review": {
             "oneOf": [{ "$ref": "#/components/schemas/CategoryReviewResult" }, { "type": "null" }]
-          }
+          },
+          "invitations": { "$ref": "#/components/schemas/InvitationReport" }
         },
         "required": ["share", "review"]
       },
@@ -6731,6 +6809,78 @@
             "required": ["changed"]
           }
         ]
+      },
+      "InvitationReport": {
+        "type": "object",
+        "properties": {
+          "emailed": {
+            "type": "array",
+            "items": { "type": "string", "format": "email" },
+            "description": "Handed to the email provider"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": { "type": "string", "format": "email" },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "owner_unverified",
+                    "taken_down",
+                    "already_emailed",
+                    "change_limit",
+                    "owner_limit",
+                    "recipient_limit",
+                    "instance_limit",
+                    "invitations_off",
+                    "opted_out"
+                  ]
+                }
+              },
+              "required": ["email", "reason"]
+            },
+            "description": "People the change added who were not emailed, and why. `opted_out` means someone signed in as that inbox turned these emails off, so it says the address has signed in here; it costs a place in the change and one of the owner's daily invitations, and is given only while those limits have room"
+          }
+        },
+        "required": ["emailed", "skipped"],
+        "description": "Present only when the request asked to `notify`. People who already had access are in neither list: only a new grant is announced"
+      },
+      "VisibilityResult": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ArtifactSummary" },
+          {
+            "type": "object",
+            "properties": { "invitations": { "$ref": "#/components/schemas/InvitationReport" } },
+            "required": []
+          }
+        ]
+      },
+      "InvitationEmailsInput": {
+        "type": "object",
+        "properties": {
+          "receive": {
+            "type": "boolean",
+            "description": "false stops invitation emails to your address; true allows them again"
+          }
+        },
+        "required": ["receive"]
+      },
+      "InvitationEmailSettings": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The signed-in person's own address"
+          },
+          "receive": {
+            "type": "boolean",
+            "description": "false: invitation emails to this address are not sent (opted_out)"
+          }
+        },
+        "required": ["email", "receive"]
       }
     },
     "responses": {

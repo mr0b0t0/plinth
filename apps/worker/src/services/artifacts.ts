@@ -11,6 +11,7 @@ import {
   type Author,
   type Capabilities,
   type EffectiveRole,
+  type InvitationReport,
   type PublishResult,
   pageDisplayName,
   type Role,
@@ -73,6 +74,7 @@ import {
 } from "./categoryShares.ts";
 import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
+import { newInvitees, sendInvitations } from "./invitations.ts";
 import { readLiveDraftMeta } from "./live.ts";
 import {
   commitVersion,
@@ -974,12 +976,15 @@ export async function restoreVersion(
   );
 }
 
-/** Replace the allowlist (viewer grants). Commenter and editor grants are kept. */
+/**
+ * Replace the allowlist (viewer grants). Commenter and editor grants are kept. Returns the
+ * addresses it added, which held no grant before (invitation emails announce only those).
+ */
 export async function replaceViewerGrants(
   ctx: Ctx,
   artifactId: string,
   emails: string[],
-): Promise<void> {
+): Promise<string[]> {
   const wanted = new Set(emails.map((e) => e.toLowerCase()));
   const existing = await ctx.db
     .select()
@@ -1008,6 +1013,7 @@ export async function replaceViewerGrants(
   }
   if (toDelete.length) await prunePersonalCategories(ctx.env.DB, { artifactId }).run();
   await bumpAccessEpoch(ctx, artifactId);
+  return toAdd;
 }
 
 /** Invalidate every content-host cookie and password pass for this artifact. */
@@ -1026,9 +1032,14 @@ export interface SetVisibilityInput {
   visibility: Visibility;
   emails?: string[];
   password?: string;
+  /** Email the people `emails` adds (docs/spec.md "Invitation emails"). Default false. */
+  notify?: boolean;
 }
 
-export async function setVisibility(ctx: Ctx, input: SetVisibilityInput): Promise<ArtifactSummary> {
+export async function setVisibility(
+  ctx: Ctx,
+  input: SetVisibilityInput,
+): Promise<ArtifactSummary & { invitations?: InvitationReport }> {
   const { artifact, role } = await requireArtifact(ctx, input.id, "manage");
   if (input.visibility === "public" && artifact.visibility !== "public") {
     await checkPublicAllowed(ctx, artifact.ownerId);
@@ -1044,11 +1055,29 @@ export async function setVisibility(ctx: Ctx, input: SetVisibilityInput): Promis
     .set({ visibility: input.visibility, passwordHash, updatedAt: nowIso() })
     .where(eq(artifacts.id, artifact.id))
     .run();
-  if (input.emails) await replaceViewerGrants(ctx, artifact.id, input.emails);
-  else await bumpAccessEpoch(ctx, artifact.id);
+  const added = input.emails ? await replaceViewerGrants(ctx, artifact.id, input.emails) : [];
+  if (!input.emails) await bumpAccessEpoch(ctx, artifact.id);
   const fresh = await findArtifact(ctx, artifact.id);
   if (!fresh) throw notFound();
-  return summaryFor(ctx, fresh, role);
+  const summary = await summaryFor(ctx, fresh, role);
+  const owner = input.notify ? await getUserById(ctx.db, fresh.ownerId) : null;
+  const invitations = await sendInvitations(ctx, {
+    notify: input.notify === true,
+    owner,
+    target: {
+      kind: "artifact",
+      id: fresh.id,
+      slug: fresh.slug,
+      title: fresh.title,
+      takenDown: fresh.takenDownAt !== null,
+    },
+    invitees: newInvitees(
+      [],
+      added.map((email) => ({ email, role: "viewer" as const })),
+      owner?.email ?? null,
+    ),
+  });
+  return invitations ? { ...summary, invitations } : summary;
 }
 
 /** Rename an artifact (owner only). A title-only patchArtifact. */

@@ -401,12 +401,23 @@ export const restoreVersionInput = z.object({
   base_version: versionNumberSchema.optional(),
 });
 
+/** Invitation emails (docs/spec.md "Invitation emails"): off unless the caller asks. */
+const notifySchema = z
+  .boolean()
+  .default(false)
+  .describe(
+    "Email each person this adds a link to it, on the owner's behalf. Default false: set it only " +
+      "when the user asked to notify them",
+  );
+
 export const setVisibilityInput = z.object({
   id: artifactRefSchema,
   visibility: visibilitySchema,
   /** Replaces the allowlist (viewer role) when given. Collaborator roles are kept. */
   emails: z.array(emailSchema).max(LIMITS.maxAllowlistEmails).optional(),
   password: passwordSchema.optional(),
+  /** Email the people `emails` adds (docs/spec.md "Invitation emails"). */
+  notify: notifySchema,
 });
 export type SetVisibilityInput = z.input<typeof setVisibilityInput>;
 
@@ -480,9 +491,17 @@ export const oauthConsentInput = z.object({
   approve: z.boolean(),
 });
 
+/** PUT /me/invitation-emails: whether the signed-in person's own address gets invitations. */
+export const invitationEmailsInput = z.object({
+  receive: z
+    .boolean()
+    .describe("false stops invitation emails to your address; true allows them again"),
+});
+
 export const grantInput = z.object({ email: emailSchema, role: roleSchema });
 export const grantsReplaceInput = z.object({
   grants: z.array(grantInput).max(LIMITS.maxAllowlistEmails),
+  notify: notifySchema,
 });
 
 /**
@@ -546,6 +565,7 @@ export const createCategoryShareInput = z.object({
   title: titleSchema.optional(),
   people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails),
   review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS),
+  notify: notifySchema,
 });
 
 /**
@@ -556,6 +576,7 @@ export const updateCategoryShareInput = z.object({
   title: titleSchema.optional(),
   people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails).optional(),
   review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS).optional(),
+  notify: notifySchema,
 });
 
 /** POST /category-shares/:id/review. */

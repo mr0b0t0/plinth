@@ -651,6 +651,7 @@ export default function Dashboard() {
         <ShareCategoryDialog
           category={selected.name}
           shareId={selectedShare?.id ?? null}
+          invitations={config?.invitation_emails !== false}
           onClose={() => setSharing(false)}
           onDone={() => {
             setSharing(false);
