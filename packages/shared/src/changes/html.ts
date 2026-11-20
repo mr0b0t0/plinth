@@ -49,6 +49,7 @@ function describeRuns(
       key,
       text: (r) => r.text,
       compatible: (x, y) => x.heading === y.heading,
+      budget: out.alignBudget,
     });
     // In the order a person reads the page, so a heading added above a changed one comes first.
     for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
@@ -219,7 +220,8 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
     const p = alignRegion(
       region.removed.filter((x) => !moved.has(x)),
       region.added.filter((x) => !moved.has(x)),
-      { key: (x) => x.html, text },
+      // A board with no name and no text keys on its markup: such boards may pair with each other.
+      { key: (x) => x.html, text, wordless: true, budget: out.alignBudget },
     );
     for (const x of p.removed) out.add({ kind: "removed", where: "", what: `${name(x)} removed` });
     same.push(...p.pairs);

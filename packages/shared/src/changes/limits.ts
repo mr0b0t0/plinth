@@ -20,7 +20,10 @@ export const CHANGE_LIMITS = {
    * region matches equal blocks only and lists the rest as removed and added.
    */
   alignCells: 40_000,
-  /** And the word comparisons it may make in one region, under the same fallback. */
+  /**
+   * And the cells and word comparisons that the alignments of one change list may make in all,
+   * shared by its regions, under the same fallback.
+   */
   alignWork: 4_000_000,
   /** Formula steps a sheet may spend so that a calculation's results can be listed. */
   sheetEvalSteps: 1_000_000,

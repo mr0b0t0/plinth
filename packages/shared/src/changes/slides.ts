@@ -218,6 +218,9 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
     const paired = alignRegion(removedSlides, addedSlides, {
       key: (s) => s.key,
       text: (s) => `${s.title} ${s.text}`,
+      // A slide of only an image keys on its images and notes: such slides may pair.
+      wordless: true,
+      budget: out.alignBudget,
     });
     // In the order a person reads the deck, so a slide added before an edited one comes first.
     for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {

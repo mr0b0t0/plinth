@@ -4,7 +4,7 @@
 // changed list's items one at a time); images added, removed or described differently.
 // Also used for a design system's guidelines.
 
-import { alignRegion } from "./align.ts";
+import { type AlignBudget, alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import {
   type MdBlock,
@@ -90,7 +90,7 @@ function shownText(x: MdBlock): string {
 }
 
 /** A list's items that changed, one item each, in the order of the list. */
-function listItemChanges(x: MdBlock, y: MdBlock, where: string): ChangeItem[] {
+function listItemChanges(x: MdBlock, y: MdBlock, where: string, budget: AlignBudget): ChangeItem[] {
   const ai = x.items ?? [];
   const bi = y.items ?? [];
   const at = new Map<MdListItem, number>();
@@ -105,6 +105,7 @@ function listItemChanges(x: MdBlock, y: MdBlock, where: string): ChangeItem[] {
     const p = alignRegion(ai.slice(h.aStart, h.aEnd), bi.slice(h.bStart, h.bEnd), {
       key: (i) => i.text,
       text: (i) => i.text,
+      budget,
     });
     const pos = (i: MdListItem) => at.get(i) as number;
     for (const { step } of inReadingOrder(p, pos, pos, h.bStart)) {
@@ -228,6 +229,7 @@ export function describeMarkdown(
       key: (x) => `${x.kind}\u0000${x.text}`,
       text: (x) => x.text,
       compatible: (x, y) => x.kind === y.kind,
+      budget: out.alignBudget,
     });
     const steps = inReadingOrder(paired, at, at, h.bStart);
     const events: Event[] = [];
@@ -279,7 +281,7 @@ export function describeMarkdown(
         const noun = NOUN[y.kind as keyof typeof NOUN];
         if (x.text !== y.text) {
           if (y.kind === "list") {
-            for (const item of listItemChanges(x, y, where)) push(key, item);
+            for (const item of listItemChanges(x, y, where, out.alignBudget)) push(key, item);
           } else {
             push(key, {
               kind: "changed",

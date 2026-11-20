@@ -1,6 +1,7 @@
 // The change list's types, its collector and (from limits.ts) its limits, shared by every
 // describer. Pure and zod-free: the app's Compare page imports it, and so can a renderer bundle or
 // the room.
+import type { AlignBudget } from "./align.ts";
 import { CHANGE_LIMITS } from "./limits.ts";
 import { changeExcerpt, withoutBidi } from "./text.ts";
 
@@ -48,11 +49,15 @@ function capped(s: string): string {
  * Collects items up to the cap, in the order they are found. It also cuts every `before` and
  * `after` longer than CHANGE_LIMITS.excerptChars, so the bound holds whatever a describer passes
  * (a 256-character token value, a long board or column name), and drops bidirectional controls
- * from every string, so no name or value can reorder how its item reads.
+ * from every string, so no name or value can reorder how its item reads. It also holds the one
+ * alignment budget that every changed region of the list draws on (`alignRegion`), so a version of
+ * many regions cannot multiply the bound.
  */
 export class ChangeCollector {
   readonly items: ChangeItem[] = [];
   truncated = false;
+  /** Cells and word comparisons left to the alignments of this list: CHANGE_LIMITS.alignWork. */
+  readonly alignBudget: AlignBudget = { left: CHANGE_LIMITS.alignWork };
   // A plain field, not a parameter property: Node loads this file with type stripping only (the
   // web build's config imports @plinth/shared).
   private readonly max: number;

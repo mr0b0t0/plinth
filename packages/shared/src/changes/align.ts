@@ -112,13 +112,10 @@ function allWords(text: string): Set<string> {
   );
 }
 
-/**
- * Jaccard overlap of two sets: shared over all; 1 when both are empty, since two texts with no
- * words at all (a slide of only an image) say the same.
- */
+/** Jaccard overlap of two sets: shared over all; 0 when both are empty. */
 function jaccard<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): number {
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
-  if (large.size === 0) return 1;
+  if (large.size === 0) return 0;
   let shared = 0;
   for (const w of small) if (large.has(w)) shared++;
   return shared / (a.size + b.size - shared);
@@ -132,7 +129,7 @@ function canReach(a: number, b: number, bar: number): boolean {
 /**
  * How alike two texts are, 0 to 1: the Jaccard overlap of their content words. Two texts with no
  * content words at all (a table of figures, "OK") compare all their words instead, and two with
- * no words at all are alike 1.
+ * no words at all ("★★★", "🎉") are not alike.
  */
 export function similarity(a: string, b: string): number {
   const ca = contentWords(a);
@@ -147,11 +144,31 @@ export interface AlignOptions<T> {
   text: (x: T) => string;
   /** Whether two blocks may pair at all (a heading only with a heading). Default: always. */
   compatible?: (x: T, y: T) => boolean;
+  /**
+   * Whether two blocks with no words at all may pair, at SIMILARITY_MIN and with no overlap for
+   * the tie, so that any pair that shares a word outweighs them: a slide of only an image, or a
+   * board with no name and no text, whose key covers what else it holds. Default false: a text run
+   * or doc block of only symbols ("★★★", "🎉") is never paired with another by where it is.
+   */
+  wordless?: boolean;
+  /**
+   * The word comparisons left to every region of one change list (ChangeCollector.alignBudget),
+   * charged by each region it aligns. Default: a budget of CHANGE_LIMITS.alignWork for this region
+   * alone.
+   */
+  budget?: AlignBudget;
+}
+
+/** Work that the alignments of one change list may still do, in cells and word comparisons. */
+export interface AlignBudget {
+  left: number;
 }
 
 /** An alignment: the pairs and the rest, in order, and whether the limits made it keys only. */
 export interface Aligned<T> extends Paired<T> {
-  /** False when the region passed alignCells or alignWork and only equal keys were matched. */
+  /**
+   * False when the region passed alignCells or the budget left and only equal keys were matched.
+   */
   aligned: boolean;
 }
 
@@ -160,12 +177,14 @@ export interface Aligned<T> extends Paired<T> {
  * (`similarity`) by SIMILARITY_MIN or more, and the pairs are chosen in order on both sides to make
  * the summed likeness as high as it can be; between alignments equally alike, the one whose pairs
  * share more of all their words (short and function words included: "Row 3" over "Row 4") wins,
- * and then the one that pairs earlier blocks. Two blocks with no words at all are alike 1. Pairs
- * come in order, as do the old blocks left over (`removed`) and the new ones (`added`). A region
- * of more than CHANGE_LIMITS.alignCells old×new cells, or one whose word comparisons (counted from
- * the sizes of the sets compared) would pass CHANGE_LIMITS.alignWork, matches equal keys only
- * (each old block, in order, with the first new block of its key after the last match) and lists
- * the rest as removed and added: it is never paired by position.
+ * and then the one that pairs earlier blocks. Two blocks with no words at all pair only with
+ * `wordless`, and then at the least likeness. Pairs come in order, as do the old blocks left over
+ * (`removed`) and the new ones (`added`). A region of more than CHANGE_LIMITS.alignCells old×new
+ * cells, or one whose cells and word comparisons (counted from the sizes of the sets compared)
+ * would pass what is left of `budget`, matches equal keys only (each old block, in order, with the
+ * first new block of its key after the last match) and lists the rest as removed and added: it is
+ * never paired by position. A region aligned charges its work to `budget`, and one that falls
+ * back charges the cells it looked at, so the regions of one change list share one bound.
  */
 export function alignRegion<T>(
   before: readonly T[],
@@ -176,7 +195,10 @@ export function alignRegion<T>(
   const m = after.length;
   if (n === 0 || m === 0)
     return { pairs: [], removed: [...before], added: [...after], aligned: true };
-  if (n * m > CHANGE_LIMITS.alignCells) return equalKeysOnly(before, after, options.key);
+  const budget = options.budget ?? { left: CHANGE_LIMITS.alignWork };
+  if (n * m > CHANGE_LIMITS.alignCells || n * m > budget.left) {
+    return equalKeysOnly(before, after, options.key);
+  }
   const ka = before.map(options.key);
   const kb = after.map(options.key);
   const wordsOf = (t: string) => {
@@ -186,17 +208,20 @@ export function alignRegion<T>(
   };
   const wa = before.map((x) => wordsOf(options.text(x)));
   const wb = after.map((y) => wordsOf(options.text(y)));
-  // Which cells are compared, and what every comparison costs, known before any is made. A Jaccard
-  // walks the smaller of its two sets, so a cell costs the smaller of the sets it compares (a text
-  // without spaces has a character pair for nearly every character, not one word per run) plus
-  // the smaller of the two all-word sets, for the tie.
+  // Which cells are compared, and what every comparison costs, known before any is made. Every
+  // cell costs one, for being looked at and aligned. A Jaccard walks the smaller of its two sets,
+  // so a cell compared also costs the smaller of the sets it compares (a text without spaces has a
+  // character pair for nearly every character, not one word per run) plus the smaller of the two
+  // all-word sets, for the tie.
   const compatible = options.compatible ?? (() => true);
   const EQUAL = 1;
   const COMPARE = 2;
+  const WORDLESS = 3;
   const plan = new Uint8Array(n * m);
   let work = 0;
   for (let i = 0; i < n; i++) {
     const a = wa[i] as (typeof wa)[number];
+    work += m;
     for (let j = 0; j < m; j++) {
       const b = wb[j] as (typeof wb)[number];
       const tieCost = Math.min(a.all.size, b.all.size);
@@ -204,6 +229,10 @@ export function alignRegion<T>(
         plan[i * m + j] = EQUAL;
         work += tieCost;
       } else if (compatible(before[i] as T, after[j] as T)) {
+        if (a.all.size === 0 && b.all.size === 0) {
+          if (options.wordless) plan[i * m + j] = WORDLESS;
+          continue;
+        }
         const [x, y] = a.content || b.content ? [a.content, b.content] : [a.all, b.all];
         if (x && y && canReach(x.size, y.size, SIMILARITY_MIN)) {
           plan[i * m + j] = COMPARE;
@@ -211,8 +240,13 @@ export function alignRegion<T>(
         }
       }
     }
-    if (work > CHANGE_LIMITS.alignWork) return equalKeysOnly(before, after, options.key);
+    if (work > budget.left) {
+      // The cells looked at so far, at most n×m, which the budget had room for.
+      budget.left -= (i + 1) * m;
+      return equalKeysOnly(before, after, options.key);
+    }
   }
+  budget.left -= work;
 
   // For each cell, the likeness (0 when below SIMILARITY_MIN or not compatible) and, to choose
   // between alignments that are equally alike, the overlap of all words, function words included.
@@ -225,7 +259,12 @@ export function alignRegion<T>(
       const cell = plan[i * m + j];
       let s = 0;
       if (cell === EQUAL) s = 1;
-      else if (cell === COMPARE) {
+      else if (cell === WORDLESS) {
+        // The least likeness that pairs, and no overlap for the tie: any pair that shares a word
+        // outweighs it.
+        sim[i * m + j] = SIMILARITY_MIN;
+        continue;
+      } else if (cell === COMPARE) {
         const [x, y] = a.content || b.content ? [a.content, b.content] : [a.all, b.all];
         s = jaccard(x as Set<string>, y as Set<string>);
       }
