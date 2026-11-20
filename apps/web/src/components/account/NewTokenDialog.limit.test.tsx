@@ -1,6 +1,7 @@
 import {
   ACTION_REF,
   type ArtifactSummary,
+  CI_NO_ARTIFACT_URL,
   type ConnectionInfo,
   ciWorkflowSnippet,
   HOSTED_ORIGIN,
@@ -152,6 +153,108 @@ describe("New token: Limit to one artifact", () => {
     await user.click(screen.getByRole("button", { name: "Create token" }));
     await screen.findByLabelText("Token");
     expect(document.body.textContent).not.toContain(ACTION_REF);
+  });
+
+  it("with nothing to choose, points to the guide's No artifact yet section", async () => {
+    backend([summary({ role: "viewer" })]);
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    const how = await screen.findByRole("link", { name: "how" });
+    expect(how.getAttribute("href")).toBe(CI_NO_ARTIFACT_URL);
+    expect(CI_NO_ARTIFACT_URL).toMatch(/docs\/ci\.md#no-artifact-yet$/);
+    expect(document.body.textContent).toContain("You own or edit no artifact yet.");
+    expect(screen.queryByLabelText("Artifact")).toBeNull();
+    // It says what the token is, not "act as you".
+    expect(document.body.textContent).toContain("reads one artifact");
+    expect(document.body.textContent).not.toContain("act as you");
+  });
+
+  it("after a failed load, Try again loads the list", async () => {
+    let fails = 1;
+    stubApi({
+      handle: (c) => {
+        if (c.path !== "/artifacts") return undefined;
+        if (fails-- > 0) return json({ error: { code: "internal", message: "x" } }, 500);
+        return json({ items: [summary()], categories: [] });
+      },
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not load your artifacts.");
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("option", { name: "Coverage report" });
+  });
+
+  it("tells equal titles apart by slug", async () => {
+    backend([
+      summary(),
+      summary({ id: "second00000000000000", slug: "coverage-2", title: "coverage report " }),
+      summary({ id: "other000000000000000", slug: "bench", title: "Bench" }),
+    ]);
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    await screen.findByRole("option", { name: "Coverage report (coverage)" });
+    expect(screen.getByRole("option", { name: "coverage report (coverage-2)" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Bench" })).toBeTruthy();
+  });
+
+  it("past the list's 500, a search finds older artifacts, and the step fits a doc", async () => {
+    const many = Array.from({ length: 500 }, (_, i) =>
+      summary({ id: `recent${String(i).padStart(14, "0")}`, slug: `r-${i}`, title: `Recent ${i}` }),
+    );
+    const old = summary({
+      id: "old00000000000000000",
+      slug: "old-notes",
+      title: "Old notes",
+      type: "doc",
+    });
+    const s = stubApi({
+      handle: (c) => {
+        if (c.path === "/artifacts") return json({ items: many, categories: [] });
+        if (c.path === "/artifacts?query=old") return json({ items: [old], categories: [] });
+        if (c.path === "/connections" && c.method === "POST")
+          return json(
+            {
+              token: TOKEN,
+              connection: connection({
+                artifact: { id: old.id, slug: old.slug, title: old.title },
+              }),
+            },
+            201,
+          );
+        return undefined;
+      },
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    await user.type(screen.getByLabelText("Name"), "CI: notes");
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    await screen.findByRole("option", { name: "Recent 0" });
+    expect(screen.queryByRole("option", { name: "Old notes" })).toBeNull();
+    await user.type(screen.getByLabelText("Find an artifact"), "old");
+    await screen.findByRole("option", { name: "Old notes" });
+    expect(s.calls.some((c) => c.path === "/artifacts?query=old")).toBe(true);
+    await user.selectOptions(screen.getByLabelText("Artifact"), old.id);
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+    await screen.findByLabelText("Token");
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(`id: ${old.id}`);
+    expect(text).toContain("path: content.md");
+    expect(text).not.toContain("path: dist");
+  });
+
+  it("the step's path matches the type", () => {
+    const path = (type: ArtifactSummary["type"]) =>
+      ciWorkflowSnippet({ id: ID, appOrigin: HOSTED_ORIGIN, type }).split("\n")[2];
+    expect(path("html")).toBe("    path: dist");
+    expect(path("doc")).toBe("    path: content.md");
+    expect(path("slides")).toBe("    path: slides # a folder with slides.md at its top");
+    expect(path("design_system")).toBe(
+      "    path: design-system # a folder with system.json at its top",
+    );
   });
 
   it("the workflow step leaves url out on the hosted instance", () => {

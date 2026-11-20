@@ -17,10 +17,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   of it, nothing else (not even the owner's or other people's email addresses), and deleting the
   artifact revokes it. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
-  a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
-  and cron: `docs/ci.md` (#51). The Action ships with the release tag, so `v0.6.0` must be
-  released before the docs that pin it go live. Apply migration `0012_bound_tokens.sql` before
-  deploying. Plugin 0.21.0.
+  a JSON object on failure and for `--dry-run` too, and prints `live_draft` as a note that needs no
+  action. GitLab CI and cron: `docs/ci.md` (#51). **Deploying:** release v0.6.0 first, right
+  after merging (`pnpm release 0.6.0 --push`), then apply migration `0012_bound_tokens.sql` and
+  deploy. The New token dialog, the README and `docs/ci.md` pin `mr0b0t0/plinth/publish@v0.6.0`
+  and `@mr0b0t0/plinth@0.6.0`, which exist only once that release is out. Plugin 0.21.0.
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
   between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,

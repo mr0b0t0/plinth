@@ -890,12 +890,16 @@ keeps every run. Guide: `docs/ci.md`.
   app. It is a JavaScript action (`node24`) that imports the CLI client from the same commit
   (`packages/cli/bin/client`, no dependencies and no build), so a tag or SHA pin pins everything and
   nothing is fetched from a registry at run time. Linux and macOS runners.
-- **Inputs**: `token` (a secret), `path` (a build folder, or one `.html`/`.md` file), `id`, `url`
+- **Inputs**: `token` (a secret), `path` (a build folder with the type's source at its top:
+  `index.html`, `content.md`, `slides.md`, or `system.json` to update a design system; or one
+  `.html`/`.md` file), `id`, `url`
   (the instance, hosted by default), `title` and `category` (a new artifact only), `note`,
   `link-run`, `base-version`, `include-maps`, `dry-run`, `fail-on-warnings`, `summary`. **Outputs**:
   `id`, `slug`, `version`, `url`, `version-url`, `compare-url`, `outcome` (`published`,
   `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error`),
-  `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`). The
+  `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`).
+  `outcome` is read from the CLI's JSON object (a dry run prints one too), and an exit 0 without
+  one it can read is `unknown`. `compare-url` is empty for v1 and for `nothing_to_publish`. The
   step's exit code is the CLI's (3 on a conflict, never retried); `fail-on-warnings` turns a
   published run with warnings into 1. `not_scanned` and `live_draft` need no action: they get no
   annotation and are not counted by `warnings` or `fail-on-warnings`. On a conflict the summary
@@ -925,7 +929,11 @@ keeps every run. Guide: `docs/ci.md`.
 - **Tokens limited to one artifact** ([Auth and permissions](#auth-and-permissions)) are the
   recommended credential: the Connections page's New token dialog makes one ("Limit to one
   artifact", then the artifact) and then shows the workflow step with the id filled in, on
-  unwrapped lines that scroll sideways. A bound token is not an agent: the page lists it under
+  unwrapped lines that scroll sideways, and a `path:` that fits the type (`content.md` for a doc,
+  a folder otherwise). The choice is one select of what the person owns or edits, most recent
+  first; a title that another one shares shows its slug too. When the list comes back at its
+  maximum (500), a search box above it finds older ones by title or slug. With nothing to choose
+  it points to the guide's "No artifact yet?" section, and a failed load offers Try again. A bound token is not an agent: the page lists it under
   Advanced, beside New token, with a key for a mark, no kind or client badge, and one line naming
   the artifact and its permissions ("<title> · Read · Publish new versions"); the Connected agents
   count and the sidebar's agents leave it out.
@@ -1110,7 +1118,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   artifact's next version (`--title` and `--category` are then ignored, with a note), and
   `whoami` names the artifact. With `--json`, every failure also prints one object on stdout:
   `{ ok: false, exit_code, outcome: "conflict" | "usage" | "error", message, current_version? }`;
-  the result object carries the artifact's `title` from the read-back. Exit codes: 0 ok, 1
+  the result object carries the artifact's `title` from the read-back. `--json --dry-run` prints
+  `{ outcome: "dry_run", dry_run: true, type, files, bytes, send }`, plus `id`, `slug`,
+  `base_version`, `next_version`, `changed` and `reused` for an update, and its sentence on stderr. Exit codes: 0 ok, 1
   error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
   without sending in exactly two cases and prints which: the current version is N+1 and its files
   equal the folder (already published, by an earlier run whose answer was lost), or it is N and its

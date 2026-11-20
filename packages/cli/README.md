@@ -138,7 +138,9 @@ npx @mr0b0t0/plinth publish report.html   # one page (sent as index.html); notes
   `category` when you passed `--category`; after a lost answer it is read back from the artifact,
   and left out only when that read fails too). With `--json`, a failure prints one object too:
   `{"ok": false, "exit_code", "outcome", "message"}`, where `outcome` is `conflict`, `usage` or
-  `error`, plus `current_version` on a conflict.
+  `error`, plus `current_version` on a conflict. `--dry-run --json` prints what would be sent as
+  one object, `{"outcome": "dry_run", "type", "files", "bytes", "send"}` (with `id`, `slug`,
+  `base_version`, `next_version`, `changed` and `reused` for an update), and sends nothing.
 - **A lost answer.** If the connection drops, or a proxy answers instead of Plinth, after the
   whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
   update, reads the artifact, and again a moment later) whether it was published, and prints that
