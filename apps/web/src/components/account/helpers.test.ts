@@ -183,7 +183,7 @@ describe("mentionReach", () => {
       handle: "gemini-cli-laptop",
     });
     expect(mentionReachText({ kind: "handle", handle: "claude-code" })).toBe(
-      "Collaborators reach it by writing @claude-code in a comment.",
+      "Mention as @claude-code.",
     );
   });
 
@@ -195,8 +195,9 @@ describe("mentionReach", () => {
     });
     const codex = mentionReach("codex", [], self);
     expect(codex).toEqual({ kind: "agent_name", handle: "codex", reached: false });
-    expect(mentionReachText(codex)).toBe(
-      "@codex always means your Codex connections, so this name does not reach it. Pick another name.",
+    expect(mentionReachText(codex)).toBe("@codex means your Codex connections. Pick another name.");
+    expect(mentionReachText({ kind: "agent_name", handle: "claude", reached: true })).toBe(
+      "Mention as @claude, with your other Claude connections.",
     );
   });
 
@@ -234,7 +235,7 @@ describe("mentionReach", () => {
     expect(mentionReach("-dash", [], self)).toEqual({ kind: "none" });
     expect(mentionReach("ends.", [], self)).toEqual({ kind: "none" });
     expect(mentionReachText({ kind: "none" })).toBe(
-      "This name cannot be mentioned. Start it with a letter or digit.",
+      "Cannot be mentioned: start the name with a letter or digit.",
     );
   });
 
@@ -249,5 +250,8 @@ describe("mentionReach", () => {
       kind: "handle",
       handle: "ci",
     });
+    // The row and the dialog already show both, so the hints add nothing.
+    expect(mentionReachText({ kind: "artifact_only" })).toBeNull();
+    expect(mentionReachText({ kind: "no_mentions" })).toBeNull();
   });
 });

@@ -123,11 +123,14 @@ describe("NewTokenDialog", () => {
     const hint = () => document.getElementById(`${name.id}-hint`)?.textContent ?? "";
     expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
     await user.type(name, "Gemini CLI");
-    expect(hint()).toContain("Collaborators reach it by writing @gemini-cli in a comment.");
+    expect(hint()).toBe(
+      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli.",
+    );
     await user.clear(name);
     await user.type(name, "nightly ci");
-    expect(hint()).toContain("@nightly-ci reaches “Nightly CI” instead");
+    expect(hint()).toContain("@nightly-ci reaches “Nightly CI” instead. Rename one of them.");
+    // Without Answer mentions, the unticked box says it; the hint adds nothing.
     await user.click(screen.getByRole("checkbox", { name: /Answer mentions/ }));
-    expect(hint()).toContain("does not have the Answer mentions permission");
+    expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
   });
 });

@@ -77,8 +77,6 @@
   #changed { background: var(--warn-soft); color: var(--fg); }
   #msg { border: 1px solid var(--warn); color: var(--warn); }
   #banner:empty, #msg:empty, #changed:empty, #sent:empty { display: none; }
-  #me { color: var(--muted); margin: 12px 0 0; font-size: 15px; }
-  #me:empty { display: none; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
   .field { margin: 0 0 16px; }
   .field[data-unanswered="true"] { border-left: 3px solid var(--warn); padding-left: 10px; }
@@ -145,7 +143,6 @@ const FIELDS = [
     <p>Your answers help us prepare the first meeting. You can save a draft and come back.</p>
   </header>
   <p id="banner" role="status"></p>
-  <p id="me"></p>
   <p id="changed" role="status"></p>
   <main>
     <form id="intake" class="card" aria-label="Project intake"></form>
@@ -194,7 +191,6 @@ const QUESTIONS = checkedFields(FIELDS);
 const form = document.getElementById("intake");
 const banner = document.getElementById("banner");
 const msg = document.getElementById("msg");
-const meEl = document.getElementById("me");
 const changedEl = document.getElementById("changed");
 const sentEl = document.getElementById("sent");
 const responses = document.getElementById("responses");
@@ -449,7 +445,6 @@ async function start() {
   }
   canWrite = s.canWrite;
   limits = s.limits;
-  if (s.viewer?.email) meEl.textContent = `Answering as ${s.viewer.email}`;
   if (!OPEN) banner.textContent = "This form is closed.";
   else if (!canWrite) banner.textContent = "Only people this form was shared with can answer.";
   intake = P.db.collection("intake");

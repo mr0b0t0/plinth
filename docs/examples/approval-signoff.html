@@ -95,8 +95,6 @@
   #status[data-state="approved"] { color: var(--accent); }
   #status[data-state="changes"] { color: var(--warn); }
   #status[data-state="unverified"] { color: var(--muted); }
-  #me { color: var(--muted); margin: 0 0 8px; font-size: 15px; }
-  #me:empty { display: none; }
   label { display: block; font-size: 15px; margin-bottom: 4px; }
   textarea {
     width: 100%;
@@ -174,13 +172,12 @@
   <section id="signoff" class="card" aria-labelledby="signoff-title">
     <h2 id="signoff-title">Sign-off</h2>
     <p id="status" role="status" data-state="pending"></p>
-    <p id="me"></p>
     <label for="note">Note (needed to request changes)</label>
     <textarea id="note" maxlength="1000" disabled></textarea>
     <div class="actions">
       <button type="button" id="approve" class="primary" disabled>Approve</button>
       <button type="button" id="changes" disabled>Request changes</button>
-      <button type="button" id="withdraw" disabled>Withdraw</button>
+      <button type="button" id="withdraw" hidden>Withdraw</button>
     </div>
     <p id="msg" role="alert"></p>
     <ul id="list" aria-label="Sign-offs"></ul>
@@ -207,7 +204,6 @@ const CLOSED = subject.dataset.closed === "true";
 const banner = document.getElementById("banner");
 const msg = document.getElementById("msg");
 const statusEl = document.getElementById("status");
-const meEl = document.getElementById("me");
 const noteEl = document.getElementById("note");
 const approveBtn = document.getElementById("approve");
 const changesBtn = document.getElementById("changes");
@@ -341,6 +337,8 @@ function setControls() {
   noteEl.disabled = !on;
   approveBtn.disabled = !on;
   changesBtn.disabled = !on;
+  // Only someone with a sign-off of their own has anything to withdraw.
+  withdrawBtn.hidden = !mine;
   withdrawBtn.disabled = !on || !mine;
 }
 
@@ -432,7 +430,6 @@ async function start() {
     return;
   }
   canWrite = s.canWrite;
-  if (s.viewer?.email) meEl.textContent = `Signing as ${s.viewer.email}`;
   if (CLOSED) banner.textContent = "Sign-off is closed. The results below stay.";
   else if (!canWrite) banner.textContent = "You can see the sign-offs. Only people this page was shared with can sign.";
   signoffs = P.db.collection("signoffs");

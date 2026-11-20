@@ -37,12 +37,25 @@ export interface ConnectionItemProps {
   connections?: readonly ConnectionInfo[];
 }
 
-/** The reach sentences that mean "a comment will not get to this connection". */
-const unreachable = (r: MentionReach) =>
-  r.kind === "shadowed" ||
-  r.kind === "none" ||
-  r.kind === "no_mentions" ||
-  (r.kind === "agent_name" && !r.reached);
+/**
+ * The row's mention line: the handle when a comment reaches the connection, a warning when a name
+ * cannot, and nothing for a token the row already shows answers no mentions.
+ */
+function MentionLine({ reach }: { reach: MentionReach }) {
+  if (reach.kind === "handle" || (reach.kind === "agent_name" && reach.reached)) {
+    return (
+      <p className="pl-acct-conn__mention">
+        Mention as <code>@{reach.handle}</code>
+      </p>
+    );
+  }
+  const text = mentionReachText(reach);
+  return text ? (
+    <p className="pl-acct-conn__mention" data-warn="true">
+      {text}
+    </p>
+  ) : null;
+}
 
 export function ConnectionItem({
   connection: c,
@@ -96,17 +109,7 @@ export function ConnectionItem({
           )}
           {revoked && <Badge tone="danger">Revoked</Badge>}
         </div>
-        {reach && (
-          <p className="pl-acct-conn__mention" data-warn={unreachable(reach) || undefined}>
-            {reach.kind === "handle" ? (
-              <>
-                Mention as <code>@{reach.handle}</code>
-              </>
-            ) : (
-              mentionReachText(reach)
-            )}
-          </p>
-        )}
+        {reach && <MentionLine reach={reach} />}
         <p className="pl-acct-conn__scopes">
           {c.artifact && (
             <span className="pl-acct-conn__scope">
@@ -242,9 +245,8 @@ function RenameDialog({
           maxLength={LIMITS.maxLabelLength}
           error={error ?? undefined}
           hint={
-            label.trim()
-              ? mentionReachText(mentionReach(label, connections, connection))
-              : "Collaborators mention it by this name in comments."
+            (label.trim() && mentionReachText(mentionReach(label, connections, connection))) ||
+            undefined
           }
           onChange={(e) => {
             setLabel(e.target.value);

@@ -111,7 +111,8 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     await readyFrame(pageA);
     const fa = inFrame(pageA);
     await expect(fa.locator("body")).toHaveAttribute("data-can-write", "true");
-    await expect(fa.locator("#me")).toHaveText(`Signing as ${a}`);
+    // Nothing to withdraw before signing; Plinth's bar, not the page, says who is signing.
+    await expect(fa.locator("#withdraw")).toBeHidden();
     await fa.getByLabel("Note (needed to request changes)").fill("Looks good to me.");
     await fa.getByRole("button", { name: "Approve" }).click();
     await expect(fa.locator("#status")).toHaveText("1 of 2 approvals on revision 1");
@@ -144,7 +145,7 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     // B withdraws, then approves: approved.
     await fb.getByRole("button", { name: "Withdraw" }).click();
     await expect(fb.locator("#list li")).toHaveCount(1);
-    await expect(fb.getByRole("button", { name: "Withdraw" })).toBeDisabled();
+    await expect(fb.locator("#withdraw")).toBeHidden();
     await fb.getByRole("button", { name: "Approve" }).click();
     await expect(fb.locator("#status")).toHaveText("Approved: 2 of 2 on revision 1");
 
@@ -268,7 +269,7 @@ test("client intake: answers by code, the owner's responses, new questions, clos
     pages.push(pc);
     const frame = await readyFrame(pc);
     const fc = inFrame(pc);
-    await expect(fc.locator("#me")).toHaveText(`Answering as ${visitor}`);
+    await expect(fc.locator("body")).toHaveAttribute("data-can-write", "true");
     await expect(fc.locator("#responses")).toBeHidden();
     // Over-long text is cut to the field's limit before it is written (the value is set by
     // script, which maxlength does not stop).
@@ -521,8 +522,10 @@ test("the Connections page shows the handle a label becomes", async ({ page }) =
   const rows = page.locator(".pl-acct-conn");
   await expect(rows).toHaveCount(3);
   await expect(rows.filter({ hasText: "Mention as @claude-code" })).toHaveCount(1);
-  await expect(page.getByText("@claude-code reaches “Claude Code” instead")).toBeVisible();
   await expect(
-    page.getByText("@claude always means your Claude connections, so this name does not reach it."),
+    page.getByText("@claude-code reaches “Claude Code” instead. Rename one of them."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("@claude means your Claude connections. Pick another name."),
   ).toBeVisible();
 });

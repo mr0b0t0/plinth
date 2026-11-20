@@ -253,13 +253,18 @@ export default function Consent() {
                 <div id={editId} className="pl-acct-form">
                   <Input
                     label="Name this connection"
-                    hint={`Shown on your Connections page and next to what it publishes. ${mentionReachText(
-                      mentionReach(label.trim() || defaultLabel, connections, {
-                        client_type: clientType,
-                        // The grant holds exactly what the client asked for.
-                        scopes: state.req.scopes,
-                      }),
-                    )}`}
+                    hint={[
+                      "Shown on your Connections page and next to what it publishes.",
+                      mentionReachText(
+                        mentionReach(label.trim() || defaultLabel, connections, {
+                          client_type: clientType,
+                          // The grant holds exactly what the client asked for.
+                          scopes: state.req.scopes,
+                        }),
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                     value={label}
                     maxLength={LIMITS.maxLabelLength}
                     placeholder={defaultLabel}

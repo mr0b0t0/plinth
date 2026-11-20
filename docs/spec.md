@@ -1109,10 +1109,11 @@ agents on one artifact").
 - **The handle in the app.** The Connections page shows each connection's handle under its name
   ("Mention as `@claude-code`"), and the rename, new-token and consent dialogs show it live for the
   name being typed. They warn when the name cannot be reached: an older live connection has the
-  same handle, the handle is `claude` or `codex` on a connection of another client type, the name
-  has no letter or digit to start a handle with, the token lacks the `mentions` scope, or it is
-  limited to one artifact. Only the owner sees these pages, and only their own labels; the comment
-  composer's suggestions for collaborators stay `@claude` and `@codex`.
+  same handle, the handle is `claude` or `codex` on a connection of another client type, or the
+  name has no letter or digit to start a handle with. A token without the `mentions` scope or
+  limited to one artifact shows no handle; its permissions and artifact already say it answers no
+  mentions. Only the owner sees these pages, and only their own labels; the comment composer's
+  suggestions for collaborators stay `@claude` and `@codex`.
 
 ### Big builds and reuse by hash
 

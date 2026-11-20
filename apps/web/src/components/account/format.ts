@@ -197,25 +197,28 @@ export function mentionReach(
   return first ? { kind: "shadowed", handle, by: first.label } : { kind: "handle", handle };
 }
 
-/** One sentence for the connection row and the name hints. */
-export function mentionReachText(reach: MentionReach): string {
+/**
+ * One short sentence for the name hints and the row's warning, or null when there is nothing to
+ * add: a token limited to one artifact, or one without the `mentions` scope, already shows that
+ * in its row (the artifact, the permissions) and in the dialog (the checkboxes).
+ */
+export function mentionReachText(reach: MentionReach): string | null {
   switch (reach.kind) {
     case "handle":
-      return `Collaborators reach it by writing @${reach.handle} in a comment.`;
+      return `Mention as @${reach.handle}.`;
     case "agent_name": {
       const type = CLIENT_TYPE_LABEL[MENTION_AGENT_NAMES[reach.handle] ?? "other"];
       return reach.reached
-        ? `Collaborators reach it with @${reach.handle}, together with your other ${type} connections.`
-        : `@${reach.handle} always means your ${type} connections, so this name does not reach it. Pick another name.`;
+        ? `Mention as @${reach.handle}, with your other ${type} connections.`
+        : `@${reach.handle} means your ${type} connections. Pick another name.`;
     }
     case "shadowed":
-      return `@${reach.handle} reaches “${reach.by}” instead, which was connected first. Rename one of them.`;
+      return `@${reach.handle} reaches “${reach.by}” instead. Rename one of them.`;
     case "none":
-      return "This name cannot be mentioned. Start it with a letter or digit.";
+      return "Cannot be mentioned: start the name with a letter or digit.";
     case "artifact_only":
-      return "Limited to one artifact, so it does not answer mentions.";
     case "no_mentions":
-      return "It does not have the Answer mentions permission, so it cannot pick up requests from comments.";
+      return null;
   }
 }
 

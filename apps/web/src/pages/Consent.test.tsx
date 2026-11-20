@@ -152,10 +152,12 @@ describe("Consent", () => {
     await user.click(screen.getByRole("button", { name: "Change name" }));
     const name = screen.getByLabelText("Name this connection");
     const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
-    expect(hint).toContain("Collaborators reach it by writing @gemini-cli in a comment.");
+    expect(hint).toBe(
+      "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli.",
+    );
   });
 
-  it("warns that a client without the mentions scope cannot pick up requests", async () => {
+  it("names no handle for a client without the mentions scope", async () => {
     backend({
       req: REQ({ client_name: "Gemini CLI", scopes: ["artifacts:read", "artifacts:write"] }),
     });
@@ -166,8 +168,8 @@ describe("Consent", () => {
     await user.click(screen.getByRole("button", { name: "Change name" }));
     const name = screen.getByLabelText("Name this connection");
     const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
-    expect(hint).toContain("does not have the Answer mentions permission");
-    expect(hint).not.toContain("@gemini-cli");
+    // The permissions list above the field already leaves Answer mentions out.
+    expect(hint).toBe("Shown on your Connections page and next to what it publishes.");
   });
 
   it("falls back to the default name when the field is cleared", async () => {

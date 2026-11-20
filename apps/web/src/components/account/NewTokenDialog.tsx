@@ -322,13 +322,16 @@ function TokenDialogBody({
         <Input
           ref={labelRef}
           label="Name"
-          hint={
+          hint={[
+            "Shown on this page and in the version history of what it publishes.",
             label.trim() && !limited
-              ? `Shown on this page and in the version history of what it publishes. ${mentionReachText(
+              ? mentionReachText(
                   mentionReach(label, connections, { client_type: clientType, scopes: chosen }),
-                )}`
-              : "Shown on this page and in the version history of what it publishes."
-          }
+                )
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" ")}
           value={label}
           maxLength={LIMITS.maxLabelLength}
           error={labelError ?? undefined}
@@ -369,8 +372,8 @@ function TokenDialogBody({
             options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
             hint={
               clientType === "other"
-                ? "Collaborators can reach it only by its name, as the hint under Name shows."
-                : `Collaborators can reach it with @${clientType} in comments, and by its name.`
+                ? undefined
+                : `Collaborators can reach it with @${clientType} in comments.`
             }
           />
         )}
