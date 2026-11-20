@@ -48,6 +48,11 @@ describe("gate query and paths", () => {
     expect(gateQueryString({ version: 3 })).toBe("?version=3");
     expect(gateQueryString({ review: true })).toBe("?review=1");
     expect(gateQueryString({ review: false, next: "/a b?x=1#h" })).toBe("?next=%2Fa+b%3Fx%3D1%23h");
+    // A place carried from an older version says so; the flag means nothing without a path.
+    expect(gateQueryString({ next: "/settings", carried: true })).toBe(
+      "?next=%2Fsettings&carried=1",
+    );
+    expect(gateQueryString({ carried: true })).toBe("");
   });
 
   it("fills the artifact ref into each gate step", () => {

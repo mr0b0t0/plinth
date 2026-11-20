@@ -44,6 +44,7 @@ const html = (over: Partial<Capabilities> = {}): Capabilities => ({
   roomOpen: ["cursor"],
   people: false,
   comments: false,
+  hold: false,
   ...over,
 });
 

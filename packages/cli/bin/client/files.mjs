@@ -13,6 +13,7 @@ export const SOURCE_FILES = {
   slides: "slides.md",
   design: "design.html",
   sheet: "sheet.jsonl",
+  design_system: "system.json",
 };
 
 /** One file a publish imports as a sheet (the server converts it): its content_format by extension. */
@@ -88,6 +89,7 @@ export function sourceMaxBytes(type, limits) {
   if (type === "slides") return LIMITS.maxSlidesBytes;
   if (type === "design") return LIMITS.maxDesignBytes;
   if (type === "sheet") return limits.max_sheet_bytes ?? LIMITS.maxSheetBytes;
+  if (type === "design_system") return LIMITS.maxDesignSystemBytes;
   return limits.max_html_bytes;
 }
 

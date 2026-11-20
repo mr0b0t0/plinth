@@ -204,6 +204,28 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   versions are still rendered side by side below the list, one at a time with a Before and After
   switch on a phone. Older links with `view=source` open the same page. Agents still read and write
   source as before.
+- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
+  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
+  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
+  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
+  is still a page.
+- **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
+  not reloaded, the heading you were reading stays where it was, and an image the new version
+  changed under the same name shows the new file. A page that loads
+  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
+  sub-page the new version no longer has opens at its root instead), and can hand state to the
+  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
+  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: a
+  "v5 is available" toast offers Update instead. Every other page is replaced at once, as before.
+  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
+- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
+  controls or presenter view, and the people the deck is shared with who have it open follow their
+  slide, shown as "Following" in the deck's controls; paging by hand pauses it until
+  they choose "Back to slide N". Someone who opens the deck mid-talk lands on the presenter's
+  slide. Only slide numbers travel, over the deck's live room; nobody sees who else is watching.
+  It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;
+  `ALLOW_SLIDES_FOLLOW=false` turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
+  publishes a new version or the owner changes who the deck is shared with.
 
 ## 0.6.0 (2026-11-20)
 

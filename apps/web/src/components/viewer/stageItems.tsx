@@ -50,6 +50,7 @@ import {
 } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
+import type { ViewUpdate } from "./useViewUpdate.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -69,6 +70,8 @@ export interface StageContext {
   editing: boolean;
   /** Presenting a deck (usePresentation); inert for every other type. */
   present: Presentation;
+  /** Live views: a newer version held while the viewer uses the page (useViewUpdate). */
+  update: ViewUpdate;
   hrefs: {
     current: string;
     edit: string;
@@ -427,7 +430,10 @@ export const BAR_CONTROLS: readonly StageItem[] = [
 
 // ---------- the strip under the bar ----------
 
-const olderVersion: StageNode = ({ gate: { artifact }, hrefs }) =>
+// While a version is held its toast says so (useViewUpdate.ts), so this line stays away: one
+// notice, and the frame does not move under the viewer.
+const olderVersion: StageNode = ({ gate: { artifact }, hrefs, update }) =>
+  update.held === null &&
   artifact.version < artifact.current_version && (
     <p className="pl-viewer__notice">
       You are viewing <span className="type-num">v{artifact.version}</span>

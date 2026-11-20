@@ -2,8 +2,9 @@
 // static string without a behaviour change, so the fragments that use no app channel (data, room
 // and people) are pinned. A change that means to alter that script updates the pin here, on
 // purpose: display names and the people fragment (who is viewing) did. Page comments added the app
-// channel and their own fragment; the channel is also tested on its own. Live views add theirs
-// (live-view tests in runtime-behaviour.test.ts).
+// channel and their own fragment; the channel is also tested on its own. Live views add theirs:
+// pushed data (runtime-behaviour.test.ts) and new versions with carried state
+// (runtime-version.test.ts).
 import { describe, expect, it } from "vitest";
 import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
@@ -11,6 +12,7 @@ import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "../src/content/runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
 import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
+import { VERSION_FRAGMENT } from "../src/content/runtime/version.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
@@ -104,6 +106,7 @@ describe("runtime fragments", () => {
       "comments",
       "live",
       "people",
+      "version",
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
@@ -114,6 +117,7 @@ describe("runtime fragments", () => {
         COMMENTS_FRAGMENT,
         LIVE_FRAGMENT,
         PEOPLE_FRAGMENT,
+        VERSION_FRAGMENT,
       ]),
     ).toBe(served);
     // Memoized per app origin, which page comments embed.

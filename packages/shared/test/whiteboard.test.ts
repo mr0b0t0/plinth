@@ -220,6 +220,7 @@ describe("fixed capabilities and writers", () => {
       roomOpen: [...BOARD_TOPICS],
       people: false,
       comments: false,
+      hold: false,
       writers: "commenter",
     });
     expect(boardCapabilities({ v: 1, background: "plain", edit: "editors" })).toMatchObject({

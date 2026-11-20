@@ -5,15 +5,29 @@
 /** The WebSocket subprotocol every room handshake must offer, and the 101 echoes. */
 export const ROOM_PROTOCOL = "plinth.room.v1";
 
-/** Path prefix of the room upgrade on a content origin: `page` for HTML, `doc` for docs. */
+/**
+ * Path prefix of the room upgrade on a content origin: `page` for HTML, `doc` for docs, `slides`
+ * for decks.
+ */
 export const ROOM_PATH_PREFIX = "/__plinth/room/v1/";
 
-/** What a socket is: a page's general room, or Plinth's own doc editing channel. */
-export const ROOM_KINDS = ["page", "doc"] as const;
+/**
+ * What a socket is: a page's general room, Plinth's own doc editing channel, or Plinth's own
+ * follow-the-presenter channel for decks (rooms/slides.ts). One kind per line.
+ */
+// biome-ignore format: one kind per line, so each kind adds its own line
+export const ROOM_KINDS = [
+  "page",
+  "doc",
+  "slides",
+] as const;
 export type RoomKind = (typeof ROOM_KINDS)[number];
 
 /** What a doc socket may do: nothing, follow the live draft, or edit it. */
 export type RoomDocRight = "none" | "watch" | "write";
+
+/** What a slides socket may do: nothing, follow the presenter, or present (lead the others). */
+export type RoomSlidesRight = "none" | "present" | "watch";
 
 /**
  * Close codes a room sends (the 4000-4999 range is the application's). The client reacts to each:

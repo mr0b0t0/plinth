@@ -60,6 +60,7 @@ meApi.get("/config", (c) => {
       available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
     })),
     invitation_emails: invitationEmailsActive(config),
+    live_views: config.allowLiveViews,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

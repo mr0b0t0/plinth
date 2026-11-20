@@ -170,9 +170,9 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   [spec.md](spec.md#costs)). When the
   allowance runs out, sockets fail: pages work alone and docs and sheets are edited without seeing
   others.
-- **Off switch.** `ALLOW_ROOMS=false` turns rooms off and `ALLOW_LIVE_EDITING=false` turns on-page
-  editing of docs and sheets off ([self-hosting.md](self-hosting.md#settings)). Keep the binding:
-  turning them back
+- **Off switch.** `ALLOW_ROOMS=false` turns rooms off, `ALLOW_LIVE_EDITING=false` turns on-page
+  editing of docs and sheets off and `ALLOW_SLIDES_FOLLOW=false` turns following the presenter in
+  decks off ([self-hosting.md](self-hosting.md#settings)). Keep the binding: turning them back
   on then needs no deploy-time change. A config without the binding also deploys and runs, with
   rooms off; `check-config` (and so `deploy:<env>`) prints a note naming it.
 - **Isolation.** Rooms need `CONTENT_ISOLATION=origin`. Under `opaque` and the staging path
@@ -201,7 +201,8 @@ no room and stores nothing.
   read each. In return an idle open view stops reading its
   gate and the shared-data change counter every 15 s ([spec.md](spec.md#costs)).
 - **Off switch.** `ALLOW_LIVE_VIEWS=false` ([self-hosting.md](self-hosting.md#settings)): pages poll
-  as before, and artifacts without a room never get an object. Without the binding live views are
+  as before, artifacts without a room never get an object, and every new version reloads the frame
+  (no in-place docs, no carried state, no `hold`). Without the binding live views are
   off too, with no config error.
 - **Isolation.** Live views work under every isolation mode, since the socket is on the app host;
   the shared-data signals need `CONTENT_ISOLATION=origin`, like shared data.

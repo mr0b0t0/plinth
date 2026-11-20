@@ -24,6 +24,7 @@ const SOURCES = {
   slides: "slides.md",
   design: "design.html",
   sheet: "sheet.jsonl",
+  design_system: "system.json",
 };
 
 /**
