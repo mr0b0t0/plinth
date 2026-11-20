@@ -77,22 +77,4 @@ describe("CategoryReviewDialog", () => {
       ],
     });
   });
-
-  it("Share all shares every pending artifact", async () => {
-    const api = stubApi({
-      handle: (c) => {
-        if (c.method === "GET") return json(detail);
-        if (c.method === "POST") return json({ shared: 2, private: 0, skipped: [] });
-        return undefined;
-      },
-    });
-    const user = userEvent.setup();
-    render(<CategoryReviewDialog shareId={detail.id} onClose={vi.fn()} onDone={vi.fn()} />);
-    await screen.findByText("Report a");
-    await user.click(screen.getByRole("button", { name: "Share all" }));
-    await waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
-    const post = api.calls.find((c) => c.method === "POST");
-    const body = (post?.body ?? { items: [] }) as { items: { decision: string }[] };
-    expect(body.items.map((i) => i.decision)).toEqual(["shared", "shared"]);
-  });
 });

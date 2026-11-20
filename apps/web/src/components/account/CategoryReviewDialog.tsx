@@ -111,18 +111,10 @@ export function CategoryReviewDialog({
       size="lg"
       onClose={onClose}
       title={title ? `Review for “${title}”` : "Review"}
-      description="These were filed under a shared category. Nobody it is shared with sees them until you share them."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Close
-          </Button>
-          <Button
-            onClick={() => void send(new Map(pending.map((p) => [p.id, "shared" as const])))}
-            disabled={pending.length === 0}
-            loading={busy}
-          >
-            Share all
           </Button>
           <Button
             variant="primary"

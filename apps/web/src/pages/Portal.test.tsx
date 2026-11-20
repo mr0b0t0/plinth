@@ -58,6 +58,17 @@ describe("Portal", () => {
     );
   });
 
+  it("labels the owner's own view a preview", async () => {
+    stubApi({
+      handle: () => json({ ...OK, portal: { ...OK.portal, role: "owner" } }),
+    });
+    const Portal = await loadPage();
+    render(<Portal params={{ id: ID }} />);
+    expect(await screen.findByRole("heading", { name: "Acme Corp: reports" })).toBeTruthy();
+    expect(screen.getByText("Preview")).toBeTruthy();
+    expect(screen.queryByText("Shared by Ana")).toBeNull();
+  });
+
   it("says when nothing is in it yet", async () => {
     stubApi({ handle: () => json({ ...OK, items: [] }) });
     const Portal = await loadPage();

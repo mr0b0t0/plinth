@@ -103,9 +103,7 @@ test("an owner shares a category, the client sees what was ticked, and new filin
 
     // The owner sees the banner, reviews and shares it; the client now sees two.
     await page.goto("/dashboard");
-    await expect(
-      page.getByText("1 artifact waits for your review before Acme's people can see it."),
-    ).toBeVisible();
+    await expect(page.getByText("1 artifact to review in Acme", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Review" }).click();
     const review = page.getByRole("dialog", { name: "Review for “Acme”" });
     await review

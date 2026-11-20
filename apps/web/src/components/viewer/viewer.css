@@ -526,8 +526,15 @@
 
 .pl-portal {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-6);
   padding-block: var(--space-6);
+}
+.pl-portal__head {
+  display: grid;
+  gap: var(--space-1);
+}
+.pl-portal__head p {
+  margin: 0;
 }
 .pl-portal__title {
   margin: 0;
@@ -545,25 +552,62 @@
   padding: 0;
   list-style: none;
 }
+/* A card like the dashboard's grid: the whole card opens the artifact (the link's ::after). */
 .pl-portal__item {
+  position: relative;
   display: grid;
-  gap: var(--space-1);
+  gap: 1px;
   min-width: 0;
+  padding-bottom: 9px;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
-.pl-portal__link {
-  display: grid;
-  gap: var(--space-1-5);
+.pl-portal__item:hover,
+.pl-portal__item:focus-within {
+  border-color: var(--color-border-strong);
 }
 .pl-portal__thumb {
+  position: relative;
+  display: block;
+  height: 132px;
+  margin-bottom: var(--space-1);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-sidebar);
+}
+.pl-portal__thumb img {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  aspect-ratio: 1200 / 630;
+  height: 100%;
   object-fit: cover;
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
+  object-position: top center;
+}
+.pl-portal__link {
+  padding-inline: 10px;
+  color: var(--color-ink);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+.pl-portal__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.pl-portal__link:focus-visible {
+  outline: none;
+}
+.pl-portal__link:focus-visible::after {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: calc(var(--focus-ring-width) * -1);
 }
 .pl-portal__item-title {
   overflow-wrap: anywhere;
 }
 .pl-portal__meta {
+  padding-inline: 10px;
   font-size: var(--text-xs);
 }

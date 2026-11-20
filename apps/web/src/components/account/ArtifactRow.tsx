@@ -9,7 +9,6 @@ import {
   GearIcon,
   LinkSimpleIcon,
   PencilSimpleIcon,
-  UsersThreeIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
 import { useState } from "react";
@@ -156,26 +155,17 @@ function CategoryBadge({ name, own = false }: { name: string; own?: boolean }) {
   );
 }
 
-/** The owner's badge for an artifact in a shared category: shared, or waiting for review. */
-function ShareStateBadge({ state }: { state: ArtifactSummary["category_share"] }) {
-  if (state === "shared") {
-    return (
-      <Badge icon={UsersThreeIcon} title="Its category's people see it" tone="accent">
-        Shared
-      </Badge>
-    );
-  }
-  if (state === "pending") {
-    return (
-      <Badge
-        tone="warning"
-        title="Filed under a shared category: nobody it is shared with sees it yet"
-      >
-        Waiting for review
-      </Badge>
-    );
-  }
-  return null;
+/**
+ * The owner's badge for an artifact waiting for review in a shared category. Shared and kept-private
+ * rows carry none: who sees an artifact is on its Settings page and in the category's share dialog.
+ */
+function ReviewBadge({ state }: { state: ArtifactSummary["category_share"] }) {
+  if (state !== "pending") return null;
+  return (
+    <Badge tone="warning" title="Its category's people do not see it until you review it">
+      Needs review
+    </Badge>
+  );
 }
 
 /**
@@ -215,11 +205,12 @@ function Tags({
   const badge = def?.badge ?? null;
   const category = withCategory ? shownCategory(a) : null;
   const share = a.role === "owner" ? (a.category_share ?? null) : null;
-  if (!category && !badge && !a.taken_down && !share && a.role === "owner") return null;
+  const review = share === "pending";
+  if (!category && !badge && !a.taken_down && !review && a.role === "owner") return null;
   return (
     <span className="pl-dash__tags">
       {category && <CategoryBadge name={category} own={a.role !== "owner"} />}
-      <ShareStateBadge state={share} />
+      <ReviewBadge state={share} />
       {badge && <Badge title={def?.label}>{badge}</Badge>}
       {a.taken_down && <Badge tone="danger">Taken down</Badge>}
       {a.role !== "owner" && (

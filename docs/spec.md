@@ -1215,11 +1215,15 @@ mention or page.
 **In the app.** The dashboard's category menu covers the owner's categories under Mine, the
 person's own under Shared, and both under All; a shared row shows the person's own category, and
 its menu's "Move to category…" sets it. With sharing on, a selected owner category offers "Share
-category" (title, people with roles, the artifacts to show, the portal link, Stop sharing), a
-banner names each share with artifacts waiting for review, `?review=<share id>` opens the review,
-rows carry "Shared" or "Waiting for review", and the Shared tab links the collections shared with
-the person. The Settings page warns before filing under a shared category and its People section
-names who else sees the artifact through one. `/p/<id>` is the portal (never stored or indexed).
+category" (title, people with roles, the artifacts to show, the portal link, Stop sharing). The
+one way into a review is the dashboard: a banner line per share with artifacts waiting ("2
+artifacts to review in Acme", Review), and `?review=<share id>` for the link agents are given;
+the review sets Share or Keep private per artifact. A waiting row carries "Needs review"; shared
+rows carry no badge. The Settings page's category hint says when the name typed is a shared
+category, and its People section names who else sees the artifact through one, with a link to the
+category on the dashboard. The dashboard does not list the collections shared with the person;
+they reach `/p/<id>` from the link the owner sends, and every artifact shared with them is under
+Shared. `/p/<id>` is the portal (never stored or indexed).
 
 ### Big builds and reuse by hash
 

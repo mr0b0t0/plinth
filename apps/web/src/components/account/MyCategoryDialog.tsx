@@ -75,9 +75,7 @@ export function MyCategoryDialog({
       open
       onClose={onClose}
       title="Move to category"
-      description={`File “${artifact.title}” under a category of your own. Only you see it; ${
-        artifact.owner.name || artifact.owner.email || "the owner"
-      } does not.`}
+      description="Only you see this category."
       footer={
         <>
           {current !== null && (

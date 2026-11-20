@@ -227,16 +227,15 @@ export default function Portal({ params }: { params: Record<string, string> }) {
     <PublicShell width="content">
       <section className="pl-portal" aria-labelledby="portal-title">
         <header className="pl-portal__head">
-          <p className="pl-gate__eyebrow">
-            {gate.portal.role === "owner"
-              ? "Your shared collection (preview)"
-              : "Shared collection"}
-          </p>
           <h1 id="portal-title" className="pl-portal__title">
             {gate.portal.title}
           </h1>
-          {gate.portal.owner_name && gate.portal.role !== "owner" && (
-            <p className="text-muted">Shared by {gate.portal.owner_name}</p>
+          {gate.portal.role === "owner" ? (
+            <p className="text-muted">Preview</p>
+          ) : (
+            gate.portal.owner_name && (
+              <p className="text-muted">Shared by {gate.portal.owner_name}</p>
+            )
           )}
         </header>
         {gate.items.length === 0 ? (
@@ -245,18 +244,19 @@ export default function Portal({ params }: { params: Record<string, string> }) {
           <ul className="pl-portal__items">
             {gate.items.map((a) => (
               <li key={a.id} className="pl-portal__item">
-                <Link to={route(APP_ROUTES.artifact, { slug: a.slug })} className="pl-portal__link">
+                <span className="pl-portal__thumb" aria-hidden="true">
                   {a.thumbnail_url && (
                     <img
                       src={a.thumbnail_url}
                       alt=""
                       loading="lazy"
-                      className="pl-portal__thumb"
                       onError={(e) => {
                         e.currentTarget.hidden = true;
                       }}
                     />
                   )}
+                </span>
+                <Link to={route(APP_ROUTES.artifact, { slug: a.slug })} className="pl-portal__link">
                   <span className="pl-portal__item-title">{a.title}</span>
                 </Link>
                 <span className="pl-portal__meta text-muted" title={formatDateTime(a.updated_at)}>

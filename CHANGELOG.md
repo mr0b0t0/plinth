@@ -16,7 +16,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   one of their categories with people (viewer or commenter) under a name they choose: the people
   get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
   once. Filing an artifact under a shared category never shares it: it waits for the owner's review
-  (a banner on the dashboard, "Waiting for review" on the row), and the owner's agent is told so
+  (a banner on the dashboard, "Needs review" on the row), and the owner's agent is told so
   (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from
   the category's people even when a new version was published while the dialog was open, and a
   taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it

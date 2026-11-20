@@ -2,8 +2,7 @@
 // (All / Mine / Shared, a category, sort, list or grid), search (kept in ?q=, the category in
 // ?category=), and the artifact quota. A category is the owner's own on their artifacts and the
 // person's own on artifacts shared with them (issue #42). With category sharing on, the owner shares
-// a category from here, reviews what waits in a shared one (?review=<share id>), and the Shared tab
-// links the collections other people shared with them.
+// a category from here and reviews what waits in a shared one (?review=<share id>).
 import {
   ArrowsDownUpIcon,
   FolderSimpleIcon,
@@ -22,8 +21,6 @@ import {
   type CategoryCount,
   type CategoryShareSummary,
   categoryKey,
-  type PortalSummary,
-  route,
 } from "@plinth/shared";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import "../components/account/account.css";
@@ -63,7 +60,7 @@ import {
   Tooltip,
 } from "../components/ui/index.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
-import { Link, useLocation } from "../lib/router.tsx";
+import { useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 
 type ListState =
@@ -136,6 +133,11 @@ export function filterByCategory(
   });
 }
 
+/** The review banner's line for one shared category. */
+export function reviewText(pending: number, category: string): string {
+  return `${pending} ${pending === 1 ? "artifact" : "artifacts"} to review in ${category}`;
+}
+
 /** One list of names from two (counts summed by key, the first list's spelling kept). */
 export function mergeCategories(
   a: readonly CategoryCount[],
@@ -206,7 +208,6 @@ export default function Dashboard() {
   /** The shared artifact being filed under the person's own category. */
   const [filing, setFiling] = useState<ArtifactSummary | null>(null);
   const [shares, setShares] = useState<CategoryShareSummary[]>([]);
-  const [portals, setPortals] = useState<PortalSummary[]>([]);
   const [shareReload, setShareReload] = useState(0);
   const categorySharing = config?.category_sharing === true;
   const barRef = useRef<HTMLDivElement>(null);
@@ -258,17 +259,14 @@ export default function Dashboard() {
     return () => ctrl.abort();
   }, [settled, pending, reload]);
 
-  // The owner's shares (for the review banner and the Share button) and the collections shared with
-  // them, only where the instance offers category sharing.
+  // The owner's shares (for the review banner and the Share button), only where the instance offers
+  // category sharing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `shareReload` re-runs the fetch
   useEffect(() => {
     if (pending || !categorySharing) return;
     const ctrl = new AbortController();
     api<{ items: CategoryShareSummary[] }>(API.categoryShares, { signal: ctrl.signal })
       .then((r) => setShares(r.items))
-      .catch(() => undefined);
-    api<{ items: PortalSummary[] }>(API.portals, { signal: ctrl.signal })
-      .then((r) => setPortals(r.items))
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [pending, categorySharing, shareReload, reload]);
@@ -499,28 +497,13 @@ export default function Dashboard() {
         <div className="pl-dash__notices">
           {waiting.map((s) => (
             <Note key={s.id} tone="warning">
-              <span>
-                {`${s.counts.pending} ${s.counts.pending === 1 ? "artifact waits" : "artifacts wait"} for your review before ${s.category}'s people can see ${s.counts.pending === 1 ? "it" : "them"}.`}
-              </span>{" "}
+              <span>{reviewText(s.counts.pending, s.category)}</span>{" "}
               <Button size="sm" onClick={() => setReviewing(s.id)}>
                 Review
               </Button>
             </Note>
           ))}
         </div>
-      )}
-      {filter === "shared" && portals.length > 0 && (
-        <nav className="pl-dash__portals" aria-label="Collections shared with you">
-          <span className="pl-dash__portals-label">Collections:</span>
-          <ul>
-            {portals.map((p) => (
-              <li key={p.id}>
-                <Link to={route(APP_ROUTES.portal, { id: p.id })}>{p.title}</Link>{" "}
-                <span className="text-muted">({p.count})</span>
-              </li>
-            ))}
-          </ul>
-        </nav>
       )}
 
       {pending || list.status === "loading" ? (

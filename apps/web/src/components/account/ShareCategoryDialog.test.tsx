@@ -126,8 +126,8 @@ describe("ShareCategoryDialog", () => {
       <ShareCategoryDialog category="Acme" shareId={SHARE.id} onClose={vi.fn()} onDone={onDone} />,
     );
     await screen.findByText("Report a");
-    // Pending rows show who filed them and stay unticked.
-    expect(screen.getByText(/Waiting for your review · filed by Work Claude/)).toBeTruthy();
+    // Pending rows say so and stay unticked.
+    expect(screen.getByText("Needs review")).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: /Report b/ }) as HTMLInputElement).checked).toBe(
       false,
     );

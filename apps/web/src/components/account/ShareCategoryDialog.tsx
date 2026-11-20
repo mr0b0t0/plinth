@@ -302,7 +302,6 @@ export function ShareCategoryDialog({
       size="lg"
       onClose={onClose}
       title={share ? `Sharing “${category}”` : `Share “${category}”`}
-      description="The people you add see the artifacts you tick, under the name below. Artifacts filed in this category later wait for your review before they can see them."
       footer={
         <>
           {share && (
@@ -336,7 +335,6 @@ export function ShareCategoryDialog({
         <Stack gap={4}>
           <Input
             label="Name people see"
-            hint="People you share with see this name, never the category's."
             value={title}
             maxLength={LIMITS.maxTitleLength}
             onChange={(e) => setTitle(e.target.value)}
@@ -429,11 +427,7 @@ export function ShareCategoryDialog({
                   <li key={r.id}>
                     <Checkbox
                       label={r.title}
-                      hint={
-                        share && r.state === "pending"
-                          ? `Waiting for your review · filed by ${r.last_author ?? "someone"}`
-                          : `Visible to these people when ticked · v${r.current_version}`
-                      }
+                      hint={share && r.state === "pending" ? "Needs review" : undefined}
                       checked={ticked.has(r.id)}
                       onChange={(e) => {
                         const next = new Set(ticked);
