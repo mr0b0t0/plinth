@@ -113,6 +113,9 @@ describe("the grid", () => {
     expect(a.target).toBe("_blank");
     expect(a.rel).toBe("noopener noreferrer nofollow");
     expect(cell("A1").getAttribute("aria-sort")).toBe("none");
+    // Header labels take their column's alignment.
+    expect(cell("B1").classList.contains("plinth-sheet__name--num")).toBe(true);
+    expect(cell("F1").classList.contains("plinth-sheet__name--check")).toBe(true);
   });
 
   it("keeps frozen columns in view by their left offsets", () => {
@@ -121,6 +124,29 @@ describe("the grid", () => {
     expect(cell("A2").classList.contains("plinth-sheet__frozen")).toBe(true);
     expect(cell("A2").style.left).toBe("48px");
     expect(cell("B2").classList.contains("plinth-sheet__frozen")).toBe(false);
+    expect(document.querySelector(".plinth-sheet--unfrozen")).toBeNull();
+  });
+
+  it("lets frozen columns scroll when they take more than half the frame", () => {
+    const queries: string[] = [];
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => {
+      queries.push(query);
+      return {
+        matches: true,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      } as unknown as MediaQueryList;
+    });
+    mount();
+    stop = boot(framed().win);
+    // 48px of row numbers and the 200px column A: unfrozen below 496px.
+    expect(queries).toEqual(["(max-width: 496px)"]);
+    expect(document.querySelector(".plinth-sheet__page")?.classList).toContain(
+      "plinth-sheet--unfrozen",
+    );
+    expect(cell("A1").style.left).toBe("");
+    expect(cell("A2").style.left).toBe("");
   });
 
   it("puts rows in chunks of 200", () => {
@@ -136,10 +162,15 @@ describe("the grid", () => {
     stop = boot(framed().win);
     const fx = () => document.querySelector(".plinth-sheet__fx")?.textContent;
     expect(fx()).toBe("A2Apples");
+    const raw = () => document.querySelector(".plinth-sheet__fx-raw") as HTMLElement;
+    expect(raw().classList.contains("plinth-sheet__fx-raw--formula")).toBe(false);
     cell("B4").focus();
     expect(fx()).toBe("B4=SUM(B2:B3)");
+    // Monospace for a formula only.
+    expect(raw().classList.contains("plinth-sheet__fx-raw--formula")).toBe(true);
     cell("F2").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(fx()).toBe("F2TRUE");
+    expect(raw().classList.contains("plinth-sheet__fx-raw--formula")).toBe(false);
   });
 
   it("sorts by a header (ascending, descending, off) and filters, saving nothing", () => {

@@ -1,9 +1,10 @@
 // The sheet's DOM: the title (for print and screen readers; the app's bar shows it on screen), one
 // bar with the selected cell's address and raw text on the left and the filter on the right, then
 // the grid, a <table> with the column letters and the header row in a sticky <thead>, frozen
-// columns kept in view by left offsets, and the data rows in <tbody> chunks of 200 that the
-// browser skips laying out while they are off screen (content-visibility), so comment pins, find
-// in page, print and screen readers still see every cell. Downloads and print are in the app's
+// columns kept in view by left offsets (unless they would take more than half the frame), and the
+// data rows in <tbody> chunks of 200 that the browser skips laying out while they are off screen
+// (content-visibility), so comment pins, find in page, print and screen readers still see every
+// cell. Downloads and print are in the app's
 // artifact menu, which asks the frame (boot.ts).
 //
 // Built with createElement and textContent only: no data string is ever parsed as HTML. The only
@@ -69,6 +70,14 @@ export function frozenOffsets(columns: readonly SheetColumn[], freeze: number): 
     x += columnWidth(columns[i] as SheetColumn);
   }
   return out;
+}
+
+/** The width of the first `freeze` columns, row numbers not included. */
+export function frozenWidthOf(columns: readonly SheetColumn[], freeze: number): number {
+  let w = 0;
+  for (let i = 0; i < Math.min(freeze, columns.length); i++)
+    w += columnWidth(columns[i] as SheetColumn);
+  return w;
 }
 
 /** The text the formula bar shows for a stored cell: exactly what the sheet holds. */
@@ -175,12 +184,14 @@ export function buildGrid(
   table.style.width = `${total}px`;
   table.append(colgroup);
 
+  const frozenCells: [HTMLElement, number][] = [];
   const freezeCell = (cell: HTMLElement, c: number) => {
     const left = lefts[c];
     if (left === undefined) return;
     cell.classList.add("plinth-sheet__frozen");
     if (c === freeze - 1) cell.classList.add("plinth-sheet__frozen--last");
     cell.style.left = `${left}px`;
+    frozenCells.push([cell, left]);
   };
 
   const thead = el(doc, "thead");
@@ -213,6 +224,7 @@ export function buildGrid(
     b.addEventListener("click", () => grid.sortBy(i));
     th.append(b);
     if (c.type === "number" || c.type === "date") th.classList.add("plinth-sheet__name--num");
+    if (c.type === "checkbox") th.classList.add("plinth-sheet__name--check");
     headers.push(th);
     names.append(th);
   });
@@ -285,8 +297,13 @@ export function buildGrid(
       selected = cell;
       cell.classList.add("plinth-sheet__selected");
       fxAddr.textContent = a1(row, col);
-      fxRaw.textContent =
-        row === 1 ? (cols[col]?.name ?? "") : rawText((sheet.rows[row - 2] ?? [])[col] ?? null);
+      const stored = row === 1 ? null : ((sheet.rows[row - 2] ?? [])[col] ?? null);
+      fxRaw.textContent = row === 1 ? (cols[col]?.name ?? "") : rawText(stored);
+      // Monospace only for a formula, so a plain value reads as it does in the grid.
+      fxRaw.classList.toggle(
+        "plinth-sheet__fx-raw--formula",
+        typeof stored === "string" && stored.startsWith("="),
+      );
     },
     sortBy(col) {
       sort = nextSort(sort, col);
@@ -345,6 +362,20 @@ export function buildGrid(
   // The first data cell is where Tab enters the grid.
   const first = rows[0]?.cells[1];
   if (first) first.tabIndex = 0;
+
+  // Frozen columns wider than half the frame would leave a phone almost nothing to scroll, so
+  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen).
+  const frozenWidth = freeze > 0 ? ROW_NUMBER_WIDTH + frozenWidthOf(cols, freeze) : 0;
+  const narrow =
+    frozenWidth > 0 ? doc.defaultView?.matchMedia?.(`(max-width: ${frozenWidth * 2}px)`) : null;
+  if (narrow) {
+    const apply = () => {
+      root.classList.toggle("plinth-sheet--unfrozen", narrow.matches);
+      for (const [cell, left] of frozenCells) cell.style.left = narrow.matches ? "" : `${left}px`;
+    };
+    apply();
+    narrow.addEventListener?.("change", apply);
+  }
 
   root.append(heading, bar);
   if (note) root.append(note);

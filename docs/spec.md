@@ -1136,7 +1136,9 @@ not edited on its page yet.
   parses formulas and never evaluates them.
 - **Viewing.** The page shows one bar (the selected cell's address and its raw text, and a filter
   field with the shown row count beside it while a filter is set) and the grid: column letters and
-  the header row stay at the top, frozen columns at the left, numbers right-aligned in their
+  the header row stay at the top, frozen columns at the left (in a frame less than twice as wide
+  as the row numbers and frozen columns together, a phone mostly, they scroll with the rest),
+  numbers right-aligned in their
   format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
   a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
   back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter
