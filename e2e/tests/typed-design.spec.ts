@@ -437,7 +437,7 @@ test.describe("editing a design", () => {
       await expect(page.getByText("Editing v1")).toBeVisible();
       const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
       await expect(lines).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("design HTML");
+      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("Design HTML");
       const preview = page.frameLocator(PREVIEW_FRAME);
       await expect(preview.locator(".plinth-design__board")).toHaveCount(3, { timeout: 15_000 });
 
