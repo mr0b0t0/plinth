@@ -1,11 +1,5 @@
-// Words and numbers for the account pages: dates, quota, client types, scopes and mention handles.
-import {
-  type ClientType,
-  MENTION_AGENT_NAMES,
-  mentionHandle,
-  parseMentions,
-  type Scope,
-} from "@plinth/shared";
+// Words and numbers for the account pages: dates, quota, client types and scopes.
+import type { ClientType, Scope } from "@plinth/shared";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -132,90 +126,6 @@ export function defaultConnectionLabel(
     const suffix = ` ${n}`;
     const name = `${base.slice(0, max - suffix.length).trimEnd()}${suffix}`;
     if (!used.has(name.toLowerCase())) return name;
-  }
-}
-
-/** A connection as far as mention routing cares (ConnectionInfo has every field). */
-export interface MentionCandidate {
-  id: string;
-  label: string;
-  created_at: string;
-  revoked_at: string | null;
-  /** Limited to one artifact: such a token never holds mentions, so it is never a target. */
-  artifact?: unknown;
-}
-
-/**
- * How a comment reaches a connection with this label (docs/agents.md "Several agents on one
- * artifact"). The server routes `@claude` and `@codex` to every connection of that client type,
- * and `@<handle>` to the owner's oldest live connection whose label normalizes to the handle
- * (mentionHandle), never to a token limited to one artifact.
- *
- * - `handle`: `@<handle>` reaches it.
- * - `agent_name`: the label becomes `claude` or `codex`, which always mean the client type;
- *   `reached` says whether this connection is of that type.
- * - `shadowed`: an older live connection (`by`, its label) has the same handle and gets it.
- * - `none`: no mention can name it (no letter or digit to start the handle with).
- * - `artifact_only`: a token limited to one artifact, which never answers mentions.
- * - `no_mentions`: routed, but it lacks the `mentions` scope, so it cannot pick requests up.
- */
-export type MentionReach =
-  | { kind: "handle"; handle: string }
-  | { kind: "agent_name"; handle: string; reached: boolean }
-  | { kind: "shadowed"; handle: string; by: string }
-  | { kind: "none" }
-  | { kind: "artifact_only" }
-  | { kind: "no_mentions" };
-
-export function mentionReach(
-  label: string,
-  others: readonly MentionCandidate[],
-  self: {
-    /** Absent for a connection that does not exist yet (the new-token dialog, consent). */
-    id?: string;
-    created_at?: string;
-    client_type: ClientType;
-    artifact?: unknown;
-    scopes?: readonly string[];
-  },
-): MentionReach {
-  if (self.artifact) return { kind: "artifact_only" };
-  if (self.scopes && !self.scopes.includes("mentions")) return { kind: "no_mentions" };
-  const handle = mentionHandle(label);
-  // The server matches what parseMentions reads out of "@handle"; anything else is unreachable.
-  if (!handle || parseMentions(`@${handle}`)[0] !== handle) return { kind: "none" };
-  const agentType = MENTION_AGENT_NAMES[handle];
-  if (agentType) return { kind: "agent_name", handle, reached: agentType === self.client_type };
-  const created = self.created_at;
-  let first: MentionCandidate | undefined;
-  for (const o of others) {
-    if (o.id === self.id || o.revoked_at !== null || o.artifact) continue;
-    if (mentionHandle(o.label) !== handle) continue;
-    if (created !== undefined && !(o.created_at < created)) continue;
-    if (!first || o.created_at < first.created_at) first = o;
-  }
-  return first ? { kind: "shadowed", handle, by: first.label } : { kind: "handle", handle };
-}
-
-/** One sentence for the connection row and the name hints. */
-export function mentionReachText(reach: MentionReach): string {
-  switch (reach.kind) {
-    case "handle":
-      return `Collaborators reach it by writing @${reach.handle} in a comment.`;
-    case "agent_name": {
-      const type = CLIENT_TYPE_LABEL[MENTION_AGENT_NAMES[reach.handle] ?? "other"];
-      return reach.reached
-        ? `Collaborators reach it with @${reach.handle}, together with your other ${type} connections.`
-        : `@${reach.handle} always means your ${type} connections, so this name does not reach it. Pick another name.`;
-    }
-    case "shadowed":
-      return `@${reach.handle} reaches “${reach.by}” instead, which was connected first. Rename one of them.`;
-    case "none":
-      return "This name cannot be mentioned. Start it with a letter or digit.";
-    case "artifact_only":
-      return "Limited to one artifact, so it does not answer mentions.";
-    case "no_mentions":
-      return "It does not have the Answer mentions permission, so it cannot pick up requests from comments.";
   }
 }
 

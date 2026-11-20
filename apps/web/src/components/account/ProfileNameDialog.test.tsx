@@ -53,10 +53,8 @@ describe("ProfileNameDialog", () => {
     expect(screen.getByRole("dialog", { name: "Your name" })).toBeTruthy();
     expect(screen.getByText(PROFILE_NAME_HELP)).toBeTruthy();
     expect(field().maxLength).toBe(100);
-    // Nothing to clear yet.
-    expect((screen.getByRole("button", { name: "Clear" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    // One way to leave a name empty: save an empty field. No separate Clear button.
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     await user.type(field(), "  Ana   Lima ");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
@@ -64,13 +62,14 @@ describe("ProfileNameDialog", () => {
     expect(onSaved.mock.calls[0]?.[0].name).toBe("Ana Lima");
   });
 
-  it("clears the name", async () => {
+  it("clears the name when the field is saved empty", async () => {
     const { calls } = backend();
     const onSaved = vi.fn();
     const user = userEvent.setup();
     render(<ProfileNameDialog current="Ana" onClose={() => {}} onSaved={onSaved} />);
     expect(field().value).toBe("Ana");
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await user.clear(field());
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({ name: "" });
   });

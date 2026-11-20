@@ -1,13 +1,21 @@
 // Pairs a presenter's window with an audience window in the same browser: the presenter page opens
-// /a/<slug>#present=audience&pair=<id>, and both pages join BroadcastChannel
-// "plinth-present:<artifact id>:<pair>" on the app origin. The presenter posts the slide it is on;
-// the audience page says hello when it opens and shows that slide. Only slide numbers cross.
+// /a/<slug>/v/<n>#present=audience&pair=<id> (the version it shows), and both pages join
+// BroadcastChannel "plinth-present:<artifact id>:<pair>" on the app origin. The presenter posts the
+// slide and the version it is on; the audience page says hello when it opens and shows exactly
+// that slide of that version. Only slide and version numbers cross.
 //
 // The pair id is not a secret: the channel is same-origin and same-browser, and the most another
-// app page could do with it is move a slide.
+// app page could do with it is move a slide, or open another version of the same artifact.
 import { isSlideNumber } from "@plinth/shared";
 
-export type PresentMessage = { v: 1; type: "slide"; slide: number } | { v: 1; type: "hello" };
+export type PresentMessage =
+  | { v: 1; type: "slide"; slide: number; version: number }
+  | { v: 1; type: "hello" };
+
+/** A version number a channel message may carry. */
+function isVersion(n: unknown): n is number {
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 1;
+}
 
 const PAIR_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
@@ -22,7 +30,9 @@ export function readPresentMessage(data: unknown): PresentMessage | null {
   const m = data as Record<string, unknown>;
   if (m.v !== 1) return null;
   if (m.type === "hello") return { v: 1, type: "hello" };
-  if (m.type === "slide" && isSlideNumber(m.slide)) return { v: 1, type: "slide", slide: m.slide };
+  if (m.type === "slide" && isSlideNumber(m.slide) && isVersion(m.version)) {
+    return { v: 1, type: "slide", slide: m.slide, version: m.version };
+  }
   return null;
 }
 

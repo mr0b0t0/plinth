@@ -36,6 +36,10 @@ function comment(over: Partial<CommentInfo> = {}): CommentInfo {
   };
 }
 
+/** The words on the composer's anchor chip, or null when it shows none. */
+const chip = (root: HTMLElement) =>
+  root.querySelector(".cm-anchor-chip__text")?.textContent ?? null;
+
 interface Server {
   items: CommentInfo[];
   list?: Record<string, unknown>;
@@ -128,9 +132,7 @@ describe("CommentsPanel, comments from the page", () => {
     const server: Server = { items: [], posts: [] };
     const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
     await screen.findByText("No comments yet.");
-    expect(within(k.panel).getByText(/Placed by the page/).textContent).toBe(
-      "Placed by the page: Top left",
-    );
+    expect(chip(k.panel)).toBe("Pinned to Top left");
     // The page owns anchoring: no pick button, and no bridge message to the frame.
     expect(within(k.panel).queryByRole("button", { name: "Pin to an element" })).toBeNull();
     expect(k.frameWin.postMessage).not.toHaveBeenCalled();
@@ -162,6 +164,43 @@ describe("CommentsPanel, comments from the page", () => {
     expect(k.settled).toHaveBeenCalledTimes(2);
   });
 
+  it("removes the page's pin when another version is shown, and keeps the draft", async () => {
+    const server: Server = { items: [], posts: [] };
+    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
+    await screen.findByText("No comments yet.");
+    expect(chip(k.panel)).toBe("Pinned to Top left");
+    const user = userEvent.setup();
+    const box = within(k.panel).getByRole("textbox", { name: "New comment" });
+    await user.type(box, "About this");
+    // A live update swaps in version 2, which may draw something else at that spot.
+    k.rerender({ version: 2, pageCompose: { req: REQ, anchor: ANCHOR } });
+    expect(chip(k.panel)).toBeNull();
+    expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
+    expect((box as HTMLTextAreaElement).value).toBe("About this");
+    await user.click(within(k.panel).getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(server.posts.length).toBe(1));
+    expect(server.posts[0]).toEqual({ body: "About this", version_number: 2 });
+    // The same version again changes nothing.
+    k.rerender({ version: 2, pageCompose: { req: "request-0000000003", anchor: ANCHOR } });
+    expect(chip(k.panel)).toBe("Pinned to Top left");
+    k.rerender({ version: 2, pageCompose: { req: "request-0000000003", anchor: ANCHOR } });
+    expect(chip(k.panel)).toBe("Pinned to Top left");
+  });
+
+  it("ends picking when a new version makes the page anchor its own comments", async () => {
+    const server: Server = { items: [], posts: [] };
+    const k = renderPanel(server, { pageOwnsAnchors: false });
+    await screen.findByText("No comments yet.");
+    await userEvent
+      .setup()
+      .click(within(k.panel).getByRole("button", { name: "Pin to an element" }));
+    expect(k.panel.dataset.picking).toBe("true");
+    k.rerender({ version: 2, pageOwnsAnchors: true });
+    expect(k.panel.dataset.picking).toBeUndefined();
+    expect(within(k.panel).queryByRole("button", { name: "Pin to an element" })).toBeNull();
+    expect(within(k.panel).getByRole("textbox", { name: "New comment" })).toBeTruthy();
+  });
+
   it("keeps a request through React's strict-mode effect re-run", async () => {
     serve({ items: [], posts: [] });
     const { frame } = fakeFrame();
@@ -186,7 +225,7 @@ describe("CommentsPanel, comments from the page", () => {
       await new Promise((r) => setTimeout(r, 10));
     });
     expect(settled).not.toHaveBeenCalled();
-    expect(screen.getByText(/Placed by the page/)).toBeTruthy();
+    expect(chip(document.body)).toBeTruthy();
   });
 
   it("is busy while someone writes, and replaces an earlier request nobody wrote for", async () => {
@@ -196,18 +235,14 @@ describe("CommentsPanel, comments from the page", () => {
     const second: PageAnchor = { kind: "page", key: "slide-2" };
     k.rerender({ pageCompose: { req: "request-0000000002", anchor: second } });
     expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
-    expect(within(k.panel).getByText(/Placed by the page/).textContent).toBe(
-      "Placed by the page: slide-2",
-    );
+    expect(chip(k.panel)).toBe("Pinned to slide-2");
     await userEvent
       .setup()
       .type(within(k.panel).getByRole("textbox", { name: "New comment" }), "Hi");
     k.rerender({ pageCompose: { req: "request-0000000003", anchor: ANCHOR } });
     expect(k.settled).toHaveBeenCalledWith("request-0000000003", { status: "busy" });
     // The anchor under the draft did not change.
-    expect(within(k.panel).getByText(/Placed by the page/).textContent).toBe(
-      "Placed by the page: slide-2",
-    );
+    expect(chip(k.panel)).toBe("Pinned to slide-2");
   });
 
   it("holds a request from someone who cannot comment like any other", async () => {
@@ -244,7 +279,7 @@ describe("CommentsPanel, comments from the page", () => {
     k.rerender({ pageCompose: { req: REQ, anchor: ANCHOR } });
     await settle();
     expect(document.activeElement).toBe(frame);
-    expect(within(k.panel).getByText(/Placed by the page/)).toBeTruthy();
+    expect(chip(k.panel)).toBeTruthy();
     // Screen readers hear that the page asked.
     await waitFor(() =>
       expect(within(k.panel).getByRole("status").textContent).toBe("The page asked for a comment."),
@@ -274,7 +309,7 @@ describe("CommentsPanel, comments from the page", () => {
     await screen.findByText("No comments yet.");
     await settle();
     expect(document.activeElement).toBe(toggle);
-    expect(within(k.panel).getByText(/Placed by the page/)).toBeTruthy();
+    expect(chip(k.panel)).toBeTruthy();
     // Opened by the person, it takes focus as before.
     cleanup();
     focusElsewhere();
@@ -319,7 +354,7 @@ describe("CommentsPanel, comments from the page", () => {
       },
     );
     await within(k.panel).findByText(/<b>bold<\/b>/);
-    expect(within(k.panel).getByText(/Placed by the page/).textContent).toContain("<img src=x");
+    expect(chip(k.panel)).toContain("<img src=x");
     expect(k.panel.querySelector("img")).toBeNull();
     expect(k.panel.querySelector("b")).toBeNull();
   });

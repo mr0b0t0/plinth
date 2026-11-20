@@ -48,27 +48,17 @@ export const PAGE_COMMENT_LIMITS = {
   readyTimeoutMs: 3000,
 } as const;
 
-/** What a page anchor's key may be: what the page anchors to, in its own terms. */
-export const PAGE_ANCHOR_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
+/** What a page anchor's key may be (at most maxKey characters): what it anchors to, in its terms. */
+export const PAGE_ANCHOR_KEY_RE = new RegExp(
+  `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,${PAGE_COMMENT_LIMITS.maxKey - 1}}$`,
+);
+/**
+ * What an anchor's label and data strings may not hold: control characters (Cc) and format
+ * characters (Cf: bidi overrides and isolates, zero-width spaces and joiners, the BOM). They can
+ * reorder or hide what the label says in the panel, so the page cannot use them.
+ */
+export const PAGE_ANCHOR_UNSAFE_RE = /[\p{Cc}\p{Cf}]/u;
 /** Keys of a page anchor's `data`. */
 export const PAGE_ANCHOR_DATA_KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
 /** A compose request id: random, URL-safe. */
 export const PAGE_REQ_RE = /^[A-Za-z0-9_-]{16,64}$/;
-
-/** UTF-8 bytes of a string (no TextEncoder: this package targets plain ES2023). */
-export function utf8Bytes(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
-      const d = s.charCodeAt(i + 1);
-      if (d >= 0xdc00 && d <= 0xdfff) {
-        n += 4;
-        i++;
-      } else n += 3;
-    } else n += 3;
-  }
-  return n;
-}

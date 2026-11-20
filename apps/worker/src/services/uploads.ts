@@ -187,18 +187,6 @@ export async function startUpload(
     });
   }
 
-  // A type that takes no bundle (a whiteboard: board.json alone, its starting board checked and
-  // written by the inline publish) is refused before the mint rate hit.
-  const typeId = target.mode === "update" ? target.artifact.type : target.type;
-  const def = typeDef(typeId);
-  if (def?.upload === false) {
-    throw new ApiError("invalid_input", `A ${def.id} is not uploaded as a bundle`, {
-      type: def.id,
-      field: "type",
-      next: "Send board JSON inline in publish_artifact or update_artifact",
-    });
-  }
-
   const limit = uploadTicketsPerHour(ctx.config);
   const rate = await hit(ctx.env.DB, `upload:${p.userId}`, limit, 3600);
   if (!rate.allowed) {

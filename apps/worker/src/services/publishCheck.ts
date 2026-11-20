@@ -8,17 +8,7 @@
 // their cost is linear in the input whatever it holds. They aim at what builds emit (Vite, esbuild,
 // hand-written pages): HTML attributes, CSS url() and @import, JS import specifiers. They do not
 // try to understand every JavaScript construct; a reference they miss is only a warning not given.
-//
-// sensitive_file is the one warning about names rather than references: a path whose bytes this
-// request sent and whose name usually holds secrets (SENSITIVE_PATH_RULES), or the local project
-// files record. It reads names, never bytes, and comes first so the cap never hides it.
-import {
-  CONTENT_RESERVED_PREFIX,
-  LIMITS,
-  PROJECT_FILES_RECORD,
-  type PublishWarning,
-  SENSITIVE_PATH_RULES,
-} from "@plinth/shared";
+import { LIMITS, type PublishWarning } from "@plinth/shared";
 import type { ContentSources } from "../content/csp.ts";
 import type { FileEntry } from "./storage.ts";
 
@@ -34,11 +24,6 @@ export interface ScanInput {
    * or the type shows author HTML only in opaque-origin artboards (a design, opaqueFrames).
    */
   opaqueReason?: "instance" | "artboard";
-  /**
-   * Final paths whose bytes this request carried (VersionStager.addFile), text or binary. Paths
-   * carried forward, reused by {path, sha256} or restored are never here.
-   */
-  sent?: string[];
   /** Files left out of the scan by the stager's budget. */
   unscanned?: string[];
   /**
@@ -71,15 +56,7 @@ interface ScanFlags {
    * works, and a data: URL needs none. What a design's artboards are checked for.
    */
   opaqueLocal: boolean;
-  /** Uses of the microphone APIs a frame can never have (MICROPHONE_WORDS), in scripts. */
-  microphone: number;
 }
-
-/**
- * Identifiers that reach the microphone from page script. Plinth frames never get the microphone
- * (the app's and the content host's Permissions-Policy), so these calls fail for every viewer.
- */
-const MICROPHONE_WORDS = new Set(["getUserMedia", "SpeechRecognition", "webkitSpeechRecognition"]);
 
 interface Ref {
   url: string;
@@ -88,70 +65,10 @@ interface Ref {
 
 const ROOT_ABSOLUTE =
   "loads the current version's file even when an older version is viewed, and fails under the path fallback. Build with relative URLs (Vite base: './')";
-const BLOCKED_MICROPHONE =
-  "Plinth frames never get the microphone, so this call fails for every viewer. For speech to text, declare dictation and use plinth.dictation (when the instance offers it); otherwise let people type";
 const OPAQUE =
   "This instance runs opaque isolation: module scripts, crossorigin links and web fonts load with Origin: null and fail. Build a classic bundle (Vite: build.modulePreload false and an iife/legacy output)";
 const OPAQUE_ARTBOARD =
   "Artboards run with an opaque origin: module scripts, crossorigin links and web fonts from the artifact fail. Use classic scripts, Google Fonts or data: fonts.";
-
-const SENSITIVE =
-  "This file name usually holds secrets (keys, tokens, passwords). Anyone who can open the artifact can read it, and earlier versions keep it. If it holds a secret, publish a new version without it, then rotate the secret: a later version does not remove it from history; only the owner deleting the artifact does. Stop and ask the user before handing over the link";
-const SENSITIVE_RECORD =
-  "This is a local .plinth-files.json record. It lists artifact ids and instance URLs, and anyone who has an artifact's id can open it while it is unlisted. Anyone who can open this artifact can read the record, and earlier versions keep it. Publish a new version without it, then ask the user whether to change the visibility of the unlisted artifacts it lists: an id cannot be changed, and only the owner deleting this artifact removes the record from history. Stop and ask the user before handing over the link";
-
-/** Whether one lowercased segment matches a rule; `last` says it is the path's last segment. */
-function segmentMatches(seg: string, last: boolean): boolean {
-  for (const r of SENSITIVE_PATH_RULES) {
-    switch (r.kind) {
-      case "name":
-        if (seg === r.value) return true;
-        break;
-      case "prefix":
-        if (
-          seg.startsWith(r.value) &&
-          (r.suffix === undefined || seg.endsWith(r.suffix)) &&
-          !(r.except ?? []).includes(seg)
-        ) {
-          return true;
-        }
-        break;
-      case "extension":
-        if (last && seg.endsWith(r.value)) return true;
-        break;
-      case "folder":
-        if (!last && seg === r.value) return true;
-        break;
-    }
-  }
-  return false;
-}
-
-/**
- * Whether a path's name usually holds secrets (SENSITIVE_PATH_RULES), case-insensitively. Pure:
- * it splits on "/" and compares strings, and never reads a file.
- */
-export function isSensitivePath(path: string): boolean {
-  const segs = path.toLowerCase().split("/");
-  return segs.some((seg, i) => segmentMatches(seg, i === segs.length - 1));
-}
-
-/** Whether a path names the local project files record (PROJECT_FILES_RECORD) in any segment. */
-function isRecordPath(path: string): boolean {
-  return path
-    .toLowerCase()
-    .split("/")
-    .some((seg) => seg === PROJECT_FILES_RECORD);
-}
-
-/** The sensitive_file warnings for the paths a request sent, in the order they arrived. */
-function sensitiveWarnings(sent: string[]): PublishWarning[] {
-  return sent.filter(isSensitivePath).map((path) => ({
-    code: "sensitive_file",
-    file: echo(path),
-    message: isRecordPath(path) ? SENSITIVE_RECORD : SENSITIVE,
-  }));
-}
 
 /** Echo text from a caller's file safely: at most 200 characters, control characters escaped. */
 export function echo(s: string): string {
@@ -175,10 +92,7 @@ function kindOf(f: FileEntry): "html" | "css" | "js" | null {
 }
 
 export function scanPublish(input: ScanInput): PublishWarning[] {
-  // sensitive_file first, before the type's own warnings too: cap() keeps the first max - 1
-  // entries, so one listed after many missing files would be folded into "and N more". live_draft
-  // is added after the cap (artifactTypes/doc.ts withLiveDraftWarning), so entry 0 stays sensitive_file.
-  const out: PublishWarning[] = [...sensitiveWarnings(input.sent ?? []), ...(input.typed ?? [])];
+  const out: PublishWarning[] = [...(input.typed ?? [])];
   let budget = LIMITS.maxScanBytes;
   const unscanned = [...(input.unscanned ?? [])];
   for (const f of input.files) {
@@ -191,7 +105,7 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
     budget -= f.bytes.byteLength;
     const text = decoder.decode(f.bytes);
     const found: Ref[] = [];
-    const flags: ScanFlags = { opaque: false, opaqueLocal: false, microphone: 0 };
+    const flags: ScanFlags = { opaque: false, opaqueLocal: false };
     if (kind === "html") scanHtml(text, found, flags);
     else if (kind === "css") scanCss(text, found, flags, "img");
     else scanJs(text, found, flags);
@@ -204,14 +118,6 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
         code: "opaque_module",
         file: f.path,
         message: input.opaqueReason === "artboard" ? OPAQUE_ARTBOARD : OPAQUE,
-      });
-    }
-    if (flags.microphone > 0) {
-      out.push({
-        code: "blocked_feature",
-        file: f.path,
-        count: flags.microphone,
-        message: BLOCKED_MICROPHONE,
       });
     }
   }
@@ -372,9 +278,6 @@ function checkRefs(file: string, refs: Ref[], input: ScanInput, out: PublishWarn
       checkHost(file, raw, hostOf(raw.slice(2)), r.directive, input, out);
       continue;
     }
-    // Plinth's own reserved paths (/__plinth/runtime.js, the data API) are the same for every
-    // version and are meant to be written root-absolute; a page that loads them is not at fault.
-    if (raw.startsWith(CONTENT_RESERVED_PREFIX)) continue;
     if (raw.startsWith("/")) {
       rootAbsolute += 1;
       if (!firstRoot) firstRoot = raw;
@@ -907,7 +810,6 @@ function scanJs(s: string, refs: Ref[], flags: ScanFlags): void {
   let prev: JsToken | null = null;
   let pendingUrl = "";
   for (const t of jsTokens(s)) {
-    if (t.kind === "word" && MICROPHONE_WORDS.has(t.value)) flags.microphone++;
     const afterDot = prev?.kind === "punct" && prev.value === ".";
     switch (state) {
       case "import":

@@ -404,11 +404,8 @@ describe("policy: pageDataAccess", () => {
     shared: [],
     room: false,
     roomOpen: [],
-    people: false,
     comments: false,
-    dictation: false,
-    hold: false,
-    files: false,
+    people: false,
   });
   it("full truth table, written out", () => {
     const T = true;
@@ -450,7 +447,7 @@ describe("policy: pageDataAccess", () => {
     ];
     expect(rows).toHaveLength(20);
     for (const [c, k, enabled, read, write, seeIdentity] of rows)
-      expect(pageDataAccess(c, k, enabled, "html"), JSON.stringify([c, k, enabled])).toEqual({
+      expect(pageDataAccess(c, k, enabled), JSON.stringify([c, k, enabled])).toEqual({
         read,
         write,
         seeIdentity,
@@ -459,27 +456,27 @@ describe("policy: pageDataAccess", () => {
     // identities, whatever else is true.
     for (const k of [none, off, viewerOnly, dataOnly, both])
       for (const enabled of [T, F]) {
-        expect(pageDataAccess(null, k, enabled, "html").seeIdentity).toBe(false);
-        if (!k?.viewer) expect(pageDataAccess(claim, k, enabled, "html").seeIdentity).toBe(false);
+        expect(pageDataAccess(null, k, enabled).seeIdentity).toBe(false);
+        if (!k?.viewer) expect(pageDataAccess(claim, k, enabled).seeIdentity).toBe(false);
       }
   });
   it("spot checks", () => {
-    expect(pageDataAccess(claim, caps(true, true), true, "html")).toEqual({
+    expect(pageDataAccess(claim, caps(true, true), true)).toEqual({
       read: true,
       write: true,
       seeIdentity: true,
     });
-    expect(pageDataAccess(null, caps(true, true), true, "html")).toEqual({
+    expect(pageDataAccess(null, caps(true, true), true)).toEqual({
       read: true,
       write: false,
       seeIdentity: false,
     });
-    expect(pageDataAccess(claim, caps(false, true), true, "html")).toEqual({
+    expect(pageDataAccess(claim, caps(false, true), true)).toEqual({
       read: false,
       write: false,
       seeIdentity: false,
     });
-    expect(pageDataAccess(claim, caps(true, true), false, "html")).toEqual({
+    expect(pageDataAccess(claim, caps(true, true), false)).toEqual({
       read: false,
       write: false,
       seeIdentity: false,
@@ -706,11 +703,8 @@ describe("policy: roomAccess", () => {
     shared: [],
     room: true,
     roomOpen: [],
-    people: false,
     comments: false,
-    dictation: false,
-    hold: false,
-    files: false,
+    people: false,
     ...extra,
   });
   const NONE = { join: false, emit: "none", openTopics: [], seeIdentity: false, doc: "none" };

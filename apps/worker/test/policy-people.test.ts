@@ -20,11 +20,8 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   shared: [],
   room: false,
   roomOpen: [],
-  people: true,
   comments: false,
-  dictation: false,
-  hold: false,
-  files: false,
+  people: true,
   ...over,
 });
 
@@ -61,7 +58,7 @@ describe("policy: pagePeopleAccess", () => {
 
 describe("policy: the people action", () => {
   const artifact = (over: Partial<ArtifactFacts> = {}): ArtifactFacts => ({
-    id: "a1",
+    id: "peopleartifact000001",
     ownerId: "u-owner",
     visibility: "unlisted",
     hasPassword: false,
@@ -82,8 +79,8 @@ describe("policy: the people action", () => {
     connectionId: "c1",
     connectionLabel: "Work",
     clientType: "claude",
-    boundArtifactId: null,
     scopes: new Set(scopes) as never,
+    boundArtifactId: null,
   });
   const access = (grantRole: "viewer" | "commenter" | "editor" | null) => ({
     grantRole,

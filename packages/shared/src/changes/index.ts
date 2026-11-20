@@ -11,7 +11,6 @@ import { describeDesign, describeHtml } from "./html.ts";
 import { describeSheet } from "./sheet.ts";
 import { describeSlides } from "./slides.ts";
 import { ChangeCollector, type ChangeList } from "./types.ts";
-import { describeWhiteboard } from "./whiteboard.ts";
 
 export * from "./diff.ts";
 export * from "./files.ts";
@@ -38,7 +37,6 @@ export const CHANGE_DESCRIBERS: { readonly [K in ArtifactType]: ChangeDescriber 
   design_system: describeDesignSystem,
   design: describeDesign,
   sheet: describeSheet,
-  whiteboard: (out, a, b) => { describeWhiteboard(out, a, b); return true; },
 };
 
 /** Said when a version cannot be read in detail (it fails the type's checks). */

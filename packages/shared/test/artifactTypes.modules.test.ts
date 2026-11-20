@@ -5,7 +5,6 @@ import { design } from "../src/artifactTypes/design.ts";
 import { doc } from "../src/artifactTypes/doc.ts";
 import { html } from "../src/artifactTypes/html.ts";
 import { slides } from "../src/artifactTypes/slides.ts";
-import { whiteboard } from "../src/artifactTypes/whiteboard.ts";
 import { ARTIFACT_TYPES, RENDERERS_DIR, rendererFiles, TYPE_REGISTRY } from "../src/index.ts";
 
 describe("type modules", () => {
@@ -14,7 +13,6 @@ describe("type modules", () => {
     expect(TYPE_REGISTRY.doc).toBe(doc);
     expect(TYPE_REGISTRY.slides).toBe(slides);
     expect(TYPE_REGISTRY.design).toBe(design);
-    expect(TYPE_REGISTRY.whiteboard).toBe(whiteboard);
     expect(Object.keys(TYPE_REGISTRY)).toEqual([...ARTIFACT_TYPES]);
   });
 

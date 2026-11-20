@@ -1,12 +1,17 @@
 // What changed in an HTML page or a design's boards, read with the string scanner (htmlScan.ts):
 // the title, the visible text (located by the nearest heading), links, images and forms added or
 // removed (counted), and whether styles or scripts changed. Markup and code are never quoted.
-import { boardSizeLabel, type DesignBoard, type DesignSource, parseDesign } from "../design.ts";
+import { type DesignBoard, type DesignSource, parseDesign } from "../design.ts";
 import { diffSequence } from "./diff.ts";
 import { type HtmlScan, type HtmlTextRun, scanHtml } from "./htmlScan.ts";
 import { multisetChanges, pairInOrder } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
+
+/** A board's size as the list says it: "1080 × 1080". */
+function sizeLabel(b: Pick<DesignBoard, "width" | "height">): string {
+  return `${b.width} × ${b.height}`;
+}
 
 function join(prefix: string, rest: string): string {
   if (prefix === "") return rest;
@@ -187,7 +192,7 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
   for (const y of b.boards) {
     const x = was.get(y);
     if (!x) {
-      out.add({ kind: "added", where: "", what: `${name(y)} added`, after: boardSizeLabel(y) });
+      out.add({ kind: "added", where: "", what: `${name(y)} added`, after: sizeLabel(y) });
       continue;
     }
     if (moved.has(y)) out.add({ kind: "moved", where: "", what: `${name(y)} moved` });
@@ -206,8 +211,8 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
         kind: "changed",
         where,
         what: "Resized",
-        before: boardSizeLabel(x),
-        after: boardSizeLabel(y),
+        before: sizeLabel(x),
+        after: sizeLabel(y),
       });
     }
     if (x.background !== y.background) {

@@ -1,10 +1,10 @@
 // Sheets (type "sheet"): an agent publishes JSON lines over MCP and Plinth renders a spreadsheet
 // with its fixed renderer on the artifact's own origin. Checked here: computed values and column
 // formats, a cycle, links, hostile cells shown as text, no request to another host, sort, filter
-// and the formula bar, phones, the dark scheme and print; CSV and .xlsx downloads from the menu and
-// from the frame's own toolbar; edit_sheet publishing a version the open page picks up, and its
-// one-line diff; and the editor's problem list and save. The opaque case is in
-// typed-sheet-opaque.spec.ts.
+// and the formula bar, phones, the dark scheme and print; CSV and .xlsx downloads from the
+// artifact menu (the frame has no buttons of its own); edit_sheet publishing a version the open
+// page picks up, and its one-line diff; and the editor's problem list and save. The opaque case is
+// in typed-sheet-opaque.spec.ts.
 import { readFileSync } from "node:fs";
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
@@ -172,7 +172,7 @@ test.describe("a published sheet", () => {
     }
   });
 
-  test("sorts by a header, filters, shows the raw cell, and prints without its toolbar", async ({
+  test("sorts by a header, filters, shows the raw cell, and prints without its bar", async ({
     page,
   }) => {
     const { artifact, client } = await publishSheet(page);
@@ -192,7 +192,8 @@ test.describe("a published sheet", () => {
       await expect(cell(frame, "B1")).toHaveAttribute("aria-sort", "descending");
       expect(await order()).toEqual(["4", "3", "2", "5", "6"]);
 
-      await frame.getByRole("searchbox").fill("pear");
+      await expect(frame.locator(".plinth-sheet__count")).toBeHidden();
+      await frame.getByRole("searchbox", { name: "Filter rows" }).fill("pear");
       expect(await order()).toEqual(["3"]);
       await expect(frame.locator(".plinth-sheet__count")).toHaveText("1 of 5 rows");
       await frame.getByRole("searchbox").fill("");
@@ -201,8 +202,9 @@ test.describe("a published sheet", () => {
       await expect(frame.locator(".plinth-sheet__fx")).toHaveText("D3=B3*C3");
 
       await page.emulateMedia({ media: "print" });
-      await expect(frame.locator(".plinth-sheet__downloads")).toBeHidden();
+      await expect(frame.locator(".plinth-sheet__bar")).toBeHidden();
       await expect(frame.locator(".plinth-sheet__fx")).toBeHidden();
+      await expect(frame.getByRole("heading", { name: TITLE })).toBeVisible();
       await expect(cell(frame, "A2")).toBeVisible();
       await page.emulateMedia({ media: "screen" });
     } finally {
@@ -210,7 +212,7 @@ test.describe("a published sheet", () => {
     }
   });
 
-  test("downloads CSV and .xlsx from the menu and from the frame's toolbar", async ({ page }) => {
+  test("downloads CSV and .xlsx from the artifact menu", async ({ page }) => {
     const { artifact, client } = await publishSheet(page);
     try {
       await page.goto(`/a/${artifact.slug}`);
@@ -238,12 +240,8 @@ test.describe("a published sheet", () => {
       expect(sheet1).toContain("<f>SUM(D2:D3)</f><v>7.6</v>");
       expect(sheet1).not.toContain("<f>HYPERLINK");
       expect(Object.keys(files).some((f) => /externalLink|vbaProject/.test(f))).toBe(false);
-
-      const [own] = await Promise.all([
-        page.waitForEvent("download"),
-        frame.getByRole("button", { name: "Download as CSV" }).click(),
-      ]);
-      expect(own.suggestedFilename()).toBe("Fruit budget.csv");
+      // One way in: the frame itself has no download buttons.
+      await expect(frame.getByRole("button", { name: /Download/ })).toHaveCount(0);
     } finally {
       await client.close();
     }

@@ -6,7 +6,6 @@ import {
   type ArtifactList,
   type ArtifactSummary,
   type ArtifactType,
-  type ArtifactTypeDef,
   type AssetInput,
   type Author,
   type Capabilities,
@@ -48,9 +47,10 @@ import {
   seesOwnerMetadata,
   seesPeople,
   seesPersonalCategory,
+  seesThumbnails,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
-import { noAssetsError, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
 import {
   matchingSpellings,
   ownerCategories,
@@ -335,8 +335,9 @@ export function toSummary(
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
     role: role ?? "viewer",
     taken_down: !!a.takenDownAt,
+    // None for a token limited to one artifact, which may not read thumbnails (decide(enter)).
     thumbnail_url:
-      thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt
+      thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt && seesThumbnails(ctx.principal)
         ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
         : null,
     // The read gate for owner-only metadata: every summary path goes through here.
@@ -482,9 +483,8 @@ async function withCategoryShare(
  * current version has the same bytes), `{path, sha256}` reuses the current version's file.
  * Cheap checks run before any rate hit or R2 operation.
  */
-function precheckAssets(ctx: Ctx, def: ArtifactTypeDef, assets: AssetInput[] | undefined): void {
+function precheckAssets(ctx: Ctx, assets: AssetInput[] | undefined): void {
   const count = assets?.length ?? 0;
-  if (count > 0 && def.assets === false) throw noAssetsError(def, assets?.[0]?.path);
   if (count > ctx.config.maxAssetsPerVersion) {
     throw tooManyAssets(ctx.config.maxAssetsPerVersion, count);
   }
@@ -556,29 +556,14 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     throw new ApiError("invalid_input", "A password is required for password visibility");
   }
   checkSourceSize(def, text);
-  precheckAssets(ctx, def, input.assets);
-  if (target.mode !== "publish") throw new ApiError("internal", "Not a publish");
-  // Per-type preparation before any rate hit or R2 operation (a whiteboard's starting board).
-  const prepared = await typeHooks(def).prepare?.(ctx, {
-    def,
-    text,
-    target: {
-      mode: "publish",
-      artifactId: target.artifactId,
-      ownerId: userId,
-      visibility: input.visibility,
-      hasPassword: input.visibility === "password" && !!input.password,
-    },
-  });
+  precheckAssets(ctx, input.assets);
   await enforcePublishRate(ctx);
   const passwordHash =
     input.visibility === "password" && input.password ? await hashPassword(input.password) : null;
-  const staged = prepared?.text ?? text;
-  let result = await writeVersion(ctx, target, (s) => stageInline(s, staged, input.assets ?? []), {
+  const result = await writeVersion(ctx, target, (s) => stageInline(s, text, input.assets ?? []), {
     visibility: input.visibility,
     passwordHash,
   });
-  if (prepared?.afterCommit) result = await prepared.afterCommit(result);
   if (input.emails?.length) await replaceViewerGrants(ctx, result.id, input.emails);
   return withCategoryShare(ctx, withCategory(result, target), "owner");
 }
@@ -607,7 +592,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   // The type is fixed at publish: the input must carry the artifact's own source field.
   const { def, text } = resolveSource(input, requireTypeDef(target.artifact.type).id);
   checkSourceSize(def, text);
-  precheckAssets(ctx, def, input.assets);
+  precheckAssets(ctx, input.assets);
   // The category is the owner's: an editor's call that carries one is refused here, before the
   // rate limit and any R2 operation, never silently dropped.
   if (input.category !== undefined) {
@@ -619,22 +604,14 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
       target.artifact.id,
     );
   }
-  // Per-type preparation before any rate hit or R2 operation (a whiteboard's starting board).
-  const prepared = await typeHooks(def).prepare?.(ctx, {
-    def,
-    text,
-    target: { mode: "update", artifact: target.artifact },
-  });
   await enforcePublishRate(ctx);
   // No assets given: the current version's assets are carried forward as references.
-  const staged = prepared?.text ?? text;
-  let result = await writeVersion(
+  const result = await writeVersion(
     ctx,
     target,
-    (s) => stageInline(s, staged, input.assets),
+    (s) => stageInline(s, text, input.assets),
     input.checkpoint ? { liveCheckpoint: true } : {},
   );
-  if (prepared?.afterCommit) result = await prepared.afterCommit(result);
   return withCategoryShare(ctx, withCategory(result, target), target.role);
 }
 
@@ -814,18 +791,19 @@ export async function listArtifacts(
 
 /**
  * list_artifacts for a token bound to one artifact: that artifact when the policy lets it view it
- * (and it matches `query`), with no categories. A category filter returns nothing: a filter on the
- * owner's names would let the token probe the bound artifact's category.
+ * (and it matches `query` and `type`), with no categories. A category filter returns nothing: a
+ * filter on the owner's names would let the token probe the bound artifact's category.
  */
 async function listBound(
   ctx: Ctx,
   bound: string,
-  filter: { query?: string; category?: string; limit?: number },
+  filter: { query?: string; category?: string; limit?: number; type?: ArtifactType },
 ): Promise<ArtifactList> {
   const none: ArtifactList = { items: [], categories: [] };
   if (filter.limit === 0 || filter.category?.trim()) return none;
   const row = await findArtifact(ctx, bound);
   if (!row) return none;
+  if (filter.type && row.type !== filter.type) return none;
   const d = await decideFor(ctx, row, "view");
   if (!d.allow) return none;
   const q = filter.query?.trim().toLowerCase();

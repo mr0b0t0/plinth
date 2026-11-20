@@ -109,12 +109,7 @@ async function setup() {
   )
     .bind(id)
     .first<{ capabilities: string | null }>();
-  const target: DataTarget = {
-    id,
-    ownerId: owner.user.id,
-    caps: versionCapabilities(row),
-    type: "html",
-  };
+  const target: DataTarget = { id, ownerId: owner.user.id, caps: versionCapabilities(row) };
   const writer = async (role: EffectiveRole, email = uniqueEmail()): Promise<DataWriter> => ({
     email,
     role,

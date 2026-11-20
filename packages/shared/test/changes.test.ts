@@ -29,9 +29,6 @@ describe("describeChanges", () => {
     expect(items("doc", "# A\n\nText.\n", "# A\n\n\nText.")).toEqual([
       { kind: "changed", where: "", what: CHANGES_INVISIBLE },
     ]);
-    expect(items("whiteboard", '{"v":1}', '{ "v": 1, "background": "dots" }')).toEqual([
-      { kind: "changed", where: "", what: CHANGES_INVISIBLE },
-    ]);
   });
 
   it("says a version cannot be read in detail rather than guessing", () => {
@@ -683,32 +680,5 @@ describe("html", () => {
     const text = JSON.stringify(list);
     for (const bad of ["<", "not text", "secret", "hidden", "content"])
       expect(text).not.toContain(bad);
-  });
-});
-
-describe("whiteboard", () => {
-  it("lists the board's settings", () => {
-    expect(
-      items(
-        "whiteboard",
-        '{"v":1,"background":"dots"}',
-        '{"v":1,"background":"grid","edit":"editors"}',
-      ),
-    ).toEqual([
-      {
-        kind: "changed",
-        where: "Board settings",
-        what: "Background changed",
-        before: "Dots",
-        after: "Grid",
-      },
-      {
-        kind: "changed",
-        where: "Board settings",
-        what: "Who can edit the board changed",
-        before: "Commenters and editors",
-        after: "Editors only",
-      },
-    ]);
   });
 });
