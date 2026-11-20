@@ -518,27 +518,41 @@ describe("room: revocation", () => {
     b.ws.close(1000);
   });
 
-  it("the alarm is set while sockets are open; artifacts without a room never get an object", async () => {
+  it("the alarm is set while sockets are open; with live views off, artifacts without a room never get an object", async () => {
     const { id, ownerP, owner } = await setup();
     const a = await connect(id, ownerP.cookie);
     a.ws.close(1000);
     await a.closed;
-    // A page without a room, through every notifying path.
+    // A page without a room, through every notifying path. Live views are off here: while they
+    // are on, any artifact may have watch sockets, so every artifact is notified (live-view.test.ts).
+    const off = { ALLOW_LIVE_VIEWS: "false" };
     const { body: plain } = await publish(owner.auth, { html: PLAIN, visibility: "allowlist" });
     await grant(plain.id, uniqueEmail(), "viewer");
-    const vis = await call(`/api/v1/artifacts/${plain.id}/visibility`, {
-      method: "PUT",
-      headers: { ...ownerP.session.headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ visibility: "unlisted" }),
-    });
+    const vis = await run(
+      `${APP}/api/v1/artifacts/${plain.id}/visibility`,
+      {
+        method: "PUT",
+        headers: { ...ownerP.session.headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: "unlisted" }),
+      },
+      off,
+    );
     expect(vis.status).toBe(200);
-    const upd = await call(`/api/v1/artifacts/${plain.id}`, {
-      method: "PUT",
-      headers: { ...owner.auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ html: `${PLAIN}<p>2</p>`, base_version: 1 }),
-    });
+    const upd = await run(
+      `${APP}/api/v1/artifacts/${plain.id}`,
+      {
+        method: "PUT",
+        headers: { ...owner.auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ html: `${PLAIN}<p>2</p>`, base_version: 1 }),
+      },
+      off,
+    );
     expect(upd.status).toBe(200);
-    await call(`/api/v1/artifacts/${plain.id}`, { method: "DELETE", headers: owner.auth });
+    await run(
+      `${APP}/api/v1/artifacts/${plain.id}`,
+      { method: "DELETE", headers: owner.auth },
+      off,
+    );
     await new Promise((r) => setTimeout(r, 100));
     const ids = (await listDurableObjectIds(rooms())).map((i) => i.toString());
     expect(ids).toContain(rooms().idFromName(id).toString());

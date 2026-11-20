@@ -14,7 +14,9 @@ export function appCsp(config: Config): string {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    // The live-view socket (api/watch.ts) on the app's own host, named for browsers that do not
+    // count ws: and wss: as 'self'. Never a content host.
+    `connect-src 'self' ${config.scheme === "http" ? "ws" : "wss"}://${config.appHost}`,
     `frame-src ${frames}`,
     "worker-src 'self' blob:",
     "object-src 'none'",

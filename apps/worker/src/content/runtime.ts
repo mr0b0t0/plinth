@@ -14,8 +14,10 @@
 //              set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
-//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs });
-//              a Doc's createdBy and updatedBy are { email, name | null, role, via }
+//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs }).
+//              While the app pushes changes (live views, runtime/live.ts) onSnapshot re-reads when
+//              told and polls only every 60 s; intervalMs applies while it does not. A Doc's
+//              createdBy and updatedBy are { email, name | null, role, via }
 //   people     who has access (owners and editors, pages that declare `data viewer people`):
 //              list({ q, limit }) -> [{ id, email, name | null, role, you }] (with .total, how
 //              many matched before limit), get(id) -> that or null; others get forbidden or
@@ -48,6 +50,7 @@ import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
+import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
 
@@ -60,6 +63,7 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
   COMMENTS_FRAGMENT,
+  LIVE_FRAGMENT,
   PEOPLE_FRAGMENT,
 ];
 

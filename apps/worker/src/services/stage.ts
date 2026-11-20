@@ -24,7 +24,8 @@ import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/erro
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
-import { getVersionRow, requireArtifact } from "./artifacts.ts";
+import { notifyViewers } from "../rooms/notify.ts";
+import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
 import {
   checkAsset,
   requireTypeDef,
@@ -845,7 +846,10 @@ export class VersionStager implements Stager {
         files,
         manifestPaths,
         sources: contentSources(this.ctx.config),
-        isolation: this.ctx.config.contentIsolation,
+        // A type whose page shows author HTML only in opaque frames (a design's artboards) is
+        // checked as opaque isolation would check it, whatever the instance runs.
+        isolation: def.opaqueFrames ? "opaque" : this.ctx.config.contentIsolation,
+        ...(def.opaqueFrames ? { opaqueReason: "artboard" as const } : {}),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
         typed: typeSourceWarnings(typedSource),
@@ -1085,6 +1089,15 @@ export async function commitVersion(
     scheduleThumbnail(ctx, result.id, result.version);
   } catch {
     // A thumbnail is optional; a reader starts the capture later.
+  }
+  // Open views of the artifact follow the new version (live views, rooms/notify.ts).
+  if (target.mode === "update") {
+    try {
+      const data = versionCapabilities({ capabilities: extra.capabilities })?.data === true;
+      notifyViewers(ctx, result.id, { version: result.version, data });
+    } catch {
+      // Best effort; the room's alarm sends a lost version within a minute.
+    }
   }
   // Room notifications and per-type publish warnings (services/artifactTypes/<type>.ts).
   const def = extra.stager.def;

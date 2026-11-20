@@ -31,11 +31,13 @@ export const TYPE_USES: Partial<Record<ArtifactType, string>> = {
   doc: "a document that is mostly prose (memo, plan, spec, report, notes)",
   slides: "a presentation (talk, pitch, review, lesson)",
   design_system: "a design system, style guide or token set",
+  design: "a visual design at fixed sizes (app screens, posters, social posts, ads, banners)",
 };
 
 /** What Plinth makes of each typed artifact, for TYPES_NOTE; "a finished page" when absent. */
 export const TYPE_RESULTS: Partial<Record<ArtifactType, string>> = {
   slides: "a deck",
+  design: "artboards on a canvas",
 };
 
 /** A sentence after a type's use sentence in TYPES_NOTE, for types other work builds on. */
@@ -73,9 +75,10 @@ export const SLIDES_PUBLISH_NOTE =
   "matter between two --- lines, starting on line 1 (aspect: 16:9 or 4:3, theme: auto, light or " +
   "dark, paginate, footer); speaker notes after a " +
   'line starting "Note:"; a line ||| splits a slide into columns; #N links to slide N. Plinth renders ' +
-  "fixed 16:9 or 4:3 slides with automatic layouts, shrink to fit, paging, presenter view and PDF " +
-  "export. Raw HTML shows as text. Assets are images; at most 500 slides and 1 MB. Speaker notes are " +
-  "visible to anyone who can open the deck. ";
+  "fixed 16:9 or 4:3 slides with automatic layouts, shrink to fit, paging, presenter view, PDF " +
+  "export and a .pptx download (viewers download it from the deck's menu; do not build one). Raw " +
+  "HTML shows as text. Assets are images; at most 500 slides and 1 MB. Speaker notes are visible to " +
+  "anyone who can open the deck. ";
 
 /** What publish_artifact says about the design_system type. */
 export const DESIGN_SYSTEM_PUBLISH_NOTE =
@@ -86,6 +89,15 @@ export const DESIGN_SYSTEM_PUBLISH_NOTE =
   "reference site with live previews, which run no scripts. Its assets are images (png, jpg, gif, " +
   "webp, avif, svg) and fonts (woff2, woff, ttf, otf); limit 1 MB of JSON. A refusal lists every " +
   "problem with its path in errors. ";
+
+/** What publish_artifact says about the design type. */
+export const DESIGN_PUBLISH_NOTE =
+  'Pass type "design" with content for visual designs: shared <head> tags (fonts, Tailwind, styles), ' +
+  'then artboards, each starting with a line <!-- artboard id="home" name="Home" size="iphone" --> ' +
+  '(a preset, "WxH", or width and height) followed by its HTML fragment. Each artboard renders alone ' +
+  "at its exact size with an opaque origin: inline scripts and allowlisted CDN scripts run, but no " +
+  "fetch of the artifact's files, no storage, and no font files from assets (use Google Fonts or " +
+  "data: URLs). Assets: images, CSS, JS, mp4/webm by relative path. Up to 60 artboards, 2 MB. ";
 
 /**
  * What get_design_system adds to UNTRUSTED_NOTE: the HTML and CSS it returns are code other people
@@ -147,7 +159,8 @@ export const CATEGORY_INSTRUCTION =
 /** What update_artifact says about types. */
 export const TYPE_UPDATE_NOTE =
   "Send the source field that matches the artifact's type (get_artifact says which): html for an " +
-  "HTML page, content (Markdown) for a doc or a deck (slides), content (JSON) for a design_system. " +
+  "HTML page, content (Markdown) for a doc or a deck (slides), content (JSON) for a design_system, " +
+  "content (artboard HTML) for a design. " +
   "The type cannot change. ";
 
 /**

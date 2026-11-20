@@ -55,6 +55,9 @@ const WORKER_VARS = [
   // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
   "ALLOW_ROOMS",
   "ALLOW_LIVE_EDITING",
+  // Live views (docs/docker.md#settings): open pages follow new versions over a socket on the app
+  // host, through the same ROOMS binding.
+  "ALLOW_LIVE_VIEWS",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

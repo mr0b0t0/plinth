@@ -23,6 +23,7 @@ import {
   contentOrigin,
   identityClaimsActive,
   liveEditMode,
+  liveViewsActive,
   roomsActive,
   sharedDataActive,
 } from "../config.ts";
@@ -32,7 +33,13 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import { type Decision, type Principal, pageDataAccess, peopleListOffered } from "../policy.ts";
+import {
+  type Decision,
+  liveViewAccess,
+  type Principal,
+  pageDataAccess,
+  peopleListOffered,
+} from "../policy.ts";
 import {
   decideFor,
   denialError,
@@ -188,7 +195,24 @@ export const GATE_PARTS: readonly GatePart[] = [
     const people = await gatePeople(ctx, a, identity);
     return people ? { people } : undefined;
   },
+  async ({ ctx, a, d }) => (gateWatch(ctx, a, d) ? { watch: true as const } : undefined),
 ];
+
+// ---------- live views ----------
+
+/**
+ * Whether the app should open the watch socket (docs/spec.md "Live views"): anyone this gate lets
+ * in, never an agent, while live views are active; pinned version links too, so they can say a
+ * newer version exists. The declaration matters only for the data right, which the socket's
+ * handshake decides, so nothing is read here.
+ */
+function gateWatch(ctx: Ctx, a: ArtifactRow, d: Extract<Decision, { allow: true }>): boolean {
+  return liveViewAccess(ctx.principal, d, null, {
+    active: liveViewsActive(ctx.config, ctx.env),
+    sharedData: sharedDataActive(ctx.config),
+    type: a.type,
+  }).watch;
+}
 
 // ---------- version declarations, read once per gate ----------
 

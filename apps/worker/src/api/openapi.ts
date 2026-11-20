@@ -51,6 +51,7 @@ import {
   updateArtifactInput,
   updateCommentInput,
   updateProfileInput,
+  VIEW_WATCH_PROTOCOL,
   VISIBILITIES,
   verifyLoginCodeInput,
   verifyMagicLinkInput,
@@ -73,8 +74,9 @@ type Method = "get" | "post" | "put" | "patch" | "delete";
  * - `admin`: a signed-in instance admin.
  * - `bearer`: a bearer token only (PAT, OAuth or ADMIN_TOKEN); a session cookie is refused.
  * - `upload`: only the single-use upload token from start_upload.
+ * - `browser`: the web app in a browser, signed in or not (cookies); a bearer token is refused.
  */
-type Auth = "agent" | "user" | "optional" | "admin" | "bearer" | "upload";
+type Auth = "agent" | "user" | "optional" | "admin" | "bearer" | "upload" | "browser";
 
 interface Param {
   name: string;
@@ -103,7 +105,11 @@ interface Operation {
   ok: [number, string | null];
   /** A non-JSON success response: its media type (the body is binary). Replaces ok's schema. */
   okMedia?: string;
+  /** What the success response is, when it has no body (a WebSocket upgrade). */
+  okDescription?: string;
   errors?: number[];
+  /** Refusals answered as plain text (a refused WebSocket handshake), by status. */
+  textErrors?: Record<number, string>;
 }
 
 // ---------- Schemas ----------
@@ -189,11 +195,13 @@ const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   doc: "a Markdown document",
   slides: "a Markdown deck",
   design_system: "design tokens, guidelines and components as JSON",
+  design: "artboards (app screens, posters, social posts, ads) as HTML",
 };
 
 /** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
 const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
   design_system: "renders as a reference site and get_design_system compiles",
+  design: "renders on a canvas, each artboard alone at its exact size",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -302,7 +310,7 @@ function responseSchemas(): Record<string, Json> {
             [def.sourceField]: str({ description: sourceDescription(def) }),
             assets: {
               type: "array",
-              description: "The version's other files; never index.html or content.md",
+              description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
               items: obj({
                 path: str(),
                 size_bytes: int(),
@@ -694,9 +702,15 @@ function responseSchemas(): Record<string, Json> {
                 "The version being shown declares `comments` (HTML only): the page may open the " +
                 "comment composer with its own anchors, and `review` is ignored",
             },
+            watch: {
+              const: true,
+              description:
+                "Live views: open GET /view/{id}/watch to learn of new versions and shared-data " +
+                "changes as they happen. Absent: poll the gate",
+            },
             people: ref("ViewGatePeople"),
           },
-          ["data", "live", "page_comments", "people"],
+          ["data", "live", "page_comments", "watch", "people"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -2130,12 +2144,54 @@ function security(op: Operation): Json[] {
       return [{ bearerAuth: op.scope ? [op.scope] : [] }];
     case "upload":
       return [{ uploadToken: [] }];
+    case "browser":
+      return [{}, session];
     case "optional":
       // Anonymous browser writes (sign-in, viewer password) still need the CSRF pair.
       return unsafe
         ? [{ csrfHeader: [] }, { bearerAuth: [] }, session]
         : [{}, { bearerAuth: [] }, session];
   }
+}
+
+// ---------- Live views (docs/spec.md "Live views") ----------
+
+function liveViewOperations(): Operation[] {
+  return [
+    {
+      method: "get",
+      path: API.viewWatch,
+      operationId: "viewWatch",
+      summary: "Live views: a WebSocket that pushes new versions and shared-data changes",
+      description:
+        "For the web app in a browser only, never for agents: a request with an `Authorization` " +
+        "header is refused. `ref` is the artifact id (`artifact.id` from the gate), opened when " +
+        "the gate says `watch: true`. The handshake needs `Origin` exactly the app's origin, " +
+        `same-origin fetch metadata when sent, and the \`${VIEW_WATCH_PROTOCOL}\` subprotocol; ` +
+        "access is the gate's view decision with the browser's cookies. The socket is " +
+        "receive-only: the client sends the text `ping` (answered `pong`) and nothing else. " +
+        'Server frames are JSON text: `{t:"welcome",v:1,version}`, ' +
+        '`{t:"version",version,spread_ms}` (re-read the gate after a random wait up to ' +
+        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data; at most one ' +
+        'per `spread_ms`, and always one after the last change) and `{t:"access",spread_ms}` ' +
+        "(sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 " +
+        "`access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read " +
+        "the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was " +
+        "opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full " +
+        "(poll instead). After any other close the first reconnect also waits a random time up " +
+        "to 10 s.",
+      tag: "Viewing",
+      auth: "browser",
+      ok: [101, null],
+      okDescription: "Switching protocols: the watch socket is open",
+      textErrors: {
+        400: "The plinth.view.v1 subprotocol was not offered",
+        403: "Wrong or missing Origin, cross-site fetch metadata, or a bearer token",
+        404: "Live views are off, or the artifact is not there for this browser",
+        426: "Not a WebSocket upgrade",
+      },
+    },
+  ];
 }
 
 /** "/artifacts/:ref/versions/:n" -> "/artifacts/{ref}/versions/{n}" */
@@ -2180,7 +2236,7 @@ function operationObject(op: Operation): Json {
           content: { [op.okMedia]: { schema: { type: "string", format: "binary" } } },
         }
       : schema === null
-        ? { description: "Done, no body" }
+        ? { description: op.okDescription ?? "Done, no body" }
         : {
             description: "Success",
             content: { "application/json": { schema: ref(schema) } },
@@ -2188,6 +2244,9 @@ function operationObject(op: Operation): Json {
   };
   for (const code of op.errors ?? []) {
     responses[String(code)] = { $ref: `#/components/responses/E${code}` };
+  }
+  for (const [code, description] of Object.entries(op.textErrors ?? {})) {
+    responses[code] = { description, content: { "text/plain": { schema: str() } } };
   }
   responses.default = { $ref: "#/components/responses/Error" };
 
@@ -2230,7 +2289,12 @@ function operationObject(op: Operation): Json {
 
 export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
   const paths: Record<string, Json> = {};
-  for (const op of [...operations(), ...dataOperations(), ...liveOperations()]) {
+  for (const op of [
+    ...operations(),
+    ...dataOperations(),
+    ...liveOperations(),
+    ...liveViewOperations(),
+  ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
     (paths[key] as Json)[op.method] = operationObject(op);

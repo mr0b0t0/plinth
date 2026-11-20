@@ -227,9 +227,9 @@ Create an artifact. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `title` | string, 1-200 | |
-| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc`, `slides` or `design_system` |
-| `type` | `html` \| `doc` \| `slides` \| `design_system`, optional | Default `html`. `doc` makes a document and `slides` a deck from Markdown in `content`, `design_system` a design system from JSON in `content` ([below](#get_design_system)); fixed at publish |
-| `content` | string, optional | For `type: "doc"` or `"slides"`: the Markdown (up to 500 slides). For `type: "design_system"`: the design system JSON. Up to 1 MB |
+| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc`, `slides`, `design_system` or `design` |
+| `type` | `html` \| `doc` \| `slides` \| `design_system` \| `design`, optional | Default `html`. `doc` makes a document and `slides` a deck from Markdown in `content`, `design_system` a design system from JSON in `content` ([below](#get_design_system)), `design` artboards on a canvas from HTML in `content`; fixed at publish |
+| `content` | string, optional | For `type: "doc"` or `"slides"`: the Markdown (up to 500 slides). For `type: "design_system"`: the design system JSON. Up to 1 MB. For `type: "design"`: the artboards (up to 60, 2 MB) |
 | `assets` | array, optional, up to the instance's file limit (default 511) | `{ path, content, encoding?: "utf8" \| "base64", sha256?, content_type? }`. Relative paths, no `..`, no empty segment or trailing `/`, not `index.html`, not under `__plinth/`. The content type comes from the extension; `content_type` is used only for an extension Plinth does not know |
 | `visibility` | `public` \| `unlisted` \| `password` \| `allowlist` | Default `allowlist` with nobody added: private to the owner and collaborators. `public` only where the instance allows it |
 | `password` | string, 6-200, optional | Needed for `password` |
@@ -273,9 +273,10 @@ A deck (type `slides`): send Markdown in `content` with a line `---` between sli
 matter sets `aspect` (`16:9` or `4:3`), `theme` (`auto`, `light`, `dark`), `paginate` and a plain-text
 `footer`; a line starting `Note:` starts the slide's speaker notes; lines `|||` split a slide into
 2 or 3 columns; `[text](#3)` links to slide 3. Plinth renders fixed 16:9 or 4:3 slides with automatic
-layouts, text that shrinks to fit, paging, Present, a presenter view and printing to PDF (with or
-without notes). Speaker notes are visible to anyone who can open the deck. Assets are images;
-`slides.md` and `index.html` are reserved. A deck needs at least one slide and holds at most 500.
+layouts, text that shrinks to fit, paging, Present, a presenter view, printing to PDF (with or
+without notes) and a `.pptx` download that viewers make from the deck's menu, in their browser.
+Speaker notes are visible to anyone who can open the deck, and are in the `.pptx`. Assets are
+images; `slides.md` and `index.html` are reserved. A deck needs at least one slide and holds at most 500.
 
 ```json
 {
@@ -298,6 +299,32 @@ Its assets are images and fonts (woff2, woff, ttf, otf); `system.json` and `inde
 reserved. JSON that does not parse is refused with `invalid_input` and `details.errors`, up to 50
 problems with their paths (`{ "path": "tokens.color.bg.$value", "message": "..." }`). The format is
 in [spec.md](spec.md#design-systems-decided-2026-11-19) and the `plinth-artifacts` skill.
+
+A design (type `design`): send its source in `content`. Shared `<head>` tags (fonts, Tailwind, a
+stylesheet) come first; then each artboard starts with a whole line
+`<!-- artboard id="home" name="Home" size="iphone" -->` followed by its HTML fragment. A size is a
+preset (`iphone`, `desktop`, `instagram-post`, `story`, `og-image`, `ad-medium-rectangle`, `a4`,
+`slide-16x9` and others; [spec.md](spec.md#designs-decided-2026-11-19)), `size="1080x1080"`, or
+`width` and `height`, 16 to 4096 px a side; `section` keeps a group of boards together on one row
+when they fit, and `background` sets the board's color. Plinth lays the boards out on a canvas
+people pan and zoom, and renders each one alone at its exact size with an opaque origin: inline
+scripts and allowlisted CDN scripts run, but a board cannot fetch the artifact's files or use storage, and font files cannot be assets
+(use Google Fonts or a `data:` URL). Assets are images, CSS, JS and mp4/webm video by relative
+path; `design.html` and `index.html` are reserved. Up to 60 artboards and 2 MB. A source that does
+not parse is refused with `invalid_input`: the message names the first problem and its line, and
+`details.issues` lists each one (`{ "line": 12, "board": "Home", "message": "..." }`).
+
+```json
+{
+  "title": "Launch kit",
+  "type": "design",
+  "content": "<link rel=\"stylesheet\" href=\"brand.css\">\n\n<!-- artboard id=\"home\" name=\"Home\" size=\"iphone\" section=\"Mobile\" -->\n<main class=\"hero\"><img src=\"hero.png\" alt=\"\"><h1>Ship faster</h1></main>\n\n<!-- artboard id=\"post\" name=\"Launch post\" size=\"instagram-post\" background=\"#0b0b0f\" -->\n<div class=\"post\">Now live</div>\n",
+  "assets": [
+    { "path": "brand.css", "content": ".hero { padding: 24px } .post { color: white }" },
+    { "path": "hero.png", "content": "iVBORw0KGgo...", "encoding": "base64", "content_type": "image/png" }
+  ]
+}
+```
 
 A mismatch is refused with `invalid_input` and a message saying what to send instead, for example
 `type doc needs its Markdown in content`, or `content for type doc is Markdown` when `content` is
@@ -323,7 +350,7 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 | --- | --- | --- |
 | `id` | string | |
 | `html` | string | The full new document. For an HTML page |
-| `content` | string | The full new Markdown. For a doc or a deck, instead of `html` (up to 1 MB) |
+| `content` | string | The full new source, instead of `html`: Markdown for a doc or a deck (up to 1 MB), JSON for a design system, the artboards for a design (up to 2 MB) |
 | `assets` | array, optional | Omit to keep the current assets; pass `[]` to remove them all. An entry with `sha256` and no `content` reuses that file from the current version |
 | `note` | string, up to 500, optional | Shown in the version history |
 | `base_version` | integer, optional | The version you edited. If it is no longer current, the call fails with `conflict` instead of overwriting |
@@ -333,7 +360,9 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 { "id": "q3-revenue-4k2j9x0aq1", "html": "<!doctype html>...", "note": "Bigger chart", "base_version": 3 }
 ```
 
-Returns the same shape as `publish_artifact`, with the new `version`.
+Returns the same shape as `publish_artifact`, with the new `version`. Open views of the artifact
+show it within seconds by themselves where the instance has live views (within 15 s otherwise), so
+there is no need to tell anyone to reload.
 
 Send the field that matches the artifact's type (`get_artifact` says which). The type cannot
 change: `html` for a doc, or `content` for an HTML page, is refused with `invalid_input`.
@@ -395,7 +424,7 @@ commands, next }`:
   module scripts fail ([below](#opaque-sandbox-instances)).
 
 Replace `<folder>` in `commands.curl` with the build folder (the one with `index.html`, a doc's
-`content.md` or a deck's `slides.md` at its top) and run it with a timeout of at least 10 minutes. The command changes
+`content.md`, a deck's `slides.md` or a design's `design.html` at its top) and run it with a timeout of at least 10 minutes. The command changes
 into that folder itself. It prints the publish result as JSON, plus
 `bundle: { entries, skipped, stripped_prefix }`. If every file sits under one top directory that
 holds the entry file, that directory is removed from the paths. Dotfiles are skipped.
@@ -424,7 +453,7 @@ the upload token works on no other route. Errors carry a `reason`:
 | `upload_exhausted` | 5 attempts used |
 | `upload_running` | Another upload of yours is in progress; wait for it. `receiving_until` and `retry_after` say when its lease ends at the latest |
 | `upload_too_slow` | The bundle took longer than its 10-minute receiving lease to arrive; send it again (the upload keeps its remaining attempts) |
-| `no_entry_file` | No `index.html` (or `content.md`, `slides.md`) at the top: point `<folder>` at the build folder that has it at its top |
+| `no_entry_file` | No `index.html` (or `content.md`, `slides.md`, `design.html`) at the top: point `<folder>` at the build folder that has it at its top |
 
 A conflict (someone published after `base_version`) ends the upload; `details.next` says which
 version is current.
@@ -473,7 +502,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`) |
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
-| `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
+| `opaque_module` | On opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there. In a design, on every instance: those that load the design's own files fail in its artboards (from a CDN that answers with CORS, such as Google Fonts or unpkg, and as `data:` fonts they work) |
 | `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries. It also says when a type's own checks (a page's design system reference, a deck's own warnings) did not run because of an error; the version is published |
 | `slides_setting` | A deck setting Plinth ignores or cuts: an unknown key, a value that is not allowed, a footer over its length; or a slide with one `\|\|\|` column marker or more than three columns |
 | `slide_empty` | A deck slide with no content, usually an extra `---` line |
@@ -497,7 +526,8 @@ notes included), never both. `assets` never lists those paths;
 each asset has `path`, `size_bytes`, `content_type` and `sha256` (`null` for files stored before
 the release that added hashes). Markdown is untrusted text like HTML. A design system returns its
 JSON in `content` (`source_path: "system.json"`); [`get_design_system`](#get_design_system) returns
-it resolved and compiled.
+it resolved and compiled. A design returns its artboards in `content` (`source_path: "design.html"`),
+untrusted like HTML.
 
 An HTML page whose head names a design system
 (`<meta name="plinth-design-system" content="<id>@<version>">`) also gets

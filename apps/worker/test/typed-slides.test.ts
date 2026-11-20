@@ -130,7 +130,7 @@ describe("slides over REST", () => {
       "type slides takes Markdown in content, not html",
     );
     expect(errorOf(await publish(a.auth, { content: "# x" })).message).toBe(
-      'content is for typed artifacts: pass type "doc", "slides" or "design_system", or send html',
+      'content is for typed artifacts: pass type "doc", "slides", "design_system" or "design", or send html',
     );
     expect(
       errorOf(await publishDeck(a.auth, { content: "<!doctype html><html><body>x</body></html>" }))
@@ -377,11 +377,8 @@ describe("slides on the content host", () => {
     const css = await call(`${contentOrigin(p.id)}/__plinth/types/slides/slides.css`);
     expect(css.headers.get("content-type")).toMatch(/^text\/css/);
     expect(await css.text()).toContain(".plinth-slides");
-    for (const path of [
-      "/__plinth/types/slides/doc.js",
-      "/__plinth/types/slides/slides-pptx.js",
-      "/__plinth/types/slides/index.html",
-    ]) {
+    // The lazy .pptx writer (slides-pptx.js) is served too: typed-slides-pptx.test.ts.
+    for (const path of ["/__plinth/types/slides/doc.js", "/__plinth/types/slides/index.html"]) {
       expect((await call(`${contentOrigin(p.id)}${path}`)).status, path).toBe(404);
     }
   });

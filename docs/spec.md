@@ -83,13 +83,14 @@ flowchart TB
     app["App domain<br/>Sign-in, dashboard, editor<br/>Comments and sharing"]
     content["Content domain<br/>One subdomain per artifact<br/>Access check, strict CSP"]
   end
-  rooms["Live rooms (optional)<br/>One Durable Object per artifact<br/>Presence and broadcast"]
+  rooms["Live rooms (optional)<br/>One Durable Object per artifact<br/>Presence and broadcast,<br/>and the open views' signals"]
   d1[("D1 database<br/>Users, versions, permissions, comments, mention queue")]
   r2[("R2 storage<br/>Artifact files, one folder per version<br/>Unchanged files reused by hash")]
   agents --> mcp
   publishers --> app
   viewers --> content
   content --> rooms
+  app --> rooms
   worker --> d1
   worker --> r2
 ```
@@ -99,7 +100,9 @@ sessions, and each artifact gets its own subdomain so artifacts cannot read each
 Metadata goes to D1 and files to R2; nothing else needs to be provisioned. The same Worker also
 defines one SQLite-backed Durable Object class, `ArtifactRoom` (binding `ROOMS`), for
 [live rooms](#live-rooms): an object per artifact, created only when someone opens that artifact's
-room, keeping no tables. A deploy without the binding runs with rooms off.
+room, keeping no tables. A deploy without the binding runs with rooms off. The same object also
+holds the artifact's open views' watch sockets ([live views](#live-views-decided-2026-11-19)), so
+while live views are on it is created when someone opens the artifact at all.
 
 ## Data model
 
@@ -113,7 +116,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`) or `design_system` (JSON in `system.json`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`) or `design` (artboards in `design.html`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -187,6 +190,16 @@ one field to the stored declaration and a second kind of comment anchor:
 | --- | --- | --- |
 | `agent_connections.artifact_id` | artifact id or NULL | The one artifact a personal access token is limited to ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)). NULL is an account-wide token or an OAuth connection; a CHECK refuses it on an OAuth row. Set at creation and never changed: to change the limit, revoke the token and make another. Deleting or taking down the artifact revokes its bound tokens in the same batch; erasing the artifact (or its owner) removes them (`ON DELETE CASCADE`, never `SET NULL`, so a bound token can never become an account-wide one). A partial index covers bound rows |
 
+**Live views** ([below](#live-views-decided-2026-11-19), no migration) store nothing and add two
+settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+10000, half for the people an artifact is shared with and half for everyone else). Fixed: 32
+watch sockets per client and 60 connects per client per minute on one artifact, a socket lifetime
+of 12 hours less up to 5 minutes at random (the content pass's, or less when the session or
+password pass it was opened with ends sooner), a spread of 2 ms per socket the cap allows (at most
+10 s, 2 s at the default), at most one data signal per spread, a first reconnect within 10 s,
+backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
+60 s closes its socket.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -246,10 +259,10 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas |
 | `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck or a design system, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
@@ -327,7 +340,8 @@ with slug and title null once the person may no longer view it; null otherwise),
 `GET /api/v1/me` returns `connection` for a bearer caller (`{ id, label, bound, artifact }`; the
 artifact only while the person may view it) and null for a session; for a token limited to one
 artifact it returns only `id` (the person's) and `connection`, none of the account fields. Size
-limits: 5 MB of HTML (1 MB of Markdown for a doc, and 1 MB and 500 slides for a deck), and per
+limits: 5 MB of HTML (1 MB of Markdown for a doc, 1 MB and 500 slides for a deck, and 2 MB and 60
+artboards for a design), and per
 version a total size and a file count set by the operator with `MAX_VERSION_BYTES` (default 50 MB,
 at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON request body may be
 up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -350,8 +364,11 @@ is `slides` (decided 2026-11-19, [Slides](#slides-decided-2026-11-19)): Markdown
 between slides, stored as `slides.md`, rendered as a deck by the same kind of fixed renderer.
 The third is `design_system` (decided 2026-11-19): design tokens, guidelines and components as
 JSON, which agents read with `get_design_system` to build other pages; see
-[Design systems](#design-systems-decided-2026-11-19). Sheets join the same type registry
-(`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx export yet. Design:
+[Design systems](#design-systems-decided-2026-11-19). The fourth is `design` (decided 2026-11-19,
+[Designs](#designs-decided-2026-11-19)): artboards on a canvas in `design.html`, each rendered alone
+at its size in a nested frame with an opaque origin. Sheets join the same type registry
+(`packages/shared/src/artifactTypes.ts`) later. A deck downloads as an editable `.pptx`, built in
+the viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` export. Design:
 `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
 ## Features
@@ -364,6 +381,7 @@ JSON, which agents read with `get_design_system` to build other pages; see
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
 - Two versions can be compared as a source diff or side by side as rendered pages.
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
+- Open views follow new versions: see [Live views](#live-views-decided-2026-11-19).
 
 ### Thumbnails and link previews
 
@@ -654,11 +672,13 @@ Decided 2026-11-14 (issue #1). Design:
   applies and retries on conflict. Every agent op needs `if_rev`. A document's `rev` is one past
   the artifact's change counter, so revs grow across the artifact and a document deleted and
   created again never repeats one. Data is not versioned and is not part of diffs or restores.
-- **Live updates.** No push for data: `onSnapshot` polls a one-row change counter every 15 s while
-  the tab is visible (at least 10 s), and refetches when it moves, at once after the page's own
-  write. A page that also declares `room` can push its own moments (a note being dragged, "note 3
-  saved, refetch it") to the people who have it open; see [Live rooms](#live-rooms). The poll is
-  unchanged.
+- **Live updates.** `onSnapshot` reads a one-row change counter and refetches when it moves, at
+  once after the page's own write. While [live views](#live-views-decided-2026-11-19) are on, the
+  app that frames the page tells it within about a second that the data changed, and the counter
+  is polled only every 60 s as a backstop; otherwise it is polled every 15 s while the tab is
+  visible (at least 10 s, `intervalMs`). A page that also declares `room` can push its own moments
+  (a note being dragged, "note 3 saved, refetch it") to the people who have it open; see
+  [Live rooms](#live-rooms).
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
@@ -728,6 +748,9 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Availability.** Only with origin isolation and the `ROOMS` binding. Under opaque isolation (and
   the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
   without a request. A page should work alone when the room is unavailable.
+- **Watch sockets are not members.** The [live views](#live-views-decided-2026-11-19) sockets of an
+  artifact's open views share its object, but join no room, never appear among peers and never
+  count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`.
 
 ### Design systems (decided 2026-11-19)
 
@@ -891,8 +914,36 @@ source editor work as for docs. A deck is not edited on its page.
   deck's size (an `@page` size in inches); from presenter view it prints a handout with each slide
   over its notes. The frame prints itself, after its images have decoded. Browsers that ignore
   `@page` sizes print on their own paper size, one slide per page.
+- **Download as .pptx (decided 2026-11-19).** "Download .pptx" in the ⋯ menu saves the deck as an
+  editable PowerPoint file, which Keynote and Google Slides open too. The frame builds it in the
+  viewer's browser from the slides as they are rendered, so the file matches the screen: one slide
+  per slide at 13.333x7.5 in (16:9) or 10.667x8 in (4:3), each heading, paragraph, list (with its
+  levels), code block, quote and table as editable text in a box where the screen shows it, at
+  the size the slide was fitted to, in the colours of the theme on screen (`auto` follows the
+  viewer's scheme), with Arial and Courier New; web and mail links, `#N` links to slides, the
+  footer and the slide numbers (each on one line, as on screen), the images and the speaker
+  notes. The writer (PptxGenJS 4.0.1, about
+  370 kB) is a second renderer file, `/__plinth/types/slides/slides-pptx.js`, which the deck
+  loads from its own origin only when someone downloads, so a first view never fetches it. Images
+  are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
+  to PNG; under opaque isolation and the path fallback the frame cannot read its own files, so
+  file images are left out (inline `data:` images stay) and the app says so, counting each image
+  file once however many slides use it. Code blocks keep their blank lines, and characters an
+  XML file cannot hold (control characters other than tab and line breaks, such as a pasted
+  terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
+  file without repairing it. Lines are spaced in exact points, the line height on screen, so each
+  box holds its text at the height measured on screen. The browser saves the file from the frame
+  and shows its own download; the app adds a toast only when images were left out or the file
+  could not be made, and the frame shows no notice of its own. While the file is being made the
+  menu item reads "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
+  one: that one answers the newer request. If the deck's frame is replaced while it makes
+  the file (a newer version, review mode), the app stops waiting at once and says to download
+  again if no file was saved. Nothing is sent to the server, and the file holds only
+  what the viewer can already read, notes included. There is no switch: it is part of the deck
+  type, and costs the instance nothing.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
-  the handout, the source). Agents treat deck text, notes included, as untrusted data.
+  the handout, the `.pptx`, the source). Agents treat deck text, notes included, as untrusted
+  data.
 - **Warnings.** A publish lists `slides_setting`, `slide_empty`, `slide_dense` and `missing_file`
   for the deck (see [Big builds](#big-builds-and-reuse-by-hash), "Publish warnings"); they never
   block. A deck with no slide or more than 500 is refused with a fix-it message. A warning that
@@ -903,12 +954,14 @@ source editor work as for docs. A deck is not edited on its page.
   deck (`plinth publish <dir>`), updates one with the Markdown in `content` (`--id`), and sends one
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
-  and the frame exchange only slide numbers, counts, view names and booleans (renderer protocol
-  version 1: `goto`, `view` and `print` from the app; `ready`, `position`, `view` and
-  `fullscreen` from the frame); see [docs/security.md](security.md#typed-artifacts).
-- **Not in this slice.** `.pptx` export and following a presenter over a live room come later;
-  transitions, builds, custom themes and fonts, math, diagrams and video are not planned for
-  slides.
+  and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
+  (renderer protocol version 1: `goto`, `view`, `print` and `export { format, nonce }`
+  from the app; `ready`, `position`, `view`, `fullscreen` and
+  `exported { nonce, ok, images_skipped, opaque }` from the frame); see
+  [docs/security.md](security.md#typed-artifacts).
+- **Not in this slice.** Following a presenter over a live room comes later; transitions, builds,
+  custom themes and fonts, math, diagrams and video are not planned for slides, and a `.pptx` is
+  never imported.
 
 ### Comments from the page (decided 2026-11-19)
 
@@ -1160,6 +1213,177 @@ keeps every run. Guide: `docs/ci.md`.
 - **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
   publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
 
+### Live views (decided 2026-11-19)
+
+An open artifact page picks up a newly published version by itself within seconds, and a page that
+keeps [shared data](#shared-data-and-viewer-identity) learns that it changed without waiting for
+its poll. Plinth pushes signals, never content: the page still loads every version and every
+document through the gate and the shared-data API, with all of their checks.
+
+- **Who.** Anyone who can open the artifact (the owner, people it is shared with, and anonymous
+  viewers of an unlisted, password or public link), never agents. A watch socket joins no
+  [room](#live-rooms), sees no peers and carries no identity, so it shows nobody to anybody; it
+  tells a viewer only what the gate and the change counter already tell them, sooner.
+- **Transport.** The app page, never the artifact, opens one receive-only WebSocket on the app host,
+  `wss://<APP_HOST>/api/v1/view/<artifact id>/watch`, with the app's own cookies, when its gate
+  says `watch: true`. The handshake is checked in order: method and upgrade, `Origin` exactly the
+  app's origin (absent and `null` refused, so no artifact can open one), same-origin fetch
+  metadata when sent, the `plinth.view.v1` subprotocol, no bearer token, live views active, the
+  artifact by id, the gate's view decision (any refusal is one identical 404), and policy
+  (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
+  served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
+  names its own `wss:` origin and nothing else.
+- **Signals.** JSON frames the room builds from integers: `welcome` (the current version),
+  `version` (a version was published: by an agent, the
+  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
+  a write from the page, an agent or the app, or the owner's "Delete all shared data"; at most one
+  per `spread_ms` per artifact: a write in a quiet window sends it at once, and the writes after
+  it share one frame at the window's end, so the last write is always followed by one) and
+  `access` (sent just before a sharing change closes the socket). The client
+  sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
+  instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
+  at the default). Each open view waits a random time up to it before it acts, so at most about
+  500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
+  top bound), however fast its data is written, and no frame says anything about who else has the
+  artifact open.
+- **What the page does.** On `version` the app re-reads its own gate at once and shows the new
+  version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
+  One such notice shows at a time: a newer version's replaces the last, so versions published in
+  a row never stack.
+  On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
+  content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
+  `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
+  "push"`), and while they are the runtime polls only every 60 s. Both messages are hints: page
+  script can forge them on its own window, and the worst a forged one does is make the page
+  re-read its own data or change its own poll.
+- **Data signals** need an HTML page whose current version declares `data`, with shared data active
+  (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
+  and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
+  nothing is posted to frames.
+- **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
+  sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
+  then re-reads its gate and reconnects. A sharing change ends every content pass of the
+  artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
+  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
+  on its page the frame stays, as it does for a new version, and is renewed once that ends. A
+  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, less
+  a random time up to 5 minutes so that sockets opened together do not all close together, or
+  earlier when the app session, viewer session or password pass it was opened with expires (4401,
+  reason `expired`), and the page reconnects after a random time up to 10 s, which decides again.
+  While
+  sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
+  `version` whose notify was lost, and takes the data right away when the current version no
+  longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
+- **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
+  WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
+  counter every 15 s, as before. While the socket is open the app still reads its gate every
+  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes. A dropped one
+  (a lost network, or a Worker deploy, which closes every socket on the instance at once) first
+  reconnects after a random time up to 10 s, so the views do not all come back in the same
+  second, then after 1, 2, 5, 10 and 30 s while it keeps failing.
+- **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+  10000), counted apart from room sockets so viewers never crowd out a room, and split into two
+  pools of half each that never affect each other: one for the owner and the people the artifact
+  is shared with, one for everyone else the gate lets in. Someone the artifact is not shared with
+  can fill only the second, so a full pool never tells them whether the owner or a collaborator
+  has it open. Over a cap the socket is closed with 4409 and the page polls. Fixed: 32 sockets and
+  60 connects a minute per client (an account, a confirmed email, or for anonymous viewers one
+  network, an IPv4 address or an IPv6 /64, kept only as an HMAC).
+- **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
+  origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
+  signals also need shared data. Without the binding live views are off, never a configuration
+  error.
+
+### Designs (decided 2026-11-19)
+
+A visual composition at fixed sizes is a design: artboards on a canvas (app screens, landing page
+mockups, posters, social posts, ads and banners, business cards, variants side by side). It is the
+fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_upload` take
+`type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
+versions, `base_version` conflicts, restore, history, comments, thumbnails and in-chat previews
+work as for every type. People see a design, never its source: the app has no editor for it (no
+Edit in any menu; its editor address opens the design) and compares two versions only as rendered
+pages. Agents change it, and each change is a new version, which owners and editors can revert by
+restoring an older one.
+
+- **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
+  then artboards. Each artboard starts with a whole line
+  `<!-- artboard id="home" name="Home" size="iphone" section="Mobile" -->` and its HTML fragment is
+  every line up to the next marker. Attributes are `name` (required, up to 80 characters), `id`
+  (`a-z`, `0-9` and `-`, up to 40; derived from the name when absent), a size (`size="<preset>"`,
+  `size="<w>x<h>"`, or `width` and `height`, 16 to 4096 CSS px a side), `background` (a hex color,
+  `transparent` or a color name; white by default) and `section` (a section's boards stay
+  together on one row when they fit). Presets cover phones and desktops, social posts, IAB ads,
+  print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
+  At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
+  bad marker is refused with a fix-it message for the first problem and every problem with its
+  line in `details.issues`. The title is the shared section's `<title>`, else the first board's
+  name. One parser for the Worker and the renderer.
+- **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
+  relative path. Font files and data files (JSON, text) are refused with what to do instead
+  (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
+  opaque origin, and those loads need CORS, which the content host never sends. Publish warnings
+  read a design's artboards as opaque documents on every instance: `opaque_module` names module
+  scripts, `crossorigin` links, imports and web fonts that load the design's own files (relative
+  or root-absolute URLs). The same loads from a CDN that answers with CORS (Google Fonts' own
+  embed, unpkg) and `data:` fonts work in an artboard and get no warning.
+- **The canvas.** A fixed Plinth renderer on the artifact's own origin
+  (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
+  out in rows with the board's name over each; the name zooms to its board. Rows are packed for
+  the screen: consecutive sections share a row, a wider gap between sections than between boards,
+  and the row width is the one at which every board shows at the largest scale, so the first view
+  fills the screen. Fit keeps every board clear of the toolbar at the bottom. Drag, the
+  wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
+  toolbar (Zoom out, the zoom level, which goes to 100%, Zoom in and Fit) and `+`, `-`, `0` (Fit)
+  and `1` (100%) zoom between 5% and 400%. After Fit
+  (the button or `0`) the canvas lays the rows out again and fits when its frame is resized, until
+  the view is moved or zoomed. Each board is
+  covered so the canvas can be dragged; Interact, on the label of the board last zoomed to (and on
+  a label that is hovered or focused), takes that board's cover off so its links, buttons and
+  scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
+  Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  they come back (a board's own state starts again then).
+- **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
+  at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
+  document over itself when the renderer posts it: Plinth's base URL (the shown version's own
+  path, `/__plinth/v/<n>/`, whose number the content host puts in the shell, so a board that
+  mounts after a newer version is published still loads its own version's files; a shell without
+  a valid number shows an error and no board), viewport and reset, then the shared section, then the fragment. The loader is served only with
+  this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
+  plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, with
+  `frame-ancestors 'self' <app>` under origin isolation (none under opaque isolation or for an
+  in-chat preview pass, whose shell no source can name), and the renderer
+  frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
+  no storage and no access to the shell, the app or another board, and it cannot navigate any of
+  them (links may open a new tab, as on every artifact).
+  The shell's own DOM never holds author markup. A design's files are served with
+  `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
+  never run script; its `design.html`, which no board loads, is served as text with
+  `same-origin`.
+- **Print or save as PDF** is in the artifact menu: every board is mounted and laid out at 100%,
+  printing waits for them to load (at most 10 seconds), and each board prints on its own page of
+  exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
+  other than Chromium may ignore per-board page sizes.
+- **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
+  (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
+  stays the same.
+- **Uploads and the CLI.** `start_upload` with `type: "design"` (or the `id` of a design) takes a
+  folder with `design.html` and its assets at its top; the Plinth CLI publishes such a folder as a
+  design and checks `design.html` against the fixed 2 MB limit.
+- **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
+  sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
+  artboard can and cannot load. Design content is untrusted like artifact HTML.
+- **Not yet.** Server-rendered PNG and PDF export through Browser Rendering is a separate change.
+  Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode and deep links to
+  one board from the app are not offered.
+- **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
+  loads the version top level, and a board's requests (an opaque document) fall in another cookie
+  partition than the enter's, so for a design the Worker also gives that browser the same capture
+  pass for the boards' partition before the page loads, through the DevTools protocol, never in a
+  URL: bound to the captured version and reading no shared data when the enter's pass reads none.
+  The capture browser's guard lets the boards' frames open the board loader, the one Plinth path
+  besides the captured version it lets a design navigate to (docs/security.md, Designs).
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1222,7 +1446,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   blocking, at most 50): `missing_file` (a relative reference not in the version),
   `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
-  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
+  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`; in a
+  design's artboards, on every instance, only those that load the design's own files) and
   `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
   Markdown shows that the version does not hold, its path resolved as the browser does: before any
@@ -1402,6 +1627,11 @@ options.
   `decide` before the scope, so a leaked CI secret can read and update one artifact and nothing
   else; the GitHub Action keeps server and artifact text from being read as workflow commands
   ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)).
+- **Live views carry only signals.** The watch socket is on the app host and refuses any `Origin`
+  but the app's, a missing one and `null`, so no artifact can open it; it refuses bearer tokens,
+  takes the gate's view decision, and carries version numbers and change signals made by the
+  server, never content or anything a page wrote. The app posts its two hints to a frame only at
+  its exact content origin ([Live views](#live-views-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
@@ -1529,6 +1759,21 @@ about 1,440 billed requests and at most 720 D1 rows written an hour, against 100
 day on the free plan. Past the allowance, sockets fail and pages work alone;
 `ALLOW_ROOMS=false` turns rooms off.
 
+Live views run on the same Durable Object allowance:
+
+| Operation | Durable Object requests | D1 rows read | D1 rows written |
+| --- | --- | --- | --- |
+| Watch connect (one per open view, again after 12 hours or a hidden tab) | 1 (plus 1 Worker request) | about 3 (session, artifact and grant, declaration) | 0 |
+| Version published | 1 notify call (every artifact while live views are on) | 0 | 0 |
+| Shared-data write | 1 notify call | 0 | 0 |
+| Sharing change, takedown or delete | 1 notify call (every artifact while live views are on) | 1 | 0 |
+| Re-check while sockets are open | 60 per hour per artifact | 1 each | 0 |
+
+Hibernated watch sockets accrue no duration and their keep-alive is answered without waking the
+object. An idle open view goes from 4 gate reads and 4 change-counter reads a minute to about
+none. On the Workers Free plan a busy instance may prefer `ALLOW_LIVE_VIEWS=false`, which keeps
+the polls and calls no object for artifacts without a room.
+
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month
 ([overview](https://costbench.com/software/developer-tools/vercel/)).
@@ -1550,7 +1795,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides and design systems done (2026-11-19); sheets later. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems and designs done (2026-11-19); sheets later. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
    group-by-category view, and personal categories for artifacts shared with you. Tokens limited
    to a category (declined for now: a category is owner text that is renamed and merged, so the
@@ -1566,7 +1811,7 @@ for a single user.
 | Sign-in | Email magic link (with a six-digit code), plus an optional password sign-in for one review account: `REVIEW_LOGIN_EMAIL` and the secret `REVIEW_LOGIN_PASSWORD_HASH`, off unless both are set, at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. That account is an ordinary user, never an `ADMIN_EMAIL` address and never on a single-user instance ([security.md](security.md#review-account-sign-in)). Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); sheets next |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame); sheets next |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

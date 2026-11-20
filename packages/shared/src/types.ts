@@ -471,6 +471,11 @@ export type ViewGate =
        */
       page_comments?: true;
       /**
+       * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
+       * and of shared-data changes, as they happen. Absent: poll as before.
+       */
+      watch?: true;
+      /**
        * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
        * the people it is shared with. Absent when there is nothing to tell.
        */

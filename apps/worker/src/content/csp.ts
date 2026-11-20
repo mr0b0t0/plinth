@@ -26,11 +26,24 @@ export interface ContentCspOptions {
   /**
    * Who may frame the response. "app" (the default): only the app, `frame-ancestors 'self'
    * <app>`. "any": no frame-ancestors at all, only for a request carrying an in-chat preview pass
-   * (docs/security.md#in-chat-previews). An MCP host frames the preview from inside its own
-   * sandboxed, opaque-origin frame, which no frame-ancestors source can name, and the pass behind
-   * it is read-only, short-lived and carries no identity.
+   * (docs/security.md#in-chat-previews), and for a design's board loader (content/boardLoader.ts)
+   * under opaque isolation or with that pass, where an opaque shell frames it; only a request with
+   * this artifact's content pass gets the loader. An MCP host frames the preview from inside its
+   * own sandboxed, opaque-origin frame, which no frame-ancestors source can name, and the pass
+   * behind it is read-only, short-lived and carries no identity.
    */
   framing?: "app" | "any";
+  /**
+   * Add the opaque sandbox (OPAQUE_SANDBOX) whatever the instance's isolation mode, once: the
+   * document gets an opaque origin even under origin isolation. For a design's board loader, whose
+   * artboard documents must never have the artifact's real origin.
+   */
+  sandbox?: boolean;
+  /**
+   * The response is read by documents with an opaque origin (a design's artboards): it gets
+   * `Cross-Origin-Resource-Policy: cross-origin`, as every file does under opaque isolation.
+   */
+  opaqueReaders?: boolean;
   /**
    * A public static file Plinth wrote (a renderer's script or style, runtime.js): no artifact
    * data, the same for every artifact, served without a cookie. It gets
@@ -107,7 +120,7 @@ export function contentCsp(config: Config, opts: ContentCspOptions = {}): string
     "form-action 'self'",
   ];
   if (opts.framing !== "any") directives.push(`frame-ancestors 'self' ${config.appOrigin}`);
-  if (config.contentIsolation === "opaque") directives.push(OPAQUE_SANDBOX);
+  if (config.contentIsolation === "opaque" || opts.sandbox) directives.push(OPAQUE_SANDBOX);
   return directives.join("; ");
 }
 
@@ -153,8 +166,12 @@ export function contentResourcePolicy(
   config: Config,
   opts: ContentCspOptions = {},
 ): "same-origin" | "cross-origin" {
-  // An MCP host's sandbox gives the previewed document an opaque origin too.
-  return config.contentIsolation === "opaque" || opts.framing === "any" || opts.publicFile
+  // An MCP host's sandbox gives the previewed document an opaque origin too, and so does a
+  // design's artboard (opaqueReaders).
+  return config.contentIsolation === "opaque" ||
+    opts.framing === "any" ||
+    opts.publicFile ||
+    opts.opaqueReaders
     ? "cross-origin"
     : "same-origin";
 }

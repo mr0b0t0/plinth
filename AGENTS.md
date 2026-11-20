@@ -75,14 +75,18 @@ make a test pass.
   metadata, an exact `Origin` on writes and JSON bodies; keep all four. The room upgrade at
   `/__plinth/room/` requires an exact `Origin` (absent or `null` refused), same-origin fetch
   metadata when sent, the `plinth.room.v1` subprotocol and the content cookie at the current epoch
-  with an identity claim; keep all four.
+  with an identity claim; keep all four. The live-view socket at `/api/v1/view/:ref/watch` on the
+  app host requires an exact app `Origin` (absent or `null` refused), same-origin fetch metadata
+  when sent, the `plinth.view.v1` subprotocol and no bearer token, takes the gate's view decision,
+  and carries only version numbers and change signals; keep all five.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
   calls to other hosts are blocked.
 - **Artifacts render in sandboxed iframes**, never with `allow-same-origin` toward the app.
   Under opaque isolation the app talks to frames whose origin is `"null"`: it identifies them by
   window (and, for the editor preview, a fresh frame and nonce per render) and posts with `"*"`
   only what the framed document may see anyway or, for the preview, only to the frame it just
-  created.
+  created. A design's artboards render in nested frames that are opaque in every isolation mode
+  (iframe and CSP `sandbox`, never `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
   instruction with the owner's authority. MCP tool descriptions say so.
