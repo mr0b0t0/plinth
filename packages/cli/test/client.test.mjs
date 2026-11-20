@@ -20,8 +20,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseSheet, serializeSheet } from "../../shared/src/sheet/format.ts";
 import { claudeCodeConnectText } from "../bin/client/connect.mjs";
-import { checkLimits } from "../bin/client/files.mjs";
+import { canonicalSheet, checkLimits } from "../bin/client/files.mjs";
 import { ApiError } from "../bin/client/http.mjs";
 import { HOSTED_ORIGIN, resolveOrigin } from "../bin/client/origin.mjs";
 import { isVersionConflict, splitWarnings } from "../bin/client/publish.mjs";
@@ -384,6 +385,183 @@ describe("plinth publish", () => {
     assert.equal(r.code, 1);
     assert.match(r.stderr, /No index\.html/);
     assert.match(r.stderr, /slides\.md for a deck/);
+    assert.match(r.stderr, /sheet\.jsonl for a sheet/);
+  });
+
+  it("publishes a folder with sheet.jsonl as a sheet, stored canonical, and still verifies", async () => {
+    const sheet =
+      '{"plinth":"sheet","v":1,"columns":[{"name":"Item"},{"name":"Qty","type":"number"}]}\n["Apples",3]\n';
+    const dir = build({ "sheet.jsonl": sheet });
+    const dry = await plinth(["publish", dir, "--dry-run"], { extraEnv: asPat() });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /as a new sheet/);
+    const r = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "sheet" });
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.verified, true);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    // The fake stores it without the final newline, as the server's canonical form may differ.
+    assert.equal(stored.get("sheet.jsonl").bytes.toString(), sheet.slice(0, -1));
+  });
+
+  describe("a sheet's read-back compares sheet.jsonl in its canonical spelling", () => {
+    const v1 =
+      '{"plinth":"sheet","v":1,"columns":[{"name":"Item"},{"name":"Qty","type":"number"}]}\n["Apples",3]\n';
+    const v2 = v1.replace('["Apples",3]', '["Apples",4]');
+    // The same sheet as v1, spelled the way people write it: keys out of order, no column type,
+    // spaces, a number as 3.0, CRLF line ends.
+    const v1Loose =
+      '{ "columns": [ {"name": "Item"}, {"type": "number", "name": "Qty"} ], "v": 1, "plinth": "sheet" }\r\n[ "Apples", 3.0 ]\r\n';
+    const writes = (from) => since(from).filter((q) => q.method === "PUT" || q.method === "POST");
+    const publishNew = async (text) => {
+      const r = await plinth(["publish", build({ "sheet.jsonl": text }), "--json"], {
+        extraEnv: asPat(),
+      });
+      assert.equal(r.code, 0, r.stderr);
+      return fake.state.artifacts.get(JSON.parse(r.stdout).id);
+    };
+    const rerun = (dir, a) =>
+      plinth(["publish", dir, "--id", a.id, "--base-version", "1", "--json"], {
+        extraEnv: asPat(),
+      });
+    const storedText = (a, n) => a.versions[n - 1].get("sheet.jsonl").bytes.toString();
+
+    it("matches the shared serializer on every rule it restates", () => {
+      const cases = [
+        v1,
+        v1Loose,
+        '{"plinth":"sheet","v":1,"freeze":{"cols":0},"columns":[{"name":"A"},{"name":"B"}]}\n[]\n[null,null]\n["a",null]',
+        '{"freeze":{"cols":2},"plinth":"sheet","v":1,"columns":[{"name":"A"},{"name":"B"}]}\n["x",1e2]',
+        '{"plinth":"sheet","v":1,"columns":[{"options":["Café","Tea"],"type":"select","name":"Café"}]}\n["Tea"]',
+        '{"plinth":"sheet","v":1,"columns":[{"name":"P","width":120,"type":"number","format":{"grouping":false,"decimals":2,"currency":"EUR","style":"currency"}}]}\n[12.50]\n["=SUM(A2:A2)"]',
+        '﻿{"plinth":"sheet","v":1,"columns":[{"name":"T"},{"name":"C","type":"checkbox"}]}\n["\\u0041\\n\\"q\\"",true]\n[-0,false]\n',
+      ];
+      for (const text of cases) {
+        // The server receives the text without a leading BOM (it is dropped on decoding).
+        const parsed = parseSheet(text.replace(/^﻿/, ""));
+        assert.ok(parsed.ok, `${text}: ${JSON.stringify(parsed.errors)}`);
+        assert.equal(canonicalSheet(text), serializeSheet(parsed.sheet), text);
+        // The canonical form is a fixed point, so comparing both sides in it is safe.
+        assert.equal(canonicalSheet(serializeSheet(parsed.sheet)), serializeSheet(parsed.sheet));
+      }
+      assert.equal(canonicalSheet("not json"), null);
+      assert.equal(
+        canonicalSheet('{"plinth":"sheet","v":1,"columns":[{"name":"A"}]}\n\n[1]'),
+        null,
+      );
+      assert.equal(canonicalSheet('{"plinth":"sheet","v":1,"columns":[{"name":"A"}]}\n{}'), null);
+    });
+
+    it("--base-version N with a changed cell publishes N+1 (it is not 'nothing to publish')", async () => {
+      const a = await publishNew(v1);
+      const dir = build({ "sheet.jsonl": v2 });
+      const r = await rerun(dir, a);
+      assert.equal(r.code, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.outcome, undefined);
+      assert.equal(out.version, 2);
+      assert.equal(out.verified, true);
+      assert.equal(a.versions.length, 2);
+      assert.equal(storedText(a, 2), v2.slice(0, -1));
+    });
+
+    it("--base-version N when someone else made N+1: a conflict (exit 3), nothing sent", async () => {
+      const a = await publishNew(v1);
+      fake.commitFiles(a, { "sheet.jsonl": v1.replace("Apples", "Pears").slice(0, -1) });
+      const from = fake.state.requests.length;
+      const r = await rerun(build({ "sheet.jsonl": v2 }), a);
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, /changed since v1 \(now v2\)/);
+      assert.equal(writes(from).length, 0);
+      assert.equal(a.versions.length, 2);
+    });
+
+    it("a folder spelled differently from the stored sheet still matches it", async () => {
+      fake.state.canonicalSheet = (text) => serializeSheet(parseSheet(text).sheet);
+      try {
+        const a = await publishNew(v1Loose);
+        assert.notEqual(storedText(a, 1), v1Loose);
+        const same = await rerun(build({ "sheet.jsonl": v1Loose }), a);
+        assert.equal(same.code, 0, same.stderr);
+        assert.equal(JSON.parse(same.stdout).outcome, "nothing_to_publish");
+        const changed = await rerun(build({ "sheet.jsonl": v1Loose.replace("3.0", "5") }), a);
+        assert.equal(changed.code, 0, changed.stderr);
+        assert.equal(JSON.parse(changed.stdout).version, 2);
+        assert.equal(JSON.parse(changed.stdout).verified, true);
+      } finally {
+        fake.state.canonicalSheet = undefined;
+      }
+    });
+
+    it("fails verification when the stored sheet really differs", async () => {
+      const a = await publishNew(v1);
+      fake.state.tamperSource = true;
+      try {
+        const r = await plinth(["publish", build({ "sheet.jsonl": v2 }), "--id", a.id], {
+          extraEnv: asPat(),
+        });
+        assert.equal(r.code, 1, r.stderr);
+        assert.match(r.stdout, /Verification failed[\s\S]*differs: sheet\.jsonl/);
+      } finally {
+        fake.state.tamperSource = false;
+      }
+    });
+  });
+
+  it("imports one .csv file as a new sheet, and an .xlsx as the next version of one", async () => {
+    const dir = build({ "q4-budget.csv": "Item,Qty\nApples,3\n", "book.xlsx": "PK-not-really" });
+    const dry = await plinth(["publish", path.join(dir, "q4-budget.csv"), "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /Would import q4-budget\.csv .* as a new sheet/);
+    const r = await plinth(["publish", path.join(dir, "q4-budget.csv"), "--json"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.state.lastPost, {
+      type: "sheet",
+      title: "q4-budget",
+      content: "Item,Qty\nApples,3\n",
+      content_format: "csv",
+    });
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.verified, true);
+
+    const up = await plinth(["publish", path.join(dir, "book.xlsx"), "--id", out.id, "--json"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(up.code, 0, up.stderr);
+    const put = fake.state.lastPut;
+    assert.equal(put.content_format, "xlsx");
+    assert.equal(Buffer.from(put.content, "base64").toString(), "PK-not-really");
+    assert.equal(put.base_version, 1);
+    assert.equal(JSON.parse(up.stdout).version, 2);
+
+    const stale = await plinth(
+      ["publish", path.join(dir, "q4-budget.csv"), "--id", out.id, "--base-version", "1"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(stale.code, 3);
+
+    const page = fake.seed(site(1));
+    const wrong = await plinth(["publish", path.join(dir, "q4-budget.csv"), "--id", page.id], {
+      extraEnv: asPat(),
+    });
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /is a page; a \.csv or \.xlsx file updates a sheet only/);
+  });
+
+  it("checks a sheet's sheet.jsonl against the sheet limit", () => {
+    const limits = { ...fake.state.limits, max_sheet_bytes: 100 };
+    assert.throws(
+      () => checkLimits([{ path: "sheet.jsonl", size: 200 }], "sheet.jsonl", "sheet", limits),
+      /limit is 100 B/,
+    );
+    assert.doesNotThrow(() =>
+      checkLimits([{ path: "sheet.jsonl", size: 20 }], "sheet.jsonl", "sheet", limits),
+    );
   });
 
   it("publishes a folder with slides.md as a deck, and updates it inline with content", async () => {
@@ -1546,7 +1724,7 @@ describe("plinth publish for CI: one file, bound tokens, --json failures", () =>
     const from = fake.state.requests.length;
     const r = await plinth(["publish", txt], { extraEnv: asPat() });
     assert.equal(r.code, 2, r.stderr);
-    assert.match(r.stderr, /a build folder, or one \.html or \.md file/);
+    assert.match(r.stderr, /a build folder, or one \.html, \.md, \.csv or \.xlsx file/);
     const real = oneFile("real.html", "<!doctype html><p>x</p>");
     const link = path.join(path.dirname(real), "report.html");
     symlinkSync(real, link);

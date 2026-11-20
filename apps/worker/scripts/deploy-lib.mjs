@@ -159,6 +159,7 @@ export function runtimeBase(repoCfg) {
         "LIVE_AUTO_CHECKPOINT_MIN_S",
         "LIVE_DRAFT_FLUSH_S",
         "LIVE_DRAFT_RETENTION_DAYS",
+        "SHEET_EVAL_BUDGET",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

@@ -40,7 +40,7 @@ import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/in
 import { DataNotice } from "./DataNotice.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
-import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
+import { postExport, postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
 
@@ -176,11 +176,26 @@ const downloadPptx: MenuItem = (c) =>
       ]
     : [];
 
+/** A sheet downloads itself: the frame builds the file, the app only names the format. */
+const downloadSheet: MenuItem = (c) => [
+  {
+    label: "Download as Excel (.xlsx)",
+    icon: DownloadSimpleIcon,
+    onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "xlsx"),
+  },
+  {
+    label: "Download as CSV",
+    icon: DownloadSimpleIcon,
+    onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "csv"),
+  },
+];
+
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
   design: [printTyped],
+  sheet: [downloadSheet, printTyped],
 };
 
 /**

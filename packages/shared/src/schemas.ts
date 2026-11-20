@@ -21,6 +21,8 @@ import {
   PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENT_LIMITS,
 } from "./pageComments.ts";
+import { SHEET_COLUMN_TYPES, SHEET_NUMBER_STYLES } from "./sheet/format.ts";
+import { SHEET_CONTENT_FORMATS } from "./sheet/import.ts";
 import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
@@ -73,8 +75,17 @@ export const contentSchema = z
       'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md); ' +
       'for type "design_system", the design system JSON (stored as system.json); ' +
       'for type "design", shared <head> tags then artboards, each starting with a line ' +
-      '<!-- artboard name="Home" size="iphone" --> (stored as design.html). ' +
-      "Not for html artifacts, which send html.",
+      '<!-- artboard name="Home" size="iphone" --> (stored as design.html); ' +
+      'for type "sheet", the sheet\'s JSON lines (stored as sheet.jsonl), or a CSV or a base64 ' +
+      ".xlsx with content_format. Not for html artifacts, which send html.",
+  );
+/** What a sheet's content is: its own JSON lines (default), CSV, or an .xlsx file in base64. */
+export const contentFormatSchema = z
+  .enum(SHEET_CONTENT_FORMATS)
+  .describe(
+    'Type "sheet" only: "jsonl" (default) for the sheet\'s JSON lines; "csv" to import CSV text (the ' +
+      'first row names the columns, types are inferred, = stays text); "xlsx" to import the first ' +
+      "worksheet of an .xlsx file sent as base64 (at most 2 MB). The stored sheet is JSON lines either way.",
   );
 export const artifactTypeSchema = z
   .enum(ARTIFACT_TYPES)
@@ -85,7 +96,9 @@ export const artifactTypeSchema = z
       '"design_system": design tokens, guidelines and components as JSON in content ' +
       "(format plinth.design-system/1), which Plinth renders as a reference site. " +
       '"design": artboards (app screens, posters, social posts, ads) as HTML in content, which ' +
-      "Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish.",
+      "Plinth renders on a canvas, each artboard alone at its exact size. " +
+      '"sheet": a table as JSON lines in content, which Plinth renders as a spreadsheet with ' +
+      "formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish.",
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z
@@ -132,6 +145,8 @@ export const publishArtifactInput = z.object({
   html: htmlSchema.optional(),
   /** Required for a typed artifact (type doc). */
   content: contentSchema.optional(),
+  /** Type sheet only: import CSV or an .xlsx instead of JSON lines. */
+  content_format: contentFormatSchema.optional(),
   assets: assetsSchema.optional(),
   visibility: visibilitySchema.default("allowlist"),
   /** Needed when visibility is "password". */
@@ -147,6 +162,8 @@ export const updateArtifactInput = z.object({
   /** The field matching the artifact's type: html for a page, content for a doc. No type: fixed. */
   html: htmlSchema.optional(),
   content: contentSchema.optional(),
+  /** Type sheet only: import CSV or an .xlsx instead of JSON lines. */
+  content_format: contentFormatSchema.optional(),
   assets: assetsSchema.optional(),
   note: noteSchema.optional(),
   /** If given and not the current version, the update is rejected with a conflict. */
@@ -241,6 +258,135 @@ export const getDesignSystemInput = z.object({
     .describe("Only these component ids (default all)."),
 });
 export type GetDesignSystemInput = z.input<typeof getDesignSystemInput>;
+
+// ---------- sheets (read_sheet, edit_sheet) ----------
+
+/** One cell as edit_sheet writes it: null, a number, a boolean or a string ("=..." a formula). */
+export const sheetCellSchema = z.union([
+  z.null(),
+  z.number(),
+  z.boolean(),
+  z.string().max(LIMITS.maxSheetCellChars),
+]);
+const sheetRowsSchema = z.array(z.array(sheetCellSchema).max(LIMITS.maxSheetColumns));
+const columnLetterSchema = z
+  .string()
+  .regex(/^[A-Za-z]{1,3}$/, "A column letter such as C")
+  .describe("A column letter, e.g. C");
+const sheetFormatSchema = z
+  .object({
+    style: z.enum(SHEET_NUMBER_STYLES),
+    decimals: z.number().int().min(0).max(10).optional(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    grouping: z.boolean().optional(),
+  })
+  .strict();
+const sheetColumnInputSchema = z
+  .object({
+    name: z.string().min(1).max(100),
+    type: z.enum(SHEET_COLUMN_TYPES).optional(),
+    width: z.number().int().min(40).max(800).optional(),
+    format: sheetFormatSchema.optional(),
+    options: z.array(z.string().min(1).max(100)).min(1).max(100).optional(),
+  })
+  .strict();
+const rowNumberSchema = z
+  .number()
+  .int()
+  .min(2)
+  .max(LIMITS.maxSheetRows + 2);
+
+/** One edit_sheet op. Rows are A1 row numbers: the header is row 1, data starts at row 2. */
+export const sheetOpSchema = z.discriminatedUnion("op", [
+  z
+    .object({
+      op: z.literal("set"),
+      at: z.string().max(10).describe('Top-left cell of the block, row 2 or below, e.g. "B2"'),
+      values: sheetRowsSchema.describe("Rows of raw cells, written from at"),
+    })
+    .strict(),
+  z.object({ op: z.literal("append_rows"), values: sheetRowsSchema }).strict(),
+  z
+    .object({
+      op: z.literal("insert_rows"),
+      before: rowNumberSchema.describe("The new rows take this row number; rows from it move down"),
+      count: z.number().int().min(1).max(LIMITS.maxSheetRows).optional(),
+      values: sheetRowsSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("delete_rows"),
+      from: rowNumberSchema,
+      count: z.number().int().min(1).max(LIMITS.maxSheetRows).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("set_column"),
+      column: columnLetterSchema,
+      name: z.string().min(1).max(100).optional(),
+      type: z.enum(SHEET_COLUMN_TYPES).optional(),
+      format: sheetFormatSchema.nullable().optional().describe("null clears it"),
+      options: z.array(z.string().min(1).max(100)).min(1).max(100).nullable().optional(),
+      width: z.number().int().min(40).max(800).nullable().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("insert_columns"),
+      before: columnLetterSchema.describe(
+        "The new columns take this letter; one past the last adds them at the end",
+      ),
+      columns: z.array(sheetColumnInputSchema).min(1).max(LIMITS.maxSheetColumns),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("delete_columns"),
+      from: columnLetterSchema,
+      count: z.number().int().min(1).max(LIMITS.maxSheetColumns).optional(),
+    })
+    .strict(),
+]);
+
+export const readSheetInput = z.object({
+  id: artifactRefSchema,
+  version: versionNumberSchema.optional(),
+  range: z
+    .string()
+    .trim()
+    .max(40)
+    .optional()
+    .describe(
+      'A1 range, e.g. "A1:F200", "B:D" (whole columns) or "2:50" (rows); default the whole sheet',
+    ),
+  values: z
+    .boolean()
+    .default(true)
+    .describe("Evaluate formulas (default true); false returns formulas without values"),
+  limit_cells: z
+    .number()
+    .int()
+    .min(1)
+    .max(LIMITS.maxSheetReadCells)
+    .optional()
+    .describe(
+      `At most this many cells (default ${LIMITS.defaultSheetReadCells}); next_range continues`,
+    ),
+});
+export type ReadSheetInput = z.input<typeof readSheetInput>;
+
+export const editSheetInput = z.object({
+  id: artifactRefSchema,
+  base_version: versionNumberSchema.describe("The version you read; a stale one is a conflict"),
+  ops: z.array(sheetOpSchema).min(1).max(LIMITS.maxSheetOps),
+  note: noteSchema.optional(),
+});
+export type EditSheetInput = z.input<typeof editSheetInput>;
 
 export const listVersionsInput = z.object({ id: artifactRefSchema });
 

@@ -55,6 +55,8 @@ const WORKER_VARS = [
   // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
   "ALLOW_ROOMS",
   "ALLOW_LIVE_EDITING",
+  // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
+  "SHEET_EVAL_BUDGET",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

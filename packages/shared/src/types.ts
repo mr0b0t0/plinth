@@ -182,6 +182,10 @@ export interface InstanceLimits {
   max_bundle_bytes: number;
   /** One file in a bundle. */
   max_bundle_file_bytes: number;
+  /** A sheet's JSON lines (sheet.jsonl), its data rows and its columns. */
+  max_sheet_bytes: number;
+  max_sheet_rows: number;
+  max_sheet_columns: number;
 }
 
 /** POST /api/v1/uploads and the start_upload MCP tool. */
@@ -818,4 +822,54 @@ export interface DesignSystemRead {
   /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
   problems: { path: string; message: string }[];
   untrusted: true;
+}
+
+// ---------- sheets (read_sheet, edit_sheet) ----------
+
+/** A computed value: an error is { error: "#DIV/0!" } and the like. */
+export type SheetReadValue = null | number | boolean | string | { error: string };
+
+/** A cell as read_sheet returns it: a literal, or a formula with its computed value. */
+export type SheetReadCell = null | number | boolean | string | { f: string; v?: SheetReadValue };
+
+export interface SheetReadColumn {
+  letter: string;
+  name: string;
+  type: string;
+  format?: { style: string; decimals?: number; currency?: string; grouping?: boolean };
+  options?: string[];
+}
+
+/** read_sheet and GET /api/v1/artifacts/:ref/sheet. */
+export interface SheetRead {
+  id: string;
+  slug: string;
+  type: "sheet";
+  title: string;
+  version: number;
+  current_version: number;
+  columns: SheetReadColumn[];
+  /** Data rows (the header is row 1 and not counted). */
+  row_count: number;
+  /** The range the rows cover, or null when it holds no cells. */
+  range: string | null;
+  rows: { row: number; cells: SheetReadCell[] }[];
+  truncated: boolean;
+  /** The range to read next when truncated, else null. */
+  next_range: string | null;
+  warnings: { code: "eval_budget"; message: string }[];
+  /** Owners and editors: unsaved page edits, as on get_artifact. Absent for other roles. */
+  live_draft?: LiveDraftMeta | null;
+  untrusted: true;
+}
+
+/** edit_sheet and POST /api/v1/artifacts/:ref/sheet/edits. */
+export interface SheetEditResult extends PublishResult {
+  changed: {
+    cells: number;
+    rows_inserted: number;
+    rows_deleted: number;
+    columns_inserted: number;
+    columns_deleted: number;
+  };
 }

@@ -177,6 +177,43 @@ export const LIMITS = {
   maxPageDisplayNameLength: 64,
   /** The `q` of a people search. */
   maxPeopleQueryLength: 100,
+  // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
+  /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
+  maxSheetBytes: 1 * MB,
+  /** Data rows (lines after the header). */
+  maxSheetRows: 10_000,
+  /** Columns, A to CV. */
+  maxSheetColumns: 100,
+  /** Bytes of one row line. */
+  maxSheetRowBytes: 32 * KB,
+  /** Characters in one cell. */
+  maxSheetCellChars: 4_000,
+  /** Characters in one formula, its = included. */
+  maxSheetFormulaChars: 2_000,
+  /** Formula cells in one sheet. */
+  maxSheetFormulaCells: 50_000,
+  /** Parentheses, calls and signs nested in one formula. */
+  maxSheetFormulaDepth: 32,
+  /** Ops in one edit_sheet call. */
+  maxSheetOps: 200,
+  /** Cells one edit_sheet call writes. */
+  maxSheetOpCells: 10_000,
+  /**
+   * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
+   * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
+   * four passes over a sheet that is all formulas.
+   */
+  maxSheetOpShiftChars: 4 * MB,
+  /** Cells one read_sheet call returns, at most. */
+  maxSheetReadCells: 10_000,
+  /** Cells read_sheet returns when the call names no limit. */
+  defaultSheetReadCells: 2_000,
+  /** Formula steps the renderer spends on one sheet (the Worker uses SHEET_EVAL_BUDGET). */
+  sheetEvalBrowserBudget: 20_000_000,
+  /** Bytes of a CSV or .xlsx file a publish or update imports. */
+  maxSheetImportBytes: 2 * MB,
+  /** Bytes an .xlsx import may decompress in all (its parts' XML). */
+  maxSheetImportInflatedBytes: 24 * MB,
 };
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */
@@ -287,6 +324,8 @@ export const DEFAULTS = {
     writesPerViewerPerHour: 300,
     writesPerArtifactPerHour: 2000,
   },
+  /** Formula steps one read_sheet call may spend (SHEET_EVAL_BUDGET, 10,000 to 20,000,000). */
+  sheetEvalBudget: 200_000,
 };
 
 /**

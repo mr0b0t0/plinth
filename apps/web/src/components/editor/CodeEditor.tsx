@@ -69,13 +69,16 @@ const PROSE_OPTIONS = {
 
 /**
  * Options for each language a type's editor settings name. HTML keeps the HTML language service's
- * completion; Markdown is prose; JSON keeps the JSON language service's schema completion. A type
+ * completion; Markdown is prose; JSON keeps the JSON language service's schema completion; plain
+ * text (a sheet's JSON lines) is typed like prose. A type
  * with a new language adds its row here.
  */
 const LANGUAGE_OPTIONS: { readonly [L in EditorLanguage]: Partial<typeof PROSE_OPTIONS> } = {
   html: {},
   markdown: PROSE_OPTIONS,
   json: {},
+  // A sheet's JSON lines: no word suggestions, and brackets and quotes typed as they are.
+  plaintext: PROSE_OPTIONS,
 };
 
 function languageOptions(language: EditorLanguage, wordWrap: EditorWordWrap) {
