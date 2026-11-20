@@ -2,11 +2,13 @@
 // static string without a behaviour change, so the fragments that use no app channel (data, room
 // and people) are pinned. A change that means to alter that script updates the pin here, on
 // purpose: display names and the people fragment (who is viewing) did. Page comments added the app
-// channel and their own fragment; the channel is also tested on its own.
+// channel and their own fragment; the channel is also tested on its own. Live views add theirs
+// last (live-view tests in runtime-behaviour.test.ts).
 import { describe, expect, it } from "vitest";
 import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
+import { LIVE_FRAGMENT } from "../src/content/runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
 import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
@@ -96,12 +98,16 @@ describe("runtime fragments", () => {
     // Without a fragment that uses the app channel, no configuration value is in the script.
     expect(before).not.toContain("APP_ORIGIN");
     expect(assembleRuntime({ appOrigin: APP }, BEFORE)).toBe(before);
-    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual(["data", "room", "comments", "people"]);
+    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual([
+      "data",
+      "room",
+      "comments",
+      "people",
+      "live",
+    ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
-    expect(
-      assembleRuntime(config(), [DATA_FRAGMENT, ROOM_FRAGMENT, COMMENTS_FRAGMENT, PEOPLE_FRAGMENT]),
-    ).toBe(served);
+    expect(served).toBe(assembleRuntime(config(), [DATA_FRAGMENT, ROOM_FRAGMENT, COMMENTS_FRAGMENT, PEOPLE_FRAGMENT, LIVE_FRAGMENT]));
     // Memoized per app origin, which page comments embed.
     expect(runtimeScript(config())).toBe(served);
     expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);

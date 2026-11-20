@@ -153,6 +153,8 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `LIVE_DRAFT_RETENTION_DAYS` | `30` | Unsaved page edits nobody touched for this long are deleted, `1` to `365` |
 | `REVIEW_LOGIN_EMAIL` | empty | With the secret `REVIEW_LOGIN_PASSWORD_HASH`: one account that may also sign in with a password at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. Off (404) unless both are set. Must not be an `ADMIN_EMAIL` address, and is refused on a single-user instance ([security.md](security.md#review-account-sign-in)) |
 | `SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000`: one step per expression and per cell a range visits. Past it, the agent gets the cells it did not reach as `#LIMIT!` with an `eval_budget` warning. Lower it on the Workers Free plan (10 ms of CPU per request) if large sheets time out; raise it on Workers Paid for big sheets. It never changes what viewers see: browsers compute sheets themselves |
+| `ALLOW_LIVE_VIEWS` | `true` | Live views: open artifact pages pick up a new version within seconds, and pages that keep shared data learn of changes without waiting for their 15 s poll, over one WebSocket the app page opens on `APP_HOST` (`/api/v1/view/<id>/watch`). It carries only version numbers and change signals. Needs the `ROOMS` Durable Object binding (the same as live rooms), but neither `ALLOW_ROOMS` nor origin isolation; data signals also need shared data. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off, and pages poll as before. Each open view, version and shared-data write then costs a Durable Object request ([deploy-checklist.md](deploy-checklist.md#live-views)); on the Workers Free plan a busy instance may prefer it off |
+| `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` | `1000` | Open views of one artifact that get pushed signals, `10` to `10000`, counted apart from `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`: half for the owner and the people it is shared with, half for everyone else. Views over it poll. It also sets how long open views spread their follow-up requests after a signal: 2 ms per socket, at most 10 s (2 s at the default) |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -323,6 +325,12 @@ to turn them on or off. See [ci.md](ci.md).
   `ALLOW_ROOMS`, with `CONTENT_ISOLATION=origin`), and the people list only while
   `ALLOW_SHARED_DATA` is on, so turning those off turns them off. Nothing is stored: `erase-user`
   removes a name with the account.
+- **Live views.** Open artifact pages hold a WebSocket on the app host
+  (`/api/v1/view/<id>/watch`) into the same `ArtifactRoom` object, which pushes new version
+  numbers and "shared data changed" signals; nothing is stored. While they are on, every new
+  version, shared-data write and sharing change calls the artifact's object (one Durable Object
+  request each). `ALLOW_LIVE_VIEWS=false` turns them off: pages then poll every 15 s, as without the
+  binding. A reverse proxy must pass this upgrade too.
 - **Interrupted publishes.** A version's files go to R2 before its database row, so a publish
   that dies midway (a closed connection, a CPU or memory limit) leaves files no version points to,
   under that attempt's own prefix. Each attempt records that prefix in the `staging_attempts`

@@ -24,7 +24,8 @@ import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/erro
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
-import { getVersionRow, requireArtifact } from "./artifacts.ts";
+import { notifyViewers } from "../rooms/notify.ts";
+import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
 import {
   checkAsset,
   requireTypeDef,
@@ -1102,6 +1103,15 @@ export async function commitVersion(
     scheduleThumbnail(ctx, result.id, result.version);
   } catch {
     // A thumbnail is optional; a reader starts the capture later.
+  }
+  // Open views of the artifact follow the new version (live views, rooms/notify.ts).
+  if (target.mode === "update") {
+    try {
+      const data = versionCapabilities({ capabilities: extra.capabilities })?.data === true;
+      notifyViewers(ctx, result.id, { version: result.version, data });
+    } catch {
+      // Best effort; the room's alarm sends a lost version within a minute.
+    }
   }
   // Room notifications and per-type publish warnings (services/artifactTypes/<type>.ts).
   const def = extra.stager.def;

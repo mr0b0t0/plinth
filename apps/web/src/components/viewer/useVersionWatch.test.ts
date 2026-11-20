@@ -1,6 +1,14 @@
 import type { ViewGate } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
-import { nextGate } from "./useVersionWatch.ts";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { json, stubApi } from "./test-utils.ts";
+import {
+  afterAccessChange,
+  nextGate,
+  useVersionWatch,
+  VERSION_POLL_MS,
+  versionPollMs,
+} from "./useVersionWatch.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -64,5 +72,89 @@ describe("nextGate while a doc is edited on its page", () => {
   it("changes nothing when no newer version exists", () => {
     expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "follow")).toBeNull();
     expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "hold")).toBeNull();
+  });
+});
+
+describe("afterAccessChange (a sharing change closed the watch socket)", () => {
+  it("shows a gate that is no longer ok, paused or not", () => {
+    const gone: ViewGate = { status: "not_found" };
+    for (const paused of [null, "follow", "hold", "present"] as const) {
+      expect(afterAccessChange(gate(3, 3), gone, false, paused)).toEqual({
+        kind: "show",
+        gate: gone,
+      });
+    }
+  });
+
+  it("not paused: the fresh gate replaces the frame, which renews its pass", () => {
+    const fresh = gate(3, 3, "fresh");
+    expect(afterAccessChange(gate(3, 3), fresh, false)).toEqual({ kind: "show", gate: fresh });
+    expect(afterAccessChange(gate(3, 2), gate(3, 2, "p"), true)).toMatchObject({ kind: "show" });
+  });
+
+  it("presenting a deck, or a doc edited on its page: the frame stays until the pause ends", () => {
+    for (const paused of ["follow", "hold", "present"] as const) {
+      expect(afterAccessChange(gate(3, 3, "kept"), gate(3, 3, "fresh"), false, paused)).toEqual({
+        kind: "keep",
+        gate: null,
+        renew: true,
+      });
+    }
+    // A version published meanwhile moves only the count on, as the version watch does.
+    const held = afterAccessChange(gate(3, 3, "kept"), gate(4, 4, "fresh"), false, "present");
+    if (held.kind !== "keep") throw new Error("expected keep");
+    expect(held.gate?.enter_url).toBe("kept");
+    expect(held.gate?.artifact.version).toBe(3);
+    expect(held.gate?.artifact.current_version).toBe(4);
+  });
+});
+
+describe("useVersionWatch while the live-view socket is open", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("polls every 15 s, and every 5 minutes as a backstop while open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { calls } = stubApi({ handle: () => json(gate(3, 3)) });
+    const { rerender } = renderHook(
+      ({ ms }) => useVersionWatch("/view/s", gate(3, 3), false, () => undefined, ms),
+      { initialProps: { ms: versionPollMs("connecting") } },
+    );
+    await act(() => vi.advanceTimersByTimeAsync(VERSION_POLL_MS));
+    expect(calls).toHaveLength(1);
+    rerender({ ms: versionPollMs("open") });
+    await act(() => vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 4));
+    expect(calls).toHaveLength(1);
+    await act(() => vi.advanceTimersByTimeAsync(300_000));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("checkNow reads the gate at once, and a change of pace does not cancel it", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    stubApi({
+      handle: async () => {
+        await held;
+        return json(gate(4, 4, "fresh"));
+      },
+    });
+    const seen: string[] = [];
+    const { result, rerender } = renderHook(
+      ({ ms }) => useVersionWatch("/view/s", gate(3, 3), false, (g) => seen.push(g.enter_url), ms),
+      { initialProps: { ms: versionPollMs("connecting") } },
+    );
+    act(() => result.current.checkNow());
+    // The socket's welcome both asks for the version and switches the pace.
+    rerender({ ms: versionPollMs("open") });
+    release();
+    await act(async () => {
+      await held;
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(seen).toEqual(["fresh"]);
   });
 });

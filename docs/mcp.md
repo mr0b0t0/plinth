@@ -362,7 +362,9 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 { "id": "q3-revenue-4k2j9x0aq1", "html": "<!doctype html>...", "note": "Bigger chart", "base_version": 3 }
 ```
 
-Returns the same shape as `publish_artifact`, with the new `version`.
+Returns the same shape as `publish_artifact`, with the new `version`. Open views of the artifact
+show it within seconds by themselves where the instance has live views (within 15 s otherwise), so
+there is no need to tell anyone to reload.
 
 Send the field that matches the artifact's type (`get_artifact` says which). The type cannot
 change: `html` for a doc, or `content` for an HTML page, is refused with `invalid_input`.
