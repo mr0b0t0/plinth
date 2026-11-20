@@ -213,6 +213,14 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const pending = useRef<Pending | null>(null);
   /** The deck's frame said the person leads viewers over the room: the next frame leads again. */
   const leading = useRef(false);
+  // A lead belongs to one deck: the page moving to another artifact (the same stage, new params)
+  // never makes that one's frame lead its viewers. Reset in render, as the refs above are kept,
+  // so no message handled after this render sees the old deck's lead.
+  const leadingFor = useRef(artifactId);
+  if (leadingFor.current !== artifactId) {
+    leadingFor.current = artifactId;
+    leading.current = false;
+  }
 
   /** Sets the mode now, so messages that arrive before the next render see it. */
   const changeMode = useCallback((next: PresentMode) => {

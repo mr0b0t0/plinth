@@ -1195,6 +1195,9 @@ Where the instance has live views, an open view keeps what it can when your new 
 
   Return `false` from the handler only while the viewer has unsaved input: the page then stays and
   a "vN is available" toast offers Update until the viewer chooses it. No declaration needed.
+  Leave `window.name` as the viewer set it (`plinth-v<n>`, the version shown): a page that renames
+  its window still carries, but a reload of an older version in that tab may then pick up state
+  meant for the next one.
 - **A page where people type** (a form, a poll, an editor), with or without the runtime, can
   declare `hold`: `<meta name="plinth-capabilities" content="hold">`. While focus is inside the
   page, a new version waits behind the same Update notice instead of replacing it; the runtime's

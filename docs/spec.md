@@ -241,8 +241,11 @@ viewer's browser (the content origin's `sessionStorage`), not in D1.
 
 **Following the presenter** ([Slides](#slides-decided-2026-11-19), no migration) stores nothing
 and adds one setting, `ALLOW_SLIDES_FOLLOW` (on), in effect only where live rooms are. Fixed: a
-slides-socket frame of 128 bytes; the room's other caps (`ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, 8
-sockets per viewer, 20 connects per viewer per minute, the message rate) apply unchanged.
+slides-socket frame of 128 bytes; 4 of the room's `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` slots (at
+most half of them) kept for presenters, so a slides socket that watches is refused once the room
+holds the rest; a leader's `goto` at most every 100 ms (every second after the room said
+`rate_limited`). The room's other caps (8 sockets per viewer, 20 connects per viewer per minute,
+the message rate) apply unchanged.
 
 **Design export** ([Designs](#designs-decided-2026-11-19), no migration) stores nothing: every
 file is rendered on request and never kept. It adds four settings: `DESIGN_EXPORT` (on, in effect
@@ -1098,7 +1101,18 @@ source editor work as for docs. A deck is not edited on its page.
   full screen and presenter view) it asks the new one to lead again (`lead`, after the slide), so
   the audience keeps following; it is remembered for the open page only. While a deck follows,
   the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
-  room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
+  room confirms the lead is sent once it does. The lead is kept for one deck: the page showing
+  another artifact forgets it. A presenter whose connection drops keeps leading when it
+  reconnects: the room may still list its old socket as the leader, and the deck knows that socket
+  was its own, so it takes over at once instead of giving the lead up, and followers carry on (had
+  the room already seen the old socket go, they get `stopped` and follow again as soon as the
+  presenter is back). Paging faster than
+  the room's message rate (a held arrow key) never leaves followers behind: the deck sends the
+  slide on screen at most every 100 ms, always ending on the last one, and if the room still
+  drops a frame (`rate_limited`, an instance with a low `ROOM_MESSAGES_PER_SECOND`) it sends what
+  the room may have missed a second later and then at most once a second. Watchers can never fill
+  the deck's room: 4 slots of `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (at most half) are kept for
+  owners and editors. Anonymous link viewers, in-chat previews,
   thumbnail captures, review mode, the editor preview and a permanent version link never follow
   or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
   closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
@@ -1505,13 +1519,19 @@ the app applies it so the reader keeps their place where it can:
   `history.replaceState` when it landed on the same path with no hash of its own. The new version's
   runtime reads and removes the record at start, before the page's own scripts after the runtime
   tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
-  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
+  30 s or one its frame was not loaded for: the app names each viewer frame for the version it
+  shows (`plinth-v5`, the page's `window.name`), and a frame named for a version takes a record
+  only when that version is its `to`, so a record the app did not act on (a hold, a kept frame, a
+  failed gate read) is never read by a reload or a sub-page of the old frame. A frame without such
+  a name (an app tab opened before frames were named, or a page that renamed its own window) takes
+  the record as before. The runtime restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
   the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
   records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
   Opaque isolation has no runtime handshake.
 - **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
   content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
-  it, with or without the runtime: when the new version arrives with focus inside its frame, or
+  it, with or without the runtime: when the new version arrives with focus inside its frame (also
+  after the viewer switched to another window or app without clicking elsewhere on the page), or
   focus moves there while the runtime answers, only the count of versions moves on and the page
   raises a "v5 is available" toast with Update, in the slot of the "Updated to vN" toast and never
   beside it, so the frame does not move; dismissed, the bar's "v4 of 5" still says it. The runtime

@@ -1643,7 +1643,15 @@ the audience (a count of distinct viewers, its own left out), so a follower lear
 who else is watching or who presents. The room stores nothing: the position lives in the
 presenter's hibernation attachment, and when the leader leaves the next presenter leads or every
 socket gets `stopped`. Slides sockets count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` and the
-per-viewer caps like page and doc sockets.
+per-viewer caps like page and doc sockets, except that 4 of the room's slots (at most half the
+cap, `SLIDES_PRESENTER_SLOTS`) are kept for `present` sockets: a `watch` socket is refused (4409)
+once the room holds the rest, so the people a deck is shared with, however many tabs they open,
+cannot lock its owners and editors out of presenting. Which slots are free says no more than any
+full room did before: a watcher who fills the watch slots learns only that the room is full, and
+presenters may still take a slot below the line. A reconnecting presenter whose old socket the
+room still lists as leading starts again at once (the deck remembers its earlier socket ids, which
+never leave the frame), and the room's ordinary rule (the last `start` leads) makes the new socket
+the leader, so followers do not get `stopped` while the room has not yet seen the old socket go.
 
 **Caps.** Per artifact, per viewer and per connection, with a connect throttle (see
 [Rate limits and quotas](#rate-limits-and-quotas)); a socket's hibernation attachment stays under
@@ -1827,12 +1835,20 @@ with `history.replaceState`, only on the same path and only when it has no hash 
 `sessionStorage` is per tab and per origin, and partitioned under the app as the top-level site, so
 the record reaches only the next frame of the same artifact in the same tab, never the app, another
 artifact or another viewer. The next version's runtime reads and removes it at start and ignores one
-older than 30 s. A page can already write anything to its own storage; the record adds no new
+older than 30 s. It takes the record only in the frame the app loaded the record's `to` in: the
+app names each viewer frame for the version it shows (`plinth-v<n>`, which the page reads as
+`window.name`), so a record the app did not act on (the update was held, the frame was kept, the
+gate read failed) is removed, unread, by a reload or a sub-page of the old frame. A frame whose
+name is not of that form (an app tab opened before frames were named, or a page that renamed its
+own window) takes the record as before the names, within the 30 s. The name is a version number
+the page is told anyway; a page that renames its own window changes only what its own record
+does. A page can already write anything to its own storage; the record adds no new
 reader.
 
 **The hold rule.** Only a page whose shown version declares `hold` (the gate says `hold: true`, only
 while `ALLOW_LIVE_VIEWS` is on) is held while focus is inside its frame (`document.activeElement` is
-the frame and the app's document has focus), whether or not it loads the runtime; such a page's
+the frame, also after the viewer switched to another window or app, which leaves it the active
+element), whether or not it loads the runtime; such a page's
 runtime is asked only when the viewer chooses Update. The app then moves only the count of versions
 and shows an Update button in its own chrome, which the page cannot cover or press. A page cannot
 force a hold without the viewer using it, except through its runtime's `onVersion` returning
