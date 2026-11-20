@@ -15,7 +15,7 @@ import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
 import { canActOnMention, type Principal } from "../policy.ts";
 import { requireVersion } from "./artifacts.ts";
-import { authorLabel, insertComment, requireComment } from "./comments.ts";
+import { authorLabel, insertComment, readAnchor, requireComment } from "./comments.ts";
 import type { Ctx } from "./context.ts";
 
 type AgentPrincipal = Extract<Principal, { kind: "agent" }>;
@@ -97,7 +97,7 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
           : (r.c.authorEmail ?? r.userEmail ?? null),
         comment_author_role:
           r.c.authorUserId && r.c.authorUserId === r.ownerId ? "owner" : (r.grantRole ?? null),
-        anchor: r.c.anchor ? (JSON.parse(r.c.anchor) as MentionTaskInfo["anchor"]) : null,
+        anchor: readAnchor(r.c.anchor),
         version_number: r.c.versionNumber,
         claimed_by: r.t.claimedBy,
         claimed_at: r.t.claimedAt,
