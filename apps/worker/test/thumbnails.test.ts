@@ -565,12 +565,16 @@ describe("a capture never carries shared data off the page", () => {
 describe("where the capture browser may go", () => {
   const scope: CaptureScope = {
     artifact: "https://abc.plinthusercontent.com",
+    version: 3,
     hosts: ["cdn.jsdelivr.net", "fonts.googleapis.com"],
   };
   const allowed = (url: string, nav = false) => captureRequestAllowed(scope, url, nav);
+  /** The enter URL the capture of version 3 opens first, as issueEnterUrl writes it. */
+  const enter = (next: string) =>
+    `https://abc.plinthusercontent.com/__plinth/enter?${new URLSearchParams({ t: "x", next })}`;
 
   it("allows the artifact itself, local schemes and the CSP's hosts for subresources", () => {
-    expect(allowed("https://abc.plinthusercontent.com/__plinth/enter?t=x", true)).toBe(true);
+    expect(allowed(enter("/__plinth/v/3/"), true)).toBe(true);
     expect(allowed("https://abc.plinthusercontent.com/__plinth/v/3/", true)).toBe(true);
     expect(allowed("https://abc.plinthusercontent.com/__plinth/api/v1/data/votes")).toBe(true);
     expect(allowed("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js")).toBe(true);
@@ -599,17 +603,34 @@ describe("where the capture browser may go", () => {
   });
 
   it("under the path fallback, only the artifact's own path on the app host", () => {
-    const fallback: CaptureScope = { artifact: "http://localhost:8787/__content/abc", hosts: [] };
-    const ok = (url: string) => captureRequestAllowed(fallback, url, true);
+    const fallback: CaptureScope = {
+      artifact: "http://localhost:8787/__content/abc",
+      version: 1,
+      hosts: [],
+    };
+    const ok = (url: string, nav = true) => captureRequestAllowed(fallback, url, nav);
     expect(ok("http://localhost:8787/__content/abc/__plinth/v/1/")).toBe(true);
-    expect(ok("http://localhost:8787/__content/abc")).toBe(true);
+    expect(
+      ok("http://localhost:8787/__content/abc/__plinth/enter?t=x&next=%2F__plinth%2Fv%2F1%2F"),
+    ).toBe(true);
+    expect(ok("http://localhost:8787/__content/abc/app.js", false)).toBe(true);
+    expect(ok("http://localhost:8787/__content/abc", false)).toBe(true);
+    // The artifact's root serves its current version: a subresource may load from it, a
+    // navigation may not.
+    expect(ok("http://localhost:8787/__content/abc")).toBe(false);
+    expect(ok("http://localhost:8787/__content/abc/")).toBe(false);
+    expect(ok("http://localhost:8787/__content/abc/__plinth/v/2/")).toBe(false);
+    // The version path at the app host's root, outside the artifact's own path.
+    expect(ok("http://localhost:8787/__plinth/v/1/")).toBe(false);
     expect(ok("http://localhost:8787/__content/abcd/")).toBe(false);
+    expect(ok("http://localhost:8787/__content/abcd/", false)).toBe(false);
     expect(ok("http://localhost:8787/api/v1/me")).toBe(false);
   });
 
   it("the instance's scope is the artifact's content origin and the CSP's hosts", () => {
-    const s = captureScope(getConfig(env as never), "aaaaaaaaaaaaaaaaaaaa");
+    const s = captureScope(getConfig(env as never), "aaaaaaaaaaaaaaaaaaaa", 4);
     expect(s.artifact).toBe("http://aaaaaaaaaaaaaaaaaaaa.content.localhost:8787");
+    expect(s.version).toBe(4);
     expect(s.hosts).toEqual(expect.arrayContaining(["cdn.jsdelivr.net", "fonts.gstatic.com"]));
   });
 
@@ -640,13 +661,17 @@ describe("where the capture browser may go", () => {
       },
     });
     const onRequest = handlers.request as (r: GuardedRequest) => void;
-    onRequest(request("https://abc.plinthusercontent.com/__plinth/v/1/", true));
+    onRequest(request("https://abc.plinthusercontent.com/__plinth/v/3/", true));
+    onRequest(request("https://abc.plinthusercontent.com/", true));
+    onRequest(request("https://abc.plinthusercontent.com/app.js", false));
     onRequest(request("https://evil.example/?d=secret", true));
     onRequest(request("https://evil.example/pixel.gif", false));
     onRequest(request("https://evil.example/already", true, true));
     await Promise.resolve();
     expect(outcomes).toEqual([
-      "continue https://abc.plinthusercontent.com/__plinth/v/1/",
+      "continue https://abc.plinthusercontent.com/__plinth/v/3/",
+      "abort(blockedbyclient) https://abc.plinthusercontent.com/",
+      "continue https://abc.plinthusercontent.com/app.js",
       "abort(blockedbyclient) https://evil.example/?d=secret",
       "abort(blockedbyclient) https://evil.example/pixel.gif",
     ]);
@@ -668,6 +693,84 @@ describe("where the capture browser may go", () => {
     });
     const a = await agent();
     const p = await publish(a.auth);
-    expect(scopes).toEqual([captureScope(getConfig(env as never), p.id)]);
+    expect(scopes).toEqual([captureScope(getConfig(env as never), p.id, 1)]);
+    const put = await run(`/api/v1/artifacts/${p.id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<!doctype html><h1>Two</h1>", base_version: 1 }),
+    });
+    expect(put.status).toBe(200);
+    expect(scopes[1]).toEqual(captureScope(getConfig(env as never), p.id, 2));
+  });
+
+  it("navigations stay on the captured version; its pages and subresources still load", () => {
+    const own = "https://abc.plinthusercontent.com";
+    // The captured version's own pages, with or without the trailing slash the host adds.
+    expect(allowed(`${own}/__plinth/v/3/`, true)).toBe(true);
+    expect(allowed(`${own}/__plinth/v/3`, true)).toBe(true);
+    expect(allowed(`${own}/__plinth/v/3/about.html?tab=2#top`, true)).toBe(true);
+    expect(allowed(`${own}/__plinth/v/3/docs/`, true)).toBe(true);
+    // The artifact's root is its current version, maybe someone else's code: never navigated to,
+    // top-level or in a frame, under this capture's pass.
+    expect(allowed(`${own}/`, true)).toBe(false);
+    expect(allowed(own, true)).toBe(false);
+    expect(allowed(`${own}/index.html`, true)).toBe(false);
+    expect(allowed(`${own}/about.html`, true)).toBe(false);
+    expect(allowed(`${own}/?__plinth_review=1`, true)).toBe(false);
+    // Another version, or one that only looks like this one.
+    expect(allowed(`${own}/__plinth/v/4/`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/2/`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/30/`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/03/`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/3%2F..%2F4/`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/3/%2e%2e/4/`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/3/../../`, true)).toBe(false);
+    // Plinth's other paths are never a page the capture opens.
+    expect(allowed(`${own}/__plinth/preview`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/runtime.js`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/api/v1/data/votes`, true)).toBe(false);
+    // The enter step only on its way to this version.
+    expect(allowed(enter("/"), true)).toBe(false);
+    expect(allowed(enter("/__plinth/v/4/"), true)).toBe(false);
+    expect(allowed(enter("/__plinth/v/3/about.html"), true)).toBe(false);
+    expect(allowed(`${own}/__plinth/enter?t=x`, true)).toBe(false);
+    expect(allowed(`${enter("/__plinth/v/3/")}&next=%2F`, true)).toBe(false);
+    // Subresources keep the origin-wide rule: the page's files, the runtime, the data API.
+    expect(allowed(`${own}/__plinth/v/3/app.js`)).toBe(true);
+    expect(allowed(`${own}/app.js`)).toBe(true);
+    expect(allowed(`${own}/__plinth/runtime.js`)).toBe(true);
+    expect(allowed(`${own}/__plinth/types/doc/doc.js`)).toBe(true);
+    expect(allowed(`${own}/__plinth/api/v1/data/votes`)).toBe(true);
+    expect(allowed("about:srcdoc", true)).toBe(true);
+  });
+
+  it("the capture's own enter URL and the host's redirect from it both pass the guard", async () => {
+    const seen: { url: string; scope: CaptureScope; location: string }[] = [];
+    setThumbnailShooter(async (_b, url, s) => {
+      const res = await run(url, { headers: { "sec-fetch-dest": "document" } });
+      seen.push({ url, scope: s, location: res.headers.get("location") ?? "" });
+      return JPEG;
+    });
+    const a = await agent();
+    const p = await publish(a.auth);
+    const put = await run(`/api/v1/artifacts/${p.id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<!doctype html><h1>Two</h1>", base_version: 1 }),
+    });
+    expect(put.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    for (const [i, s] of seen.entries()) {
+      const n = i + 1;
+      expect(s.scope.version).toBe(n);
+      expect(captureRequestAllowed(s.scope, s.url, true)).toBe(true);
+      const next = new URL(s.location, s.url).href;
+      expect(next).toBe(`${s.scope.artifact}/__plinth/v/${n}/`);
+      expect(captureRequestAllowed(s.scope, next, true)).toBe(true);
+      // The same browser may not go on to the artifact's root or the other version.
+      expect(captureRequestAllowed(s.scope, `${s.scope.artifact}/`, true)).toBe(false);
+      const other = `${s.scope.artifact}/__plinth/v/${3 - n}/`;
+      expect(captureRequestAllowed(s.scope, other, true)).toBe(false);
+    }
   });
 });

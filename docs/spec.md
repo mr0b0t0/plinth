@@ -372,8 +372,9 @@ JSON, which agents read with `get_design_system` to build other pages; see
   that carries no identity, so the page sees a signed-out viewer. A version written by a token
   limited to one artifact, or by an account since erased, is captured with a pass that reads no
   shared data (the data API answers `reason: "capture"`), and every capture's browser aborts any
-  request or navigation outside the artifact's own origin and the hosts its CSP allows, and closes
-  any window the page opens (docs/security.md#thumbnails-and-link-previews). It stores a 1200x630 JPEG at
+  request or navigation outside the artifact's own origin and the hosts its CSP allows, aborts any
+  navigation off the captured version's own path (`/__plinth/v/<n>/`), and closes any window the
+  page opens (docs/security.md#thumbnails-and-link-previews). It stores a 1200x630 JPEG at
   `artifacts/<id>/thumbs/v<n>.jpg`. The capture runs after the response (`waitUntil`) and never
   delays a publish; at most two run at once, a failed one is retried after a day, and a reader
   that finds none starts one, which backfills older versions. Migration `0008_thumbnails.sql`
