@@ -112,5 +112,31 @@
       },
       "liveEdit": false
     }
+  ],
+  [
+    "design",
+    {
+      "id": "design",
+      "label": "Design",
+      "badge": "Design",
+      "sourcePath": "design.html",
+      "sourceField": "content",
+      "sourceLabel": "design HTML",
+      "contentType": "text/html; charset=utf-8",
+      "maxSourceBytes": 2097152,
+      "reservedPaths": [
+        "index.html",
+        "design.html"
+      ],
+      "assetTypes": "/^(image\\/(png|jpeg|gif|webp|avif|svg\\+xml)|text\\/css|text\\/javascript|application\\/javascript|video\\/(mp4|webm))(;|$)/",
+      "renderer": {
+        "script": "design.js",
+        "style": "design.css",
+        "frame": "board.html"
+      },
+      "editor": null,
+      "liveEdit": false,
+      "opaqueFrames": true
+    }
   ]
 ]

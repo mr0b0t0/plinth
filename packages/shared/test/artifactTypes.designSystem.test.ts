@@ -14,7 +14,7 @@ import {
 
 describe("design_system type", () => {
   it("is its own module, listed after slides", () => {
-    expect(ARTIFACT_TYPES).toEqual(["html", "doc", "slides", "design_system"]);
+    expect(ARTIFACT_TYPES.slice(0, 4)).toEqual(["html", "doc", "slides", "design_system"]);
     expect(TYPE_REGISTRY.design_system).toBe(designSystem);
     expect(typeDef("design_system")).toBe(designSystem);
   });

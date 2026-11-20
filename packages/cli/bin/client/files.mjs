@@ -7,15 +7,21 @@ import { CliError, formatBytes } from "./http.mjs";
 import { ASSET_PATH_RE, DEFAULTS, LIMITS } from "./vendor/constants.mjs";
 
 /** The source file of each artifact type, at the top of the folder (the first one found wins). */
-export const SOURCE_FILES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+export const SOURCE_FILES = {
+  html: "index.html",
+  doc: "content.md",
+  slides: "slides.md",
+  design: "design.html",
+};
 
-/** The field a type's source goes in on PUT /artifacts: html for a page, content for Markdown. */
+/** The field a type's source goes in on PUT /artifacts: html for a page, content for every typed one. */
 export const sourceField = (type) => (type === "html" ? "html" : "content");
 
-/** The most bytes a type's source may hold: the instance's limit, or the fixed deck limit. */
+/** The most bytes a type's source may hold: the instance's limit, or the type's fixed limit. */
 export function sourceMaxBytes(type, limits) {
   if (type === "doc") return limits.max_doc_bytes;
   if (type === "slides") return LIMITS.maxSlidesBytes;
+  if (type === "design") return LIMITS.maxDesignBytes;
   return limits.max_html_bytes;
 }
 

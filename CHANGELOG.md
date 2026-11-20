@@ -36,6 +36,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   views at most one "data changed" signal per spread (2 s at the default). A
   reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.24.0: the agent's rule
   never to tell people to reload.
+- **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
+  posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
+  `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
+  IAB ads, print and slides. Plinth lays the boards out on a canvas you pan and zoom, in rows
+  packed to fill the screen (Fit, 100%, a board's name zooms to it), renders each one alone at its
+  exact size in its own frame with an opaque origin, so its scripts, styles and images run without
+  reaching the page or each other, lets you interact with one board, pins comments to boards, and
+  prints or saves the design as PDF one board per page. People see the design, never its source:
+  agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
+  a folder with `design.html` at its top as a design. Thumbnails show each board
+  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.25.0.
 
 ## 0.6.0 (2026-11-20)
 

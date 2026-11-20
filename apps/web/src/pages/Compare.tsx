@@ -1,6 +1,6 @@
 // Page: /a/:slug/compare?from=&to=&view=. Two versions of an artifact, as a source diff of their
 // source file (index.html, or a doc's content.md, plus asset changes) or side by side as rendered
-// pages.
+// pages. A type with no source editor (a design) shows only the rendered pages.
 import {
   ArrowsLeftRightIcon,
   ClockCounterClockwiseIcon,
@@ -77,6 +77,9 @@ export default function Compare({ params }: { params: Record<string, string> }) 
   const options = (versions.data?.items ?? []).map((v) => versionOption(v, current));
   const ready = from !== null && to !== null;
 
+  // A type people never see the source of (a design) compares only as rendered pages. No Source
+  // tab until the type is known, so a design never shows one while it loads.
+  const sourceShown = artifact.data ? sourceOf(artifact.data).def.editor !== null : false;
   const newer = newVersion.data ? sourceOf(newVersion.data) : null;
   const source =
     oldVersion.data && newVersion.data && newer && ready ? (
@@ -146,7 +149,11 @@ export default function Compare({ params }: { params: Record<string, string> }) 
           <p className="hx-note type-small">Both sides show the same version. Pick another one.</p>
         )}
 
-        {ready && (
+        {ready && !sourceShown && (
+          <RenderedCompare slug={slug} title={title ?? slug} from={from} to={to} />
+        )}
+
+        {ready && sourceShown && (
           <Tabs
             label="Comparison view"
             value={view}

@@ -38,6 +38,21 @@ function notFound(config: Config, body = "Not found"): Response {
   return new Response(body, { status: 404, headers });
 }
 
+/**
+ * Where a type's framed page lives (renderer.frame, a design's board loader):
+ * /__plinth/frames/<id>/<file>. Not under /__plinth/types/, whose files are public: this page is
+ * answered only behind the content pass (serve.ts, the "pass" reserved row).
+ */
+export const TYPE_FRAMES_PREFIX = `${CONTENT_RESERVED_PREFIX}frames/`;
+
+/** The type whose framed page this path names, or null. */
+export function typeFrameRequest(path: string): ArtifactTypeDef | null {
+  if (!path.startsWith(TYPE_FRAMES_PREFIX)) return null;
+  const m = /^([^/]+)\/([^/]+)$/.exec(path.slice(TYPE_FRAMES_PREFIX.length));
+  const def = m?.[1] ? typeDef(m[1]) : null;
+  return def?.renderer?.frame && def.opaqueFrames && m?.[2] === def.renderer.frame ? def : null;
+}
+
 /** Whether an If-None-Match header matches an ETag (weak comparison, RFC 9110 13.1.2). */
 export function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
   if (!ifNoneMatch) return false;
@@ -129,6 +144,9 @@ export async function serveTypedEntry(
     ...(live ? { live } : {}),
     // A deck in review mode shows every slide stacked, so comment pins anchor to a stable DOM.
     ...(review && def.present ? { view: "overview" as const } : {}),
+    // A type with opaque frames (a design) pins its boards' files to the version this shell shows:
+    // a board mounts late and again after it scrolls back, and the current version may have moved.
+    ...(def.opaqueFrames ? { version: version.number } : {}),
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
   applyContentHeaders(config, headers, { scripts: "self", framing, ...(socket ? { socket } : {}) });

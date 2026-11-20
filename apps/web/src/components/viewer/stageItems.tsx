@@ -130,8 +130,9 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
+/** A type with no source editor (a design) has no Edit: agents change it. */
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role)
+  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
     ? [
         {
           label: c.live.available ? "Edit source" : "Edit",
@@ -179,6 +180,7 @@ const downloadPptx: MenuItem = (c) =>
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
+  design: [printTyped],
 };
 
 /**

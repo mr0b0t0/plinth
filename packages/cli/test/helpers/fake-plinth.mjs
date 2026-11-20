@@ -18,7 +18,12 @@ const rid = (n = 20) =>
 export const PAT = "plinth_pat_testtoken";
 
 /** Each type's source file, as the server's registry has it; Markdown types send `content`. */
-const SOURCES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+const SOURCES = {
+  html: "index.html",
+  doc: "content.md",
+  slides: "slides.md",
+  design: "design.html",
+};
 const sourceOf = (type) => SOURCES[type] ?? "index.html";
 
 export async function startFakePlinth(options = {}) {

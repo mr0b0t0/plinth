@@ -100,6 +100,54 @@ describe("publish warnings on a real Vite build", () => {
     expect(w[0]?.message).toMatch(/classic bundle/);
     expect(scan(vite.relative.files, vite.relative.paths, "origin")).toEqual([]);
   });
+
+  it("artboards: opaque_module only for loads of the artifact's own files, never for CDN or data: ones", () => {
+    const artboard = (files: FileEntry[]) =>
+      scanPublish({
+        files,
+        manifestPaths: new Set([...files.map((f) => f.path), "font.woff2"]),
+        sources,
+        isolation: "opaque",
+        opaqueReason: "artboard",
+      }).filter((x) => x.code === "opaque_module");
+    // The fixes the warning itself names: Google Fonts' own embed, a data: font, a CDN module.
+    const fine = [
+      '<link rel="preconnect" href="https://fonts.googleapis.com">',
+      '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+      '<link href="https://fonts.googleapis.com/css2?family=Inter&display=swap" rel="stylesheet">',
+      "<style>@font-face { font-family: B; src: url(data:font/woff2;base64,AAAA) format('woff2'); }</style>",
+      '<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>',
+      '<script type="module" src="https://cdn.jsdelivr.net/npm/lit@3.2.1/index.js"></script>',
+      '<script type="module">import "https://cdn.jsdelivr.net/npm/lit@3.2.1/index.js";</script>',
+    ];
+    for (const line of fine) expect(artboard([file("design.html", line)]), line).toEqual([]);
+    // Loads of the artifact's own files fail from an opaque document.
+    const own = [
+      '<script type="module" src="app.js"></script>',
+      '<script crossorigin src="app.js"></script>',
+      '<link rel="stylesheet" href="brand.css" crossorigin>',
+      '<link rel="modulepreload" href="./chunk.js">',
+      '<script type="module">import "./chunk.js";</script>',
+      "<script type=\"module\">import('./chunk.js');</script>",
+      "<style>@font-face { font-family: B; src: url(font.woff2); }</style>",
+      "<style>@font-face { font-family: B; src: url('/font.woff2'); }</style>",
+    ];
+    for (const line of own) {
+      expect(artboard([file("design.html", line)]), line).toEqual([
+        expect.objectContaining({ code: "opaque_module", file: "design.html" }),
+      ]);
+    }
+    expect(
+      artboard([file("brand.css", "@font-face { font-family: B; src: url(font.woff2); }")]),
+    ).toHaveLength(1);
+    // An opaque-isolation instance keeps its own, wider check (instance wording).
+    for (const line of [fine[1], fine[3], fine[4]] as string[]) {
+      expect(
+        scan([file("index.html", line)], ["index.html"], "opaque").map((x) => x.code),
+        line,
+      ).toContain("opaque_module");
+    }
+  });
 });
 
 describe("publish warning rules", () => {

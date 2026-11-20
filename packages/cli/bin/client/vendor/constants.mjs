@@ -140,6 +140,8 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
+  /** Bytes of design HTML (design.html) per version of a design artifact. */
+  maxDesignBytes: 2 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
   maxDesignSystemBytes: 1 * MB,
   /** The design system format's limits (packages/shared/src/designSystem.ts). */

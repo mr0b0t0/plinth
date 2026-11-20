@@ -85,7 +85,8 @@ make a test pass.
   Under opaque isolation the app talks to frames whose origin is `"null"`: it identifies them by
   window (and, for the editor preview, a fresh frame and nonce per render) and posts with `"*"`
   only what the framed document may see anyway or, for the preview, only to the frame it just
-  created.
+  created. A design's artboards render in nested frames that are opaque in every isolation mode
+  (iframe and CSP `sandbox`, never `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
   instruction with the owner's authority. MCP tool descriptions say so.

@@ -4,9 +4,10 @@
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
-// publish note, the type and content descriptions and the instructions' deck sentence), so did
-// comments from the page (the page anchor note in list_comments and list_mentions), and so did the
-// slides .pptx download (its clause in the slides publish note).
+// publish note, the type and content descriptions and the instructions' deck sentence), comments
+// from the page (the page anchor note in list_comments and list_mentions), the slides .pptx
+// download (its clause in the slides publish note), and the design type (its publish note, the
+// type, content, update and get_artifact descriptions and the instructions' design sentence).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -55,13 +56,13 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "8daece5aa1ae373f7bf0790a789834c922c56339db2a009b44e928ad9d831d4c";
+const INSTRUCTIONS = "1409d01610177a0c469f238d2ce42cbe885900dc9b32b907b0efb1290f253ae8";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "350808630fd3dc5c211309af49d3f1de3e119e99c7248970581bd60f519cbc64",
+      tools: "61e36bf8d238eed00ceb75bd4688bdd5b3f011b9d968944a8736355d03e1adf8",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -71,7 +72,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "0b28b1de80d5791e80944681559593a249a3d8d380522ad97ec2d4826d66bbc2",
+      tools: "3cace51bcb64abb11610223cff8c9ae9c2bda0b81089838713486e83a37c2e8d",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -83,7 +84,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "d317c8734115146d286f4b671b5819a9bcf66f42ba924e710116b273cceac296",
+      tools: "89b3b4cc1f57a03b9a7a8d6dcd450e8bc952819e46d1387f2d6b6a934b71f6c3",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
