@@ -5,8 +5,9 @@
 //
 // It uses the WebSocket Hibernation API: an idle room is evicted from memory while its sockets
 // stay open, and wakes for the next message. What a socket is (who, which rights, which rooms and
-// presence) lives in its attachment, so nothing is lost on a wake. Nothing persists: the object
-// writes no storage tables, only its alarm, which re-checks access in D1 while sockets are open.
+// presence) lives in its attachment, so nothing is lost on a wake. Almost nothing persists: the
+// object writes its alarm, which re-checks access in D1 while sockets are open, and for a live
+// doc one small record of the checkpoints being saved (rooms/doc.ts, DOC_STATE_KEY, never text).
 // Message contents are never logged.
 //
 // A doc's or a sheet's room also carries Plinth's own editing channel (kind "doc" for every type
@@ -289,6 +290,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       env,
       sockets: () => this.sockets("doc"),
       save: (ws, s) => this.save(ws, s as SocketState),
+      storage: ctx.storage,
       send: (ws, frame) => this.sendDoc(ws, frame),
       gone: () => {
         this.doc.reset();

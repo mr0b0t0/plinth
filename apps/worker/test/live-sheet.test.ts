@@ -5,7 +5,7 @@
 // holds a lease; a version published meanwhile (edit_sheet, PUT, a restore) never merged: the
 // draft freezes, and the review's two choices publish it as it is or discard it, each under the
 // room's checkpoint lock, so the two never interleave.
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { applySheetStruct, splitLines } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
@@ -620,9 +620,12 @@ describe("sheet socket: versions published from outside", () => {
   // A save that outlives the room's 30 s checkpoint lock: its version and its finish come after
   // the lock ran out, and the rows edited meanwhile are never replaced by the saved snapshot.
   describe("a save that outlives its checkpoint lock", () => {
+    // The lock runs out, in memory and in the room's stored record.
     const expire = (id: string) =>
       runInDurableObject(stubFor(id), async (room) => {
-        (room as unknown as { doc: { lock: { until: number } } }).doc.lock.until = 0;
+        const doc = (room as unknown as { doc: { lock: { until: number }; persist(): void } }).doc;
+        doc.lock.until = 0;
+        doc.persist();
       });
     /** The room's answer to a version notify: its own checkpoint saved, or a freeze. */
     const notified = async (c: Socket) => {
@@ -687,16 +690,59 @@ describe("sheet socket: versions published from outside", () => {
       a.ws.close(1000);
     });
 
-    it("frozen by its own version after the next save took the lock, the finish resumes editing with Pears", async () => {
+    // An idle room is evicted while the stager writes (its sockets hibernate): the wake on the
+    // version notify reloads the draft from D1 and the save's record from the room's storage.
+    it("evicted while it saves, its own version is still recognized on the wake, and the finish keeps Pears", async () => {
       const { id, a, stub, snap, after, later, put } = await slowSave();
-      // The next save's snapshot replaces the slow one's: v2's notify is not recognized, and the
-      // sheet freezes against it.
+      // A second save took the lock and gave up: its record does not come back with the wake.
       const next = await stub.docSnapshot(id);
-      expect(next).toMatchObject({ state: "ready", rev: after, text: later });
+      await stub.docAbort(next.lock);
+      await evictDurableObject(stub);
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      await evictDurableObject(stub);
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      // No lock came back with the wakes: the next save takes one.
+      expect(await stub.docSnapshot(id)).toMatchObject({ state: "ready", text: later });
+      a.ws.close(1000);
+    });
+
+    it("evicted while it saves, its finish arriving first on the wake keeps Pears, and the notify is a no-op", async () => {
+      const { id, a, stub, snap, after, later } = await slowSave();
+      await evictDurableObject(stub);
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      expect((await a.nextOf("saved")).version).toBe(2);
+      await stub.docVersion(id, 2, snap.hash);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      a.ws.close(1000);
+    });
+
+    it("with no record of it (a room that stored none), the freeze against its own version ends at the finish, Pears kept", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // As a room that ran code which stored nothing: the wake knows neither the save nor the epoch.
+      await runInDurableObject(stub, async (_room, state) => {
+        await state.storage.delete("live-doc");
+      });
+      await evictDurableObject(stub);
       expect((await put()).status).toBe(200);
       expect(await notified(a)).toEqual({ t: "conflict", version: 2 });
-      // The slow save's finish: v2 holds its snapshot, so the draft goes on from v2 with the
-      // Pears edit, unfrozen, instead of going back to the snapshot.
+      // v2 holds exactly the text the finish saved, and the draft is past its rev: editing goes
+      // on from v2 with the Pears edit, so "Discard mine" is never offered against its own save.
       expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
         rev: after + 1,
         dirty: true,
@@ -709,10 +755,153 @@ describe("sheet socket: versions published from outside", () => {
         conflict_version: null,
         text: later,
       });
+      a.ws.close(1000);
+    });
+
+    it("a discard and an edit while it saves, then an eviction: the late finish is not finished onto those lines", async () => {
+      const { id, owner, ownerP, a, stub, snap, after } = await slowSave();
+      const res = await call(id, ownerP.session.headers, `/live/draft?rev=${after}`, {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(204);
+      const reset = await a.nextOf("reset");
+      expect(reset.version).toBe(1);
+      // Plums edited on v1's rows, then the room is evicted and woken, at base v1, before v2 lands.
+      const plums = await editRow(a, 3, '["Plums",2]', reset.rev);
+      const mine = SHEET.replace('["Plums"]', '["Plums",2]');
+      await evictDurableObject(stub);
+      expect(await stub.docPeek(id)).toMatchObject({ base_version: 1, rev: plums, text: mine });
+      // v2 lands with no notify (rooms off for that request), then its finish.
+      const put = await run(
+        `${APP}/api/v1/artifacts/${id}`,
+        {
+          method: "PUT",
+          headers: { ...owner.auth, "Content-Type": "application/json" },
+          body: JSON.stringify({ content: snap.text, base_version: 1 }),
+        },
+        { ALLOW_ROOMS: "false" },
+      );
+      expect(put.status).toBe(200);
+      // The discard's epoch came back with the wake, so v2 is a version published meanwhile and
+      // the sheet is frozen for review, rather than v2 becoming the base under v1's rows.
+      await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 1,
+        conflict_version: 2,
+        text: mine,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a wake after the draft went back to its base never reuses a snapshot's rev: the finish keeps the edit made since", async () => {
+      const { id, owner, a, stub, snap } = await (async () => {
+        const s = await sheetSetup(SHEET);
+        const a = await connectDoc(s.id, s.ownerP.cookie);
+        const rev = await editRow(a, 1, '["Apples",4,true]', 0);
+        const stub = stubFor(s.id);
+        const snap = await stub.docSnapshot(s.id);
+        await expire(s.id);
+        // Apples put back: the draft is its base again, and its D1 row is deleted.
+        await editRow(a, 1, '["Apples",3,true]', rev);
+        return { ...s, a, stub, snap };
+      })();
+      await evictDurableObject(stub);
+      const woke = await stub.docPeek(id);
+      expect(woke).toMatchObject({ base_version: 1, text: SHEET });
+      expect(woke?.rev).toBeGreaterThan(snap.rev);
+      await editRow(a, 2, '["Pears",9]', woke?.rev ?? 0);
+      const pears = SHEET.replace('["Pears",5]', '["Pears",9]');
+      // The snapshot lands as v2 unnotified, and v3 on top of it is notified first: frozen.
+      const write = (content: string, base: number, vars: Record<string, unknown> = {}) =>
+        run(
+          `${APP}/api/v1/artifacts/${id}`,
+          {
+            method: "PUT",
+            headers: { ...owner.auth, "Content-Type": "application/json" },
+            body: JSON.stringify({ content, base_version: base }),
+          },
+          vars,
+        );
+      expect((await write(snap.text, 1, { ALLOW_ROOMS: "false" })).status).toBe(200);
+      const v3 = snap.text.replace('["Plums"]', '["Plums",1]');
+      expect((await write(v3, 2)).status).toBe(200);
+      expect((await a.nextOf("conflict")).version).toBe(3);
+      // The finish moves the base to v2 under the Pears edit, never back to the snapshot's rows.
+      await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: 3,
+        text: pears,
+      });
+      a.ws.close(1000);
+    });
+
+    it("after the next save took the lock, its own version is still recognized, and the finish keeps Pears", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // The next save's snapshot does not replace the slow one's: v2's notify is recognized, and
+      // the sheet is not frozen against its own version.
+      const next = await stub.docSnapshot(id);
+      expect(next).toMatchObject({ state: "ready", rev: after, text: later });
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
       // The next save's lock is its own, and still held.
       expect((await stub.docSnapshot(id)).state).toBe("busy");
       await stub.docAbort(next.lock);
-      expect(await lease(a, 2, 3, after + 1)).toMatchObject({ t: "leased" });
+      expect(await lease(a, 2, 3, after)).toMatchObject({ t: "leased" });
+      a.ws.close(1000);
+    });
+
+    it("the next save giving up leaves the slow one's snapshot: its version is not frozen against", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // The next save aborts (a stale base, too soon, a stager refusal) before v2's notify.
+      const next = await stub.docSnapshot(id);
+      await stub.docAbort(next.lock);
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      a.ws.close(1000);
+    });
+
+    it("a clean or busy snapshot meanwhile leaves it too: rows put back stay put back", async () => {
+      const { id, a, stub, snap, after, put } = await slowSave();
+      // Busy: another save holds the lock. It gives up.
+      const next = await stub.docSnapshot(id);
+      expect((await stub.docSnapshot(id)).state).toBe("busy");
+      await stub.docAbort(next.lock);
+      // Clean: both rows put back as v1 has them.
+      const back = await editRow(a, 1, '["Apples",3,true]', after);
+      const clean = await editRow(a, 2, '["Pears",5]', back);
+      expect(await stub.docSnapshot(id)).toMatchObject({ state: "clean", rev: clean });
+      // v2 is still the slow save's own: the draft moves onto it with the rows put back, instead
+      // of being reset to v2's rows.
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: clean });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: SHEET,
+      });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: clean,
+        dirty: true,
+      });
       a.ws.close(1000);
     });
   });

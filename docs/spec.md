@@ -2112,7 +2112,8 @@ its review has exactly two choices (below).
   handled as any version published meanwhile instead of becoming the base under the replaced
   draft. Otherwise the room still knows that save's version as its own (by its content) until it
   finishes, so the draft moves onto it with the edits made during the save, and it is never frozen
-  against it; a finish never puts the saved snapshot back over edits made after it, for docs too.
+  against it, also when a later save took the lock and gave up, or the room left memory while the
+  save ran (it keeps each save in progress, by hash and never its text, in its own storage); a finish never puts the saved snapshot back over edits made after it, for docs too.
   People editing the same draft together through the room are not affected.
   `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` reports the draft's
   metadata to owners' and editors' agents.
@@ -2507,7 +2508,8 @@ Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Fre
 100k requests and 13,000 GB-s of duration per day. Workers Paid includes 1M requests and 400k GB-s
 a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
 request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
-are free, and a hibernating room accrues no duration. A room stores nothing.
+are free, and a hibernating room accrues no duration. A room stores almost nothing: its alarm and,
+for a doc or sheet edited on its page, one small record of the saves in progress (never their text).
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
