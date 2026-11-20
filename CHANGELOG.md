@@ -16,7 +16,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   (**Limit to one artifact** in the New token dialog): it reads that artifact and publishes new versions
   of it, nothing else (not even the owner's or other people's email addresses, nor an enter URL
   or a thumbnail, which would show the page's shared data), and deleting the
-  artifact revokes it. `plinth publish` takes a single
+  artifact revokes it. Thumbnails of the versions such a token publishes are taken without the
+  page's shared data, and the thumbnail browser now aborts anything a page loads or opens off its
+  own artifact and the CDN allowlist. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
   a JSON object on failure and for `--dry-run` too, and prints `live_draft` as a note that needs no
   action. GitLab CI and cron: `docs/ci.md` (#51). **Deploying:** release v0.6.0 first, right

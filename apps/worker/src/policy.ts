@@ -284,18 +284,28 @@ export interface PageClaim {
   account?: boolean;
 }
 
+/** The kind of content pass a page runs under, as far as shared data cares. */
+export interface PagePassFacts {
+  /** An in-chat preview pass (any framer, one look at the page). */
+  preview?: boolean;
+  /** A thumbnail capture whose version's writer may not read the data (captureReadsData). */
+  noData?: boolean;
+}
+
 /**
  * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config).
- * Anyone with a content pass may read once the current version declares `data`; only identified
- * viewers write; authors and the viewer's email are visible only to identified viewers on a page
- * that also declares `viewer`.
+ * Anyone with a content pass may read once the current version declares `data`, except an in-chat
+ * preview and a capture of a version whose writer may not read the data (captureReadsData); only
+ * identified viewers write; authors and the viewer's email are visible only to identified viewers
+ * on a page that also declares `viewer`.
  */
 export function pageDataAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   enabled: boolean,
+  pass: PagePassFacts = {},
 ): { read: boolean; write: boolean; seeIdentity: boolean } {
-  const read = enabled && caps?.data === true;
+  const read = enabled && caps?.data === true && !pass.preview && !pass.noData;
   const write = read && claim !== null;
   return { read, write, seeIdentity: write && caps?.viewer === true };
 }
@@ -476,6 +486,21 @@ export function mayCreateArtifacts(p: Principal): boolean {
  */
 export function mayReadStatsSummary(p: Principal): boolean {
   return boundArtifactOf(p) === null;
+}
+
+/**
+ * Does the thumbnail capture of a version read the page's shared data, as a signed-out link viewer
+ * would? Only when a person, or an agent acting for them account-wide, wrote that version: they can
+ * read the data already, so the page they wrote learns nothing new by running with it. Never for a
+ * version written by a token limited to one artifact: that token may not read the data, and its
+ * page would run with it unattended in Plinth's own browser. Nor for a version whose writer is gone
+ * (an erased account), since nobody can say who wrote it.
+ */
+export function captureReadsData(writer: {
+  userId: string | null;
+  boundArtifactId: string | null;
+}): boolean {
+  return writer.userId !== null && writer.boundArtifactId === null;
 }
 
 /**

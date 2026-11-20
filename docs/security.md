@@ -35,6 +35,7 @@ make a test pass.
 | A page drives the comment composer | A page that declares `comments` opens the composer again and again, swaps the anchor under a comment someone is writing, prefills `@claude ...` for a collaborator to click through, or reads comment text through the channel | The page can only open the composer: it never posts and cannot fill in the text; at most one compose a second, none while the tab is hidden or a dialog is open, none before the page said hello; a closed panel reopened at most once a second, by compose and `open` together; `busy` and no change while someone is writing; no page request moves focus, so keystrokes meant for the page never land in the composer; the frame is told ids, pins, status and anchors only ([Comments from the page](#comments-from-the-page)) |
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
 | A CI token reads shared data through a content pass | A token limited to one artifact (refused `data_read`) asks the viewer gate for an enter URL, redeems it and reads `/__plinth/api/` with a script, or reads a thumbnail of a version that draws the data | The gate and thumbnails ask the policy for `enter`, which is `view` for everyone else and `token_bound` for a bound token, so it never gets an enter URL or a thumbnail; its in-chat preview pass reads no shared data and joins no room ([Authorization](#authorization)) |
+| A CI token's page leaks shared data from the thumbnail capture | A token limited to one artifact publishes a version that declares `data`, reads `/__plinth/api/` and sets `location.href` to an outside URL carrying the documents; the capture after the commit runs it with no viewer involved | The capture of a version a bound token wrote (or whose writer's account is gone) gets a pass that reads no shared data (`reason: "capture"`, `policy.captureReadsData`); every capture's browser aborts any request or navigation outside the artifact's own origin and the CSP's hosts, and closes any window the page opens ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 
@@ -574,8 +575,12 @@ the policy for `enter`, not `view`: the same rule as `view` for every other prin
 takedown included), and `token_bound` (403) for a bound token on its artifact, so no enter URL, no
 identity claim, no room and no counted open is ever minted for it. Thumbnails are `enter` too
 (`GET /artifacts/:ref/thumbnail` answers 403 `token_bound`, and summaries give the token
-`thumbnail_url: null`, `policy.seesThumbnails`), since Plinth's capture runs the page with a pass
-that reads its data and the picture could show it. The in-chat preview (`preview_artifact`) stays
+`thumbnail_url: null`, `policy.seesThumbnails`), since Plinth's capture of a person's version runs
+the page with a pass that reads its data and the picture could show it. The capture of a version
+the token itself wrote reads none: the pass Plinth mints for it carries a no-data flag (`d`, only
+ever with the capture flag), and the data API refuses it as it refuses a preview, with
+`reason: "capture"` (`policy.captureReadsData`, [Thumbnails and link previews](#thumbnails-and-link-previews)).
+The in-chat preview (`preview_artifact`) stays
 allowed: a preview pass carries no identity, reads and writes no shared data (`reason: "preview"`)
 and never joins a room, so it shows the version's files, which `get_artifact` already returns. The
 token's own versions still run for everyone who opens the artifact, as an editor's agent's do: page
@@ -700,6 +705,11 @@ can read it from that shell's arguments. Whoever holds an **update** token holds
 That version is served at the artifact's current visibility, on its origin, with its viewers'
 content cookies, so its script can read every version of a private artifact in those viewers'
 browsers and leak it through navigation. The version can be reverted; the reading cannot be undone.
+A token limited to one artifact ([Publishing from CI](#publishing-from-ci)) is in the same position
+for every version it publishes, with one more runner: Plinth's own thumbnail capture opens each new
+version with no viewer present. That capture reads no shared data for a version a bound token
+wrote, and its browser aborts every navigation off the artifact, so the token's page cannot use it
+to send the data anywhere ([Thumbnails and link previews](#thumbnails-and-link-previews)).
 A **publish** token creates one private artifact. The `stored.reused` count in the result tells the
 holder whether bytes they guessed are in the current version, which is weaker than the version
 commit the token already allows. The agent's own MCP token, in the same transcript, is far more
@@ -779,6 +789,21 @@ file.
   loads under the usual content CSP, so it can reach nothing but its own origin and the CDN
   allowlist. The enter token carries no identity claim, so a page with shared data sees a
   signed-out viewer and can neither read nor write as anyone.
+- **Only a writer who can read the data gets a capture that reads it.** A person's version is
+  captured with a link viewer's read of the data: its writer can read the data already, so the
+  page learns nothing new. A version written by a token limited to one artifact, which may not read the data, or by an
+  account that has since been erased, is captured with a pass that carries a no-data flag (`d`,
+  only with `c`; a pass with `d` and without `c` is refused, and two passes that disagree on it
+  count as none). The data API refuses that pass exactly as it refuses an in-chat preview, with
+  `reason: "capture"`; the rule is `policy.captureReadsData`, and the flag follows the captured
+  version, not the artifact's current one.
+- **The capture browser goes nowhere else.** The CSP cannot stop a top-level navigation, and the
+  capture is the one place a page runs top-level, unattended. So every capture turns on request
+  interception and aborts any request or navigation outside the artifact's own origin (its own
+  path under the path fallback), the hosts the content CSP allows (subresources only, over https
+  on their default port) and `data:`, `blob:` and `about:` URLs. A window the page opens is a
+  page of its own that this interception does not cover; the capture closes it on sight, which
+  may still let its first request out, so the no-data rule above does not depend on it.
 - **The one top-level exception.** The content host sends every top-level visit to the app's page,
   so artifacts render only in the app's sandboxed frame. The capture browser must load the
   version top-level, so its enter token carries a capture flag (`c`), which becomes a content

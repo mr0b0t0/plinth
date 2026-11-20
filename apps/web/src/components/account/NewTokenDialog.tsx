@@ -90,6 +90,14 @@ function useEditableArtifacts(load: boolean, query: string) {
   return { state, full, retry: () => setAttempt((n) => n + 1) };
 }
 
+/**
+ * The person owns or edits no artifact at all ("No artifact yet"): the unfiltered list came back
+ * empty, so there is nothing a limited token could be for.
+ */
+function nothingToPick(editable: Editable, full: boolean): boolean {
+  return editable.status === "ready" && !full && !editable.query && editable.items.length === 0;
+}
+
 /** The random end of a slug (`weekly-report-1sxs6tzyab` gives `1sxs6tzyab`), or all of it. */
 const slugEnd = (slug: string) => slug.slice(slug.lastIndexOf("-") + 1) || slug;
 
@@ -148,6 +156,9 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
   const labelRef = useRef<HTMLInputElement>(null);
   const doneRef = useRef<HTMLButtonElement>(null);
 
+  // A limited token for someone with no artifact yet cannot be made: Create token waits.
+  const blocked = limited && nothingToPick(editable, full);
+
   const chosen: Scope[] = limited
     ? canPublish
       ? ["artifacts:read", "artifacts:write"]
@@ -161,7 +172,7 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy) return;
+    if (busy || blocked) return;
     const name = label.trim();
     let bad = false;
     if (!name) {
@@ -286,7 +297,13 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
           <Button variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form="new-token-form" loading={busy}>
+          <Button
+            variant="primary"
+            type="submit"
+            form="new-token-form"
+            loading={busy}
+            disabled={blocked}
+          >
             Create token
           </Button>
         </>
@@ -416,7 +433,7 @@ function ArtifactPicker({
 }: ArtifactPickerProps) {
   const failed = editable.status === "error";
   const ready = editable.status === "ready" ? editable : null;
-  const none = ready !== null && !full && !ready.query && ready.items.length === 0;
+  const none = nothingToPick(editable, full);
   // The chosen artifact stays in the list while a search shows others.
   const items = ready
     ? picked && !ready.items.some((a) => a.id === picked.id)

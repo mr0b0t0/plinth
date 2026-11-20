@@ -177,6 +177,23 @@ describe("New token: Limit to one artifact", () => {
     expect(document.body.textContent).not.toContain("act as you");
   });
 
+  it("with nothing to choose, Create token is disabled until the limit is off", async () => {
+    const { posted } = backend([]);
+    const user = userEvent.setup();
+    renderDialog();
+    await user.type(screen.getByLabelText("Name"), "CI: report");
+    const create = screen.getByRole("button", { name: "Create token" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(false);
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    await screen.findByRole("link", { name: "Publish one first" });
+    expect(create.disabled).toBe(true);
+    // Enter in the name field submits nothing either.
+    await user.type(screen.getByLabelText("Name"), "{Enter}");
+    expect(posted).toEqual([]);
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    expect(create.disabled).toBe(false);
+  });
+
   it("after a failed load, Try again loads the list", async () => {
     let fails = 1;
     stubApi({

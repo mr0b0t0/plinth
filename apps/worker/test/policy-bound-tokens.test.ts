@@ -2,6 +2,7 @@
 // each still needing the person's role and the token's scope; every other artifact is not_found for
 // every action and every scope set (the binding is checked before the scope); takedown and delete
 // still win; and the helpers outside decide.
+import type { Capabilities } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   type AccessFacts,
@@ -9,9 +10,11 @@ import {
   type ArtifactFacts,
   boundArtifactOf,
   canActOnMention,
+  captureReadsData,
   decide,
   mayCreateArtifacts,
   type Principal,
+  pageDataAccess,
   scopeFor,
   seesOwnerMetadata,
   seesPeople,
@@ -283,5 +286,30 @@ describe("policy: a token bound to one artifact", () => {
     const task = { targetConnection: "c-ci", targetClientType: null };
     expect(canActOnMention(boundAgent(ALL), task, OWNER)).toBe(false);
     expect(canActOnMention({ ...wide, connectionId: "c-ci" }, task, OWNER)).toBe(true);
+  });
+
+  it("a capture of a version a bound token wrote reads no shared data; a person's capture does", () => {
+    // Who wrote the version decides the capture's pass.
+    expect(captureReadsData({ userId: OWNER, boundArtifactId: null })).toBe(true);
+    expect(captureReadsData({ userId: OWNER, boundArtifactId: BOUND })).toBe(false);
+    // A writer whose account was erased is nobody anyone can vouch for.
+    expect(captureReadsData({ userId: null, boundArtifactId: null })).toBe(false);
+    // The pass then reads nothing, exactly as an in-chat preview reads nothing.
+    const caps: Capabilities = {
+      data: true,
+      viewer: false,
+      shared: [],
+      room: false,
+      roomOpen: [],
+      comments: false,
+    };
+    expect(pageDataAccess(null, caps, true)).toEqual({
+      read: true,
+      write: false,
+      seeIdentity: false,
+    });
+    expect(pageDataAccess(null, caps, true, {}).read).toBe(true);
+    expect(pageDataAccess(null, caps, true, { noData: true }).read).toBe(false);
+    expect(pageDataAccess(null, caps, true, { preview: true }).read).toBe(false);
   });
 });
