@@ -5,8 +5,13 @@
 // ids, pin numbers, status and anchors only, and the person writes and posts the comment.
 //
 // It talks to the app over the app channel (runtime/app.ts) with protocol v1 of
-// packages/shared/src/pageComments.ts, and makes no request of its own. Nothing is posted until
-// the page first uses plinth.comments.
+// packages/shared/src/pageComments.ts, and makes no request of its own. A page whose own
+// <meta name="plinth-capabilities"> lists `comments` starts the channel as the runtime loads, so
+// Plinth's pins for its threads (element anchors, and page anchors once it registers `locate`)
+// work however late the page first calls plinth.comments, or if it never does. On any other page
+// nothing is posted until the page first uses plinth.comments. Starting twice does nothing.
+// Positions are measured again on scroll, resize, load and any change to the document's size
+// (ResizeObserver), so pins follow the layout.
 //
 //   ready      Promise<{ available, reason }>, never rejects; reason null | "not_framed" |
 //              "no_app" | "not_declared"
@@ -21,9 +26,11 @@
 //   open(id) -> bool       show this thread in the app's panel
 //   onFocus(fn) -> off     fn({ id, anchor }) when the person picks a page-anchored thread
 import {
+  CAPABILITIES_META,
   PAGE_COMMENT_LIMITS as L,
   PAGE_ANCHOR_DATA_KEY_RE,
   PAGE_ANCHOR_KEY_RE,
+  PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENTS_SOURCE,
   PAGE_COMMENTS_VERSION,
 } from "@plinth/shared";
@@ -39,6 +46,7 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
   var CM_V = ${PAGE_COMMENTS_VERSION};
   var CM_KEY_RE = /${PAGE_ANCHOR_KEY_RE.source}/;
   var CM_DATA_KEY_RE = /${PAGE_ANCHOR_DATA_KEY_RE.source}/;
+  var CM_UNSAFE_RE = /${PAGE_ANCHOR_UNSAFE_RE.source}/${PAGE_ANCHOR_UNSAFE_RE.flags};
   var CM_MAX_TEXT = ${L.maxText};
   var CM_MAX_DATA_BYTES = ${L.maxDataBytes};
   var CM_MAX_DATA_KEYS = ${L.maxDataKeys};
@@ -123,7 +131,7 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
       } else if (k === "x" || k === "y") {
         if (!cmCoord(v)) return null;
       } else if (k === "text") {
-        if (typeof v !== "string" || v.length > CM_MAX_TEXT) return null;
+        if (typeof v !== "string" || v.length > CM_MAX_TEXT || CM_UNSAFE_RE.test(v)) return null;
       } else if (k === "data") {
         if (!cmIsObject(v)) return null;
         var dk = Object.keys(v);
@@ -136,7 +144,7 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
             d === null ||
             typeof d === "boolean" ||
             (typeof d === "number" && isFinite(d)) ||
-            (typeof d === "string" && d.length <= CM_MAX_DATA_STRING);
+            (typeof d === "string" && d.length <= CM_MAX_DATA_STRING && !CM_UNSAFE_RE.test(d));
           if (!ok) return null;
           data[dk[j]] = d;
         }
@@ -315,6 +323,14 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
     onApp(CM_SOURCE, cmFromApp);
     window.addEventListener("scroll", cmOnScroll, true);
     window.addEventListener("resize", cmOnScroll);
+    // Images, fonts and late scripts move things after the first measure, and so does any layout
+    // change that resizes the document: measure again (posted only when something moved).
+    window.addEventListener("load", cmOnScroll);
+    if (typeof window.ResizeObserver === "function") {
+      try {
+        new window.ResizeObserver(cmOnScroll).observe(document.documentElement);
+      } catch (e) {}
+    }
     // Said again while unanswered, in case the app was not listening yet.
     var hellos = 0;
     var hello = function () {
@@ -402,6 +418,30 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
       };
     },
   };
+
+  // A page that declares comments starts at once: Plinth hides "Pin to an element" and skips
+  // review mode for it, so its threads' pins depend on this channel. The first meta with the name
+  // counts, as on the server; the app's answer still decides whether anything is available.
+  function cmDeclared() {
+    try {
+      var metas = document.getElementsByTagName("meta");
+      for (var i = 0; i < metas.length; i++) {
+        var name = String(metas[i].getAttribute("name") || "").trim().toLowerCase();
+        if (name !== ${JSON.stringify(CAPABILITIES_META)}) continue;
+        var tokens = String(metas[i].getAttribute("content") || "").toLowerCase().split(/[\\s,]+/);
+        return tokens.indexOf("comments") >= 0;
+      }
+    } catch (e) {}
+    return false;
+  }
+  function cmAutoStart() {
+    if (!cm.started && cmDeclared()) cmStart();
+  }
+  cmAutoStart();
+  // The script may run in <head> before the meta is parsed.
+  if (!cm.started && document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", cmAutoStart);
+  }
 
 `,
 };

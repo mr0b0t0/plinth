@@ -1,11 +1,11 @@
 // The renderer protocol (version 1) as the slides frame speaks it. The app may ask for a slide, a
 // view or a print; the frame tells the app where it is, which view it shows and when the person
-// pressed `f`. Every message carries only a slide number, a count, a mode name or a boolean, never
-// deck text.
+// pressed `f`. Every message carries only a slide number, a count or a mode name, never deck text.
 //
 //   app -> frame: goto { slide }             show slide N (clamped to the deck)
 //   app -> frame: view { mode }              "deck", "presenter" or "overview"
-//   app -> frame: print { notes? }           print the deck, or the handout with notes
+//   app -> frame: print                      print the deck (the handout with notes from
+//                                            presenter view)
 //   frame -> app: ready { slide, count }     after boot
 //   frame -> app: position { slide, count }  after every change
 //   frame -> app: view { mode }              the view it now shows, after every change (its own
@@ -18,7 +18,7 @@ import type { DeckMode } from "./nav.ts";
 export type SlidesAppMessage =
   | { type: "goto"; slide: number }
   | { type: "view"; mode: DeckMode }
-  | { type: "print"; notes: boolean };
+  | { type: "print" };
 
 const MODES: readonly DeckMode[] = ["deck", "presenter", "overview"];
 
@@ -31,10 +31,7 @@ export function readSlidesAppMessage(data: unknown): SlidesAppMessage | null {
   if (m.type === "view") {
     return MODES.includes(m.mode as DeckMode) ? { type: "view", mode: m.mode as DeckMode } : null;
   }
-  if (m.type === "print") {
-    if (m.notes !== undefined && typeof m.notes !== "boolean") return null;
-    return { type: "print", notes: m.notes === true };
-  }
+  if (m.type === "print") return { type: "print" };
   return null;
 }
 

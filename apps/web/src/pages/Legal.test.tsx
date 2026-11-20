@@ -52,6 +52,28 @@ describe("Legal", () => {
     );
   });
 
+  it("the privacy notice says owners see who opened their pages, and for how long", async () => {
+    stubApi();
+    render(<Legal params={{ doc: "privacy" }} />);
+    await screen.findByRole("heading", { level: 1 });
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Who opened a page: when someone other than its owner opens a page");
+    expect(text).toContain("the name and email address of people signed in to this service");
+    expect(text).toContain("an approximate number of anonymous visitors, never who they are");
+    expect(text).toContain("Who opened a page: 365 days, then only the number of opens");
+    expect(text).toContain("holds a random visitor id");
+    expect(text).toContain("It lasts up to 30 days");
+    expect(text).not.toMatch(/Nothing about who opened a page is kept/);
+  });
+
+  it("takes the open log's retention from the instance when it gives one", () => {
+    const doc = legalDoc("privacy", { ...withOperator, view_log_retention_days: 90 });
+    const howLong = doc?.sections.find((s) => s.heading === "How long");
+    const { container } = render(<div>{howLong?.body}</div>);
+    const text = (container.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Who opened a page: 90 days, then only the number of opens");
+  });
+
   it("publishes no terms or privacy notice without an operator, but keeps the acceptable use policy", () => {
     expect(legalDoc("terms", personal)).toBeNull();
     expect(legalDoc("privacy", personal)).toBeNull();

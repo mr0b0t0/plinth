@@ -105,34 +105,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Dictation: app chrome the page cannot cover, shown at every width while listening. */
-.pl-viewer__listening {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--space-1-5);
-}
-.pl-viewer__listening.is-on {
-  padding: 0 0 0 var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-danger-soft);
-}
-.pl-viewer__listening-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  color: var(--color-danger);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-}
-.pl-viewer__listening-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: var(--radius-full);
-  background: var(--color-danger);
-}
-
 /* A quiet line when an older version is on view. */
 .pl-viewer__notice {
   padding: var(--space-1-5) var(--page-pad);
@@ -528,54 +500,26 @@
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
-.pl-share-views__help {
-  margin: 0;
-  color: var(--color-ink-muted);
-  font-size: var(--text-xs);
-}
-/* The owner's 30-day opens sparkline. */
-.pl-sparkline {
-  display: block;
-  flex: none;
-  width: 6rem;
-  height: 1.5rem;
-}
-.pl-sparkline__bar {
-  fill: var(--color-accent);
-}
-.pl-sparkline__baseline {
-  stroke: var(--color-border-control);
-  stroke-width: 1;
-}
-
 /* Editing a doc on its page (#36): a bronze line along the top of the frame. */
 .pl-viewer--editing .pl-viewer__frame-wrap {
   box-shadow: inset 0 2px 0 var(--color-accent);
 }
 
 /* ---------- Presenting a deck (the slides type) ---------- */
-.pl-viewer__present {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1-5) var(--space-3);
-  margin: 0;
+/* An audience window paired with its presenter shows the deck alone, on its own stage colour. */
+.pl-viewer--audience .pl-viewer__bar,
+.pl-viewer--audience .pl-viewer__banner,
+.pl-viewer--audience .pl-viewer__stage > :not(.pl-viewer__room) {
+  display: none;
 }
-.pl-viewer__present-title {
-  color: var(--color-ink);
-  font-weight: 600;
-}
-.pl-viewer__present-actions {
-  display: inline-flex;
-  gap: var(--space-1-5);
-  margin-left: auto;
-}
-/* The frame the app put full screen fills the screen with the deck's own stage colour. */
+
+/* The frame the app put full screen fills the screen; the deck paints its own stage colour, light
+   or dark, around the slide. */
 .pl-viewer-frame:fullscreen {
   width: 100vw;
   height: 100vh;
   border: 0;
-  background: #000;
+  background: transparent;
 }
 
 /* ---------- portals: /p/:id (docs/spec.md "Category sharing and personal categories") ---------- */

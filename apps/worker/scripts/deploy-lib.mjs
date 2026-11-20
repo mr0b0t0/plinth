@@ -159,7 +159,6 @@ export function runtimeBase(repoCfg) {
         "LIVE_AUTO_CHECKPOINT_MIN_S",
         "LIVE_DRAFT_FLUSH_S",
         "LIVE_DRAFT_RETENTION_DAYS",
-        "ALLOW_DICTATION",
         "ALLOW_CATEGORY_SHARING",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
@@ -188,6 +187,8 @@ export function runtimeConfigMissing(cfg) {
  * trigger (nothing would remove what abandoned uploads leave).
  */
 export function runtimeConfigProblem(cfg) {
+  const review = reviewLoginConfigProblem(cfg);
+  if (review) return review;
   const missing = runtimeConfigMissing(cfg);
   if (missing.length === 0) return null;
   return (
@@ -196,6 +197,30 @@ export function runtimeConfigProblem(cfg) {
     `\`"triggers": { "crons": ["${SWEEP_CRON}"] }\` (as apps/worker/wrangler.jsonc has them), or ` +
     "rerun setup, which adds them to an existing config (docs/deploy-checklist.md)"
   );
+}
+
+/**
+ * The review account (REVIEW_LOGIN_EMAIL) must be an ordinary user: never an ADMIN_EMAIL address,
+ * and never on a single-user instance. The Worker refuses both at start-up too (src/config.ts);
+ * this stops the deploy first. Its password hash is a secret, so it is not in the config to check.
+ */
+export function reviewLoginConfigProblem(cfg) {
+  const vars = cfg?.vars ?? {};
+  const review = String(vars.REVIEW_LOGIN_EMAIL ?? "")
+    .trim()
+    .toLowerCase();
+  if (!review) return null;
+  const admins = String(vars.ADMIN_EMAIL ?? "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (admins.includes(review)) {
+    return "REVIEW_LOGIN_EMAIL is an ADMIN_EMAIL address. The review account signs in with a shared password, so it must be an ordinary account: pick another address";
+  }
+  if (String(vars.SINGLE_USER_MODE ?? "").toLowerCase() === "true") {
+    return "REVIEW_LOGIN_EMAIL is set on a single-user instance, where only the admin signs in. Remove it, or turn SINGLE_USER_MODE off";
+  }
+  return null;
 }
 
 /** True when `cfg` binds the live-rooms Durable Object (`ROOMS`, class `ArtifactRoom`). */

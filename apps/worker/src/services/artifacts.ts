@@ -47,6 +47,7 @@ import {
   seesOwnerMetadata,
   seesPeople,
   seesPersonalCategory,
+  seesThumbnails,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
@@ -334,8 +335,9 @@ export function toSummary(
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
     role: role ?? "viewer",
     taken_down: !!a.takenDownAt,
+    // None for a token limited to one artifact, which may not read thumbnails (decide(enter)).
     thumbnail_url:
-      thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt
+      thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt && seesThumbnails(ctx.principal)
         ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
         : null,
     // The read gate for owner-only metadata: every summary path goes through here.
@@ -789,18 +791,19 @@ export async function listArtifacts(
 
 /**
  * list_artifacts for a token bound to one artifact: that artifact when the policy lets it view it
- * (and it matches `query`), with no categories. A category filter returns nothing: a filter on the
- * owner's names would let the token probe the bound artifact's category.
+ * (and it matches `query` and `type`), with no categories. A category filter returns nothing: a
+ * filter on the owner's names would let the token probe the bound artifact's category.
  */
 async function listBound(
   ctx: Ctx,
   bound: string,
-  filter: { query?: string; category?: string; limit?: number },
+  filter: { query?: string; category?: string; limit?: number; type?: ArtifactType },
 ): Promise<ArtifactList> {
   const none: ArtifactList = { items: [], categories: [] };
   if (filter.limit === 0 || filter.category?.trim()) return none;
   const row = await findArtifact(ctx, bound);
   if (!row) return none;
+  if (filter.type && row.type !== filter.type) return none;
   const d = await decideFor(ctx, row, "view");
   if (!d.allow) return none;
   const q = filter.query?.trim().toLowerCase();

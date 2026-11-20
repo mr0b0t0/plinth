@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "plinth": {
+      "type": "http",
+      "url": "https://plinth.aconite.io/mcp"
+    }
+  }
+}

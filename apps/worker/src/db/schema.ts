@@ -276,19 +276,30 @@ export const artifactDataUsage = sqliteTable("artifact_data_usage", {
   seq: integer("seq").notNull().default(0),
 });
 
-// Open counts (migrations/0010_view_counts.sql): one number per artifact per UTC day, and the
-// folded total of days older than the daily window. No viewer data of any kind.
-export const artifactViewDays = sqliteTable(
-  "artifact_view_days",
-  {
-    artifactId: text("artifact_id").notNull(),
-    /** UTC day, YYYY-MM-DD. */
-    day: text("day").notNull(),
-    views: integer("views").notNull().default(0),
-  },
-  (t) => [primaryKey({ columns: [t.artifactId, t.day] })],
-);
+// Artifact stats (migrations/0020_artifact_opens.sql): one row per counted open, with who opened
+// it, kept for VIEW_LOG_RETENTION_DAYS; older opens fold into artifact_view_totals (counts only).
+export const artifactOpens = sqliteTable("artifact_opens", {
+  id: integer("id").primaryKey(),
+  artifactId: text("artifact_id").notNull(),
+  /** The version shown; null for opens counted before versions were recorded. */
+  version: integer("version"),
+  /** UTC ISO 8601. */
+  openedAt: text("opened_at").notNull(),
+  viewerKind: text("viewer_kind", {
+    enum: ["user", "email", "anonymous", "unknown"],
+  }).notNull(),
+  /** Signed in (viewer_kind 'user'); cleared when the user is deleted. */
+  userId: text("user_id"),
+  /** Confirmed an allowlisted email by code, without an account (viewer_kind 'email'). */
+  email: text("email"),
+  /** A random per-browser id from the content cookie (viewer_kind 'anonymous'). */
+  visitor: text("visitor"),
+  role: text("role", {
+    enum: ["editor", "commenter", "viewer", "public", "link", "password"],
+  }),
+});
 
+// The all-time count of opens the log no longer keeps (migrations/0010_view_counts.sql).
 export const artifactViewTotals = sqliteTable("artifact_view_totals", {
   artifactId: text("artifact_id").primaryKey(),
   views: integer("views").notNull().default(0),

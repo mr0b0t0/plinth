@@ -10,7 +10,6 @@ import { bumpAccessEpoch, requireArtifact } from "../services/artifacts.ts";
 import { prunePersonalCategories } from "../services/categories.ts";
 import { sharingCategoryShare } from "../services/categoryShares.ts";
 import type { Ctx } from "../services/context.ts";
-import { grantNames } from "../services/people.ts";
 import { getUserById } from "../services/users.ts";
 import { type AppEnv, parseBody, serviceCtx } from "./context.ts";
 
@@ -24,19 +23,10 @@ async function settings(ctx: Ctx, a: ArtifactRow): Promise<SharingSettings> {
     .orderBy(asc(accessGrants.email))
     .all();
   const owner = await getUserById(ctx.db, a.ownerId);
-  // The name behind an address, only once its holder has taken part here: the owner types these
-  // addresses, so a name for any of them would say whether it has an account (policy.ts
-  // accessListShowsName).
-  const names = await grantNames(ctx.env.DB, a.id);
   return {
     visibility: a.visibility,
     has_password: !!a.passwordHash,
-    grants: grants.map((g) => ({
-      email: g.email,
-      role: g.role,
-      created_at: g.createdAt,
-      name: names.get(g.email) ?? null,
-    })),
+    grants: grants.map((g) => ({ email: g.email, role: g.role, created_at: g.createdAt })),
     public_allowed:
       !!owner &&
       canMakePublic({

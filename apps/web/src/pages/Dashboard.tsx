@@ -78,8 +78,7 @@ type ListState =
       query: string;
     };
 
-/** "design_system": the design systems the person can build with (shown when there is one). */
-type Filter = "all" | "mine" | "shared" | "design_system";
+type Filter = "all" | "mine" | "shared";
 type Sort = "updated" | "created" | "title";
 /** The category filter: null shows every category, "" the owner's artifacts with none. */
 export type CategoryFilter = string | null;
@@ -301,7 +300,6 @@ export default function Dashboard() {
         ? ownCategories
         : mergeCategories(ownCategories, myCategories);
   const hasShared = items.some((a) => a.role !== "owner");
-  const hasDesignSystems = items.some((a) => a.type === "design_system");
   // Under Shared the filter and its menu are the person's own categories; with none, both are off.
   const byCategory = category !== null && (filter !== "shared" || myCategories.length > 0);
   const shown = useMemo(() => {
@@ -310,9 +308,7 @@ export default function Dashboard() {
         ? items.filter((a) => a.role === "owner")
         : filter === "shared"
           ? items.filter((a) => a.role !== "owner")
-          : filter === "design_system"
-            ? items.filter((a) => a.type === "design_system")
-            : items;
+          : items;
     return sortArtifacts(
       filterByCategory(picked, byCategory ? category : null, filter === "shared"),
       sort,
@@ -362,9 +358,6 @@ export default function Dashboard() {
     { value: "all", label: "All" },
     { value: "mine", label: "Mine" },
     ...(hasShared || filter === "shared" ? [{ value: "shared" as const, label: "Shared" }] : []),
-    ...(hasDesignSystems || filter === "design_system"
-      ? [{ value: "design_system" as const, label: "Design systems" }]
-      : []),
   ];
 
   const emptyFilter =
@@ -381,11 +374,7 @@ export default function Dashboard() {
           ? searching
             ? "None of your artifacts match."
             : "You have not published anything yet."
-          : filter === "design_system"
-            ? searching
-              ? "No design systems match."
-              : "No design systems yet."
-            : "Nothing has been shared with you."
+          : "Nothing has been shared with you."
       : null;
 
   const categoryLabel =

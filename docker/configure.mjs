@@ -55,8 +55,6 @@ const WORKER_VARS = [
   // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
   "ALLOW_ROOMS",
   "ALLOW_LIVE_EDITING",
-  // Dictation run by the app (docs/docker.md#settings); off unless set to "true".
-  "ALLOW_DICTATION",
   // Owners may share a category with people (docs/docker.md#settings); on unless set to "false".
   "ALLOW_CATEGORY_SHARING",
 ];
