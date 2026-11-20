@@ -758,6 +758,13 @@ function responseSchemas(): Record<string, Json> {
         description:
           "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode",
       },
+      live_views: {
+        type: "boolean",
+        description:
+          "Open views apply new versions while keeping the reader's state here (ALLOW_LIVE_VIEWS): " +
+          "docs update in place, pages with the runtime carry their state, pages that declare " +
+          "`hold` wait while the viewer uses them. Absent or false: a new version replaces the page",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -808,8 +815,15 @@ function responseSchemas(): Record<string, Json> {
                 "changes as they happen. Absent: poll the gate",
             },
             people: ref("ViewGatePeople"),
+            hold: {
+              const: true,
+              description:
+                "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the " +
+                "viewer is using the page (focus inside its frame), a newer version waits behind " +
+                "an Update button instead of replacing it",
+            },
           },
-          ["data", "live", "page_comments", "watch", "people"],
+          ["data", "live", "page_comments", "watch", "people", "hold"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -2402,6 +2416,13 @@ function operations(): Operation[] {
             "`comments`, which anchors its own comments",
         },
         { name: "next", schema: str(), description: "Path inside the artifact to land on" },
+        {
+          name: "carried",
+          schema: enumOf(["1"]),
+          description:
+            "`next` is a place carried from an older version (live views): land on the root " +
+            "when the current version has no file there",
+        },
       ],
       ok: [200, "ViewGate"],
       errors: [403],

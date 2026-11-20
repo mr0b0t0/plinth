@@ -466,6 +466,8 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
  * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
+ * `hold`: while the viewer is using the page (focus inside its frame), a newer version waits behind
+ * an Update button instead of replacing it (docs/spec.md "Live views"). Not shared data either.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
@@ -473,6 +475,7 @@ export const CAPABILITY_TOKENS = [
   { token: "room", declares: true, needs: [], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
   { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
+  { token: "hold", declares: true, needs: [], stored: "declared" },
 ];
 
 export const DATA_CAPABILITIES = CAPABILITY_TOKENS.map((t) => t.token);

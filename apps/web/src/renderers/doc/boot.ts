@@ -10,6 +10,11 @@
 // live draft and reports its status to the app; edit code runs only once the app sends
 // { type: "edit", on: true }. Without `live` that message turns on solo editing of the version's
 // text, which the app saves through its own session after asking for it with `collect`.
+//
+// Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
+// { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
+// a room client is attached or anything is being edited; otherwise the text solo editing starts
+// from becomes the version on screen.
 import {
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -18,6 +23,7 @@ import {
 } from "@plinth/shared";
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import { type DocBackend, DocEditor, LocalDoc } from "./edit.ts";
+import { pinImages, showVersion } from "./follow.ts";
 import { LiveDocClient } from "./live.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
@@ -45,7 +51,8 @@ function readPayload(doc: Document): TypedPayload | null {
 type AppMessage =
   | { type: "print" }
   | { type: "edit"; on: boolean }
-  | { type: "collect"; nonce: string };
+  | { type: "collect"; nonce: string }
+  | { type: "version"; n: number; nonce: string };
 
 const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
@@ -59,6 +66,17 @@ export function readAppMessage(data: unknown): AppMessage | null {
   if (m.type === "collect" && typeof m.nonce === "string" && NONCE_RE.test(m.nonce)) {
     return { type: "collect", nonce: m.nonce };
   }
+  if (
+    m.type === "version" &&
+    typeof m.n === "number" &&
+    Number.isInteger(m.n) &&
+    m.n >= 1 &&
+    m.n < 2 ** 31 &&
+    typeof m.nonce === "string" &&
+    NONCE_RE.test(m.nonce)
+  ) {
+    return { type: "version", n: m.n, nonce: m.nonce };
+  }
   return null;
 }
 
@@ -71,7 +89,13 @@ const ERRORS: Record<string, string> = {
 };
 
 /** Wires on-page editing. Returns a function that stops it. */
-function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: string) {
+function live(
+  win: Window,
+  root: HTMLElement,
+  payload: TypedPayload,
+  appOrigin: string,
+  prepare?: (fragment: DocumentFragment) => void,
+) {
   let client: LiveDocClient | null = null;
   let local: LocalDoc | null = null;
   let editor: DocEditor | null = null;
@@ -132,7 +156,7 @@ function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: 
   const goSolo = () => {
     local ??= new LocalDoc(payload.text, events);
     if (editor) editor.setBackend(local);
-    else editor = new DocEditor(root, win, local, hooks);
+    else editor = new DocEditor(root, win, local, hooks, prepare);
   };
 
   if (payload.live === "room") {
@@ -163,11 +187,11 @@ function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: 
         error: (code) => editor?.notify(ERRORS[code] ?? "Something went wrong with live editing."),
       },
     });
-    editor = new DocEditor(root, win, client, hooks);
+    editor = new DocEditor(root, win, client, hooks, prepare);
     client.start();
   }
 
-  const onMessage = (m: AppMessage) => {
+  const onMessage = (m: Exclude<AppMessage, { type: "version" }>) => {
     if (m.type === "edit") {
       if (m.on && (!client || client.failed)) goSolo();
       editor?.setEditing(m.on);
@@ -179,6 +203,11 @@ function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: 
   };
   return {
     onMessage,
+    /**
+     * Nothing here keeps text of its own: no room client, no editing, no solo copy with changes.
+     * Only then may a newer version replace what is on screen.
+     */
+    idle: () => !client && !(editor?.editing ?? false) && !(local?.dirty ?? false),
     stop: () => {
       client?.stop();
       editor?.setEditing(false);
@@ -217,14 +246,51 @@ export function boot(win: Window): () => void {
   // The artifact page's "Print or save as PDF" item, and on-page editing. Only the app page that
   // frames this doc may ask.
   const appOrigin = payload.app_origin;
+  // The version last shown in place, if any: from then on the editor renders its images from that
+  // version's own files too, as showVersion does (follow.ts), not the ones loaded at boot.
+  let shown: number | null = null;
+  const prepare = (fragment: DocumentFragment) => {
+    if (shown !== null) pinImages(fragment, doc.baseURI, shown);
+  };
   let editing: ReturnType<typeof live> | null =
-    payload.live === "room" && appOrigin !== "" ? live(win, root, payload, appOrigin) : null;
+    payload.live === "room" && appOrigin !== ""
+      ? live(win, root, payload, appOrigin, prepare)
+      : null;
+  const answer = (msg: Record<string, unknown>) => {
+    try {
+      win.parent.postMessage(
+        { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, ...msg },
+        appOrigin,
+      );
+    } catch {
+      // The app page is gone: nobody to tell.
+    }
+  };
+  // One version at a time, in the order asked.
+  let following: Promise<void> = Promise.resolve();
+  const follow = (n: number, nonce: string) => {
+    following = following.then(async () => {
+      const idle = () => !editing || editing.idle();
+      if (!idle()) return answer({ type: "shown", n, nonce, ok: false });
+      // Edit may be turned on while the text is fetched: showVersion asks `idle` again before it
+      // replaces anything, so an editor opened meanwhile is never torn down.
+      const text = await showVersion(win, root, n, payload.path, idle);
+      if (text === null) return answer({ type: "shown", n, nonce, ok: false });
+      // Editing starts from the version on screen: drop the idle editor, which held the old text.
+      editing?.stop();
+      editing = null;
+      payload.text = text;
+      shown = n;
+      answer({ type: "shown", n, nonce, ok: true });
+    });
+  };
   const onMessage = (e: MessageEvent) => {
     if (e.source !== win.parent || appOrigin === "" || e.origin !== appOrigin) return;
     const m = readAppMessage(e.data);
     if (!m) return;
     if (m.type === "print") return win.print();
-    editing ??= live(win, root, payload, appOrigin);
+    if (m.type === "version") return follow(m.n, m.nonce);
+    editing ??= live(win, root, payload, appOrigin, prepare);
     editing.onMessage(m);
   };
   win.addEventListener("keydown", onKey);

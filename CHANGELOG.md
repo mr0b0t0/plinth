@@ -189,6 +189,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
   is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
   is still a page.
+- **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
+  not reloaded, the heading you were reading stays where it was, and an image the new version
+  changed under the same name shows the new file. A page that loads
+  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
+  sub-page the new version no longer has opens at its root instead), and can hand state to the
+  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
+  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: a
+  "v5 is available" toast offers Update instead. Every other page is replaced at once, as before.
+  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
 
 ## 0.6.0 (2026-11-20)
 

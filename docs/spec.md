@@ -231,6 +231,13 @@ block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characte
 to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolation, and its board
 counts toward the `DATA_*` limits like any page's shared data.
 
+**Keeping state across versions** ([below](#live-views-decided-2026-11-19), no migration) adds one
+field to the stored declaration, `versions.capabilities.hold`, written only when the page declares
+`hold` (a row without it reads as no hold), and no setting: it follows `ALLOW_LIVE_VIEWS`. Fixed:
+1 s for a page's runtime to answer, 800 ms for its `onVersion` handlers, 5 s for the doc renderer
+to show a version in place, 16 KiB of carried state, read within 30 s. Carried state lives in the
+viewer's browser (the content origin's `sessionStorage`), not in D1.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -442,7 +449,9 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
 - Two versions can be compared side by side as rendered pages, with a plain-language list of what
   changed ([Comparing versions](#comparing-versions-decided-2026-11-19)).
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
-- Open views follow new versions: see [Live views](#live-views-decided-2026-11-19).
+- Open views follow new versions: see [Live views](#live-views-decided-2026-11-19). A doc
+  updates in place and a page with the runtime keeps its state; a page that declares `hold` waits
+  while the viewer is using it.
 
 ### Thumbnails and link previews
 
@@ -1395,6 +1404,65 @@ document through the gate and the shared-data API, with all of their checks.
   origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
   signals also need shared data. Without the binding live views are off, never a configuration
   error.
+
+**Keeping state across versions.** When a newer version reaches an open view (pushed or polled),
+the app applies it so the reader keeps their place where it can:
+
+- **Docs update in place** (origin isolation, outside review mode, and not while the frame follows a
+  live-editing room or holds page edits). The app posts `{ type: "version", n, nonce }` to the doc
+  renderer at the exact content origin; the renderer fetches `/__plinth/v/<n>/content.md` from its
+  own origin with the content pass it already holds, renders it exactly as at boot (Markdown, then
+  the sanitizer), keeps the block that was at the top of the viewport where it was (found again by
+  its nearest heading, or by its block index when that heading is gone), and answers `{ type:
+  "shown", n, nonce, ok }`. Its images load from that version's own path (`chart.png` becomes
+  `/__plinth/v/<n>/chart.png`), in view and in a later Edit, because a browser reuses an image it
+  already loaded in a document for the same URL without asking again: a new version that changes
+  an image under the same name shows the new image next to the new text. The source keeps the
+  author's paths. On `ok` the frame and its enter URL stay; nothing reloads, and solo
+  editing afterwards starts from the version on screen. On a refusal (anything being edited, a room
+  client attached, a failed or refused fetch; the renderer checks again once the text has arrived,
+  so an editor opened meanwhile is kept) or no answer in 5 s, a fresh frame loads, unless the doc is
+  by then edited on its page, which keeps its frame as below. Under opaque isolation and the path
+  fallback docs always load a fresh frame.
+- **Pages that load `/__plinth/runtime.js`** keep their scroll position, their place inside the
+  artifact (sub-page, query and hash) and any state they hand over, with no declaration. The runtime
+  says `hello` to the app when framed; before the swap the app posts `{ type: "update", from, to,
+  nonce, force }` at the exact content origin, the runtime calls the page's `plinth.onVersion`
+  handlers (800 ms for all of them), writes one record (`from`, `to`, the time, scroll, path, and
+  the page's `{ state }` when its JSON is at most 16 KiB) to its own origin's `sessionStorage` and
+  answers `update:ok` with its path, without the hash. The app re-reads its gate with that path as
+  `next` and `carried=1` (the server passes it through `safeNext`) and loads the new version there;
+  when the new version has no file at that path (a `pushState` route, a page renamed or removed), the
+  gate lands it on the root instead of the content host's "Not found". The hash never
+  goes into a request URL: it stays in the record, and the new version's runtime puts it back with
+  `history.replaceState` when it landed on the same path with no hash of its own. The new version's
+  runtime reads and removes the record at start, before the page's own scripts after the runtime
+  tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
+  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
+  the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
+  records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
+  Opaque isolation has no runtime handshake.
+- **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
+  content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
+  it, with or without the runtime: when the new version arrives with focus inside its frame, or
+  focus moves there while the runtime answers, only the count of versions moves on and the page
+  raises a "v5 is available" toast with Update, in the slot of the "Updated to vN" toast and never
+  beside it, so the frame does not move; dismissed, the bar's "v4 of 5" still says it. The runtime
+  is asked only when the viewer chooses Update. Update reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime), with no
+  "Updated to vN" toast after it: one notice per update. A
+  version that arrives while focus is elsewhere replaces the page as before. `hold` is not shared
+  data and not a room, works under every isolation mode, and is stored only when declared. **Every
+  other page is replaced at once, as before** (the 2026-11-14 "follows new versions live"
+  behaviour): the hold rule is opt-in.
+- **What crosses.** App to frame: version numbers and the app's own nonces. Frame to app: `hello`, a
+  nonce, `ok` or a hold, and one path that is checked (one leading `/`, at most 2,048 characters, no
+  backslash or control character, never `/__plinth/`, its hash dropped) and only becomes the gate's
+  `next`. The app accepts these only from the frame it holds at its exact content origin. Page state
+  stays in the content origin's `sessionStorage`: one tab, one artifact, never the app, another
+  artifact or another viewer. No script is injected into artifact HTML.
+- **Off.** With `ALLOW_LIVE_VIEWS=false` (the app config says `live_views: false`) and the gate
+  without `hold`, every update replaces the frame, as before. Permanent version links, a deck being
+  presented and a doc edited on its page keep their frame as before.
 
 ### Designs (decided 2026-11-19)
 
@@ -2499,6 +2567,12 @@ options.
   the user chose in the session; a mention from any role never makes the owner's agent read one,
   and `sensitive_file` flags secret-looking names among the files a request sent
   ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
+- **A new version keeps state only inside its own origin.** A doc shown in place fetches its
+  Markdown from its own origin with the pass it holds and renders it through the same sanitizer;
+  state a page hands to its next version stays in that content origin's `sessionStorage`. The
+  frame tells the app only `hello`, a hold, a nonce and one checked path, which becomes the gate's
+  `next`; the app accepts these only from the frame it holds at its exact content origin, and posts
+  version numbers and nonces only there ([Live views](#live-views-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
@@ -2646,6 +2720,9 @@ Hibernated watch sockets accrue no duration and their keep-alive is answered wit
 object. An idle open view goes from 4 gate reads and 4 change-counter reads a minute to about
 none. On the Workers Free plan a busy instance may prefer `ALLOW_LIVE_VIEWS=false`, which keeps
 the polls and calls no object for artifacts without a room.
+Keeping state across versions costs nothing on the server: a doc shown in place reads one file
+(`/__plinth/v/<n>/content.md`) instead of loading a new frame, and a page that lands on its
+sub-page costs one more gate read.
 
 Sheets run on the same Worker allowances:
 

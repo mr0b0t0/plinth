@@ -36,6 +36,7 @@ import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
+import { type UpdateHandlers, useViewUpdate } from "./useViewUpdate.ts";
 import "./viewer.css";
 
 // The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
@@ -73,6 +74,11 @@ export interface ViewerStageProps {
    * data changed; the frame's runtime is told both (useLiveDataRelay).
    */
   liveData?: { pushed: boolean; tick: number };
+  /**
+   * Live views: a newer version waiting to be applied, and how to apply it (useViewUpdate). Absent:
+   * the page swaps the frame itself, as before.
+   */
+  update?: UpdateHandlers;
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -108,6 +114,7 @@ export function ViewerStage({
   review,
   onLeaveReview,
   liveData,
+  update: updateHandlers,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -198,6 +205,18 @@ export function ViewerStage({
   useEffect(() => {
     onPauseChange?.(pause);
   }, [pause, onPauseChange]);
+  // Live views: a newer version is applied in place, with the page's state, or held while the
+  // viewer is using a page that declares `hold` (viewUpdate.ts).
+  const update = useViewUpdate({
+    frame,
+    contentOrigin,
+    config,
+    gate,
+    pinned,
+    pause,
+    review: review === true,
+    handlers: updateHandlers,
+  });
   // A version published while presenting waits; once presenting ends, the deck catches up.
   const presented = useRef(false);
   useEffect(() => {
@@ -265,6 +284,7 @@ export function ViewerStage({
     live,
     editing,
     present,
+    update,
     hrefs: {
       current: currentHref,
       edit: editHref,
