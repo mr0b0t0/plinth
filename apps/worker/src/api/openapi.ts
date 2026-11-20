@@ -959,59 +959,52 @@ function sheetSchemas(): Record<string, Json> {
     columns_deleted: int(),
   });
   return {
-    SheetRead: obj(
-      {
-        id: str(),
-        slug: str(),
-        type: { const: "sheet" },
-        title: str({ description: "Untrusted text" }),
-        version: int({ minimum: 1 }),
-        current_version: int({ minimum: 1 }),
-        columns: {
-          type: "array",
-          items: obj(
-            {
-              letter: str({ description: 'A1 letter, "A" to "CV"' }),
-              name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
-              type: enumOf(SHEET_COLUMN_TYPES),
-              format: {
-                type: "object",
-                description:
-                  "Number columns: style plain, percent or currency, decimals, currency, grouping",
-              },
-              options: { type: "array", items: str() },
-            },
-            ["format", "options"],
-          ),
-        },
-        row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
-        range: nullable("string", { description: "The A1 range the rows cover" }),
-        rows: {
-          type: "array",
-          items: obj({
-            row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
-            cells: {
-              type: "array",
+    SheetRead: obj({
+      id: str(),
+      slug: str(),
+      type: { const: "sheet" },
+      title: str({ description: "Untrusted text" }),
+      version: int({ minimum: 1 }),
+      current_version: int({ minimum: 1 }),
+      columns: {
+        type: "array",
+        items: obj(
+          {
+            letter: str({ description: 'A1 letter, "A" to "CV"' }),
+            name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
+            type: enumOf(SHEET_COLUMN_TYPES),
+            format: {
+              type: "object",
               description:
-                "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
-              items: {},
+                "Number columns: style plain, percent or currency, decimals, currency, grouping",
             },
-          }),
-        },
-        truncated: { type: "boolean" },
-        next_range: nullable("string", { description: "The range to read next when truncated" }),
-        warnings: {
-          type: "array",
-          items: obj({ code: enumOf(["eval_budget"]), message: str() }),
-        },
-        live_draft: {
-          ...nullable("object"),
-          description: "Owners and editors only, as on get_artifact",
-        },
-        untrusted: { const: true },
+            options: { type: "array", items: str() },
+          },
+          ["format", "options"],
+        ),
       },
-      ["live_draft"],
-    ),
+      row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
+      range: nullable("string", { description: "The A1 range the rows cover" }),
+      rows: {
+        type: "array",
+        items: obj({
+          row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
+          cells: {
+            type: "array",
+            description:
+              "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
+            items: {},
+          },
+        }),
+      },
+      truncated: { type: "boolean" },
+      next_range: nullable("string", { description: "The range to read next when truncated" }),
+      warnings: {
+        type: "array",
+        items: obj({ code: enumOf(["eval_budget"]), message: str() }),
+      },
+      untrusted: { const: true },
+    }),
     SheetValue: value,
     SheetEditResult: {
       allOf: [ref("PublishResult"), obj({ changed: counts })],

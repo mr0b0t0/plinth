@@ -840,8 +840,6 @@ export interface SheetRead {
   /** The range to read next when truncated, else null. */
   next_range: string | null;
   warnings: { code: "eval_budget"; message: string }[];
-  /** Owners and editors: unsaved page edits, as on get_artifact. Absent for other roles. */
-  live_draft?: LiveDraftMeta | null;
   untrusted: true;
 }
 

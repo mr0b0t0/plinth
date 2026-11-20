@@ -40,7 +40,7 @@ make a test pass.
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 | A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
-| A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
+| A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text is always quoted, text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`, and so does each `=`, `+`, `-` or `@` after a comma, semicolon or tab inside it; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
 | A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds; numeric text matched in linear time; an edit's inserts and deletes capped at 4 MB of formula text rewritten ([Sheets](#sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -564,7 +564,14 @@ sheets. Text passes six layers:
    text.
 5. **CSV export.** RFC 4180 quoting and the OWASP formula-injection guard: a text value (a literal
    or a formula's text result) starting with `=`, `+`, `-`, `@`, tab or carriage return is written
-   with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF.
+   with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF. The file's separator is
+   a comma, but Excel reads a CSV with the locale's list separator, a semicolon in pt-PT, de and
+   fr, so a cell `Total;=cmd|' /C calc'!A0` written unquoted became two cells there and the second
+   one ran. Every text value is therefore quoted, column names included, so a reader that honours
+   quotes keeps it one cell whatever its separator, and the first line never starts with Excel's
+   `sep=` directive (it starts with `"`). For a reader that splits on a separator anyway, each
+   `=`, `+`, `-` or `@` right after a comma, semicolon or tab inside text gets a `'` too
+   (`Total;'=cmd...`), at the cost of that one character in such text.
 6. **.xlsx export.** Text is written as inline strings, so text starting with `=` stays text;
    formulas come only from the sheet's own formulas, whose functions are the allowlist, so a
    downloaded workbook cannot hold HYPERLINK, WEBSERVICE, DDE (`cmd|...`) or an external

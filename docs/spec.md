@@ -370,7 +370,8 @@ for agents; see [Sheets](#sheets-decided-2026-11-19). Every type is a row of one
   in `versions`. Files it shares with the current version are referenced, not copied.
 - The artifact page shows the list: number, author (person or agent label), note, date.
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
-- Two versions can be compared as a source diff or side by side as rendered pages.
+- Two versions can be compared as a source diff or side by side as rendered pages (a sheet,
+  whose source people never see, only as rendered pages).
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
 
 ### Thumbnails and link previews
@@ -1085,13 +1086,15 @@ a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a sp
 fourth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
-restore, history, diffs and the source editor work as for docs. Cells are versioned content, never
-shared data: every change, an agent's or a person's, is a new version anyone can revert. A sheet is
-not edited on its page yet.
+restore and history work as for docs. People never see the JSON lines: a sheet has no source
+editor (its registry row's `editor` is null), so the app offers no Edit, the editor's address goes
+to the sheet's page, and Compare shows two versions rendered side by side, never a source diff.
+Cells are versioned content, never shared data: every change is a new version anyone can revert.
+A sheet is not edited on its page yet; agents change it.
 
 - **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
   and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
-  row 1 and data starts at row 2, so formulas mean the same in Plinth and in Excel. A column has a
+  row 1 and data starts at row 2, so A1 references mean the same in Plinth and in Excel. A column has a
   `name` (1 to 100 characters, no control or invisible characters), a `type` (`text`, the default,
   `number`, `date`, `checkbox`, `select` or `url`), an optional `width` (40 to 800 pixels), a
   `format` for numbers (`style` `plain`, `percent` or `currency`, `decimals` 0 to 10, `currency` an
@@ -1107,7 +1110,8 @@ not edited on its page yet.
   and the editor.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
-  Each row therefore has one spelling, and a version diff shows only the rows that changed. This
+  Each row therefore has one spelling, and a version's file differs from the last only in the
+  rows that changed. This
   holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it by
   comparing the stored sheet with the folder's in that canonical spelling, never by skipping it.
 - **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
@@ -1123,6 +1127,9 @@ not edited on its page yet.
   nothing that reaches a network, another artifact or the clock beyond today's UTC date (no
   HYPERLINK, WEBSERVICE, INDIRECT, OFFSET, NOW or RAND). Dates are 1900-system serials (a date
   column's literal is its serial in formulas); numbers show rounded to 15 significant digits.
+  A formula whose result is an empty cell (`=B2` on an empty B2, or an `IF` or `INDEX` that
+  returns one) shows blank, as in Google Sheets, where Excel shows 0; in arithmetic, text and
+  comparisons an empty cell is 0 or `""`, as in both.
   Errors are Excel's (`#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`, `#NUM!`) plus `#CYCLE!`
   for every cell on a circular reference and `#LIMIT!` for a cell not computed within the step
   budget. Each formula is computed once, in dependency order, with an explicit stack; one step is
@@ -1151,8 +1158,11 @@ not edited on its page yet.
 - **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx from the artifact
   menu (Download as CSV, Download as Excel (.xlsx)), which also has Print; the frame has no
   buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
-  UTF-8 with a BOM, CRLF, RFC 4180 quoting, and text starting with `=`, `+`, `-`, `@`, tab or
-  carriage return written with a leading `'` (numbers never are). The .xlsx is SpreadsheetML
+  UTF-8 with a BOM, CRLF, RFC 4180 quoting with every text value quoted (column names too, so
+  Excel with a semicolon or tab list separator still reads each as one cell, and the file never
+  starts with Excel's `sep=` directive), text starting with `=`, `+`, `-`, `@`, tab or carriage
+  return written with a leading `'`, and a `'` before `=`, `+`, `-` or `@` right after a comma,
+  semicolon or tab inside text (numbers never are). The .xlsx is SpreadsheetML
   written by Plinth and zipped with fflate 0.8.3: one worksheet named after the title, the header
   in bold, column widths, the frozen pane, number formats from the column formats, text as inline
   strings (text starting with `=` stays text), formulas with Plinth's computed values cached
@@ -1162,7 +1172,13 @@ not edited on its page yet.
   `"csv"` (CSV text) or `"xlsx"` (an .xlsx file in base64, at most 2 MB, of which at most 24 MB of
   its parts is ever decompressed) instead of JSON lines; `"jsonl"` is the default. The first row
   names the columns and each column's type is inferred from its values (all numbers, all dates,
-  all TRUE or FALSE, all links, else text). A CSV never makes a formula: text starting with `=`
+  all TRUE or FALSE, all links, else text); a text column keeps every CSV field as written. A CSV
+  field is a number only when no digit is lost or invented: no leading zero but `0` itself
+  (`00123` stays text), no leading `+` (`+351912345678` stays text) and at most 15 significant
+  digits (a 20-digit id stays text). The decimal mark is a point, or a comma in a file separated
+  by semicolons (`1,50`); thousands separators are read only where they cannot be the decimal
+  mark (`1,234.50`, `1.234,50`, `1,234,567`), so `1,500` in a comma file and `1.500` in a
+  semicolon file stay text. A CSV never makes a formula: text starting with `=`
   stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
   (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
   value is used, and number formats, column widths and frozen columns carry over where they map.
@@ -1186,9 +1202,12 @@ not edited on its page yet.
   `eval_budget` warning and those cells are `#LIMIT!`. It is the `view` action, like `get_artifact`.
   `edit_sheet(id, base_version, ops, note?)` applies 1 to 200 ops (at most 10,000 cells written)
   to `base_version` in order and publishes one new version through `update_artifact`, or nothing:
-  `set` (a block of raw cells from a cell, growing the sheet past its end), `append_rows`,
-  `insert_rows`, `delete_rows`, `set_column` (name, type, format, options, width; `null` clears),
-  `insert_columns` and `delete_columns`. An op that would take the sheet past 10,000 data rows
+  `set` (a block of raw cells from a cell, growing the sheet past its end by at most 1,000 empty
+  rows before the block, else refused with `details.reason` `"too_far_past_end"`; every row it adds
+  counts in `changed.rows_inserted`), `append_rows`, `insert_rows`, `delete_rows`, `set_column`
+  (name, type, format, options, width; `null` clears), `insert_columns` and `delete_columns`.
+  Frozen columns follow column inserts and deletes: columns inserted among them are frozen too (at
+  most 5), and deleted frozen columns leave the frozen pane. An op that would take the sheet past 10,000 data rows
   (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
   references as Excel's structural changes do; references into deleted cells become `#REF!`. Each
   such op rewrites every formula in the sheet, and one call rewrites at most 4 MB (4,194,304

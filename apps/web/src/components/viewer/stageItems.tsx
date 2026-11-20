@@ -26,7 +26,13 @@ import {
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
-import type { AppConfig, ArtifactType, DataCapability, ViewGate } from "@plinth/shared";
+import {
+  type AppConfig,
+  type ArtifactType,
+  type DataCapability,
+  typeDef,
+  type ViewGate,
+} from "@plinth/shared";
 import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
@@ -124,8 +130,9 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
+/** A type with no source editor (a sheet) has no Edit: agents change it. */
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role)
+  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
     ? [
         {
           label: c.live.available ? "Edit source" : "Edit",

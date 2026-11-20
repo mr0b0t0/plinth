@@ -42,5 +42,5 @@ test("the grid renders and CSV downloads from the menu", async ({ page }) => {
   ]);
   expect(download.suggestedFilename()).toBe("Opaque fruit.csv");
   const text = readFileSync((await download.path()) as string, "utf8");
-  expect(text).toBe("﻿Item,Qty\r\nApples,3\r\nPears,6\r\n");
+  expect(text).toBe('﻿"Item","Qty"\r\n"Apples",3\r\n"Pears",6\r\n');
 });

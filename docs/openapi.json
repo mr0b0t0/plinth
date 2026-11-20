@@ -5405,10 +5405,6 @@
               "required": ["code", "message"]
             }
           },
-          "live_draft": {
-            "type": ["object", "null"],
-            "description": "Owners and editors only, as on get_artifact"
-          },
           "untrusted": { "const": true }
         },
         "required": [

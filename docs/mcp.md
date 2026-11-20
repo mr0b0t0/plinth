@@ -855,7 +855,7 @@ A formula cell is `{ f, v }`, where `v` may be `{ "error": "#DIV/0!" }`; every o
 stored value (a leading `'` keeps text literal). `truncated` and `next_range` continue a long
 range. Formulas are evaluated only for the cells returned and what they depend on, within the
 instance's `SHEET_EVAL_BUDGET`; past it, `warnings` holds `eval_budget` and those cells are
-`#LIMIT!`: read a smaller range. Owners and editors also get `live_draft`, as on `get_artifact`.
+`#LIMIT!`: read a smaller range.
 Cell text, formulas and column names are untrusted, written by people and other agents. An
 artifact of another type is refused with `invalid_input` (after the access check).
 
@@ -874,13 +874,13 @@ editor. Scope `artifacts:write`. REST: `POST /api/v1/artifacts/:ref/sheet/edits`
 
 | Op | Shape | Notes |
 | --- | --- | --- |
-| `set` | `{ "op": "set", "at": "B2", "values": [[...], ...] }` | A block of raw cells from `at` (row 2 or below); grows the sheet past its end |
+| `set` | `{ "op": "set", "at": "B2", "values": [[...], ...] }` | A block of raw cells from `at` (row 2 or below); grows the sheet past its end by at most 1,000 empty rows before the block (past that, `invalid_input` with `details.reason` `"too_far_past_end"`). The rows it adds count in `rows_inserted` |
 | `append_rows` | `{ "op": "append_rows", "values": [[...]] }` | |
 | `insert_rows` | `{ "op": "insert_rows", "before": 5, "count": 1, "values": [[...]] }` | `count` defaults to the rows in `values`, or 1. Formula references move |
 | `delete_rows` | `{ "op": "delete_rows", "from": 5, "count": 1 }` | References into deleted rows become `#REF!` |
 | `set_column` | `{ "op": "set_column", "column": "C", "name": "...", "type": "number", "format": {...}, "options": [...], "width": 120 }` | Every field optional; `null` clears `format`, `options` or `width` |
-| `insert_columns` | `{ "op": "insert_columns", "before": "C", "columns": [{ "name": "Note", "type": "text" }] }` | `before` one past the last column adds them at the end |
-| `delete_columns` | `{ "op": "delete_columns", "from": "C", "count": 1 }` | A sheet keeps at least one column |
+| `insert_columns` | `{ "op": "insert_columns", "before": "C", "columns": [{ "name": "Note", "type": "text" }] }` | `before` one past the last column adds them at the end. Inserted among the frozen columns, they are frozen too (at most 5) |
+| `delete_columns` | `{ "op": "delete_columns", "from": "C", "count": 1 }` | A sheet keeps at least one column. Deleted frozen columns leave the frozen pane |
 
 The call publishes one version through `update_artifact` (same rights, rate limit and warnings), or
 nothing: a bad op is `invalid_input` with `details.op` (its index), and a result that breaks a

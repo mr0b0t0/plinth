@@ -29,6 +29,7 @@ import {
   LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
+  type SheetExportFormat,
 } from "@plinth/shared";
 
 export interface PrintMessage {
@@ -104,8 +105,6 @@ export function postToDeck(
 }
 
 // ---------- sheets (the sheet type) ----------
-
-export type SheetExportFormat = "csv" | "xlsx";
 
 export interface ExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;

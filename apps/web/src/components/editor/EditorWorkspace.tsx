@@ -71,6 +71,12 @@ export function draftModelName(def: ArtifactTypeDef): string {
   return `draft.${ext}`;
 }
 
+/** The type's editor settings. The editor page mounts the workspace only for a type that has them. */
+function editorOf(def: ArtifactTypeDef): NonNullable<ArtifactTypeDef["editor"]> {
+  if (!def.editor) throw new Error(`Type ${def.id} has no source editor`);
+  return def.editor;
+}
+
 /** A size in whole megabytes for messages ("1 MB", "5 MB"). */
 const megabytes = (n: number) => `${Math.round(n / (1024 * 1024))} MB`;
 
@@ -111,6 +117,7 @@ export default function EditorWorkspace({
   const toast = useToast();
   const id = artifact.id;
   const { def } = sourceOf(artifact);
+  const editor = editorOf(def);
   const label = def.sourceLabel;
   // The pane header starts with a capital, as "HTML" and "Markdown" do ("Design system JSON").
   const paneLabel = label.charAt(0).toUpperCase() + label.slice(1);
@@ -496,7 +503,7 @@ export default function EditorWorkspace({
             onCopyDraft={onCopyDraft}
             onLoadLatest={onLoadLatest}
             onSaveOnTop={() => void save(conflict.current)}
-            language={def.editor.language}
+            language={editor.language}
             sourceLabel={label}
           />
         )}
@@ -522,8 +529,8 @@ export default function EditorWorkspace({
                       modifiedLabel={`${label} of ${artifact.title}, based on v${base.version}`}
                       onModifiedChange={setHtml}
                       path={`inmemory://plinth/${id}/reapply`}
-                      language={def.editor.language}
-                      wordWrap={def.editor.wordWrap}
+                      language={editor.language}
+                      wordWrap={editor.wordWrap}
                     />
                   ) : (
                     <CodeEditor
@@ -531,8 +538,8 @@ export default function EditorWorkspace({
                       onChange={setHtml}
                       ariaLabel={`${label} of ${artifact.title}. Tab indents; press ${TAB_FOCUS_KEYS} to make Tab move focus.`}
                       path={`inmemory://plinth/${id}/${draftModelName(def)}`}
-                      language={def.editor.language}
-                      wordWrap={def.editor.wordWrap}
+                      language={editor.language}
+                      wordWrap={editor.wordWrap}
                     />
                   )}
                 </div>

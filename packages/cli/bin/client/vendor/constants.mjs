@@ -190,6 +190,12 @@ export const LIMITS = {
   /** Cells one edit_sheet call writes. */
   maxSheetOpCells: 10_000,
   /**
+   * Empty rows one edit_sheet set may add between the sheet's last row and the row it writes
+   * (a set at B5000 on a sheet of 10 data rows would add 4,988). Past it the op is refused with
+   * reason "too_far_past_end": append_rows or insert_rows add rows on purpose.
+   */
+  maxSheetSetGapRows: 1_000,
+  /**
    * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
    * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
    * four passes over a sheet that is all formulas.
@@ -386,6 +392,9 @@ export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 /** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
 export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
 export const RENDERER_PROTOCOL_VERSION = 1;
+
+/** The files a sheet's frame builds when the app asks it to (the renderer message `export`). */
+export const SHEET_EXPORT_FORMATS = ["csv", "xlsx"];
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an

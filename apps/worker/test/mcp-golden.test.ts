@@ -7,8 +7,8 @@
 // publish note, the type and content descriptions and the instructions' deck sentence), so did
 // comments from the page (the page anchor note in list_comments and list_mentions), and so did the
 // sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
-// and content_format descriptions, the untrusted note's sheet sentence and the instructions' sheet
-// sentence).
+// and content_format descriptions, the untrusted note's sheet sentence, the instructions' sheet
+// sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -65,7 +65,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "65665295660c5bee41b7e38d79290d2101312649f0f23383a045baecda26ec3c",
+      tools: "17a91ddc625c642a267f54fbd800db91f2d23f78066673c3191de049cf6778e4",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -75,7 +75,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "9a60caaaac7c4fda83036657ecbd7c1a6ea7498575430ab059d5ed44f056a1a2",
+      tools: "e901c4b565d46eb54a4eeef3a5778fee0c9e2b405dfefdf3eddfb416bbdbfa96",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -87,7 +87,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "624b934b7d6d832b1fb4a156c1eb90a42a58da7868562472ee95461ead35ac00",
+      tools: "42e514727bfeec9c846c74167c42bf2b0e6c6e8d0db9137b44c538968ec3bacc",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

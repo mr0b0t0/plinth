@@ -27,7 +27,7 @@ export const ARTIFACT_TYPES = [
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /** The languages the source editor holds. The web app has a Monaco setup for each one. */
-export type EditorLanguage = "html" | "markdown" | "json" | "plaintext";
+export type EditorLanguage = "html" | "markdown" | "json";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -50,7 +50,11 @@ export interface ArtifactTypeDef {
   assetTypes: RegExp | null;
   /** Renderer files under /__plinth/types/<id>/, or null for a type served as-is. */
   renderer: { script: string; style: string } | null;
-  editor: { language: EditorLanguage; wordWrap: "on" | "off" };
+  /**
+   * The source editor's settings, or null for a type people never see the source of (a sheet):
+   * the app then offers no Edit and no source diff, and agents change it.
+   */
+  editor: { language: EditorLanguage; wordWrap: "on" | "off" } | null;
   /**
    * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
    * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.

@@ -357,7 +357,7 @@ export const readSheetInput = z.object({
     .max(40)
     .optional()
     .describe(
-      'A1 range, e.g. "A1:F200", "B:D" (whole columns) or "2:50" (rows); default the whole sheet',
+      'A1 range, e.g. "A1:F200", "B:D" (whole columns) or "2:50" (rows); default every data row (row 2 down, every column)',
     ),
   values: z
     .boolean()
