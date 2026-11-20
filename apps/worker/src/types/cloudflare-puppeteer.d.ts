@@ -11,6 +11,11 @@ declare module "@cloudflare/puppeteer-types" {
       opts?: { waitUntil?: string; timeout?: number },
     ): Promise<{ ok(): boolean; status(): number; url(): string } | null>;
     screenshot(opts?: { type?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Uint8Array>;
+    createCDPSession(): Promise<CDPSession>;
+  }
+  /** A DevTools protocol session (only the call services/thumbnails.ts makes). */
+  export interface CDPSession {
+    send(method: "Network.setCookie", params: object): Promise<unknown>;
   }
   export interface Browser {
     newPage(): Promise<Page>;

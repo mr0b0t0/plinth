@@ -10,6 +10,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
+  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
+  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
+  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
+  shows in full on hover. On phones the category moves from beside the title to a row's second
+  line, and on a card it takes the place of "You".
 - **Who is viewing: names and the people list.** Set your name from the account menu ("Your
   name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
   on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
@@ -19,18 +25,23 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   page. The list and the owner's sharing settings name a person once they have commented, entered
   something or published a version there, so adding an address never reveals whether it has an
   account. Names are display text: no `@`, no invisible characters, never a role. Plugin 0.22.0.
-- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
-  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
-  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
-  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
-  shows in full on hover. On phones the category moves from beside the title to a row's second
-  line, and on a card it takes the place of "You".
 - **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
   PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
   lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
   The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
   On instances with opaque content isolation the file leaves out the deck's image files, and says
   so. Plugin 0.23.0.
+- **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
+  posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
+  `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
+  IAB ads, print and slides. Plinth lays the boards out on a canvas you pan and zoom, in rows
+  packed to fill the screen (Fit, 100%, a board's name zooms to it), renders each one alone at its
+  exact size in its own frame with an opaque origin, so its scripts, styles and images run without
+  reaching the page or each other, lets you interact with one board, pins comments to boards, and
+  prints or saves the design as PDF one board per page. People see the design, never its source:
+  agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
+  a folder with `design.html` at its top as a design. Thumbnails show each board
+  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.24.0.
 
 ## 0.6.0 (2026-11-20)
 

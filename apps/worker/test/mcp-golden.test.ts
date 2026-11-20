@@ -6,8 +6,10 @@
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
 // publish note, the type and content descriptions and the instructions' deck sentence), so did
 // comments from the page (the page anchor note in list_comments and list_mentions), so did who
-// is viewing (names and the people list in list_artifact_data's description), and so did the
-// slides .pptx download (its clause in the slides publish note).
+// is viewing (names and the people list in list_artifact_data's description), so did the
+// slides .pptx download (its clause in the slides publish note), and so did the design type
+// (its publish note, the type, content, update and get_artifact descriptions and the
+// instructions' design sentence).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -56,13 +58,13 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "8daece5aa1ae373f7bf0790a789834c922c56339db2a009b44e928ad9d831d4c";
+const INSTRUCTIONS = "1409d01610177a0c469f238d2ce42cbe885900dc9b32b907b0efb1290f253ae8";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "59e200e61494321b58ec4418ef6e8a9b7c5166fa4943df5098332348d80117bc",
+      tools: "851a86217b437868c2f5a5b5ae624169e8c9136f57d273fed1256372245aedc6",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -72,7 +74,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "4275e99824bb6646d56b3528661d3a0c199696d0f331c0cf431324ddb8e967e2",
+      tools: "705159db4c168384a43fb2d1e903d69485de926070ffc42c47700e244cad30ca",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -84,7 +86,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "e807ddd617a10da4d9d1ccb62c080ebe78e1fcffd68078d2fa4233ffbbb59315",
+      tools: "a6fb2d1dc874edad46b41066120172acd654b89baa833e9df317ef158915211a",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

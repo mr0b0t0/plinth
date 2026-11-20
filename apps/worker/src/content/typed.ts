@@ -38,6 +38,21 @@ function notFound(config: Config, body = "Not found"): Response {
   return new Response(body, { status: 404, headers });
 }
 
+/**
+ * Where a type's framed page lives (renderer.frame, a design's board loader):
+ * /__plinth/frames/<id>/<file>. Not under /__plinth/types/, whose files are public: this page is
+ * answered only behind the content pass (serve.ts, the "pass" reserved row).
+ */
+export const TYPE_FRAMES_PREFIX = `${CONTENT_RESERVED_PREFIX}frames/`;
+
+/** The type whose framed page this path names, or null. */
+export function typeFrameRequest(path: string): ArtifactTypeDef | null {
+  if (!path.startsWith(TYPE_FRAMES_PREFIX)) return null;
+  const m = /^([^/]+)\/([^/]+)$/.exec(path.slice(TYPE_FRAMES_PREFIX.length));
+  const def = m?.[1] ? typeDef(m[1]) : null;
+  return def?.renderer?.frame && def.opaqueFrames && m?.[2] === def.renderer.frame ? def : null;
+}
+
 /** Whether an If-None-Match header matches an ETag (weak comparison, RFC 9110 13.1.2). */
 export function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
   if (!ifNoneMatch) return false;

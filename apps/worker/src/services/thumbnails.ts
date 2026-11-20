@@ -17,13 +17,24 @@
 // wrote it) is captured with a pass that reads none. The pass is bound to the captured version, so
 // the content host serves that version on every path, the artifact's root included. Whatever the
 // version, the browser lets the page reach only its own origin and the hosts its CSP allows, and no
-// navigation opens another version or a Plinth helper path
+// navigation opens another version or a Plinth helper path other than the type's framed page (a
+// design's board loader, which holds no version data). A design's boards get the same pass in
+// their own cookie partition (captureFrameCookies)
 // (docs/security.md#thumbnails-and-link-previews).
 import puppeteer from "@cloudflare/puppeteer";
-import { CONTENT_RESERVED_PREFIX } from "@plinth/shared";
-import { type Bindings, type Config, contentOrigin, thumbnailsActive } from "../config.ts";
+import { CONTENT_RESERVED_PREFIX, typeDef } from "@plinth/shared";
+import {
+  type Bindings,
+  type Config,
+  contentOrigin,
+  registrableDomain,
+  thumbnailsActive,
+} from "../config.ts";
 import { contentSources } from "../content/csp.ts";
-import { issueEnterUrl } from "../content/tokens.ts";
+import { contentCookieName } from "../content/serve.ts";
+import { issueEnterUrl, passMaxAgeS, signContentCookie } from "../content/tokens.ts";
+import { TYPE_FRAMES_PREFIX } from "../content/typed.ts";
+import { secureFlag } from "../lib/cookies.ts";
 import { captureReadsData } from "../policy.ts";
 import { artifactRoot } from "./storage.ts";
 
@@ -57,8 +68,9 @@ export function thumbnailKey(artifactId: string, n: number): string {
  * Where the capture browser lets a page go: the artifact's own content origin (and, under the path
  * fallback, only its own path there), and the hosts the content CSP lets any page load from (the
  * CDN allowlist and Google Fonts), never as a navigation. A navigation (top-level or a frame's)
- * under /__plinth/ goes only to the captured version, /__plinth/v/<version>/, and the enter step
- * that leads there.
+ * under /__plinth/ goes only to the captured version, /__plinth/v/<version>/, the enter step
+ * that leads there, and the one framed page the artifact's type renders its frames from (a
+ * design's board loader).
  */
 export interface CaptureScope {
   /** contentOrigin(config, id): an origin, or an origin and path under the path fallback. */
@@ -67,9 +79,27 @@ export interface CaptureScope {
   version: number;
   /** Hosts reached over https on their default port, for subresources only. */
   hosts: readonly string[];
+  /**
+   * The type's framed page under the artifact's base (/__plinth/frames/<type>/<file>), for a type
+   * that renders its author HTML in opaque frames; absent for every other type. It holds no
+   * version data, so the frames may open it as a navigation.
+   */
+  frame?: string;
 }
 
-export function captureScope(config: Config, artifactId: string, version: number): CaptureScope {
+/** The framed page of a type with opaque frames (renderer.frame), or undefined. */
+function typeFramePath(type: string | undefined): string | undefined {
+  const def = type === undefined ? null : typeDef(type);
+  const file = def?.opaqueFrames ? def.renderer?.frame : undefined;
+  return def && file ? `${TYPE_FRAMES_PREFIX}${def.id}/${file}` : undefined;
+}
+
+export function captureScope(
+  config: Config,
+  artifactId: string,
+  version: number,
+  type?: string,
+): CaptureScope {
   const s = contentSources(config);
   const hosts = new Set([
     ...s.script,
@@ -82,7 +112,13 @@ export function captureScope(config: Config, artifactId: string, version: number
     ...s.worker,
     ...s.manifest,
   ]);
-  return { artifact: contentOrigin(config, artifactId), version, hosts: [...hosts] };
+  const frame = typeFramePath(type);
+  return {
+    artifact: contentOrigin(config, artifactId),
+    version,
+    hosts: [...hosts],
+    ...(frame ? { frame } : {}),
+  };
 }
 
 /** The path under the artifact's base that opens version n: what the capture's enter leads to. */
@@ -100,8 +136,9 @@ const LOCAL_SCHEMES: ReadonlySet<string> = new Set(["data:", "blob:", "about:"])
  *
  * A navigation on the artifact under /__plinth/ must also stay on the captured version: its own
  * path (/__plinth/v/<n>/ and below, or /__plinth/v/<n>, which the content host redirects to the
- * slash), or the enter step whose `next` is exactly that path. Another version and every reserved
- * helper are aborted as navigations. The artifact's other paths (`/`, `/chart.html`) stay open:
+ * slash), or the enter step whose `next` is exactly that path, or exactly the type's framed page
+ * (scope.frame: a design's artboards load it, and it holds no version data). Another version and
+ * every other reserved helper are aborted as navigations. The artifact's other paths (`/`, `/chart.html`) stay open:
  * the capture pass is bound to its version, so the content host serves them from it, never from
  * the current version. Subresources keep the origin-wide rule.
  */
@@ -132,6 +169,7 @@ export function captureRequestAllowed(
       const next = u.searchParams.getAll("next");
       return next.length === 1 && next[0] === version;
     }
+    if (scope.frame !== undefined && rest === scope.frame) return true;
     return rest === version.slice(0, -1) || rest.startsWith(version);
   }
   if (navigation) return false;
@@ -170,18 +208,143 @@ export async function guardCapturePage(page: GuardedPage, scope: CaptureScope): 
   });
 }
 
-/** Opens `url` in a browser, held to `scope`, and returns a JPEG of the first screen. */
-export type Shooter = (browser: Fetcher, url: string, scope: CaptureScope) => Promise<Uint8Array>;
+/**
+ * A cookie the browser holds before it opens the page: the parameters of the DevTools protocol's
+ * Network.setCookie, partition key included.
+ */
+export interface CaptureCookie {
+  name: string;
+  value: string;
+  url: string;
+  path: string;
+  secure: true;
+  httpOnly: true;
+  sameSite: "None";
+  /** Seconds since the epoch. */
+  expires: number;
+  partitionKey?: { topLevelSite: string; hasCrossSiteAncestor: true };
+}
+
+/**
+ * Opens `url` in a browser, held to `scope`, and returns a JPEG of the first screen. `cookies` are
+ * set before the page opens.
+ */
+export type Shooter = (
+  browser: Fetcher,
+  url: string,
+  scope: CaptureScope,
+  cookies: readonly CaptureCookie[],
+) => Promise<Uint8Array>;
+
+/**
+ * A second capture pass for the cookie partition of documents that have a cross-site ancestor,
+ * for a type that renders its author HTML in opaque frames (a design's artboards).
+ *
+ * The capture loads the version top-level, so the enter sets its cookie in the partition of a
+ * top-level, same-site document. A board's document is opaque (CSP and iframe `sandbox`), so
+ * Chromium keys the board's own requests (its images, styles and scripts) to the same top-level
+ * site with the cross-site ancestor bit set, a partition the enter's cookie is not in: without
+ * this cookie they would go to the app's gate and the thumbnail would show boards without them.
+ * In the app the shell is already a cross-site frame, so viewing needs nothing of this. Under
+ * CONTENT_ISOLATION=opaque the shell is itself opaque at the top, where Chromium keys no
+ * partition at all, so there the cookie is unpartitioned: it lives only in this capture's own
+ * browser, which loads this one artifact and is closed afterwards.
+ *
+ * The cookie is the same pass the enter sets (a capture: no identity, two minutes, this artifact
+ * at this epoch only, bound to the captured version, and reading no shared data when the enter's
+ * pass reads none), handed to Plinth's own browser and never put in a URL. Empty where a Secure
+ * cookie cannot be set (a plain-http instance on a name other than localhost).
+ */
+export async function captureFrameCookies(
+  config: Config,
+  target: { artifactId: string; accessEpoch: number; number: number; readsData: boolean },
+  nowMs = Date.now(),
+): Promise<CaptureCookie[]> {
+  const origin = new URL(contentOrigin(config, target.artifactId));
+  if (!secureFlag(config.scheme, origin.host)) return [];
+  // In the staging path fallback every artifact lives on the app host under its own path.
+  const path = config.contentPathFallback ? `${origin.pathname}/` : "/";
+  return [
+    {
+      name: contentCookieName(config, origin),
+      value: await signContentCookie(
+        config,
+        target.artifactId,
+        target.accessEpoch,
+        undefined,
+        "capture",
+        target.number,
+        false,
+        undefined,
+        !target.readsData,
+      ),
+      url: `${origin.origin}${path}`,
+      path,
+      secure: true,
+      httpOnly: true,
+      sameSite: "None",
+      expires: Math.floor(nowMs / 1000) + passMaxAgeS("capture"),
+      ...(config.contentIsolation === "opaque"
+        ? {}
+        : {
+            partitionKey: {
+              topLevelSite: `${origin.protocol}//${registrableDomain(origin.host)}`,
+              hasCrossSiteAncestor: true as const,
+            },
+          }),
+    },
+  ];
+}
+
+/**
+ * What the capture's browser opens for version `number`, and the cookies it holds first. The
+ * exact version, even if a newer one lands while the browser loads, entered with a capture pass:
+ * no identity, and the one pass the content host serves top-level. It reads no shared data when
+ * the version's writer may not (policy.captureReadsData). A type whose author HTML renders in
+ * opaque frames gets the same pass in their partition too (captureFrameCookies).
+ */
+export async function captureLoad(
+  config: Config,
+  target: {
+    artifactId: string;
+    accessEpoch: number;
+    type: string;
+    number: number;
+    readsData: boolean;
+  },
+): Promise<{ url: string; cookies: CaptureCookie[] }> {
+  const url = await issueEnterUrl(
+    config,
+    { id: target.artifactId, accessEpoch: target.accessEpoch },
+    captureVersionPath(target.number),
+    undefined,
+    { capture: true, captureVersion: target.number, noData: !target.readsData },
+  );
+  const cookies = typeDef(target.type)?.opaqueFrames
+    ? await captureFrameCookies(config, target)
+    : [];
+  return { url, cookies };
+}
 
 async function browserShot(
   binding: Fetcher,
   url: string,
   scope: CaptureScope,
+  cookies: readonly CaptureCookie[],
 ): Promise<Uint8Array> {
   const browser = await puppeteer.launch(binding);
   try {
     const page = await browser.newPage();
     await guardCapturePage(page as unknown as GuardedPage, scope);
+    if (cookies.length > 0) {
+      const cdp = await page.createCDPSession();
+      for (const cookie of cookies) {
+        // Without it the capture still runs, as before: boards without their own files.
+        await cdp.send("Network.setCookie", cookie).catch((e: unknown) => {
+          console.warn(`capture cookie not set: ${e instanceof Error ? e.message : e}`);
+        });
+      }
+    }
     await page.setViewport({ width: THUMB.width, height: THUMB.height, deviceScaleFactor: 1 });
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     const res = await page.goto(url, {
@@ -205,9 +368,10 @@ export function setThumbnailShooter(s: Shooter | null): void {
   shooter = s ?? browserShot;
 }
 
-interface CaptureTarget {
+export interface CaptureTarget {
   artifactId: string;
   accessEpoch: number;
+  type: string;
   versionId: string;
   number: number;
   /** policy.captureReadsData for the version's writer. */
@@ -251,14 +415,14 @@ async function setState(db: D1Database, versionId: string, state: "ok" | "failed
 }
 
 /** The live (not deleted, not taken down) artifact and its version n, or null. */
-async function captureTarget(
+export async function captureTarget(
   db: D1Database,
   artifactId: string,
   n: number,
 ): Promise<CaptureTarget | null> {
   const row = await db
     .prepare(
-      `SELECT a.id AS artifact_id, a.access_epoch, v.id AS version_id, v.number,
+      `SELECT a.id AS artifact_id, a.access_epoch, a.type, v.id AS version_id, v.number,
               v.created_by_user, c.artifact_id AS bound_artifact_id
        FROM artifacts a JOIN versions v ON v.artifact_id = a.id
        LEFT JOIN agent_connections c ON c.id = v.created_by_connection
@@ -268,6 +432,7 @@ async function captureTarget(
     .first<{
       artifact_id: string;
       access_epoch: number;
+      type: string;
       version_id: string;
       number: number;
       created_by_user: string | null;
@@ -277,6 +442,7 @@ async function captureTarget(
     ? {
         artifactId: row.artifact_id,
         accessEpoch: row.access_epoch,
+        type: row.type,
         versionId: row.version_id,
         number: row.number,
         readsData: captureReadsData({
@@ -302,18 +468,9 @@ export async function captureThumbnail(
   if (!target) return "skipped";
   if (!(await claimThumbnail(env.DB, target.versionId).catch(() => false))) return "skipped";
   try {
-    // The exact version, even if a newer one lands while the browser loads, entered with a
-    // capture pass: no identity, and the one pass the content host serves top-level. It reads no
-    // shared data when the version's writer may not (policy.captureReadsData).
-    const url = await issueEnterUrl(
-      config,
-      { id: target.artifactId, accessEpoch: target.accessEpoch },
-      captureVersionPath(target.number),
-      undefined,
-      { capture: true, captureVersion: target.number, noData: !target.readsData },
-    );
-    const scope = captureScope(config, target.artifactId, target.number);
-    const jpeg = await withBudget(shooter(env.BROWSER, url, scope), THUMB.budgetMs);
+    const { url, cookies } = await captureLoad(config, target);
+    const scope = captureScope(config, target.artifactId, target.number, target.type);
+    const jpeg = await withBudget(shooter(env.BROWSER, url, scope, cookies), THUMB.budgetMs);
     if (jpeg.byteLength === 0) throw new Error("empty screenshot");
     const key = thumbnailKey(target.artifactId, target.number);
     await env.FILES.put(key, jpeg, { httpMetadata: { contentType: "image/jpeg" } });

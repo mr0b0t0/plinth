@@ -845,7 +845,10 @@ export class VersionStager implements Stager {
         files,
         manifestPaths,
         sources: contentSources(this.ctx.config),
-        isolation: this.ctx.config.contentIsolation,
+        // A type whose page shows author HTML only in opaque frames (a design's artboards) is
+        // checked as opaque isolation would check it, whatever the instance runs.
+        isolation: def.opaqueFrames ? "opaque" : this.ctx.config.contentIsolation,
+        ...(def.opaqueFrames ? { opaqueReason: "artboard" as const } : {}),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
         typed: typeSourceWarnings(typedSource),
