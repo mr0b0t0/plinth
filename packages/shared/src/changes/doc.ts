@@ -1,12 +1,19 @@
-// What changed in a doc (content.md), block by block, each located by the nearest heading above
-// it: headings added, removed or renamed; paragraphs, lists, quotes, code blocks and tables
-// added, removed or changed, with excerpts of their visible text; images added, removed or
-// described differently. Also used for a design system's guidelines.
+// What changed in a doc (content.md), block by block, in the order a person reads them, each
+// located by the nearest heading above it: headings added, removed or renamed; paragraphs, quotes,
+// code blocks, tables and lists added, removed or changed, with excerpts of their visible text (a
+// changed list's items one at a time); images added, removed or described differently.
+// Also used for a design system's guidelines.
 import { diffSequence } from "./diff.ts";
-import { type MdBlock, type MdBlockKind, type MdImage, markdownBlocks } from "./markdownText.ts";
-import { multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
+import {
+  type MdBlock,
+  type MdBlockKind,
+  type MdImage,
+  type MdListItem,
+  markdownBlocks,
+} from "./markdownText.ts";
+import { inReadingOrder, multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
 import { changeExcerpt, differenceExcerpts, quoted } from "./text.ts";
-import type { ChangeCollector } from "./types.ts";
+import type { ChangeCollector, ChangeItem } from "./types.ts";
 
 const NOUN: Record<Exclude<MdBlockKind, "image" | "definition">, string> = {
   heading: "Heading",
@@ -18,13 +25,36 @@ const NOUN: Record<Exclude<MdBlockKind, "image" | "definition">, string> = {
   divider: "Divider",
 };
 
-/** For each block, the text of the nearest heading above it ("" before the first). */
-function headingsAbove(blocks: readonly MdBlock[]): string[] {
-  const out: string[] = [];
-  let last = "";
-  for (const b of blocks) {
-    out.push(last);
-    if (b.kind === "heading") last = b.text;
+/** Where a block is: under a heading, or (for a heading) after one of the same level. */
+interface Place {
+  heading: string;
+  after: boolean;
+}
+
+/**
+ * For each block, its place. A block is under the nearest heading above it. A heading is under
+ * the nearest heading above it of a higher level, or after the nearest one of its own level when
+ * that one comes later: "Plot 5" is after "Plot 4", not under it.
+ */
+function placesOf(blocks: readonly MdBlock[]): Place[] {
+  const out: Place[] = [];
+  let last: MdBlock | null = null;
+  // The latest heading of each level, 1 to 6, and its index.
+  const latest: ({ block: MdBlock; at: number } | null)[] = [null, null, null, null, null, null];
+  for (const [at, b] of blocks.entries()) {
+    if (b.kind !== "heading") {
+      out.push({ heading: last?.text ?? "", after: false });
+      continue;
+    }
+    const level = b.level ?? 1;
+    let near: { block: MdBlock; at: number } | null = null;
+    for (let l = 1; l <= level; l++) {
+      const h = latest[l - 1];
+      if (h && (!near || h.at > near.at)) near = h;
+    }
+    out.push({ heading: near?.block.text ?? "", after: (near?.block.level ?? 1) === level });
+    latest[level - 1] = { block: b, at };
+    last = b;
   }
   return out;
 }
@@ -40,18 +70,79 @@ export interface DocScope {
   prefix?: string;
 }
 
-function place(heading: string, scope: DocScope): string {
-  if (!scope.prefix) return heading === "" ? "" : `Under ${quoted(heading)}`;
-  return heading === "" ? scope.prefix : `${scope.prefix}, under ${quoted(heading)}`;
+function place(p: Place, scope: DocScope): string {
+  if (p.heading === "") return scope.prefix ?? "";
+  const rel = `${p.after ? "after" : "under"} ${quoted(p.heading)}`;
+  return scope.prefix ? `${scope.prefix}, ${rel}` : `${rel[0]?.toUpperCase()}${rel.slice(1)}`;
+}
+
+/** One item, with the position that sorts it into reading order. */
+interface Event {
+  key: number;
+  item: ChangeItem;
+}
+
+/** A block's visible text, a list's items set apart with " · " so each one stays plain. */
+function shownText(x: MdBlock): string {
+  return x.kind === "list" && x.items ? x.items.map((i) => i.text).join(" · ") : x.text;
+}
+
+/** A list's items that changed, one item each, in the order of the list. */
+function listItemChanges(x: MdBlock, y: MdBlock, where: string): ChangeItem[] {
+  const ai = x.items ?? [];
+  const bi = y.items ?? [];
+  const at = new Map<MdListItem, number>();
+  for (const [k, i] of ai.entries()) at.set(i, k);
+  for (const [k, i] of bi.entries()) at.set(i, k);
+  const { hunks } = diffSequence(
+    ai.map((i) => i.text),
+    bi.map((i) => i.text),
+  );
+  const out: ChangeItem[] = [];
+  for (const h of hunks) {
+    const p = pairInOrder(
+      ai.slice(h.aStart, h.aEnd),
+      bi.slice(h.bStart, h.bEnd),
+      undefined,
+      (u, v) => sharesWord(u.text, v.text),
+    );
+    const pos = (i: MdListItem) => at.get(i) as number;
+    for (const { step } of inReadingOrder(p, pos, pos, h.bStart)) {
+      if (step.x && step.y) {
+        out.push({
+          kind: "changed",
+          where,
+          what: "List item changed",
+          ...differenceExcerpts(step.x.text, step.y.text),
+        });
+      } else if (step.y) {
+        out.push({
+          kind: "added",
+          where,
+          what: "List item added",
+          after: changeExcerpt(step.y.text),
+        });
+      } else if (step.x) {
+        out.push({
+          kind: "removed",
+          where,
+          what: "List item removed",
+          before: changeExcerpt(step.x.text),
+        });
+      }
+    }
+  }
+  return out;
 }
 
 interface Placed {
   image: MdImage;
   where: string;
+  key: number;
 }
 
 /** Images of one changed region: each side's images with the place of the block they are in. */
-function describeImages(out: ChangeCollector, a: readonly Placed[], b: readonly Placed[]): void {
+function imageEvents(a: readonly Placed[], b: readonly Placed[]): Event[] {
   const bySrc = (list: readonly Placed[]) => {
     const m = new Map<string, Placed>();
     for (const p of list) if (!m.has(p.image.src)) m.set(p.image.src, p);
@@ -63,29 +154,40 @@ function describeImages(out: ChangeCollector, a: readonly Placed[], b: readonly 
   );
   const oldBySrc = bySrc(a);
   const newBySrc = bySrc(b);
+  const out: Event[] = [];
   for (const src of removed) {
-    const { image, where } = oldBySrc.get(src) as Placed;
+    const { image, where, key } = oldBySrc.get(src) as Placed;
     const name = imageName(image);
-    out.add({ kind: "removed", where, what: name ? `Image ${name} removed` : "Image removed" });
+    out.push({
+      key,
+      item: { kind: "removed", where, what: name ? `Image ${name} removed` : "Image removed" },
+    });
   }
   for (const src of added) {
-    const { image, where } = newBySrc.get(src) as Placed;
+    const { image, where, key } = newBySrc.get(src) as Placed;
     const name = imageName(image);
-    out.add({ kind: "added", where, what: name ? `Image ${name} added` : "Image added" });
+    out.push({
+      key,
+      item: { kind: "added", where, what: name ? `Image ${name} added` : "Image added" },
+    });
   }
   for (const [src, { image: was }] of oldBySrc) {
     const placed = newBySrc.get(src);
     const now = placed?.image;
     if (placed && now && now.alt !== was.alt && !removed.includes(src) && !added.includes(src)) {
-      out.add({
-        kind: "changed",
-        where: placed.where,
-        what: "Image description changed",
-        before: changeExcerpt(was.alt),
-        after: changeExcerpt(now.alt),
+      out.push({
+        key: placed.key,
+        item: {
+          kind: "changed",
+          where: placed.where,
+          what: "Image description changed",
+          before: changeExcerpt(was.alt),
+          after: changeExcerpt(now.alt),
+        },
       });
     }
   }
+  return out;
 }
 
 /** Adds the changes from `before` to `after`, two Markdown texts, to `out`. */
@@ -97,8 +199,8 @@ export function describeMarkdown(
 ): void {
   const a = markdownBlocks(before);
   const b = markdownBlocks(after);
-  const aAbove = headingsAbove(a);
-  const bAbove = headingsAbove(b);
+  const aPlace = placesOf(a);
+  const bPlace = placesOf(b);
   const { hunks, exact } = diffSequence(
     a.map((x) => x.raw),
     b.map((x) => x.raw),
@@ -114,9 +216,11 @@ export function describeMarkdown(
     const index = new Map<MdBlock, number>();
     for (const [k, x] of removedBlocks.entries()) index.set(x, h.aStart + k);
     for (const [k, x] of addedBlocks.entries()) index.set(x, h.bStart + k);
-    const hunkWhere = place(bAbove[h.bStart] ?? aAbove[h.aStart] ?? "", scope);
+    const at = (x: MdBlock) => index.get(x) as number;
+    const whereA = (x: MdBlock) => place(aPlace[at(x)] as Place, scope);
+    const whereB = (y: MdBlock) => place(bPlace[at(y)] as Place, scope);
     const shown = (x: MdBlock) => x.kind !== "image" && x.kind !== "definition";
-    const { pairs, removed, added } = pairInOrder(
+    const paired = pairInOrder(
       removedBlocks.filter(shown),
       addedBlocks.filter(shown),
       (x, y) => x.kind === y.kind,
@@ -124,75 +228,124 @@ export function describeMarkdown(
       // but sits before one that does was added there.
       (x, y) => sharesWord(x.text, y.text),
     );
-    // Removals, then changes, then additions, each in order; then the region's images.
-    for (const x of removed) {
-      const where = place(aAbove[index.get(x) as number] ?? "", scope);
-      if (x.kind === "heading") {
-        out.add({ kind: "removed", where, what: `Heading ${quoted(x.text)} removed` });
-      } else {
-        const noun = NOUN[x.kind as keyof typeof NOUN];
-        out.add({ kind: "removed", where, what: `${noun} removed`, before: changeExcerpt(x.text) });
+    const steps = inReadingOrder(paired, at, at, h.bStart);
+    const events: Event[] = [];
+    const push = (key: number, item: ChangeItem) => events.push({ key, item });
+    // Where each removed block (an image's, too) sorts: just after the pair before it. One pass,
+    // since both are in old-version order.
+    const removedKeys = new Map<MdBlock, number>();
+    {
+      let key = h.bStart - 0.5;
+      let k = 0;
+      for (const x of removedBlocks) {
+        for (
+          ;
+          k < paired.pairs.length && at((paired.pairs[k] as [MdBlock, MdBlock])[0]) < at(x);
+          k++
+        ) {
+          key = at((paired.pairs[k] as [MdBlock, MdBlock])[1]) + 0.5;
+        }
+        removedKeys.set(x, key);
       }
     }
-    for (const [x, y] of pairs) {
-      const where = place(bAbove[index.get(y) as number] ?? "", scope);
-      if (y.kind === "heading") {
+    const removedKey = (x: MdBlock) => removedKeys.get(x) as number;
+    for (const { key, step } of steps) {
+      const { x, y } = step;
+      if (x && y) {
+        const where = whereB(y);
+        if (y.kind === "heading") {
+          if (x.text !== y.text) {
+            push(key, {
+              kind: "changed",
+              where,
+              what: `Heading ${quoted(x.text)} renamed`,
+              before: changeExcerpt(x.text),
+              after: changeExcerpt(y.text),
+            });
+          } else if (x.level !== y.level) {
+            push(key, {
+              kind: "changed",
+              where,
+              what: `Heading ${quoted(y.text)} is now level ${y.level}`,
+              before: `Level ${x.level}`,
+              after: `Level ${y.level}`,
+            });
+          }
+          continue;
+        }
+        const noun = NOUN[y.kind as keyof typeof NOUN];
         if (x.text !== y.text) {
-          out.add({
+          if (y.kind === "list") {
+            for (const item of listItemChanges(x, y, where)) push(key, item);
+          } else {
+            push(key, {
+              kind: "changed",
+              where,
+              what: `${noun} changed`,
+              ...differenceExcerpts(x.text, y.text),
+            });
+          }
+        } else if (y.kind === "list") {
+          // The same items, written differently: one line, not one per item.
+          push(key, { kind: "changed", where, what: "List formatting or links changed" });
+        } else if (y.kind !== "divider") {
+          push(key, {
             kind: "changed",
             where,
-            what: `Heading ${quoted(x.text)} renamed`,
-            before: changeExcerpt(x.text),
+            what: `${noun} formatting or links changed`,
             after: changeExcerpt(y.text),
           });
-        } else if (x.level !== y.level) {
-          out.add({
-            kind: "changed",
+        }
+      } else if (y) {
+        const where = whereB(y);
+        if (y.kind === "heading") {
+          push(key, { kind: "added", where, what: `Heading ${quoted(y.text)} added` });
+        } else {
+          const noun = NOUN[y.kind as keyof typeof NOUN];
+          push(key, {
+            kind: "added",
             where,
-            what: `Heading ${quoted(y.text)} is now level ${y.level}`,
-            before: `Level ${x.level}`,
-            after: `Level ${y.level}`,
+            what: `${noun} added`,
+            after: changeExcerpt(shownText(y)),
           });
         }
-        continue;
-      }
-      const noun = NOUN[y.kind as keyof typeof NOUN];
-      if (x.text !== y.text) {
-        out.add({
-          kind: "changed",
-          where,
-          what: `${noun} changed`,
-          ...differenceExcerpts(x.text, y.text),
-        });
-      } else if (y.kind !== "divider") {
-        out.add({
-          kind: "changed",
-          where,
-          what: `${noun} formatting or links changed`,
-          after: changeExcerpt(y.text),
-        });
+      } else if (x) {
+        const where = whereA(x);
+        if (x.kind === "heading") {
+          push(key, { kind: "removed", where, what: `Heading ${quoted(x.text)} removed` });
+        } else {
+          const noun = NOUN[x.kind as keyof typeof NOUN];
+          push(key, {
+            kind: "removed",
+            where,
+            what: `${noun} removed`,
+            before: changeExcerpt(shownText(x)),
+          });
+        }
       }
     }
-    for (const y of added) {
-      const where = place(bAbove[index.get(y) as number] ?? "", scope);
-      if (y.kind === "heading") {
-        out.add({ kind: "added", where, what: `Heading ${quoted(y.text)} added` });
-      } else {
-        const noun = NOUN[y.kind as keyof typeof NOUN];
-        out.add({ kind: "added", where, what: `${noun} added`, after: changeExcerpt(y.text) });
-      }
-    }
-    const placed = (blocks: MdBlock[], above: string[]) =>
+    const placed = (blocks: MdBlock[], side: "a" | "b") =>
       blocks.flatMap((x) =>
         x.images.map((image) => ({
           image,
-          where: place(above[index.get(x) as number] ?? "", scope),
+          where: side === "a" ? whereA(x) : whereB(x),
+          key: side === "a" ? removedKey(x) : at(x),
         })),
       );
-    describeImages(out, placed(removedBlocks, aAbove), placed(addedBlocks, bAbove));
+    events.push(...imageEvents(placed(removedBlocks, "a"), placed(addedBlocks, "b")));
     const defs = (list: MdBlock[]) => list.some((x) => x.kind === "definition");
     if (defs(removedBlocks) || defs(addedBlocks)) {
-      out.add({ kind: "changed", where: hunkWhere, what: "Link targets changed" });
+      const first = addedBlocks[0] ?? removedBlocks[0];
+      push(h.bEnd, {
+        kind: "changed",
+        where: first ? (addedBlocks[0] ? whereB(first) : whereA(first)) : (scope.prefix ?? ""),
+        what: "Link targets changed",
+      });
+    }
+    // Stable: items of one block keep their order.
+    events.sort((u, v) => u.key - v.key);
+    for (const e of events) {
+      if (!out.add(e.item)) break;
     }
   }
 }

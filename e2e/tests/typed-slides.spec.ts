@@ -660,7 +660,7 @@ test.describe("a published deck", () => {
         expect(current.body.content).toContain("## Appendix");
 
         await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-        const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+        const changes = page.getByRole("region", { name: "Changes" });
         // Where Monaco put the typed lines varies with the platform's End key; the list names the
         // slide that the "## Appendix" line starts, wherever it landed.
         await expect(

@@ -1079,13 +1079,7 @@ function ComponentSpecimens() {
             {
               id: "changes",
               label: "Changes",
-              content: (
-                <ChangeList
-                  heading="What changed from v6 to v7"
-                  changes={SAMPLE_CHANGES}
-                  files={SAMPLE_FILES}
-                />
-              ),
+              content: <ChangeList changes={SAMPLE_CHANGES} files={SAMPLE_FILES} />,
             },
             {
               id: "history",

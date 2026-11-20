@@ -1,7 +1,9 @@
 // What changed in a sheet (sheet.jsonl): columns added, removed, renamed, or with another type,
 // number format, option list or width; frozen columns; rows added or removed (counted, with their
 // first cell as a label); and cells changed ("B7 changed: 12 → 14"). A formula cell says that its
-// calculation changed, with both results when both sheets evaluate within the step budget.
+// calculation changed, with both results when both sheets evaluate within the step budget. A total
+// that only recomputed is left out: its formula is the same, or, when rows or columns were added
+// or removed, it differs only in which cells it refers to.
 import { a1, colLetter } from "../sheet/address.ts";
 import {
   type Cell,
@@ -12,6 +14,7 @@ import {
   type SheetColumn,
 } from "../sheet/format.ts";
 import { evaluateSheet } from "../sheet/formula/evaluate.ts";
+import { lexFormula } from "../sheet/formula/lexer.ts";
 import { isError, numberText, type Value } from "../sheet/formula/values.ts";
 import { diffSequence } from "./diff.ts";
 import { pairInOrder } from "./pairs.ts";
@@ -58,6 +61,33 @@ function valueText(v: Value): string {
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
   if (typeof v === "number") return numberText(v);
   return v;
+}
+
+/** A formula with every cell and range reference replaced by one mark, or null if it does not lex. */
+function formulaShape(cell: string): string | null {
+  const src = cell.slice(1);
+  try {
+    let out = "";
+    let last = 0;
+    for (const t of lexFormula(src)) {
+      if (t.t !== "ref" && t.t !== "range") continue;
+      out += `${src.slice(last, t.start)}\u0000`;
+      last = t.end;
+    }
+    return out + src.slice(last);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether two formulas are one calculation whose references moved: the same apart from the cells
+ * they refer to. Only asked when rows or columns were added or removed, which is what moves them.
+ */
+function sameCalculation(a: Cell, b: Cell): boolean {
+  if (!isFormula(a) || !isFormula(b)) return false;
+  const sa = formulaShape(a);
+  return sa !== null && sa === formulaShape(b);
 }
 
 function sameColumn(a: SheetColumn, b: SheetColumn): boolean {
@@ -112,7 +142,7 @@ function describeColumns(out: ChangeCollector, a: Sheet, b: Sheet): { pairs: [nu
     for (const x of p.removed) {
       out.add({
         kind: "removed",
-        where: "Columns",
+        where: "",
         what: `Column ${quoted(ac[x]?.name ?? "")} removed`,
       });
     }
@@ -186,7 +216,7 @@ function describeColumns(out: ChangeCollector, a: Sheet, b: Sheet): { pairs: [nu
     const frozen = (n: number) => (n === 0 ? "None" : count(n, "column"));
     out.add({
       kind: "changed",
-      where: "Columns",
+      where: "",
       what: "Frozen columns changed",
       before: frozen(fa),
       after: frozen(fb),
@@ -214,6 +244,11 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
     b.rows.map((r) => key(r, 1)),
   );
   if (!exact) out.truncated = true;
+  // Rows or columns added or removed: a formula that only follows them is not a change of its own.
+  const moved =
+    pairs.length !== ac.length ||
+    pairs.length !== bc.length ||
+    hunks.some((h) => h.aEnd - h.aStart !== h.bEnd - h.bStart);
 
   const pending: Pending[] = [];
   for (const h of hunks) {
@@ -239,7 +274,7 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
       const label = rowLabel(a.rows[p.removed[0] as number], ac);
       out.add({
         kind: "removed",
-        where: "Rows",
+        where: "",
         what: `${rowsSpan(first, p.removed.length)} removed${p.removed.length > 1 ? ` (${count(p.removed.length, "row")})` : ""}`,
         before: label === "" ? undefined : label,
       });
@@ -254,8 +289,9 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
         const address = a1(y + 2, cb);
         const where = `Row ${y + 2}, ${quoted(bc[cb]?.name ?? "")}`;
         if (isFormula(va) || isFormula(vb)) {
+          if (moved && sameCalculation(va, vb)) continue;
           // Its results are filled in below, once per sheet.
-          if (out.add({ kind: "changed", where, what: `${address}: calculation changed` })) {
+          if (out.add({ kind: "changed", where, what: `${address} calculation changed` })) {
             pending.push({
               at: out.items.length - 1,
               before: isFormula(va) ? [x + 2, ca] : null,
@@ -290,7 +326,7 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
       const label = rowLabel(b.rows[p.added[0] as number], bc);
       out.add({
         kind: "added",
-        where: "Rows",
+        where: "",
         what: `${rowsSpan(first, p.added.length)} added${p.added.length > 1 ? ` (${count(p.added.length, "row")})` : ""}`,
         after: label === "" ? undefined : label,
       });

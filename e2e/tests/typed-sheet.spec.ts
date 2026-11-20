@@ -275,7 +275,7 @@ test.describe("a published sheet", () => {
         .toMatch(/12[.,]00/);
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
       // One cell changed, said as a cell and its two values; no sheet lines on the page.
-      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      const changes = page.getByRole("region", { name: "Changes" });
       const items = changes.getByRole("list").first().getByRole("listitem");
       await expect(items).toHaveCount(1);
       await expect(items).toContainText("B2 changed");

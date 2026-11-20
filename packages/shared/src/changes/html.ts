@@ -5,7 +5,7 @@
 import { type DesignBoard, type DesignSource, parseDesign } from "../design.ts";
 import { diffSequence } from "./diff.ts";
 import { type HtmlScan, type HtmlTextRun, markupSignature, scanHtml } from "./htmlScan.ts";
-import { multisetChanges, pairInOrder } from "./pairs.ts";
+import { inReadingOrder, multisetChanges, pairInOrder, sharesWord } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
@@ -29,53 +29,64 @@ function describeRuns(
   const key = (r: HtmlTextRun) => `${r.heading ? "#" : ""}${r.text}`;
   const { hunks, exact } = diffSequence(a.map(key), b.map(key));
   if (!exact) out.truncated = true;
-  const where = (r: HtmlTextRun) => join(prefix, r.under === "" ? "" : `Under ${quoted(r.under)}`);
+  const where = (r: HtmlTextRun) =>
+    join(prefix, r.under === "" ? "" : `${r.after ? "After" : "Under"} ${quoted(r.under)}`);
   for (const h of hunks) {
     if (out.full) {
       out.truncated = true;
       return;
     }
-    const { pairs, removed, added } = pairInOrder(
-      a.slice(h.aStart, h.aEnd),
-      b.slice(h.bStart, h.bEnd),
+    const removedRuns = a.slice(h.aStart, h.aEnd);
+    const addedRuns = b.slice(h.bStart, h.bEnd);
+    const index = new Map<HtmlTextRun, number>();
+    for (const [k, r] of removedRuns.entries()) index.set(r, h.aStart + k);
+    for (const [k, r] of addedRuns.entries()) index.set(r, h.bStart + k);
+    const at = (r: HtmlTextRun) => index.get(r) as number;
+    const paired = pairInOrder(
+      removedRuns,
+      addedRuns,
       (x, y) => x.heading === y.heading,
+      // As in a doc: a heading renamed keeps a word, so one added before it is not taken for it.
+      (x, y) => !x.heading || sharesWord(x.text, y.text),
     );
-    for (const r of removed) {
-      out.add(
-        r.heading
-          ? { kind: "removed", where: where(r), what: `Heading ${quoted(r.text)} removed` }
-          : {
-              kind: "removed",
-              where: where(r),
-              what: "Text removed",
-              before: changeExcerpt(r.text),
-            },
-      );
-    }
-    for (const [x, y] of pairs) {
-      out.add(
-        y.heading
-          ? {
-              kind: "changed",
-              where: where(y),
-              what: `Heading ${quoted(x.text)} changed`,
-              before: changeExcerpt(x.text),
-              after: changeExcerpt(y.text),
-            }
-          : {
-              kind: "changed",
-              where: where(y),
-              what: "Text changed",
-              ...differenceExcerpts(x.text, y.text),
-            },
-      );
-    }
-    for (const r of added) {
-      out.add(
-        r.heading
-          ? { kind: "added", where: where(r), what: `Heading ${quoted(r.text)} added` }
-          : { kind: "added", where: where(r), what: "Text added", after: changeExcerpt(r.text) },
-      );
+    // In the order a person reads the page, so a heading added above a changed one comes first.
+    for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
+      const { x, y } = step;
+      if (x && y) {
+        out.add(
+          y.heading
+            ? {
+                kind: "changed",
+                where: where(y),
+                what: `Heading ${quoted(x.text)} changed`,
+                before: changeExcerpt(x.text),
+                after: changeExcerpt(y.text),
+              }
+            : {
+                kind: "changed",
+                where: where(y),
+                what: "Text changed",
+                ...differenceExcerpts(x.text, y.text),
+              },
+        );
+      } else if (y) {
+        out.add(
+          y.heading
+            ? { kind: "added", where: where(y), what: `Heading ${quoted(y.text)} added` }
+            : { kind: "added", where: where(y), what: "Text added", after: changeExcerpt(y.text) },
+        );
+      } else if (x) {
+        out.add(
+          x.heading
+            ? { kind: "removed", where: where(x), what: `Heading ${quoted(x.text)} removed` }
+            : {
+                kind: "removed",
+                where: where(x),
+                what: "Text removed",
+                before: changeExcerpt(x.text),
+              },
+        );
+      }
     }
   }
 }

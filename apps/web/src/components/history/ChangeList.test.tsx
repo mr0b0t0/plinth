@@ -26,7 +26,6 @@ describe("ChangeList", () => {
   it("lists each change as text, with its place and its values", () => {
     render(
       <ChangeList
-        heading="What changed from v1 to v2"
         changes={{
           truncated: false,
           items: [
@@ -45,27 +44,38 @@ describe("ChangeList", () => {
               after: "We charge twelve euros a month for each seat, billed yearly.",
             },
             { kind: "added", where: "", what: "Heading “FAQ” added" },
+            { kind: "added", where: "Under “FAQ”", what: "Paragraph added", after: "Ask us." },
+            {
+              kind: "removed",
+              where: "Under “FAQ”",
+              what: "Paragraph removed",
+              before: "We answer every question within two working days, by email or phone.",
+            },
           ],
         }}
         files={noFiles}
       />,
     );
-    const region = screen.getByRole("region", { name: "What changed from v1 to v2" });
+    const region = screen.getByRole("region", { name: "Changes" });
     const items = within(region).getAllByRole("listitem");
     expect(items.map((i) => i.textContent)).toEqual([
       "B7 changedRow 7, “Qty”Before: 12 → , after: 14",
       "Paragraph changedUnder “Pricing”BeforeWe charge ten euros a month for each seat, billed yearly.AfterWe charge twelve euros a month for each seat, billed yearly.",
       "Heading “FAQ” added",
+      // One side only: its text alone, with no Before or After label.
+      "Paragraph addedUnder “FAQ”Ask us.",
+      "Paragraph removedUnder “FAQ”We answer every question within two working days, by email or phone.",
     ]);
-    // No file changed: no Files part at all.
-    expect(within(region).queryByRole("heading", { name: "Files" })).toBeNull();
-    expect(within(region).queryByRole("region", { name: "Files" })).toBeNull();
+    // Only the paragraph with both sides carries the labels.
+    expect(within(region).getAllByText("Before")).toHaveLength(1);
+    expect(within(region).getAllByText("After")).toHaveLength(1);
+    // No file changed: no file rows.
+    expect(within(region).queryByText(/^File /)).toBeNull();
   });
 
   it("shows text that looks like markup as text, never as markup", () => {
     const { container } = render(
       <ChangeList
-        heading="What changed"
         changes={{
           truncated: false,
           items: [
@@ -85,14 +95,13 @@ describe("ChangeList", () => {
   });
 
   it("says when nothing changed, when the list is cut, and while it is worked out", () => {
-    const { rerender } = render(<ChangeList heading="H" changes={null} files={null} />);
-    expect(screen.getByRole("region", { name: "H" }).getAttribute("aria-busy")).toBe("true");
+    const { rerender } = render(<ChangeList changes={null} files={null} />);
+    expect(screen.getByRole("region", { name: "Changes" }).getAttribute("aria-busy")).toBe("true");
     expect(screen.getByText("Working out what changed…")).toBeTruthy();
-    rerender(<ChangeList heading="H" changes={{ items: [], truncated: false }} files={null} />);
+    rerender(<ChangeList changes={{ items: [], truncated: false }} files={null} />);
     expect(screen.getByText("Nothing changed in the content.")).toBeTruthy();
     rerender(
       <ChangeList
-        heading="H"
         changes={{ items: [{ kind: "changed", where: "", what: "Text changed" }], truncated: true }}
         files={null}
       />,
@@ -100,10 +109,9 @@ describe("ChangeList", () => {
     expect(screen.getByText("More changed than this list shows.")).toBeTruthy();
   });
 
-  it("lists added, removed and replaced files with sizes, and counts the rest", () => {
+  it("lists added, removed and replaced files as rows of the list, and counts the rest", () => {
     render(
       <ChangeList
-        heading="H"
         changes={{ items: [], truncated: false }}
         files={{
           added: [{ path: "img/new.png", kind: "added", after: 12_400 }],
@@ -114,13 +122,18 @@ describe("ChangeList", () => {
         }}
       />,
     );
-    const files = screen.getByRole("region", { name: "Files" });
+    const region = screen.getByRole("region", { name: "Changes" });
     expect(
-      within(files)
+      within(region)
         .getAllByRole("listitem")
         .map((i) => i.textContent),
-    ).toEqual(["Addedimg/new.png12.4 KB", "Removedold.css820 B", "Replacedchart.png1 KB → 3.1 MB"]);
-    expect(within(files).getByText("And 3 more files.")).toBeTruthy();
+    ).toEqual([
+      "File “img/new.png” added12.4 KB",
+      "File “old.css” removed820 B",
+      "File “chart.png” replaced1 KB → 3.1 MB",
+    ]);
+    expect(within(region).getByText("And 3 more files.")).toBeTruthy();
+    expect(within(region).queryByText("Nothing changed in the content.")).toBeNull();
   });
 });
 

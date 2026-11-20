@@ -121,15 +121,11 @@ describe("doc", () => {
         before: "We charge ten euros a month for each seat.",
         after: "We charge twelve euros a month for each seat.",
       },
-      {
-        kind: "changed",
-        where: "Under “Prices”",
-        what: "List changed",
-        before: "one two",
-        after: "one two three",
-      },
+      // A list's items one at a time: only the one added, not the list joined into a sentence.
+      { kind: "added", where: "Under “Prices”", what: "List item added", after: "three" },
       { kind: "removed", where: "Under “Pricing”", what: "Image “Site map” removed" },
-      { kind: "added", where: "Under “Prices”", what: "Heading “FAQ” added" },
+      // A heading of the same level follows the one before it.
+      { kind: "added", where: "After “Prices”", what: "Heading “FAQ” added" },
       { kind: "added", where: "Under “FAQ”", what: "Quote added", after: "Ask us anything." },
       { kind: "added", where: "Under “FAQ”", what: "Image chart.png added" },
     ]);
@@ -193,16 +189,17 @@ describe("doc", () => {
     const a = "## Plot 4\n\nTwelve nests.\n\n## Notes\n\n- Fence needs repair.";
     const b =
       "## Plot 4\n\nTwelve nests.\n\n## Plot 5\n\nSix nests.\n\n## Field notes\n\n- Fence needs repair.";
+    // In reading order: "Plot 5" comes before the renamed heading on the page.
     expect(items("doc", a, b)).toEqual([
+      { kind: "added", where: "After “Plot 4”", what: "Heading “Plot 5” added" },
+      { kind: "added", where: "Under “Plot 5”", what: "Paragraph added", after: "Six nests." },
       {
         kind: "changed",
-        where: "Under “Plot 5”",
+        where: "After “Plot 5”",
         what: "Heading “Notes” renamed",
         before: "Notes",
         after: "Field notes",
       },
-      { kind: "added", where: "Under “Plot 4”", what: "Heading “Plot 5” added" },
-      { kind: "added", where: "Under “Plot 5”", what: "Paragraph added", after: "Six nests." },
     ]);
     // A rename that keeps no word is still a rename.
     expect(items("doc", "## Notes\n\nText.", "## Observations\n\nText.")).toEqual([
@@ -213,6 +210,46 @@ describe("doc", () => {
         before: "Notes",
         after: "Observations",
       },
+    ]);
+  });
+
+  it("names only the list items that changed, and sets a whole list's items apart", () => {
+    const a = "## Notes\n\n- Rain stopped counts at noon.\n- The north fence needs repair.";
+    const b =
+      "## Notes\n\n- Rain stopped counts at noon.\n- The north fence was repaired on 9 May.";
+    expect(items("doc", a, b)).toEqual([
+      {
+        kind: "changed",
+        where: "Under “Notes”",
+        what: "List item changed",
+        before: "The north fence needs repair.",
+        after: "The north fence was repaired on 9 May.",
+      },
+    ]);
+    expect(items("doc", `${a}\n- Gate left open.`, a)).toEqual([
+      {
+        kind: "removed",
+        where: "Under “Notes”",
+        what: "List item removed",
+        before: "Gate left open.",
+      },
+    ]);
+    expect(items("doc", "## Notes", `## Notes\n\n- One\n- Two`)).toEqual([
+      { kind: "added", where: "Under “Notes”", what: "List added", after: "One · Two" },
+    ]);
+    expect(items("doc", "- One\n- Two", "* One\n* Two")).toEqual([
+      { kind: "changed", where: "", what: "List formatting or links changed" },
+    ]);
+  });
+
+  it("puts a heading under one of a higher level, and after one of its own", () => {
+    const a = "# Survey\n\n## Plot 4\n\nTwelve.";
+    const b = "# Survey\n\n## Plot 4\n\nTwelve.\n\n### Edge\n\nTwo.\n\n## Plot 5\n\nSix.";
+    expect(items("doc", a, b).map((x) => [x.what, x.where])).toEqual([
+      ["Heading “Edge” added", "Under “Plot 4”"],
+      ["Paragraph added", "Under “Edge”"],
+      ["Heading “Plot 5” added", "After “Plot 4”"],
+      ["Paragraph added", "Under “Plot 5”"],
     ]);
   });
 });
@@ -365,11 +402,11 @@ describe("sheet", () => {
       {
         kind: "changed",
         where: "Row 3, “Total”",
-        what: "D3: calculation changed",
+        what: "D3 calculation changed",
         before: "4",
         after: "5",
       },
-      { kind: "added", where: "Rows", what: "Rows 4 to 5 added (2 rows)", after: "“Plums”" },
+      { kind: "added", where: "", what: "Rows 4 to 5 added (2 rows)", after: "“Plums”" },
     ]);
   });
 
@@ -425,7 +462,7 @@ describe("sheet", () => {
       },
       {
         kind: "changed",
-        where: "Columns",
+        where: "",
         what: "Frozen columns changed",
         before: "None",
         after: "1 column",
@@ -457,7 +494,7 @@ describe("sheet", () => {
     ]);
   });
 
-  it("lists a row added above a total as one row, not as the total overwritten", () => {
+  it("lists a row added above a total as one row, and leaves out the total it recomputes", () => {
     const h = JSON.stringify({
       plinth: "sheet",
       v: 1,
@@ -468,16 +505,25 @@ describe("sheet", () => {
     });
     const a = [h, '["Audit",14]', '["Total","=SUM(B2:B2)"]'].join("\n");
     const b = [h, '["Audit",14]', '["Handover",6]', '["Total","=SUM(B2:B3)"]'].join("\n");
+    // The total's range grew to take the new row: the same calculation, so only the row is listed.
     expect(items("sheet", a, b)).toEqual([
+      { kind: "added", where: "", what: "Row 3 added", after: "“Handover”" },
+    ]);
+    // Another calculation in the same version is still a change of its own.
+    const c = [h, '["Audit",14]', '["Handover",6]', '["Total","=AVERAGE(B2:B3)"]'].join("\n");
+    expect(items("sheet", a, c)).toEqual([
       {
         kind: "changed",
         where: "Row 4, “Hours”",
-        what: "B4: calculation changed",
+        what: "B4 calculation changed",
         before: "14",
-        after: "20",
+        after: "10",
       },
-      { kind: "added", where: "Rows", what: "Row 3 added", after: "“Handover”" },
+      { kind: "added", where: "", what: "Row 3 added", after: "“Handover”" },
     ]);
+    // With no row added or removed, a reference changed by hand is listed.
+    const d = [h, '["Audit",14]', '["Total","=SUM(B1:B2)"]'].join("\n");
+    expect(items("sheet", a, d).map((x) => x.what)).toEqual(["B3 calculation changed"]);
   });
 
   it("leaves results out when a calculation cannot be evaluated within the budget", () => {
@@ -486,7 +532,7 @@ describe("sheet", () => {
       {
         kind: "changed",
         where: "Row 2, “A”",
-        what: "A2: calculation changed",
+        what: "A2 calculation changed",
         before: "2",
         after: "4",
       },
@@ -713,6 +759,17 @@ describe("html", () => {
       { kind: "added", where: "", what: "1 form added" },
       { kind: "changed", where: "", what: "Styles changed" },
       { kind: "changed", where: "", what: "Scripts changed" },
+    ]);
+  });
+
+  it("lists text in reading order, with a heading after one of its own level", () => {
+    const a = "<h2>Plot 4</h2><p>Twelve.</p><h2>Notes</h2><p>Fence.</p>";
+    const b =
+      "<h2>Plot 4</h2><p>Twelve.</p><h2>Plot 5</h2><p>Six.</p><h2>Field notes</h2><p>Fence.</p>";
+    expect(items("html", a, b).map((x) => [x.what, x.where])).toEqual([
+      ["Heading “Plot 5” added", "After “Plot 4”"],
+      ["Text added", "Under “Plot 5”"],
+      ["Heading “Notes” changed", "After “Plot 5”"],
     ]);
   });
 

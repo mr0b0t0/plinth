@@ -465,7 +465,7 @@ test.describe("changing a design", () => {
 
       // Compare shows the two versions rendered, never their source.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      const changes = page.getByRole("region", { name: "Changes" });
       await expect(
         changes.getByRole("listitem").filter({ hasText: "Board “Banner” added" }),
       ).toBeVisible();

@@ -82,7 +82,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
   the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
   formatting changed". A heading or row added before another reads as added, not as the next one
-  renamed. Every type compares this way, designs included. The two
+  renamed, items come in the order the page reads, a changed list names only the item that
+  changed, and a sheet total that only recomputed for an added row is left out. Every type
+  compares this way, designs included. The two
   versions are still rendered side by side below the list, one at a time with a Before and After
   switch on a phone. Older links with `view=source` open the same page. Agents still read and write
   source as before.

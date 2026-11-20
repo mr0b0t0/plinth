@@ -12,8 +12,13 @@ export interface HtmlTextRun {
   text: string;
   /** Inside an h1 to h6. */
   heading: boolean;
-  /** The text of the nearest heading before this run, or "" before the first. */
+  /**
+   * The text of the nearest heading before this run, or "" before the first. For a heading, the
+   * nearest one before it of a higher or the same level.
+   */
   under: string;
+  /** A heading that follows `under` at the same level ("Plot 5" after "Plot 4"), not inside it. */
+  after?: true;
 }
 
 export interface HtmlScan {
@@ -173,12 +178,35 @@ export function scanHtml(src: string): HtmlScan {
   let headingDepth = 0;
   let under = "";
   let runHeading = false;
+  // The level of the heading being read, and the latest heading of each level (1 to 6).
+  let level = 1;
+  const latest: ({ text: string; seq: number } | null)[] = [null, null, null, null, null, null];
+  let seq = 0;
   const flush = () => {
     const t = foldSpace(decodeEntities(text));
     text = "";
     if (t === "") return;
-    out.runs.push({ text: t, heading: runHeading, under });
-    if (runHeading) under = t;
+    if (!runHeading) {
+      out.runs.push({ text: t, heading: false, under });
+      return;
+    }
+    let near: { text: string; seq: number } | null = null;
+    let nearLevel = 0;
+    for (let l = 1; l <= level; l++) {
+      const h = latest[l - 1];
+      if (h && (!near || h.seq > near.seq)) {
+        near = h;
+        nearLevel = l;
+      }
+    }
+    out.runs.push({
+      text: t,
+      heading: true,
+      under: near?.text ?? "",
+      ...(near && nearLevel === level ? { after: true as const } : {}),
+    });
+    latest[level - 1] = { text: t, seq: seq++ };
+    under = t;
   };
 
   let i = 0;
@@ -219,6 +247,7 @@ export function scanHtml(src: string): HtmlScan {
       continue;
     }
     if (HEADINGS.has(name)) {
+      if (headingDepth === 0) level = Number(name[1]);
       headingDepth++;
       runHeading = true;
     }

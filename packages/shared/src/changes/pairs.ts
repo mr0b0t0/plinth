@@ -66,6 +66,36 @@ export function pairInOrder<T>(
   return out;
 }
 
+/** One step of a changed region: a removal (`x`), an addition (`y`) or a pair (both). */
+export type RegionStep<T> = { x: T; y?: undefined } | { x?: undefined; y: T } | { x: T; y: T };
+
+/**
+ * A changed region's removals, pairs and additions in reading order, each with a sort key: a pair
+ * or an addition sits at its position in the new version, a removal just after the pair before it
+ * (or at the start of the region). `aAt` and `bAt` give positions in the old and new version.
+ */
+export function inReadingOrder<T>(
+  p: Paired<T>,
+  aAt: (x: T) => number,
+  bAt: (y: T) => number,
+  bStart: number,
+): { key: number; step: RegionStep<T> }[] {
+  const out: { key: number; step: RegionStep<T> }[] = [];
+  for (const [x, y] of p.pairs) out.push({ key: bAt(y), step: { x, y } });
+  for (const y of p.added) out.push({ key: bAt(y), step: { y } });
+  // Removals and pairs are both in old-version order: one pass, so a large region stays linear.
+  let key = bStart - 0.5;
+  let k = 0;
+  for (const x of p.removed) {
+    for (; k < p.pairs.length && aAt((p.pairs[k] as [T, T])[0]) < aAt(x); k++) {
+      key = bAt((p.pairs[k] as [T, T])[1]) + 0.5;
+    }
+    out.push({ key, step: { x } });
+  }
+  // A stable sort: a removal and the pairs keep their own order on equal keys.
+  return out.sort((u, v) => u.key - v.key);
+}
+
 /** Whether two texts share a word of four or more letters, ignoring case. */
 export function sharesWord(a: string, b: string): boolean {
   const words = (t: string) =>

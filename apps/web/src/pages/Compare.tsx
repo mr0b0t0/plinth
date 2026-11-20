@@ -118,7 +118,6 @@ export default function Compare({ params }: { params: Record<string, string> }) 
             {from !== to && (
               <ChangeList
                 key={`${from}-${to}`}
-                heading={`What changed from v${from} to v${to}`}
                 changes={changes?.changes ?? null}
                 files={changes?.files ?? null}
               />

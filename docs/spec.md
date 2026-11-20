@@ -1665,30 +1665,34 @@ people work with artifacts as they look, not as their source. Agents, MCP, REST 
 read and write source, and `GET /a/<slug>/source` (plain text for agents and crawlers, linked only
 from discovery tags) stays.
 
-- **The page.** `/a/:slug/compare?from=&to=` shows "What changed from v4 to v5", a list of changes
-  with a "Files" part when a file was added, removed or replaced, then the two versions side by side, each in its own sandboxed frame on the
-  content host through a fresh viewer gate (as before). At phone width the frames show one at a
+- **The page.** `/a/:slug/compare?from=&to=` shows the From and To pickers, then the list of
+  changes with no heading of its own (the pickers say which versions; "Changes" names the region
+  for screen readers), its rows as wide as the frames below, then the two versions side by side,
+  each in its own sandboxed frame on the content host through a fresh viewer gate (as before). At phone width the frames show one at a
   time, with a Before and After switch. There is no source view: a link that still carries
   `view=source` or `view=rendered` lands on the same page.
 - **The list.** It is worked out in the browser, from the two version details Compare already
   fetches (`GET /api/v1/artifacts/:ref/versions/:n`), by pure, zod-free describers in
   `packages/shared/src/changes/` (one per type, keyed by the registry, so a new type must add one).
-  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "Slide
-  3", "Row 7, “Qty”", "Board “Home”"), a short sentence, and the visible text or value before and
-  after. Within a changed region, items are paired in order, preferring a heading that keeps a word
-  of its old name and a row whose first cell is the same, so a heading or row added before another
-  reads as added, not as the next one renamed or overwritten. The app holds the two source texts
+  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "After
+  “Plot 4”", "Slide 3", "Row 7, “Qty”", "Board “Home”", or nothing when the sentence says it all),
+  a short sentence, and the visible text or value before and after. An item with only one side
+  shows that text alone, green when added and red when removed, with no Before or After label.
+  Within a changed region, items are paired in order, preferring a heading that keeps a word of
+  its old name and a row whose first cell is the same, so a heading or row added before another
+  reads as added, not as the next one renamed or overwritten; the region's items are then listed
+  in the order a person reads the new version. The app holds the two source texts
   only as the describers' input and renders only their output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
   pass the free plan's CPU time per request, and the app has the versions already.
 
 | Type | What the list names |
 | --- | --- |
-| `doc` | Blocks located by the nearest heading above: headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped); formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
+| `doc` | Blocks located by the nearest heading above (a heading after the one before it at its own level, "After “Plot 4”", and under one of a higher level): headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped; a whole list's items set apart with " · "); a changed list's items added, removed or changed one at a time ("List item changed"), never the list as one sentence; formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
 | `slides` | Deck settings (aspect, theme, slide numbers, footer); slides added, removed and moved ("Slide 4 moved to 2"); per slide its title, text, columns, images and speaker notes |
-| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell's "calculation changed", with both results when both versions evaluate within 1,000,000 steps |
+| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell whose calculation changed ("C7 calculation changed"), with both results when both versions evaluate within 1,000,000 steps. A total that only recomputed is left out: its formula is the same, or, when rows or columns were added or removed, it differs only in the cells it refers to (`=SUM(C2:C5)` to `=SUM(C2:C6)` with a row added) |
 | `design_system` | Name, description, prefix, fonts; tokens added, removed and changed, light and dark ("color.brand.500 changed", #3B5BDB → #2F4AC0), their descriptions and deprecation; guidelines (as a doc); shared styles; components added, removed, renamed, their status, description and usage, and "examples or styles changed" (never the code) |
 | `design` | Shared styles or fonts; boards added, removed, renamed, resized, moved, their background and section; per board its visible text, images and styles |
-| `html` | The page title; visible text located by the nearest heading; links, images and forms added or removed (counted); styles and scripts changed (never quoted); "Layout or formatting changed" when none of these changed but the markup did (a class, an attribute such as `hidden` or an image's size, bold or italics, a video, frame or SVG shape, spacing in preformatted text) |
+| `html` | The page title; visible text located by the nearest heading (a heading after one of its own level, as in a doc); links, images and forms added or removed (counted); styles and scripts changed (never quoted); "Layout or formatting changed" when none of these changed but the markup did (a class, an attribute such as `hidden` or an image's size, bold or italics, a video, frame or SVG shape, spacing in preformatted text) |
 
 - **HTML without a DOM.** HTML pages and design boards are read by a string scanner that finds text
   runs, tag names and a few attributes (link targets, image sources, stylesheets, scripts). It
@@ -1697,7 +1701,8 @@ from discovery tags) stays.
   person when their markup differs only in how it is written: comments, whitespace between tags or
   folded inside text (not in `pre`, `listing`, `textarea` or `xmp`), the case of tag and attribute
   names, attribute order and quotes, spacing in a class list, and how characters are encoded.
-- **Files.** Every type lists its files added, removed and replaced, with their sizes. Two files at
+- **Files.** Every type lists its files added, removed and replaced as rows at the end of the same
+  list ("File “img/map.png” added", its size beside it), with no part or badge of their own. Two files at
   one path are the same when their `sha256` match, or, when either side was stored before hashes
   were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as
   JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
