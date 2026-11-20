@@ -5,8 +5,9 @@
 // direct writes the server refuses; a settings version that makes the board editors-only turns
 // the commenter's board read-only as their socket reconnects; an agent's block shows up; the
 // artifact menu downloads a PNG and an SVG and offers no source editor; the keyboard moves a block
-// and zooms; the page fits a phone; and Board settings in the ⋯ menu saves a settings version,
-// and after a newer version shows that version's settings instead.
+// and zooms; the page fits a phone; and the ⋯ menu's one Settings item (the owner's settings page,
+// the editor's dialog) saves settings versions, and after a newer version shows that version's
+// settings and loads it behind the dialog instead.
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Frame, type Page, test } from "@playwright/test";
@@ -344,80 +345,104 @@ test("export from the menu, the keyboard, zoom, phone width and axe", async ({ p
   }
 });
 
-test("Board settings: the ⋯ dialog saves a version, and a newer version is shown, not overwritten", async ({
+test("Board settings: one Settings item; the owner's page and the editor's dialog save versions, a newer one is shown", async ({
   page,
+  browser,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const owner = uniqueEmail("wb-settings");
-  const { client, id, slug } = await publishBoard(page, owner);
+  const editor = uniqueEmail("wb-settings-ed");
+  const { token, client, id, slug } = await publishBoard(page, owner);
+  const shared = await apiPut(
+    page.request,
+    `/artifacts/${id}/sharing`,
+    { grants: [{ email: editor, role: "editor" }] },
+    { token },
+  );
+  expect(shared.status, JSON.stringify(shared.body)).toBe(200);
+  const editorPage = await (await browser.newContext()).newPage();
   try {
+    // The owner: the ⋯ menu has one Settings item, the settings page, and no source editor.
     await page.goto(`/a/${slug}`);
     const frame = await boardFrame(page);
     await expect(frame.locator(".wb-viewport")).toHaveAttribute("data-bg", "dots");
-
-    // The menu offers Board settings and no source editor.
     await page.getByRole("button", { name: "Artifact actions" }).click();
     const menu = page.getByRole("menu");
-    await expect(menu.getByRole("menuitem", { name: "Board settings" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: /settings/i })).toHaveCount(1);
     await expect(menu.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
-    await menu.getByRole("menuitem", { name: "Board settings" }).click();
+    await menu.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page).toHaveURL(new RegExp(`/a/${slug}/settings$`));
 
-    const dialog = page.getByRole("dialog", { name: "Board settings" });
-    await expect(dialog.getByRole("radio", { name: /^Dots/ })).toBeChecked();
+    // Its Board section saves v2 with the new background.
+    const section = page.locator("section", {
+      has: page.getByRole("heading", { name: "Board", exact: true }),
+    });
+    await expect(section.getByRole("radio", { name: "Dots" })).toBeChecked();
     // The default: only editors change the board.
-    await expect(dialog.getByRole("radio", { name: /^Editors only/ })).toBeChecked();
-    await expect(dialog.getByRole("textbox")).toHaveCount(0);
-    // Let the dialog's entrance animation settle so axe sees its final colours.
-    await page.waitForFunction(() =>
-      document.getAnimations().every((a) => a.playState !== "running"),
-    );
-    const results = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
-    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
-
-    // Save: v2 holds the new settings, and the page shows it.
-    await dialog.getByRole("radio", { name: /^Grid/ }).check();
-    await dialog.getByRole("button", { name: "Save" }).click();
-    await expect(dialog).toHaveCount(0);
+    await expect(section.getByRole("radio", { name: "Editors only" })).toBeChecked();
+    await section.getByRole("radio", { name: "Grid" }).check();
+    await section.getByRole("button", { name: "Save board" }).click();
     await expect(page.getByText("Saved as v2")).toBeVisible();
-    await expect(page.frameLocator(CURRENT_FRAME).locator(".wb-viewport")).toHaveAttribute(
-      "data-bg",
-      "grid",
-      { timeout: 15_000 },
-    );
     const v2 = await tool(client, "get_artifact", { id });
     expect(v2.data.version).toBe(2);
     expect(JSON.parse(v2.data.content)).toEqual({ v: 1, background: "grid", edit: "editors" });
-    // The blocks stay: a settings version never touches the board's shared data.
-    await expect(page.frameLocator(CURRENT_FRAME).locator(".wb-block")).toHaveCount(3);
 
-    // The dialog reads v2; an agent publishes v3 meanwhile; the save is refused and v3 is shown.
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menu").getByRole("menuitem", { name: "Board settings" }).click();
-    await expect(dialog.getByRole("radio", { name: /^Grid/ })).toBeChecked();
+    // The editor: one Settings item, which opens the dialog over the board.
+    await seedSession(editorPage.context(), editor);
+    await editorPage.goto(`/a/${slug}`);
+    const edFrame = await boardFrame(editorPage);
+    await expect(edFrame.locator(".wb-viewport")).toHaveAttribute("data-bg", "grid");
+    // The blocks stay: a settings version never touches the board's shared data.
+    await expect(edFrame.locator(".wb-block")).toHaveCount(3);
+    await editorPage.getByRole("button", { name: "Artifact actions" }).click();
+    const edMenu = editorPage.getByRole("menu");
+    await expect(edMenu.getByRole("menuitem", { name: /settings/i })).toHaveCount(1);
+    await edMenu.getByRole("menuitem", { name: "Settings" }).click();
+    const dialog = editorPage.getByRole("dialog", { name: "Board settings" });
+    await expect(dialog.getByRole("radio", { name: "Grid" })).toBeChecked();
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    // Let the dialog's entrance animation settle so axe sees its final colours.
+    await editorPage.waitForFunction(() =>
+      document.getAnimations().every((a) => a.playState !== "running"),
+    );
+    const results = await new AxeBuilder({ page: editorPage }).include('[role="dialog"]').analyze();
+    expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+
+    // An agent publishes v3 meanwhile; the save is refused, the dialog shows v3's settings, and
+    // the page behind it loads v3 (its version and its background).
     const v3 = await tool(client, "update_artifact", {
       id,
       content: '{"v":1,"background":"plain","edit":"commenters"}',
       base_version: 2,
     });
     expect(v3.isError, v3.text).toBe(false);
-    await dialog.getByRole("radio", { name: /^Dots/ }).check();
+    await dialog.getByRole("radio", { name: "Dots" }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(
       dialog.getByText("v3 was published meanwhile. These are its settings."),
     ).toBeVisible();
-    await expect(dialog.getByRole("radio", { name: /^Plain/ })).toBeChecked();
-    await expect(dialog.getByRole("radio", { name: /^Commenters and editors/ })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "Plain" })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "Commenters and editors" })).toBeChecked();
     await expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+    await expect(editorPage.getByTitle("Launch board, version 3")).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    await expect(editorPage.frameLocator(CURRENT_FRAME).locator(".wb-viewport")).toHaveAttribute(
+      "data-bg",
+      "plain",
+      { timeout: 15_000 },
+    );
     expect((await tool(client, "get_artifact", { id })).data.version).toBe(3);
 
     // Saving again goes against v3.
-    await dialog.getByRole("radio", { name: /^Editors only/ }).check();
+    await dialog.getByRole("radio", { name: "Editors only" }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(dialog).toHaveCount(0);
     const v4 = await tool(client, "get_artifact", { id });
     expect(v4.data.version).toBe(4);
     expect(JSON.parse(v4.data.content)).toEqual({ v: 1, background: "plain", edit: "editors" });
   } finally {
+    await editorPage.context().close();
     await client.close();
   }
 });

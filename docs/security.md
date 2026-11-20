@@ -59,7 +59,7 @@ make a test pass.
 | A viewer changes a whiteboard | A person with view access posts or moves blocks through `/__plinth/api/v1/data/blocks`, or a stored row lost its write floor | Fixed capabilities carry `writers`, read back through `versionCapabilities` on every request; `pageWriteFloor` fails closed to editor (a board's default) for every type whose page does not declare its capabilities, and `roomAccess` uses the same floor ([Whiteboards](#whiteboards)) |
 | A whiteboard's room keeps old rights | A commenter keeps emitting `block.move` after the owner made the board editors-only | The settings version changes the effective open topics, so its sockets close with 4410 as it commits and reconnect with no right to emit; the data API refuses their writes from the next request |
 | Another page makes a board download itself | A page that frames or opens a whiteboard posts it export messages | The board acts on an export message only from its parent window at the app origin (the app's ⋯ menu), and the message names only a format; what it downloads is the board its viewer already sees |
-| Board settings overwrite a newer version, or carry more than settings | Someone opens Board settings, an agent publishes new settings meanwhile, and the stale dialog saves over them; or the dialog's save smuggles blocks or another key into board.json | The dialog saves with the version it read as `base_version`, so a stale save is refused with 409 and the dialog shows the newer settings without saving; any other refusal only shows its message. The app builds board.json from two known values only, and the Worker checks it with `parseBoardContent` like any update ([Whiteboards](#whiteboards)) |
+| Board settings overwrite a newer version, or carry more than settings | Someone opens a board's settings, an agent publishes new settings meanwhile, and the stale form saves over them; or the form's save smuggles blocks or another key into board.json | The form (the settings page's Board section, or an editor's dialog) saves with the version it read as `base_version`, so a stale save is refused with 409 and the form shows the newer settings without saving; any other refusal only shows its message. The app builds board.json from two known values only, and the Worker checks it with `parseBoardContent` like any update ([Whiteboards](#whiteboards)) |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -838,18 +838,19 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   only if the viewer presses "Use mine".
 - **No editor preview.** A whiteboard has no source editor, so the app never renders a board in
   the editor's preview frame, which holds the owner's content pass.
-- **Board settings.** Owners and editors change a board's settings in an app dialog on the app
-  host, never in the board's frame: nothing is posted to the frame, and the frame cannot open or
-  answer the dialog. Save is the ordinary `PUT /api/v1/artifacts/:ref` (CSRF header, the policy's
-  `edit` decision, the stager's `parseBoardContent` checks) with board.json that the app builds
-  from two enum values (`boardSettingsText`), never from typed text, and the version the dialog
-  read as `base_version`. A save against a stale version is refused with 409 naming the current
-  version; the dialog then shows the newer version's settings and saves nothing until the person
-  saves again, so no version is silently overwritten. Only that refusal (code `conflict`, no
-  `reason`, a newer `current_version`) counts as a conflict: any other refusal, every other 409
-  included, shows its message and keeps the choice, and trying again still sends the same
-  `base_version`, so it cannot overwrite either. The settings carry no starting blocks, so a save
-  never writes shared data.
+- **Board settings.** Owners and editors change a board's settings in app UI on the app host (the
+  owner in the settings page's Board section, an editor in a dialog over the board), never in the
+  board's frame: nothing is posted to the frame, and the frame cannot open, read or answer either
+  form. Save is the ordinary `PUT /api/v1/artifacts/:ref` (CSRF header, the policy's `edit`
+  decision, the stager's `parseBoardContent` checks) with board.json that the app builds from two
+  enum values (`boardSettingsText`), never from typed text, and the version the form read as
+  `base_version`. A save against a stale version is refused with 409 naming the current version;
+  the form then shows the newer version's settings and saves nothing until the person saves
+  again, so no version is silently overwritten. Only that refusal (code `conflict`, no `reason`, a
+  newer `current_version`) counts as a conflict: any other refusal, every other 409 included,
+  shows its message and keeps the choice, and trying again still sends the same `base_version`, so
+  it cannot overwrite either. The settings carry no starting blocks, so a save never writes shared
+  data.
 - **The runtime cannot be replaced by the page.** The shell has only fixed ids, the runtime defines
   `window.plinth` as a non-writable, non-configurable property before the renderer runs, and the
   renderer reads it once before it builds any DOM. It never sets an `id` or a `name` from data.

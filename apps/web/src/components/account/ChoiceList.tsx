@@ -1,4 +1,4 @@
-// One choice from a short list, each option with an optional sentence of explanation (visibility).
+// One choice from a short list where each option needs a sentence of explanation (visibility).
 // Native radio buttons in a fieldset: arrow keys move the choice, Tab enters and leaves as one stop.
 import { type ReactNode, useId } from "react";
 import { ICON_SIZE, type Icon } from "../ui/index.ts";
@@ -6,8 +6,7 @@ import { ICON_SIZE, type Icon } from "../ui/index.ts";
 export interface Choice<T extends string> {
   value: T;
   label: string;
-  /** A sentence under the label; leave it out when the label says enough. */
-  description?: ReactNode;
+  description: ReactNode;
   icon?: Icon;
   disabled?: boolean;
   /** Why it is disabled, shown under the description. */
@@ -37,7 +36,7 @@ export function ChoiceList<T extends string>({
       <div className="pl-acct-choices__list">
         {choices.map((c) => {
           const id = `${group}-${c.value}`;
-          const descId = c.description !== undefined ? `${id}-desc` : undefined;
+          const descId = `${id}-desc`;
           const Glyph = c.icon;
           return (
             <label
@@ -63,14 +62,12 @@ export function ChoiceList<T extends string>({
                   {Glyph && <Glyph size={ICON_SIZE.sm} aria-hidden="true" />}
                   {c.label}
                 </span>
-                {descId && (
-                  <span id={descId} className="pl-acct-choice__description">
-                    {c.description}
-                    {c.disabled && c.disabledReason && (
-                      <span className="pl-acct-choice__reason"> {c.disabledReason}</span>
-                    )}
-                  </span>
-                )}
+                <span id={descId} className="pl-acct-choice__description">
+                  {c.description}
+                  {c.disabled && c.disabledReason && (
+                    <span className="pl-acct-choice__reason"> {c.disabledReason}</span>
+                  )}
+                </span>
               </span>
             </label>
           );

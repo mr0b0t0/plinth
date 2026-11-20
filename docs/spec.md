@@ -1768,21 +1768,24 @@ its page without a new version each time, and agents add and move blocks with
 - **No source editor.** People change the board on its page. Its settings (`edit`, `background`)
   change in Board settings (below) or through an agent's `update_artifact`; the menu has no Edit
   item for a board, and its editor address goes back to the board.
-- **Board settings.** The board's page never shows `board.json`. Owners and editors change the two
-  settings from **Board settings** in the board's ⋯ menu, the one way in (the toolbar has no
-  settings button): a dialog with two groups of choices, the background (Dots, Grid or Plain) and
-  who can change the board (Commenters and editors, or Editors only), labels only, with no
-  explanatory text and no text field. It reads the current version, and Save sends board.json
-  built by the app from the two values (`{"v":1,"background":…,"edit":…}`) with
-  `PUT /api/v1/artifacts/:ref`, that version as `base_version` and a note naming what changed, so
-  the change is a new version under the person's name, which owners and editors can restore from
-  History. When a newer version was published meanwhile, the save is refused (409, `conflict`):
-  the dialog then shows that version's settings and says so ("v5 was published meanwhile. These
-  are its settings."), and nothing is saved until the person saves again. Only that refusal
-  counts as a conflict: error code `conflict`, no `reason` in its details, and a `current_version`
-  above the version the dialog read. Any other refusal, every other 409 included ("Another version
-  is being written; try again shortly", an expired attempt, a refusal with a `reason`), shows the
-  server's message, keeps the person's choice for another try and offers no newer settings.
+- **Board settings.** The board's page never shows `board.json`. The board's ⋯ menu has one
+  Settings item, the one way in (the toolbar has no settings button). For the owner it is the
+  artifact's settings page, which on a whiteboard has a **Board** section; an editor, who has no
+  settings page, gets the same choices in a small **Board settings** dialog over the board. Both
+  show two one-row choices, the background (Dots, Grid or Plain) and who can change the board
+  (Editors only, or Commenters and editors), labels only, with no explanatory text and no text
+  field. They read the current version, and Save sends board.json built by the app from the two
+  values (`{"v":1,"background":…,"edit":…}`) with `PUT /api/v1/artifacts/:ref`, that version as
+  `base_version` and a note naming what changed, so the change is a new version under the
+  person's name, which owners and editors can restore from History. When a newer version was
+  published meanwhile, the save is refused (409, `conflict`): the form then shows that version's
+  settings and says so ("v5 was published meanwhile. These are its settings."), the page around
+  it shows that version too (the board behind the dialog loads it; the settings page shows its
+  number), and nothing is saved until the person saves again. Only that refusal counts as a
+  conflict: error code `conflict`, no `reason` in its details, and a `current_version` above the
+  version the form read. Any other refusal, every other 409 included ("Another version is being
+  written; try again shortly", an expired attempt, a refusal with a `reason`), shows the server's
+  message, keeps the person's choice for another try and offers no newer settings.
 - **Thumbnails.** A board's card shows its thumbnail as the version was captured, the blocks of
   that moment included. Board edits are not versions, so the thumbnail changes only with a new
   settings version. A capture, like a link viewer who is not signed in, sees the board with no

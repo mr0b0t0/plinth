@@ -92,11 +92,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   lists which types an instance publishes (`artifact_types`). Plugin 0.29.0: when and how agents
   publish and change whiteboards.
 - **Board settings for whiteboards.** Owners and editors change a board's background (dots, grid
-  or plain) and who can change it (commenters and editors, or editors only) from **Board settings**
-  in the board's ⋯ menu, in a small dialog with two choices and no text to type. Each save is a
-  new version; if someone published a newer one meanwhile, the dialog shows its settings instead
-  of overwriting them, and any other refusal shows its own message. The skill tells agents to read
-  a board's settings again before changing them, since people change them too.
+  or plain) and who can change it (editors only, or commenters and editors) without typing
+  anything: from **Settings** in the board's ⋯ menu, which is the settings page's new Board section
+  for the owner and a small dialog over the board for an editor. Each save is a new version; if
+  someone published a newer one meanwhile, nothing is overwritten: the newer settings are shown
+  and the board loads that version. Any other refusal shows its own message. The skill tells
+  agents to read a board's settings again before changing them, since people change them too.
 
 ## 0.6.0 (2026-11-20)
 
