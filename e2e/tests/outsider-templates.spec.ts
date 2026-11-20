@@ -410,7 +410,7 @@ test("client intake: a moderated answer says who changed it; a field named const
     await expect(response).toContainText("A new booking flow.");
     await expect(response.locator("dt", { hasText: "Who builds it?" })).toHaveCount(0);
     expect(await response.textContent()).not.toContain("function");
-    await expect(response).not.toContainText("changed by");
+    await expect(response).not.toContainText("Changed by");
 
     // The owner moderates the answers from the page: the response says who changed them.
     const listed = await tool<{ docs: any[] }>(client, "list_artifact_data", {
@@ -437,10 +437,42 @@ test("client intake: a moderated answer says who changed it; a field named const
     );
     expect(moderated).toBe("ok");
     await reopen(page);
-    await expect(fo.locator(".response").first()).toContainText(`changed by ${owner} (owner)`);
+    await expect(fo.locator(".response .meta").first()).toContainText(`Sent · `);
+    await expect(fo.locator(".response .meta").first()).toContainText(
+      ` · Changed by ${owner} (owner)`,
+    );
     await expect(fo.locator(".response").first()).toContainText("(no card numbers)");
     await fo.locator(".response").first().scrollIntoViewIfNeeded();
     await shot(page, "intake-changed-by");
+
+    // The owner's agent changes them again: the same line adds "via agent".
+    const again = await tool<{ docs: any[] }>(client, "list_artifact_data", {
+      id: art.id,
+      collection: "intake",
+    });
+    expect(again.isError, again.text).toBe(false);
+    const written = await tool<{ results: { ok: boolean }[] }>(client, "write_artifact_data", {
+      id: art.id,
+      ops: [
+        {
+          op: "set",
+          collection: "intake",
+          doc_id: docId,
+          data: {
+            answers: { company: "Globex", goal: "A booking flow." },
+            submitted: true,
+            formRevision: 1,
+          },
+          if_rev: again.data.docs[0]?.rev,
+        },
+      ],
+    });
+    expect(written.isError, written.text).toBe(false);
+    expect(written.data.results.map((r) => r.ok)).toEqual([true]);
+    await reopen(page);
+    await expect(fo.locator(".response .meta").first()).toContainText(
+      ` · Changed by ${owner} (owner) via agent`,
+    );
   } finally {
     await client.close();
     for (const p of pages) await p.context().close();

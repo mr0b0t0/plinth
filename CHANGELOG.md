@@ -51,7 +51,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   "start and end the name with a Latin letter or digit", which also covers names in other scripts
   and names ending in a dot.
 - **The intake example shows who changed an answer.** Answers the owner or an editor changed say
-  "changed by" with their email and role, as sign-offs do, and a question whose id is
+  "Changed by" with their email and role on the response's date line, and a question whose id is
   `constructor` or another built-in name no longer shows a stray answer.
 - **The approval example keeps your own decision current.** "You approved · Withdraw" follows the
   shared data, so it updates when the owner or an editor changes or deletes your sign-off, without
