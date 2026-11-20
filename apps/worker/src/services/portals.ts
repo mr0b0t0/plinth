@@ -19,6 +19,7 @@ import { eq, inArray } from "drizzle-orm";
 import { countSignInGuess, maySignIn } from "../auth/login.ts";
 import { type ArtifactRow, artifacts, type UserRow, users } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
+import { oneLine } from "../email/templates.ts";
 import { hmacHex, newId, newSixDigitCode, timingSafeEqual } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
@@ -325,14 +326,17 @@ async function sendPortalCode(ctx: Ctx, share: ShareSql, email: string): Promise
     .where(eq(users.id, share.owner_id))
     .get();
   // Neither the share's title nor the category name: only who shared it. The owner's name is
-  // their own text, so the sign-in email names it as such.
-  const who = owner?.name ? `${owner.name} shared` : "someone shared";
+  // their own text, so the sign-in email names it as such, on one line: names saved before display
+  // names refused control characters (v0.6.0 trimmed only the ends) are still stored as written,
+  // and a line break could close the labelled line and add lines that read as Plinth's.
+  const name = owner?.name ? oneLine(owner.name) : "";
+  const who = name ? `${name} shared` : "someone shared";
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
     ...viewerCodeEmail(ctx, email, code, {
       asked: `Someone asked to open a collection ${who} on Plinth with this email address.`,
-      signIn: owner?.name
-        ? `Someone asked for it to open a collection shared with this address. The sharer's name, as they wrote it and not checked by Plinth, is "${owner.name}".`
+      signIn: name
+        ? `Someone asked for it to open a collection shared with this address. The sharer's name, as they wrote it and not checked by Plinth, is "${name}".`
         : "Someone asked for it to open a collection shared with this address.",
     }),
   });

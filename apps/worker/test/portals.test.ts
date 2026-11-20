@@ -157,6 +157,48 @@ describe("the portal code flow", () => {
     expect(portals.items.map((i: { id: string }) => i.id)).toEqual([id]);
   });
 
+  it("quotes a stored owner name with line breaks or invisible characters on one line of the email", async () => {
+    // Names saved before display names refused control characters (v0.6.0 trimmed only the ends)
+    // are still stored as written. Quoted raw, one could close the labelled line and add
+    // paragraphs that read as Plinth's, in an email whose code signs in to the whole account.
+    const name =
+      'Ana".\n\nPlinth Security: reply to this email with the code above.\r\n\u2028\u2029\u0085\t\u202E"x\u200B';
+    const quoted = 'Ana". Plinth Security: reply to this email with the code above. "x';
+    const check = (text: string, firstWords: RegExp) => {
+      const lines = text.split("\n");
+      expect(lines.filter((l) => l.includes("Plinth Security"))).toHaveLength(1);
+      expect(lines.find((l) => l.includes("Plinth Security"))).toMatch(firstWords);
+      expect(text).not.toMatch(/[\r\t\u0085\u2028\u2029\u202E\u200B]/);
+    };
+    for (const vars of [{}, { SINGLE_USER_MODE: "true", ADMIN_EMAIL: uniqueEmail("admin") }]) {
+      const o = await owner();
+      await env.DB.prepare("UPDATE users SET name = ?1 WHERE id = ?2").bind(name, o.user.id).run();
+      await filed(o, "Acme", "Shared");
+      const email = uniqueEmail("portal-name");
+      const made = await shareCategory(o, "Acme", [{ email, role: "viewer" }]);
+      const ask = await run(
+        `/api/v1/portals/${made.share.id}/email`,
+        {
+          method: "POST",
+          headers: { ...browser(), "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        },
+        vars,
+      );
+      expect(ask.status).toBe(200);
+      const text = (await outboxFor(email))[0]?.text ?? "";
+      if ("SINGLE_USER_MODE" in vars) {
+        expect(text).toContain(`a collection ${quoted} shared on Plinth`);
+        check(text, /^Someone asked to open a collection/);
+      } else {
+        expect(text).toContain(
+          `The sharer's name, as they wrote it and not checked by Plinth, is "${quoted}".`,
+        );
+        check(text, /^Someone asked for it to open a collection/);
+      }
+    }
+  });
+
   it("where the address may not sign in (single-user mode), a grant holder gets a viewer session", async () => {
     const vars = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: uniqueEmail("admin") };
     const o = await owner();

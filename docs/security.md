@@ -1787,12 +1787,13 @@ got a viewer session.
   account if there is none, and before anything the sharer wrote it warns to enter the code only
   on `APP_HOST` and never to give it to anyone or reply with it. The artifact's title (or, for a
   portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
-  Plinth. The title is quoted on one line (`email/templates.ts oneLine`): a title set through
-  publish or update keeps inner line breaks, so every run of whitespace or control characters in
-  it becomes one space and format characters (bidi overrides, zero-width) are dropped. Otherwise
-  a title could close the labelled line and add paragraphs that read as Plinth's, such as "reply
-  with the code above". Names already refuse those characters. In single-user mode, where the code only opens what is shared, the email stays the
-  plain "viewing code" email.
+  Plinth. The title or name is quoted on one line (`email/templates.ts oneLine`): every run of
+  whitespace or control characters in it becomes one space and format characters (bidi overrides,
+  zero-width) are dropped. A title set through publish or update keeps inner line breaks, and a
+  name saved before display names refused control characters (v0.6.0 and earlier trimmed only
+  the ends) is still stored as written. Otherwise either could close the labelled line and add
+  paragraphs that read as Plinth's, such as "reply with the code above". In single-user mode,
+  where the code only opens what is shared, the email stays the plain "viewing code" email.
 - **The account is the mailbox's.** An owner can list any address, but only the person who reads
   that mailbox can type the code, so no one can create or enter an account for an address they do
   not read. An account made this way is an ordinary account: verified, no name, the default quota,

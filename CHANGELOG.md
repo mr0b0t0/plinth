@@ -83,8 +83,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   on its page. The gate, the email and the privacy notice say so, and the gate and the shared
   collection tell someone already signed in that confirming another address switches them to it.
   The code's email is now a sign-in email ("Your Plinth sign-in code"), warning never to give the
-  code to anyone before it shows the title the sharer wrote (on one line, so a title cannot add
-  lines of its own), and wrong guesses at it count against the same per-address limit as the
+  code to anyone before it shows the title or name the sharer wrote (on one line, so neither can
+  add lines of its own), and wrong guesses at it count against the same per-address limit as the
   sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
   a viewer session without an account, and viewer sessions started earlier keep working until
   they expire. Plugin 0.29.0.

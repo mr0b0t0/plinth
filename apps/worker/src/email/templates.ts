@@ -13,10 +13,10 @@ export function escapeHtml(s: string): string {
 }
 
 /**
- * Text someone else wrote (an artifact's title), made safe to quote inside one line of a
- * plain-text email: every run of whitespace and control characters (line breaks, tabs, NEL, the
- * line and paragraph separators) becomes one space, and format characters (bidi overrides,
- * zero-width) are dropped. The text then cannot end the line that labels it as the sharer's and
+ * Text someone else wrote (an artifact's title, a sharer's stored name), made safe to quote inside
+ * one line of a plain-text email: every run of whitespace and control characters (line breaks,
+ * tabs, NEL, the line and paragraph separators) becomes one space, and format characters (bidi
+ * overrides, zero-width) are dropped. The text then cannot end the line that labels it as the sharer's and
  * start lines of its own that read as Plinth's.
  */
 export function oneLine(s: string): string {
