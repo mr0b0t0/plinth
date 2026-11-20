@@ -279,3 +279,22 @@
     display: none;
   }
 }
+
+/* ---------- Added after the prose split (prose.test.ts checks the text above this line) ---------- */
+
+/* Narrow windows: the side margin is too narrow for a "+" beside every block. Only the one above
+   the block being edited and the one at the end show, each on a line of its own at the right,
+   clear of rules and text; the others wait, out of reach of a tap, until keyboard focus reaches
+   them. */
+@media screen and (max-width: 50rem) {
+  .plinth-doc--editing > .plinth-doc__insert:is(:has(+ .plinth-doc__field), :last-of-type) {
+    position: static;
+    display: block;
+    margin: 0.25rem 0 0.25rem auto;
+  }
+  .plinth-doc--editing
+    > .plinth-doc__insert:not(:has(+ .plinth-doc__field)):not(:last-of-type):not(:focus-visible) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}

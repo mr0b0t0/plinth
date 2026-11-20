@@ -670,17 +670,22 @@ page shows the strip and makes the REST calls, and renders no content.
   height and scrolls beyond it; one wider than its pane fades at the edge it scrolls to. Each side
   starts with its plain-language change list since the draft's base, from the History's
   describers ([Comparing versions](#comparing-versions-decided-2026-11-19)), one line per change:
-  a value that changed whole as "18 → 24", a longer text as only the words that changed (removed
-  ones struck through, added ones tinted, a few words of context and "…" around them), and nothing
-  more when the excerpts do not reach the change. vN's side also names each file it added, removed
+  a short label ("Paragraph changed", with its place in front only when two would read the same;
+  a sheet's cell as its column and row, "Qty, row 3"), then a value that changed whole as
+  "18 → 24" (a sheet's in its column's format, as the grid shows it: "€89.00 → €95.00"), a longer
+  text as only the words that changed (removed ones struck through, added ones tinted, none of the
+  words both sides share, "…" between two changes), and nothing more when the excerpts do not
+  reach the change. vN's side also names each file it added, removed
   or replaced, at most 50 of each kind, then "and N more files"; page changes never change files,
   so their side lists none. Pressing an item brings both sides to the place it names. Each side
   marks what changed since the base in the drawing itself, the same way in both themes (a bronze
   tint and a bar at the left edge): a doc's changed blocks (a list's or a table's changed items),
   with a short bar where blocks were removed, and a sheet's changed cells, by their entered value
   or formula. Each side opens scrolled to its first change when that is out of view (at phone
-  width, when the switch first shows it). The versions reviewed are every version since the draft's base; the strip and
+  width, when the switch first shows it); a sheet's changed column starts right after the row
+  numbers, never beside a cut-off sliver of another. The versions reviewed are every version since the draft's base; the strip and
   the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
+  While a version waits for review, the version in the artifact bar is the draft's base.
   The review looks like the app around it (ink primary, bronze for the live state, the app's
   compact buttons) and has no explanatory paragraphs: exactly two choices, and Back:
   - **Publish your changes**: the room's own frozen draft, byte for byte, becomes the next version on top
@@ -722,10 +727,13 @@ page shows the strip and makes the REST calls, and renders no content.
   it off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
 - **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
   source") turns edit mode on; a strip under the bar says what is happening ("Draft saved",
-  "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), who else is editing and where
-  ("row 12", a structural place, never content; at phone width only how many), with Publish, a
+  "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
+  (who and where, "row 12", a structural place, never content, in its tooltip and its accessible
+  name), with Publish, a
   menu with "Publish with a note…" and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
-  its Markdown; blocks other people hold show their email and their text as it arrives. Esc at the
+  its Markdown; blocks other people hold show their email and their text as it arrives. At phone
+  width a doc shows only the "+" above the block being edited and the one at the end, each on a
+  line of its own, so none covers a rule or text. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
   line when unpublished changes exist (with Publish and Discard), when someone is editing, or when
   a version needs review (with Review changes); editing itself starts only from the Edit toggle.

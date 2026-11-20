@@ -26,6 +26,7 @@ import {
   joinLines,
   LIMITS,
   liveRules,
+  NUMERIC_TEXT,
   parseSheet,
   type Sheet,
   type SheetEvaluation,
@@ -36,9 +37,16 @@ import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.t
 import { appPoster, ReviewSession } from "../common/editSession.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient } from "../common/live.ts";
-import { CHANGED_ATTR, DraftReview, type ReviewPane } from "../common/review.ts";
+import {
+  bringIntoPane,
+  CHANGED_ATTR,
+  DraftReview,
+  type ItemWords,
+  type ReviewPane,
+} from "../common/review.ts";
 import { LocalSheet, type SheetBackend, SheetEditor } from "./edit.ts";
 import { exportSheet } from "./export.ts";
+import { formatNumber } from "./format.ts";
 import { buildGrid, type Grid } from "./grid.ts";
 import { fromApp, readSheetAppMessage, type SheetAppMessage } from "./protocol.ts";
 
@@ -61,9 +69,33 @@ function gridGoto(grid: Grid): (item: ChangeItem) => boolean {
           ? grid.cell(1, colIndex(col[1] as string))
           : null;
     if (!td) return false;
-    td.scrollIntoView({ block: "center", inline: "center" });
+    bringIntoPane(td);
     return true;
   };
+}
+
+/** A cell's change item: "B3 changed", "B3 filled in", "B3 cleared", "B6: calculation changed". */
+const CELL_ITEM = /^([A-Z]{1,3})(\d+)(?:: calculation changed| changed| (filled in)| (cleared))$/;
+
+/**
+ * A cell's change in the sheet's own words: its column's name and row ("Qty, row 3"), with the
+ * values as its cells show them (a number in its column's format, a date as the grid writes it).
+ * Null for any other item, which keeps the shared words.
+ */
+export function sheetItemWords(item: ChangeItem, sheet: Sheet | null): ItemWords | null {
+  const m = CELL_ITEM.exec(item.what);
+  if (!m) return null;
+  const col = sheet?.header.columns[colIndex(m[1] as string)];
+  const name = col?.name.trim() ? col.name : (m[1] as string);
+  const label = `${name}, row ${m[2]}${m[3] ? " filled in" : m[4] ? " cleared" : ""}`;
+  const shown = (v: string | undefined) =>
+    v === undefined || !col || !NUMERIC_TEXT.test(v) ? v : formatNumber(Number(v), col);
+  const out: ItemWords = { label };
+  const before = shown(item.before);
+  const after = shown(item.after);
+  if (before !== undefined) out.before = before;
+  if (after !== undefined) out.after = after;
+  return out;
 }
 
 /**
@@ -102,7 +134,15 @@ export function changedCells(base: Sheet, sheet: Sheet): [number, number][] {
  * cells that differ from the base marked.
  */
 function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): ReviewPane {
+  const parsed = new Map<string, Sheet | null>();
   return {
+    describe(item, text) {
+      if (!parsed.has(text)) {
+        const p = parseSheet(text);
+        parsed.set(text, p.ok ? p.sheet : null);
+      }
+      return sheetItemWords(item, parsed.get(text) ?? null);
+    },
     render(el, text, _version, base) {
       const p = parseSheet(text);
       if (!p.ok) {

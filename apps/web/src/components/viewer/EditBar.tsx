@@ -1,5 +1,6 @@
 // The slim strip under the artifact bar while a doc or a sheet is edited on its page (#36): what
-// is going on (announced politely), who else is editing and where, Publish (the one primary
+// is going on (announced politely), how many others are editing (who and where in its tooltip
+// and its name), Publish (the one primary
 // action, Cmd/Ctrl+S), "Publish with a note…" and "Discard unpublished changes" (behind a confirm)
 // in the overflow menu, and Done. While a version published meanwhile waits for review, Publish
 // and the overflow menu give way to "Review changes", which opens the whole-draft review in the
@@ -14,7 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { versionRange } from "@plinth/shared";
 import { type FormEvent, type Ref, useId, useState } from "react";
-import { Button, ConfirmDialog, Dialog, Input, Menu } from "../ui/index.ts";
+import { Button, ConfirmDialog, Dialog, Input, Menu, Tooltip } from "../ui/index.ts";
 import type { LivePhase } from "./useLiveEdit.ts";
 
 export interface EditBarProps {
@@ -90,10 +91,15 @@ export function editStatusShort(p: EditBarProps): string | null {
   return null;
 }
 
-/** "Ana is editing row 12" for the people named in the strip. */
+/** "ana@example.org (editing row 12)" for one of the others editing. */
 function editorText(e: { email: string; block: boolean; where?: string }): string {
   if (!e.block) return e.email;
   return e.where ? `${e.email} (editing ${e.where})` : `${e.email} (editing)`;
+}
+
+/** Who else is editing and where, for the count's tooltip and name. */
+export function editorsText(editors: EditBarProps["editors"]): string {
+  return `Also here: ${editors.map(editorText).join(", ")}`;
 }
 
 export function EditBar(props: EditBarProps) {
@@ -105,8 +111,6 @@ export function EditBar(props: EditBarProps) {
   const reasonId = useId();
   const conflict = phase === "conflict";
   const publishable = props.publishable !== false;
-  const shown = editors.slice(0, 3);
-  const more = editors.length - shown.length;
   const submitNote = (e: FormEvent) => {
     e.preventDefault();
     setNoteOpen(false);
@@ -142,20 +146,19 @@ export function EditBar(props: EditBarProps) {
         </span>
       </span>
       {editors.length > 0 && (
-        <span className="pl-editbar__editors">
-          <UsersIcon size={14} aria-hidden="true" />
-          <span className="visually-hidden">Also here: </span>
-          {shown.map((e) => (
-            <span key={e.email} className="pl-editbar__editor">
-              {editorText(e)}
-            </span>
-          ))}
-          {more > 0 && <span className="pl-editbar__editor">+{more}</span>}
-          {/* At phone width the names give way to how many, so the strip stays one line. */}
-          <span className="pl-editbar__count" aria-hidden="true">
+        // How many others are here, at every width; who and where are its tooltip and its name.
+        <Tooltip content={editorsText(editors)} placement="bottom">
+          <span
+            className="pl-editbar__editors"
+            role="img"
+            aria-label={editorsText(editors)}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users can read who in the tooltip
+            tabIndex={0}
+          >
+            <UsersIcon size={14} aria-hidden="true" />
             {editors.length}
           </span>
-        </span>
+        </Tooltip>
       )}
       {reason && (
         <span id={reasonId} className="pl-editbar__reason">

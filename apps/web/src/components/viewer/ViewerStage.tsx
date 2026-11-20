@@ -208,6 +208,12 @@ export function ViewerStage({
     onLeave: () => barRef.current?.focus(),
   });
   const editing = live.editing;
+  // While a version waits for review, the page still shows the changes made on their base: the
+  // bar names that base, whenever the room's news of the newer version arrived.
+  const shownVersion =
+    editing && live.phase === "conflict"
+      ? live.review?.base || live.status?.base_version || artifact.version
+      : artifact.version;
   // Presenting a deck: the slide, full screen, presenter view and its audience window.
   const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
   const pause: WatchPause = live.pause ?? present.pause;
@@ -374,11 +380,7 @@ export function ViewerStage({
             </h1>
           </div>
           <div className="pl-viewer__version">
-            <VersionPicker
-              slug={slug}
-              current={artifact.current_version}
-              shown={artifact.version}
-            />
+            <VersionPicker slug={slug} current={artifact.current_version} shown={shownVersion} />
           </div>
           {isOwner && (
             <span className="pl-viewer__access" title={access.description}>

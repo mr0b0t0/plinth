@@ -15,6 +15,7 @@ import {
   CHANGED_ATTR,
   changedWords,
   DraftReview,
+  itemWords,
   markChangedChildren,
   type ReviewPane,
 } from "./review.ts";
@@ -71,6 +72,14 @@ const button = (name: string) =>
     | HTMLButtonElement
     | undefined;
 const panes = () => [...document.querySelectorAll(".plinth-review__pane")] as HTMLElement[];
+
+/** Lays a pane out at 300 × 400 px, its content `scrollWidth` wide (happy-dom has no layout). */
+function sized(el: HTMLElement, scrollWidth: number) {
+  el.getBoundingClientRect = () => new DOMRect(0, 0, 300, 400);
+  el.getClientRects = () => [new DOMRect(0, 0, 300, 400)] as unknown as DOMRectList;
+  Object.defineProperty(el, "clientWidth", { value: 300, configurable: true });
+  Object.defineProperty(el, "scrollWidth", { value: scrollWidth, configurable: true });
+}
 
 describe("the whole-draft review", () => {
   it("renders both sides read-only, each against the files it would publish", async () => {
@@ -227,24 +236,47 @@ describe("what changed, in the review", () => {
     ]);
   });
 
-  it("shows only the words that changed, never two openings cut alike", () => {
+  it("shows only the words that changed, with none of the words both sides share", () => {
     const before =
       "We ship the hosted beta to the first 200 teams on 2 December, with self-hosting docs the same week.";
     const after =
       "We ship the hosted beta (moved up a week) to the first 200 teams on 2 December, with self-hosting docs the same week.";
-    expect(changedWords(before, after)).toEqual([
-      { kind: "same", text: "…\u00a0the hosted beta" },
-      { kind: "added", text: "(moved up a week)" },
-      { kind: "same", text: "to the first\u00a0…" },
-    ]);
+    expect(changedWords(before, after)).toEqual([{ kind: "added", text: "(moved up a week)" }]);
     expect(changedWords("Reach 50 teams.", "Reach 80 teams.")).toEqual([
-      { kind: "same", text: "Reach" },
       { kind: "removed", text: "50" },
       { kind: "added", text: "80" },
-      { kind: "same", text: "teams." },
     ]);
+    // Two changes are told apart by "…"; more than two end with one.
+    expect(changedWords("a b c d e f", "a X c d Y f")).toEqual([
+      { kind: "removed", text: "b" },
+      { kind: "added", text: "X" },
+      { kind: "gap", text: "…" },
+      { kind: "removed", text: "e" },
+      { kind: "added", text: "Y" },
+    ]);
+    expect(changedWords("a b c d e f", "X b Y d Z f").at(-1)).toEqual({ kind: "gap", text: "…" });
     // Excerpts that agree in every word say nothing: the item's line is enough.
     expect(changedWords("Same words…", "Same words…")).toEqual([]);
+  });
+
+  it("labels each change shortly, naming its place only where two would read the same", () => {
+    const item = (where: string, what: string) => ({ kind: "changed" as const, where, what });
+    expect(
+      itemWords([
+        item("Under “Q4 launch plan”", "Paragraph changed"),
+        item("Under “Goals”", "Heading “Goals” renamed"),
+      ]).map((w) => w.label),
+    ).toEqual(["Paragraph changed", "Heading “Goals” renamed"]);
+    expect(
+      itemWords([
+        item("Under “Goals”", "Paragraph changed"),
+        item("Under “Risks”", "Paragraph changed"),
+      ]).map((w) => w.label),
+    ).toEqual(["Under “Goals”: Paragraph changed", "Under “Risks”: Paragraph changed"]);
+    // A pane's own words win.
+    expect(
+      itemWords([item("Row 3, “Qty”", "B3 changed")], () => ({ label: "Qty, row 3" }))[0],
+    ).toEqual({ label: "Qty, row 3" });
   });
 
   it("renders a short value as before → after, and a text as its changed words", () => {
@@ -260,7 +292,7 @@ describe("what changed, in the review", () => {
     });
     expect(text?.querySelector("del")?.textContent).toBe("removed: 50");
     expect(text?.querySelector("ins")?.textContent).toBe("added: 80");
-    expect(text?.textContent).toBe("Reach removed: 50 added: 80 weekly active teams\u00a0…");
+    expect(text?.textContent).toBe("removed: 50 added: 80");
     // A value that changed whole (a sheet's cell): one plain line.
     const cell = values({
       kind: "changed",
@@ -298,7 +330,7 @@ describe("what changed, in the review", () => {
     expect(n).toBe(3);
   });
 
-  it("opens a pane scrolled to its first change when that is out of view", async () => {
+  it("opens a pane scrolled to its first change: centred down, its left edge past what sticks", async () => {
     const pane: ReviewPane = {
       render(el) {
         const far = document.createElement("p");
@@ -306,8 +338,7 @@ describe("what changed, in the review", () => {
         el.append(far);
         // Laid out below and to the right of what the pane shows.
         far.getBoundingClientRect = () => new DOMRect(500, 900, 80, 20);
-        el.getBoundingClientRect = () => new DOMRect(0, 0, 300, 400);
-        el.getClientRects = () => [new DOMRect(0, 0, 300, 400)] as unknown as DOMRectList;
+        sized(el, 2000);
         return null;
       },
     };
@@ -315,7 +346,48 @@ describe("what changed, in the review", () => {
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     const body = document.querySelector(".plinth-review__body") as HTMLElement;
     expect(body.scrollTop).toBe(900 - 190);
-    expect(body.scrollLeft).toBe(500 - 110);
+    // Its column starts at the pane's left edge: no part of another column beside it.
+    expect(body.scrollLeft).toBe(500);
+  });
+
+  /** A sheet-like row: sticky row numbers (48px), then cells of the given widths. */
+  const rowPane = (widths: number[], changed: number, scrollWidth: number): ReviewPane => ({
+    render(el) {
+      const row = document.createElement("tr");
+      const num = document.createElement("th");
+      num.style.position = "sticky";
+      num.getBoundingClientRect = () => new DOMRect(0, 0, 48, 20);
+      row.append(num);
+      let x = 48;
+      for (const [i, w] of widths.entries()) {
+        const cell = document.createElement("td");
+        const left = x;
+        cell.getBoundingClientRect = () => new DOMRect(left, 0, w, 20);
+        if (i === changed) cell.setAttribute(CHANGED_ATTR, "");
+        row.append(cell);
+        x += w;
+      }
+      el.append(row);
+      sized(el, scrollWidth);
+      return null;
+    },
+  });
+
+  it("leaves a sheet's sticky row numbers clear of the cell it scrolls to", async () => {
+    const { review } = setup({ pane: rowPane([160, 120, 120, 120, 120], 3, 2000) });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
+    const body = document.querySelector(".plinth-review__body") as HTMLElement;
+    // Column D starts right after the row numbers.
+    expect(body.scrollLeft).toBe(48 + 160 + 120 + 120 - 48);
+  });
+
+  it("near the far end, starts at a whole column rather than a sliver of one", async () => {
+    // 568px wide in a 300px pane: it scrolls at most 268px, which would cut column B.
+    const { review } = setup({ pane: rowPane([160, 120, 120, 120], 2, 568) });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
+    const body = document.querySelector(".plinth-review__body") as HTMLElement;
+    // Column B starts after the row numbers instead, and C still shows whole.
+    expect(body.scrollLeft).toBe(48 + 160 - 48);
   });
 });
 

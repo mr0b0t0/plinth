@@ -5,9 +5,10 @@
 // each read-only by the type's own renderer and against the files it would publish: the page
 // changes against their base version's files, vN against vN's. Above each is its change list from
 // the shared describers (what the page changes did since the base, and what vN did since the
-// base, with vN's files when it changed any; a changed text shows only the words that changed).
-// Each pane marks what changed since the base (the type's blocks or cells) and opens at its first
-// change. Then exactly two choices, and Back:
+// base, with vN's files when it changed any): one short label per change ("Paragraph changed",
+// "Qty, row 3"), with only the words or values that changed. Each pane marks what changed since
+// the base (the type's blocks or cells) and opens at its first change. Then exactly two choices,
+// and Back:
 // - "Publish your changes": they become the next version, with the files they were made with,
 //   over vN, which stays in History;
 // - "Discard your changes": the app confirms it with its own dialog over the dimmed page, then
@@ -47,6 +48,18 @@ export interface ReviewPane {
     version: number,
     base: string | null,
   ): ((item: ChangeItem) => boolean) | null;
+  /**
+   * A shorter way to say one change item of the side whose live form is `text`, with its values as
+   * the pane shows them ("Qty, row 3" with "€89.00" and "€95.00"), or null for the shared words.
+   */
+  describe?(item: ChangeItem, text: string): ItemWords | null;
+}
+
+/** What one change item says in the review: its label, and the values on each side if any. */
+export interface ItemWords {
+  label: string;
+  before?: string;
+  after?: string;
 }
 
 /** The attribute a pane sets on each block or cell that changed since the base. */
@@ -96,59 +109,87 @@ export function itemText(item: ChangeItem): string {
   return item.where ? `${item.where}: ${item.what}` : item.what;
 }
 
-/** One run of a changed text: words both sides share, or words only one side has. */
+/**
+ * Each item's words in one list: the pane's own (`describe`), otherwise the item's `what` alone
+ * ("Paragraph changed"), with its place in front only where two items would read the same.
+ */
+export function itemWords(
+  items: readonly ChangeItem[],
+  describe: (item: ChangeItem) => ItemWords | null = () => null,
+): ItemWords[] {
+  const own = items.map(describe);
+  const seen = new Map<string, number>();
+  for (const [i, item] of items.entries()) {
+    const l = own[i]?.label ?? item.what;
+    seen.set(l, (seen.get(l) ?? 0) + 1);
+  }
+  return items.map((item, i) => {
+    const words = own[i];
+    if (words) return words;
+    const out: ItemWords = {
+      label: (seen.get(item.what) ?? 0) > 1 ? itemText(item) : item.what,
+    };
+    if (item.before !== undefined) out.before = item.before;
+    if (item.after !== undefined) out.after = item.after;
+    return out;
+  });
+}
+
+/** One run of a changed text: words only one side has, or the "…" between two changes. */
 export interface WordRun {
-  kind: "same" | "removed" | "added";
+  kind: "gap" | "removed" | "added";
   text: string;
 }
 
-/** Words of context kept on each side of a change. */
-const CONTEXT_WORDS = 3;
 /** Changes shown in one item's words; more end with "…". */
 const MAX_HUNKS = 2;
 /** Words shown of one removed or added run; a longer one ends with "…". */
 const MAX_RUN_WORDS = 12;
 
-/**
- * What changed between two short texts (a change item's `before` and `after`), as runs: only the
- * words that differ, with a few words of context around each change and "…" where text is left
- * out, so a change deep in a long paragraph is what shows, not the opening both sides share. Empty
- * when the two do not differ in their words (the change lies past both excerpts).
- */
-export function changedWords(before: string, after: string): WordRun[] {
+/** The word-level differences between two short texts. */
+function wordHunks(before: string, after: string) {
   const a = before.split(/\s+/).filter(Boolean);
   const b = after.split(/\s+/).filter(Boolean);
-  const { hunks } = diffSequence(a, b, { maxEdits: 200 });
-  if (hunks.length === 0) return [];
+  return { a, b, hunks: diffSequence(a, b, { maxEdits: 200 }).hunks };
+}
+
+/**
+ * What changed between two short texts (a change item's `before` and `after`), as runs: only the
+ * words removed and added, with "…" between two changes and after the last when more are left out,
+ * and none of the words both sides share (the pane marks where the change is). Empty when the two
+ * do not differ in their words (the change lies past both excerpts).
+ */
+export function changedWords(before: string, after: string): WordRun[] {
+  const { a, b, hunks } = wordHunks(before, after);
   const runs: WordRun[] = [];
   const push = (kind: WordRun["kind"], words: string[]) => {
     if (words.length === 0) return;
     const cut = words.length > MAX_RUN_WORDS ? [...words.slice(0, MAX_RUN_WORDS), "…"] : words;
-    // A "…" stays on the line of the word beside it (a no-break space).
-    const text = cut.join(" ").replace(/^… /, "… ").replace(/ …$/, " …");
-    const last = runs.at(-1);
-    if (last && last.kind === kind) last.text += ` ${text}`;
-    else runs.push({ kind, text });
+    // A "…" stays on the line of the word before it (a no-break space).
+    runs.push({ kind, text: cut.join(" ").replace(/ …$/, "\u00a0…") });
   };
   const shown = hunks.slice(0, MAX_HUNKS);
-  let j = 0;
   for (const [i, h] of shown.entries()) {
-    // Context before: what follows the previous change, cut to a few words on each side (before
-    // the first change, only the words just before it, after a "…").
-    const gap = b.slice(j, h.bStart);
-    const lead = i === 0 ? 0 : CONTEXT_WORDS;
-    if (gap.length > lead + CONTEXT_WORDS) {
-      push("same", [...gap.slice(0, lead), "…", ...gap.slice(-CONTEXT_WORDS)]);
-    } else push("same", gap);
+    if (i > 0) runs.push({ kind: "gap", text: "…" });
     push("removed", a.slice(h.aStart, h.aEnd));
     push("added", b.slice(h.bStart, h.bEnd));
-    j = h.bEnd;
   }
-  const tail = b.slice(j);
-  const more = hunks.length > shown.length;
-  if (tail.length > CONTEXT_WORDS || more) push("same", [...tail.slice(0, CONTEXT_WORDS), "…"]);
-  else push("same", tail);
+  if (hunks.length > shown.length) runs.push({ kind: "gap", text: "…" });
   return runs;
+}
+
+/** True when every word of both texts changed: a value replaced whole ("18 → 24"). */
+function changedWhole(before: string, after: string): boolean {
+  const { a, b, hunks } = wordHunks(before, after);
+  const h = hunks[0];
+  return (
+    hunks.length === 1 &&
+    h !== undefined &&
+    h.aStart === 0 &&
+    h.bStart === 0 &&
+    h.aEnd === a.length &&
+    h.bEnd === b.length
+  );
 }
 
 /** "chart.png replaced" style lines for vN's files part, and how many more there are. */
@@ -314,7 +355,7 @@ export class DraftReview {
       s.dataset.side = side;
       s.setAttribute("aria-label", label);
       s.append(el(d, "h3", "plinth-review__label", label));
-      s.append(this.changes(list, files, goTo));
+      s.append(this.changes(list, files, goTo, text));
       const body = el(d, "div", "plinth-review__body");
       body.tabIndex = 0;
       body.setAttribute("aria-label", label);
@@ -434,6 +475,7 @@ export class DraftReview {
     list: ChangeList | null,
     files: { lines: string[]; more: number },
     goTo: (item: ChangeItem) => void,
+    text: string | null,
   ): HTMLElement {
     const d = this.doc;
     const s = el(d, "div", "plinth-review__changes");
@@ -444,15 +486,21 @@ export class DraftReview {
     } else {
       const ul = el(d, "ul", "plinth-review__list");
       ul.setAttribute("aria-label", "Changes");
-      for (const item of list.items) {
+      const { describe } = this.setup.pane;
+      const words = itemWords(
+        list.items,
+        describe && text !== null ? (item) => describe(item, text) : undefined,
+      );
+      for (const [i, item] of list.items.entries()) {
+        const w = words[i] as ItemWords;
         const li = el(d, "li", "plinth-review__item");
         li.dataset.kind = item.kind;
-        const b = el(d, "button", "plinth-review__item-button", itemText(item));
+        const b = el(d, "button", "plinth-review__item-button", w.label);
         b.type = "button";
         b.addEventListener("click", () => goTo(item));
         li.append(b);
-        const values = this.values(item);
-        if (values) li.append(values);
+        const values = this.values(w);
+        if (values) li.append(": ", values);
         ul.append(li);
       }
       if (list.truncated) ul.append(el(d, "li", "plinth-review__item", "and more"));
@@ -478,10 +526,11 @@ export class DraftReview {
   }
 
   /**
-   * An item's values: a short value as "18 → 24", a longer text as only the words that changed
-   * (removed ones struck through), or nothing when the excerpts do not show the change.
+   * An item's values: a value that changed whole as "18 → 24", a text as only the words that
+   * changed (removed ones struck through, added ones tinted), or nothing when the excerpts do not
+   * show the change.
    */
-  private values(item: ChangeItem): HTMLElement | null {
+  private values(item: ItemWords): HTMLElement | null {
     const d = this.doc;
     const { before, after } = item;
     if (before === undefined && after === undefined) return null;
@@ -492,14 +541,13 @@ export class DraftReview {
     }
     const runs = changedWords(before, after);
     if (runs.length === 0) return null;
-    if (runs.every((r) => r.kind !== "same")) {
-      // The whole value changed: one plain line.
+    if (changedWhole(before, after)) {
       span.textContent = `${before} → ${after}`;
       return span;
     }
     for (const [i, r] of runs.entries()) {
       if (i > 0) span.append(" ");
-      if (r.kind === "same") {
+      if (r.kind === "gap") {
         span.append(r.text);
         continue;
       }
@@ -581,8 +629,11 @@ export class DraftReview {
 }
 
 /**
- * Scroll `pane` so `target` is in view, centred, when it is not already wholly in view (a sheet's
- * sticky header row and column stay clear of a centred cell). True when it scrolled.
+ * Scroll `pane` so `target` is in view when it is not already wholly in view: centred from top to
+ * bottom (clear of a sheet's sticky header rows), and from side to side with its left edge just
+ * past whatever sticks at the left of its row (a sheet's row numbers and frozen columns), so its
+ * column shows whole, with its name, and no unlabelled sliver of another is left beside them. True
+ * when it scrolled.
  */
 function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
   const p = pane.getBoundingClientRect();
@@ -592,11 +643,52 @@ function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
     pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
     moved = true;
   }
-  if (t.left < p.left || t.right > p.right) {
-    pane.scrollLeft += t.left - p.left - Math.max(0, (p.width - t.width) / 2);
+  if (sticks(target)) return moved;
+  const lead = stickyLead(target, p.left);
+  if (t.left < p.left + lead || t.right > p.right) {
+    // Where each cell of the row starts, in the pane's scroll coordinates.
+    const at = (e: Element) => e.getBoundingClientRect().left - p.left + pane.scrollLeft;
+    const max = pane.scrollWidth - pane.clientWidth;
+    let to = at(target) - lead;
+    if (to > max) {
+      // The last columns cannot reach the left edge: start at the column the end would cut
+      // instead, while the target still fits.
+      to = max;
+      for (const c of Array.from(target.parentElement?.children ?? [])) {
+        if (c === target) break;
+        const x = at(c);
+        const w = c.getBoundingClientRect().width;
+        if (!sticks(c) && x < max + lead && x + w > max + lead) {
+          if (at(target) + t.width - (x - lead) <= pane.clientWidth) to = x - lead;
+          break;
+        }
+      }
+    }
+    pane.scrollLeft = Math.max(0, to);
     moved = true;
   }
   return moved;
+}
+
+function sticks(e: Element): boolean {
+  return e.ownerDocument.defaultView?.getComputedStyle(e).position === "sticky";
+}
+
+/** How far from the pane's left edge (`left`) the cells that stick before `target` reach. */
+function stickyLead(target: Element, left: number): number {
+  let lead = 0;
+  for (const c of Array.from(target.parentElement?.children ?? [])) {
+    if (c === target) break;
+    if (sticks(c)) lead = Math.max(lead, c.getBoundingClientRect().right - left);
+  }
+  return lead;
+}
+
+/** Brings `target` into view in the review pane it is drawn in (a pane's change items use it). */
+export function bringIntoPane(target: Element): void {
+  const pane = target.closest<HTMLElement>(".plinth-review__body");
+  if (pane) scrollIntoPane(pane, target);
+  else target.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 /** A thin mark where blocks were removed, for `parent` (an item in a list). */

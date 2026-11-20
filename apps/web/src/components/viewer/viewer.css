@@ -194,19 +194,16 @@
 .pl-editbar__status {
   overflow-wrap: anywhere;
 }
-/* At phone width the strip stays one line: a short status ("v5 published") and how many others are
-   here stand in for the long words and the names, which are still read. */
-.pl-editbar__short,
-.pl-editbar__count {
+/* At phone width the strip stays one line: a short status ("v5 published") stands in for the long
+   words, which are still read. */
+.pl-editbar__short {
   display: none;
 }
 @media (max-width: 30rem) {
-  .pl-editbar__short,
-  .pl-editbar__count {
+  .pl-editbar__short {
     display: inline;
   }
-  .pl-editbar__long,
-  .pl-editbar__editors > .pl-editbar__editor {
+  .pl-editbar__long {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -216,18 +213,14 @@
     white-space: nowrap;
   }
 }
+/* How many others are editing; who and where are in its tooltip. */
 .pl-editbar__editors {
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1-5);
-  min-width: 0;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
   color: var(--color-ink-muted);
-  overflow-wrap: anywhere;
-}
-.pl-editbar__editor + .pl-editbar__editor::before {
-  content: "· ";
-  color: var(--color-ink-ghost);
+  font-variant-numeric: tabular-nums;
 }
 .pl-editbar__typing {
   color: var(--color-accent-ink);

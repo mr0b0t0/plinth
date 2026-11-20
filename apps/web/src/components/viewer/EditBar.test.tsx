@@ -83,8 +83,13 @@ describe("EditBar", () => {
     render(<EditBar {...p} />);
     const status = screen.getByText("Draft saved");
     expect(status.getAttribute("aria-live")).toBe("polite");
-    expect(screen.getByText(/bo@example\.org/).textContent).toBe("bo@example.org (editing row 12)");
-    expect(screen.getByText(/cy@example\.org/).textContent).toBe("cy@example.org (editing)");
+    // How many others are here; who and where are its name (and its tooltip), never a list of
+    // emails across the strip.
+    const others = screen.getByRole("img", {
+      name: "Also here: bo@example.org (editing row 12), cy@example.org (editing)",
+    });
+    expect(others.textContent).toBe("2");
+    expect(others.tabIndex).toBe(0);
     const publish = screen.getByRole("button", { name: "Publish" });
     expect(publish.getAttribute("aria-keyshortcuts")).toBe("Meta+S Control+S");
     await userEvent.click(publish);

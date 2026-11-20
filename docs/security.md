@@ -2543,7 +2543,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   earlier, kept in the app origin's `sessionStorage` under the artifact's id; the frame checks it
   with the type's rules before it renders it read-only, and Publish your changes sends the app's own copy; co-editor emails
   and their places ("row 12", built by the renderer from lease positions, never content) become
-  text nodes. No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
+  text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
 - **Per-type rules mirror the stager.** The room checks every edit and structural change with the
   type's rules, which hold every check the type's publish hook makes on the source alone (a doc

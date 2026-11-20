@@ -227,6 +227,10 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   await expect(bar).toContainText("v3 was published while you edited");
   // The update shows in the strip only: no toast repeats it while editing.
   await expect(page.getByText("Updated to v3")).toHaveCount(0);
+  // The bar names the base the changes were made on, not the version waiting for review, however
+  // late the news of it arrives.
+  await page.waitForTimeout(1_000);
+  await expect(page.locator(".pl-viewer__version")).toContainText(/^\s*v2\b/);
   const mine = review.getByRole("region", { name: "Your changes" });
   await expect(mine.getByRole("list", { name: "Changes" })).toContainText("Paragraph changed");
   await expect(mine).toContainText("First paragraph. Mine.");

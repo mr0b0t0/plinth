@@ -118,10 +118,6 @@ html.plinth-reviewing body {
   border-radius: 8px;
 }
 
-.plinth-review__pane[data-side="mine"] {
-  border-left: 2px solid var(--review-live);
-}
-
 .plinth-review__label {
   margin: 0;
   font-size: 13px;
@@ -136,10 +132,12 @@ html.plinth-reviewing body {
   overflow: auto;
 }
 
+/* One change: its label, then what changed, as one run of text of at most two lines. */
 .plinth-review__item {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 8px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   padding: 2px 0;
   overflow-wrap: anywhere;
 }
@@ -163,10 +161,6 @@ html.plinth-reviewing body {
 }
 
 .plinth-review__values {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
   color: var(--review-muted);
 }
 

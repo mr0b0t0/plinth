@@ -212,7 +212,7 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
   await expect(review).toBeVisible();
   const mine = review.getByRole("region", { name: "Your changes" });
-  await expect(mine).toContainText("B2 changed");
+  await expect(mine).toContainText("Qty, row 2");
   await expect(mine).toContainText("3 → 4");
   await expect(mine.locator("table")).toBeVisible();
   // The cell it changed is marked, and in view.
@@ -226,7 +226,7 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
     await toV2.click();
     await expect(mine).toBeHidden();
   }
-  await expect(review.getByRole("region", { name: "v2" })).toContainText("B3 changed");
+  await expect(review.getByRole("region", { name: "v2" })).toContainText("Qty, row 3");
   // Neither side changed a file, so neither lists any.
   await expect(review.locator(".plinth-review__files")).toHaveCount(0);
   // Back keeps the draft frozen, and the review opens again.
