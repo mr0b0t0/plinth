@@ -13,7 +13,6 @@ import {
   ChartLineUpIcon,
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
-  CodeIcon,
   DotsThreeIcon,
   DownloadSimpleIcon,
   FlagIcon,
@@ -158,18 +157,13 @@ const compactSignInToEdit: MenuItem = (c) =>
     : [];
 
 /**
- * A type with no source editor (a sheet or a design) has no Edit: agents change it. A sheet's one
- * way into editing is the Edit toggle on its page.
+ * The source editor, for a type that has one (not a sheet or a design: agents change those) and
+ * only where the page cannot be edited in place. Where it can (a doc), the Edit toggle is the one
+ * way in, and no source is offered beside it.
  */
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
-    ? [
-        {
-          label: c.live.available ? "Edit source" : "Edit",
-          icon: c.live.available ? CodeIcon : PencilSimpleIcon,
-          href: c.hrefs.edit,
-        },
-      ]
+  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor && !c.live.available
+    ? [{ label: "Edit", icon: PencilSimpleIcon, href: c.hrefs.edit }]
     : [];
 
 const settings: MenuItem = (c) =>
@@ -488,22 +482,13 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
       status={live.status}
       restore={live.restore}
       signIn={live.signIn}
-      unavailable={
-        live.roomReady
-          ? null
-          : live.mode === "room" && live.status === null
-            ? "Connecting to the live draft…"
-            : "Live editing is unavailable right now."
-      }
-      onSave={() => {
-        void live.publish().then(actions.refocusAfterNotice);
+      onSaveRestore={() => {
+        void live.saveRestore().then(actions.refocusAfterNotice);
       }}
-      onDiscard={() => {
-        void live.discard().then(actions.refocusAfterNotice);
+      onDropRestore={() => {
+        live.dropRestore();
+        actions.refocusAfterNotice();
       }}
-      onReview={() => void live.openReview()}
-      onSaveRestore={() => void live.saveRestore()}
-      onDropRestore={live.dropRestore}
     />
   );
 

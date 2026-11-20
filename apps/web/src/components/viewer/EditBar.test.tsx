@@ -181,11 +181,6 @@ describe("LiveDraftNotice", () => {
     publishable: true,
     ...over,
   });
-  const handlers = () => ({
-    onSave: vi.fn(),
-    onDiscard: vi.fn(),
-    onReview: vi.fn(),
-  });
   const DRAFT = {
     base_version: 3,
     dirty: true,
@@ -211,75 +206,57 @@ describe("LiveDraftNotice", () => {
     );
   });
 
-  it("names who left unpublished changes and when, with publish and discard", async () => {
-    const h = handlers();
-    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
+  it("names who left unpublished changes and when, and offers no action of its own", () => {
+    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} />);
     expect(screen.getByRole("note").textContent).toContain(
       "Unpublished changes on the page by bo@example.org, 3 h ago",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
-    expect(h.onSave).toHaveBeenCalled();
-    // Editing starts from the bar's Edit toggle, not from this line.
-    expect(screen.queryByRole("button", { name: "Continue editing" })).toBeNull();
+    // The Edit toggle is the one way in; the edit strip holds Publish and Discard.
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("asks before discarding someone's page changes, and only discards on confirm", async () => {
-    const h = handlers();
-    const user = userEvent.setup();
-    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "Discard the unpublished changes?",
-    });
-    expect(dialog.textContent).toContain("The changes by bo@example.org are not kept anywhere.");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(h.onDiscard).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-    await user.click(await screen.findByRole("button", { name: "Discard changes" }));
-    expect(h.onDiscard).toHaveBeenCalledTimes(1);
-  });
-
-  it("disables publishing and discarding with the reason while the live draft is out of reach", () => {
-    const h = handlers();
-    render(
-      <LiveDraftNotice
-        draft={DRAFT}
-        status={null}
-        unavailable="Live editing is unavailable right now."
-        {...h}
-      />,
-    );
-    const reason = screen.getByText("Live editing is unavailable right now.");
-    for (const name of ["Publish", "Discard"]) {
-      const b = screen.getByRole("button", { name }) as HTMLButtonElement;
-      expect(b.disabled).toBe(true);
-      expect(b.getAttribute("aria-describedby")).toBe(reason.id);
-    }
-  });
-
-  it("says who is editing, and a conflict with Review changes", async () => {
-    const h = handlers();
+  it("says who is editing, and that a version waits for review, as text only", () => {
     const { rerender } = render(
       <LiveDraftNotice
         draft={null}
         status={status({ editors: [{ email: "bo@example.org", block: true }] })}
-        {...h}
       />,
     );
     expect(screen.getByRole("note").textContent).toContain("bo@example.org is editing");
     expect(screen.queryByRole("button")).toBeNull();
     rerender(
-      <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} {...h} />,
+      <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} />,
     );
     expect(screen.getByRole("note").textContent).toContain(
       "v5 was published over unpublished changes",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
-    expect(h.onReview).toHaveBeenCalled();
+    // Review changes is in the edit strip.
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("offers Publish and Discard for the copy this tab kept, which no frame holds", async () => {
+    const onSaveRestore = vi.fn();
+    const onDropRestore = vi.fn();
+    render(
+      <LiveDraftNotice
+        draft={null}
+        status={null}
+        restore={{ text: "# Plan", base: 4, saved_at: "2026-11-18T07:00:00.000Z" }}
+        onSaveRestore={onSaveRestore}
+        onDropRestore={onDropRestore}
+      />,
+    );
+    expect(screen.getByRole("note").textContent).toContain(
+      "Unpublished changes from earlier in this tab, based on v4",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
+    expect(onSaveRestore).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(onDropRestore).toHaveBeenCalledTimes(1);
   });
 
   it("gives a code-confirmed editor no editing actions", () => {
-    render(<LiveDraftNotice draft={DRAFT} status={null} signIn {...handlers()} />);
+    render(<LiveDraftNotice draft={DRAFT} status={null} signIn />);
     expect(screen.getByRole("note").textContent).toContain("Sign in to edit.");
     expect(screen.queryByRole("button")).toBeNull();
   });

@@ -7,12 +7,7 @@
 // frame (the review holds the two choices and its own way out, Back). While that review is open the
 // strip shows its status only: no second exit. At phone width the status is short ("v5 published"),
 // so the strip stays one line.
-import {
-  DotsThreeIcon,
-  PencilSimpleIcon,
-  UploadSimpleIcon,
-  UsersIcon,
-} from "@phosphor-icons/react";
+import { DotsThreeIcon, PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
 import { versionRange } from "@plinth/shared";
 import { type FormEvent, type Ref, useId, useState } from "react";
 import { Button, ConfirmDialog, Dialog, Input, Menu, Tooltip } from "../ui/index.ts";
@@ -178,7 +173,6 @@ export function EditBar(props: EditBarProps) {
               <Button
                 variant="primary"
                 size="sm"
-                icon={UploadSimpleIcon}
                 loading={saving}
                 disabled={!dirty || !publishable}
                 aria-keyshortcuts="Meta+S Control+S"

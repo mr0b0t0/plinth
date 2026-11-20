@@ -610,7 +610,10 @@ the count survives.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
 - The source editor stays for the types that have one until each type's editing on the page
-  covers what it does; for docs both work. Sheets, designs and whiteboards have no source editor.
+  covers what it does. Where a doc can be edited on its page, the page is its one way in and the
+  viewer offers no source editor item; where it cannot (opaque isolation, the path fallback,
+  `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
+  whiteboards have no source editor.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
 the draft's files decided 2026-11-19). Owners and editors edit a doc or a sheet right on its
@@ -754,18 +757,20 @@ page shows the strip and makes the REST calls, and renders no content.
   isolation and the path fallback there is no editing on the page: docs are edited in the source
   editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
   off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
-- **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
-  source") turns edit mode on; a strip under the bar says what is happening ("Draft saved",
+- **On the page.** An Edit toggle in the artifact bar, the one way in (no source editor item
+  beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
   "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
   (who and where, "row 12", a structural place, never content, in its tooltip and its accessible
-  name), with Publish, a
+  name), with Publish (a text button), a
   menu with "Publish with a note…" and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
   its Markdown; blocks other people hold show their email and their text as it arrives. At phone
   width a doc shows only the "+" above the block being edited and the one at the end, each on a
   line of its own, so none covers a rule or text. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
-  line when unpublished changes exist (with Publish and Discard), when someone is editing, or when
-  a version needs review (with Review changes); editing itself starts only from the Edit toggle.
+  line of text when unpublished changes exist, when someone is editing, or when a version needs
+  review; it has no buttons, because editing starts only from the Edit toggle and Publish, Discard
+  and Review changes are in the strip. Only the solo copy a tab kept from before a reload, which no
+  frame holds, gets Publish and Discard on that line.
   Edit mode and comment review mode exclude each other. While the review is open, app
   notifications keep clear of its choices, and no notification ever covers a dialog's controls.
 - **The frame key.** For an owner or editor who may edit on the page, the app opens each frame

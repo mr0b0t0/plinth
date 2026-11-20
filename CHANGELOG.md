@@ -21,11 +21,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   your changes** asks first, in the app's own confirmation; **Back** leaves the review. It looks like the rest of the app. The
   strip offers only **Review changes** and **Done** while a version waits (and only its status
   while the review is open, without an "Updated to" notification beside it), and the line shown
-  to people who are not editing no longer repeats the Edit toggle. Both choices are safe against
+  to people who are not editing is text only: the Edit toggle is the one way in, and Publish,
+  Discard and Review changes are in the strip. Both choices are safe against
   another editor choosing at the same moment: exactly one takes effect, and every other open
   review closes saying what happened. No source is shown. Changes
   the tab kept from before a reload are reviewed the same way when a newer version is current.
-- **Publish on the page.** The edit strip says **Publish**, **Publish with a note…** and
+- **Publish on the page.** A doc that can be edited on its page no longer offers **Edit source**
+  in its menu: the Edit toggle is the one way in. The edit strip says **Publish**, **Publish with a note…** and
   **Discard unpublished changes**, and its status says "Draft saved", "Publishing…" and "Published
   as v7". It shows how many others are editing, with who and where in a tooltip. On a phone a
   doc shows only the "+" above the block being edited and the one at the end, clear of the text.

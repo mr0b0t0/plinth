@@ -1,6 +1,6 @@
-// A sheet edited on its page has one way into editing: the Edit toggle (or, at phone width, "Edit
-// on the page" in the ⋯ menu). A sheet has no source editor, so there is no Edit source beside it,
-// and without on-page editing there is no Edit at all.
+// A doc or a sheet edited on its page has one way into editing: the Edit toggle (or, at phone
+// width, "Edit on the page" in the ⋯ menu), with no source editor item beside it. Without on-page
+// editing a doc keeps the source editor as "Edit", and a sheet, which has none, has no Edit at all.
 import { typeDef } from "@plinth/shared";
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
@@ -56,8 +56,16 @@ describe("the ⋯ menu's edit entries", () => {
     expect(l).not.toContain("Edit");
   });
 
-  it("a doc is unchanged: Edit on the page and Edit source", () => {
+  it("a doc edited on its page: Edit on the page only, no source beside it", () => {
     const l = labels(context("doc", { available: true, merges: true }));
-    expect(l).toEqual(expect.arrayContaining(["Edit on the page", "Edit source"]));
+    expect(l).toContain("Edit on the page");
+    expect(l).not.toContain("Edit source");
+    expect(l).not.toContain("Edit");
+  });
+
+  it("a doc without on-page editing keeps the source editor as Edit", () => {
+    const l = labels(context("doc", { available: false, merges: true }));
+    expect(l).toContain("Edit");
+    expect(l).not.toContain("Edit on the page");
   });
 });

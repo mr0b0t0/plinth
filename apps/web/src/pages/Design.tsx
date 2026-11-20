@@ -1360,7 +1360,6 @@ function LiveEditSpecimens() {
     onDone: noop,
     onReview: noop,
   };
-  const notice = { onSave: noop, onDiscard: noop, onReview: noop };
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
     <>
@@ -1388,17 +1387,14 @@ function LiveEditSpecimens() {
               updated_by_email: "bo@example.org",
             }}
             status={null}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
             status={{ ...LIVE_STATUS, editors: [{ email: "bo@example.org", block: true }] }}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
             status={{ ...LIVE_STATUS, dirty: true, conflict_version: 5 }}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
@@ -1406,7 +1402,6 @@ function LiveEditSpecimens() {
             restore={{ text: "", base: 4, saved_at: hoursAgo }}
             onSaveRestore={noop}
             onDropRestore={noop}
-            {...notice}
           />
           <LiveDraftNotice
             draft={{
@@ -1418,7 +1413,6 @@ function LiveEditSpecimens() {
             }}
             status={null}
             signIn
-            {...notice}
           />
         </div>
       </Specimen>
