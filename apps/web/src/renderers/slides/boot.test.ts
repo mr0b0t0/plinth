@@ -13,6 +13,7 @@ import {
   CURRENT_MAX_SHARE,
   formatElapsed,
   PRESENTER_BAR,
+  PRESENTER_CAPTION,
   PRESENTER_COLUMN_GAP,
   PRESENTER_ROW_GAP,
   type PresenterClock,
@@ -581,6 +582,13 @@ describe("presenter view", () => {
     expect(p.hasAttribute("data-narrow")).toBe(false);
     const l = presenterLayout(1280, 732, { width: 1280, height: 720 });
     expect(p.style.getPropertyValue("--pcol")).toBe(`${l.column}px`);
+    // Both columns are as tall as the slide and its bar; the "Next" caption has the row above.
+    expect(p.style.getPropertyValue("--prow")).toBe(`${l.row}px`);
+    expect(Array.from(p.children, (c) => c.className)).toEqual([
+      "plinth-slides__main",
+      "plinth-slides__caption plinth-slides__caption--next",
+      "plinth-slides__side",
+    ]);
     const current = p.querySelector(".plinth-slides__pane--current") as HTMLElement;
     expect(current.style.getPropertyValue("--s")).toBe(
       String(Math.round(l.current * 10000) / 10000),
@@ -591,6 +599,7 @@ describe("presenter view", () => {
     f.target.dispatchEvent(new Event("resize"));
     expect(p.hasAttribute("data-narrow")).toBe(true);
     expect(p.style.getPropertyValue("--pcol")).toBe("");
+    expect(p.style.getPropertyValue("--prow")).toBe("");
     expect(order()).toEqual(["pane--current", "pbar", "pane--next", "notes"]);
   });
 
@@ -605,10 +614,12 @@ describe("presenter view", () => {
       const l = presenterLayout(w, h, canvas);
       expect(l.narrow).toBe(false);
       const column = l.column ?? 0;
-      // The current slide and the bar under it fit the height; Next and Notes keep a third or so.
-      expect((column * 720) / 1280 + PRESENTER_ROW_GAP + PRESENTER_BAR).toBeLessThanOrEqual(
-        h - 2 * GUTTER + 0.5,
-      );
+      // The caption row, the current slide and the bar under it fit the height; Next and Notes
+      // keep a third or so, and the columns are the slide and the bar tall.
+      const row = Math.ceil((column * 720) / 1280) + PRESENTER_ROW_GAP + PRESENTER_BAR;
+      expect(l.row).toBe(row);
+      expect(PRESENTER_CAPTION + row).toBeLessThanOrEqual(h - 2 * GUTTER + 1);
+      expect(l.next * 720).toBeLessThan(row);
       expect(column).toBeLessThanOrEqual(
         CURRENT_MAX_SHARE * (w - 2 * GUTTER - PRESENTER_COLUMN_GAP),
       );
@@ -621,10 +632,12 @@ describe("presenter view", () => {
       Math.floor(CURRENT_MAX_SHARE * (1280 - 2 * GUTTER - PRESENTER_COLUMN_GAP)),
     );
     expect(presenterLayout(1600, 500, canvas).column).toBe(
-      Math.floor(((500 - 2 * GUTTER - PRESENTER_BAR - PRESENTER_ROW_GAP) * 1280) / 720),
+      Math.floor(
+        ((500 - 2 * GUTTER - PRESENTER_CAPTION - PRESENTER_BAR - PRESENTER_ROW_GAP) * 1280) / 720,
+      ),
     );
     const phone = presenterLayout(360, 660, canvas);
-    expect(phone).toMatchObject({ narrow: true, column: null });
+    expect(phone).toMatchObject({ narrow: true, column: null, row: null });
     expect(phone.current).toBeCloseTo((360 - 2 * GUTTER) / 1280, 6);
     expect(phone.next).toBe(phone.current);
     expect(presenterLayout(560, 400, canvas).narrow).toBe(true);

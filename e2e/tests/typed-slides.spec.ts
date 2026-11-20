@@ -326,7 +326,8 @@ test.describe("a published deck", () => {
         // No strip under the bar: presenter view is in the frame, the audience window in Present.
         await expect(page.getByRole("region", { name: "Presenter view" })).toHaveCount(0);
         // Two columns that fit the frame: the bar right under the current slide; Next at the top
-        // of the other column and the notes filling it to the bottom.
+        // of the other column, level with the current slide, and the notes down to the bar's
+        // bottom; the whole, with the "Next" caption's row above it, centred in the height.
         const layout = await frame.evaluate(() => {
           const box = (s: string) => {
             const r = (document.querySelector(s) as HTMLElement).getBoundingClientRect();
@@ -335,17 +336,22 @@ test.describe("a published deck", () => {
           return {
             current: box(".plinth-slides__pane--current .plinth-slides__canvas"),
             bar: box(".plinth-slides__pbar"),
-            next: box(".plinth-slides__pane--next"),
+            next: box(".plinth-slides__pane--next .plinth-slides__canvas"),
+            caption: box(".plinth-slides__caption--next"),
             notes: box(".plinth-slides__notes"),
             height: window.innerHeight,
           };
         });
         expect(Math.abs(layout.bar.y - layout.current.bottom - 12)).toBeLessThan(2);
         expect(layout.next.x).toBeGreaterThan(layout.current.right);
-        expect(layout.next.y).toBeLessThan(layout.current.y + 40);
+        expect(Math.abs(layout.next.y - layout.current.y)).toBeLessThan(1.5);
+        expect(layout.caption.bottom).toBeLessThanOrEqual(layout.next.y);
         expect(layout.notes.y).toBeGreaterThan(layout.next.bottom);
-        expect(Math.abs(layout.notes.bottom - (layout.height - 16))).toBeLessThan(2);
-        expect(layout.bar.bottom).toBeLessThanOrEqual(layout.height - 16 + 1);
+        expect(Math.abs(layout.notes.bottom - layout.bar.bottom)).toBeLessThan(1.5);
+        const above = layout.current.y - 24;
+        const below = layout.height - layout.bar.bottom;
+        expect(Math.min(above, below)).toBeGreaterThanOrEqual(16 - 1);
+        expect(Math.abs(above - below)).toBeLessThan(2);
         // Its own previous and next page it (touch screens have no keys and no swipes here).
         await presenter.getByRole("button", { name: "Next slide" }).click();
         await expect.poll(() => slideOf(frame)).toBe("2");

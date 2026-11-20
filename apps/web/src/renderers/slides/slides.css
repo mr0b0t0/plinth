@@ -376,16 +376,20 @@ body {
 
 /* ---------- presenter view (presenter.ts) ---------- */
 /* Two columns: the current slide with the bar directly under it on the left (--pcol, the slide's
-   width, from presenterLayout), the next slide and the notes on the right, the notes filling the
-   height. One column on a narrow or portrait frame ([data-narrow]): current, bar, next, notes.
-   The slides and the notes share one card edge; the gaps are presenter.ts's constants. */
+   width, from presenterLayout), the next slide and the notes on the right. Both columns are
+   --prow tall (the slide and the bar), so the next slide's top is level with the current slide's
+   and the notes end with the bar; the "Next" caption has the row above, and the whole is centred
+   in the frame's height. One column on a narrow or portrait frame ([data-narrow]): current, bar,
+   next, notes. The slides and the notes share one card edge; the gaps are presenter.ts's
+   constants. */
 
 .plinth-slides__presenter {
   position: absolute;
   inset: 0;
   display: grid;
   grid-template-columns: var(--pcol, minmax(0, 2fr)) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: 24px var(--prow, minmax(0, 1fr));
+  align-content: center;
   column-gap: 24px;
   padding: 16px;
   overflow: hidden;
@@ -402,11 +406,12 @@ body {
 }
 
 .plinth-slides__main {
+  grid-area: 2 / 1;
   display: flex;
   flex-direction: column;
-  align-self: start;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
 }
 
 .plinth-slides__pane {
@@ -431,6 +436,7 @@ body {
 }
 
 .plinth-slides__side {
+  grid-area: 2 / 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -447,7 +453,19 @@ body {
   color: var(--slides-muted);
   font-size: 0.75rem;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 16px;
+}
+
+/* In the row above the columns, 8 px over the next slide. */
+.plinth-slides__caption--next {
+  grid-area: 1 / 2;
+  align-self: end;
+  margin-bottom: 8px;
+}
+
+.plinth-slides__presenter[data-narrow] .plinth-slides__caption--next {
+  align-self: auto;
+  margin-bottom: -4px;
 }
 
 .plinth-slides__caption--notes {

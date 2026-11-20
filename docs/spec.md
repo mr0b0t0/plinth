@@ -704,8 +704,9 @@ source editor work as for docs. A deck is not edited on its page.
   large as fits, with one bar directly under it (the elapsed timer with pause, which starts again
   each time presenter view opens; previous and next around the same `3 / 20` count, since
   presenter view takes no swipes or taps and touch screens page here; the clock; Exit); on the
-  right the next slide at the top and the notes filling the rest of the height. Below 600 px wide
-  or in portrait it is one column: current, bar, next, notes. Exit, Escape or `s` leave it. A
+  right the next slide, its top level with the current slide's and its "Next" caption above it,
+  and the notes down to the bar's bottom edge, the two columns centred in the frame's height
+  together. Below 600 px wide or in portrait it is one column: current, bar, next, notes. Exit, Escape or `s` leave it. A
   slide without notes leaves the notes pane empty. The frame tells the app each view it switches
   to, so the Present menu and the paused version swap follow the deck however presenter view was
   opened or left. While presenter view is on, the Present menu offers "Audience window" in its

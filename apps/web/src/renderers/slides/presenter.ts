@@ -1,9 +1,11 @@
 // Presenter view, inside the deck's own frame. At desktop width it has two columns: on the left the
 // current slide, as large as fits, with the bar directly under it (the elapsed timer with pause,
-// previous and next with "3 / 20" between them, the clock and Exit); on the right the next slide at
-// the top and the speaker notes filling the rest of the height. On a narrow or portrait frame the
-// same parts stack in one column: current, bar, next, notes. Touch screens have no keys and
-// presenter view takes no swipes, so its bar pages. A slide that does not fit is marked on the
+// previous and next with "3 / 20" between them, the clock and Exit); on the right the next slide,
+// its top level with the current slide's, and the speaker notes down to the bar's bottom edge. The
+// "Next" caption sits in a row above both columns, which are centred in the frame's height
+// together, so neither column ends in bare stage while the other runs on. On a narrow or portrait
+// frame the same parts stack in one column: current, bar, next, notes. Touch screens have no keys
+// and presenter view takes no swipes, so its bar pages. A slide that does not fit is marked on the
 // current pane. Everything here is made with createElement and textContent; the slides and notes
 // it shows are copies of what deck.ts already sanitized.
 import { dropIds, type SlideView } from "./deck.ts";
@@ -43,6 +45,8 @@ export const PRESENTER_COLUMN_GAP = 24;
 export const PRESENTER_ROW_GAP = 12;
 /** The bar's height (slides.css min-height). */
 export const PRESENTER_BAR = 40;
+/** The row above the two columns that holds the "Next" caption (slides.css). */
+export const PRESENTER_CAPTION = 24;
 /** The current slide's column takes at most this share of the width; Next and Notes get the rest. */
 export const CURRENT_MAX_SHARE = 0.72;
 /** In two columns the next slide takes at most this share of the height. */
@@ -60,6 +64,8 @@ export interface PresenterLayout {
   next: number;
   /** The left column's width in two columns (the current slide's width), or null in one. */
   column: number | null;
+  /** The columns' height in two columns (the current slide and the bar under it), or null. */
+  row: number | null;
 }
 
 /** Sizes presenter view for a w x h frame: everything fits its height in two columns. */
@@ -73,17 +79,21 @@ export function presenterLayout(
   if (presenterNarrow(w, h)) {
     // Each slide as wide as the frame, unless that would leave the notes no room.
     const s = Math.min(innerW / canvas.width, (innerH * 0.45) / canvas.height);
-    return { narrow: true, current: s, next: s, column: null };
+    return { narrow: true, current: s, next: s, column: null, row: null };
   }
   const widest = CURRENT_MAX_SHARE * (innerW - PRESENTER_COLUMN_GAP);
-  const tallest = ((innerH - PRESENTER_BAR - PRESENTER_ROW_GAP) * canvas.width) / canvas.height;
+  const room = innerH - PRESENTER_CAPTION - PRESENTER_BAR - PRESENTER_ROW_GAP;
+  const tallest = (room * canvas.width) / canvas.height;
   const column = Math.max(1, Math.floor(Math.min(widest, tallest)));
   const side = innerW - PRESENTER_COLUMN_GAP - column;
+  const row =
+    Math.ceil((column * canvas.height) / canvas.width) + PRESENTER_ROW_GAP + PRESENTER_BAR;
   return {
     narrow: false,
     current: column / canvas.width,
-    next: Math.max(0.05, Math.min(side / canvas.width, (innerH * NEXT_MAX_SHARE) / canvas.height)),
+    next: Math.max(0.05, Math.min(side / canvas.width, (row * NEXT_MAX_SHARE) / canvas.height)),
     column,
+    row,
   };
 }
 
@@ -169,9 +179,10 @@ export class Presenter {
     bar.append(timing, paging, end);
     main.append(this.current, bar);
 
-    // Next at the top, the notes filling the rest.
+    // Next at the top, level with the current slide (its caption in the row above), the notes
+    // filling the rest. In one column the caption comes between the bar and the next slide.
     const side = el(doc, "div", "plinth-slides__side");
-    const nextLabel = el(doc, "p", "plinth-slides__caption", "Next");
+    const nextLabel = el(doc, "p", "plinth-slides__caption plinth-slides__caption--next", "Next");
     this.next = el(doc, "div", "plinth-slides__pane plinth-slides__pane--next");
     this.next.setAttribute("inert", "");
     this.next.setAttribute("aria-hidden", "true");
@@ -182,9 +193,9 @@ export class Presenter {
       "Notes",
     );
     this.notes = el(doc, "div", "plinth-slides__notes");
-    side.append(nextLabel, this.next, notesLabel, this.notes);
+    side.append(this.next, notesLabel, this.notes);
 
-    this.el.append(main, side);
+    this.el.append(main, nextLabel, side);
   }
 
   private get clock(): PresenterClock {
@@ -267,6 +278,8 @@ export class Presenter {
     this.el.toggleAttribute("data-narrow", l.narrow);
     if (l.column === null) this.el.style.removeProperty("--pcol");
     else this.el.style.setProperty("--pcol", `${l.column}px`);
+    if (l.row === null) this.el.style.removeProperty("--prow");
+    else this.el.style.setProperty("--prow", `${l.row}px`);
     setScale(this.current, this.canvas, l.current);
     setScale(this.next, this.canvas, l.next);
   }
