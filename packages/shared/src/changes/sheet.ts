@@ -124,6 +124,7 @@ function describeColumns(out: ChangeCollector, a: Sheet, b: Sheet): { pairs: [nu
   const { hunks } = diffSequence(
     ac.map((c) => c.name),
     bc.map((c) => c.name),
+    out.diffOptions(),
   );
   const pairs: [number, number][] = [];
   let i = 0;
@@ -244,6 +245,7 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
   const { hunks, exact } = diffSequence(
     a.rows.map((r) => key(r, 0)),
     b.rows.map((r) => key(r, 1)),
+    out.diffOptions(),
   );
   if (!exact) out.truncated = true;
   // Rows or columns added or removed: a formula that only follows them is not a change of its own.
@@ -254,7 +256,7 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
 
   const pending: Pending[] = [];
   for (const h of hunks) {
-    if (out.full) {
+    if (out.done()) {
       out.truncated = true;
       break;
     }

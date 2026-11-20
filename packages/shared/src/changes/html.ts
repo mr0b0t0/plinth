@@ -28,12 +28,12 @@ function describeRuns(
   prefix: string,
 ): void {
   const key = (r: HtmlTextRun) => `${r.heading ? "#" : ""}${r.text}`;
-  const { hunks, exact } = diffSequence(a.map(key), b.map(key));
+  const { hunks, exact } = diffSequence(a.map(key), b.map(key), out.diffOptions());
   if (!exact) out.truncated = true;
   const where = (r: HtmlTextRun) =>
     join(prefix, r.under === "" ? "" : `${r.after ? "After" : "Under"} ${quoted(r.under)}`);
   for (const h of hunks) {
-    if (out.full) {
+    if (out.done()) {
       out.truncated = true;
       return;
     }
@@ -56,6 +56,11 @@ function describeRuns(
       const { x, y } = step;
       // Equal runs (a region the diff gave up on holds unchanged ones too) are not changes.
       if (x && y && key(x) === key(y)) continue;
+      // Every other step lists one item: once the list is full, the rest is cut.
+      if (out.full) {
+        out.truncated = true;
+        return;
+      }
       if (x && y) {
         out.add(
           y.heading
@@ -172,10 +177,12 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
   }
   // Boards in order by id: one taken out of one place and put into another moved; boards that
   // replace each other in one place are the same board renamed (a board's id comes from its name).
-  const { hunks } = diffSequence(
+  const { hunks, exact } = diffSequence(
     a.boards.map((x) => x.id),
     b.boards.map((x) => x.id),
+    out.diffOptions(),
   );
+  if (!exact) out.truncated = true;
   const same: [DesignBoard, DesignBoard][] = [];
   let i = 0;
   let j = 0;
@@ -198,10 +205,19 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
     j = h.bEnd;
   }
   keep(a.boards.length);
+  // Each id's added boards in order, taken from the front: linear however many boards moved.
   const moved = new Set<DesignBoard>();
+  const waiting = new Map<string, { list: DesignBoard[]; next: number }>();
+  for (const y of addedAll) {
+    const w = waiting.get(y.id);
+    if (w) w.list.push(y);
+    else waiting.set(y.id, { list: [y], next: 0 });
+  }
   for (const x of removedAll) {
-    const y = addedAll.find((t) => t.id === x.id && !moved.has(t));
-    if (!y) continue;
+    const w = waiting.get(x.id);
+    const y = w?.list[w.next];
+    if (!w || !y) continue;
+    w.next++;
     moved.add(x).add(y);
     same.push([x, y]);
   }
@@ -217,6 +233,10 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
     return t;
   };
   for (const region of regions) {
+    if (out.done()) {
+      out.truncated = true;
+      return;
+    }
     const p = alignRegion(
       region.removed.filter((x) => !moved.has(x)),
       region.added.filter((x) => !moved.has(x)),
@@ -230,6 +250,22 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
   const was = new Map(same.map(([x, y]) => [y, x]));
   for (const y of b.boards) {
     const x = was.get(y);
+    const unchanged =
+      x !== undefined &&
+      !moved.has(y) &&
+      x.name === y.name &&
+      x.width === y.width &&
+      x.height === y.height &&
+      x.background === y.background &&
+      (x.section ?? "") === (y.section ?? "") &&
+      x.html === y.html;
+    if (unchanged) continue;
+    // Every other board lists at least one item: once the list is full or out of time, the rest
+    // is cut.
+    if (out.done()) {
+      out.truncated = true;
+      break;
+    }
     if (!x) {
       out.add({ kind: "added", where: "", what: `${name(y)} added`, after: sizeLabel(y) });
       continue;
@@ -283,10 +319,9 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
       if (JSON.stringify(sa.styles) !== JSON.stringify(sb.styles)) {
         out.add({ kind: "changed", where, what: "Styles changed" });
       }
-      if (out.items.length === items && !out.full) {
+      if (out.items.length === items && !out.done()) {
         out.add({ kind: "changed", where, what: "Layout changed" });
       }
     }
-    if (out.full) break;
   }
 }

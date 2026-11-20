@@ -1788,7 +1788,11 @@ there is what it has to keep.
 - **Bounded work.** Every step is linear in its input: the scanner and the Markdown reader use no
   regular expression that can backtrack across a line (tests feed a megabyte of `<`, `![`, `[a](`
   and unclosed quotes). A diff stops past 4,000 edits or 400 ms and reports the region as
-  replaced. Aligning the blocks of one changed region by their words is the one step that is not
+  replaced. One change list has one deadline of 1,500 ms for all its diffs, since a version of
+  many changed lists or boards runs one diff per list or board: each diff gets at most the time
+  left, and every loop over lists, boards and regions (inside a region too) stops once the
+  deadline has passed or the list is full, and says the list was cut. It stops only after it has
+  found one change, so a cut list is never empty. Aligning the blocks of one changed region by their words is the one step that is not
   linear: it runs only on a region of at most 40,000 old×new blocks whose cells and word
   comparisons, counted before any is made from the sizes of the sets each pair compares (a text
   without spaces has a character pair for every character, not one word per run), fit in what is

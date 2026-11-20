@@ -4,7 +4,7 @@
 // changed list's items one at a time); images added, removed or described differently.
 // Also used for a design system's guidelines.
 
-import { type AlignBudget, alignRegion } from "./align.ts";
+import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import {
   type MdBlock,
@@ -89,27 +89,45 @@ function shownText(x: MdBlock): string {
   return x.kind === "list" && x.items ? x.items.map((i) => i.text).join(" · ") : x.text;
 }
 
-/** A list's items that changed, one item each, in the order of the list. */
-function listItemChanges(x: MdBlock, y: MdBlock, where: string, budget: AlignBudget): ChangeItem[] {
+/**
+ * A list's items that changed, one item each, in the order of the list: at most `room` + 1 (one
+ * more than the list has room for says it is cut). It also stops at the list's deadline, once
+ * `pending` (the items its caller holds) and its own are not both none, and marks the list cut.
+ */
+function listItemChanges(
+  x: MdBlock,
+  y: MdBlock,
+  where: string,
+  list: ChangeCollector,
+  room: number,
+  pending: number,
+): ChangeItem[] {
   const ai = x.items ?? [];
   const bi = y.items ?? [];
   const at = new Map<MdListItem, number>();
   for (const [k, i] of ai.entries()) at.set(i, k);
   for (const [k, i] of bi.entries()) at.set(i, k);
-  const { hunks } = diffSequence(
+  const { hunks, exact } = diffSequence(
     ai.map((i) => i.text),
     bi.map((i) => i.text),
+    list.diffOptions(),
   );
+  if (!exact) list.truncated = true;
   const out: ChangeItem[] = [];
   for (const h of hunks) {
+    if (list.expired(pending + out.length)) return out;
     const p = alignRegion(ai.slice(h.aStart, h.aEnd), bi.slice(h.bStart, h.bEnd), {
       key: (i) => i.text,
       text: (i) => i.text,
-      budget,
+      budget: list.alignBudget,
     });
     const pos = (i: MdListItem) => at.get(i) as number;
     for (const { step } of inReadingOrder(p, pos, pos, h.bStart)) {
       if (step.x && step.y && step.x.text === step.y.text) continue;
+      if (out.length > room || list.expired(pending + out.length)) {
+        list.truncated = true;
+        return out;
+      }
       if (step.x && step.y) {
         out.push({
           kind: "changed",
@@ -206,10 +224,11 @@ export function describeMarkdown(
   const { hunks, exact } = diffSequence(
     a.map((x) => x.raw),
     b.map((x) => x.raw),
+    out.diffOptions(),
   );
   if (!exact) out.truncated = true;
   for (const h of hunks) {
-    if (out.full) {
+    if (out.done()) {
       out.truncated = true;
       return;
     }
@@ -252,10 +271,18 @@ export function describeMarkdown(
       }
     }
     const removedKey = (x: MdBlock) => removedKeys.get(x) as number;
+    // Where the region was cut: past the list's room (its items are kept here until they are
+    // sorted, so the collector cannot stop this loop) or its deadline. Nothing after it is listed.
+    let cutKey = Number.POSITIVE_INFINITY;
     for (const { key, step } of steps) {
       const { x, y } = step;
       // The same Markdown (a region the diff gave up on holds unchanged blocks too) is no change.
       if (x && y && x.raw === y.raw) continue;
+      if (events.length > out.room || out.expired(events.length)) {
+        out.truncated = true;
+        cutKey = key;
+        break;
+      }
       if (x && y) {
         const where = whereB(y);
         if (y.kind === "heading") {
@@ -281,7 +308,10 @@ export function describeMarkdown(
         const noun = NOUN[y.kind as keyof typeof NOUN];
         if (x.text !== y.text) {
           if (y.kind === "list") {
-            for (const item of listItemChanges(x, y, where, out.alignBudget)) push(key, item);
+            const room = out.room - events.length;
+            for (const item of listItemChanges(x, y, where, out, room, events.length)) {
+              push(key, item);
+            }
           } else {
             push(key, {
               kind: "changed",
@@ -353,6 +383,10 @@ export function describeMarkdown(
     // Stable: items of one block keep their order.
     events.sort((u, v) => u.key - v.key);
     for (const e of events) {
+      if (e.key > cutKey) {
+        out.truncated = true;
+        break;
+      }
       if (!out.add(e.item)) break;
     }
   }

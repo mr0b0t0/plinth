@@ -5,7 +5,7 @@
 // middle is anchored instead (`anchoredHunks`): items found once on each side keep their place, so
 // an insertion does not shift every later pair. Still correct, just not minimal.
 import { diffArrays } from "diff";
-import { CHANGE_LIMITS } from "./types.ts";
+import { CHANGE_LIMITS } from "./limits.ts";
 
 /** Items [aStart, aEnd) of the first list became items [bStart, bEnd) of the second. */
 export interface SequenceHunk {

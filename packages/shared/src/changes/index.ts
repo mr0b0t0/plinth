@@ -21,7 +21,8 @@ export const CHANGES_INVISIBLE = "Nothing visible changed, only how the content 
 
 /**
  * What changed from `before` to `after`, two source texts of one artifact `type`, in plain
- * language: at most CHANGE_LIMITS.maxItems items, in the order a person meets them. Never throws.
+ * language: at most CHANGE_LIMITS.maxItems items, in the order a person meets them, worked out
+ * within one deadline of CHANGE_LIMITS.totalMs (past it the list is cut). Never throws.
  */
 export function describeChanges(type: ArtifactType, before: string, after: string): ChangeList {
   const out = new ChangeCollector();
@@ -38,6 +39,7 @@ export function describeChanges(type: ArtifactType, before: string, after: strin
   if (readable === false) {
     return { items: [{ kind: "changed", where: "", what: CHANGES_UNREADABLE }], truncated: false };
   }
+  // The deadline never cuts a list before its first change (`expired`): an empty list found none.
   if (out.items.length === 0) out.add({ kind: "changed", where: "", what: CHANGES_INVISIBLE });
   return out.list();
 }

@@ -144,6 +144,7 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
   const { hunks, exact } = diffSequence(
     a.map((s) => s.key),
     b.map((s) => s.key),
+    out.diffOptions(),
   );
   if (!exact) out.truncated = true;
 
@@ -203,7 +204,7 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
   }
 
   for (const h of hunks) {
-    if (out.full) {
+    if (out.done()) {
       out.truncated = true;
       return;
     }

@@ -1727,7 +1727,12 @@ from discovery tags) stays.
   JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
   review a draft.
 - **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
-  the smallest set of edits past 4,000 edits or 400 ms. It then anchors the region on the blocks
+  the smallest set of edits past 4,000 edits or 400 ms, or sooner when the list's one deadline
+  of 1,500 ms is nearer: a version of many changed lists or boards runs one diff for each, and
+  all of them share that deadline. Past it, or once the list holds 200 items, the describers start
+  no more lists, boards or regions (nor the next list inside a region) and the list says it was
+  cut; they stop only after the first change is found, so a cut list is never empty. A diff that
+  stops anchors the region on the blocks
   found exactly once in each version, keeping the longest run of them in the same order as
   unchanged (one level of a patience diff, O(n log n)), so a block added or removed does not shift
   every later pair; what lies between two anchors is aligned as above, the unchanged items left
