@@ -151,6 +151,29 @@ describe("buildPptx", () => {
     expect(slide).toContain('algn="r"');
   });
 
+  it("keeps a one-line item (the footer, the number) from wrapping, and wraps the rest", async () => {
+    const one: DeckModel = {
+      ...MODEL,
+      slides: [
+        {
+          n: 1,
+          notes: "",
+          background: "FFFFFF",
+          items: [
+            {
+              kind: "text",
+              box: { x: 0.833, y: 7, w: 2, h: 0.3 },
+              paras: [para({ size: 13.5, runs: [{ text: "Acme review" }] })],
+              oneLine: true,
+            },
+          ],
+        },
+      ],
+    };
+    expect((await files(one)).text("ppt/slides/slide1.xml")).toMatch(/<a:bodyPr[^>]* wrap="none"/);
+    expect((await files()).text("ppt/slides/slide1.xml")).not.toContain('wrap="none"');
+  });
+
   it("adds the image, the notes and the background, and counts a missing image", async () => {
     const { zip, text, imagesSkipped } = await files();
     expect(imagesSkipped).toBe(1);

@@ -195,6 +195,9 @@ describe("buildExportModel", () => {
     // The footer is text, never Markdown, and the number is the slide's.
     expect(texts(one?.items ?? [])).toEqual(expect.arrayContaining(["Q4 <b>review</b>", "1"]));
     expect(texts(items)).toContain("2");
+    // Both stay on one line, as on screen; the body's text wraps.
+    const oneLine = (one?.items ?? []).filter((i) => i.kind === "text" && i.oneLine);
+    expect(texts(oneLine).sort()).toEqual(["1", "Q4 <b>review</b>"]);
   });
 
   it("keeps a code block's blank lines, and draws no line for its closing newline", () => {

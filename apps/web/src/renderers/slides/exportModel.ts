@@ -241,10 +241,10 @@ function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void
   }
 }
 
-function textItem(c: SlideCtx, el: Element, paras: Para[], items: Item[]): void {
+function textItem(c: SlideCtx, el: Element, paras: Para[], items: Item[], oneLine = false): void {
   if (paras.length === 0) return;
   const box = boxOf(c, c.g.rect(el));
-  if (box) items.push({ kind: "text", box, paras });
+  if (box) items.push({ kind: "text", box, paras, ...(oneLine ? { oneLine: true as const } : {}) });
 }
 
 /** The rectangle an image is drawn in: its box, or with object-fit contain, the fitted picture. */
@@ -421,7 +421,8 @@ export function slideModel(view: SlideView, count: number, o: ExportModelOptions
   const c: SlideCtx = { g, origin, scale, canvas, count, fallbackColor };
   const items: Item[] = [];
   blocks(c, view.body, items);
-  // The footer and the slide number, which sit on the canvas outside the body.
+  // The footer and the slide number, which sit on the canvas outside the body, each on one line:
+  // their boxes fit the screen font, and the file's Arial is wider.
   for (const el of Array.from(view.el.children)) {
     if (
       el.classList.contains("plinth-slides__footer") ||
@@ -432,6 +433,7 @@ export function slideModel(view: SlideView, count: number, o: ExportModelOptions
         el,
         lines(c, el).map((runs) => paraOf(c, el, runs)),
         items,
+        true,
       );
     }
   }

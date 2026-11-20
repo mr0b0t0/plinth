@@ -74,8 +74,7 @@ export const EXPORT_TIMEOUT_MS = 90_000;
 
 /** The toast when the deck's frame is replaced while it makes the file. */
 export const EXPORT_INTERRUPTED_TOAST = {
-  title: "The deck reloaded during the .pptx download",
-  description: "If no file was saved, choose Download .pptx again.",
+  title: "The .pptx download was interrupted",
   tone: "warning",
 } as const;
 
@@ -86,17 +85,13 @@ export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: 
   tone: "success" | "warning" | "danger";
 } {
   if (!m.ok) {
-    return {
-      title: "The .pptx could not be made",
-      description: "Try again, or print the deck as PDF.",
-      tone: "danger",
-    };
+    return { title: "The .pptx could not be made", tone: "danger" };
   }
   if (m.images_skipped === 0) return { title: "Downloaded the .pptx", tone: "success" };
   if (m.opaque) {
     return {
       title: "Downloaded the .pptx",
-      description: "Images were left out: this Plinth instance serves decks with opaque origins.",
+      description: "Images were left out.",
       tone: "warning",
     };
   }

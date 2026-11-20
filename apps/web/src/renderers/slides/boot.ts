@@ -18,7 +18,7 @@ import {
 } from "@plinth/shared";
 import { buildDeck, type SlideView } from "./deck.ts";
 import { el } from "./dom.ts";
-import { clickDownload, collectImages, showReadyNotice, writerLoader } from "./export.ts";
+import { collectImages, saveBlob, writerLoader } from "./export.ts";
 import { buildExportModel, domGeometry, type Geometry, pptxFileName } from "./exportModel.ts";
 import { iconButton } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
@@ -71,7 +71,7 @@ export interface BootOptions {
   loadWriter?: () => Promise<PptxBuilder>;
   /** This document's origin is opaque (by default: window.origin is "null"). */
   opaque?: boolean;
-  /** Saves the finished file (by default an <a download> click and the ready notice). */
+  /** Saves the finished file (by default an <a download> click in the frame). */
   save?: (blob: Blob, name: string) => void;
 }
 
@@ -282,13 +282,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   const loadWriter = opts.loadWriter ?? writerLoader(doc);
   const opaque = opts.opaque ?? win.origin === "null";
-  const save =
-    opts.save ??
-    ((blob: Blob, name: string) => {
-      const url = URL.createObjectURL(blob);
-      clickDownload(doc, url, name);
-      showReadyNotice(doc, root, url, name);
-    });
+  const save = opts.save ?? ((blob: Blob, name: string) => saveBlob(win, blob, name));
   /**
    * The nonce the running export answers, or null when none runs. A request that comes while one
    * runs (the app gave up waiting and the person asked again) takes over its answer: the app

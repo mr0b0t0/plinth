@@ -117,7 +117,7 @@ describe("the export messages", () => {
       tone: "success",
     });
     expect(exportedToast({ ok: true, images_skipped: 3, opaque: true }).description).toBe(
-      "Images were left out: this Plinth instance serves decks with opaque origins.",
+      "Images were left out.",
     );
     expect(exportedToast({ ok: true, images_skipped: 1, opaque: false }).description).toBe(
       "1 image could not be added.",

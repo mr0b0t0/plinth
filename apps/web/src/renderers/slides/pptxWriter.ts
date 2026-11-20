@@ -103,7 +103,7 @@ function addItem(slide: Slide, item: Item, images: ReadonlyMap<string, string>):
       h,
       margin: 0,
       valign: "top",
-      wrap: true,
+      wrap: item.oneLine !== true,
       fontFace: SANS,
     });
     return true;

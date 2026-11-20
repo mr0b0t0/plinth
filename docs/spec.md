@@ -899,7 +899,8 @@ source editor work as for docs. A deck is not edited on its page.
   levels), code block, quote and table as editable text in a box where the screen shows it, at
   the size the slide was fitted to, in the colours of the theme on screen (`auto` follows the
   viewer's scheme), with Arial and Courier New; web and mail links, `#N` links to slides, the
-  footer, the slide numbers, the images and the speaker notes. The writer (PptxGenJS 4.0.1, about
+  footer and the slide numbers (each on one line, as on screen), the images and the speaker
+  notes. The writer (PptxGenJS 4.0.1, about
   370 kB) is a second renderer file, `/__plinth/types/slides/slides-pptx.js`, which the deck
   loads from its own origin only when someone downloads, so a first view never fetches it. Images
   are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
@@ -908,10 +909,10 @@ source editor work as for docs. A deck is not edited on its page.
   file once however many slides use it. Code blocks keep their blank lines, and characters an
   XML file cannot hold (control characters other than tab and line breaks, such as a pasted
   terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
-  file without repairing it. The browser saves the
-  file from the frame; the frame also shows a Download button for 30 seconds, for a browser that
-  only saves from a click inside the frame. Asking again while a file is being made makes no
-  second one: that one answers the newer request. If the deck's frame is replaced while it makes
+  file without repairing it. The browser saves the file from the frame, and the app's toast is the
+  only notice (the frame shows none of its own); while the file is being made the menu item reads
+  "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
+  one: that one answers the newer request. If the deck's frame is replaced while it makes
   the file (a newer version, review mode), the app stops waiting at once and says to download
   again if no file was saved. Nothing is sent to the server, and the file holds only
   what the viewer can already read, notes included. There is no switch: it is part of the deck

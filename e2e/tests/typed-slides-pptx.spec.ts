@@ -2,9 +2,9 @@
 // lazy writer from its own origin under the shell's script-src 'self', builds the file from the
 // slides it shows and downloads it. Checked here: a download event with the deck's title as the
 // file name; the file unzips with one slide per slide, the deck's text, the notes and both images
-// (the PNG as is, the SVG drawn to PNG); no CSP violation and no request to another host; the
-// app's toast; and the frame's own Download button, which starts the download again from a click
-// inside the frame. The opaque case is in typed-slides-pptx-opaque.spec.ts.
+// (the PNG as is, the SVG drawn to PNG); no CSP violation and no request to another host; and the
+// app's toast, the only notice: the frame adds none. The opaque case is in
+// typed-slides-pptx-opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
@@ -165,14 +165,10 @@ test("Download .pptx gives the deck as an editable file, built in the frame", as
     );
     expect(await frame.evaluate(() => (window as { __pwned?: unknown }).__pwned)).toBeUndefined();
 
-    // The frame's own button starts the download again, from a click inside the frame.
-    const notice = page.frameLocator(CURRENT_FRAME).locator(".plinth-slides__ready");
-    await expect(notice).toContainText(`${TITLE}.pptx is ready`);
-    const again = page.waitForEvent("download");
-    await notice.getByRole("button", { name: "Download" }).click();
-    expect((await again).suggestedFilename()).toBe(`${TITLE}.pptx`);
-    await notice.getByRole("button", { name: "Dismiss" }).click();
-    await expect(notice).toHaveCount(0);
+    // The toast is the only notice: the frame shows none of its own.
+    await expect(
+      page.frameLocator(CURRENT_FRAME).getByRole("button", { name: "Download" }),
+    ).toHaveCount(0);
     expect(problems).toEqual([]);
   } finally {
     await client.close();

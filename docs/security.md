@@ -468,9 +468,9 @@ What is new:
   images out, and the app says so. Inline `data:` images are part of the deck's text and go in.
   No rule is relaxed for the export.
 - **The download stays in the frame.** The frame saves the file with an `<a download>` click on a
-  `blob:` URL; both frame sandboxes already include `allow-downloads`. For a browser that saves
-  only from a click inside the frame, the frame shows its own Download button for 30 seconds; the
-  blob URL is released when it goes. The file name is the deck's title reduced to letters, digits,
+  `blob:` URL; both frame sandboxes already include `allow-downloads`. The frame shows no UI of
+  its own for it (the app's toast reports the result), and the blob URL is released a minute
+  after the save. The file name is the deck's title reduced to letters, digits,
   spaces, dots, dashes and underscores, at most 80 characters. Links in the file keep only what the
   doc's URL rules allow (web and mail links, and `#N` as a link to a slide of the deck).
 
