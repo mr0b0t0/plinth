@@ -23,3 +23,4 @@ export * from "./sheet/index.ts";
 export * from "./slides.ts";
 export * from "./text.ts";
 export * from "./types.ts";
+export * from "./whiteboard.ts";

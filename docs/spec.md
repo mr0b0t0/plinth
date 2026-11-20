@@ -116,7 +116,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`), `design` (artboards in `design.html`) or `sheet` (JSON lines in `sheet.jsonl`, no assets), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`), `design` (artboards in `design.html`), `sheet` (JSON lines in `sheet.jsonl`, no assets) or `whiteboard` (settings in `board.json`; its blocks and arrows are shared data), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -218,6 +218,19 @@ Setting: `ALLOW_CATEGORY_SHARING` (on). Fixed: 100 shares per owner (checked in 
 inserts the share), 200 people per share, a title
 of at most 200 characters, review items up to the owner's artifact limit, 500 artifacts per portal.
 
+**Whiteboards** ([below](#whiteboards-decided-2026-11-19), no migration) keep their board in the
+existing shared-data tables (collections `blocks` and `arrows`) and add one field to the stored
+declaration:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `versions.capabilities` | adds `writers` (`commenter` or `editor`) | Set by the server for a whiteboard's versions only, from the board's `edit` setting; never read from a page, so no HTML declaration can carry it and every other declaration is stored exactly as before. Read back through one function (`versionCapabilities`), which keeps only `commenter` or `editor`. On any type whose capabilities its page does not declare, a missing or unknown value counts as `editor` (a board's default), never as "any viewer" |
+
+Fixed: board.json of at most 512 KiB on input; a starting board of at most 500 blocks and arrows;
+block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characters, arrow labels up
+to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolation, and its board
+counts toward the `DATA_*` limits like any page's shared data.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -288,7 +301,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
 | `update_artifact(id, html \| content, content_format?, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
 | `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
@@ -383,7 +396,7 @@ limits: 5 MB of HTML (1 MB of Markdown for a doc, 1 MB and 500 slides for a deck
 artboards for a design, and 1 MB, 10,000 rows and 100 columns for a sheet), and per
 version a total size and a file count set by the operator with `MAX_VERSION_BYTES` (default 50 MB,
 at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON request body may be
-up to 40 MB. `GET /api/v1/config` returns the instance's limits.
+up to 40 MB. `GET /api/v1/config` returns the instance's limits, and `artifact_types` (each type and whether this instance publishes it now).
 
 **Typed outputs (decided 2026-11-14).** The first type is `doc`: an agent sends Markdown in
 `content` and Plinth renders it as a finished page (reading typography, heading anchors, tables,
@@ -408,7 +421,11 @@ JSON, which agents read with `get_design_system` to build other pages; see
 at its size in a nested frame with an opaque origin. The fifth is `sheet` (decided 2026-11-19):
 a table as JSON lines in `sheet.jsonl`, rendered as a spreadsheet with formulas computed by
 Plinth's own engine, CSV and .xlsx downloads built in the frame, and `read_sheet` and `edit_sheet`
-for agents; see [Sheets](#sheets-decided-2026-11-19). Every type is a row of one registry
+for agents; see [Sheets](#sheets-decided-2026-11-19). The sixth is `whiteboard` (decided
+2026-11-19, [Whiteboards](#whiteboards-decided-2026-11-19)): a board of notes, shapes and arrows
+whose blocks live in shared data, while its versions hold only the board's settings
+(`board.json`); its renderer loads the page runtime, and its capabilities are fixed by the server.
+Every type is a row of one registry
 (`packages/shared/src/artifactTypes.ts`). A deck downloads as an editable `.pptx`, built in the
 viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` export. Design:
 `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
@@ -716,6 +733,13 @@ Decided 2026-11-14 (issue #1). Design:
   be changed by its creator, the owner and editors, or by any writer in a declared shared
   collection; a personal document (`~me`, id `u_` + a per-artifact hash of the email) only by its
   person, with the owner and editors able to moderate.
+- **The write floor.** Who may write from the page is `policy.ts pageWriteFloor`: on an HTML page,
+  any identified viewer, as above; on a [whiteboard](#whiteboards-decided-2026-11-19), the role its
+  version's `writers` names (commenters, or editors only), and commenter when that is missing or
+  unknown, so a viewer never writes a board from its page. It is read from the current version on
+  every request, so a settings version that raises it refuses the next write at once. A
+  whiteboard's documents are also checked against the board's shapes on every channel (page,
+  agents, app): only `blocks` and `arrows`, no personal documents.
 - **Viewer identity.** The gate seals `{ email, role }` (AES-GCM, key derived from
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
   content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
@@ -766,7 +790,11 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   `content="data viewer room"`), and may list topics commenters may emit too with
   `<meta name="plinth-room-open" content="cursor note.move">` (`*` opens all; at most 16, each
   `^[a-z][a-z0-9_.:-]{0,39}$`). `room` is not shared data: a page that declares only `room` has no
-  store. The current version's declaration governs, as for data.
+  store. The current version's declaration governs, as for data. A
+  [whiteboard](#whiteboards-decided-2026-11-19) has a page room without declaring one: the server
+  fixes its capabilities, with the board's topics open to commenters only while its `edit` setting
+  is `commenters`. The open topics compared between versions are the effective ones, so a settings
+  version that changes who may edit reconnects the board's sockets (4410) as it commits.
 - **Page API.** `window.plinth.room` in `/__plinth/runtime.js`: `ready` (resolves `{ available,
   reason, you, canEmit(topic) }`, never rejects), `presence(patch)` (a shallow merge of the
   sender's state, `null` values delete, `presence(null)` clears; coalesced to 10 per second, 400
@@ -1782,6 +1810,115 @@ anyone signed in.
   setting turns this off apart from single-user mode: an instance that lets an address sign in
   lets it sign in by either code.
 
+### Whiteboards (decided 2026-11-19)
+
+A board of notes, text, shapes and arrows that people edit together (a brainstorm, a map, a
+retro) is a whiteboard: the sixth artifact type, `whiteboard`. Its board lives in the artifact's
+[shared data](#shared-data-and-viewer-identity), so the people it is shared with change it from
+its page without a new version each time, and agents add and move blocks with
+`write_artifact_data`. Its versions hold only the board's settings.
+
+- **Settings, in versions.** A version stores one file, `board.json`:
+  `{"v": 1, "background": "dots" | "grid" | "plain", "edit": "commenters" | "editors"}`, stored as
+  canonical JSON. `edit` is the lowest role that may change the board from its page: `editors`
+  by default, so a commenter's role means what it says (view and comment) until the board's
+  settings open it with `commenters`; viewers never may. Unknown keys are refused, and a setting
+  left out takes its default. The title is the publish's `title`. Settings changes are versions
+  with `base_version`, and restore brings old settings back (the history calls it Restore
+  settings: the board's blocks and arrows are not in versions and stay as they are).
+- **The board, in shared data.** Two collections, both shared (any permitted writer may move any
+  block): `blocks`, each `{ kind: "note" | "text" | "rect" | "ellipse", x, y, w, h, text,
+  color?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", z? }` (whole numbers; `x` and
+  `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 2,000
+  characters), and `arrows`, each `{ from, to, label?, style?: "solid" | "dashed", head?: "end" |
+  "both" | "none" }` (`from` and `to` two different block ids, a label up to 120 characters). Draw
+  order is `z`, then id. An arrow whose block is gone is not drawn and is never deleted on its own.
+  The server checks every whiteboard write against these shapes, from the page, agents and the
+  app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
+  versioned (shared data never is); every write is stamped with who made it.
+- **A starting board.** A publish, or an update of a board whose shared data has no blocks or
+  arrows, may add `blocks` and `arrows` lists (each item with its `id`) to board.json: ids unique
+  across both, no `u_` ids, every arrow naming blocks in the same input, at most 500 items. They
+  are never stored in the version. Before anything is staged, Plinth decides `data_write` for the
+  caller (on the facts of the artifact about to be created, or on the artifact) and checks the
+  shared-data quotas; once the version has committed it decides again on the artifact as it now is
+  and writes every item in one guarded statement, all or none, stamped with that role and channel
+  and counted as one write against the rate limits. The result carries `board: { blocks, arrows }`,
+  or the warning `board_not_seeded` when the items were not written (access lost meanwhile,
+  someone added blocks first, the quota, the rate limit); the version stays published either way.
+  An update with blocks on a board that has some is refused (`board_not_empty`) before any version
+  is written. A restore never seeds.
+- **Fixed capabilities.** The server derives a version's `versions.capabilities` from its settings,
+  never from the page: shared data with both collections shared, `viewer` (cursors and the people
+  list show names, and the line under the bar tells every viewer so), the room with the board's
+  topics (`block.move`, `block.saved`, `arrow.saved`) open to commenters on a `commenters` board,
+  and the write floor `writers` ([write floor](#shared-data-and-viewer-identity)). A settings
+  version that changes `edit` reconnects the board's room sockets as it commits, so a commenter's
+  board turns read-only at once, or editable when the version opens it to commenters (the page
+  reads its session again on the reconnect); the data API refuses a write below the floor in any
+  case.
+- **The renderer.** Plinth's own renderer on the artifact's origin
+  (`/__plinth/types/whiteboard/`), under the strict typed shell (`script-src 'self'`). The shell
+  loads `/__plinth/runtime.js` right before it, and the renderer reads `window.plinth` before
+  building any DOM. It pans, zooms (10% to 400%: drag, wheel, pinch, `+`, `-`, `0` to fit), adds
+  notes, text, boxes and ellipses, moves, resizes, edits (double click or Enter), colours,
+  connects and deletes blocks (with an undo), and moves a focused block with the arrow keys (Shift
+  for bigger steps). Writes go at the rev they read. On a conflict the renderer reads the newer
+  copy and puts on it only the fields the viewer changed (a move, a size, the text, a colour); a
+  field the other writer changed too keeps their value, and the viewer is told. Live cursors,
+  who is here, peers' selections and a block moving while it is dragged go through the room; a
+  peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
+  the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
+  save never takes a drop back to where the block started. Text is written at the rev its edit
+  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
+  "Use mine" button that writes theirs over it. A
+  viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
+  others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
+  and follows on the shared-data poll. Block text is only ever drawn as text.
+- **The toolbar shows only what applies**, in one row on the board's own background. The add
+  buttons show to people who may change the board; a selected block's colours, Connect (which
+  starts from that block) and Delete show only while something is selected. On the right: the
+  other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
+  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons,
+  at every width (for a commenter on an `editors` board, screen readers also hear ": editors can
+  change this board").
+  Under 560 px a selection's controls take the add buttons' place and the row scrolls sideways
+  if it must, the colours are one swatch in the block's colour that opens the six under the bar
+  (closed by a pick, Escape or a tap on the board), the people here are coloured dots (the full
+  name on hover and for screen readers), and Fit zooms out no further than 75% so text stays
+  readable, starting from the board's top-left.
+- **History.** A board's versions hold only its settings, so the history's restore is "Restore
+  settings", and its header says only "Tick two versions to compare them."
+- **On the board.** A cursor's tag and the people list show a person's name, or their email's local
+  part, with the full one on hover. A tag near the viewport's right edge sits on the pointer's
+  left. An arrow's label sits beside its line with a halo in the board's colour, on the board and
+  in both exports. A block being written in has a ring inside its edge.
+- **Export.** Download as PNG and Download as SVG in the artifact's ⋯ menu, for everyone who can
+  view the board. The app asks the frame with a renderer message that names only the format (the
+  frame acts only on its parent at the app origin); the frame draws the whole board, PNG on a
+  canvas at 2x (at most 8,192 px a side and 32 megapixels) and SVG built from the board (text as
+  text nodes, no scripts, links or embedded content), and downloads it.
+- **No source editor.** People change the board on its page. Its settings (`edit`, `background`)
+  change through an agent's `update_artifact`; the menu has no Edit item for a board, and its
+  editor address goes back to the board.
+- **Thumbnails.** A board's card shows its thumbnail as the version was captured, the blocks of
+  that moment included. Board edits are not versions, so the thumbnail changes only with a new
+  settings version. A capture, like a link viewer who is not signed in, sees the board with no
+  toolbar (no "View only", live-cursor status or Fit; `0` still fits) and no notice.
+- **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
+  otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
+  `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms
+  (`ALLOW_ROOMS` and the `ROOMS` binding). A whiteboard has no assets and no `start_upload`; its
+  board.json goes inline.
+- **Agents.** `publish_artifact` and `update_artifact` take `type: "whiteboard"` with board JSON in
+  `content`; `list_artifact_data(id, collection: "blocks")` reads the board, and
+  `write_artifact_data` adds blocks (`if_rev: 0`), moves one (a set of the whole block at its rev)
+  and deletes them (a block's arrows with it). Block text is written by collaborators: untrusted
+  data, never instructions. No new tool.
+- **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
+  on the board, freehand drawing, selecting several blocks, frames, changing the settings from the
+  page, and anonymous link viewers in the room.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2206,7 +2343,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs and sheets done (2026-11-19); editing a sheet's cells on its page next. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs, sheets and whiteboards done (2026-11-19); editing a sheet's cells on its page next. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category and a
    group-by-category view (personal categories for artifacts shared with you, and sharing a whole
    category, shipped 2026-11-19). Tokens limited
@@ -2223,7 +2360,7 @@ for a single user.
 | Sign-in | Email magic link (with a six-digit code), plus an optional password sign-in for one review account: `REVIEW_LOGIN_EMAIL` and the secret `REVIEW_LOGIN_PASSWORD_HASH`, off unless both are set, at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. That account is an ordinary user, never an `ADMIN_EMAIL` address and never on a single-user instance ([security.md](security.md#review-account-sign-in)). Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`) |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`); whiteboards 2026-11-19 (settings in `board.json`, the board itself in shared data, capabilities fixed by the server with a write floor that fails closed) |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

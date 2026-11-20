@@ -207,6 +207,7 @@ const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   design_system: "design tokens, guidelines and components as JSON",
   design: "artboards (app screens, posters, social posts, ads) as HTML",
   sheet: "a table as JSON lines",
+  whiteboard: "a board of notes, shapes and arrows, its settings as JSON",
 };
 
 /** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
@@ -214,6 +215,7 @@ const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
   design_system: "renders as a reference site and get_design_system compiles",
   design: "renders on a canvas, each artboard alone at its exact size",
   sheet: "renders as a spreadsheet and read_sheet evaluates",
+  whiteboard: "renders as a live board, its blocks and arrows kept in shared data",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -238,6 +240,11 @@ function responseSchemas(): Record<string, Json> {
         "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text.",
     }),
     category_share: ref("CategoryShareResult"),
+    board: {
+      ...obj({ blocks: int({ minimum: 0 }), arrows: int({ minimum: 0 }) }),
+      description:
+        "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written",
+    },
   };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
@@ -410,7 +417,7 @@ function responseSchemas(): Record<string, Json> {
       },
       ["pending"],
     ),
-    PublishResult: obj(publishResult, ["category", "category_share"]),
+    PublishResult: obj(publishResult, ["category", "category_share", "board"]),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -522,7 +529,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category", "category_share"],
+      ["category", "category_share", "board"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -733,6 +740,12 @@ function responseSchemas(): Record<string, Json> {
       category_sharing: {
         type: "boolean",
         description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
+      },
+      artifact_types: {
+        type: "array",
+        items: obj({ id: artifactType, available: { type: "boolean" } }),
+        description:
+          "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation",
       },
     }),
     LoginResult: obj({

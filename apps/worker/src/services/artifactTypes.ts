@@ -18,7 +18,9 @@ import {
   type PublishWarning,
   TYPE_REGISTRY,
   typeDef,
+  type Visibility,
 } from "@plinth/shared";
+import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { designHooks } from "./artifactTypes/design.ts";
 import { designSystemHooks } from "./artifactTypes/design_system.ts";
@@ -26,6 +28,7 @@ import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
 import { sheetHooks } from "./artifactTypes/sheet.ts";
 import { slidesHooks } from "./artifactTypes/slides.ts";
+import { whiteboardHooks } from "./artifactTypes/whiteboard.ts";
 import type { Ctx } from "./context.ts";
 
 export interface SourceInput {
@@ -102,6 +105,36 @@ export interface TypeHooks {
    * imports csv and xlsx). Absent: content_format is refused for the type. Throws invalid_input.
    */
   importSource?(def: ArtifactTypeDef, text: string, format: string): string;
+  /**
+   * An inline publish or update's source, after the edit check and the wire-field checks and
+   * before the publish rate and any R2 operation: the text to stage instead, and a step to run
+   * once the version has committed (its result in, the result out). A whiteboard stores only its
+   * settings and writes its starting board into shared data after the commit. Never on a restore.
+   */
+  prepare?(ctx: Ctx, p: PrepareInput): Promise<PreparedSource>;
+}
+
+/** What a type's prepare hook gets: the source as sent, and what the version will become. */
+export interface PrepareInput {
+  def: ArtifactTypeDef;
+  text: string;
+  target:
+    | {
+        mode: "publish";
+        artifactId: string;
+        ownerId: string;
+        visibility: Visibility;
+        hasPassword: boolean;
+      }
+    | { mode: "update"; artifact: ArtifactRow };
+}
+
+/** What a type's prepare hook returns. */
+export interface PreparedSource {
+  /** The source to stage. */
+  text: string;
+  /** Run after the commit, outside its error handling: it never makes the commit look failed. */
+  afterCommit?(result: PublishResult): Promise<PublishResult>;
 }
 
 /** A version's source as the warning hooks see it, before the commit. */
@@ -119,6 +152,7 @@ const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   design_system: designSystemHooks,
   design: designHooks,
   sheet: sheetHooks,
+  whiteboard: whiteboardHooks,
 };
 
 /** The Worker hooks of a registry row. */
@@ -266,6 +300,15 @@ export function resolveSource(
   return { def, text: hooks.canonical?.(def, text) ?? text };
 }
 
+/** A type that takes no files besides its source (registry `assets: false`) refuses every asset. */
+export function noAssetsError(def: ArtifactTypeDef, path?: string): ApiError {
+  return new ApiError(
+    "invalid_input",
+    `A ${def.id} has no files besides ${def.sourcePath}: send no assets`,
+    { type: def.id, field: "assets", ...(path !== undefined ? { path } : {}) },
+  );
+}
+
 /** Refuse an asset at one of the type's reserved paths or of a content type it does not take. */
 export function checkAsset(def: ArtifactTypeDef, path: string, contentType: string): void {
   if (def.reservedPaths.includes(path)) {
@@ -278,6 +321,7 @@ export function checkAsset(def: ArtifactTypeDef, path: string, contentType: stri
       { type: def.id, field: "assets", path },
     );
   }
+  if (def.assets === false) throw noAssetsError(def, path);
   if (def.assetTypes && !def.assetTypes.test(contentType)) {
     const hooks = typeHooks(def);
     throw new ApiError(

@@ -24,6 +24,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   ARTIFACT_ID_RE,
+  ARTIFACT_TYPES,
   type ArtifactType,
   canEmitTopic,
   type EffectiveRole,
@@ -229,7 +230,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
   const l = c.limits as Record<string, unknown> | undefined;
   const ok =
     typeof c.artifactId === "string" &&
-    (c.type === "html" || c.type === "doc") &&
+    (ARTIFACT_TYPES as readonly unknown[]).includes(c.type) &&
     (c.kind === "page" || c.kind === "doc") &&
     int(c.epoch) &&
     int(c.passExp) &&

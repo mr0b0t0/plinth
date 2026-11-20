@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APP_MESSAGE_KINDS,
+  boardExportMessage,
   collectMessage,
   editMessage,
   exportMessage,
@@ -49,6 +50,7 @@ describe("renderer protocol kinds", () => {
       viewMessage("deck"),
       exportMessage("x".repeat(16)),
       sheetExportMessage("csv"),
+      boardExportMessage("png"),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
