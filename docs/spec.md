@@ -1702,7 +1702,9 @@ anyone signed in.
   address signs them in with it instead. The code's email is then a sign-in email: subject "Your
   Plinth sign-in code", the sign-in sentence first, a warning to enter the code only on the app
   host and never give it to anyone or reply with it, and only then the artifact's title (or the
-  sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too. On a
+  sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too.
+  The title is quoted on one line: its line breaks and other whitespace become single spaces and
+  invisible characters are dropped, so it cannot start lines that read as Plinth's. On a
   single-user instance they say that no account is needed, and the email stays the "viewing code"
   email, as before.
 - **Not a sign-up path.** A code goes only to an address that holds a grant on that artifact or

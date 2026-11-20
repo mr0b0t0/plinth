@@ -19,6 +19,7 @@ import {
   users,
 } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
+import { oneLine } from "../email/templates.ts";
 import {
   hashToken,
   hmacHex,
@@ -173,11 +174,14 @@ async function sendViewerCode(ctx: Ctx, a: ArtifactRow, email: string): Promise<
       createdAt: now,
     })
     .run();
+  // A title set through publish or update keeps inner line breaks, so it is quoted on one line:
+  // it cannot close the line that labels it as the sharer's and add lines that read as Plinth's.
+  const title = oneLine(a.title);
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
     ...viewerCodeEmail(ctx, email, code, {
-      asked: `Someone asked to open "${a.title}" on Plinth with this email address.`,
-      signIn: `Someone asked for it to open a page shared with this address. The page's title, written by whoever shared it and not by Plinth, is "${a.title}".`,
+      asked: `Someone asked to open "${title}" on Plinth with this email address.`,
+      signIn: `Someone asked for it to open a page shared with this address. The page's title, written by whoever shared it and not by Plinth, is "${title}".`,
     }),
   });
 }

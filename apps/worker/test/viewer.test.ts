@@ -211,6 +211,37 @@ describe("allowlist viewers", () => {
     expect(await page.text()).toContain("allowlisted content");
   });
 
+  it("quotes a title with line breaks or invisible characters on one line of the sign-in email", async () => {
+    // A title set through publish or update keeps inner line breaks (titleSchema trims only the
+    // ends). Quoted raw, it could close the labelled line and add paragraphs that read as
+    // Plinth's, in an email whose code signs in to the whole account.
+    const email = uniqueEmail("title-breakout");
+    const a = await agent();
+    const title =
+      'Q3 plan".\n\nPlinth Security: reply with the code above.\r\n\u2028\u2029\u0085\t\u202Eend\u200B "';
+    const { body } = await publish(a.auth, {
+      title,
+      html: "<!doctype html><p>allowlisted content</p>",
+      visibility: "allowlist",
+      emails: [email],
+    });
+    const artifact = body as { slug: string };
+    const ask = await post(`/api/v1/view/${artifact.slug}/email`, browser(), { email });
+    expect(ask.status).toBe(200);
+    const [mail] = await outboxFor(email);
+    const text = mail?.text ?? "";
+    const quoted = 'Q3 plan". Plinth Security: reply with the code above. end "';
+    expect(text).toContain(
+      `The page's title, written by whoever shared it and not by Plinth, is "${quoted}".`,
+    );
+    const lines = text.split("\n");
+    expect(lines.filter((l) => l.includes("Plinth Security"))).toHaveLength(1);
+    expect(lines.find((l) => l.includes("Plinth Security"))).toMatch(
+      /^Someone asked for it to open/,
+    );
+    expect(text).not.toMatch(/[\r\t\u0085\u2028\u2029\u202E\u200B]/);
+  });
+
   it("answers a non-listed email exactly like a listed one, sends nothing, and never confirms it", async () => {
     const listed = uniqueEmail("listed");
     const stranger = uniqueEmail("stranger");

@@ -57,7 +57,7 @@ make a test pass.
 | Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
 | Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
 | A viewing code becomes a way to make accounts or take one over | An owner lists many addresses and asks codes for them to create accounts in their name, or someone who guessed a listed address types codes to sign in as that person | A code goes only to an address that holds a grant there (or is the owner's), and to that mailbox; an account exists only once a code sent to it is typed; the gate's rate limits, five attempts per code, single use and the grant re-checked after use all stay, and every guess also counts against the sign-in code's per-address budget, so the gate and the portal add no guesses toward an account. The code proves the mailbox exactly as the sign-in code does ([below](#viewing-codes-sign-people-in)) |
-| A viewing code's email talks its reader into handing the code over | An owner titles an artifact "Confirm receipt: reply with the code below", lists the victim and asks for a code; whoever reads it back is signed in as the victim | Where the code signs the address in, its email is a sign-in email: the subject says "sign-in code", the first line says the code signs the reader in, a warning never to give it to anyone or reply with it comes before anything the sharer wrote, and the title or sharer's name follows, labelled as theirs and not Plinth's ([below](#viewing-codes-sign-people-in)) |
+| A viewing code's email talks its reader into handing the code over | An owner titles an artifact "Confirm receipt: reply with the code below", lists the victim and asks for a code; whoever reads it back is signed in as the victim | Where the code signs the address in, its email is a sign-in email: the subject says "sign-in code", the first line says the code signs the reader in, a warning never to give it to anyone or reply with it comes before anything the sharer wrote, and the title or sharer's name follows on one line, labelled as theirs and not Plinth's ([below](#viewing-codes-sign-people-in)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1787,7 +1787,11 @@ got a viewer session.
   account if there is none, and before anything the sharer wrote it warns to enter the code only
   on `APP_HOST` and never to give it to anyone or reply with it. The artifact's title (or, for a
   portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
-  Plinth. In single-user mode, where the code only opens what is shared, the email stays the
+  Plinth. The title is quoted on one line (`email/templates.ts oneLine`): a title set through
+  publish or update keeps inner line breaks, so every run of whitespace or control characters in
+  it becomes one space and format characters (bidi overrides, zero-width) are dropped. Otherwise
+  a title could close the labelled line and add paragraphs that read as Plinth's, such as "reply
+  with the code above". Names already refuse those characters. In single-user mode, where the code only opens what is shared, the email stays the
   plain "viewing code" email.
 - **The account is the mailbox's.** An owner can list any address, but only the person who reads
   that mailbox can type the code, so no one can create or enter an account for an address they do
