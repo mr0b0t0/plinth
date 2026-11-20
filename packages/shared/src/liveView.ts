@@ -94,6 +94,20 @@ export const LIVE_VIEW_LIMITS = {
 /** The content origin's sessionStorage key for the state carried to the next version. */
 export const VIEW_CARRY_KEY = "__plinth_carry";
 
+/**
+ * The app names each viewer frame for the version it loads there (`plinth-v5`), which the page
+ * reads as `window.name`. The runtime takes a carry record only in a frame named for the record's
+ * `to`, so a record the old version wrote and the app then did not act on (the update was held,
+ * the frame stayed, the gate could not be read) is never read by a reload or a sub-page of that
+ * old frame. A page can rename its own window: that only changes what its own record does.
+ */
+export const VIEW_FRAME_NAME_PREFIX = "plinth-v";
+
+/** The name of the viewer frame that shows `version`. */
+export function viewFrameName(version: number): string {
+  return `${VIEW_FRAME_NAME_PREFIX}${version}`;
+}
+
 /** Server -> client, JSON text frames. The client only ever sends the text "ping". */
 export type ViewWatchFrame =
   /** First frame: the current version. */

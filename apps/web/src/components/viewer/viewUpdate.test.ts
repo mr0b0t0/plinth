@@ -1,7 +1,13 @@
 // How an open view applies a newer version (docs/spec.md "Live views"): the plan for each
 // situation, and the checks on what a frame's runtime answers.
-import { describe, expect, it } from "vitest";
-import { carryPath, planUpdate, readViewMessage, type UpdateSituation } from "./viewUpdate.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  carryPath,
+  frameHasFocus,
+  planUpdate,
+  readViewMessage,
+  type UpdateSituation,
+} from "./viewUpdate.ts";
 
 const BASE: UpdateSituation = {
   enabled: true,
@@ -81,6 +87,31 @@ describe("planUpdate", () => {
         "swap",
       );
     }
+  });
+});
+
+describe("frameHasFocus", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (document as unknown as { activeElement?: unknown }).activeElement;
+  });
+
+  it("counts focus in the frame after the window lost focus (the viewer switched apps)", () => {
+    const frame = document.createElement("iframe");
+    Object.defineProperty(document, "activeElement", { configurable: true, get: () => frame });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    expect(frameHasFocus(frame)).toBe(true);
+    // Switching to another app blurs the window, and the frame stays the active element.
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    expect(frameHasFocus(frame)).toBe(true);
+  });
+
+  it("does not count focus elsewhere on the page, or no frame", () => {
+    const frame = document.createElement("iframe");
+    const other = document.createElement("input");
+    Object.defineProperty(document, "activeElement", { configurable: true, get: () => other });
+    expect(frameHasFocus(frame)).toBe(false);
+    expect(frameHasFocus(null)).toBe(false);
   });
 });
 

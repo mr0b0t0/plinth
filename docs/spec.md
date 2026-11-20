@@ -1482,13 +1482,17 @@ the app applies it so the reader keeps their place where it can:
   `history.replaceState` when it landed on the same path with no hash of its own. The new version's
   runtime reads and removes the record at start, before the page's own scripts after the runtime
   tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
-  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
+  30 s or one its frame was not loaded for: the app names each viewer frame for the version it
+  shows (`plinth-v5`, the page's `window.name`), and the runtime takes a record only in the frame
+  named for its `to`, so a record the app did not act on (a hold, a kept frame, a failed gate read)
+  is never read by a reload or a sub-page of the old frame, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
   the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
   records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
   Opaque isolation has no runtime handshake.
 - **The hold rule, per artifact.** A page that declares `hold` (`<meta name="plinth-capabilities"
   content="hold">`, HTML only; the gate says `hold: true`) is not replaced while the viewer is using
-  it, with or without the runtime: when the new version arrives with focus inside its frame, or
+  it, with or without the runtime: when the new version arrives with focus inside its frame (also
+  after the viewer switched to another window or app without clicking elsewhere on the page), or
   focus moves there while the runtime answers, only the count of versions moves on and the page
   raises a "v5 is available" toast with Update, in the slot of the "Updated to vN" toast and never
   beside it, so the frame does not move; dismissed, the bar's "v4 of 5" still says it. The runtime

@@ -1710,12 +1710,18 @@ with `history.replaceState`, only on the same path and only when it has no hash 
 `sessionStorage` is per tab and per origin, and partitioned under the app as the top-level site, so
 the record reaches only the next frame of the same artifact in the same tab, never the app, another
 artifact or another viewer. The next version's runtime reads and removes it at start and ignores one
-older than 30 s. A page can already write anything to its own storage; the record adds no new
+older than 30 s. It takes the record only in the frame the app loaded the record's `to` in: the
+app names each viewer frame for the version it shows (`plinth-v<n>`, which the page reads as
+`window.name`), so a record the app did not act on (the update was held, the frame was kept, the
+gate read failed) is removed, unread, by a reload or a sub-page of the old frame. The name is a
+version number the page is told anyway; a page that renames its own window changes only what its
+own record does. A page can already write anything to its own storage; the record adds no new
 reader.
 
 **The hold rule.** Only a page whose shown version declares `hold` (the gate says `hold: true`, only
 while `ALLOW_LIVE_VIEWS` is on) is held while focus is inside its frame (`document.activeElement` is
-the frame and the app's document has focus), whether or not it loads the runtime; such a page's
+the frame, also after the viewer switched to another window or app, which leaves it the active
+element), whether or not it loads the runtime; such a page's
 runtime is asked only when the viewer chooses Update. The app then moves only the count of versions
 and shows an Update button in its own chrome, which the page cannot cover or press. A page cannot
 force a hold without the viewer using it, except through its runtime's `onVersion` returning
