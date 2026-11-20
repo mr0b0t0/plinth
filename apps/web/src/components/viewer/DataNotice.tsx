@@ -42,8 +42,7 @@ export type NoticeGate = Partial<Omit<Extract<ViewGate, { status: "ok" }>, "stat
 export type NoticeLine = (gate: NoticeGate) => string | null;
 
 /** The people list (`people`), told to every identified viewer: their own address is on it. */
-export const PEOPLE_LIST_NOTICE =
-  "The owner and editors can see everyone this page is shared with.";
+export const PEOPLE_LIST_NOTICE = "The owner and editors can see who has access.";
 
 /**
  * Who is viewing: the display name the page sees beside the email the data line names, and
@@ -54,9 +53,7 @@ export function peopleNoticeText(gate: NoticeGate): string | null {
   if (!p) return null;
   const parts: string[] = [];
   if (p.name) {
-    parts.push(
-      `The page also sees your name, ${p.name}, and shows it wherever it shows your email.`,
-    );
+    parts.push(`The page also sees your name, ${p.name}, and shows it with your email.`);
   }
   if (p.list) parts.push(PEOPLE_LIST_NOTICE);
   return parts.length > 0 ? parts.join(" ") : null;

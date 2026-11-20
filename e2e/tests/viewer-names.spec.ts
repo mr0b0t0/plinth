@@ -14,7 +14,7 @@ import { ROOT } from "../support/paths.ts";
 import { seedToken } from "../support/tokens.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PEOPLE_SENTENCE = "The owner and editors can see everyone this page is shared with.";
+const PEOPLE_SENTENCE = "The owner and editors can see who has access.";
 
 const TEAM_HTML = `<!doctype html>
 <html lang="en">
@@ -155,7 +155,7 @@ test("names and the people list on a page shared with a team", async ({ page, br
   await expect(frame(page).locator("#people")).toContainText(`${viewer} · viewer`);
   await expect(notice(page)).toContainText(`This page can see that you are ${owner}`);
   await expect(notice(page)).toContainText(
-    "The page also sees your name, Ana Owner, and shows it wherever it shows your email.",
+    "The page also sees your name, Ana Owner, and shows it with your email.",
   );
   await expect(notice(page)).toContainText(PEOPLE_SENTENCE);
   await frame(page).getByRole("button", { name: "Sign up" }).click();

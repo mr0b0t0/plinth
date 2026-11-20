@@ -20,11 +20,9 @@ describe("DataNotice: names and the people list", () => {
   it("adds the name and the people sentence after the data line", () => {
     render(<DataNotice gate={{ data, people: { name: "Ada Lovelace", list: true } }} />);
     expect(screen.getByRole("note").textContent).toBe(
-      `${dataNoticeText(data)} The page also sees your name, Ada Lovelace, and shows it wherever it shows your email. ${PEOPLE_LIST_NOTICE}`,
+      `${dataNoticeText(data)} The page also sees your name, Ada Lovelace, and shows it with your email. ${PEOPLE_LIST_NOTICE}`,
     );
-    expect(PEOPLE_LIST_NOTICE).toBe(
-      "The owner and editors can see everyone this page is shared with.",
-    );
+    expect(PEOPLE_LIST_NOTICE).toBe("The owner and editors can see who has access.");
   });
 
   it("says each one alone", () => {
@@ -32,7 +30,7 @@ describe("DataNotice: names and the people list", () => {
       `${dataNoticeText(data)} ${PEOPLE_LIST_NOTICE}`,
     );
     expect(noticeText({ data, people: { name: "Ada" } })).toBe(
-      `${dataNoticeText(data)} The page also sees your name, Ada, and shows it wherever it shows your email.`,
+      `${dataNoticeText(data)} The page also sees your name, Ada, and shows it with your email.`,
     );
   });
 

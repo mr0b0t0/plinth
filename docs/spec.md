@@ -1003,8 +1003,8 @@ never a directory.
   called (`policy.ts accessListShowsName`).
 - **Telling the viewer.** The gate's `people` block (`name`, `list`) adds to the line under the
   bar: the name the page sees beside the email, and, on a page that declares `people`, "The owner
-  and editors can see everyone this page is shared with", shown to every identified viewer since
-  their address is on the list.
+  and editors can see who has access", shown to every identified viewer since their address is on
+  the list.
 - **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
   agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
   person can create it). The access list reaches agents only where the page offers it: when the
