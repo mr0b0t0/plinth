@@ -111,6 +111,9 @@ edge certificate covers the apex and every first-level subdomain; the
   seeing each other's page edits) connect to `wss://<id>.<content host>/__plinth/room/`; a proxy
   that drops the `Upgrade` header leaves pages working alone. Keep the idle timeout above 30
   seconds, the interval at which pages ping their room.
+- **Pass WebSocket upgrades on the app name too.** Live views connect to
+  `wss://<app host>/api/v1/view/<id>/watch`; a proxy that drops that upgrade leaves pages polling
+  every 15 s instead of following new versions at once. The same 30-second ping applies.
 - **Be the only way in.** Publish the container's port only to the proxy, e.g.
   `-p 127.0.0.1:8788:8788` with the proxy on the same machine, or a private network. A client that
   reached the container directly could skip TLS and choose its own `CF-Connecting-IP`.
@@ -229,6 +232,7 @@ it starts the instance as it is.
 | `PLINTH_OPERATOR_NAME`, `PLINTH_OPERATOR_EMAIL`, `PLINTH_OPERATOR_ADDRESS`, `PLINTH_OPERATOR_REGISTRATION`, `PLINTH_OPERATOR_HOSTING` | empty | Who runs the instance, for its legal pages |
 | `PLINTH_MAX_ARTIFACTS_PER_USER`, `PLINTH_MAX_PUBLISHES_PER_HOUR`, `PLINTH_MAX_VERSION_BYTES`, `PLINTH_MAX_ASSETS_PER_VERSION`, `PLINTH_MAX_STORAGE_BYTES_PER_USER`, `PLINTH_CDN_ALLOWLIST`, `PLINTH_ALLOW_PUBLIC_VISIBILITY`, `PLINTH_PUBLIC_MIN_ACCOUNT_AGE_HOURS` | as in self-hosting.md | Limits and the script allowlist. `PLINTH_MAX_VERSION_BYTES` (default 50 MB) and `PLINTH_MAX_ASSETS_PER_VERSION` (default 511) size one version |
 | `PLINTH_ALLOW_ROOMS`, `PLINTH_ALLOW_LIVE_EDITING` | `true` | Live rooms and on-page doc editing. The instance's config always carries the `ROOMS` binding they need; `"false"` turns them off |
+| `PLINTH_ALLOW_LIVE_VIEWS` | `true` | Live views: open pages follow new versions and shared-data changes over a WebSocket on the app host, through the same `ROOMS` binding; `"false"` turns them off and pages poll |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |
 
 Each `PLINTH_OPERATOR_*`, limit and `PLINTH_ALLOW_*` variable sets the Worker setting of the same

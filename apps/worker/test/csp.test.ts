@@ -160,4 +160,17 @@ describe("app CSP builder", () => {
     expect(h.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(h.get("strict-transport-security")).toBe("max-age=31536000");
   });
+
+  it("connects only to its own origin and its own host's live-view socket, never a content host", () => {
+    const https = vars({ PUBLIC_SCHEME: "https", CONTENT_HOST: "plinthcontent.net" });
+    const connect = (c: ReturnType<typeof vars>) =>
+      appCsp(c)
+        .split("; ")
+        .find((d) => d.startsWith("connect-src "));
+    expect(connect(https)).toBe(`connect-src 'self' wss://${https.appHost}`);
+    expect(connect(vars())).toBe("connect-src 'self' ws://app.localhost:8787");
+    // The same whether or not live views are on: it names only the app's own host.
+    expect(connect(vars({ ALLOW_LIVE_VIEWS: "false" }))).toBe(connect(vars()));
+    expect(connect(https)).not.toContain("plinthcontent.net");
+  });
 });

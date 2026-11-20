@@ -1,10 +1,20 @@
 // Telling an artifact's live room that access or the declaration changed (#36). Best effort, after
 // the response (waitUntil), with one retry: the room's 60 s alarm re-checks D1 and closes what a
-// lost call left open. Only artifacts that can have a room are notified (a doc, or an HTML artifact
-// whose current or previous version declares `room`), so ordinary artifacts never instantiate one.
-// Failures are logged with the operation only, never content.
+// lost call left open. Only artifacts that can have sockets are notified: with live views off, a
+// doc or an HTML artifact whose current or previous version declares `room`, so ordinary artifacts
+// never instantiate an object; with live views on, every artifact, since anyone who opens one may
+// hold a watch socket on it. Failures are logged with the operation only, never content.
+//
+// Live views (notifyViewers): a new version, or a change to the page's shared data, reaches the
+// artifact's watch sockets the same way, as a signal made of integers and nothing else.
 import { type Capabilities, TYPE_REGISTRY } from "@plinth/shared";
-import { type Bindings, type Config, liveEditMode, roomsActive } from "../config.ts";
+import {
+  type Bindings,
+  type Config,
+  liveEditMode,
+  liveViewsActive,
+  roomsActive,
+} from "../config.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 
 export type RoomOp = "revoke" | "gone" | "redeclare";
@@ -46,7 +56,15 @@ async function loadRoomFacts(env: Bindings, artifactId: string) {
   };
 }
 
-function hasRoom(facts: NonNullable<Awaited<ReturnType<typeof loadRoomFacts>>>): boolean {
+/**
+ * Whether the artifact's object may hold sockets: watch sockets on every artifact while live views
+ * are active, room sockets on a doc or a page whose current or previous version declares `room`.
+ */
+function mayHaveSockets(
+  facts: NonNullable<Awaited<ReturnType<typeof loadRoomFacts>>>,
+  ctx: NotifyCtx,
+): boolean {
+  if (liveViewsActive(ctx.config, ctx.env)) return true;
   const live = Object.hasOwn(TYPE_REGISTRY, facts.type)
     ? TYPE_REGISTRY[facts.type as keyof typeof TYPE_REGISTRY].liveEdit
     : false;
@@ -72,15 +90,17 @@ async function call(env: Bindings, artifactId: string, op: RoomOp, epoch: number
 
 /**
  * After a sharing change (revoke, with the artifact's new epoch), a delete or takedown (gone), or
- * a version that changed the room declaration (redeclare). A no-op while rooms are not active.
+ * a version that changed the room declaration (redeclare). A no-op while neither rooms nor live
+ * views are active; a redeclare only concerns page rooms.
  */
 export function notifyRoom(ctx: NotifyCtx, artifactId: string, op: RoomOp): void {
-  if (!roomsActive(ctx.config, ctx.env)) return;
+  const rooms = roomsActive(ctx.config, ctx.env);
+  if (!rooms && (op === "redeclare" || !liveViewsActive(ctx.config, ctx.env))) return;
   ctx.waitUntil(
     (async () => {
       try {
         const facts = await loadRoomFacts(ctx.env, artifactId);
-        if (!facts || !hasRoom(facts)) return;
+        if (!facts || !mayHaveSockets(facts, ctx)) return;
         await call(ctx.env, artifactId, op, facts.epoch);
       } catch {
         console.error(`room notify failed: ${op}`);
@@ -145,6 +165,38 @@ export function notifyDocVersion(
         }
       }
       console.error("room notify failed: version");
+    })(),
+  );
+}
+
+/** What a live-view notify tells the watch sockets: a new version, or a change to shared data. */
+export type ViewerSignal = { version: number; data: boolean } | "data";
+
+/**
+ * Live views (docs/spec.md "Live views"): after version `n` committed (`{ version, data }`, `data`
+ * whether it declares `data`), or after the page's shared data changed (`"data"`), the artifact's
+ * watch sockets get the signal. Best effort, after the response, with one retry: the room's alarm
+ * re-sends a lost version within a minute, and the page runtime's backstop poll catches a lost data
+ * signal. A no-op while live views are not active; nothing but the signal reaches the room.
+ */
+export function notifyViewers(ctx: NotifyCtx, artifactId: string, signal: ViewerSignal): void {
+  if (!liveViewsActive(ctx.config, ctx.env)) return;
+  const ns = ctx.env.ROOMS;
+  if (!ns) return;
+  const op = signal === "data" ? "data" : "published";
+  ctx.waitUntil(
+    (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const stub = ns.get(ns.idFromName(artifactId));
+          if (signal === "data") await stub.dataChanged();
+          else await stub.published(signal.version, signal.data);
+          return;
+        } catch {
+          // Retried once; the alarm and the runtime's backstop poll cover a loss.
+        }
+      }
+      console.error(`viewer notify failed: ${op}`);
     })(),
   );
 }

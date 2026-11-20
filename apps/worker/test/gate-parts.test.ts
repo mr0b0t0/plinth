@@ -1,6 +1,7 @@
 // The viewer gate is assembled from gate parts (api/view.ts GATE_PARTS). The wire shape is the
 // same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
-// `page_comments`, each only when its part has something to say.
+// `page_comments`, then `watch` (live views, live-view.test.ts), each only when its part has
+// something to say.
 import { describe, expect, it } from "vitest";
 import { GATE_PARTS } from "../src/api/view.ts";
 import { agent, browserSession, call, json, publish } from "./helpers.ts";
@@ -27,8 +28,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, then the live part, then page comments", () => {
-    expect(GATE_PARTS.length).toBe(3);
+  it("runs the data part, then the live part, then page comments, then watch", () => {
+    expect(GATE_PARTS.length).toBe(4);
   });
 
   it("a page that declares comments and data: `data`, then `page_comments`", async () => {
@@ -36,16 +37,16 @@ describe("gate parts", () => {
     const html = DECLARED.replace('content="data viewer room"', 'content="data comments"');
     const { body } = await publish(a.auth, { html, visibility: "allowlist" });
     const gate = await gateAs(a.user.id, body.id);
-    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "data", "page_comments"]);
+    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "data", "page_comments", "watch"]);
     expect(gate.page_comments).toBe(true);
     expect(gate.data.capabilities).toEqual(["data", "comments"]);
   });
 
-  it("a page that declares nothing: only the fields every gate has", async () => {
+  it("a page that declares nothing: the fields every gate has, and `watch`", async () => {
     const a = await agent();
     const { body } = await publish(a.auth, { visibility: "allowlist" });
     const gate = await gateAs(a.user.id, body.id);
-    expect(Object.keys(gate)).toEqual(BASE_KEYS);
+    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "watch"]);
     expect(Object.keys(gate.artifact)).toEqual(ARTIFACT_KEYS);
     expect(gate.role).toBe("owner");
   });
@@ -54,7 +55,7 @@ describe("gate parts", () => {
     const a = await agent();
     const { body } = await publish(a.auth, { html: DECLARED, visibility: "allowlist" });
     const gate = await gateAs(a.user.id, body.id);
-    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "data"]);
+    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "data", "watch"]);
     expect(Object.keys(gate.data)).toEqual([
       "available",
       "capabilities",
@@ -82,7 +83,7 @@ describe("gate parts", () => {
       visibility: "allowlist",
     });
     const gate = await gateAs(a.user.id, body.id);
-    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "live"]);
+    expect(Object.keys(gate)).toEqual([...BASE_KEYS, "live", "watch"]);
     expect(Object.keys(gate.live)).toEqual(["mode", "draft"]);
     expect(gate.live).toEqual({ mode: "room", draft: null });
   });

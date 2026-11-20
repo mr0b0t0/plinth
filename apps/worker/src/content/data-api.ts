@@ -25,11 +25,13 @@
 // GET /__plinth/api/v1/room (live rooms, #36) shares checks 1 to 4, then branches to roomInfo()
 // in content/room.ts, which has its own availability, artifact, pass and policy steps: a page
 // that declares only `room` has no shared data, and rooms may be on where shared data is off.
+import { waitUntil } from "cloudflare:workers";
 import { CONTENT_DATA_HEADER, CONTENT_RESERVED_PREFIX, dataObjectSchema } from "@plinth/shared";
 import { z } from "zod";
 import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { type PageClaim, pageDataAccess } from "../policy.ts";
+import { notifyViewers } from "../rooms/notify.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 import {
   changes,
@@ -355,6 +357,19 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
 
 // ---------- the dispatcher ----------
 
+/**
+ * Keep work alive after the response: the request's own waitUntil (cloudflare:workers), so the
+ * content host's dispatch keeps its signature. Outside a request (never in production), the
+ * promise simply runs on.
+ */
+function afterResponse(p: Promise<unknown>): void {
+  try {
+    waitUntil(p);
+  } catch {
+    p.catch(() => undefined);
+  }
+}
+
 export async function serveDataApi(
   request: Request,
   env: Bindings,
@@ -456,7 +471,7 @@ async function handle(
     access.write && claim
       ? { email: claim.email, role: claim.role, viewerId: claim.viewerId, via: "page" }
       : null;
-  return route.handler({
+  const res = await route.handler({
     request,
     env,
     config,
@@ -470,4 +485,10 @@ async function handle(
     writer,
     view: (row) => toPageDoc(row, claim, access.seeIdentity),
   });
+  // A write that landed: the page's other open views re-read their data (live views). Only the
+  // signal travels; each view reads the data again through this API, with all of its checks.
+  if (method !== "GET" && res.ok) {
+    notifyViewers({ env, config, waitUntil: afterResponse }, target.id, "data");
+  }
+  return res;
 }

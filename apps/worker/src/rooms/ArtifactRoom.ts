@@ -11,14 +11,28 @@
 //
 // A doc artifact's room also carries Plinth's own doc editing channel (kind "doc", rooms/doc.ts):
 // the live draft, its leases and its D1 flush, and the checkpoint RPCs the app host calls.
+//
+// Live views share the object (kind "watch", docs/spec.md "Live views"): receive-only sockets the
+// app page opens on the app host (api/watch.ts), for anyone who may open the artifact. A watch
+// socket joins no room, is never a peer and carries no identity; it gets only frames the room
+// makes from integers: `welcome`, `version` (published, or the alarm's catch-up), `data`
+// (dataChanged, at most one per spread_ms) and `access` (just before a sharing change closes it).
+// Watch sockets are counted apart from room sockets, so viewers never fill a room, and in two
+// pools of their own (`member`, `open`), so an outsider who fills the open pool learns nothing
+// about the people the artifact is shared with. No frame depends on how many sockets are open:
+// `spread_ms` comes from the instance's cap alone.
 import { DurableObject } from "cloudflare:workers";
 import {
+  ARTIFACT_ID_RE,
   type ArtifactType,
   canEmitTopic,
   type EffectiveRole,
   LIMITS,
+  LIVE_VIEW_LIMITS,
   type LiveDocServerFrame,
+  type LiveViewPool,
   liveDocClientFrameSchema,
+  livePoolCap,
   mergePresence,
   ROOM_CLOSE,
   ROOM_LIMITS,
@@ -34,17 +48,95 @@ import {
   type RoomPeer,
   type RoomServerFrame,
   roomClientFrameSchema,
+  spreadMs,
+  VIEW_WATCH_PROTOCOL,
+  type ViewWatchFrame,
 } from "@plinth/shared";
 import type { Bindings } from "../config.ts";
 import { randomString } from "../lib/crypto.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 import { type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
 import { roomDeclaration } from "./notify.ts";
+import { TrailingThrottle } from "./throttle.ts";
 
 /** The header the gate puts on the internal connect request: a JSON RoomConnect. */
 export const ROOM_CONNECT_HEADER = "x-plinth-room";
 /** The internal connect URL; a reserved TLD, so it can never mean a real site. */
 export const ROOM_CONNECT_URL = "https://room.invalid/connect";
+
+/** The header the watch handshake (api/watch.ts) puts on its internal request: a JSON WatchConnect. */
+export const WATCH_CONNECT_HEADER = "x-plinth-watch";
+
+/** What the watch handshake tells the room about one watch socket, after every check passed. */
+export interface WatchConnect {
+  artifactId: string;
+  kind: "watch";
+  /** The artifact's access epoch at the handshake: a sharing change closes the socket (4401). */
+  epoch: number;
+  /** When the socket must be re-authorized (ms since the epoch): LIVE_VIEW_LIMITS.socketTtlS. */
+  passExp: number;
+  /** The artifact's current version at the handshake. */
+  version: number;
+  /** The socket gets `data` signals (policy.ts liveViewAccess). The room can only take it away. */
+  data: boolean;
+  /** 16 hex characters: an HMAC of who connects (account, email or network), never the raw value. */
+  client: string;
+  /** The cap pool the socket counts in (policy.ts liveViewPool). */
+  pool: LiveViewPool;
+  /** The instance's LIVE_VIEW_* limits, as the Worker parsed them. */
+  limits: { maxSockets: number };
+}
+
+/** A watch socket, as its hibernation attachment holds it. */
+interface WatchState extends WatchConnect {
+  /** Random per socket. */
+  id: string;
+}
+
+const CLIENT_RE = /^[0-9a-f]{16}$/;
+
+/** The watch header, checked for shape as strictly as parseConnect checks a room's. */
+export function parseWatchConnect(raw: string | null): WatchConnect | null {
+  if (!raw || raw.length > 1024) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const c = v as Record<string, unknown>;
+  const int = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  const l = c.limits as Record<string, unknown> | undefined;
+  const ok =
+    typeof c.artifactId === "string" &&
+    ARTIFACT_ID_RE.test(c.artifactId) &&
+    c.kind === "watch" &&
+    int(c.epoch) &&
+    int(c.passExp) &&
+    int(c.version) &&
+    typeof c.data === "boolean" &&
+    typeof c.client === "string" &&
+    CLIENT_RE.test(c.client) &&
+    (c.pool === "member" || c.pool === "open") &&
+    typeof l === "object" &&
+    l !== null &&
+    !Array.isArray(l) &&
+    int(l.maxSockets) &&
+    (l.maxSockets as number) >= 1;
+  if (!ok || !l) return null;
+  return {
+    artifactId: c.artifactId as string,
+    kind: "watch",
+    epoch: c.epoch as number,
+    passExp: c.passExp as number,
+    version: c.version as number,
+    data: c.data as boolean,
+    client: c.client as string,
+    pool: c.pool as LiveViewPool,
+    limits: { maxSockets: l.maxSockets as number },
+  };
+}
 
 /** What the gate tells the room about one socket, after every check passed. */
 export interface RoomConnect {
@@ -79,6 +171,9 @@ interface SocketState extends RoomConnect {
   /** A doc socket's lease on the live draft (rooms/doc.ts). */
   lease?: StoredLease | null;
 }
+
+/** Any socket's attachment: a room socket (page or doc) or a watch socket. */
+type AnyState = SocketState | WatchState;
 
 const ROLES: ReadonlySet<string> = new Set(["owner", "editor", "commenter", "viewer"]);
 const DOC_RIGHTS: ReadonlySet<string> = new Set(["none", "watch", "write"]);
@@ -136,15 +231,19 @@ interface Bucket {
 
 export class ArtifactRoom extends DurableObject<Bindings> {
   /** Attachments already read in this wake. */
-  private readonly states = new WeakMap<WebSocket, SocketState>();
+  private readonly states = new WeakMap<WebSocket, AnyState>();
   /** Sockets this room closed itself, so their peers were already told. */
   private readonly closed = new WeakSet<WebSocket>();
   /** Message buckets per socket id. In memory: a wake resets them, which is acceptable. */
   private readonly buckets = new Map<string, Bucket>();
   /** Connect times per viewer in the last minute. In memory, like the buckets. */
   private readonly connects = new Map<string, number[]>();
+  /** Watch connect times per client in the last minute. In memory, like the buckets. */
+  private readonly watchConnects = new Map<string, number[]>();
   /** The live draft of a doc artifact (kind "doc" sockets and the checkpoint RPCs). */
   private readonly doc: LiveDoc;
+  /** Live views: `data` frames, at most one per spread_ms. In memory, like the buckets. */
+  private readonly dataFrames = new TrailingThrottle(() => this.sendData());
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
@@ -155,7 +254,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       send: (ws, frame) => this.sendDoc(ws, frame),
       gone: () => {
         this.doc.reset();
-        for (const { ws } of this.sockets()) this.drop(ws, ROOM_CLOSE.gone, "gone");
+        for (const { ws } of this.everyone()) this.drop(ws, ROOM_CLOSE.gone, "gone");
       },
     });
     // The client's keep-alive, answered without waking the object.
@@ -166,6 +265,8 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response(null, { status: 426 });
     }
+    const watch = request.headers.get(WATCH_CONNECT_HEADER);
+    if (watch !== null) return this.acceptWatch(watch);
     const info = parseConnect(request.headers.get(ROOM_CONNECT_HEADER));
     if (!info) return new Response(null, { status: 400 });
     // A doc socket is for owners and editors (watch or write); the gate never sends "none".
@@ -220,9 +321,13 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return new Response(null, { status: 101, webSocket: client, headers });
   }
 
-  /** The per-artifact, per-viewer and per-minute caps. Records the connect when it is allowed. */
+  /**
+   * The per-artifact, per-viewer and per-minute caps. Records the connect when it is allowed. Only
+   * room sockets (page and doc) count: watch sockets have caps of their own.
+   */
   private isFull(info: RoomConnect): boolean {
-    if (this.ctx.getWebSockets().length >= info.limits.maxConnections) return true;
+    const room = this.ctx.getWebSockets("k:page").length + this.ctx.getWebSockets("k:doc").length;
+    if (room >= info.limits.maxConnections) return true;
     if (this.ctx.getWebSockets(`v:${info.viewer}`).length >= ROOM_LIMITS.socketsPerViewer) {
       return true;
     }
@@ -237,34 +342,159 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return false;
   }
 
+  // ---------- live views: watch sockets ----------
+
+  /** Accept a watch socket (api/watch.ts checked everything first), or close it 4409 when full. */
+  private async acceptWatch(raw: string): Promise<Response> {
+    const info = parseWatchConnect(raw);
+    if (!info) return new Response(null, { status: 400 });
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    const headers = { "Sec-WebSocket-Protocol": VIEW_WATCH_PROTOCOL };
+    if (this.watchFull(info)) {
+      // Accepted without hibernation only to say why, then closed: the app polls instead.
+      server.accept();
+      server.close(ROOM_CLOSE.full, "full");
+      return new Response(null, { status: 101, webSocket: client, headers });
+    }
+    const state: WatchState = { ...info, id: `w_${randomString(16)}` };
+    this.ctx.acceptWebSocket(server, [
+      "k:watch",
+      `c:${info.client}`,
+      `e:${info.epoch}`,
+      `p:${info.pool}`,
+    ]);
+    if (!this.save(server, state)) {
+      server.close(ROOM_CLOSE.invalid, "invalid");
+      return new Response(null, { status: 101, webSocket: client, headers });
+    }
+    this.sendWatch(server, { t: "welcome", v: 1, version: info.version });
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + ROOM_LIMITS.recheckIntervalS * 1000);
+    }
+    return new Response(null, { status: 101, webSocket: client, headers });
+  }
+
+  /**
+   * The watch caps: per pool (half of LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT each), per client, per
+   * minute. Only the socket's own pool counts, never the other: a refusal here is something its
+   * caller could only cause together with the sockets of its own pool.
+   */
+  private watchFull(info: WatchConnect): boolean {
+    const pool = this.ctx.getWebSockets(`p:${info.pool}`).length;
+    if (pool >= livePoolCap(info.limits.maxSockets, info.pool)) return true;
+    const mine = this.ctx.getWebSockets(`c:${info.client}`).length;
+    if (mine >= LIVE_VIEW_LIMITS.socketsPerClient) return true;
+    const now = Date.now();
+    const recent = (this.watchConnects.get(info.client) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= LIVE_VIEW_LIMITS.connectsPerClientPerMinute) {
+      this.watchConnects.set(info.client, recent);
+      return true;
+    }
+    recent.push(now);
+    this.watchConnects.set(info.client, recent);
+    return false;
+  }
+
+  private sendWatch(ws: WebSocket, frame: ViewWatchFrame): void {
+    if (this.closed.has(ws)) return;
+    try {
+      ws.send(JSON.stringify(frame));
+    } catch {
+      // Closing.
+    }
+  }
+
+  /**
+   * Version `n` was committed (rooms/notify.ts notifyViewers): watch sockets behind it get a
+   * `version` frame. `data` false (the version does not declare `data`) takes the data right away;
+   * a version never grants it: the app reconnects when its gate shows data it lacked.
+   */
+  async published(n: number, data: boolean): Promise<number> {
+    const behind = this.watchSockets().filter(({ s }) => s.version < n);
+    for (const { ws, s } of behind) {
+      s.version = n;
+      if (!data) s.data = false;
+      this.save(ws, s);
+      this.sendWatch(ws, { t: "version", version: n, spread_ms: spreadOf(s) });
+    }
+    return behind.length;
+  }
+
+  /**
+   * The artifact's shared data changed: watch sockets with the data right get a `data` frame, at
+   * most one per spread_ms (rooms/throttle.ts). A write in a quiet window sends it at once; the
+   * writes after it join one frame at the window's end, which goes to the sockets open then. So
+   * however fast the page is written, its views re-read at most once per spread_ms each, and the
+   * last write is always followed by a frame. Returns how many sockets hold the data right.
+   */
+  async dataChanged(): Promise<number> {
+    const to = this.dataSockets();
+    if (!to.length) return 0;
+    this.dataFrames.request(Math.max(...to.map(({ s }) => spreadOf(s))));
+    return to.length;
+  }
+
+  private dataSockets(): { ws: WebSocket; s: WatchState }[] {
+    return this.watchSockets().filter(({ s }) => s.data);
+  }
+
+  private sendData(): void {
+    for (const { ws, s } of this.dataSockets()) {
+      this.sendWatch(ws, { t: "data", spread_ms: spreadOf(s) });
+    }
+  }
+
+  /** How many watch sockets are open (tests and diagnostics; never who). */
+  async watchers(): Promise<number> {
+    return this.watchSockets().length;
+  }
+
   // ---------- sockets and their state ----------
 
-  private state(ws: WebSocket): SocketState | null {
+  private state(ws: WebSocket): AnyState | null {
     const cached = this.states.get(ws);
     if (cached) return cached;
-    const s = ws.deserializeAttachment() as SocketState | null;
+    const s = ws.deserializeAttachment() as AnyState | null;
     if (!s || typeof s !== "object" || typeof s.id !== "string") return null;
     this.states.set(ws, s);
     return s;
   }
 
   /** Store a socket's state, refusing one over the attachment limit (2 KiB on the platform). */
-  private save(ws: WebSocket, s: SocketState): boolean {
+  private save(ws: WebSocket, s: AnyState): boolean {
     if (utf8Bytes(JSON.stringify(s)) > ROOM_LIMITS.attachmentBytes) return false;
     ws.serializeAttachment(s);
     this.states.set(ws, s);
     return true;
   }
 
-  /** Open sockets this room has not closed, with their state. */
-  private sockets(kind?: RoomKind): { ws: WebSocket; s: SocketState }[] {
-    const out: { ws: WebSocket; s: SocketState }[] = [];
-    for (const ws of this.ctx.getWebSockets(kind ? `k:${kind}` : undefined)) {
+  /** Open sockets with `tag` this room has not closed, with their state. */
+  private open<T extends AnyState>(tag: string): { ws: WebSocket; s: T }[] {
+    const out: { ws: WebSocket; s: T }[] = [];
+    for (const ws of this.ctx.getWebSockets(tag)) {
       if (this.closed.has(ws)) continue;
       const s = this.state(ws);
-      if (s) out.push({ ws, s });
+      if (s) out.push({ ws, s: s as T });
     }
     return out;
+  }
+
+  /** Open room sockets (page and doc, or one kind), with their state. Never watch sockets. */
+  private sockets(kind?: RoomKind): { ws: WebSocket; s: SocketState }[] {
+    if (kind) return this.open<SocketState>(`k:${kind}`);
+    return [...this.open<SocketState>("k:page"), ...this.open<SocketState>("k:doc")];
+  }
+
+  /** Open watch sockets, with their state. */
+  private watchSockets(): { ws: WebSocket; s: WatchState }[] {
+    return this.open<WatchState>("k:watch");
+  }
+
+  /** Every open socket: room sockets and watch sockets. */
+  private everyone(): { ws: WebSocket; s: AnyState }[] {
+    return [...this.sockets(), ...this.watchSockets()];
   }
 
   private members(room: string): { ws: WebSocket; s: SocketState }[] {
@@ -328,7 +558,8 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   private leaveAll(ws: WebSocket): void {
     const s = this.state(ws);
-    if (!s) return;
+    // A watch socket joins no room: it has no peers to tell.
+    if (!s || s.kind === "watch") return;
     this.buckets.delete(s.id);
     const names = Object.keys(s.rooms);
     if (!names.length) return;
@@ -364,6 +595,17 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (this.closed.has(ws)) return;
     const s = this.state(ws);
     if (!s) return this.drop(ws, ROOM_CLOSE.invalid, "invalid");
+    // A watch socket is receive-only: it may send the text `ping` (normally answered by the
+    // auto-response without waking the object) and nothing else.
+    if (s.kind === "watch") {
+      if (message !== "ping") return this.drop(ws, ROOM_CLOSE.invalid, "invalid");
+      try {
+        ws.send("pong");
+      } catch {
+        // Closing.
+      }
+      return;
+    }
     // Sizes and kinds are checked on the raw frame, before anything is parsed. A doc frame may
     // carry a block's text, so it gets the fixed doc limit instead of the page one.
     if (typeof message !== "string") return this.drop(ws, 1003, "binary");
@@ -518,7 +760,10 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   // ---------- revocation (Worker RPC, and the alarm as its backstop) ----------
 
-  /** Close sockets whose content pass predates this access epoch (a sharing change). */
+  /**
+   * Close sockets whose content pass (for a watch socket, its handshake) predates this access epoch
+   * (a sharing change).
+   */
   async revoke(minEpoch: number): Promise<number> {
     let n = 0;
     for (const { ws, s } of this.sockets()) {
@@ -527,14 +772,28 @@ export class ArtifactRoom extends DurableObject<Bindings> {
         n++;
       }
     }
-    return n;
+    const watchers = this.watchSockets().filter(({ s }) => s.epoch < minEpoch);
+    this.dropWatchers(watchers);
+    return n + watchers.length;
+  }
+
+  /**
+   * Close watch sockets after a sharing change (4401 `access_changed`). Each first gets an `access`
+   * frame with the instance's `spread_ms`, so the views re-read their gates and reconnect spread
+   * out, as they do after any other signal.
+   */
+  private dropWatchers(list: { ws: WebSocket; s: WatchState }[]): void {
+    for (const { ws, s } of list) {
+      this.sendWatch(ws, { t: "access", spread_ms: spreadOf(s) });
+      this.drop(ws, ROOM_CLOSE.unauthorized, "access_changed");
+    }
   }
 
   /** The artifact was deleted or taken down: close everything, and forget the live draft. */
   async gone(): Promise<number> {
     this.doc.reset();
     let n = 0;
-    for (const { ws } of this.sockets()) {
+    for (const { ws } of this.everyone()) {
       this.drop(ws, ROOM_CLOSE.gone, "gone");
       n++;
     }
@@ -551,7 +810,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return n;
   }
 
-  /** How many sockets are open (tests and diagnostics; never who). */
+  /** How many room sockets (page and doc) are open (tests and diagnostics; never who). */
   async size(): Promise<number> {
     return this.sockets().length;
   }
@@ -603,10 +862,12 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   /**
    * While any socket is open, every ROOM_LIMITS.recheckIntervalS: one D1 read of the artifact's
    * epoch, takedown, deletion and current declaration. It closes what an RPC lost in waitUntil, or
-   * a change made with SQL, left open, and any socket whose content pass has expired.
+   * a change made with SQL, left open, and any socket whose content pass has expired. Watch sockets
+   * behind the current version get its `version` frame (a lost `published`), and lose the data
+   * right once the current version no longer declares `data`.
    */
   override async alarm(): Promise<void> {
-    const open = this.sockets();
+    const open = this.everyone();
     if (!open.length) return;
     const artifactId = open[0]?.s.artifactId ?? "";
     let row: {
@@ -632,13 +893,34 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
     const now = Date.now();
     const caps = row ? versionCapabilities(row) : null;
+    const behind: { ws: WebSocket; s: WatchState }[] = [];
+    const revoked: { ws: WebSocket; s: WatchState }[] = [];
     for (const { ws, s } of open) {
       if (!row || row.deleted_at || row.taken_down_at) this.drop(ws, ROOM_CLOSE.gone, "gone");
+      else if (s.kind === "watch" && s.epoch < row.access_epoch) revoked.push({ ws, s });
       else if (s.epoch < row.access_epoch || s.passExp <= now) {
-        this.drop(ws, ROOM_CLOSE.unauthorized, "access_changed");
+        // A watch socket that only reached its lifetime says so: the app reconnects, without
+        // re-reading its gate first.
+        const expired = s.kind === "watch";
+        this.drop(ws, ROOM_CLOSE.unauthorized, expired ? "expired" : "access_changed");
       } else if (s.kind === "page" && !sameDeclaration(caps, s)) {
         this.drop(ws, ROOM_CLOSE.redeclared, "redeclared");
+      } else if (s.kind === "watch") {
+        const lostData = s.data && caps?.data !== true;
+        if (lostData) s.data = false;
+        const late = row.current_version > s.version;
+        if (late) {
+          s.version = row.current_version;
+          behind.push({ ws, s });
+        }
+        if (lostData || late) this.save(ws, s);
       }
+    }
+    // Watch sockets a lost `revoke` left open, spread like the RPC's.
+    this.dropWatchers(revoked);
+    // Versions whose `published` was lost, or committed while live views were off.
+    for (const { ws, s } of behind) {
+      this.sendWatch(ws, { t: "version", version: s.version, spread_ms: spreadOf(s) });
     }
     // A doc version whose notify was lost (or published while rooms were off): the draft in
     // memory catches up, so a checkpoint is not refused as stale until everyone leaves.
@@ -649,10 +931,18 @@ export class ArtifactRoom extends DurableObject<Bindings> {
         console.error("live doc catch-up failed");
       }
     }
-    if (this.sockets().length) {
+    if (this.everyone().length) {
       await this.ctx.storage.setAlarm(now + ROOM_LIMITS.recheckIntervalS * 1000);
     }
   }
+}
+
+/**
+ * A watch frame's `spread_ms`: from the instance's cap the socket's handshake carried, never from
+ * how many sockets get the frame, which would tell every watcher how many views are open.
+ */
+function spreadOf(s: WatchState): number {
+  return spreadMs(s.limits.maxSockets);
 }
 
 /** Whether the current declaration still gives a page socket what it was admitted with. */

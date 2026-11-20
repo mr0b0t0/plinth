@@ -27,6 +27,7 @@ import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
 import { useLiveEdit } from "./useLiveEdit.ts";
+import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
@@ -61,6 +62,11 @@ export interface ViewerStageProps {
   review?: boolean;
   /** Leaves review mode: the page closes the comments panel and loads the frame without it. */
   onLeaveReview?: () => void;
+  /**
+   * Live views: whether signals are pushed, and a count that moves each time the page's shared
+   * data changed; the frame's runtime is told both (useLiveDataRelay).
+   */
+  liveData?: { pushed: boolean; tick: number };
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -95,6 +101,7 @@ export function ViewerStage({
   onPauseChange,
   review,
   onLeaveReview,
+  liveData,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -169,6 +176,17 @@ export function ViewerStage({
     leaveReview: onLeaveReview,
   });
   const pause: WatchPause = live.pause ?? present.pause;
+  // Live views: shared-data changes reach the page's runtime (origin isolation only).
+  useLiveDataRelay({
+    frame,
+    contentOrigin,
+    enabled:
+      config?.content_isolation === "origin" &&
+      !config.content_path_fallback &&
+      gate.data?.available === true,
+    pushed: liveData?.pushed === true,
+    dataTick: liveData?.tick ?? 0,
+  });
   useEffect(() => {
     onPauseChange?.(pause);
   }, [pause, onPauseChange]);

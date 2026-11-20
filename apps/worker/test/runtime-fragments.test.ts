@@ -1,10 +1,13 @@
 // /__plinth/runtime.js is assembled from fragments (content/runtime/). The assembly replaced one
 // static string without a behaviour change, so the data and room fragments without the app
 // channel are pinned to the script on main before the split. Page comments added the app channel
-// and their own fragment after them; the channel is also tested on its own.
+// and their own fragment after them; the channel is also tested on its own. Live views add theirs
+// last (live-view tests in runtime-behaviour.test.ts).
 import { describe, expect, it } from "vitest";
+import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
+import { LIVE_FRAGMENT } from "../src/content/runtime/live.ts";
 import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
@@ -89,9 +92,10 @@ describe("runtime fragments", () => {
     // Without a fragment that uses the app channel, no configuration value is in the script.
     expect(before).not.toContain("APP_ORIGIN");
     expect(assembleRuntime({ appOrigin: APP }, BEFORE)).toBe(before);
-    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual(["data", "room", "comments"]);
+    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual(["data", "room", "comments", "live"]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
+    expect(served).toBe(assembleRuntime(config(), [...BEFORE, COMMENTS_FRAGMENT, LIVE_FRAGMENT]));
     // Memoized per app origin, which page comments embed.
     expect(runtimeScript(config())).toBe(served);
     expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);

@@ -1,8 +1,10 @@
 // Cloudflare Worker entry: routes by hostname to the app host or an artifact's content host.
+import { API, API_PREFIX } from "@plinth/shared";
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AppEnv, authenticate, base, serviceCtx } from "./api/context.ts";
 import { api } from "./api/index.ts";
 import { openApiDocument } from "./api/openapi.ts";
+import { serveViewWatch, watchPreflight } from "./api/watch.ts";
 import { devSeed } from "./app/dev-seed.ts";
 import {
   aiCatalog,
@@ -63,6 +65,10 @@ app.get("/healthz", (c) => c.json({ ok: true, environment: c.get("config").envir
 
 app.route("/", oauthRoutes);
 app.route("/", devSeed);
+// The live-view socket (api/watch.ts), ahead of the /api/v1 router so its middleware never wraps
+// the 101: its own checks before `authenticate`, and the app's headers on the response itself.
+// Other methods go on to the router, which refuses them as it refuses any unknown endpoint.
+app.get(`${API_PREFIX}${API.viewWatch}`, watchPreflight, authenticate, serveViewWatch);
 app.route("/api/v1", api);
 
 app.get("/openapi.json", (c) => c.json(openApiDocument(c.get("config"))));

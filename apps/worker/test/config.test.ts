@@ -1,11 +1,19 @@
 import { env } from "cloudflare:workers";
-import { DEFAULTS, LIMITS, LIVE_DEFAULTS, ROOM_DEFAULTS, TTL } from "@plinth/shared";
+import {
+  DEFAULTS,
+  LIMITS,
+  LIVE_DEFAULTS,
+  LIVE_VIEW_DEFAULTS,
+  ROOM_DEFAULTS,
+  TTL,
+} from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
   IDENTITY_READERS,
   identityClaimsActive,
   liveEditMode,
+  liveViewsActive,
   MIN_VERSION_BYTES,
   maxBundleBytes,
   type OptionalBindings,
@@ -637,5 +645,70 @@ describe("room and live editing settings", () => {
       expect(r.active(parseConfig(base), binding), r.name).toBe(true);
     }
     expect(new Set(IDENTITY_READERS.map((r) => r.name)).size).toBe(IDENTITY_READERS.length);
+  });
+});
+
+describe("config: live views (ALLOW_LIVE_VIEWS, LIVE_VIEW_*)", () => {
+  const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+
+  it("default on, 1000 watch sockets per artifact; an empty value keeps the defaults", () => {
+    const c = parseConfig(base);
+    expect(c.allowLiveViews).toBe(true);
+    expect(c.liveViews).toEqual({ maxSocketsPerArtifact: 1000 });
+    expect(c.liveViews).toEqual(LIVE_VIEW_DEFAULTS);
+    const empty = parseConfig({
+      ...base,
+      ALLOW_LIVE_VIEWS: "",
+      LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: "",
+    });
+    expect(empty.allowLiveViews).toBe(true);
+    expect(empty.liveViews.maxSocketsPerArtifact).toBe(1000);
+  });
+
+  it("reads the switch and the cap, and refuses a cap out of bounds", () => {
+    for (const off of ["false", "0", "no", "off", "nope"]) {
+      expect(parseConfig({ ...base, ALLOW_LIVE_VIEWS: off }).allowLiveViews, off).toBe(false);
+    }
+    for (const v of ["10", "10000"]) {
+      const c = parseConfig({ ...base, LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: v });
+      expect(c.liveViews.maxSocketsPerArtifact).toBe(Number(v));
+    }
+    for (const v of ["9", "10001", "-1", "1.5", "lots"]) {
+      expect(() => parseConfig({ ...base, LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: v }), v).toThrow(
+        /LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT must be an integer from 10 to 10000/,
+      );
+    }
+  });
+
+  it("active with the switch and the ROOMS binding, under any isolation, without ALLOW_ROOMS", () => {
+    expect(liveViewsActive(parseConfig(base), binding)).toBe(true);
+    // Without the binding: off, never a config error.
+    expect(liveViewsActive(parseConfig(base), {})).toBe(false);
+    expect(liveViewsActive(parseConfig({ ...base, ALLOW_LIVE_VIEWS: "false" }), binding)).toBe(
+      false,
+    );
+    // The socket is on the app host: rooms off and opaque isolation do not matter.
+    expect(liveViewsActive(parseConfig({ ...base, ALLOW_ROOMS: "false" }), binding)).toBe(true);
+    const opaque = parseConfig({
+      ...base,
+      CONTENT_HOST: "content.aconite.io",
+      CONTENT_ISOLATION: "opaque",
+    });
+    expect(liveViewsActive(opaque, binding)).toBe(true);
+    const fallback = parseConfig({
+      ...base,
+      ENVIRONMENT: "staging",
+      APP_HOST: "plinth.example.workers.dev",
+      STAGING_CONTENT_FALLBACK: "true",
+    });
+    expect(liveViewsActive(fallback, binding)).toBe(true);
+  });
+
+  it("the shipped wrangler.jsonc lists them with the documented defaults", () => {
+    const c = parseConfig(env as unknown as Record<string, unknown>);
+    expect(c.allowLiveViews).toBe(true);
+    expect(c.liveViews).toEqual(LIVE_VIEW_DEFAULTS);
+    for (const k of ["ALLOW_LIVE_VIEWS", "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT"])
+      expect(typeof (env as unknown as Record<string, unknown>)[k], k).toBe("string");
   });
 });
