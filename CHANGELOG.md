@@ -19,89 +19,105 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   with one board, pins comments to boards, and prints or saves the design as PDF one board per
   page. The editor previews the boards as you type and shows each problem with its line. The Plinth
   CLI publishes a folder with `design.html` at its top as a design. Thumbnails show each board
-  with its own images and styles. Update the plugin for the agent's design rules.
+  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.24.0.
 
-- **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
-  take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
-  recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot
-  hide, and passes the page only words. Artifact frames still never get the microphone. Off unless
-  an operator sets `ALLOW_DICTATION=true`; origin isolation only, and only for people the page is
-  shared with. Text to speech (`speechSynthesis`) works in every page as before, now documented,
-  and a page that calls `getUserMedia` or `SpeechRecognition` itself gets a `blocked_feature`
-  publish warning.
+## 0.6.0 (2026-11-20)
 
+- **Thumbnails picture the version they are of.** The capture of a version is served that
+  version on every path, so a page that loads `/assets/index.js`, frames `/chart.html` or
+  redirects to `/docs/` shows its own files, not the current version's, and an older version's
+  thumbnail never runs a newer version's code. The thumbnail browser also no longer opens another
+  version or a Plinth helper path as a page.
 - **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact
-  (the artifact's Settings, **Publish from CI**): it reads that artifact and publishes new versions
-  of it, nothing else (not even the owner's or other people's email addresses), and deleting the
-  artifact revokes it. `plinth publish` takes a single
+  (**Limit to one artifact** in the New token dialog): it reads that artifact and publishes new versions
+  of it, nothing else (not even the owner's or other people's email addresses, nor an enter URL
+  or a thumbnail, which would show the page's shared data), and deleting the
+  artifact revokes it. Thumbnails of the versions such a token publishes are taken without the
+  page's shared data, and the thumbnail browser now aborts anything a page loads or opens off its
+  own artifact and the CDN allowlist. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
-  a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
-  and cron: `docs/ci.md` (#51).
-
+  a JSON object on failure and for `--dry-run` too, and prints `live_draft` as a note that needs no
+  action. GitLab CI and cron: `docs/ci.md` (#51). **Deploying:** release v0.6.0 first, right
+  after merging (`pnpm release 0.6.0 --push`), then apply migration `0012_bound_tokens.sql` and
+  deploy. The New token dialog, the README and `docs/ci.md` pin `mr0b0t0/plinth/publish@v0.6.0`
+  and `@mr0b0t0/plinth@0.6.0`, which exist only once that release is out. Plugin 0.21.0.
+- **Comments from the page.** A page that declares `comments` can open the comment composer on a
+  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
+  its own markers for the threads and tell Plinth where to put its pins. The person still writes
+  and posts every comment, and the page never sees comment text. Opening comments on such a page no
+  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
+  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0. A declaring page connects as
+  soon as it loads, so its pins show even before its code calls `plinth.comments`, and they follow
+  the layout as images load or the page resizes. Whether the page anchors its own comments follows
+  the version being viewed, so an older version without the declaration keeps "Pin to an element".
+- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
+  off its anchor; it now grows in place.
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
   between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
-  clicks or swipes, link to a slide (`#slide=4`), present full screen, open a presenter view with
-  the notes, the next slide and a timer (and an audience window that follows it), and print or save
-  as PDF with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  clicks or swipes, link to a slide (`#slide=4`), see every slide in a thumbnail grid, and from
+  Present in the bar go full screen or open a presenter view with the notes, the next slide and a
+  timer (and an audience window that follows it with nothing but the slide). Print or save as PDF
+  with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
   publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
-
+  Plugin 0.19.0.
 - **Design systems.** Publish tokens, guidelines and components as a design system (`type:
   "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
   spacing and shadow samples and live component previews in light and dark. Agents read one with
   the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
   into the pages they build, and get a `design_system_outdated` warning when a page was built on
   an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
-  type.
-
-- **Comments from the page.** A page that declares `comments` can open the comment composer on a
-  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
-  its own markers for the threads and tell Plinth where to put its pins. The person still writes
-  and posts every comment, and the page never sees comment text. Opening comments on such a page no
-  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
-  tasks. Example: `docs/examples/canvas-comments.html`.
-
-- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
-  off its anchor; it now grows in place.
-
-- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
-  name…"); pages that show who is viewing now show it beside your email, on `plinth.viewer`, on
-  the entries you write and in live rooms. A page that declares `data viewer people` lets its
-  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
-  line under the bar tells every invited viewer. On such a page their agents get the same list in
-  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
-  page. The list and the owner's sharing settings name a person once they have commented, entered
-  something or published a version there, so adding an address never reveals whether it has an
-  account. Names are display text: no `@`, no invisible characters, never a role.
-
+  type. CSS blocks may not hold escapes or `url()`s to other hosts, and a `url()` to a file the
+  design system lacks is a `missing_file` warning. Plugin 0.18.0.
+- **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
+  linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
+  the people who opened it (name and email for people signed in and allowlisted viewers, with the
+  version they last saw), opens per version and an approximate count of anonymous visitors. Agents read the same with the `get_artifact_stats` MCP
+  tool, `GET /api/v1/artifacts/:ref/stats` and `GET /api/v1/stats/artifacts` (owner only). This
+  replaces the open counts in the Share dialog and `GET /api/v1/artifacts/:ref/views`, which is
+  gone. Opens are kept with who made them for `VIEW_LOG_RETENTION_DAYS` (default 365), then only
+  counted; `VIEW_COUNTS=off` still stops recording. Apply migration `0020_artifact_opens.sql`
+  before deploying: it keeps the existing daily counts as opens with no viewer. Plugin 0.17.0.
+- **A Cursor plugin.** `integrations/plugin-cursor` packages the Plinth server and skill in Cursor's
+  plugin layout, for the Cursor Marketplace and cursor.directory.
+- **A build for OpenAI's plugin directory.** `integrations/plugin-openai` is the folder to ZIP for
+  ChatGPT and Codex: the portable manifest with its listing block, the hosted server, the icon and
+  the skill, with no hooks and no Claude Code passages.
+- **The plugin directory build connects to the hosted instance again.** Anthropic's plugin directory
+  refused the 0.15.0 build because its server URL used the Plinth instance option, so the directory
+  build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
+  self-hosted instance as its own server, or install the full plugin from this repository's
+  marketplace, which keeps the option. Plugin 0.16.0.
+- **OpenAI domain verification.** Set `OPENAI_APPS_CHALLENGE` to the token OpenAI's plugin portal
+  shows, and the instance serves it at `/.well-known/openai-apps-challenge`. Unset, the path stays
+  404.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
   From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
-
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
+  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
+- **Review account sign-in.** An operator can give one ordinary account a password, for a
+  directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
+  `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at
+  `/login/review`, linked from the sign-in page, and locks after repeated wrong passwords. Off
+  unless both are set; never an admin account ([security.md](docs/security.md#review-account-sign-in)).
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.
-
 - **Live rooms.** Pages can show who is here and share moments live with `plinth.room`, and
   owners and editors can edit a doc together right on its page, saved as versions on Save or after
   a pause (#36).
-
 - **MCP tool annotations.** Every tool now says whether it only reads, whether it can remove
   data, and whether repeating it is safe, so clients can ask before the right calls and directories
   (Anthropic's connector directory requires them) can list Plinth.
-
 - **Admin stats and view counts.** Instance admins get a Stats page (people, artifacts,
   publishes, storage, shared data, agent connections, open reports and opens, with 7/30/90-day
   trends), and owners see how often other people opened a page in its Share dialog. Opens are
   kept as a daily number per page, never who opened it; `VIEW_COUNTS=off` turns counting off.
   Apply migration `0010_view_counts.sql` before deploying.
-
 - **Artifact categories: agents file artifacts under the project they work in; owners filter,
   move and rename them.** Each artifact can carry one category, usually the repo or client it
   belongs to. Agents set it when they publish (`category` on `publish_artifact` and
@@ -111,7 +127,6 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   see your categories, never the people you share with. Update the plugin (0.12.0) for the agent
   rules. Self-hosters: apply migration `0009_categories` before deploying
   ([deploy checklist](docs/deploy-checklist.md#6-upgrading-and-rolling-back)).
-
 - **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
   in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
   CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not

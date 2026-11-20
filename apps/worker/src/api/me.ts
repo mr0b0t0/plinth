@@ -3,14 +3,13 @@ import {
   type BoundMe,
   type Me,
   type MeConnection,
-  normalizeDisplayName,
   REPO_URL,
   TTL,
   updateProfileInput,
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { dictationActive, instanceLimits } from "../config.ts";
+import { instanceLimits } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -44,17 +43,15 @@ meApi.get("/config", (c) => {
     limits: instanceLimits(config),
     cdn_allowlist: [...config.cdnAllowlist],
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
-    dictation: dictationActive(config),
+    review_login: config.reviewLogin !== null,
+    view_log_retention_days: config.viewLogRetentionDays,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);
   return res;
 });
 
-/**
- * Update the signed-in person's display name (displayName.ts rules: stored normalised, "" clears
- * it). People only (not agents).
- */
+/** Update the signed-in person's display name. People only (not agents). */
 meApi.patch("/me", async (c) => {
   const p = c.get("principal");
   if (p.kind === "agent") throw new ApiError("forbidden", "Agents cannot change the profile");
@@ -63,7 +60,7 @@ meApi.patch("/me", async (c) => {
   await c
     .get("db")
     .update(users)
-    .set({ name: normalizeDisplayName(name) || null })
+    .set({ name: name || null })
     .where(eq(users.id, p.userId))
     .run();
   return meResponse(c);

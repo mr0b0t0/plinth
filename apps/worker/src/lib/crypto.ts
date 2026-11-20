@@ -239,7 +239,15 @@ export async function viewerIdFor(
 }
 
 // Passwords: PBKDF2-SHA256. Workers caps iterations at 100,000.
-const PBKDF2_ITERATIONS = 100_000;
+export const PBKDF2_ITERATIONS = 100_000;
+
+/**
+ * A hash in hashPassword's format at the full iteration count: `pbkdf2-sha256$100000$<16-byte
+ * salt>$<32-byte hash>`, both base64url without padding. scripts/review-login-hash.mjs writes it.
+ */
+export const PASSWORD_HASH_RE = new RegExp(
+  `^pbkdf2-sha256\\$${PBKDF2_ITERATIONS}\\$[A-Za-z0-9_-]{22}\\$[A-Za-z0-9_-]{43}$`,
+);
 
 async function pbkdf2(password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, [

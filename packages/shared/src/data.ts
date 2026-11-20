@@ -9,9 +9,9 @@ import {
   type EffectiveRole,
   LIMITS,
 } from "./constants.ts";
-import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
+import { utf8Length } from "./utf8.ts";
 
 // ---------- capabilities ----------
 
@@ -27,18 +27,8 @@ export interface Capabilities {
   room: boolean;
   /** Topics commenters may emit too (plinth-room-open); `*` opens all. Viewers never emit. */
   roomOpen: string[];
-  /**
-   * The owner and editors may list everyone with access from the page (/__plinth/api/v1/people).
-   * Counts only with `data` and `viewer`.
-   */
-  people: boolean;
   /** The page may open the comment composer with its own anchors (`plinth.comments`). */
   comments: boolean;
-  /**
-   * The page may receive words the viewer dictates (`plinth.dictation`, run by the app). Not shared
-   * data, not a room, and never the microphone.
-   */
-  dictation: boolean;
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -105,9 +95,7 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
     accept: (t) => t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t),
     checkOnRead: true,
   },
-  { kind: "token", key: "people" },
   { kind: "token", key: "comments" },
-  { kind: "token", key: "dictation" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -171,10 +159,9 @@ function tokens(content: string): string[] {
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
  * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room` or
- * `comments` or `dictation` is declared: the viewer is learned through the data API or the room,
- * so `viewer` alone declares nothing, and neither does a list alone. Shared names count only with
- * `data`, open topics only with `room`. A page that declares only `comments` or `dictation` has no
- * store and no room.
+ * `comments` is declared: the viewer is learned through the data API or the room, so `viewer`
+ * alone declares nothing, and neither does a list alone. Shared names count only with `data`,
+ * open topics only with `room`.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
@@ -290,10 +277,7 @@ export const dataDocIdSchema = z
   )
   .describe("Document id, or ~me for your own personal document");
 
-/** UTF-8 length of a string, without TextEncoder (this package targets plain ES2023). */
-export function utf8Length(s: string): number {
-  return utf8Bytes(s);
-}
+export { utf8Length };
 
 /** UTF-8 bytes of a document's JSON, as stored. */
 export function dataByteSize(data: unknown): number {
@@ -397,15 +381,20 @@ export type DataVia = "page" | "agent" | "app";
 
 /**
  * Why shared data is unavailable to a page. `preview`: the page is shown in an agent's thread
- * (an MCP App), through a read-only pass that carries no identity.
+ * (an MCP App), through a read-only pass that carries no identity. `capture`: Plinth's thumbnail
+ * browser is taking a picture of a version whose writer may not read the data (a token limited to
+ * one artifact wrote it).
  */
-export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared" | "preview";
+export type DataUnavailableReason =
+  | "opaque_isolation"
+  | "disabled"
+  | "not_declared"
+  | "preview"
+  | "capture";
 
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {
   email: string | null;
-  /** The writer's display name, read live (displayName.ts pageDisplayName); null without one. */
-  name: string | null;
   role: EffectiveRole | null;
   via: DataVia;
 }
@@ -428,8 +417,6 @@ export interface PageDoc {
 /** Server-derived author of a write, as owners' and editors' agents see it. */
 export interface AgentDocAuthor {
   email: string | null;
-  /** Display text chosen by the writer: untrusted, never proof of role. */
-  name: string | null;
   role: EffectiveRole | null;
   via: DataVia;
   connection_label: string | null;
@@ -454,14 +441,9 @@ export type DataSession =
   | { available: false; reason: DataUnavailableReason }
   | {
       available: true;
-      /**
-       * null for anonymous link viewers. `email` and `name` only when the page declares `viewer`;
-       * `name` is null without an account name.
-       */
-      viewer: { id: string; email: string | null; name: string | null; role: EffectiveRole } | null;
+      /** null for anonymous link viewers. `email` only when the page declares `viewer`. */
+      viewer: { id: string; email: string | null; role: EffectiveRole } | null;
       can_write: boolean;
-      /** The reader may list the page's people (owner or editor, the page declares `people`). */
-      can_list_people: boolean;
       capabilities: DataCapability[];
       shared: string[];
       limits: { max_doc_bytes: number; max_docs: number; max_bytes: number };
@@ -492,62 +474,8 @@ export interface DataSummary {
   usage: { docs: number; bytes: number };
   limits: DataLimits;
   collections: { name: string; docs: number; bytes: number; updated_at: string }[];
-  /**
-   * Everyone with access (the owner, then grants by email). Present only when the current version
-   * declares `data viewer people` and shared data is on: the same people a page's owner and
-   * editors can list, under the same notice to viewers.
-   */
-  people?: AgentPerson[];
   untrusted: string;
 }
-
-// ---------- people (docs/spec.md "Who is viewing: names and the people list") ----------
-
-/** One person with access to an artifact, as an owner's or editor's page sees them. */
-export interface PagePerson {
-  /** The per-artifact `u_` viewer id: what a personal document of theirs is called. */
-  id: string;
-  email: string;
-  /** Display text chosen by the person, or null. Never authority. */
-  name: string | null;
-  role: EffectiveRole;
-  /** This is the reader. */
-  you: boolean;
-}
-
-/** GET /__plinth/api/v1/people */
-export interface PagePeopleList {
-  people: PagePerson[];
-  /** How many matched before `limit`. */
-  total: number;
-}
-
-/** One person with access, as owners' and editors' agents see them. Untrusted input for agents. */
-export interface AgentPerson {
-  viewer_id: string;
-  email: string;
-  name: string | null;
-  role: EffectiveRole;
-}
-
-/** GET /api/v1/artifacts/:ref/people */
-export interface PeopleResult {
-  people: AgentPerson[];
-  untrusted: string;
-}
-
-/** A people search: every whitespace-separated term must match a name or an email. */
-export const peopleQuerySchema = z
-  .string()
-  .trim()
-  .max(LIMITS.maxPeopleQueryLength)
-  .describe("Search terms, matched against names and emails");
-
-/** GET /api/v1/artifacts/:ref/people */
-export const listArtifactPeopleInput = z.object({
-  id: artifactRefSchema,
-  q: peopleQuerySchema.optional(),
-});
 
 /** list_artifact_data with a collection. */
 export interface DataPage {

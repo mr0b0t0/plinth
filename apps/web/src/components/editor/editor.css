@@ -77,13 +77,12 @@
 .pl-editor__problems {
   align-items: flex-start;
 }
-.pl-editor__problems > div {
+.pl-editor__problems ul {
   flex: 1;
   min-width: 0;
-}
-.pl-editor__problems ul {
-  margin: var(--space-1) 0 0;
-  padding-left: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
   overflow-wrap: anywhere;
 }
 .pl-editor__problems code {

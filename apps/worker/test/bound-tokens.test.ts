@@ -11,20 +11,25 @@ import { resolveBearer } from "../src/auth/principal.ts";
 import { agentConnections, mentionTasks } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { tar } from "./fixtures/bundles/tar.ts";
+import acme from "./fixtures/design-systems/acme.json";
 import {
   agent,
   browserSession,
   call,
   config,
+  contentOrigin,
   createToken,
   createUser,
   db,
+  enterContent,
+  fetchWith,
   json,
   mcpClient,
   publish,
   serviceCtxFor,
   tool,
 } from "./helpers.ts";
+import { upgrade } from "./room-helpers.ts";
 
 const DATA_PAGE = `<!doctype html><title>Report</title>
 <meta name="plinth-capabilities" content="data">
@@ -307,6 +312,14 @@ describe("using a token limited to one artifact", () => {
     bound(await req("POST", `/artifacts/${id}/versions/1/restore`, t.auth, {}), "restore");
     bound(await req("DELETE", `/artifacts/${id}`, t.auth), "delete");
     bound(await req("POST", `/artifacts/${id}/comments`, t.auth, { body: "hi" }), "comment");
+    // A page anchor (comments from the page) is a comment like any other.
+    bound(
+      await req("POST", `/artifacts/${id}/comments`, t.auth, {
+        body: "hi",
+        anchor: { kind: "page", key: "slide-1", x: 10, y: 20 },
+      }),
+      "page-anchored comment",
+    );
     // Reading the threads too: they carry every commenter's email and the mention tasks.
     const posted = await req("POST", `/artifacts/${id}/comments`, h, { body: "A note" });
     expect(posted.status).toBe(201);
@@ -320,7 +333,11 @@ describe("using a token limited to one artifact", () => {
       }),
       "data write",
     );
-    bound(await req("GET", `/artifacts/${id}/views`, t.auth), "views");
+    bound(await req("GET", `/artifacts/${id}/stats`, t.auth), "stats");
+    // The summary across the person's artifacts would list the ones the binding hides.
+    const summary = await req("GET", "/stats/artifacts", t.auth);
+    bound(summary, "stats summary");
+    expect(JSON.stringify(summary.body)).not.toContain("Other page");
     // An update that carries a category is refused before anything is written.
     const withCategory = await req("PUT", `/artifacts/${id}`, t.auth, {
       html: "<p>x</p>",
@@ -376,6 +393,8 @@ describe("using a token limited to one artifact", () => {
       ["restore_version", { id, version: 1 }],
       ["list_artifact_data", { id }],
       ["list_comments", { id }],
+      ["get_artifact_stats", { id }],
+      ["get_artifact_stats", {}],
       [
         "write_artifact_data",
         { id, ops: [{ op: "delete", collection: "votes", doc_id: "a", if_rev: 1 }] },
@@ -492,6 +511,216 @@ describe("using a token limited to one artifact", () => {
     });
     expect((await req("GET", "/me", h)).body.connection).toBeNull();
   });
+
+  it("a type filter applies to its one artifact too", async () => {
+    const { h, id } = await setup();
+    const t = await boundToken(h, id);
+    expect((await req("GET", "/artifacts?type=html", t.auth)).body.items).toHaveLength(1);
+    expect((await req("GET", "/artifacts?type=doc", t.auth)).body).toEqual({
+      items: [],
+      categories: [],
+    });
+    const c = await mcpClient(t.token);
+    expect((await tool(c, "list_artifacts", { type: "doc" })).data.items).toEqual([]);
+    expect((await tool(c, "list_artifacts", { type: "html" })).data.items).toHaveLength(1);
+    await c.close();
+  });
+});
+
+describe("a token limited to one artifact never sees the page run with its data", () => {
+  /** A shared-data read the way the runtime makes one, with whatever content cookie it has. */
+  const readData = (id: string, cookie: string | null) =>
+    call(`${contentOrigin(id)}/__plinth/api/v1/data/votes`, {
+      headers: {
+        "x-plinth-data": "1",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+        ...(cookie ? { cookie } : {}),
+      },
+    });
+
+  it("the viewer gate refuses it, so no pass reads the shared data", async () => {
+    const { owner, id, other } = await setup();
+    const t = await boundToken(await signedIn(owner.user.id), id);
+    const gate = await req("GET", `/view/${id}`, t.auth);
+    expect(gate.status).toBe(403);
+    expect(gate.body.error.details.reason).toBe("token_bound");
+    expect(gate.body.enter_url).toBeUndefined();
+    // Every other artifact is the 404 it always is.
+    expect((await req("GET", `/view/${other.id}`, t.auth)).body).toEqual({ status: "not_found" });
+    // The reviewer's path: redeem the gate's URL, then read /__plinth/api/ as a page script would.
+    const entered = await enterContent(id, { headers: t.auth });
+    expect(entered.cookie).toBeNull();
+    const read = await readData(id, entered.cookie);
+    expect(read.status).not.toBe(200);
+    expect(await read.text()).not.toContain('"votes"');
+    // The owner's account-wide token and the owner in a browser still open it, and read the data.
+    expect((await req("GET", `/view/${id}`, owner.auth)).body.status).toBe("ok");
+    const mine = await enterContent(id, { headers: (await browserSession(owner.user.id)).headers });
+    expect(mine.cookie).toBeTruthy();
+    expect((await readData(id, mine.cookie)).status).toBe(200);
+  });
+
+  it("the gate refuses it on an unlisted artifact too, and after a correct password", async () => {
+    const pub = await setup({ visibility: "unlisted" });
+    const t = await boundToken(pub.h, pub.id);
+    const gate = await req("GET", `/view/${pub.id}`, t.auth);
+    expect(gate.status).toBe(403);
+    expect(gate.body.error.details.reason).toBe("token_bound");
+
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const locked = await publish(owner.auth, {
+      title: "Locked",
+      html: DATA_PAGE,
+      visibility: "password",
+      password: "correct horse battery",
+    });
+    expect(locked.res.status).toBe(201);
+    const lt = await boundToken(h, locked.body.id);
+    // The owner's token needs no password, and gets no pass either way.
+    expect((await req("GET", `/view/${locked.body.id}`, lt.auth)).body.error.details.reason).toBe(
+      "token_bound",
+    );
+    const pw = await req("POST", `/view/${locked.body.id}/password`, lt.auth, {
+      password: "correct horse battery",
+    });
+    expect(pw.status).toBe(403);
+    expect(pw.body.error.details.reason).toBe("token_bound");
+  });
+
+  it("gets no thumbnail, and its summaries carry no thumbnail_url", async () => {
+    const { owner, h, id } = await setup();
+    const t = await boundToken(h, id);
+    const shot = await req("GET", `/artifacts/${id}/thumbnail`, t.auth);
+    expect(shot.status).toBe(403);
+    expect(shot.body.error.details.reason).toBe("token_bound");
+    // The owner's own answer is the usual "No thumbnail yet" (this instance takes none).
+    expect((await req("GET", `/artifacts/${id}/thumbnail`, owner.auth)).status).toBe(404);
+    // With thumbnails on, the owner's summary links one and the bound token's does not.
+    const on = { BROWSER: {} as Fetcher };
+    const mine = await json(
+      await fetchWith(on, `/api/v1/artifacts/${id}`, { headers: owner.auth }),
+    );
+    expect(mine.thumbnail_url).toEqual(expect.stringContaining(`/artifacts/${id}/thumbnail`));
+    const its = await json(await fetchWith(on, `/api/v1/artifacts/${id}`, { headers: t.auth }));
+    expect(its.id).toBe(id);
+    expect(its.thumbnail_url).toBeNull();
+    const list = await json(await fetchWith(on, "/api/v1/artifacts", { headers: t.auth }));
+    expect(list.items[0].thumbnail_url).toBeNull();
+  });
+
+  it("its in-chat preview is a pass that reads no shared data and joins no room", async () => {
+    const { h, id } = await setup();
+    const t = await boundToken(h, id);
+    const c = await mcpClient(t.token);
+    const room = `<!doctype html><title>Board</title>
+<meta name="plinth-capabilities" content="data viewer room"><p>board</p>`;
+    const up = await tool(c, "update_artifact", { id, html: room, base_version: 1 });
+    expect(up.isError, up.text).toBe(false);
+    const link = await tool(c, "preview_artifact", { id });
+    expect(link.isError, link.text).toBe(false);
+    await c.close();
+    const enter = await call(link.data.preview_url, { headers: { "sec-fetch-dest": "iframe" } });
+    const cookie = (enter.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    expect(cookie).toContain("=");
+    const read = await readData(id, cookie);
+    expect(read.status).toBeGreaterThanOrEqual(400);
+    expect(await read.text()).toContain("preview");
+    const ws = await upgrade(id, cookie);
+    expect(ws.status).toBe(403);
+    expect(ws.webSocket).toBeFalsy();
+    expect(await ws.text()).toContain("preview");
+  });
+});
+
+describe("a token limited to one artifact, on the tools that read other artifacts", () => {
+  /** A design system the same person owns, so only the binding stands in the way. */
+  async function publishDs(auth: Record<string, string>, visibility = "allowlist") {
+    const r = await publish(auth, {
+      html: undefined,
+      title: "Acme UI",
+      type: "design_system",
+      content: JSON.stringify(acme),
+      visibility,
+    });
+    expect(r.res.status, JSON.stringify(r.body)).toBe(201);
+    return r;
+  }
+  const builtOn = (ref: string) =>
+    `<!doctype html><html><head><title>Report</title><meta name="plinth-design-system" content="${ref}"></head><body><p>x</p></body></html>`;
+
+  it("get_artifact_stats on another artifact is the 404 every other artifact gets", async () => {
+    const { h, id, other } = await setup();
+    const t = await boundToken(h, id);
+    for (const ref of [other.id, other.slug, "abcdefghij0123456789"]) {
+      const r = await req("GET", `/artifacts/${ref}/stats`, t.auth);
+      expect(r.status, ref).toBe(404);
+      expect(JSON.stringify(r.body), ref).not.toContain("token_bound");
+    }
+    const c = await mcpClient(t.token);
+    const r = await tool(c, "get_artifact_stats", { id: other.id });
+    expect(r.data.error.code).toBe("not_found");
+    await c.close();
+  });
+
+  it("get_design_system on another artifact is a 404, private or unlisted, by id or slug", async () => {
+    const { owner, h, id } = await setup();
+    const t = await boundToken(h, id);
+    const c = await mcpClient(t.token);
+    const missing = await req("GET", "/artifacts/abcdefghij0123456789/design-system", t.auth);
+    for (const visibility of ["allowlist", "unlisted"]) {
+      const { body: ds } = await publishDs(owner.auth, visibility);
+      // The owner's account-wide token reads it, so the binding alone refuses it.
+      expect((await req("GET", `/artifacts/${ds.id}/design-system`, owner.auth)).status).toBe(200);
+      for (const ref of [ds.id, ds.slug]) {
+        const r = await req("GET", `/artifacts/${ref}/design-system`, t.auth);
+        expect(r.status, `${visibility} ${ref}`).toBe(404);
+        expect(r.body, `${visibility} ${ref}`).toEqual(missing.body);
+        const m = await tool(c, "get_design_system", { id: ref });
+        expect(m.isError).toBe(true);
+        expect(m.data.error.code).toBe("not_found");
+      }
+    }
+    await c.close();
+  });
+
+  it("a page it publishes that names another design system gets the unavailable warning", async () => {
+    const { owner, h, id } = await setup();
+    const { body: ds } = await publishDs(owner.auth, "unlisted");
+    const t = await boundToken(h, id);
+    const r = await req("PUT", `/artifacts/${id}`, t.auth, {
+      html: builtOn(`${ds.id}@1`),
+      base_version: 1,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.warnings.map((w: { code: string }) => w.code)).toEqual([
+      "design_system_unavailable",
+    ]);
+    expect(JSON.stringify(r.body)).not.toContain("Acme UI");
+    // get_artifact leaves the reference out for the token, and shows it to the owner.
+    expect((await req("GET", `/artifacts/${id}`, t.auth)).body.design_system).toBeNull();
+    expect((await req("GET", `/artifacts/${id}`, owner.auth)).body.design_system).toMatchObject({
+      id: ds.id,
+      version: 1,
+    });
+  });
+
+  it("a token limited to a design system reads that design system", async () => {
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const { body: ds } = await publishDs(owner.auth);
+    const t = await boundToken(h, ds.id);
+    const r = await req("GET", `/artifacts/${ds.id}/design-system`, t.auth);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ id: ds.id, version: 1, name: "Acme UI" });
+    const c = await mcpClient(t.token);
+    const m = await tool(c, "get_design_system", { id: ds.id });
+    expect(m.isError).toBe(false);
+    expect(m.data).toEqual(r.body);
+    await c.close();
+  });
 });
 
 describe("the end of a token limited to one artifact", () => {
@@ -513,7 +742,7 @@ describe("the end of a token limited to one artifact", () => {
       ["POST", `/artifacts/${id}/comments`, { body: "hi" }],
       ["GET", `/artifacts/${id}/comments`, undefined],
       ["GET", `/artifacts/${id}/data`, undefined],
-      ["GET", `/artifacts/${id}/views`, undefined],
+      ["GET", `/artifacts/${id}/stats`, undefined],
     ] as const) {
       const r = await req(method, path, t.auth, body);
       expect(r.status, `${method} ${path}`).toBe(404);

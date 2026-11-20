@@ -331,6 +331,52 @@ describe("plinth publish", () => {
     }
   });
 
+  it("--json --dry-run prints one JSON object of what would be sent, and sends nothing", async () => {
+    const from = fake.state.requests.length;
+    const fresh = await plinth(["publish", build(site(1)), "--json", "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(fresh.code, 0, fresh.stderr);
+    const n = JSON.parse(fresh.stdout);
+    assert.equal(n.outcome, "dry_run");
+    assert.equal(n.dry_run, true);
+    assert.equal(n.type, "html");
+    assert.equal(n.files, 2);
+    assert.equal(n.send, "bundle");
+    assert.ok(Number.isInteger(n.bytes) && n.bytes > 0);
+    assert.equal(n.version, undefined);
+    // The sentence goes to stderr, so stdout stays one object.
+    assert.match(fresh.stderr, /Would publish 2 files/);
+
+    const a = fake.seed({ "index.html": "<p>1</p>", "a.css": "p{}", "b.css": "b{}" });
+    const dir = build({ "index.html": "<p>2</p>", "a.css": "p{}", "b.css": "changed{}" });
+    const upd = await plinth(["publish", dir, "--id", a.id, "--json", "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(upd.code, 0, upd.stderr);
+    const u = JSON.parse(upd.stdout);
+    assert.equal(u.outcome, "dry_run");
+    assert.equal(u.id, a.id);
+    assert.equal(u.slug, a.slug);
+    assert.equal(u.base_version, 1);
+    assert.equal(u.next_version, 2);
+    assert.equal(u.files, 3);
+    assert.equal(u.changed, 1);
+    assert.equal(u.reused, 1);
+    assert.equal(u.send, "inline");
+    assert.match(upd.stderr, /Would update .* from v1 to v2/);
+    assert.equal(a.versions.length, 1);
+    assert.deepEqual(
+      since(from)
+        .filter((q) => q.method !== "GET")
+        .map((q) => `${q.method} ${q.path}`),
+      [],
+    );
+    // Without --json the sentence stays on stdout.
+    const text = await plinth(["publish", dir, "--id", a.id, "--dry-run"], { extraEnv: asPat() });
+    assert.match(text.stdout, /^Would update /);
+  });
+
   it("needs index.html (or content.md) at the top of the folder", async () => {
     const r = await plinth(["publish", build({ "dist/index.html": "x" }), "--dry-run"], {
       extraEnv: asPat(),

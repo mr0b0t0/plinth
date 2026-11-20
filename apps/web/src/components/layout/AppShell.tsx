@@ -13,7 +13,6 @@ import {
   PlusIcon,
   SignOutIcon,
   SunIcon,
-  UserCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { API, APP_ROUTES } from "@plinth/shared";
@@ -32,7 +31,6 @@ import { Link, navigate, useLocation } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useThemePreference } from "../../lib/theme.ts";
 import { CONNECT_AGENT_HREF } from "../account/nav.ts";
-import { ProfileNameDialog } from "../account/ProfileNameDialog.tsx";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { focusElement, getFocusable } from "../ui/focus.ts";
@@ -140,7 +138,6 @@ export function AppShell({
   const [preference, setPreference] = useThemePreference();
   const compact = useMediaQuery(SIDEBAR_COMPACT_QUERY);
   const [navOpen, setNavOpen] = useState(false);
-  const [nameOpen, setNameOpen] = useState(false);
   const sidebarId = useId();
   const agentsHeadingId = useId();
   const sidebarRef = useRef<HTMLElement>(null);
@@ -168,8 +165,6 @@ export function AppShell({
   const menuItems: MenuEntry[] = [
     ...userMenuItems,
     ...(userMenuItems.length > 0 ? [{ type: "separator" as const }] : []),
-    { label: "Your name…", icon: UserCircleIcon, onSelect: () => setNameOpen(true) },
-    { type: "separator" as const },
     {
       label: `${THEME_NAMES.light} (light)`,
       icon: SunIcon,
@@ -447,16 +442,6 @@ export function AppShell({
           </main>
         </div>
       </div>
-      {me && nameOpen && (
-        <ProfileNameDialog
-          current={me.name}
-          onClose={() => setNameOpen(false)}
-          onSaved={() => {
-            setNameOpen(false);
-            void refresh().catch(() => undefined);
-          }}
-        />
-      )}
       <Toaster />
     </IconProvider>
   );

@@ -9,7 +9,7 @@ import worker from "../src/index.ts";
 import { agent, browserSession, contentOrigin, enterContent, publish } from "./helpers.ts";
 
 const PAGE = `<!doctype html><title>Routes</title>
-<meta name="plinth-capabilities" content="data viewer room people">
+<meta name="plinth-capabilities" content="data viewer room">
 <meta name="plinth-data-shared" content="tasks"><p>routes</p>`;
 
 async function run(url: string, init: RequestInit): Promise<Response> {

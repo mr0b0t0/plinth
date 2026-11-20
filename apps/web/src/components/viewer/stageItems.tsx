@@ -8,18 +8,20 @@
 // itself (the frame, the hold rule) stay in ViewerStage.
 
 import {
+  ArrowsOutIcon,
+  ChartLineUpIcon,
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
   CodeIcon,
   DotsThreeIcon,
   FlagIcon,
   GearSixIcon,
-  MicrophoneSlashIcon,
   MoonIcon,
   PencilSimpleIcon,
+  PlayIcon,
   PresentationChartIcon,
-  PresentationIcon,
   PrinterIcon,
+  ProjectorScreenIcon,
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
@@ -29,13 +31,9 @@ import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
 import { DataNotice } from "./DataNotice.tsx";
-import { DictationControl } from "./DictationControl.tsx";
-import { copyForAgent } from "./designSystemItems.ts";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
-import { PresentStrip } from "./PresentStrip.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
-import type { Dictation } from "./useDictation.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
 
@@ -57,14 +55,13 @@ export interface StageContext {
   editing: boolean;
   /** Presenting a deck (usePresentation); inert for every other type. */
   present: Presentation;
-  /** Dictation run by the app, for a page that declares it. */
-  dictation: Dictation;
   hrefs: {
     current: string;
     edit: string;
     history: string;
     report: string;
     settings: string;
+    stats: string;
     signIn: string;
   };
   comments: {
@@ -87,8 +84,6 @@ export interface StageContext {
     finishEditing: () => void;
     /** After a notice button that may have unmounted with focus in it: move focus on. */
     refocusAfterNotice: () => void;
-    /** Fetch a fresh gate (the newest version). */
-    reload: () => void;
   };
 }
 
@@ -142,6 +137,9 @@ const editSource: MenuItem = (c) =>
 const settings: MenuItem = (c) =>
   c.gate.role === "owner" ? [{ label: "Settings", icon: GearSixIcon, href: c.hrefs.settings }] : [];
 
+const stats: MenuItem = (c) =>
+  c.gate.role === "owner" ? [{ label: "Stats", icon: ChartLineUpIcon, href: c.hrefs.stats }] : [];
+
 /**
  * A doc prints itself: the renderer in the frame calls its own print(), so the browser prints the
  * document (or saves it as PDF), not this page around it.
@@ -154,28 +152,32 @@ const printTyped: MenuItem = (c) => [
   },
 ];
 
-/** A deck's presenter view: notes, the next slide and a timer, in the frame. */
-const presenterView: MenuItem = (c) =>
-  c.present.available && c.present.mode !== "audience"
-    ? [{ label: "Presenter view", icon: PresentationChartIcon, onSelect: c.present.presenterView }]
-    : [];
-
-/** A deck's handout: each slide over its speaker notes, printed by the frame. */
-const printWithNotes: MenuItem = (c) => [
-  {
-    label: "Print with speaker notes",
-    icon: PrinterIcon,
-    onSelect: () => c.present.print(true),
-  },
-];
-
-/** Menu items for one artifact type, in order, after Settings. One type per line. */
+/** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [presenterView, printTyped, printWithNotes],
-  design_system: [copyForAgent],
+  slides: [printTyped],
   design: [printTyped],
 };
+
+/**
+ * The Present control's two ways to present a deck: full screen (the app puts its own frame full
+ * screen) and presenter view (notes, the next slide and a timer, in the frame). While presenter
+ * view is on, its slot opens an audience window that follows it; the frame's own Exit and Escape
+ * leave presenter view. An audience window offers full screen only.
+ */
+export function presentEntries(p: Presentation): MenuEntry[] {
+  const entries: MenuEntry[] = [{ label: "Full screen", icon: ArrowsOutIcon, onSelect: p.present }];
+  if (p.mode === "presenter") {
+    entries.push({ label: "Audience window", icon: ProjectorScreenIcon, onSelect: p.openAudience });
+  } else if (p.mode === "off") {
+    entries.push({
+      label: "Presenter view",
+      icon: PresentationChartIcon,
+      onSelect: p.presenterView,
+    });
+  }
+  return entries;
+}
 
 /** Menu items for a page that declares one capability, in order, after the type's items. */
 export const CAPABILITY_MENU_ITEMS: Partial<Record<DataCapability, readonly MenuItem[]>> = {};
@@ -187,18 +189,6 @@ const capabilityItems: MenuItem = (c) =>
   (c.gate.data?.capabilities ?? []).flatMap((cap) =>
     (CAPABILITY_MENU_ITEMS[cap] ?? []).flatMap((item) => item(c)),
   );
-
-/** While the viewer allowed dictation on this page: take it back, which also stops listening. */
-const dictationConsent: MenuItem = (c) =>
-  c.dictation.declared && c.dictation.allowed
-    ? [
-        {
-          label: "Dictation on this page: allowed. Turn off",
-          icon: MicrophoneSlashIcon,
-          onSelect: c.dictation.turnOff,
-        },
-      ]
-    : [];
 
 /** Owners and editors do not report their own work; the footer link stays for all. */
 const report: MenuItem = (c) =>
@@ -221,9 +211,9 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   compactSignInToEdit,
   editSource,
   settings,
+  stats,
   typeItems,
   capabilityItems,
-  dictationConsent,
   report,
   separator,
   switchTheme,
@@ -311,18 +301,18 @@ const commentsToggle: StageNode = (c) => {
   );
 };
 
-/** Present a deck: the app puts its own frame full screen (no allow="fullscreen" on the frame). */
+/** Present a deck: the one bar control for full screen and presenter view (presentEntries). */
 const presentButton: StageNode = (c) =>
   c.present.available && (
-    <Tooltip content="Present" placement="bottom">
-      <Button
-        variant="ghost"
-        icon={PresentationIcon}
-        aria-label="Present"
-        className="pl-viewer__present-button"
-        onClick={c.present.present}
-      />
-    </Tooltip>
+    <Menu
+      label="Present"
+      icon={PlayIcon}
+      iconOnly
+      variant="ghost"
+      align="end"
+      triggerClassName="pl-viewer__present-button"
+      items={presentEntries(c.present)}
+    />
   );
 
 const shareButton: StageNode = (c) =>
@@ -345,7 +335,6 @@ const actionsMenu: StageNode = (c) => (
 
 /** The controls on the right of the bar, left to right. One control per line. */
 export const BAR_CONTROLS: readonly StageItem[] = [
-  { id: "dictation", render: (c) => <DictationControl dictation={c.dictation} /> },
   { id: "history", render: historyLink },
   { id: "edit", render: editToggle },
   { id: "sign-in-to-edit", render: signInToEdit },
@@ -420,20 +409,10 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
     />
   );
 
-const presentStrip: StageNode = ({ present, gate: { artifact }, actions }) => (
-  <PresentStrip
-    present={present}
-    version={artifact.version}
-    currentVersion={artifact.current_version}
-    onShowNewer={actions.reload}
-  />
-);
-
 /** The strip of notices under the bar, top to bottom. One item per line. */
 export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "older-version", render: olderVersion },
   { id: "data-notice", render: dataNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
-  { id: "present", render: presentStrip },
 ];
