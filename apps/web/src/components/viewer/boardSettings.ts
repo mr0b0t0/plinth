@@ -10,31 +10,15 @@ import {
   type ErrorCode,
 } from "@plinth/shared";
 
-export const BACKGROUND_CHOICES: readonly {
-  value: BoardBackground;
-  label: string;
-  description: string;
-}[] = [
-  { value: "dots", label: "Dots", description: "A light dot grid behind the blocks." },
-  { value: "grid", label: "Grid", description: "Light lines behind the blocks." },
-  { value: "plain", label: "Plain", description: "No pattern." },
+export const BACKGROUND_CHOICES: readonly { value: BoardBackground; label: string }[] = [
+  { value: "dots", label: "Dots" },
+  { value: "grid", label: "Grid" },
+  { value: "plain", label: "Plain" },
 ];
 
-export const EDIT_CHOICES: readonly {
-  value: BoardEditMode;
-  label: string;
-  description: string;
-}[] = [
-  {
-    value: "commenters",
-    label: "Commenters and editors",
-    description: "Everyone it is shared with as a commenter or an editor changes the board.",
-  },
-  {
-    value: "editors",
-    label: "Editors only",
-    description: "Commenters see the board and follow along, but cannot change it.",
-  },
+export const EDIT_CHOICES: readonly { value: BoardEditMode; label: string }[] = [
+  { value: "commenters", label: "Commenters and editors" },
+  { value: "editors", label: "Editors only" },
 ];
 
 const labelOf = <T extends string>(list: readonly { value: T; label: string }[], v: T) =>
@@ -75,7 +59,7 @@ export function settingsBody(
 
 /** What the dialog says after a save was refused because a newer version exists. */
 export function conflictNotice(version: number): string {
-  return `v${version} changed the board settings. Here they are now.`;
+  return `v${version} was published meanwhile. These are its settings.`;
 }
 
 /** A refused request as the app's API client reports it (`ApiRequestError`). */

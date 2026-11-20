@@ -1765,15 +1765,15 @@ its page without a new version each time, and agents add and move blocks with
   item for a board, and its editor address goes back to the board.
 - **Board settings.** The board's page never shows `board.json`. Owners and editors change the two
   settings from **Board settings** in the board's ⋯ menu, the one way in (the toolbar has no
-  settings button): a dialog with two groups of choices, the background (dots, grid or plain) and
-  who can change the board (commenters and editors, or editors only), and no text field. It reads
-  the current version, and Save sends board.json built by the app from the two values
-  (`{"v":1,"background":…,"edit":…}`) with `PUT /api/v1/artifacts/:ref`, that version as
-  `base_version` and a note naming what changed, so the change is a new version under the
-  person's name, which owners and editors can restore from History. When a newer version was
-  published meanwhile, the save is refused (409, `conflict`): the dialog then shows that version's
-  settings and says so ("v5 changed the board settings. Here they are now."), and nothing is saved
-  until the person saves again. Only that refusal counts as a conflict: error code `conflict`, no
+  settings button): a dialog with two groups of choices, the background (Dots, Grid or Plain) and
+  who can change the board (Commenters and editors, or Editors only), labels only, with no
+  explanatory text and no text field. It reads the current version, and Save sends board.json
+  built by the app from the two values (`{"v":1,"background":…,"edit":…}`) with
+  `PUT /api/v1/artifacts/:ref`, that version as `base_version` and a note naming what changed, so
+  the change is a new version under the person's name, which owners and editors can restore from
+  History. When a newer version was published meanwhile, the save is refused (409, `conflict`):
+  the dialog then shows that version's settings and says so ("v5 was published meanwhile. These
+  are its settings."), and nothing is saved until the person saves again. Only that refusal counts as a conflict: error code `conflict`, no
   `reason` in its details, and a `current_version` above the version the dialog read. Any other
   refusal, every other 409 included ("Another version is being written; try again shortly", an
   expired attempt, a refusal with a `reason`), shows the server's message, keeps the person's

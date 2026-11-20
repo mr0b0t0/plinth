@@ -71,7 +71,7 @@ describe("board settings helpers", () => {
       "Board settings: commenters and editors",
     );
     expect(settingsNote(after, after)).toBe("Board settings");
-    expect(conflictNotice(5)).toBe("v5 changed the board settings. Here they are now.");
+    expect(conflictNotice(5)).toBe("v5 was published meanwhile. These are its settings.");
   });
 
   it("counts only the stale-version 409 as a conflict: code conflict, no reason, a newer version", () => {
@@ -114,6 +114,12 @@ describe("BoardSettingsDialog", () => {
     screen.getByRole("group", { name: "Who can change the board" });
     // No text field: only the two groups of choices.
     expect(screen.queryByRole("textbox")).toBeNull();
+    // Short labels only: no sentence under a choice or under the title.
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio.hasAttribute("aria-describedby")).toBe(false);
+    }
+    expect(document.querySelector(".pl-acct-choice__description")).toBeNull();
+    expect(screen.getByRole("dialog").hasAttribute("aria-describedby")).toBe(false);
     const save = screen.getByRole("button", { name: "Save" });
     expect((save as HTMLButtonElement).disabled).toBe(true);
 
@@ -184,7 +190,7 @@ describe("BoardSettingsDialog", () => {
     await user.click(await screen.findByRole("radio", { name: /^Plain/ }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await screen.findByText("v5 changed the board settings. Here they are now.");
+    await screen.findByText("v5 was published meanwhile. These are its settings.");
     // The dialog now holds v5's values, and the person's choice is not saved behind their back.
     expect((screen.getByRole("radio", { name: /^Grid/ }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole("radio", { name: /^Editors only/ }) as HTMLInputElement).checked).toBe(
@@ -228,7 +234,7 @@ describe("BoardSettingsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText("Another version is being written; try again shortly");
-    expect(screen.queryByText(/changed the board settings/)).toBeNull();
+    expect(screen.queryByText(/was published meanwhile/)).toBeNull();
     // The choice stays, and Save stays on so the person can try again against the same version.
     expect((screen.getByRole("radio", { name: /^Grid/ }) as HTMLInputElement).checked).toBe(true);
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
@@ -269,7 +275,7 @@ describe("BoardSettingsDialog", () => {
 
     await screen.findByText("Someone is editing this page right now; try again when they finish");
     // No conflict notice, no second read, and the person's choice stays as they left it.
-    expect(screen.queryByText(/changed the board settings/)).toBeNull();
+    expect(screen.queryByText(/was published meanwhile/)).toBeNull();
     expect(document.querySelector(".pl-board-settings__notice")).toBeNull();
     expect(reads).toBe(1);
     expect((screen.getByRole("radio", { name: /^Plain/ }) as HTMLInputElement).checked).toBe(true);

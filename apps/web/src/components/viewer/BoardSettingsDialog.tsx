@@ -136,7 +136,6 @@ export function BoardSettingsDialog({ artifactId, onClose, onSaved }: BoardSetti
       open
       onClose={onClose}
       title="Board settings"
-      description="Each change is saved as a new version. The blocks and arrows on the board stay as they are."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>

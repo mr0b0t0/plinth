@@ -400,7 +400,7 @@ test("Board settings: the ⋯ dialog saves a version, and a newer version is sho
     await dialog.getByRole("radio", { name: /^Dots/ }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(
-      dialog.getByText("v3 changed the board settings. Here they are now."),
+      dialog.getByText("v3 was published meanwhile. These are its settings."),
     ).toBeVisible();
     await expect(dialog.getByRole("radio", { name: /^Plain/ })).toBeChecked();
     await expect(dialog.getByRole("radio", { name: /^Editors only/ })).toBeChecked();

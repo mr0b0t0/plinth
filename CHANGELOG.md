@@ -95,8 +95,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   or plain) and who can change it (commenters and editors, or editors only) from **Board settings**
   in the board's ⋯ menu, in a small dialog with two choices and no text to type. Each save is a
   new version; if someone published a newer one meanwhile, the dialog shows its settings instead
-  of overwriting them, and any other refusal shows its own message. Plugin 0.30.0: agents read a
-  board's settings again before changing them, since people change them too.
+  of overwriting them, and any other refusal shows its own message. The skill tells agents to read
+  a board's settings again before changing them, since people change them too.
 
 ## 0.6.0 (2026-11-20)
 
