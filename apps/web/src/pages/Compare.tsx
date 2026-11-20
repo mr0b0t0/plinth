@@ -1,13 +1,11 @@
-// Page: /a/:slug/compare?from=&to=&view=. Two versions of an artifact, as a source diff of their
-// source file (index.html, or a doc's content.md, plus asset changes) or side by side as rendered
-// pages. A type with no source editor (a sheet or a design) shows only the rendered pages.
-import {
-  ArrowsLeftRightIcon,
-  ClockCounterClockwiseIcon,
-  CodeIcon,
-  MonitorIcon,
-} from "@phosphor-icons/react";
-import { sourceOf, type VersionInfo } from "@plinth/shared";
+// Page: /a/:slug/compare?from=&to=. Two versions of an artifact: a plain-language list of what
+// changed (worked out in the browser by the shared describers, files included), then the two
+// versions rendered side by side, one at a time at phone width. Every type compares the same way,
+// a design included, and no source is shown: older links with view=source or view=rendered land
+// here too.
+import { ArrowsLeftRightIcon, ClockCounterClockwiseIcon } from "@phosphor-icons/react";
+import type { VersionInfo } from "@plinth/shared";
+import { ChangeList } from "../components/history/ChangeList.tsx";
 import {
   AccessProblem,
   ArtifactCrumbTitle,
@@ -17,19 +15,9 @@ import {
 import { useArtifact, useVersion, useVersions } from "../components/history/data.ts";
 import { comparePath, excerpt, historyPath, parseVersion } from "../components/history/format.ts";
 import { RenderedCompare } from "../components/history/RenderedCompare.tsx";
-import { SourceDiff } from "../components/history/SourceDiff.tsx";
-import {
-  ButtonLink,
-  IconButton,
-  Select,
-  Skeleton,
-  SkeletonText,
-  Tabs,
-  Tooltip,
-} from "../components/ui/index.ts";
+import { useChanges } from "../components/history/useChanges.ts";
+import { ButtonLink, IconButton, Select, Skeleton, Tooltip } from "../components/ui/index.ts";
 import { navigate, useLocation } from "../lib/router.tsx";
-
-type View = "source" | "rendered";
 
 const clamp = (n: number, max: number) => Math.min(Math.max(n, 1), Math.max(max, 1));
 
@@ -46,7 +34,6 @@ export default function Compare({ params }: { params: Record<string, string> }) 
   const versions = useVersions(slug);
 
   const current = artifact.data?.current_version ?? 0;
-  const view: View = search.get("view") === "rendered" ? "rendered" : "source";
   const askedTo = parseVersion(search.get("to"));
   const askedFrom = parseVersion(search.get("from"));
   const to = current ? clamp(askedTo ?? current, current) : null;
@@ -54,6 +41,7 @@ export default function Compare({ params }: { params: Record<string, string> }) 
 
   const oldVersion = useVersion(slug, from);
   const newVersion = useVersion(slug, to);
+  const changes = useChanges(oldVersion.data, newVersion.data);
 
   const title = artifact.data?.title;
   useDocumentTitle(
@@ -71,35 +59,10 @@ export default function Compare({ params }: { params: Record<string, string> }) 
     );
   }
 
-  const go = (f: number, t: number, v: View = view) =>
-    navigate(comparePath(slug, f, t, v), { replace: true });
+  const go = (f: number, t: number) => navigate(comparePath(slug, f, t), { replace: true });
 
   const options = (versions.data?.items ?? []).map((v) => versionOption(v, current));
   const ready = from !== null && to !== null;
-
-  // A type people never see the source of (a sheet or a design) compares only as rendered pages.
-  // No Source tab until the type is known, so neither shows one while it loads.
-  const sourceShown = artifact.data ? sourceOf(artifact.data).def.editor !== null : false;
-  const newer = newVersion.data ? sourceOf(newVersion.data) : null;
-  const source =
-    oldVersion.data && newVersion.data && newer && ready ? (
-      <SourceDiff
-        key={`${from}-${to}`}
-        from={from}
-        to={to}
-        fileName={newVersion.data.source_path}
-        sourceLabel={newer.def.sourceLabel}
-        oldHtml={sourceOf(oldVersion.data).text}
-        newHtml={newer.text}
-        oldAssets={oldVersion.data.assets}
-        newAssets={newVersion.data.assets}
-      />
-    ) : (
-      <div aria-busy="true" className="hx-loading">
-        <span className="visually-hidden">Loading the two versions…</span>
-        <SkeletonText lines={8} />
-      </div>
-    );
 
   return (
     <HistoryShell
@@ -149,26 +112,18 @@ export default function Compare({ params }: { params: Record<string, string> }) 
           <p className="hx-note type-small">Both sides show the same version. Pick another one.</p>
         )}
 
-        {ready && !sourceShown && (
-          <RenderedCompare slug={slug} title={title ?? slug} from={from} to={to} />
-        )}
-
-        {ready && sourceShown && (
-          <Tabs
-            label="Comparison view"
-            value={view}
-            onChange={(id) => go(from, to, id as View)}
-            className="hx-tabs"
-            tabs={[
-              { id: "source", label: "Source", icon: CodeIcon, content: source },
-              {
-                id: "rendered",
-                label: "Rendered",
-                icon: MonitorIcon,
-                content: <RenderedCompare slug={slug} title={title ?? slug} from={from} to={to} />,
-              },
-            ]}
-          />
+        {ready && (
+          <div className="hx-compare__body">
+            {/* One version on both sides: the note above says so, and there is nothing to list. */}
+            {from !== to && (
+              <ChangeList
+                key={`${from}-${to}`}
+                changes={changes?.changes ?? null}
+                files={changes?.files ?? null}
+              />
+            )}
+            <RenderedCompare slug={slug} title={title ?? slug} from={from} to={to} />
+          </div>
         )}
       </div>
     </HistoryShell>

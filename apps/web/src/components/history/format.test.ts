@@ -49,11 +49,9 @@ describe("paths", () => {
     expect(versionPath("my-doc", 3, 3)).toBe("/a/my-doc");
     expect(versionPath("my-doc", 2, 3)).toBe("/a/my-doc/v/2");
   });
-  it("builds compare links", () => {
+  it("builds compare links, with no view (Compare has one view)", () => {
     expect(comparePath("my-doc", 1, 3)).toBe("/a/my-doc/compare?from=1&to=3");
-    expect(comparePath("my-doc", 1, 3, "rendered")).toBe(
-      "/a/my-doc/compare?from=1&to=3&view=rendered",
-    );
+    expect(comparePath("my-doc", 3, 1)).toBe("/a/my-doc/compare?from=3&to=1");
   });
   it("parses version numbers strictly", () => {
     expect(parseVersion("3")).toBe(3);

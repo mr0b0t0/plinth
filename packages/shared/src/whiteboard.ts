@@ -30,6 +30,23 @@ export type BoardBackground = (typeof BOARD_BACKGROUNDS)[number];
  */
 export const BOARD_EDIT_MODES = ["commenters", "editors"] as const;
 export type BoardEditMode = (typeof BOARD_EDIT_MODES)[number];
+/**
+ * The settings' names and values as people read them: the Board settings dialog's labels, which
+ * History's Compare page uses too ("Background: Dots → Grid").
+ */
+export const BOARD_SETTING_LABELS = {
+  background: "Background",
+  edit: "Who can change the board",
+} as const;
+export const BOARD_BACKGROUND_LABELS: { readonly [K in BoardBackground]: string } = {
+  dots: "Dots",
+  grid: "Grid",
+  plain: "Plain",
+};
+export const BOARD_EDIT_LABELS: { readonly [K in BoardEditMode]: string } = {
+  commenters: "Commenters and editors",
+  editors: "Editors only",
+};
 export const ARROW_STYLES = ["solid", "dashed"] as const;
 export const ARROW_HEADS = ["end", "both", "none"] as const;
 
