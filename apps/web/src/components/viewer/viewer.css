@@ -158,6 +158,10 @@
 .pl-editbar__typing {
   color: var(--color-accent-ink);
 }
+.pl-editbar__count,
+.pl-editbar__narrow {
+  display: none;
+}
 .pl-editbar__actions {
   display: inline-flex;
   align-items: center;
@@ -197,6 +201,40 @@
   .pl-editbar,
   .pl-livenotice {
     padding-inline: var(--space-4);
+  }
+}
+/* Phone width: the status, who is here (a count) and the buttons share one line. */
+@media (max-width: 40rem) {
+  .pl-editbar {
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+  }
+  .pl-editbar__state {
+    flex: 1 1 auto;
+  }
+  .pl-editbar__state > svg {
+    display: none;
+  }
+  .pl-editbar__editors {
+    flex: none;
+  }
+  .pl-editbar__count,
+  .pl-editbar__narrow {
+    display: inline;
+  }
+  .pl-editbar__wide {
+    display: none;
+  }
+  .pl-editbar__names {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .pl-editbar__actions {
+    flex: none;
   }
 }
 /* The review dialog's diff (ConflictView with editor.css). The dialog body has no definite

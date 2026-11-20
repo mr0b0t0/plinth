@@ -4,35 +4,25 @@
 // the whole block at most every 250 ms; Esc or moving focus elsewhere in the page releases it.
 // Blocks other people hold show a bronze rule with their email and their text as it arrives.
 //
-// Two backends: the room's doc socket (live.ts, "room" mode), or a local copy of the text that
-// only this frame edits ("solo" mode, where the app saves it through its own session). The
-// editor never parses HTML from anyone: the textarea is created with createElement and filled
+// Two backends: the room's doc socket (../common/live.ts, "room" mode), or a local copy of the
+// text that only this frame edits ("solo" mode, where the app saves it through its own session).
+// The editor never parses HTML from anyone: the textarea is created with createElement and filled
 // through .value, and every rendered block went through the unchanged sanitizer first.
 import { joinLines, LIMITS, type LineRange, rangesOverlap, splitLines } from "@plinth/shared";
+import {
+  type ClientLease,
+  type LeaseDenial,
+  type LeaseLoss,
+  type LiveBackend,
+  locateBlock,
+} from "../common/live.ts";
 import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./blocks.ts";
-import { type ClientLease, type LeaseDenial, type LeaseLoss, locateBlock } from "./live.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
 const STALE_RETRIES = 3;
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
-export interface DocBackend {
-  readonly lines: string[];
-  readonly ready: boolean;
-  readonly connected: boolean;
-  readonly settled: boolean;
-  readonly mine: ClientLease | null;
-  readonly leases: Map<string, ClientLease>;
-  readonly you: { id: string; email: string; right: "watch" | "write" } | null;
-  readonly conflictVersion: number | null;
-  /** The room's text of the held block as of the last ack, and as last written to D1. */
-  readonly ackedText: string | null;
-  readonly durableText: string | null;
-  lease(range: LineRange): boolean;
-  edit(text: string): boolean;
-  release(): void;
-  takeover(leaseId: string): boolean;
-}
+export type DocBackend = LiveBackend;
 
 /** The text only this frame edits (solo mode): every lease is granted and applied at once. */
 export class LocalDoc implements DocBackend {

@@ -14,9 +14,11 @@ describe("sheet renderer sources", () => {
   it("are the files the renderer is made of", () => {
     expect(sources.sort()).toEqual([
       "boot.ts",
+      "edit.ts",
       "export.ts",
       "format.ts",
       "grid.ts",
+      "input.ts",
       "main.ts",
       "protocol.ts",
       "view.ts",

@@ -75,6 +75,18 @@ describe("planUpdate", () => {
     expect(plan({})).toBe("swap");
   });
 
+  it("never shows a sheet in place, and keeps a sheet or doc edited on its page", () => {
+    // A sheet swaps like the other typed artifacts, whether or not its frame follows its live
+    // room; while a sheet or a doc is edited on its page (follow or hold) the frame stays.
+    for (const liveRoomFrame of [false, true]) {
+      expect(plan({ type: "sheet", liveRoomFrame })).toBe("swap");
+      for (const pause of ["follow", "hold"] as const) {
+        expect(plan({ type: "sheet", liveRoomFrame, pause })).toBe("keep");
+        expect(plan({ type: "doc", liveRoomFrame, pause })).toBe("keep");
+      }
+    }
+  });
+
   it("swaps the other typed artifacts", () => {
     for (const type of ["slides", "design_system", "design", "sheet", "whiteboard"] as const) {
       expect(plan({ type, holdDeclared: true, frameFocused: true, runtimeHello: true })).toBe(

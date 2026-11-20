@@ -13,6 +13,7 @@ import {
   mayManageCategoryShares,
   type Principal,
   roleOf,
+  roomAccess,
   seesCategorySharing,
   seesPersonalCategory,
   strongerRole,
@@ -211,6 +212,42 @@ describe("decide with a category grant", () => {
 
   it("anonymous callers never hold a category grant", () => {
     expect(allow(anon, "view")).toBe(false);
+  });
+
+  it("never edits a sheet or doc on its page: the draft socket refuses the role it gives", () => {
+    // Even a hand-edited "editor" category row clamps below editor, so live sheets stay closed.
+    const stray = { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "editor" as never };
+    for (const x of [access(), access({ categoryGrant: stray })]) {
+      const d = decide(client, "view", art(), x);
+      expect(d.allow).toBe(true);
+      expect(d.role).not.toBe("editor");
+      expect(allow(client, "live_edit", art(), x)).toBe(false);
+      const claim = {
+        email: "client@example.com",
+        role: d.role as "commenter" | "viewer",
+        viewerId: `u_${"a".repeat(24)}`,
+        account: true,
+      };
+      for (const type of ["sheet", "doc"] as const) {
+        expect(roomAccess(claim, null, "doc", { active: true, type })).toMatchObject({
+          join: false,
+          doc: "none",
+        });
+      }
+    }
+    // A direct editor grant beside the category grant still opens the sheet's draft socket.
+    const editor = decide(client, "view", art(), access({ grantRole: "editor" }));
+    expect(editor.role).toBe("editor");
+    const editorClaim = {
+      email: "client@example.com",
+      role: "editor" as const,
+      viewerId: `u_${"a".repeat(24)}`,
+      account: true,
+    };
+    expect(roomAccess(editorClaim, null, "doc", { active: true, type: "sheet" })).toMatchObject({
+      join: true,
+      doc: "write",
+    });
   });
 });
 

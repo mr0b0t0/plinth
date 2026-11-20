@@ -9,13 +9,20 @@
 // arrival order, shifts the other leases, bumps `rev` and broadcasts each op to every doc socket
 // (the sender's copy is its ack). `gen` is random per in-memory load of the room, so a client
 // never mistakes a reload for a continuation.
+//
+// A sheet (the other live-editable type) uses the same channel: a row is a line, a lease on a row
+// is a lease on its line, and each line an edit puts in is checked by the type's rules
+// (liveTypes.ts). Rows and columns are inserted and deleted with one more frame, `struct`, that
+// both sides apply with the same pure function (applySheetStruct), so no text is resent.
 import { z } from "zod";
 import { LIMITS } from "./constants.ts";
-import { utf8Length } from "./data.ts";
+import { liveDocTooLarge } from "./liveTypes.ts";
+import { sheetColumnInputSchema } from "./schemas.ts";
 
-// The line and lease helpers live in liveLines.ts (no zod), so the doc renderer can use them
-// without carrying the schemas below.
+// The line and lease helpers live in liveLines.ts, the per-type rules in liveTypes.ts (neither
+// with zod), so the renderers can use them without carrying the schemas below.
 export * from "./liveLines.ts";
+export * from "./liveTypes.ts";
 
 /** Fixed live-editing rules, not env vars (the env-var ones are LIVE_DEFAULTS). */
 export const LIVE_DOC = {
@@ -25,6 +32,8 @@ export const LIVE_DOC = {
   editDebounceMs: 250,
   /** A checkpoint snapshot holds the draft this long at most. */
   checkpointLockS: 30,
+  /** Checkpoint snapshots a room keeps for recognizing their versions (the oldest goes first). */
+  maxPendingCheckpoints: 8,
   /** A diff with more edits than this is a conflict rather than a merge. */
   maxMergeEdits: 5000,
   /** Co-editors a status lists. */
@@ -55,16 +64,6 @@ export const LIVE_BOUNDS = {
 export type LiveMode = "room" | "solo";
 
 // ---------- lines and leases ----------
-
-/** Whether a draft text is past what a doc may hold: LIMITS.maxDocBytes or maxLiveDocLines. */
-export function liveDocTooLarge(text: string): boolean {
-  if (utf8Length(text) > LIMITS.maxDocBytes) return true;
-  let lines = 1;
-  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
-    if (++lines > LIMITS.maxLiveDocLines) return true;
-  }
-  return false;
-}
 
 /**
  * The draft text cut into pieces of at most `maxBytes` UTF-8 bytes, never inside a character, for
@@ -104,6 +103,34 @@ const version = z.number().int().min(1);
 const email = z.string().max(254);
 const gen = z.string().min(1).max(64);
 
+const columnLetters = z.string().regex(/^[A-Z]{1,3}$/);
+const rowCount = z.number().int().min(1).max(LIMITS.maxSheetRows);
+const sheetRow = z
+  .number()
+  .int()
+  .min(2)
+  .max(LIMITS.maxSheetRows + 2);
+
+/** A sheet's structural change (SheetStructOp), as a struct frame carries it. */
+export const sheetStructOpSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("insert_rows"), before: sheetRow, count: rowCount }).strict(),
+  z.object({ op: z.literal("delete_rows"), from: sheetRow, count: rowCount }).strict(),
+  z
+    .object({
+      op: z.literal("insert_columns"),
+      before: columnLetters,
+      columns: z.array(sheetColumnInputSchema).min(1).max(LIMITS.maxSheetColumns),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("delete_columns"),
+      from: columnLetters,
+      count: z.number().int().min(1).max(LIMITS.maxSheetColumns),
+    })
+    .strict(),
+]);
+
 /** What the renderer sends. The raw frame is checked against LIMITS.liveDocFrameBytes first. */
 export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
   z
@@ -118,6 +145,8 @@ export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("release"), lease: leaseId }),
   z.object({ t: z.literal("takeover"), lease: leaseId }),
   z.object({ t: z.literal("sync") }),
+  /** A sheet's rows or columns, at the draft's current rev, while nobody else holds a lease. */
+  z.object({ t: z.literal("struct"), rev: count, op: sheetStructOpSchema }),
 ]);
 export type LiveDocClientFrame = z.infer<typeof liveDocClientFrameSchema>;
 
@@ -182,6 +211,20 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     /** The sending socket's id, so a client recognizes its own ack. */
     by: z.string().max(64),
     seq: count.optional(),
+  }),
+  /** A sheet's structural change, applied: every socket applies `op` with applySheetStruct. */
+  z.object({
+    t: z.literal("struct"),
+    gen,
+    rev: z.number().int().min(1),
+    op: sheetStructOpSchema,
+    by: z.string().max(64),
+  }),
+  /** Sent only to the socket whose struct frame was refused. */
+  z.object({
+    t: z.literal("struct_denied"),
+    reason: z.enum(["held", "stale", "frozen", "watch"]),
+    by: email.optional(),
   }),
   z.object({ t: z.literal("released"), lease: leaseId }),
   z.object({

@@ -11,10 +11,17 @@
 // attributes taken from data are href (a link that passes isSheetLinkUrl again here), title (an
 // error's meaning, a fixed string) and a width clamped to 40 to 800 pixels. Cell ids come from the
 // cell's address alone (__plinth-cell-B7), never from its content.
+//
+// On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
+// cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
+// with the view carried over), setHolders() tints the rows other people hold (the holder named on
+// the row number for a pointer and a screen reader), the editor's Row and Column menus sit in the bar (`tools`), and the slot
+// between the bar and the cells is kept for what the editor adds there.
 import {
   a1,
   type Cell,
   colLetter,
+  isError,
   isSheetLinkUrl,
   type Sheet,
   type SheetColumn,
@@ -38,9 +45,45 @@ export interface GridOptions {
 
 export interface Grid {
   el: HTMLElement;
+  /** The cells' table, for the editor's listeners. */
+  table: HTMLTableElement;
+  /** Between the bar (and its note) and the cells. */
+  slot: HTMLElement;
+  /** In the bar, before the filter: the editor's Row and Column menus go here. */
+  tools: HTMLElement;
   select(row: number, col: number): void;
+  /** The selected cell's A1 row and column. */
+  selected(): { row: number; col: number };
+  /** A cell by its A1 row and column (row 1 is the header), or null. */
+  cell(row: number, col: number): HTMLElement | null;
   sortBy(col: number): void;
   filter(text: string): void;
+  /** The formula bar's text, while a cell is being edited. */
+  showRaw(text: string): void;
+  /**
+   * Show `sheet` in place when it has the same columns and number of rows: only cells whose
+   * value changed are repainted, and cells `locked` holds (the open editor's) are left alone.
+   * False when the shape changed (the caller builds a new grid and carries the view over).
+   */
+  update(sheet: Sheet, ev: SheetEvaluation): boolean;
+  /** Paint a cell again from its computed value (after its field closed). */
+  repaint(row: number, col: number): void;
+  /** Rows other people hold: A1 row to the holder's email (tinted, the name on the row number). */
+  setHolders(rows: ReadonlyMap<number, string>): void;
+  /** Cells the grid must not repaint (the one being edited). */
+  setLocked(locked: (td: HTMLElement) => boolean): void;
+  /** Sort, filter, scroll and selection, to carry over to a rebuilt grid. */
+  view(): GridView;
+  restore(v: GridView): void;
+}
+
+export interface GridView {
+  sort: SortState | null;
+  filter: string;
+  top: number;
+  left: number;
+  row: number;
+  col: number;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -53,6 +96,17 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (className) e.className = className;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/** "ana.costa-x1@example.com" -> "Ana": a first name from an email, for short notes. */
+export function personName(email: string): string {
+  const first = email
+    .replace(/@.*$/, "")
+    .split(/[\s._+-]+/)
+    .find((w) => /^\p{L}/u.test(w));
+  if (!first) return email;
+  const [head = "", ...rest] = Array.from(first);
+  return head.toLocaleUpperCase() + rest.join("");
 }
 
 /** A column's width in pixels, clamped. */
@@ -153,7 +207,8 @@ export function buildGrid(
   filterInput.setAttribute("aria-label", "Filter rows");
   filterInput.autocomplete = "off";
   filterInput.spellcheck = false;
-  bar.append(fx, count, filterInput);
+  const tools = el(doc, "div", "plinth-sheet__tools");
+  bar.append(fx, count, tools, filterInput);
   const note = opts.exhausted
     ? el(
         doc,
@@ -184,14 +239,17 @@ export function buildGrid(
   table.style.width = `${total}px`;
   table.append(colgroup);
 
-  const frozenCells: [HTMLElement, number][] = [];
+  // Each frozen cell once (a repainted cell is frozen again), and whether the frame is too narrow
+  // for them to stay (set below).
+  const frozenCells = new Map<HTMLElement, number>();
+  let unfrozen = false;
   const freezeCell = (cell: HTMLElement, c: number) => {
     const left = lefts[c];
     if (left === undefined) return;
     cell.classList.add("plinth-sheet__frozen");
     if (c === freeze - 1) cell.classList.add("plinth-sheet__frozen--last");
-    cell.style.left = `${left}px`;
-    frozenCells.push([cell, left]);
+    cell.style.left = unfrozen ? "" : `${left}px`;
+    frozenCells.set(cell, left);
   };
 
   const thead = el(doc, "thead");
@@ -235,6 +293,15 @@ export function buildGrid(
   const rows: HTMLTableRowElement[] = [];
   const texts: string[][] = [];
   const values: Value[][] = [];
+  let current = sheet;
+  let locked: (td: HTMLElement) => boolean = () => false;
+  const paint = (td: HTMLElement, d: Display, c: number) => {
+    const sel = td.classList.contains("plinth-sheet__selected");
+    td.replaceChildren();
+    fillCell(doc, td, d);
+    freezeCell(td, c);
+    if (sel) td.classList.add("plinth-sheet__selected");
+  };
   sheet.rows.forEach((_row, ri) => {
     const r = ri + 2;
     const tr = el(doc, "tr", "plinth-sheet__row");
@@ -278,6 +345,11 @@ export function buildGrid(
   scroll.append(table);
 
   let filterValue = "";
+  const applyFilter = () => {
+    rows.forEach((tr, i) => {
+      tr.hidden = !rowMatches(texts[i] as string[], filterValue);
+    });
+  };
   const updateCount = () => {
     const shown = rows.filter((tr) => !tr.hidden).length;
     const all = rows.length;
@@ -287,38 +359,153 @@ export function buildGrid(
   updateCount();
 
   let selected: HTMLElement | null = null;
+  let selRow = rows.length > 0 ? 2 : 1;
+  let selCol = 0;
   let sort: SortState | null = null;
+  const holderTags = new Map<number, HTMLElement>();
+  const resort = () => {
+    order = sortedOrder(rows.length, (i) => (values[i] as Value[])[sort?.col ?? 0] ?? null, sort);
+    layout();
+  };
   const grid: Grid = {
     el: root,
+    table,
+    slot: el(doc, "div", "plinth-sheet__slot"),
+    tools,
+    selected: () => ({ row: selRow, col: selCol }),
+    cell: (row, col) => byAddress.get(a1(row, col)) ?? null,
     select(row, col) {
       const cell = byAddress.get(a1(row, col));
       if (!cell) return;
       selected?.classList.remove("plinth-sheet__selected");
       selected = cell;
+      selRow = row;
+      selCol = col;
       cell.classList.add("plinth-sheet__selected");
       fxAddr.textContent = a1(row, col);
-      const stored = row === 1 ? null : ((sheet.rows[row - 2] ?? [])[col] ?? null);
+      const stored = row === 1 ? null : ((current.rows[row - 2] ?? [])[col] ?? null);
       fxRaw.textContent = row === 1 ? (cols[col]?.name ?? "") : rawText(stored);
       // Monospace only for a formula, so a plain value reads as it does in the grid.
-      fxRaw.classList.toggle(
-        "plinth-sheet__fx-raw--formula",
-        typeof stored === "string" && stored.startsWith("="),
-      );
+      fxRaw.classList.toggle("plinth-sheet__fx-raw--formula", isFormula(stored));
+    },
+    showRaw(text) {
+      fxRaw.textContent = text;
+      fxRaw.classList.toggle("plinth-sheet__fx-raw--formula", isFormula(text));
     },
     sortBy(col) {
       sort = nextSort(sort, col);
       headers.forEach((h, i) => {
         h.setAttribute("aria-sort", sort && sort.col === i ? sort.dir : "none");
       });
-      order = sortedOrder(rows.length, (i) => (values[i] as Value[])[col] ?? null, sort);
-      layout();
+      resort();
     },
     filter(text) {
       filterValue = text;
-      rows.forEach((tr, i) => {
-        tr.hidden = !rowMatches(texts[i] as string[], text);
-      });
+      applyFilter();
       updateCount();
+    },
+    update(next, nextEv) {
+      if (
+        next.rows.length !== rows.length ||
+        JSON.stringify(next.header) !== JSON.stringify(current.header)
+      ) {
+        return false;
+      }
+      current = next;
+      let changed = false;
+      for (let ri = 0; ri < rows.length; ri++) {
+        const r = ri + 2;
+        const rowValues = values[ri] as Value[];
+        const rowTexts = texts[ri] as string[];
+        for (let c = 0; c < cols.length; c++) {
+          const v = nextEv.value(r, c);
+          if (sameValue(v, rowValues[c] ?? null)) continue;
+          rowValues[c] = v;
+          const d = displayValue(v, cols[c] as SheetColumn);
+          rowTexts[c] = d.kind === "check" ? d.label : d.text;
+          changed = true;
+          const td = byAddress.get(a1(r, c));
+          if (td && !locked(td)) paint(td, d, c);
+        }
+      }
+      if (changed) {
+        applyFilter();
+        updateCount();
+        if (sort) resort();
+      }
+      grid.select(selRow, selCol);
+      return true;
+    },
+    repaint(row, col) {
+      const td = byAddress.get(a1(row, col));
+      const c = cols[col];
+      if (!td || !c || row < 2) {
+        if (td && c && row === 1) {
+          td.replaceChildren();
+          const b = el(doc, "button", "plinth-sheet__sort");
+          b.type = "button";
+          b.append(el(doc, "span", "plinth-sheet__name-text", c.name));
+          b.append(el(doc, "span", "plinth-sheet__sort-mark"));
+          b.addEventListener("click", () => grid.sortBy(col));
+          td.append(b);
+        }
+        return;
+      }
+      paint(td, displayValue((values[row - 2] as Value[])[col] ?? null, c), col);
+    },
+    setHolders(held) {
+      for (const [row, tag] of holderTags) {
+        if (held.has(row)) continue;
+        tag.parentElement?.removeAttribute("title");
+        tag.remove();
+        holderTags.delete(row);
+        const tr = row === 1 ? names : rows[row - 2];
+        tr?.classList.remove("plinth-sheet__row--held");
+      }
+      for (const [row, email] of held) {
+        const tr = row === 1 ? names : rows[row - 2];
+        const num = tr?.cells[0];
+        if (!tr || !num) continue;
+        tr.classList.add("plinth-sheet__row--held");
+        let tag = holderTags.get(row);
+        if (!tag) {
+          tag = el(doc, "span", "plinth-sheet__holder plinth-sheet__sr");
+          holderTags.set(row, tag);
+          num.append(tag);
+        }
+        // The tint is the one cue on screen; the row number names the holder for a pointer and a
+        // screen reader (the edit bar lists who is editing).
+        const said = `${personName(email)} is editing`;
+        tag.textContent = said;
+        num.title = said;
+      }
+    },
+    setLocked(fn) {
+      locked = fn;
+    },
+    view: () => ({
+      sort,
+      filter: filterValue,
+      top: scroll.scrollTop,
+      left: scroll.scrollLeft,
+      row: selRow,
+      col: selCol,
+    }),
+    restore(v) {
+      if (v.sort && v.sort.col < cols.length) {
+        sort = v.sort;
+        headers.forEach((h, i) => {
+          h.setAttribute("aria-sort", sort && sort.col === i ? sort.dir : "none");
+        });
+        resort();
+      }
+      if (v.filter) {
+        filterInput.value = v.filter;
+        grid.filter(v.filter);
+      }
+      scroll.scrollTop = v.top;
+      scroll.scrollLeft = v.left;
+      grid.select(Math.min(v.row, rows.length + 1), Math.min(v.col, cols.length - 1));
     },
   };
   filterInput.addEventListener("input", () => grid.filter(filterInput.value));
@@ -338,10 +525,10 @@ export function buildGrid(
     const td = (e.target as Element).closest?.("td");
     if (td && !(e.target as Element).closest("a")) (td as HTMLElement).focus();
   });
-  // Arrow keys move between visible cells.
+  // Arrow keys move between visible cells (not while a cell's own field has the keys).
   table.addEventListener("keydown", (e) => {
     const td = (e.target as Element).closest?.("td") as HTMLTableCellElement | null;
-    if (!td) return;
+    if (!td || (e.target as Element).closest?.("input, select, textarea")) return;
     const tr = td.parentElement as HTMLTableRowElement;
     const index = td.cellIndex;
     const visible = () =>
@@ -364,14 +551,22 @@ export function buildGrid(
   if (first) first.tabIndex = 0;
 
   // Frozen columns wider than half the frame would leave a phone almost nothing to scroll, so
-  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen).
+  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen). A grid that was replaced
+  // (a live sheet whose shape changed) stops listening the next time the width crosses the line.
   const frozenWidth = freeze > 0 ? ROW_NUMBER_WIDTH + frozenWidthOf(cols, freeze) : 0;
   const narrow =
     frozenWidth > 0 ? doc.defaultView?.matchMedia?.(`(max-width: ${frozenWidth * 2}px)`) : null;
   if (narrow) {
+    let applied = false;
     const apply = () => {
-      root.classList.toggle("plinth-sheet--unfrozen", narrow.matches);
-      for (const [cell, left] of frozenCells) cell.style.left = narrow.matches ? "" : `${left}px`;
+      if (applied && !root.isConnected) {
+        narrow.removeEventListener?.("change", apply);
+        return;
+      }
+      applied = true;
+      unfrozen = narrow.matches;
+      root.classList.toggle("plinth-sheet--unfrozen", unfrozen);
+      for (const [cell, left] of frozenCells) cell.style.left = unfrozen ? "" : `${left}px`;
     };
     apply();
     narrow.addEventListener?.("change", apply);
@@ -379,8 +574,20 @@ export function buildGrid(
 
   root.append(heading, bar);
   if (note) root.append(note);
-  root.append(scroll);
+  root.append(grid.slot, scroll);
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;
+}
+
+/** Stored text that is a formula (the formula bar shows it in monospace). */
+function isFormula(v: Cell | string): boolean {
+  return typeof v === "string" && v.startsWith("=");
+}
+
+/** The same computed value (an error by its code). */
+function sameValue(a: Value, b: Value): boolean {
+  if (a === b) return true;
+  if (isError(a) && isError(b)) return a.error === b.error;
+  return false;
 }

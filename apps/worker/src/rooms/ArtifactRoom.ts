@@ -5,14 +5,16 @@
 //
 // It uses the WebSocket Hibernation API: an idle room is evicted from memory while its sockets
 // stay open, and wakes for the next message. What a socket is (who, which rights, which rooms and
-// presence) lives in its attachment, so nothing is lost on a wake. Nothing persists: the object
-// writes no storage tables, only its alarm, which re-checks access in D1 while sockets are open.
+// presence) lives in its attachment, so nothing is lost on a wake. Almost nothing persists: the
+// object writes its alarm, which re-checks access in D1 while sockets are open, and for a live
+// doc one small record of the checkpoints being saved (rooms/doc.ts, DOC_STATE_KEY, never text).
 // Message contents are never logged.
 //
-// A doc artifact's room also carries Plinth's own doc editing channel (kind "doc", rooms/doc.ts):
-// the live draft, its leases and its D1 flush, and the checkpoint RPCs the app host calls. A deck's
-// room carries Plinth's own follow-the-presenter channel (kind "slides", rooms/slides.ts): slide
-// numbers from owners and editors to the identified viewers who have the deck open.
+// A doc's or a sheet's room also carries Plinth's own editing channel (kind "doc" for every type
+// with liveEdit, rooms/doc.ts): the live draft, its leases and its D1 flush, and the checkpoint
+// RPCs the app host calls.
+// A deck's room carries Plinth's own follow-the-presenter channel (kind "slides", rooms/slides.ts):
+// slide numbers from owners and editors to the identified viewers who have the deck open.
 //
 // Live views share the object (kind "watch", docs/spec.md "Live views"): receive-only sockets the
 // app page opens on the app host (api/watch.ts), for anyone who may open the artifact. A watch
@@ -313,6 +315,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       env,
       sockets: () => this.sockets("doc"),
       save: (ws, s) => this.save(ws, s as SocketState),
+      storage: ctx.storage,
       send: (ws, frame) => this.sendDoc(ws, frame),
       gone: () => {
         this.doc.reset();
@@ -930,7 +933,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   // ---------- the live doc draft (Worker RPC from services/live.ts and rooms/notify.ts) ----------
 
-  /** Version `n` of the doc was committed; `hash` is its content.md sha256 when known. */
+  /** Version `n` was committed; `hash` is its source file's sha256 when known. */
   async docVersion(artifactId: string, n: number, hash: string | null): Promise<void> {
     await this.doc.version(artifactId, n, hash);
   }
@@ -950,8 +953,10 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     n: number,
     text: string,
     lockId: string,
+    epoch?: string,
+    rev?: number,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text, lockId);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, rev);
   }
 
   /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */
@@ -959,8 +964,13 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     await this.doc.abortCheckpoint(lockId);
   }
 
-  async docDiscard(artifactId: string, rev: number): Promise<{ ok: boolean; rev: number }> {
-    return this.doc.discard(artifactId, rev);
+  /** Under the checkpoint lock: `busy` while another checkpoint holds it (rooms/doc.ts). */
+  async docDiscard(
+    artifactId: string,
+    rev: number,
+    opts: { lock?: string; conflictVersion?: number } = {},
+  ): Promise<{ ok: boolean; rev: number; busy?: true }> {
+    return this.doc.discard(artifactId, rev, opts);
   }
 
   async docPeek(artifactId: string) {

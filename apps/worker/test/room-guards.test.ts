@@ -490,4 +490,28 @@ describe("live views: the room's watch header (docs/security.md#live-views)", ()
     expect(parseConnect(JSON.stringify(room))).toBeNull();
     expect(parseConnect(JSON.stringify({ ...room, kind: "page" }))).not.toBeNull();
   });
+
+  it("a room header names a registered type: a sheet's draft socket, never an unknown type", () => {
+    const sheet = {
+      artifactId: good.artifactId,
+      type: "sheet",
+      kind: "doc",
+      epoch: 1,
+      passExp: good.passExp,
+      viewer: "u_0123456789abcdef01234567",
+      role: "editor",
+      email: "a@example.com",
+      name: null,
+      seeIdentity: false,
+      emit: "none",
+      openTopics: [],
+      doc: "write",
+      limits: { maxConnections: 50, maxMessageBytes: 8192, messagesPerSecond: 20 },
+    };
+    expect(parseConnect(JSON.stringify(sheet))?.type).toBe("sheet");
+    expect(parseConnect(JSON.stringify({ ...sheet, type: "doc" }))?.type).toBe("doc");
+    for (const type of ["spreadsheet", "", 1, null, "__proto__", "toString"]) {
+      expect(parseConnect(JSON.stringify({ ...sheet, type })), String(type)).toBeNull();
+    }
+  });
 });

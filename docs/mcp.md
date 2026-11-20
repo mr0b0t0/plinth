@@ -556,7 +556,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `ds_deprecated_alias` | A design system token aliases a deprecated one |
 | `design_system_outdated` | The page names its design system at an older version than the current one. Read it with `get_design_system` and update if the person wants the newer tokens |
 | `design_system_unavailable` | The page names a design system you cannot open (or an artifact that is not one). One message for every case |
-| `live_draft` | A note, not something to fix: people are editing this doc on its page. Your version is published; their unsaved edits are merged onto it, or they review the two when both changed the same lines. Nothing was overwritten. Do not wait or retry for them |
+| `live_draft` | A note, not something to fix: people are editing this doc or sheet on its page. Your version is published. A doc's unsaved edits are merged onto it, or they review the two when both changed the same lines. A sheet's are never merged: the people editing review their edits beside your version and choose to publish theirs in its place (yours stays in the history) or discard theirs. Nothing was overwritten. Do not wait or retry for them |
 | `board_not_seeded` | A whiteboard's version is published, but its starting blocks and arrows were not written to its shared data (you lost access meanwhile, someone added blocks first, the board's data is full, or the write limit was reached). Read the board with `list_artifact_data` and add what is missing with `write_artifact_data` |
 
 At most 50 are listed, then one "and N more".
@@ -580,13 +580,15 @@ An HTML page whose head names a design system
 `design_system: { id, title, version, current_version }` when you may view that design system, or
 `null` when you cannot (or it is not one). Pages without the meta have no `design_system` field.
 
-For a doc, owners' and editors' agents also get `live_draft`: `null`, or
-`{ base_version, dirty, conflict_version, updated_at }` when people have unsaved edits on the doc's
+For a doc or a sheet, owners' and editors' agents also get `live_draft`: `null`, or
+`{ base_version, dirty, conflict_version, updated_at }` when people have unsaved edits on its
 page. It is metadata only; the draft text is never returned. Publish with `update_artifact` and
 `base_version` as usual: your version is published, and the result warns `live_draft`. The page
 edits are merged onto it when they touch other lines; when they change the same or adjacent lines,
-they are frozen for the people editing to review. Nothing is overwritten either way, and neither
-case needs anything from you.
+they are frozen for the people editing to review. A sheet's page edits are never merged: any
+version you publish while they exist freezes them, and the people editing choose between their
+edits and your version. Nothing is overwritten either way, and neither case needs anything from
+you.
 
 | Field | Type | Notes |
 | --- | --- | --- |
