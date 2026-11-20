@@ -15,7 +15,7 @@ import {
   PLUGIN_NOTE,
   SENSITIVE_INSTRUCTION,
   TYPES_NOTE,
-  UNTRUSTED_NOTE,
+  UNTRUSTED_FILES_NOTE,
 } from "./notes.ts";
 import { PREVIEW_TOOL_META, previewSupported } from "./preview.ts";
 import { registerArtifactTools } from "./tools/artifacts.ts";
@@ -72,7 +72,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         `${SENSITIVE_INSTRUCTION} ` +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
         "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
-        `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
+        `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_FILES_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
     },
   );
 

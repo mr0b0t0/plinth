@@ -2069,14 +2069,19 @@ live read, and the feature adds no tool, route, env var or stored state.
   no exception; with no one to ask, the agent fails the task with `reply_comment` and
   `failed: true`. Paths come from the user's words, a list the agent shows and the user confirms,
   or the local record below, and every read drops dot segments, keys and credential files,
-  Git-ignored files and anything outside the project after symlinks are resolved. The record
-  itself is the one dot-segment file the agent reads, and it is never sent.
-- **Served as data.** A project file is served by its extension on the artifact's origin like any
-  asset, so an `.html`, `.htm`, `.svg` or `.xml` file runs as a document there when a viewer opens
-  it, with the page's shared data and room in reach, and HTML, CSS and JS files get the reference
-  check that page code gets; a named `content_type` applies only to extensions Plinth does not
-  know. The agent adds `.txt` to a project file of those types and of `.js`, `.mjs`, `.cjs` and
-  `.css` (`files/src/app.js.txt`), or embeds it in the page as JSON in a
+  Git-ignored files and anything outside the project after symlinks are resolved. In a list built
+  from the artifact, the agent marks each path that is not in the local record and names who
+  added it (the author of the earliest version that has it). The record itself is the one
+  dot-segment file the agent reads, and it is never sent.
+- **Served as data.** A project file is served by its extension, in any letter case, on the
+  artifact's origin like any asset, so an `.html`, `.htm`, `.svg` or `.xml` file (`.HTML` too)
+  runs as a document there when a viewer opens it, with the page's shared data and room in reach,
+  and HTML, CSS and JS files get the reference check that page code gets; a named `content_type`
+  applies only to extensions Plinth does not know. The agent adds `.txt` to a project file of
+  those types and of `.js`, `.mjs`, `.cjs` and `.css`, in any letter case
+  (`files/src/app.js.txt`), and sends a project file with no `content_type` or with `text/plain`
+  only, never a named type such as `application/xhtml+xml`, which Plinth would serve for an
+  extension it does not know. Or it embeds it in the page as JSON in a
   `<script type="application/json">` block with every `<` written as `\u003c`
   (`JSON.stringify` leaves `</script>` as it is, which would end the block and run the rest of the
   file as markup in the page), and keeps the real project path in the local record. A reference warning on a project file comes from its contents: the
@@ -2095,7 +2100,9 @@ live read, and the feature adds no tool, route, env var or stored state.
   [Big builds](#big-builds-and-reuse-by-hash)). Which local files an agent reads is agent-side:
   the server sees bytes, not where they were read ([docs/security.md](security.md#project-files)).
   The MCP tool descriptions, the server instructions, the plinth-artifacts skill and the mention
-  watcher's announcement say so.
+  watcher's announcement say so, each sentence once per session: the recipe on `update_artifact`,
+  the sentence that nothing on Plinth chooses local files in the instructions and on the two
+  mention tools, and `sensitive_file` in the instructions.
 
 ### Pages for people outside the team, and several agents on one artifact (decided 2026-11-19)
 
@@ -2223,7 +2230,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   which is logged and never fails the publish). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Sensitive file names.** `sensitive_file` flags a path whose bytes this request sent and whose
-  name usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`…) or is the local
+  name usually holds secrets (`.env`, `.envrc`, `*.pem`, `*.p8`, `id_rsa`, `credentials.json`,
+  `*.tfvars`, `.kube/`, `.docker/config.json`…; the full list is `SENSITIVE_PATH_RULES` in
+  `packages/shared`) or is the local
   `.plinth-files.json` record, whose artifact ids open unlisted artifacts. It checks names, never
   content, over MCP, REST, inline and bundle alike, and it never blocks a publish. It comes before
   every other warning, so the cap never hides it. Paths that are carried forward, reused by

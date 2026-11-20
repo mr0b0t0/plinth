@@ -376,6 +376,16 @@ describe("sensitive_file (names of the files a request sent)", () => {
     ".ENV",
     "Server.PEM",
     ".PLINTH-FILES.JSON",
+    ".envrc",
+    "files/.pgpass",
+    "keys/AuthKey_ABC123.p8",
+    "putty/server.ppk",
+    "infra/terraform.tfvars",
+    "infra/prod.auto.tfvars",
+    ".kube/config",
+    "files/.kube/cache/token",
+    ".docker/config.json",
+    "home/.Docker/Config.json",
   ])("%s is sensitive", (path) => {
     expect(isSensitivePath(path)).toBe(true);
   });
@@ -389,6 +399,14 @@ describe("sensitive_file (names of the files a request sent)", () => {
     "README.md",
     // Only the last segment's final extension counts.
     "public.key.md",
+    // `.kube` is a folder rule and `.docker/config.json` a whole-tail rule: neither matches a
+    // file of that name or another file in that folder.
+    ".kube",
+    "docker/config.json",
+    ".docker/daemon.json",
+    "config.json",
+    "envrc.md",
+    "variables.tfvars.example",
   ])("%s is not sensitive", (path) => {
     expect(isSensitivePath(path)).toBe(false);
   });

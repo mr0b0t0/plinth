@@ -65,7 +65,6 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         opaque +
         DATA_PAGE_NOTE +
         ROOM_PAGE_NOTE +
-        PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
       ...preview,

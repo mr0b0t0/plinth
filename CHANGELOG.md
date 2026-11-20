@@ -25,6 +25,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
   It checks names only, never blocks, and is not reported for files carried forward, reused by
   hash or restored.
+- **`sensitive_file` knows more names**: `.envrc`, `.pgpass`, `*.p8`, `*.ppk`, `*.tfvars`, files
+  under `.kube/`, and `.docker/config.json`.
+- **Shorter MCP tool descriptions.** The project files rules are said once per session instead of
+  on every tool, which takes about 7,500 characters (some 1,900 tokens) off what an agent loads.
+- **Project files: safer types, and a marked list.** Agents add `.txt` to page and code files in
+  any letter case (`App.HTML` too), send project files only as plain text, and, when they offer
+  files taken from the artifact, mark each one the user has not chosen before and say who added
+  it.
 - **Pages for clients and approvers, and several agents on one artifact.** Three finished example
   pages for people outside your team, who confirm their email by code with no account: an approval
   sign-off, a client intake form and a client checklist (`docs/examples/`). What your side decides

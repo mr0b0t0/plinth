@@ -54,22 +54,22 @@ export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
  */
 export const PROJECT_FILES_RECORD = ".plinth-files.json";
 
-/**
- * One rule of SENSITIVE_PATH_RULES, matched against a lowercased path segment. `name`: the whole
- * segment. `prefix`: the segment starts with `value` (and ends with `suffix` when given), unless it
- * is one of `except`. `extension`: the last segment ends with `value`. `folder`: a segment before
- * the last one.
- */
 export type SensitivePathRule =
   | { kind: "name"; value: string }
   | { kind: "prefix"; value: string; suffix?: string; except?: readonly string[] }
   | { kind: "extension"; value: string }
-  | { kind: "folder"; value: string };
+  | { kind: "folder"; value: string }
+  | { kind: "path"; value: string };
 
 /**
  * File names that usually hold secrets, for the advisory sensitive_file publish warning. Names only:
  * a secret in an ordinary file name is not caught. The project files record is on the list because
  * its artifact ids open unlisted artifacts, not because it holds a key. One rule per line.
+ *
+ * Each rule is matched against the lowercased path split at "/". `name`: a whole segment. `prefix`:
+ * a segment starts with `value` (and ends with `suffix` when given), unless it is one of `except`.
+ * `extension`: the last segment ends with `value`. `folder`: a segment before the last one. `path`:
+ * the path ends with these segments (`.docker/config.json` matches `x/.docker/config.json`).
  */
 export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "name", value: ".env" },
@@ -79,6 +79,8 @@ export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "name", value: ".git-credentials" },
   { kind: "name", value: ".dev.vars" },
   { kind: "name", value: ".htpasswd" },
+  { kind: "name", value: ".envrc" },
+  { kind: "name", value: ".pgpass" },
   { kind: "name", value: "id_rsa" },
   { kind: "name", value: "id_dsa" },
   { kind: "name", value: "id_ecdsa" },
@@ -95,10 +97,15 @@ export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "extension", value: ".keystore" },
   { kind: "extension", value: ".jks" },
   { kind: "extension", value: ".tfstate" },
+  { kind: "extension", value: ".tfvars" },
+  { kind: "extension", value: ".p8" },
+  { kind: "extension", value: ".ppk" },
   { kind: "folder", value: ".git" },
   { kind: "folder", value: ".ssh" },
   { kind: "folder", value: ".aws" },
   { kind: "folder", value: ".gnupg" },
+  { kind: "folder", value: ".kube" },
+  { kind: "path", value: ".docker/config.json" },
 ];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */

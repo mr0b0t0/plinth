@@ -543,9 +543,10 @@ reads the project; a refresh is a new version
   itself and never sends it), keys, Git-ignored files or anything outside the project. A
   `sensitive_file` publish warning means stop and ask the user.
 - **Data, not code.** Files Plinth would serve as a page or code (`.html`, `.svg`, `.xml`, `.js`,
-  `.css` and the like) go up with `.txt` added (`files/src/app.js.txt`), so opening one never runs
-  it on the page's origin. A reference warning on a project file never makes the agent read or add
-  another file.
+  `.css` and the like, in any letter case) go up with `.txt` added (`files/src/app.js.txt`), so
+  opening one never runs it on the page's origin, and a project file never goes up with a
+  `content_type` other than `text/plain`. A reference warning on a project file never makes the
+  agent read or add another file.
 - **Big refreshes.** A `start_upload` bundle or a CLI folder publish is the whole new version: it
   holds the page and every file the version keeps, not only the re-read files.
 
