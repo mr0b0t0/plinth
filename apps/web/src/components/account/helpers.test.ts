@@ -5,6 +5,9 @@ import {
   formatRelativeShort,
   guessClientType,
   mcpUrl,
+  mentionReach,
+  mentionReachText,
+  mentionReachWarns,
   quotaText,
   scopeLabel,
   versionsText,
@@ -158,5 +161,117 @@ describe("grants", () => {
       commenter: 0,
       editor: 1,
     });
+  });
+});
+
+describe("mentionReach", () => {
+  const conn = (id: string, label: string, created_at: string, extra = {}) => ({
+    id,
+    label,
+    created_at,
+    revoked_at: null as string | null,
+    ...extra,
+  });
+  const self = { id: "me", created_at: "2026-11-10T00:00:00Z", client_type: "other" as const };
+
+  it("turns a label into the handle a comment uses", () => {
+    expect(mentionReach("Claude Code", [], self)).toEqual({
+      kind: "handle",
+      handle: "claude-code",
+    });
+    expect(mentionReach("  Gemini CLI (laptop) ", [], self)).toEqual({
+      kind: "handle",
+      handle: "gemini-cli-laptop",
+    });
+    expect(mentionReachText({ kind: "handle", handle: "claude-code" })).toBe(
+      "Mention as @claude-code.",
+    );
+  });
+
+  it("agent names always mean the client type", () => {
+    expect(mentionReach("Claude", [], { ...self, client_type: "claude" })).toEqual({
+      kind: "agent_name",
+      handle: "claude",
+      reached: true,
+    });
+    const codex = mentionReach("codex", [], self);
+    expect(codex).toEqual({ kind: "agent_name", handle: "codex", reached: false });
+    expect(mentionReachText(codex)).toBe("@codex means your Codex connections. Pick another name.");
+    expect(mentionReachText({ kind: "agent_name", handle: "claude", reached: true })).toBe(
+      "Mention as @claude, with your other Claude connections.",
+    );
+  });
+
+  it("an older live connection with the same handle takes it; a revoked one does not", () => {
+    const older = conn("a", "Claude-Code", "2026-11-01T00:00:00Z");
+    const newer = conn("b", "claude code", "2026-11-20T00:00:00Z");
+    expect(mentionReach("Claude Code", [older, newer], self)).toEqual({
+      kind: "shadowed",
+      handle: "claude-code",
+      by: "Claude-Code",
+    });
+    expect(mentionReach("Claude Code", [newer], self)).toEqual({
+      kind: "handle",
+      handle: "claude-code",
+    });
+    const revoked = { ...older, revoked_at: "2026-11-02T00:00:00Z" };
+    expect(mentionReach("Claude Code", [revoked], self).kind).toBe("handle");
+    // A token limited to one artifact is never a target, so it shadows nothing.
+    expect(mentionReach("Claude Code", [{ ...older, artifact: { id: "x" } }], self).kind).toBe(
+      "handle",
+    );
+    // A connection that does not exist yet comes after every live one.
+    expect(mentionReach("claude code", [newer], { client_type: "other" })).toMatchObject({
+      kind: "shadowed",
+      by: "claude code",
+    });
+    // Its own row never shadows itself.
+    expect(
+      mentionReach("Claude Code", [conn("me", "Claude Code", self.created_at)], self).kind,
+    ).toBe("handle");
+  });
+
+  it("names no mention can reach", () => {
+    expect(mentionReach("!!!", [], self)).toEqual({ kind: "none" });
+    expect(mentionReach("-dash", [], self)).toEqual({ kind: "none" });
+    expect(mentionReach("ends.", [], self)).toEqual({ kind: "none" });
+    expect(mentionReachText({ kind: "none" })).toBe(
+      "Cannot be mentioned: start the name with a letter or digit.",
+    );
+  });
+
+  it("tokens that never pick up mentions", () => {
+    expect(mentionReach("CI", [], { ...self, artifact: { id: "x" } })).toEqual({
+      kind: "artifact_only",
+    });
+    expect(mentionReach("CI", [], { ...self, scopes: ["artifacts:read"] })).toEqual({
+      kind: "no_mentions",
+    });
+    expect(mentionReach("CI", [], { ...self, scopes: ["artifacts:read", "mentions"] })).toEqual({
+      kind: "handle",
+      handle: "ci",
+    });
+    // The row and the dialog already show both, so the hints add nothing.
+    expect(mentionReachText({ kind: "artifact_only" })).toBeNull();
+    expect(mentionReachText({ kind: "no_mentions" })).toBeNull();
+  });
+
+  it("a Claude or Codex connection is also reached by its client name", () => {
+    const claude = mentionReach("Laptop", [], { ...self, client_type: "claude" });
+    expect(claude).toEqual({ kind: "handle", handle: "laptop", also: "claude" });
+    expect(mentionReachText(claude)).toBe("Mention as @laptop or @claude.");
+    expect(mentionReachText(mentionReach("Laptop", [], { ...self, client_type: "codex" }))).toBe(
+      "Mention as @laptop or @codex.",
+    );
+  });
+
+  it("warns only when no mention reaches the connection by its name", () => {
+    expect(mentionReachWarns({ kind: "shadowed", handle: "a", by: "A" })).toBe(true);
+    expect(mentionReachWarns({ kind: "none" })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: false })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: true })).toBe(false);
+    expect(mentionReachWarns({ kind: "handle", handle: "a" })).toBe(false);
+    expect(mentionReachWarns({ kind: "artifact_only" })).toBe(false);
+    expect(mentionReachWarns({ kind: "no_mentions" })).toBe(false);
   });
 });
