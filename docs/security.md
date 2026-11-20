@@ -56,6 +56,8 @@ make a test pass.
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
 | Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
 | Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
+| A viewing code becomes a way to make accounts or take one over | An owner lists many addresses and asks codes for them to create accounts in their name, or someone who guessed a listed address types codes to sign in as that person | A code goes only to an address that holds a grant there (or is the owner's), and to that mailbox; an account exists only once a code sent to it is typed; the gate's rate limits, five attempts per code, single use and the grant re-checked after use all stay, and every guess also counts against the sign-in code's per-address budget, so the gate and the portal add no guesses toward an account. The code proves the mailbox exactly as the sign-in code does ([below](#viewing-codes-sign-people-in)) |
+| A viewing code's email talks its reader into handing the code over | An owner titles an artifact "Confirm receipt: reply with the code below", lists the victim and asks for a code; whoever reads it back is signed in as the victim | Where the code signs the address in, its email is a sign-in email: the subject says "sign-in code", the first line says the code signs the reader in, a warning never to give it to anyone or reply with it comes before anything the sharer wrote, and the title or sharer's name follows on one line, labelled as theirs and not Plinth's ([below](#viewing-codes-sign-people-in)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -246,7 +248,7 @@ agent is stored.
 | --- | --- | --- | --- | --- |
 | `__Host-plinth_session` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 30 days | Signed-in person. Stored server-side as a SHA-256 hash |
 | `__Host-plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
-| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
+| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code where that address may not sign in (single-user mode); elsewhere a confirmed code sets `__Host-plinth_session` ([below](#viewing-codes-sign-people-in)) |
 | `__Host-plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
 | `__Host-plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours for the pass it carries; the cookie itself lasts 30 days while `VIEW_COUNTS` is on | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below). While counting is on it also carries a random visitor id for the owner's anonymous-visitor count, which is all an expired one is still read for. Named `plinth_content` in the staging path fallback and on plain-http instances |
 
@@ -1216,7 +1218,7 @@ version just published appears in the agent's thread.
 | --- | --- |
 | Sign-in requests per email | 5 per hour |
 | Sign-in requests per IP | 20 per hour |
-| Code attempts per email | 10 per hour |
+| Code attempts per email | 10 per hour, for each code flow; every code that can sign the address in (sign-in, allowlist gate, portal) also counts against one shared 10 per hour |
 | Password attempts per artifact per IP | 10 per hour |
 | Viewer codes per email | 5 per hour |
 | Comments per user | 60 per hour |
@@ -1798,7 +1800,8 @@ authorized by email, and a share that exists answers `email_required` to anyone 
 flow mirrors the allowlist's (same answer listed or not, same rate limit counters, five attempts,
 single use, re-checking the grant after use); its codes carry `share_id` with `artifact_id` NULL
 and a hash that binds the share, so a portal code never opens an artifact's code route and the
-reverse. The viewer session it starts names no artifact. `GET /api/v1/portals` lists a share only
+reverse. The session it starts (an app session, or a viewer session where the address may not
+sign in, [below](#viewing-codes-sign-people-in)) names no artifact. `GET /api/v1/portals` lists a share only
 when `decidePortal` lets the caller open it, the same decision `GET /api/v1/portals/:id` makes.
 Portal pages are `no-store` and
 `noindex`. Grantees see the share's title, the artifacts' titles and the owner's name and email
@@ -1809,6 +1812,61 @@ state or other people on the share. Category names and share titles are never lo
 **Erasure.** A person's own shares, grants on them, portal codes and personal categories cascade
 from `users`; `erase-user` also deletes their address from other people's shares
 (`category_grants`). Deleting or taking down an artifact removes every personal category on it.
+
+## Viewing codes sign people in
+
+Spec: [Invitees get an account](spec.md#invitees-get-an-account-decided-2026-11-19). A six-digit
+code confirmed at an allowlist gate or a portal proves the mailbox exactly as the sign-in code
+does, so where the instance lets the address sign in (`maySignIn`: every address, except all but
+`ADMIN_EMAIL` in single-user mode) it starts a normal app session for it, creating the account on
+first use. Before, only the owner's own address was signed in this way (2026-11-16); everyone else
+got a viewer session.
+
+- **Nothing about who gets a code changes.** `POST .../email` gives the same answer whether or not
+  the address holds a grant, counts both alike against the same limits (per IP and per email), and
+  mails a code only to an address that holds a grant on that artifact or share or is the owner's.
+  A code is hashed with `SESSION_SECRET` and bound to its artifact or share, works once, stops after
+  five wrong guesses, expires after 15 minutes, and the grant is checked again after it is used.
+  Every failure looks the same and creates nothing: no session and no account.
+- **One guess budget per address.** A guess at a viewing code counts against the gate's own
+  per-email limit and also against `login:verify:<email>`, the sign-in code's limit (10 an hour),
+  for every address alike. Without that, an owner who lists a victim's address could add the
+  gate's 10 guesses an hour (and the portal's, which shares the gate's counter) to the sign-in
+  page's 10, each hit worth the whole account. With it, all the ways to sign an address in share
+  one 10 an hour, as before invitees were signed in.
+- **The email is a sign-in email.** Where the code signs the address in, the email's subject is
+  "Your Plinth sign-in code", its first line says the code signs the reader in and creates an
+  account if there is none, and before anything the sharer wrote it warns to type the code only
+  into Plinth's own sign-in form, never into a page being viewed, and never to give it to anyone
+  or reply with it. It does not name `APP_HOST` as the safe place: artifacts are framed on
+  app-host pages, so a page could draw a code box of its own under that host. The artifact's
+  title (or, for a portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
+  Plinth. The title or name is quoted on one line (`email/templates.ts oneLine`): every run of
+  whitespace or control characters in it becomes one space and format characters (bidi overrides,
+  zero-width) are dropped. A title set through publish or update keeps inner line breaks, and a
+  name saved before display names refused control characters (v0.6.0 and earlier trimmed only
+  the ends) is still stored as written; the name is also cleaned as on every read
+  (`displayName.ts pageDisplayName`). Otherwise either could close the labelled line and add
+  paragraphs that read as Plinth's, such as "reply with the code above". In single-user mode,
+  where the code only opens what is shared, the email stays the plain "viewing code" email.
+- **The account is the mailbox's.** An owner can list any address, but only the person who reads
+  that mailbox can type the code, so no one can create or enter an account for an address they do
+  not read. An account made this way is an ordinary account: verified, no name, the default quota,
+  and admin only if it is `ADMIN_EMAIL`, as `getOrCreateUser` decides at sign-in.
+- **One session per browser.** The app session cookie the code sets replaces the one the browser
+  held, and the server deletes that earlier session in the same request, so a person who confirms
+  a second address of theirs is signed in with it and out of the first. The gate and the portal
+  tell a signed-in person so before they ask for the code.
+- **Who has an account stays private.** Invitees now have accounts, but nothing shows whether an
+  address has one: access lists name a grant holder only after they took part in the artifact
+  ([The people list](#the-people-list)), and an account a code created has no name until its
+  person sets one.
+- **Viewer sessions where sign-in is not allowed.** In single-user mode the code starts the
+  `__Host-plinth_viewer` session as before, and viewer sessions started before this change keep
+  working until they expire (7 days). Every rule for them stays: they are not an account, policy
+  answers `account_required` for live editing, they never file artifacts under personal
+  categories, and a signed-in person may hold one for another address beside their own session.
+
 
 ## Operator checklist for the content domain
 

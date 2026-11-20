@@ -4,7 +4,7 @@ import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiError, json, stubApi } from "../components/viewer/test-utils.ts";
+import { apiError, CONFIG, json, ME, stubApi } from "../components/viewer/test-utils.ts";
 
 async function loadPage() {
   vi.resetModules();
@@ -93,16 +93,56 @@ describe("Portal", () => {
     const Portal = await loadPage();
     const user = userEvent.setup();
     render(<Portal params={{ id: ID }} />);
-    await screen.findByRole("heading", { name: "Confirm your email" });
+    await screen.findByRole("heading", { name: "Sign in" });
     expect(screen.getByText("Enter your email to get a one-time code.")).toBeTruthy();
     expect(screen.queryByText(/collection/i)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "Email" }), "client@example.org");
     await user.click(screen.getByRole("button", { name: "Send code" }));
     await user.type(await screen.findByRole("textbox", { name: "Six-digit code" }), "123456");
+    // The sent-code line is the only text above the code field.
+    expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Confirm code" }));
     expect(await screen.findByRole("heading", { name: "Acme Corp: reports" })).toBeTruthy();
     const code = api.calls.find((c) => c.path === `/portals/${ID}/code`);
     expect(code?.body).toEqual({ email: "client@example.org", code: "123456" });
+  });
+
+  it("tells a signed-in person without access that confirming another address signs them in with it", async () => {
+    stubApi({
+      me: ME,
+      handle: (c) =>
+        c.path === `/portals/${ID}`
+          ? json({ status: "email_required", portal: { id: ID } })
+          : undefined,
+    });
+    const Portal = await loadPage();
+    render(<Portal params={{ id: ID }} />);
+    const notice = await screen.findByText(/You are signed in as/);
+    expect(notice.textContent).toBe(
+      "You are signed in as ada@example.org, which has no access. Confirming another address switches you to it.",
+    );
+    // The notice is the only explanation: no lead asking a signed-in person to sign in.
+    expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
+    // Nor a heading that does: the person is signed in already.
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
+  });
+
+  it("on a single-user instance, the notice does not say the code switches accounts", async () => {
+    stubApi({
+      me: ME,
+      config: { ...CONFIG, single_user_mode: true },
+      handle: (c) =>
+        c.path === `/portals/${ID}`
+          ? json({ status: "email_required", portal: { id: ID } })
+          : undefined,
+    });
+    const Portal = await loadPage();
+    render(<Portal params={{ id: ID }} />);
+    const notice = await screen.findByText(/You are signed in as/);
+    expect(notice.textContent).toContain("You can confirm another address below.");
+    expect(notice.textContent).not.toContain("switches");
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
   });
 
   it("an unknown portal is not found", async () => {

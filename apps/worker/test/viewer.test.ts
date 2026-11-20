@@ -1,10 +1,13 @@
-// Allowlist viewers: confirm an email by a one-time code, then open every artifact that email is
-// listed on. A non-listed email never gets a viewer session, and the API never reveals the list.
+// Allowlist viewers: confirm an email by a one-time code, which signs the address in to the app
+// (its account created on first use), then open every artifact that email is listed on. Where the
+// instance does not let the address sign in (single-user mode) the code starts a viewer session
+// instead. A non-listed email never gets a session, and the API never reveals the list.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { RATE_LIMITS } from "@plinth/shared";
 import { and, desc, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { devOutbox, loginCodes, sessions } from "../src/db/schema.ts";
+import { artifacts, devOutbox, loginCodes, sessions, users } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { hashToken } from "../src/lib/crypto.ts";
 import { MAX_VIEWER_CODE_ATTEMPTS } from "../src/services/viewers.ts";
@@ -23,12 +26,16 @@ import {
 } from "./helpers.ts";
 
 /** Run a request through the Worker's fetch handler and wait for its waitUntil work (email). */
-async function run(path: string, init: RequestInit = {}): Promise<Response> {
+async function run(
+  path: string,
+  init: RequestInit = {},
+  vars: Record<string, string> = {},
+): Promise<Response> {
   const ctx = createExecutionContext();
   const url = path.startsWith("http") ? path : `${APP}${path}`;
   const res = await worker.fetch(
     new Request(url, { redirect: "manual", ...init }),
-    env as never,
+    { ...env, ...vars } as never,
     ctx,
   );
   await waitOnExecutionContext(ctx);
@@ -49,8 +56,12 @@ function browser(extraCookie = "") {
   };
 }
 
-const post = (path: string, headers: Record<string, string>, body: unknown) =>
-  run(path, { method: "POST", headers, body: JSON.stringify(body) });
+const post = (
+  path: string,
+  headers: Record<string, string>,
+  body: unknown,
+  vars: Record<string, string> = {},
+) => run(path, { method: "POST", headers, body: JSON.stringify(body) }, vars);
 
 async function allowlisted(emails: string[]) {
   const a = await agent();
@@ -80,15 +91,39 @@ async function codeFor(email: string): Promise<string> {
 }
 
 /** Ask for a code and confirm it. Returns the response of the confirm call. */
-async function confirm(ref: string, email: string, headers = browser()) {
-  expect((await post(`/api/v1/view/${ref}/email`, headers, { email })).status).toBe(200);
-  return post(`/api/v1/view/${ref}/code`, headers, { email, code: await codeFor(email) });
+async function confirm(
+  ref: string,
+  email: string,
+  headers: Record<string, string> = browser(),
+  vars: Record<string, string> = {},
+) {
+  expect((await post(`/api/v1/view/${ref}/email`, headers, { email }, vars)).status).toBe(200);
+  return post(`/api/v1/view/${ref}/code`, headers, { email, code: await codeFor(email) }, vars);
 }
 
+/** The first cookie a response sets, as `name=value` (the session a code started). */
 const viewerCookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 
+/** A single-user instance whose admin is `admin`: other addresses may not sign in there. */
+const singleUser = (admin: string) => ({
+  SINGLE_USER_MODE: "true",
+  ADMIN_EMAIL: admin,
+});
+
+async function sessionRow(cookie: string) {
+  const value = cookie.split("=")[1] ?? "";
+  return db()
+    .select()
+    .from(sessions)
+    .where(eq(sessions.id, await hashToken(value)))
+    .get();
+}
+
+const userByEmail = (email: string) =>
+  db().select().from(users).where(eq(users.email, email)).get();
+
 describe("allowlist viewers", () => {
-  it("a listed email gets a code, confirms it, and opens the artifact", async () => {
+  it("a listed email gets a code, confirms it, is signed in with a new account, and opens the artifact", async () => {
     const email = uniqueEmail("listed");
     const { artifact } = await allowlisted([email]);
 
@@ -104,7 +139,27 @@ describe("allowlist viewers", () => {
     expect(await json(ask)).toEqual({ ok: true });
     const mails = await outboxFor(email);
     expect(mails).toHaveLength(1);
-    expect(mails[0]?.text).toContain("Private board deck");
+    // The code signs the address in, so the email is a sign-in email: it says so in the subject
+    // and first, warns never to pass the code on, and quotes the sharer's title after the code,
+    // named as theirs.
+    expect(mails[0]?.subject).toBe("Your Plinth sign-in code");
+    const text = mails[0]?.text ?? "";
+    expect(text.split("\n")[0]).toBe(
+      "This code signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
+    );
+    expect(text).toContain(
+      "Type it only into Plinth's own sign-in form, never into a page you are viewing. Never give it to anyone or reply with it: whoever enters it is signed in as you.",
+    );
+    // Artifacts are framed on app-host pages, so naming the host would not tell a fake code box
+    // from Plinth's own form.
+    expect(text).not.toContain("app.localhost:8787");
+    expect(text).toContain(
+      `The page's title, written by whoever shared it and not by Plinth, is "Private board deck".`,
+    );
+    expect(text.indexOf("Private board deck")).toBeGreaterThan(text.indexOf("Your code is"));
+    expect(text.indexOf("Private board deck")).toBeGreaterThan(text.indexOf("Never give it"));
+    // No account exists until the code is confirmed.
+    expect(await userByEmail(email)).toBeUndefined();
 
     // The code is stored hashed, bound to the artifact, with the viewer purpose.
     const code = await codeFor(email);
@@ -124,23 +179,26 @@ describe("allowlist viewers", () => {
     expect(gate.role).toBe("viewer");
     expect(gate.enter_url.startsWith(`${contentOrigin(artifact.id)}/__plinth/enter?t=`)).toBe(true);
 
+    // A normal app session, exactly as signing in sets it; no viewer cookie.
     const setCookie = ok.headers.get("set-cookie") ?? "";
-    expect(setCookie).toMatch(/^__Host-plinth_viewer=plinth_vs_[A-Za-z0-9]+;/);
+    expect(setCookie).toMatch(/^__Host-plinth_session=[^;]+;/);
+    expect(setCookie).not.toMatch(/plinth_viewer/);
     expect(setCookie).toMatch(/; HttpOnly/);
     expect(setCookie).toMatch(/; Secure/);
     expect(setCookie).toMatch(/; SameSite=Lax/);
     expect(setCookie).toMatch(/; Path=\//);
-    expect(setCookie).toMatch(/; Max-Age=604800/);
+    expect(setCookie).toMatch(/; Max-Age=2592000/);
     expect(setCookie).not.toMatch(/Domain=/i);
 
-    // The session row is a viewer session for the email, stored by hash only.
-    const value = viewerCookieOf(ok).split("=")[1] ?? "";
-    const s = await db()
-      .select()
-      .from(sessions)
-      .where(eq(sessions.id, await hashToken(value)))
-      .get();
-    expect(s).toMatchObject({ kind: "viewer", viewerEmail: email, userId: null });
+    // The account exists now, verified, and the session row (stored by hash only) is its.
+    const user = await userByEmail(email);
+    expect(user?.emailVerifiedAt).toBeTruthy();
+    expect(user?.isAdmin).toBe(false);
+    const s = await sessionRow(viewerCookieOf(ok));
+    expect(s).toMatchObject({ kind: "user", userId: user?.id, viewerEmail: null });
+    const me = await call("/api/v1/me", { headers: { Cookie: viewerCookieOf(ok) } });
+    expect(me.status).toBe(200);
+    expect((await json(me)).email).toBe(email);
 
     // With the cookie, the gate opens on later visits and the content host serves the artifact.
     const again = await json(
@@ -154,6 +212,37 @@ describe("allowlist viewers", () => {
       headers: { Cookie: contentCookie },
     });
     expect(await page.text()).toContain("allowlisted content");
+  });
+
+  it("quotes a title with line breaks or invisible characters on one line of the sign-in email", async () => {
+    // A title set through publish or update keeps inner line breaks (titleSchema trims only the
+    // ends). Quoted raw, it could close the labelled line and add paragraphs that read as
+    // Plinth's, in an email whose code signs in to the whole account.
+    const email = uniqueEmail("title-breakout");
+    const a = await agent();
+    const title =
+      'Q3 plan".\n\nPlinth Security: reply with the code above.\r\n\u2028\u2029\u0085\t\u202Eend\u200B "';
+    const { body } = await publish(a.auth, {
+      title,
+      html: "<!doctype html><p>allowlisted content</p>",
+      visibility: "allowlist",
+      emails: [email],
+    });
+    const artifact = body as { slug: string };
+    const ask = await post(`/api/v1/view/${artifact.slug}/email`, browser(), { email });
+    expect(ask.status).toBe(200);
+    const [mail] = await outboxFor(email);
+    const text = mail?.text ?? "";
+    const quoted = 'Q3 plan". Plinth Security: reply with the code above. end "';
+    expect(text).toContain(
+      `The page's title, written by whoever shared it and not by Plinth, is "${quoted}".`,
+    );
+    const lines = text.split("\n");
+    expect(lines.filter((l) => l.includes("Plinth Security"))).toHaveLength(1);
+    expect(lines.find((l) => l.includes("Plinth Security"))).toMatch(
+      /^Someone asked for it to open/,
+    );
+    expect(text).not.toMatch(/[\r\t\u0085\u2028\u2029\u202E\u200B]/);
   });
 
   it("answers a non-listed email exactly like a listed one, sends nothing, and never confirms it", async () => {
@@ -175,6 +264,7 @@ describe("allowlist viewers", () => {
     expect(res.status).toBe(403);
     expect((await json(res)).error.details).toEqual({ reason: "invalid_code" });
     expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await userByEmail(stranger)).toBeUndefined();
   });
 
   it("a non-listed email cannot get a session even with a valid code row for it", async () => {
@@ -196,6 +286,8 @@ describe("allowlist viewers", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
     const rows = await db().select().from(sessions).where(eq(sessions.viewerEmail, listed)).all();
     expect(rows).toHaveLength(0);
+    // Nor an account: one is created only for a code that opens something.
+    expect(await userByEmail(listed)).toBeUndefined();
   });
 
   it("a code works once", async () => {
@@ -222,6 +314,7 @@ describe("allowlist viewers", () => {
     const right = await post(`/api/v1/view/${artifact.id}/code`, headers, { email, code });
     expect(right.status).toBe(403);
     expect(right.headers.get("set-cookie")).toBeNull();
+    expect(await userByEmail(email)).toBeUndefined();
   });
 
   it("an expired code is refused, and only the newest code works", async () => {
@@ -272,6 +365,45 @@ describe("allowlist viewers", () => {
     expect(statuses[20]).toBe(429);
   });
 
+  it("guesses at a viewing code share the sign-in code's per-address budget, both ways", async () => {
+    const { artifact } = await allowlisted([uniqueEmail("budget-other")]);
+    const limit = RATE_LIMITS.codeAttemptsPerEmailPerHour;
+
+    // Wrong viewing codes use up the address's sign-in guesses too.
+    const viewerFirst = uniqueEmail("budget-viewer");
+    for (let i = 0; i < limit; i++) {
+      await post(`/api/v1/view/${artifact.id}/code`, browser(), {
+        email: viewerFirst,
+        code: "000000",
+      });
+    }
+    const signIn = await post("/api/v1/auth/verify-code", browser(), {
+      email: viewerFirst,
+      code: "000000",
+    });
+    expect(signIn.status).toBe(429);
+
+    // And wrong sign-in codes leave no extra guesses at the gate: a listed address with a fresh,
+    // correct viewing code is refused once its sign-in budget is spent.
+    const loginFirst = uniqueEmail("budget-login");
+    const listed = await allowlisted([loginFirst]);
+    const headers = browser();
+    expect(
+      (await post(`/api/v1/view/${listed.artifact.id}/email`, headers, { email: loginFirst }))
+        .status,
+    ).toBe(200);
+    for (let i = 0; i < limit; i++) {
+      await post("/api/v1/auth/verify-code", browser(), { email: loginFirst, code: "000000" });
+    }
+    const gate = await post(`/api/v1/view/${listed.artifact.id}/code`, headers, {
+      email: loginFirst,
+      code: await codeFor(loginFirst),
+    });
+    expect(gate.status).toBe(429);
+    expect(gate.headers.get("set-cookie") ?? "").not.toMatch(/plinth_session|plinth_viewer/);
+    expect(await userByEmail(loginFirst)).toBeUndefined();
+  });
+
   it("only allowlist artifacts take viewer codes", async () => {
     const a = await agent();
     const { body: p } = await publish(a.auth);
@@ -300,7 +432,7 @@ describe("allowlist viewers", () => {
     expect(gate.status).toBe("email_required");
   });
 
-  it("a signed-in user can confirm a different, listed email by code in the same browser", async () => {
+  it("a signed-in user who confirms a different, listed email is signed in with that one instead", async () => {
     const user = await createUser();
     const listed = uniqueEmail("work");
     const { artifact } = await allowlisted([listed]);
@@ -308,11 +440,82 @@ describe("allowlist viewers", () => {
     const headers = { ...browser(), ...s.headers, "Content-Type": "application/json" };
     const ok = await confirm(artifact.id, listed, headers);
     expect((await json(ok)).status).toBe("ok");
-    const both = `${s.headers.Cookie}; ${viewerCookieOf(ok)}`;
-    const gate = await json(
-      await call(`/api/v1/view/${artifact.id}`, { headers: { Cookie: both } }),
+    const cookie = viewerCookieOf(ok);
+    expect(cookie).toMatch(/^__Host-plinth_session=/);
+    const me = await call("/api/v1/me", { headers: { Cookie: cookie } });
+    expect((await json(me)).email).toBe(listed);
+    // The session it replaced is over, as signing out would end it.
+    expect((await call("/api/v1/me", { headers: { Cookie: s.headers.Cookie ?? "" } })).status).toBe(
+      401,
     );
-    expect(gate.status).toBe("ok");
+    expect(
+      (await json(await call(`/api/v1/view/${artifact.id}`, { headers: { Cookie: cookie } })))
+        .status,
+    ).toBe("ok");
+  });
+
+  it("an address that already has an account is signed in to that account", async () => {
+    const existing = await createUser();
+    const { artifact } = await allowlisted([existing.email]);
+    const ok = await confirm(artifact.id, existing.email);
+    expect((await json(ok)).role).toBe("viewer");
+    expect(await sessionRow(viewerCookieOf(ok))).toMatchObject({
+      kind: "user",
+      userId: existing.id,
+    });
+    const all = await db().select().from(users).where(eq(users.email, existing.email)).all();
+    expect(all).toHaveLength(1);
+  });
+
+  it("the artifact shows in the invitee's list of artifacts shared with them (the dashboard)", async () => {
+    const email = uniqueEmail("dash");
+    const { artifact } = await allowlisted([email]);
+    const ok = await confirm(artifact.id, email);
+    const list = await json(
+      await call("/api/v1/artifacts", { headers: { Cookie: viewerCookieOf(ok) } }),
+    );
+    const row = (list.items as { id: string; role: string }[]).find((i) => i.id === artifact.id);
+    expect(row?.role).toBe("viewer");
+  });
+
+  it("an editor confirmed by code may edit a doc on its page: the code signed them in", async () => {
+    const { docSetup, grant } = await import("./room-helpers.ts");
+    const { id } = await docSetup();
+    const email = uniqueEmail("coded-editor");
+    await grant(id, email, "editor");
+    await db().update(artifacts).set({ visibility: "allowlist" }).where(eq(artifacts.id, id)).run();
+    const ok = await confirm(id, email);
+    const gate = await json(ok);
+    expect(gate.role).toBe("editor");
+    expect(gate.live).toEqual({ mode: "room", draft: null });
+  });
+
+  it("a viewer session started before codes signed people in keeps working until it expires", async () => {
+    const email = uniqueEmail("legacy");
+    const { artifact } = await allowlisted([email]);
+    const value = `plinth_vs_legacy${Date.now()}${Math.random().toString(36).slice(2)}`;
+    await db()
+      .insert(sessions)
+      .values({
+        id: await hashToken(value),
+        kind: "viewer",
+        viewerEmail: email,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    const cookie = { Cookie: `__Host-plinth_viewer=${value}` };
+    expect(
+      (await json(await call(`/api/v1/view/${artifact.id}`, { headers: cookie }))).status,
+    ).toBe("ok");
+    await db()
+      .update(sessions)
+      .set({ expiresAt: new Date(Date.now() - 1000).toISOString() })
+      .where(eq(sessions.id, await hashToken(value)))
+      .run();
+    expect(
+      (await json(await call(`/api/v1/view/${artifact.id}`, { headers: cookie }))).status,
+    ).toBe("email_required");
   });
 
   it("one confirmed email opens every artifact it is listed on, and nothing else", async () => {
@@ -329,19 +532,108 @@ describe("allowlist viewers", () => {
       "email_required",
     );
   });
+});
+
+describe("where the address may not sign in (single-user mode): a viewer session", () => {
+  it("a listed email confirms its code and gets a viewer session, not an account", async () => {
+    const vars = singleUser(uniqueEmail("admin"));
+    const email = uniqueEmail("listed");
+    const { artifact } = await allowlisted([email]);
+    const headers = browser();
+    expect((await post(`/api/v1/view/${artifact.id}/email`, headers, { email }, vars)).status).toBe(
+      200,
+    );
+    const [mail] = await outboxFor(email);
+    expect(mail?.subject).toBe("Your Plinth viewing code");
+    expect(mail?.text).toContain(
+      `Someone asked to open "Private board deck" on Plinth with this email address.`,
+    );
+    expect(mail?.text).not.toContain("signs you in");
+    const ok = await post(
+      `/api/v1/view/${artifact.id}/code`,
+      headers,
+      { email, code: await codeFor(email) },
+      vars,
+    );
+    expect(ok.status).toBe(200);
+    const gate = await json(ok);
+    expect(gate.status).toBe("ok");
+    expect(gate.role).toBe("viewer");
+
+    const setCookie = ok.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/^__Host-plinth_viewer=plinth_vs_[A-Za-z0-9]+;/);
+    expect(setCookie).toMatch(/; HttpOnly/);
+    expect(setCookie).toMatch(/; Secure/);
+    expect(setCookie).toMatch(/; SameSite=Lax/);
+    expect(setCookie).toMatch(/; Path=\//);
+    expect(setCookie).toMatch(/; Max-Age=604800/);
+    expect(setCookie).not.toMatch(/Domain=/i);
+
+    // The session row is a viewer session for the email, stored by hash only; no account.
+    expect(await sessionRow(viewerCookieOf(ok))).toMatchObject({
+      kind: "viewer",
+      viewerEmail: email,
+      userId: null,
+    });
+    expect(await userByEmail(email)).toBeUndefined();
+
+    const again = await run(
+      `/api/v1/view/${artifact.slug}`,
+      { headers: { Cookie: viewerCookieOf(ok) } },
+      vars,
+    );
+    expect((await json(again)).status).toBe("ok");
+  });
 
   it("a viewer session is not an account: it cannot use account endpoints or write", async () => {
+    const vars = singleUser(uniqueEmail("admin"));
     const email = uniqueEmail("viewer-only");
     const { artifact } = await allowlisted([email]);
-    const ok = await confirm(artifact.id, email);
+    const ok = await confirm(artifact.id, email, browser(), vars);
     const cookie = viewerCookieOf(ok);
-    expect((await call("/api/v1/me", { headers: { Cookie: cookie } })).status).toBe(401);
-    const edit = await call(`/api/v1/artifacts/${artifact.id}`, {
-      method: "PUT",
-      headers: { ...browser(cookie), Cookie: `${cookie}; __Host-plinth_csrf=viewer-csrf` },
-      body: JSON.stringify({ html: "<p>defaced</p>" }),
-    });
+    expect(cookie).toMatch(/^__Host-plinth_viewer=/);
+    expect((await run("/api/v1/me", { headers: { Cookie: cookie } }, vars)).status).toBe(401);
+    const edit = await run(
+      `/api/v1/artifacts/${artifact.id}`,
+      {
+        method: "PUT",
+        headers: { ...browser(cookie), Cookie: `${cookie}; __Host-plinth_csrf=viewer-csrf` },
+        body: JSON.stringify({ html: "<p>defaced</p>" }),
+      },
+      vars,
+    );
     expect([401, 403, 404]).toContain(edit.status);
+  });
+
+  it("the signed-in admin can confirm a different, listed email and stays signed in", async () => {
+    const admin = await createUser(uniqueEmail("admin"));
+    const vars = singleUser(admin.email);
+    const listed = uniqueEmail("work");
+    const { artifact } = await allowlisted([listed]);
+    const s = await browserSession(admin.id);
+    const headers = { ...browser(), ...s.headers, "Content-Type": "application/json" };
+    const ok = await confirm(artifact.id, listed, headers, vars);
+    expect((await json(ok)).status).toBe("ok");
+    expect(viewerCookieOf(ok)).toMatch(/^__Host-plinth_viewer=/);
+    const both = `${s.headers.Cookie}; ${viewerCookieOf(ok)}`;
+    const gate = await json(
+      await run(`/api/v1/view/${artifact.id}`, { headers: { Cookie: both } }, vars),
+    );
+    expect(gate.status).toBe("ok");
+    const me = await run("/api/v1/me", { headers: { Cookie: both } }, vars);
+    expect((await json(me)).email).toBe(admin.email);
+  });
+
+  it("an editor confirmed by code there watches a doc and is asked to sign in (account_required)", async () => {
+    const vars = singleUser(uniqueEmail("admin"));
+    const { docSetup, grant } = await import("./room-helpers.ts");
+    const { id } = await docSetup();
+    const email = uniqueEmail("coded-editor");
+    await grant(id, email, "editor");
+    await db().update(artifacts).set({ visibility: "allowlist" }).where(eq(artifacts.id, id)).run();
+    const gate = await json(await confirm(id, email, browser(), vars));
+    expect(gate.role).toBe("editor");
+    expect(gate.live).toEqual({ mode: "room", sign_in: true, draft: null });
   });
 });
 

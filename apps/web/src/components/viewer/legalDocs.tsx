@@ -33,7 +33,7 @@ export const DEFAULT_VIEW_LOG_RETENTION_DAYS = 365;
 /** The instance settings the pages use. */
 export type LegalConfig = Pick<
   AppConfig,
-  "operator" | "email_provider" | "max_artifacts_per_user" | "category_sharing"
+  "operator" | "email_provider" | "max_artifacts_per_user" | "category_sharing" | "single_user_mode"
 > & {
   /** VIEW_LOG_RETENTION_DAYS; DEFAULT_VIEW_LOG_RETENTION_DAYS when absent. */
   view_log_retention_days?: number;
@@ -186,6 +186,8 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               let its owner, its editors and their agents see everyone it is shared with, by email
               address and role, and by name once that person has commented, entered something or
               published a version on it.
+              {!cfg.single_user_mode &&
+                " When someone shares an artifact or a category with your address, confirming the code we email you signs you in and creates a Plinth account for that address if it has none."}
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
@@ -228,11 +230,14 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             <li>
               <strong>Who opened a page</strong>: when someone other than its owner opens a page, we
               record when, which version, and who it was: the name and email address of people
-              signed in to this service, and the email address of viewers who confirmed it with a
-              code. Anyone else is recorded only by a random id in their viewing cookie, so the
-              owner sees an approximate number of anonymous visitors, never who they are. No IP
-              address or browser details are kept with an open. The page's owner sees this for their
-              own pages, and the people who run this service see only totals across all pages.
+              signed in to this service
+              {cfg.single_user_mode
+                ? ", and the email address of viewers who confirmed it with a code."
+                : ", including anyone who confirmed their address with a code we emailed them."}{" "}
+              Anyone else is recorded only by a random id in their viewing cookie, so the owner sees
+              an approximate number of anonymous visitors, never who they are. No IP address or
+              browser details are kept with an open. The page's owner sees this for their own pages,
+              and the people who run this service see only totals across all pages.
             </li>
             <li>
               <strong>Unsaved page edits</strong>: when you edit a document on its page, we keep the

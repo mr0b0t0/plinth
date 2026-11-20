@@ -85,6 +85,20 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   through a category grant, and the share, portal and personal-category routes answer it 403
   `token_bound`. On a page that lists who has access, the owner and editors see the category's
   people too, each once at their highest role. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
+- **People you share with get an account.** Confirming the emailed code at an artifact's gate or
+  a shared collection now signs the person in to Plinth with that address, creating their account
+  the first time, as the owner's own code already did. What is shared with them then shows under
+  Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
+  on its page. The gate and the shared category's page say "Sign in", the email and the privacy
+  notice say that an account is created, and someone already signed in is told instead that
+  confirming another address switches them to it. The privacy notice says their opens are
+  recorded as a signed-in person's.
+  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning to type the code
+  only into Plinth's own sign-in form and never to give it to anyone before it shows the title or name the sharer wrote (on one line, so neither can
+  add lines of its own), and wrong guesses at it count against the same per-address limit as the
+  sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
+  a viewer session without an account, and viewer sessions started earlier keep working until
+  they expire. Plugin 0.29.0.
 
 ## 0.6.0 (2026-11-20)
 

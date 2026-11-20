@@ -121,7 +121,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
 | `mention_tasks` | id, comment_id, target agent, state, claimed_by, result_version | The queue agents read. State is pending, claimed, done or failed |
-| `sessions` | id, user or viewer email, expires_at | Login and viewer sessions |
+| `sessions` | id, user or viewer email, expires_at | Login sessions (signing in, and a viewing code confirmed at an allowlist gate or a portal), and viewer sessions where the confirmed address may not sign in (single-user mode) |
 | `reports` | id, artifact_id, reason, reporter, state | Abuse reports |
 
 **Shared data** ([below](#shared-data-and-viewer-identity), migration `0005_shared_state.sql`)
@@ -268,6 +268,13 @@ it.
 | Unlisted | Anyone with the link |
 | Password | Anyone with the link and the password |
 | Allowlist | Only listed emails (and the owner), confirmed by a one-time code or magic link |
+
+Confirming the code at an allowlist gate (or on a portal) signs the person in to the app with that
+address, exactly as the sign-in code does and as the owner's own address already did: a normal
+user session, with the account created on first use ([Invitees get an
+account](#invitees-get-an-account-decided-2026-11-19)). Only where the instance does not let the
+address sign in (single-user mode, for any address but the admin's) does the code start a viewer
+session (`plinth_viewer`) instead, which opens what is shared with that email and nothing else.
 
 Owners can also grant a listed email the commenter or editor role. Owners can also share a category
 with people (viewer or commenter, [below](#category-sharing-and-personal-categories-decided-2026-11-19)):
@@ -476,8 +483,9 @@ the count survives.
   normal paths count.
 - **Who is recorded.** The gate decides, from the principal that produced the `ok` gate. Anyone
   signed in to an account is recorded by user id (`viewer_kind = 'user'`), whatever the
-  visibility, so a signed-in reader of a public page is named to its owner. A viewer who confirmed
-  an allowlisted email by code, without an account, is recorded by that email (`'email'`) when it
+  visibility, so a signed-in reader of a public page is named to its owner, and so is someone
+  signed in by confirming an allowlisted email's code. A viewer session (that code confirmed where
+  the address may not sign in, as in single-user mode) is recorded by its email (`'email'`) when it
   holds a grant on the artifact. Everyone else (link, public and password visitors) is
   `'anonymous'`. Each row also has the role of the open (`editor`, `commenter` or `viewer` from a
   grant; otherwise `public`, `link` or `password` from the visibility) and the version served (the
@@ -559,9 +567,12 @@ rendered page, and the other editors with the page open see the changes as they 
 artifacts are edited in the source editor only: page scripts share the frame's origin and could
 forge edits that the editor's session would then save.
 
-- **Who.** Owners and editors signed in to an account (policy action `live_edit`). An editor
-  confirmed by code without an account watches the edits and is asked to sign in. Commenters and
-  viewers see versions only. Agents never edit live: they publish versions.
+- **Who.** Owners and editors signed in to an account (policy action `live_edit`). Confirming the
+  code at the gate signs an editor in, so they edit like any signed-in editor. Only an editor with
+  a viewer session (confirmed by code where the address may not sign in, as in single-user mode,
+  or in a session started before codes signed people in) watches the edits and is asked to sign in
+  (`account_required`). Commenters and viewers see versions only. Agents never edit live: they
+  publish versions.
 - **Concurrency.** The doc's room (its Durable Object, see [Live rooms](#live-rooms)) is the only
   place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the room
   enforces, so two people never edit the same lines. Each edit replaces the leased range whole, so
@@ -1120,8 +1131,9 @@ never a directory.
   get it cleaned on every read (refused characters and every form of `@` dropped, at most 64 code
   points, `null` when nothing visible is left): document authors, room peers, comment and mention
   authors, the owner's name on summaries and the gate, version labels and stats. So names stored
-  before these rules comply too. People confirmed by code
-  without an account have no name. A name is display text, never authority: `role` stays
+  before these rules comply too. People with a viewer session (confirmed by code where they may
+  not sign in) have no name, and an account a code created has none until its person sets one. A
+  name is display text, never authority: `role` stays
   server-derived beside it.
 - **Read live, never sealed.** The name is read from `users` by the identity email (the owner's
   own, or the one holding the grant) whenever a response needs it. It is not in the content pass or
@@ -1599,8 +1611,9 @@ a **portal**, listing what the owner chose to show them.
 
 **Personal categories.** A person with a role on an artifact other than owner (viewer, commenter,
 editor, directly or through a shared category, held by their account's own email: a viewer email
-confirmed in the browser opens the artifact but gives 403 `no_grant` here, as the dashboard lists
-only what the account's email holds) files it under a category of their own with
+confirmed in the browser, which a viewer session holds where that address may not sign in, opens
+the artifact but gives 403 `no_grant` here, as the dashboard lists only what the account's email
+holds) files it under a category of their own with
 `PUT /api/v1/artifacts/:ref/my-category` (`{ category }`, `null` clears it). It is stored per person
 and artifact (`personal_categories`), validated and normalised as the owner's category is, and
 snapped onto the person's own names (their personal ones and their own artifacts' categories, one
@@ -1687,9 +1700,10 @@ limited to one artifact `token_bound`). Someone not
 yet known confirms their email with `POST .../email` and `POST .../code`, which mirror the allowlist
 code flow: the same answer whether or not the address holds a grant, the same rate limits, a
 single-use six-digit code hashed with the share bound into it (useless on an artifact's code route,
-and the reverse), and the grant checked again after the code is used. Success starts the viewer
-session (`plinth_viewer`), which names no artifact, so each listed artifact then opens without a
-second code; the owner's own address signs the owner in. The email names who shared it, never the
+and the reverse), and the grant checked again after the code is used. Success signs the address in
+as on an allowlist gate (the owner's own address signs the owner in; any other gets its account,
+created on first use; a viewer session `plinth_viewer` only where the address may not sign in),
+and the session names no artifact, so each listed artifact then opens without a second code. The email names who shared it, never the
 title or the category. `GET /api/v1/portals` lists the shares that hold the caller's email and
 that `decidePortal` lets the caller open, as `GET /api/v1/portals/:id` decides.
 
@@ -1719,6 +1733,54 @@ category on the dashboard. The dashboard does not list the categories shared wit
 they reach `/p/<id>` from the link the owner sends, and every artifact shared with them is under
 Shared. `/p/<id>` is the portal (never stored or indexed); its email gate asks for an email in one
 line, and its cards use the dashboard's previews.
+
+### Invitees get an account (decided 2026-11-19)
+
+Someone an artifact or a category is shared with by email opens the link and confirms their
+address with the six-digit code Plinth mails them. That code is the same proof of the mailbox as
+the sign-in code, so confirming it signs them in to the app with that address, as it already did
+for the owner's own address (2026-11-16). They then find what is shared with them under Shared on
+the dashboard, set a name, connect agents and comment or edit live as their role allows, like
+anyone signed in.
+
+- **The session.** `POST /api/v1/view/:ref/code` and `POST /api/v1/portals/:id/code`, once the
+  code checks out and the address still holds a grant (or is the owner's), start a normal user
+  session (`__Host-plinth_session`, 30 days): the owner's account for the owner's address, and for
+  any other address the account `getOrCreateUser` finds or creates, marked verified, exactly as
+  sign-in does. The app session the browser held before is ended in the same request, so a person
+  signed in with one address who confirms another is then signed in with the second; the gate says
+  so before they ask for the code. Nothing else changes in the code flow: the same answer whether
+  or not the address is listed, the same rate limits, five attempts per code, single use, the
+  grant checked again after use, and no account for an address whose code fails. Because the code
+  now signs people in, each guess also counts against the sign-in code's per-address limit (10 an
+  hour), so the sign-in page, the gate and the portal share one guess budget per address.
+- **The fallback.** Where `maySignIn` refuses the address (single-user mode, for any address but
+  `ADMIN_EMAIL`), the code starts a viewer session (`__Host-plinth_viewer`, 7 days, principal kind
+  `viewer`) as before. Viewer sessions started before this change keep working until they expire.
+  Everything that only applies to viewer sessions stays, and now applies only to them: such a
+  session is not an account (`/api/v1/me` answers 401), an editor holding one watches live edits
+  and is asked to sign in (`account_required`), a signed-in person can hold one for another
+  address beside their session (the gate and the identity claim then use that address),
+  and its email opens an artifact but never files it under a personal category (`no_grant`).
+- **What people are told.** The gate and the portal say, before the code is asked for, that
+  confirming it signs the person in: the artifact gate's lead ends "Sign in with a one-time code.",
+  and the portal's heading is "Sign in". A signed-in person whose own address has no access is
+  told instead, on both, that confirming another address signs them in with it, and reads no
+  invitation to sign in beside that: the portal's heading for them is "Confirm your email". On the
+  code step the line saying where the code went is the only text above the field. The code's
+  email is then a sign-in email: subject "Your Plinth sign-in code", the sign-in sentence first
+  (it says an account is created for the address if it has none, so that is said before the code
+  is typed), a warning to type the code only into Plinth's own sign-in form, never into a page
+  being viewed, and never give it to anyone or reply with it, and only then the artifact's title
+  (or the sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too.
+  The title or name is quoted on one line: its line breaks and other whitespace become single
+  spaces and invisible characters are dropped, so it cannot start lines that read as Plinth's. On a
+  single-user instance they say that no account is needed, and the email stays the "viewing code"
+  email, as before.
+- **Not a sign-up path.** A code goes only to an address that holds a grant on that artifact or
+  share (or is the owner's), and an account exists only once its person has typed the code. No
+  setting turns this off apart from single-user mode: an instance that lets an address sign in
+  lets it sign in by either code.
 
 ### Big builds and reuse by hash
 
