@@ -112,10 +112,13 @@ function allWords(text: string): Set<string> {
   );
 }
 
-/** Jaccard overlap of two sets: shared over all; 0 when both are empty. */
+/**
+ * Jaccard overlap of two sets: shared over all; 1 when both are empty, since two texts with no
+ * words at all (a slide of only an image) say the same.
+ */
 function jaccard<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): number {
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
-  if (large.size === 0) return 0;
+  if (large.size === 0) return 1;
   let shared = 0;
   for (const w of small) if (large.has(w)) shared++;
   return shared / (a.size + b.size - shared);
@@ -128,7 +131,8 @@ function canReach(a: number, b: number, bar: number): boolean {
 
 /**
  * How alike two texts are, 0 to 1: the Jaccard overlap of their content words. Two texts with no
- * content words at all (a table of figures, "OK") compare all their words instead.
+ * content words at all (a table of figures, "OK") compare all their words instead, and two with
+ * no words at all are alike 1.
  */
 export function similarity(a: string, b: string): number {
   const ca = contentWords(a);
@@ -156,9 +160,10 @@ export interface Aligned<T> extends Paired<T> {
  * (`similarity`) by SIMILARITY_MIN or more, and the pairs are chosen in order on both sides to make
  * the summed likeness as high as it can be; between alignments equally alike, the one whose pairs
  * share more of all their words (short and function words included: "Row 3" over "Row 4") wins,
- * and then the one that pairs earlier blocks. Pairs come in order, as do the old blocks left over
- * (`removed`) and the new ones (`added`). A region of more than CHANGE_LIMITS.alignCells old×new
- * cells, or one whose word comparisons would pass CHANGE_LIMITS.alignWork, matches equal keys only
+ * and then the one that pairs earlier blocks. Two blocks with no words at all are alike 1. Pairs
+ * come in order, as do the old blocks left over (`removed`) and the new ones (`added`). A region
+ * of more than CHANGE_LIMITS.alignCells old×new cells, or one whose word comparisons (counted from
+ * the sizes of the sets compared) would pass CHANGE_LIMITS.alignWork, matches equal keys only
  * (each old block, in order, with the first new block of its key after the last match) and lists
  * the rest as removed and added: it is never paired by position.
  */
@@ -181,25 +186,48 @@ export function alignRegion<T>(
   };
   const wa = before.map((x) => wordsOf(options.text(x)));
   const wb = after.map((y) => wordsOf(options.text(y)));
-  // The cost of every word comparison, known before any is made.
+  // Which cells are compared, and what every comparison costs, known before any is made. A Jaccard
+  // walks the smaller of its two sets, so a cell costs the smaller of the sets it compares (a text
+  // without spaces has a character pair for nearly every character, not one word per run) plus
+  // the smaller of the two all-word sets, for the tie.
+  const compatible = options.compatible ?? (() => true);
+  const EQUAL = 1;
+  const COMPARE = 2;
+  const plan = new Uint8Array(n * m);
   let work = 0;
-  for (const a of wa) for (const b of wb) work += Math.min(a.all.size, b.all.size);
-  if (work > CHANGE_LIMITS.alignWork) return equalKeysOnly(before, after, options.key);
+  for (let i = 0; i < n; i++) {
+    const a = wa[i] as (typeof wa)[number];
+    for (let j = 0; j < m; j++) {
+      const b = wb[j] as (typeof wb)[number];
+      const tieCost = Math.min(a.all.size, b.all.size);
+      if (ka[i] === kb[j]) {
+        plan[i * m + j] = EQUAL;
+        work += tieCost;
+      } else if (compatible(before[i] as T, after[j] as T)) {
+        const [x, y] = a.content || b.content ? [a.content, b.content] : [a.all, b.all];
+        if (x && y && canReach(x.size, y.size, SIMILARITY_MIN)) {
+          plan[i * m + j] = COMPARE;
+          work += Math.min(x.size, y.size) + tieCost;
+        }
+      }
+    }
+    if (work > CHANGE_LIMITS.alignWork) return equalKeysOnly(before, after, options.key);
+  }
 
   // For each cell, the likeness (0 when below SIMILARITY_MIN or not compatible) and, to choose
   // between alignments that are equally alike, the overlap of all words, function words included.
-  const compatible = options.compatible ?? (() => true);
   const sim = new Float64Array(n * m);
   const tie = new Float64Array(n * m);
   for (let i = 0; i < n; i++) {
     const a = wa[i] as (typeof wa)[number];
     for (let j = 0; j < m; j++) {
       const b = wb[j] as (typeof wb)[number];
+      const cell = plan[i * m + j];
       let s = 0;
-      if (ka[i] === kb[j]) s = 1;
-      else if (compatible(before[i] as T, after[j] as T)) {
+      if (cell === EQUAL) s = 1;
+      else if (cell === COMPARE) {
         const [x, y] = a.content || b.content ? [a.content, b.content] : [a.all, b.all];
-        if (x && y && canReach(x.size, y.size, SIMILARITY_MIN)) s = jaccard(x, y);
+        s = jaccard(x as Set<string>, y as Set<string>);
       }
       if (s < SIMILARITY_MIN) continue;
       sim[i * m + j] = s;

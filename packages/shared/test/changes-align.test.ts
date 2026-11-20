@@ -216,6 +216,57 @@ describe("alignRegion", () => {
     expect(p.pairs).toEqual([]);
   });
 
+  it("counts the word sets it compares, so text without spaces is bounded too", () => {
+    // Paragraphs of Chinese with no punctuation: one word each, but thousands of character pairs,
+    // and those are what it compares.
+    let seed = 7;
+    const han = (len: number) =>
+      Array.from({ length: len }, () => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return String.fromCodePoint(0x4e00 + (seed % 20000));
+      }).join("");
+    const a = Array.from({ length: 200 }, () => han(3000));
+    const b = Array.from({ length: 200 }, () => han(3000));
+    // Counted by words, this was 40,000 comparisons of one word and took seconds; counted by the
+    // character pairs compared, it passes alignWork and matches equal keys only.
+    const p = alignRegion(a, b, { key, text });
+    expect(p.aligned).toBe(false);
+    // A region whose comparisons stay within alignWork still aligns.
+    const edited = (x: string) => `${x.slice(0, 1500)}${han(1)}${x.slice(1500)}`;
+    const q = alignRegion(a.slice(0, 20), a.slice(0, 20).map(edited), { key, text });
+    expect(q.aligned).toBe(true);
+    expect(q.pairs).toHaveLength(20);
+  });
+
+  it("finds two blocks with no words at all alike, so an image slide pairs with itself", () => {
+    expect(similarity("", "")).toBe(1);
+    expect(similarity("", "Hello there")).toBe(0);
+    const deck = (...slides: string[]) => slides.join("\n\n---\n\n");
+    const slides = (image: string, notes: string) =>
+      deck("# Intro\n\nHello world there", `![](${image})\n\nNote: ${notes}`, "# End");
+    expect(
+      items("slides", slides("photo.png", "old notes here"), slides("photo.png", "new notes text")),
+    ).toEqual([
+      {
+        kind: "changed",
+        where: "Slide 2",
+        what: "Speaker notes changed",
+        before: "old notes here",
+        after: "new notes text",
+      },
+    ]);
+    expect(
+      items(
+        "slides",
+        slides("photo.png", "old notes here"),
+        slides("other.png", "old notes here"),
+      ).map((i) => [i.kind, i.where]),
+    ).toEqual([
+      ["removed", "Slide 2"],
+      ["added", "Slide 2"],
+    ]);
+  });
+
   it("uses the fallback for a region of more than alignCells in a change list", () => {
     const page = (word: string, n: number) =>
       Array.from({ length: n }, (_, k) => `<p>Report ${k} ${word}</p>`).join("");

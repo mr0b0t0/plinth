@@ -1683,7 +1683,8 @@ from discovery tags) stays.
   alone. Content words are lowercased (after NFKC), made of letters and digits, three characters
   or longer, and not one of 50 common English function words ("the", "this", "with"); text in a
   script written without spaces gives its pairs of characters, and two texts with no content
-  words compare all their words. Two blocks are alike by the Jaccard overlap of those words (a
+  words compare all their words; two with no words at all (a slide of only an image) are fully
+  alike. Two blocks are alike by the Jaccard overlap of those words (a
   slide by its title and text, a board by its name and text); the region's old and new blocks are
   aligned in order so that the summed likeness is highest, a pair counting only at 0.3 or more,
   and blocks with the same content count as fully alike. A matched pair is a change, an old block
