@@ -142,7 +142,10 @@ describe("runtime: names and the people list", () => {
   it("people.list passes q and limit, and people.get returns a person or null", async () => {
     const { plinth, calls } = boot(server());
     await plinth.ready;
-    expect(await plinth.people.list({ q: "an n", limit: 5 })).toEqual(PEOPLE);
+    const listed = await plinth.people.list({ q: "an n", limit: 5 });
+    expect([...listed]).toEqual(PEOPLE);
+    // How many matched before `limit`, as the route's `total` says.
+    expect(listed.total).toBe(2);
     expect(calls.at(-1)).toEqual({ method: "GET", path: "/people?q=an%20n&limit=5" });
     expect(await plinth.people.get(PEOPLE[1]?.id)).toEqual(PEOPLE[1]);
     expect(await plinth.people.get("u_bbbbbbbbbbbbbbbbbbbbbbbb")).toBeNull();

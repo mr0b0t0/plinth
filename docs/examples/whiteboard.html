@@ -11,6 +11,8 @@
   sends is untrusted: positions are checked, and names are drawn as text. Commenters, editors and
   the owner change the board; people with view access join the room and show their cursor (presence
   is not an event) but never emit, so their board is read-only and follows the others live.
+  This page is the hand-written example of a multiplayer page. For a board itself, agents publish
+  type "whiteboard" (docs/spec.md "Whiteboards"), which Plinth renders with its own renderer.
 -->
 <meta name="plinth-capabilities" content="data viewer room">
 <meta name="plinth-data-shared" content="notes links">
@@ -791,7 +793,6 @@ async function start() {
     notices.data = "Saving and live cursors are not available here. Notes you add stay in this tab.";
     showNotices();
     setEditable();
-    document.body.dataset.ready = "1";
     return;
   }
   const s = await P.ready;
@@ -814,8 +815,6 @@ async function start() {
     notices.data = `Saving is off here (${DATA_WHY[s.reason] || "it is unavailable"}). Notes you add stay in this tab.`;
   }
   showNotices();
-  // Shared data is settled; the room may still be connecting (body[data-room] says when).
-  document.body.dataset.ready = "1";
 
   const r = await P.room.ready;
   document.body.dataset.roomReason = String(r.reason);

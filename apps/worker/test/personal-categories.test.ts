@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { sessions } from "../src/db/schema.ts";
 import { hashToken, newToken } from "../src/lib/crypto.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
-import { filed, owner, person, send, shareCategory } from "./category-helpers.ts";
+import { filed, owner, person, run, send, shareCategory } from "./category-helpers.ts";
 import { call, db, json, publish, uniqueEmail } from "./helpers.ts";
 import { grant } from "./room-helpers.ts";
 
@@ -157,6 +157,28 @@ describe("PUT /artifacts/:ref/my-category", () => {
     // With the grant on the account's own email it is filed.
     await grant(a.id, c.email, "viewer");
     expect((await setMine(a.id, both, "Clients")).status).toBe(200);
+  });
+});
+
+describe("my_categories counts", () => {
+  it("count only the artifacts the person can open: none through a category while sharing is off", async () => {
+    const o = await owner();
+    const viaCategory = await filed(o, "Acme", "Through the category");
+    const direct = await filed(o, "Other", "Shared directly");
+    const c = await person();
+    await grant(direct.id, c.email, "viewer");
+    await shareCategory(o, "Acme", [{ email: c.email, role: "viewer" }]);
+    expect((await setMine(viaCategory.id, c.session, "Client")).status).toBe(200);
+    expect((await setMine(direct.id, c.session, "Client")).status).toBe(200);
+    const on = await json(await call("/api/v1/artifacts", { headers: c.session }));
+    expect(on.my_categories).toEqual([{ name: "Client", count: 2 }]);
+    const off = await json(
+      await run("/api/v1/artifacts", { headers: c.session }, { ALLOW_CATEGORY_SHARING: "false" }),
+    );
+    expect((off.items as { id: string }[]).map((i) => i.id)).toEqual([direct.id]);
+    expect(off.my_categories).toEqual([{ name: "Client", count: 1 }]);
+    // The row is kept, so turning sharing back on loses nothing.
+    expect(await rows(viaCategory.id)).toHaveLength(1);
   });
 });
 

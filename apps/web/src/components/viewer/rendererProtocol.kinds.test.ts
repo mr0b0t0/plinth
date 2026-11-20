@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APP_MESSAGE_KINDS,
+  boardExportMessage,
   collectMessage,
   editMessage,
   exportMessage,
@@ -12,6 +13,7 @@ import {
   matchFrameMessage,
   printMessage,
   readFrameMessage,
+  sheetExportMessage,
   versionMessage,
   viewMessage,
 } from "./rendererProtocol.ts";
@@ -52,12 +54,13 @@ describe("renderer protocol kinds", () => {
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
       printMessage(),
-      printMessage(true),
       editMessage(false),
       collectMessage("x".repeat(16)),
       gotoMessage(1),
       viewMessage("deck"),
       exportMessage("x".repeat(16)),
+      sheetExportMessage("csv"),
+      boardExportMessage("png"),
       versionMessage(1, "x".repeat(16)),
     ];
     for (const m of all) {

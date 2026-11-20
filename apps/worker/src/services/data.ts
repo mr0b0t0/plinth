@@ -10,6 +10,7 @@ import {
   type AgentDoc,
   type AgentDocAuthor,
   type AgentPerson,
+  boardDocError,
   type Capabilities,
   capabilityList,
   DATA_COLLECTION_RE,
@@ -40,9 +41,10 @@ import {
   pageDataAccess,
   pagePeopleAccess,
   peopleListOffered,
+  type VersionWriter,
 } from "../policy.ts";
 import { type Person, peopleWithAccess } from "./people.ts";
-import { namesByEmail } from "./users.ts";
+import { nameByEmail, namesByEmail } from "./users.ts";
 
 /** Who is writing, as the server knows it. Stamps come only from here, never from the request. */
 export interface DataWriter {
@@ -60,6 +62,17 @@ export interface DataTarget {
   id: string;
   ownerId: string;
   caps: Capabilities | null;
+  /**
+   * Who wrote the versions the content host serves (policy.ts peopleListOffered), loaded only on a
+   * page that declares `people`. Absent or null offers no people list, so a caller that does not
+   * load it never opens the list.
+   */
+  writers?: readonly VersionWriter[] | null;
+  /**
+   * The artifact's stored type (artifacts.type): policy's write floor depends on it, and a
+   * whiteboard's documents are checked against the board's shapes.
+   */
+  type: string;
 }
 
 /** A row of artifact_docs as D1 returns it. */
@@ -93,6 +106,8 @@ const PLAIN_SET_ATTEMPTS = 4;
 const invalid = (message: string) => new ApiError("invalid_input", message);
 const quota = (limit: QuotaLimit) =>
   new ApiError("quota_exceeded", `This artifact's shared data is full (${limit})`, { limit });
+/** quota_exceeded with the limit that stopped a write. */
+export const quotaExceeded = quota;
 const conflict = (currentRev: number) =>
   new ApiError("conflict", "The document changed since you read it", { current_rev: currentRev });
 const docNotFound = () => new ApiError("not_found", "Document not found");
@@ -150,13 +165,10 @@ export async function session(
   const reason = unavailableReason(config, target.caps);
   if (reason) return { available: false, reason };
   const active = sharedDataActive(config);
-  const access = pageDataAccess(claim, target.caps, active);
+  const access = pageDataAccess(claim, target.caps, active, target.type);
   const usage = await usageOf(d1, target.id);
   // The name is read only when the page may see who this is (a link viewer triggers no read).
-  const name =
-    claim && access.seeIdentity
-      ? ((await namesByEmail(d1, [claim.email])).get(claim.email) ?? null)
-      : null;
+  const name = claim && access.seeIdentity ? await nameByEmail(d1, claim.email) : null;
   return {
     available: true,
     viewer: claim
@@ -168,7 +180,7 @@ export async function session(
         }
       : null,
     can_write: access.write,
-    can_list_people: pagePeopleAccess(claim, target.caps, active).list,
+    can_list_people: pagePeopleAccess(claim, target.caps, active, target.writers ?? null).list,
     capabilities: capabilityList(target.caps),
     shared: target.caps?.shared ?? [],
     limits: limitsOf(config),
@@ -201,8 +213,14 @@ export async function summary(
     )
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
-  const people = peopleListOffered(target.caps, sharedDataActive(config))
-    ? await peopleWithAccess(d1, config.tokenSigningKey, target.id, readerEmail)
+  const people = peopleListOffered(target.caps, sharedDataActive(config), target.writers ?? null)
+    ? await peopleWithAccess(
+        d1,
+        config.tokenSigningKey,
+        target.id,
+        readerEmail,
+        config.allowCategorySharing,
+      )
     : null;
   return {
     capabilities: capabilityList(target.caps),
@@ -437,8 +455,17 @@ export async function toAgentDoc(
 
 // ---------- writes ----------
 
-/** Validate a document and measure it: UTF-8 bytes of collection + doc id + data JSON. */
-function prepareDoc(config: Config, collection: string, docId: string, data: unknown) {
+/**
+ * Validate a document and measure it: UTF-8 bytes of collection + doc id + data JSON. `json` is
+ * exactly the text stored in artifact_docs.data, and `size` what counts toward the quotas. Every
+ * write measures through this, a whiteboard's starting board included (services/board.ts).
+ */
+export function measureDoc(
+  config: Config,
+  collection: string,
+  docId: string,
+  data: unknown,
+): { json: string; size: number } {
   checkCollection(collection);
   checkDocId(docId);
   const shape = dataShapeError(data);
@@ -453,6 +480,28 @@ function prepareDoc(config: Config, collection: string, docId: string, data: unk
   return { json, size: utf8Length(collection) + utf8Length(docId) + dataBytes };
 }
 
+/**
+ * measureDoc, plus the board's shapes on a whiteboard: only the `blocks` and `arrows` collections,
+ * no personal documents, and each document a valid block or arrow (whiteboard.ts boardDocError).
+ * Validation, not authorization: the same for the page, agents and the app, and who may write is
+ * policy's (pageDataAccess, decide data_write).
+ */
+function prepareDoc(
+  config: Config,
+  target: DataTarget,
+  collection: string,
+  docId: string,
+  data: unknown,
+) {
+  const measured = measureDoc(config, collection, docId, data);
+  if (target.type === "whiteboard") {
+    if (isPersonalDocId(docId)) throw invalid("A whiteboard has no personal documents");
+    const problem = boardDocError(collection, data);
+    if (problem) throw invalid(problem);
+  }
+  return measured;
+}
+
 /** A writer the page rules refuse outright (anonymous) never reaches the rate limits. */
 function requireWriter(writer: DataWriter | null, docId: string): DataWriter {
   if (writer) return writer;
@@ -460,7 +509,12 @@ function requireWriter(writer: DataWriter | null, docId: string): DataWriter {
   throw denied(d.allow ? "read_only" : d.reason);
 }
 
-async function limitWrites(d1: D1Database, config: Config, artifactId: string, email: string) {
+export async function limitWrites(
+  d1: D1Database,
+  config: Config,
+  artifactId: string,
+  email: string,
+) {
   for (const [key, limit] of [
     [`data:w:${artifactId}:${email}`, config.data.writesPerViewerPerHour],
     [`data:w:${artifactId}:all`, config.data.writesPerArtifactPerHour],
@@ -504,7 +558,7 @@ function anyCreator(
     .allow;
 }
 
-const USER_BYTES_SQL = `SELECT coalesce(sum(u.bytes), 0) AS total FROM artifact_data_usage u
+export const USER_BYTES_SQL = `SELECT coalesce(sum(u.bytes), 0) AS total FROM artifact_data_usage u
   JOIN artifacts a ON a.id = u.artifact_id WHERE a.owner_id = ?1 AND a.deleted_at IS NULL`;
 
 async function readState(d1: D1Database, target: DataTarget, collection: string, docId: string) {
@@ -540,10 +594,15 @@ const NEXT_REV_SQL =
  * Callers check the artifact once before their ops, so a write already in flight when the artifact
  * is deleted or taken down (and its data wiped) must not bring data back.
  */
-const ARTIFACT_LIVE_SQL = `EXISTS (SELECT 1 FROM artifacts WHERE id = ?1
+export const ARTIFACT_LIVE_SQL = `EXISTS (SELECT 1 FROM artifacts WHERE id = ?1
   AND deleted_at IS NULL AND taken_down_at IS NULL)`;
 
 const artifactGone = () => new ApiError("not_found", "Artifact not found");
+
+/** The columns every insert into artifact_docs writes, in the order its values follow. */
+export const DOC_INSERT_COLUMNS = `artifact_id, collection, doc_id, data, size_bytes, rev,
+         created_by_email, created_by_role, created_via, created_by_label, created_at,
+         updated_by_email, updated_by_role, updated_via, updated_by_label, updated_at`;
 
 async function insertGuarded(
   d1: D1Database,
@@ -559,9 +618,7 @@ async function insertGuarded(
   // The SELECT needs its WHERE for SQLite to parse ON CONFLICT after INSERT ... SELECT.
   return d1
     .prepare(
-      `INSERT INTO artifact_docs (artifact_id, collection, doc_id, data, size_bytes, rev,
-         created_by_email, created_by_role, created_via, created_by_label, created_at,
-         updated_by_email, updated_by_role, updated_via, updated_by_label, updated_at)
+      `INSERT INTO artifact_docs (${DOC_INSERT_COLUMNS})
        SELECT ?1, ?2, ?3, ?4, ?5, ${NEXT_REV_SQL}, ?6, ?7, ?8, ?9, ?10, ?6, ?7, ?8, ?9, ?10
         WHERE ${ARTIFACT_LIVE_SQL}
           AND coalesce((SELECT docs FROM artifact_data_usage WHERE artifact_id = ?1), 0) < ?11
@@ -704,7 +761,7 @@ export async function createDoc(
 ): Promise<StoredDoc> {
   let docId = newId();
   const w = requireWriter(writer, docId);
-  let { json, size } = prepareDoc(config, collection, docId, data);
+  let { json, size } = prepareDoc(config, target, collection, docId, data);
   await limitWrites(d1, config, target.id, w.email);
   for (let attempt = 0; attempt < PLAIN_SET_ATTEMPTS; attempt++) {
     authorize(w, target, collection, { docId, creatorEmail: null }, "create");
@@ -715,7 +772,7 @@ export async function createDoc(
     const why = await whyNotInserted(d1, config, target, collection, docId, size);
     if ("quota" in why) throw quota(why.quota);
     docId = newId();
-    ({ json, size } = prepareDoc(config, collection, docId, data));
+    ({ json, size } = prepareDoc(config, target, collection, docId, data));
   }
   throw new ApiError("conflict", "Could not create the document, try again");
 }
@@ -736,7 +793,7 @@ export async function putDoc(
 ): Promise<{ doc: StoredDoc; created: boolean }> {
   const w = requireWriter(writer, docIdIn);
   const docId = resolveDocId(docIdIn, w.viewerId) as string;
-  const { json, size } = prepareDoc(config, collection, docId, data);
+  const { json, size } = prepareDoc(config, target, collection, docId, data);
   if (ifRev !== undefined && (!Number.isInteger(ifRev) || ifRev < 0)) {
     throw invalid("if_rev must be a whole number, 0 or more");
   }

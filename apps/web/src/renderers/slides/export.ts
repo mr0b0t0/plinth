@@ -12,16 +12,15 @@
 //    and a canvas would be tainted, so file images are left out and the app says so. Inline
 //    data: images are part of the deck's text and always go in.
 // 4. The file is saved with an <a download> click in the frame (both frame sandboxes allow
-//    downloads). A browser may refuse a download the frame did not start from a click of its own,
-//    so the frame also shows a "ready" notice whose Download button starts it from such a click.
+//    downloads); the app's toast is the only notice.
 import { LIMITS, TYPE_REGISTRY } from "@plinth/shared";
 import { imageSources } from "./exportModel.ts";
 import { type DeckModel, PPTX_READY_EVENT, type PptxBuilder } from "./pptxModel.ts";
 
 /** How long the writer may take to load before the export fails. */
 export const WRITER_TIMEOUT_MS = 30_000;
-/** How long the ready notice stays (its blob URL is released when it goes). */
-export const READY_NOTICE_MS = 30_000;
+/** How long a saved file's blob URL is kept before it is released. */
+export const REVOKE_AFTER_MS = 60_000;
 /** The largest side of an image drawn to PNG, in pixels. */
 const MAX_RASTER = 4096;
 
@@ -178,49 +177,9 @@ export function clickDownload(doc: Document, url: string, name: string): void {
   a.remove();
 }
 
-const closers = new WeakMap<Element, () => void>();
-
-/**
- * The "ready" notice: the file name and a Download button that starts the download from a click
- * in the frame, for browsers that refuse the first one. Plinth's own UI, made with textContent.
- * It goes after READY_NOTICE_MS or on Dismiss, and releases the blob URL then.
- */
-export function showReadyNotice(
-  doc: Document,
-  root: HTMLElement,
-  url: string,
-  name: string,
-  ms = READY_NOTICE_MS,
-): () => void {
-  for (const old of Array.from(root.querySelectorAll(".plinth-slides__ready"))) {
-    closers.get(old)?.();
-  }
-  const bar = doc.createElement("div");
-  bar.className = "plinth-slides__ready";
-  bar.dataset.plinthControl = "";
-  bar.setAttribute("role", "status");
-  const text = doc.createElement("span");
-  text.className = "plinth-slides__ready-text";
-  text.textContent = `${name} is ready`;
-  const download = doc.createElement("button");
-  download.type = "button";
-  download.className = "plinth-slides__btn";
-  download.textContent = "Download";
-  download.addEventListener("click", () => clickDownload(doc, url, name));
-  const dismiss = doc.createElement("button");
-  dismiss.type = "button";
-  dismiss.className = "plinth-slides__btn";
-  dismiss.textContent = "Dismiss";
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const close = () => {
-    clearTimeout(timer);
-    bar.remove();
-    URL.revokeObjectURL(url);
-  };
-  dismiss.addEventListener("click", close);
-  closers.set(bar, close);
-  bar.append(text, download, dismiss);
-  root.append(bar);
-  timer = setTimeout(close, ms);
-  return close;
+/** Saves `blob` as `name` from this document, and releases its URL after REVOKE_AFTER_MS. */
+export function saveBlob(win: Window, blob: Blob, name: string, ms = REVOKE_AFTER_MS): void {
+  const url = URL.createObjectURL(blob);
+  clickDownload(win.document, url, name);
+  win.setTimeout(() => URL.revokeObjectURL(url), ms);
 }

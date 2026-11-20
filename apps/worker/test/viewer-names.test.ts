@@ -4,7 +4,7 @@
 // owners' and editors' agents and the owner's sharing settings get, and what the live viewer
 // tells the viewer. Cookies are minted through the real gate and enter flow.
 import { env } from "cloudflare:workers";
-import type { ViewGate } from "@plinth/shared";
+import { RATE_LIMITS, type ViewGate } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { eraseUserSql } from "../scripts/admin-lib.mjs";
 import { viewerIdFor } from "../src/lib/crypto.ts";
@@ -55,6 +55,15 @@ describe("PATCH /me: display name rules", () => {
     ]) {
       const res = await setName(u.id, bad);
       expect(res.status, JSON.stringify(bad)).toBe(400);
+      // The reason, as one sentence: the same the app shows before it sends.
+      expect((await json(res)).error.message, JSON.stringify(bad)).toMatch(/^A name .*\.$/);
+    }
+    for (const blank of ["\u3164", "\u115F", "\u1160", "\uFFA0", "\u2800", "\u0301\u0302"]) {
+      const res = await setName(u.id, blank);
+      expect(res.status, JSON.stringify(blank)).toBe(400);
+      expect((await json(res)).error.message).toBe(
+        "A name needs a letter, number or symbol you can see.",
+      );
     }
     expect(await stored(u.id)).toBe("José");
     expect((await setName(u.id, "   ")).status).toBe(200);
@@ -277,6 +286,40 @@ describe("names for agents, the owner and the viewer", () => {
     });
   });
 
+  it("GET /api/v1/artifacts/:ref/people takes a limit, says the total, and shares the page's rate limit", async () => {
+    const { owner, id, ownerP } = await setup(peoplePage());
+    for (const role of ["editor", "commenter", "viewer"] as const) await holder(id, role);
+    const all = await json(await call(`/api/v1/artifacts/${id}/people`, { headers: owner.auth }));
+    expect(all.people).toHaveLength(4);
+    expect(all.total).toBe(4);
+    const two = await json(
+      await call(`/api/v1/artifacts/${id}/people?limit=2`, { headers: owner.auth }),
+    );
+    expect(two.people).toEqual(all.people.slice(0, 2));
+    expect(two.total).toBe(4);
+    for (const bad of ["0", "202", "x", "1.5"]) {
+      const res = await call(`/api/v1/artifacts/${id}/people?limit=${bad}`, {
+        headers: owner.auth,
+      });
+      expect(res.status, bad).toBe(400);
+    }
+    // One bucket per reader per artifact, for the page and REST together.
+    const hour = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      "INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3) ON CONFLICT (key, window_start) DO UPDATE SET count = ?3",
+    )
+      .bind(
+        `people:${id}:${ownerP.email}`,
+        hour - (hour % 3600),
+        RATE_LIMITS.peopleReadsPerViewerPerHour,
+      )
+      .run();
+    const limited = await call(`/api/v1/artifacts/${id}/people`, { headers: owner.auth });
+    expect(limited.status).toBe(429);
+    expect((await json(limited)).error.code).toBe("rate_limited");
+    expect((await api(id, "/people", { cookie: ownerP.cookie })).status).toBe(429);
+  });
+
   it("an address the owner adds says nothing about its account until its holder takes part", async () => {
     const { owner, id, ownerP } = await setup(peoplePage());
     // Three accounts with names, which the owner knows only by address, and an address with none.
@@ -418,5 +461,117 @@ describe("names for agents, the owner and the viewer", () => {
     // Link viewers: nothing.
     const link = await publish(owner.auth, { html: peoplePage(), visibility: "unlisted" });
     expect((await gateOf(link.body.id, {})).people).toBeUndefined();
+  });
+});
+
+describe("names in the app and for agents: cleaned on every read, never the owner's mark", () => {
+  /** An owner (an account-wide Claude token, a browser session) and a commenter, both named. */
+  async function named(ownerName: string, commenterName: string) {
+    const owner = await agent({ label: "Work Claude", clientType: "claude" });
+    const browser = (await browserSession(owner.user.id)).headers;
+    const jsonHeaders = { ...browser, "Content-Type": "application/json" };
+    // v1 by the owner in person, so the version is labelled with the name.
+    const res = await call("/api/v1/artifacts", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ title: "Notes", html: "<!doctype html><h1>Notes</h1>" }),
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const id = (await json(res)).id as string;
+    const commenter = await createUser();
+    await grant(id, commenter.email, "commenter");
+    await storeRawName(owner.user.id, ownerName);
+    await storeRawName(commenter.id, commenterName);
+    const commenterBrowser = (await browserSession(commenter.id)).headers;
+    const post = async (headers: Record<string, string>, body: string) => {
+      const r = await call(`/api/v1/artifacts/${id}/comments`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      });
+      expect(r.status, await r.clone().text()).toBe(201);
+      return json(r);
+    };
+    return { owner, browser, id, commenter, commenterBrowser, post };
+  }
+
+  it("a legacy name with U+202E and U+FF20 comes back cleaned from comments, mentions, summaries, versions and the gate", async () => {
+    const s = await named("Ana\u202E Owner\uFF20home", "Bob\u202E \uFF20Lima");
+    const posted = await s.post(s.commenterBrowser, "@claude please look");
+    expect(posted.author.label).toBe("Bob Lima");
+    const comments = await json(
+      await call(`/api/v1/artifacts/${s.id}/comments`, { headers: s.browser }),
+    );
+    expect(comments.items.map((c: { author: { label: string } }) => c.author.label)).toEqual([
+      "Bob Lima",
+    ]);
+    // MCP: list_comments, and list_mentions' comment_author.
+    const c = await mcpClient(s.owner.token);
+    const listed = await tool(c, "list_comments", { id: s.id });
+    expect(listed.isError, listed.text).toBe(false);
+    expect(listed.text).not.toMatch(/[\u202E\uFF20]/);
+    const mentions = await tool(c, "list_mentions", {});
+    expect(mentions.data.items[0].comment_author).toBe("Bob Lima");
+    // The owner's name on summaries and the version label.
+    const got = await tool(c, "get_artifact", { id: s.id });
+    expect(got.data.owner.name).toBe("Ana Ownerhome");
+    const listedArtifacts = await tool(c, "list_artifacts", {});
+    expect(listedArtifacts.text).not.toMatch(/[\u202E\uFF20]/);
+    const versions = await tool(c, "list_versions", { id: s.id });
+    expect(versions.data.items[0].author.label).toBe("Ana Ownerhome");
+    await c.close();
+    const rest = await json(await call(`/api/v1/artifacts/${s.id}`, { headers: s.owner.auth }));
+    expect(rest.owner.name).toBe("Ana Ownerhome");
+    const restVersions = await json(
+      await call(`/api/v1/artifacts/${s.id}/versions`, { headers: s.owner.auth }),
+    );
+    expect(JSON.stringify(restVersions)).not.toMatch(/[\u202E\uFF20]/);
+    expect(JSON.stringify(restVersions)).toContain("Ana Ownerhome");
+    // The gate names the owner to every viewer.
+    expect((await gateOf(s.id, s.commenterBrowser)).artifact.owner_name).toBe("Ana Ownerhome");
+    // A stored name that is nothing but a Hangul filler reads as no name: the address shows.
+    await storeRawName(s.commenter.id, "\u3164\u3164");
+    const again = await json(
+      await call(`/api/v1/artifacts/${s.id}/comments`, { headers: s.browser }),
+    );
+    expect(again.items[0].author.label).toBe(s.commenter.email);
+  });
+
+  it("marks the owner's comments and versions from ids, so a lookalike name lacks the mark", async () => {
+    const s = await named("Ana Owner", "Ana Owner");
+    const mine = await s.post(s.browser, "From the owner");
+    const theirs = await s.post(s.commenterBrowser, "From someone named like the owner");
+    expect(mine.author).toMatchObject({ label: "Ana Owner", is_owner: true });
+    expect(theirs.author).toMatchObject({ label: "Ana Owner", is_owner: false });
+    const comments = await json(
+      await call(`/api/v1/artifacts/${s.id}/comments`, { headers: s.browser }),
+    );
+    expect(comments.items.map((c: { author: { is_owner: boolean } }) => c.author.is_owner)).toEqual(
+      [true, false],
+    );
+    // A version by the owner (in person, then by their agent) carries the mark; an editor's not.
+    const editor = await agent({ label: "Ana Owner" });
+    await grant(s.id, editor.user.email, "editor");
+    await storeRawName(editor.user.id, "Ana Owner");
+    const up = await call(`/api/v1/artifacts/${s.id}`, {
+      method: "PUT",
+      headers: { ...s.owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<!doctype html><h1>v2</h1>", base_version: 1 }),
+    });
+    expect(up.status).toBe(200);
+    const byEditor = await call(`/api/v1/artifacts/${s.id}`, {
+      method: "PUT",
+      headers: { ...editor.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<!doctype html><h1>v3</h1>", base_version: 2 }),
+    });
+    expect(byEditor.status, await byEditor.clone().text()).toBe(200);
+    const { items } = (await json(
+      await call(`/api/v1/artifacts/${s.id}/versions`, { headers: s.browser }),
+    )) as { items: { number: number; author: { label: string; is_owner: boolean } }[] };
+    expect(items.map((v) => [v.number, v.author.label, v.author.is_owner])).toEqual([
+      [3, "Ana Owner", false],
+      [2, "Work Claude", true],
+      [1, "Ana Owner", true],
+    ]);
   });
 });

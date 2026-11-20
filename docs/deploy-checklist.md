@@ -194,7 +194,9 @@ no room and stores nothing.
   request when it connects (again after 12 hours, or after its tab was hidden for a minute), and
   every new version, shared-data write, sharing change, takedown or delete is one notify call to
   the artifact's object, for every artifact. Hibernated watch sockets accrue no duration and their
-  keep-alive is answered without waking the object. In return an idle open view stops reading its
+  keep-alive is answered without waking the object, but while an artifact has an open view (tabs
+  hidden for a minute close theirs) its object wakes once a minute for the re-check alarm, one D1
+  read each. In return an idle open view stops reading its
   gate and the shared-data change counter every 15 s ([spec.md](spec.md#costs)).
 - **Off switch.** `ALLOW_LIVE_VIEWS=false` ([self-hosting.md](self-hosting.md#settings)): pages poll
   as before, artifacts without a room never get an object, and every new version reloads the frame
@@ -209,21 +211,6 @@ no room and stores nothing.
   half for the people an artifact is shared with and half for everyone else; views over it poll.
   After a signal, open views spread their follow-up requests over 2 ms per socket of this cap (at
   most 10 s), so one artifact sees at most about 500 a second at the default.
-
-### Dictation
-
-Dictation needs no binding, no migration and no Cloudflare resource: the viewer's browser does
-the speech recognition, and Plinth only passes words from the app to the page.
-
-- **Off switch.** `ALLOW_DICTATION` is off unless set to `"true"`. Off, the app's
-  `Permissions-Policy` keeps `microphone=()` and pages that declare `dictation` get
-  `ready` with `available: false`, `reason: "disabled"`.
-- **Isolation.** Dictation needs `CONTENT_ISOLATION=origin`. Under `opaque` and the staging path
-  fallback it is off, whatever the setting says.
-- **Before turning it on.** Try it in desktop Chrome and Edge, and in Safari on macOS and iOS (a
-  browser without a recognizer, such as Firefox, reports `unsupported`), and read the consent
-  dialog with a screen reader. Check that the privacy notice on `/legal/privacy` shows its
-  Dictation paragraph.
 
 ### Creating the resources
 
@@ -461,13 +448,9 @@ These need accounts, money or legal judgement, so no script does them.
     cursor is, and live messages between them, passed along and never stored). An operator with a
     privacy notice of their own should cover the same, or set both to `"false"`; one who raises
     `LIVE_DRAFT_RETENTION_DAYS` should say so in their notice.
-14. Dictation is off unless `ALLOW_DICTATION` is set to `"true"` ([Dictation](#dictation)). While
-    it is on, the privacy notice says that the browser's speech service hears the audio and that
-    Plinth never receives it. An operator with a privacy notice of their own should say the same
-    before turning it on.
-15. Turn on GitHub private vulnerability reporting for the repository (see
+14. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
-16. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
+15. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
     Durable Objects.
 
 ## 6. Upgrading and rolling back

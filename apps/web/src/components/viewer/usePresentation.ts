@@ -1,17 +1,29 @@
 // Presenting a deck (an artifact whose type has `present`, the slides type) from the viewer: the
 // slide the frame is on, Present (the app puts its own frame full screen), Presenter view (the
-// frame shows notes, the next slide and a timer) with an optional audience window in step,
-// printing, and the .pptx download (the frame builds and saves the file; the app sends a nonce and
-// hears back booleans and a count). The app only ever handles slide numbers and view names; the
-// deck's text stays in the frame, on the artifact's own origin.
+// frame shows notes, the next slide and a timer) with an optional audience window in step, and the
+// .pptx download (the frame builds and saves the file; the app sends a nonce and hears back
+// booleans and a count). The app only ever handles slide numbers, version numbers and view names;
+// the deck's text stays in the frame, on the artifact's own origin.
 //
 // The slide is kept in the app URL's fragment (#slide=N), written with history.replaceState and
 // never sent to the server, so a reload or a shared link opens the same slide. A new frame (a newer
-// version, review mode) reports `ready` and is sent back to that slide.
+// version, review mode) reports `ready` and is sent back to that slide. The slide lives in refs,
+// not state, so paging never re-renders the viewer.
 //
-// The frame can change view on its own (its `s` key and Presenter control, Escape, its Exit button)
-// and reports every change with `view`, so `mode`, the strip, the version pause and the audience
-// window follow what is on screen, whoever switched it.
+// The frame can change view on its own (its `s` key, Escape, its Exit button)
+// and reports every change with `view`, so `mode`, the menu and the version pause follow what is
+// on screen, whoever switched it.
+//
+// Review mode (the comments panel's frame) shows every slide stacked and refuses every other view,
+// so Present and Presenter view chosen there (or the frame's f key) first leave review mode: the
+// page closes the panel and loads the deck without it, and the new frame presents once it reports
+// `ready`.
+//
+// An audience window shows exactly the presenter window's slide of the presenter window's
+// version: it opens on that version's permanent link (so it never moves to a newer version by
+// itself), keeps its frame in deck view at any size, sends its frame back to the presenter's slide
+// whatever paged it, and loads another version only when the presenter's window shows one. It
+// follows the presenter's window until either window closes.
 import { APP_ROUTES, type AppConfig, route, typeDef, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showToast } from "../ui/index.ts";
@@ -25,7 +37,6 @@ import {
   exportMessage,
   gotoMessage,
   newNonce,
-  postPrint,
   postToDeck,
   rendererTargetOrigin,
   viewMessage,
@@ -41,23 +52,17 @@ export type PresentMode = "off" | "presenter" | "audience";
 export interface Presentation {
   /** The artifact is a deck. Everything else is inert when false. */
   available: boolean;
-  /**
-   * The deck was opened through a permanent version link (/a/:slug/v/:n): it never moves to a
-   * newer version, and its audience window opens the same version.
-   */
-  pinned: boolean;
-  slide: number | null;
-  count: number | null;
   mode: PresentMode;
-  /** The app has put the frame full screen. */
-  fullscreen: boolean;
+  /**
+   * An audience window that has heard from its presenter window: the viewer then shows only the
+   * deck. A link with a pair id and no presenter in this browser keeps the whole page.
+   */
+  paired: boolean;
   /** Keeps the frame while presenting (no swap to a newer version mid-talk). */
   pause: WatchPause;
   present(): void;
   presenterView(): void;
-  exit(): void;
   openAudience(): void;
-  print(notes: boolean): void;
   /** A .pptx is being made in the frame. */
   exporting: boolean;
   /** Ask the frame to build the deck as .pptx and download it. */
@@ -69,29 +74,27 @@ export const EXPORT_TIMEOUT_MS = 90_000;
 
 /** The toast when the deck's frame is replaced while it makes the file. */
 export const EXPORT_INTERRUPTED_TOAST = {
-  title: "The deck reloaded during the .pptx download",
-  description: "If no file was saved, choose Download .pptx again.",
+  title: "The .pptx download was interrupted",
   tone: "warning",
 } as const;
 
-/** The toast for a finished export. Exported for tests. */
+/**
+ * The toast for a finished export, or null for a clean one: the browser shows its own download.
+ * Exported for tests.
+ */
 export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: boolean }): {
   title: string;
   description?: string;
-  tone: "success" | "warning" | "danger";
-} {
+  tone: "warning" | "danger";
+} | null {
   if (!m.ok) {
-    return {
-      title: "The .pptx could not be made",
-      description: "Try again, or print the deck as PDF.",
-      tone: "danger",
-    };
+    return { title: "The .pptx could not be made", tone: "danger" };
   }
-  if (m.images_skipped === 0) return { title: "Downloaded the .pptx", tone: "success" };
+  if (m.images_skipped === 0) return null;
   if (m.opaque) {
     return {
       title: "Downloaded the .pptx",
-      description: "Images were left out: this Plinth instance serves decks with opaque origins.",
+      description: "Images were left out.",
       tone: "warning",
     };
   }
@@ -111,20 +114,28 @@ export interface PresentationOptions {
   contentOrigin: string;
   config: AppConfig | null;
   slug: string;
-  /** Opened through a permanent version link; the gate's version is the one on view. */
-  pinned?: boolean;
+  /** The frame is in review mode (the comments panel's stacked overview). */
+  review?: boolean;
+  /** Leaves review mode: closes the comments panel and loads the deck without it. */
+  leaveReview?: () => void;
+  /** Loads another app URL in this window (an audience window following a new version). */
+  navigate?: (href: string) => void;
 }
 
+/** What Present or Presenter view asked for while the frame was in review mode. */
+type Pending = { action: "fullscreen" | "presenter"; from: HTMLIFrameElement | null };
+
 /**
- * The URL of an audience window for `pair`: the artifact's current version, or `version` itself
- * when the presenter is on a permanent version link, so both windows show the same deck.
+ * The URL of an audience window for `pair` on `version` (the presenter's), optionally at `slide`.
+ * Without a version it is the artifact's current link.
  */
-export function audienceHref(slug: string, pair: string, version?: number): string {
+export function audienceHref(slug: string, pair: string, version?: number, slide?: number): string {
   const path =
     version === undefined
       ? route(APP_ROUTES.artifact, { slug })
       : route(APP_ROUTES.artifactVersion, { slug, n: version });
-  return `${path}#present=audience&pair=${pair}`;
+  const hash = `#present=audience&pair=${pair}`;
+  return path + (slide === undefined ? hash : writeFragment(hash, slide));
 }
 
 function writeSlide(slide: number): void {
@@ -137,10 +148,11 @@ function writeSlide(slide: number): void {
   }
 }
 
+const replaceLocation = (href: string) => window.location.replace(href);
+
 export function usePresentation(o: PresentationOptions): Presentation {
   const { gate, frame, contentOrigin, config, slug } = o;
-  const pinned = o.pinned === true;
-  const pinnedVersion = pinned ? gate.artifact.version : undefined;
+  const version = gate.artifact.version;
   const artifactId = gate.artifact.id;
   const type = gate.artifact.type;
   const available = typeDef(type)?.present === true;
@@ -148,12 +160,11 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const target = rendererTargetOrigin(config, contentOrigin);
 
   const initial = useMemo(() => readFragment(window.location.hash), []);
-  const [slide, setSlide] = useState<number | null>(null);
-  const [count, setCount] = useState<number | null>(null);
   const [mode, setMode] = useState<PresentMode>(() =>
     available && initial.pair ? "audience" : "off",
   );
   const [fullscreen, setFullscreen] = useState(false);
+  const [paired, setPaired] = useState(false);
   const [exporting, setExporting] = useState(false);
   /** The export the app is waiting for: its nonce, its timeout and the frame it was sent to. */
   const pendingExport = useRef<{
@@ -169,7 +180,23 @@ export function usePresentation(o: PresentationOptions): Presentation {
   frameRef.current = frame;
   const targetRef = useRef(target);
   targetRef.current = target;
+  const versionRef = useRef(version);
+  versionRef.current = version;
+  const navigateRef = useRef(o.navigate ?? replaceLocation);
+  navigateRef.current = o.navigate ?? replaceLocation;
+  const reviewRef = useRef(o.review === true);
+  reviewRef.current = o.review === true;
+  const leaveReviewRef = useRef(o.leaveReview);
+  leaveReviewRef.current = o.leaveReview;
+  /** The presenter's channel to its audience windows, and its pair id. */
   const channel = useRef<PresentChannel | null>(null);
+  const pairRef = useRef<string | null>(null);
+  /** In an audience window: the presenter's slide, once its window has sent one. */
+  const lead = useRef<number | null>(null);
+  /** In an audience window: it is already loading the presenter's other version. */
+  const moving = useRef(false);
+  /** Present chosen in review mode, done when the frame without review mode is ready. */
+  const pending = useRef<Pending | null>(null);
 
   /** Sets the mode now, so messages that arrive before the next render see it. */
   const changeMode = useCallback((next: PresentMode) => {
@@ -177,15 +204,18 @@ export function usePresentation(o: PresentationOptions): Presentation {
     setMode(next);
   }, []);
 
-  /** Presenter view is over (the strip's Exit, or the frame left it): the audience is let go. */
-  const leavePresenter = useCallback(() => {
-    channel.current?.close();
-    channel.current = null;
-    changeMode("off");
-  }, [changeMode]);
+  /** The presenter's slide and version, to its audience windows. */
+  const tellAudience = useCallback((n: number) => {
+    if (modeRef.current === "audience") return;
+    channel.current?.post({ v: 1, type: "slide", slide: n, version: versionRef.current });
+  }, []);
 
   const goto = useCallback((n: number) => {
     postToDeck(frameRef.current, targetRef.current, gotoMessage(n));
+  }, []);
+
+  const showDeck = useCallback(() => {
+    postToDeck(frameRef.current, targetRef.current, viewMessage("deck"));
   }, []);
 
   const requestFullscreen = useCallback((afterFail?: () => void) => {
@@ -203,13 +233,27 @@ export function usePresentation(o: PresentationOptions): Presentation {
     );
   }, []);
 
+  /**
+   * In review mode, leaves it and keeps `action` for the frame that replaces this one; true when
+   * it did. Outside review mode it does nothing and returns false.
+   */
+  const leaveReviewFirst = useCallback((action: Pending["action"]): boolean => {
+    const leave = leaveReviewRef.current;
+    if (!reviewRef.current || !leave) return false;
+    pending.current = { action, from: frameRef.current };
+    leave();
+    return true;
+  }, []);
+
   // The frame's messages: where the deck is, and the f key.
   useEffect(() => {
     if (!available) return;
     const onMessage = (e: MessageEvent) => {
       const m = readSlidesFrameMessage(e, { frame, contentOrigin, opaque, type });
       if (!m) return;
+      const audience = modeRef.current === "audience";
       if (m.type === "fullscreen") {
+        if (!audience && leaveReviewFirst("fullscreen")) return;
         requestFullscreen(() => showToast({ title: "Use Present in the bar" }));
         return;
       }
@@ -219,38 +263,53 @@ export function usePresentation(o: PresentationOptions): Presentation {
         clearTimeout(pending.timer);
         pendingExport.current = null;
         setExporting(false);
-        showToast(exportedToast(m));
+        const toast = exportedToast(m);
+        if (toast) showToast(toast);
         return;
       }
       if (m.type === "view") {
-        // An audience window follows its presenter window whatever its own frame shows.
-        if (modeRef.current === "audience") return;
+        // An audience window shows the deck view, whatever its own frame switched to.
+        if (audience) {
+          if (lead.current !== null && m.mode !== "deck") showDeck();
+          return;
+        }
         if (m.mode === "presenter") {
           if (modeRef.current !== "presenter") changeMode("presenter");
         } else if (modeRef.current === "presenter") {
-          leavePresenter();
+          changeMode("off");
         }
         return;
       }
-      setCount(m.count);
       if (m.type === "ready") {
+        if (audience && lead.current !== null) showDeck();
         const want = wanted.current;
         if (want !== null && want !== m.slide) goto(Math.min(want, m.count));
         else {
           wanted.current = m.slide;
-          setSlide(m.slide);
+          tellAudience(m.slide);
+        }
+        // The frame that replaced a review frame: what Present asked for there happens now.
+        const asked = pending.current;
+        if (!audience && asked && asked.from !== frame) {
+          pending.current = null;
+          if (asked.action === "presenter") changeMode("presenter");
+          else {
+            requestFullscreen(() => showToast({ title: "Press Present again for full screen" }));
+          }
         }
         if (modeRef.current === "presenter") {
           postToDeck(frame, targetRef.current, viewMessage("presenter"));
         }
         return;
       }
-      wanted.current = m.slide;
-      setSlide(m.slide);
-      writeSlide(m.slide);
-      if (modeRef.current === "presenter") {
-        channel.current?.post({ v: 1, type: "slide", slide: m.slide });
+      // An audience window stays on the presenter's slide, whatever paged its frame.
+      if (audience && lead.current !== null && m.slide !== lead.current) {
+        goto(lead.current);
+        return;
       }
+      wanted.current = m.slide;
+      writeSlide(m.slide);
+      tellAudience(m.slide);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -261,9 +320,11 @@ export function usePresentation(o: PresentationOptions): Presentation {
     opaque,
     type,
     goto,
+    showDeck,
     requestFullscreen,
     changeMode,
-    leavePresenter,
+    tellAudience,
+    leaveReviewFirst,
   ]);
 
   // A new frame (a newer version, review mode) replaced the one making the file: its answer can no
@@ -284,21 +345,27 @@ export function usePresentation(o: PresentationOptions): Presentation {
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [available]);
 
-  // An audience window follows its presenter window.
+  // An audience window follows its presenter window: the same version, the same slide, deck view.
   useEffect(() => {
     if (!available || mode !== "audience" || !initial.pair) return;
-    const ch = openPresentChannel(artifactId, initial.pair, (m) => {
-      if (m.type !== "slide") return;
+    const pair = initial.pair;
+    const ch = openPresentChannel(artifactId, pair, (m) => {
+      if (m.type !== "slide" || moving.current) return;
+      if (m.version !== versionRef.current) {
+        // One load: later messages while this window navigates would start it again.
+        moving.current = true;
+        navigateRef.current(audienceHref(slug, pair, m.version, m.slide));
+        return;
+      }
+      lead.current = m.slide;
       wanted.current = m.slide;
+      setPaired(true);
+      showDeck();
       goto(m.slide);
     });
-    channel.current = ch;
     ch?.post({ v: 1, type: "hello" });
-    return () => {
-      ch?.close();
-      if (channel.current === ch) channel.current = null;
-    };
-  }, [available, mode, initial.pair, artifactId, goto]);
+    return () => ch?.close();
+  }, [available, mode, initial.pair, artifactId, slug, goto, showDeck]);
 
   useEffect(
     () => () => {
@@ -309,41 +376,30 @@ export function usePresentation(o: PresentationOptions): Presentation {
   );
 
   const present = useCallback(() => {
-    if (!available) return;
+    if (!available || leaveReviewFirst("fullscreen")) return;
     requestFullscreen(() =>
       showToast({ title: "This browser did not allow full screen", tone: "danger" }),
     );
-  }, [available, requestFullscreen]);
+  }, [available, requestFullscreen, leaveReviewFirst]);
 
   const presenterView = useCallback(() => {
-    if (!available) return;
+    if (!available || leaveReviewFirst("presenter")) return;
     postToDeck(frameRef.current, targetRef.current, viewMessage("presenter"));
     changeMode("presenter");
-  }, [available, changeMode]);
+  }, [available, changeMode, leaveReviewFirst]);
 
-  const exit = useCallback(() => {
-    if (modeRef.current === "presenter") {
-      postToDeck(frameRef.current, targetRef.current, viewMessage("deck"));
-      leavePresenter();
-    }
-    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-  }, [leavePresenter]);
-
+  // Every audience window of this presenter shares one pair, so a second one follows as well.
   const openAudience = useCallback(() => {
     if (!available) return;
-    const pair = newNonce();
-    channel.current?.close();
-    channel.current = openPresentChannel(artifactId, pair, (m) => {
-      if (m.type === "hello" && wanted.current !== null) {
-        channel.current?.post({ v: 1, type: "slide", slide: wanted.current });
-      }
-    });
-    window.open(audienceHref(slug, pair, pinnedVersion), "_blank", "noopener");
-  }, [available, artifactId, slug, pinnedVersion]);
-
-  const print = useCallback((notes: boolean) => {
-    postPrint(frameRef.current, targetRef.current, notes);
-  }, []);
+    if (!channel.current || !pairRef.current) {
+      const pair = newNonce();
+      pairRef.current = pair;
+      channel.current = openPresentChannel(artifactId, pair, (m) => {
+        if (m.type === "hello" && wanted.current !== null) tellAudience(wanted.current);
+      });
+    }
+    window.open(audienceHref(slug, pairRef.current, versionRef.current), "_blank", "noopener");
+  }, [available, artifactId, slug, tellAudience]);
 
   const exportPptx = useCallback(() => {
     if (!available || pendingExport.current) return;
@@ -365,17 +421,12 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const presenting = available && (fullscreen || mode === "presenter");
   return {
     available,
-    pinned,
-    slide,
-    count,
     mode,
-    fullscreen,
+    paired: mode === "audience" && paired,
     pause: presenting ? "present" : null,
     present,
     presenterView,
-    exit,
     openAudience,
-    print,
     exporting,
     exportPptx,
   };

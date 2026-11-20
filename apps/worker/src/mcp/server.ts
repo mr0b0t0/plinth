@@ -13,7 +13,6 @@ import {
   CATEGORY_SHARE_INSTRUCTION,
   contentNote,
   PLUGIN_NOTE,
-  SENSITIVE_INSTRUCTION,
   TYPES_NOTE,
   UNTRUSTED_NOTE,
 } from "./notes.ts";
@@ -24,6 +23,8 @@ import type { ToolRegistrar } from "./tools/context.ts";
 import { registerDataTools } from "./tools/data.ts";
 import { registerDesignSystemTools } from "./tools/designSystems.ts";
 import { registerPreviewTools } from "./tools/preview.ts";
+import { registerSheetTools } from "./tools/sheets.ts";
+import { registerStatsTools } from "./tools/stats.ts";
 import { registerUploadTools } from "./tools/uploads.ts";
 
 export * from "./catalog.ts";
@@ -37,9 +38,11 @@ export const MCP_TOOL_FILES: readonly ToolRegistrar[] = [
   registerArtifactTools,
   registerCommentTools,
   registerUploadTools,
+  registerStatsTools,
   registerDataTools,
   registerPreviewTools,
   registerDesignSystemTools,
+  registerSheetTools,
 ];
 
 export function buildMcpServer(ctx: Ctx): McpServer {
@@ -65,7 +68,6 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "read it with list_artifact_data and change it with write_artifact_data. " +
         "For a build folder or more than ~1 MB, call start_upload instead of inline assets. " +
         "Results list warnings; fix them before handing over the link (not_scanned and live_draft need no action). " +
-        `${SENSITIVE_INSTRUCTION} ` +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
         "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
         `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,

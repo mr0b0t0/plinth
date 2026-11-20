@@ -1,7 +1,7 @@
 // The .pptx export in the frame: the lazy writer's URL next to the renderer script and its
 // one-event handoff, which images go in (the artifact's own files under origin isolation, inline
-// data: images always, nothing fetched under an opaque origin or from another origin), the ready
-// notice, and the boot wiring: an export message from the app (parent, app origin, nonce) builds
+// data: images always, nothing fetched under an opaque origin or from another origin), saving
+// with no notice of its own, and the boot wiring: an export message from the app (parent, app origin, nonce) builds
 // the file from every slide and answers with booleans and a count only.
 import {
   LIMITS,
@@ -16,7 +16,7 @@ import {
   clickDownload,
   collectImages,
   imageData,
-  showReadyNotice,
+  saveBlob,
   writerLoader,
   writerUrl,
 } from "./export.ts";
@@ -161,40 +161,25 @@ describe("images", () => {
 });
 
 describe("saving", () => {
-  it("downloads with an <a download> and offers a Download button until dismissed", () => {
+  it("downloads with an <a download> that it removes again", () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    const root = document.createElement("main");
-    document.body.append(root);
     clickDownload(document, "blob:x", "Q4.pptx");
     expect(click).toHaveBeenCalledTimes(1);
     expect(document.querySelector("a[download]")).toBeNull();
-
-    showReadyNotice(document, root, "blob:x", "Q4 <b>.pptx");
-    const bar = root.querySelector(".plinth-slides__ready");
-    expect(bar?.querySelector(".plinth-slides__ready-text")?.textContent).toBe(
-      "Q4 <b>.pptx is ready",
-    );
-    expect(bar?.querySelector("b")).toBeNull();
-    const [download, dismiss] = Array.from(bar?.querySelectorAll("button") ?? []);
-    download?.click();
-    expect(click).toHaveBeenCalledTimes(2);
-    dismiss?.click();
-    expect(root.querySelector(".plinth-slides__ready")).toBeNull();
-    expect(revoke).toHaveBeenCalledWith("blob:x");
   });
 
-  it("replaces an older notice and goes by itself", () => {
+  it("saves a blob with no notice of its own, and releases its URL later", () => {
     vi.useFakeTimers();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:1");
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    const root = document.createElement("main");
-    showReadyNotice(document, root, "blob:1", "a.pptx", 1000);
-    showReadyNotice(document, root, "blob:2", "a.pptx", 1000);
-    expect(root.querySelectorAll(".plinth-slides__ready")).toHaveLength(1);
-    expect(revoke).toHaveBeenCalledWith("blob:1");
+    const before = document.body.innerHTML;
+    saveBlob(window, new Blob(["x"]), "a.pptx", 1000);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(document.body.innerHTML).toBe(before);
+    expect(revoke).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1000);
-    expect(root.querySelector(".plinth-slides__ready")).toBeNull();
-    expect(revoke).toHaveBeenCalledWith("blob:2");
+    expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:1");
   });
 });
 

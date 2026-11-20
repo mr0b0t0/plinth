@@ -194,6 +194,9 @@ describe("operator settings (legal pages)", () => {
       max_request_bytes: LIMITS.maxInlineRequestBytes,
       max_bundle_bytes: DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes,
       max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+      max_sheet_bytes: LIMITS.maxSheetBytes,
+      max_sheet_rows: LIMITS.maxSheetRows,
+      max_sheet_columns: LIMITS.maxSheetColumns,
     });
     expect(cfg.cdn_allowlist).toEqual(config().cdnAllowlist);
     expect(cfg.upload_ticket_ttl_s).toBe(TTL.uploadTicketMs / 1000);
@@ -271,6 +274,19 @@ describe("operator settings (legal pages)", () => {
     expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "false" }).showSourceLink).toBe(false);
     expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "0" }).showSourceLink).toBe(false);
   });
+  it("keeps who opened an artifact for VIEW_LOG_RETENTION_DAYS (365 by default, 90 to 3650)", () => {
+    expect(parseConfig(base).viewLogRetentionDays).toBe(365);
+    expect(parseConfig({ ...base, VIEW_LOG_RETENTION_DAYS: "" }).viewLogRetentionDays).toBe(365);
+    for (const ok of ["90", "180", "3650"])
+      expect(parseConfig({ ...base, VIEW_LOG_RETENTION_DAYS: ok }).viewLogRetentionDays).toBe(
+        Number(ok),
+      );
+    for (const bad of ["89", "0", "3651", "-1", "365.5", "1e3", "a year", " 365x"])
+      expect(() => parseConfig({ ...base, VIEW_LOG_RETENTION_DAYS: bad }), bad).toThrow(
+        ConfigError,
+      );
+  });
+
   it("count artifact opens unless VIEW_COUNTS is off", () => {
     expect(parseConfig(base).viewCounts).toBe(true);
     expect(parseConfig({ ...base, VIEW_COUNTS: "" }).viewCounts).toBe(true);

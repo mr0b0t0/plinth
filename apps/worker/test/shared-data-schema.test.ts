@@ -260,16 +260,15 @@ describe("createVersion stores capabilities", () => {
     expect(old?.capabilities).toBeNull();
     expect(versionCapabilities(old ?? null)).toBeNull();
     // Rows stored without the room fields (every row without `room`) read as no room, and rows
-    // without `comments`, `dictation` or `hold` as no page comments, no dictation and no hold.
+    // without `comments` or `hold` as no page comments and no hold.
     expect(versionCapabilities(current ?? null)).toEqual({
       data: true,
       viewer: true,
       shared: ["tasks"],
       room: false,
       roomOpen: [],
-      people: false,
       comments: false,
-      dictation: false,
+      people: false,
       hold: false,
     });
     expect(versionCapabilities(null)).toBeNull();
@@ -284,9 +283,8 @@ describe("createVersion stores capabilities", () => {
       shared: [],
       room: false,
       roomOpen: [],
-      people: false,
       comments: false,
-      dictation: false,
+      people: false,
       hold: false,
     });
     // A room declaration, alone or with data; topics that break the rule are dropped.
@@ -301,9 +299,8 @@ describe("createVersion stores capabilities", () => {
       shared: [],
       room: true,
       roomOpen: ["cursor", "*"],
-      people: false,
       comments: false,
-      dictation: false,
+      people: false,
       hold: false,
     });
     expect(
@@ -320,9 +317,8 @@ describe("createVersion stores capabilities", () => {
       shared: [],
       room: false,
       roomOpen: [],
-      people: false,
       comments: false,
-      dictation: false,
+      people: false,
       hold: false,
     });
   });

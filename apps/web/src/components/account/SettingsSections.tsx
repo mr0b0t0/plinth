@@ -1,13 +1,11 @@
-// The sections of /a/:slug/settings: title, category, who can open it, people, publishing from CI,
-// delete. Owner only (the Worker checks that on every call; the page only hides what would fail).
-import { KeyIcon, TrashIcon, UserPlusIcon } from "@phosphor-icons/react";
+// The sections of /a/:slug/settings: title, category, who can open it, people, delete. Owner only (the
+// Worker checks that on every call; the page only hides what would fail).
+import { TrashIcon, UserPlusIcon } from "@phosphor-icons/react";
 import {
   API,
   APP_ROUTES,
   type ArtifactSummary,
   type CategoryCount,
-  type CategoryShareSummary,
-  CI_DOCS_URL,
   categoryKey,
   categoryProblem,
   LIMITS,
@@ -39,7 +37,6 @@ import { ChoiceList } from "./ChoiceList.tsx";
 import { CopyField } from "./CopyField.tsx";
 import { versionsText } from "./format.ts";
 import { addGrant, type GrantDraft, removeGrant, setGrantRole } from "./grants.ts";
-import { NewTokenDialog } from "./NewTokenDialog.tsx";
 import { Note } from "./Note.tsx";
 
 const ACCESS_NOTE =
@@ -186,7 +183,6 @@ export function CategorySection({
     return () => ctrl.abort();
   }, []);
 
-  const [waiting, setWaiting] = useState<string | null>(null);
   const typed = normalizeCategory(value);
   const target = typed ? snapCategory(typed, snapTargets(artifact, names ?? [])) : "";
   const dirty = target !== "" && target !== artifact.category;
@@ -198,7 +194,7 @@ export function CategorySection({
   // off, so say why and where a respelling for all of them happens.
   const sameAsCurrent = typed !== "" && typed !== artifact.category && target === artifact.category;
   const hint = sharedTarget
-    ? `“${target}” is shared with people. This artifact will wait for your review before they see it.`
+    ? `“${target}” is shared: this waits for your review before its people see it.`
     : dirty
       ? `Will be filed under “${target}”.`
       : sameAsCurrent
@@ -216,17 +212,6 @@ export function CategorySection({
       if (category === null) toast.success("Category removed");
       else toast.success("Category saved", res.category ?? undefined);
       onSaved(res.category);
-      // Filed under a shared category: point at the review that decides whether its people see it.
-      setWaiting(null);
-      if (res.category_share === "pending" && res.category) {
-        const stored = res.category;
-        api<{ items: CategoryShareSummary[] }>(API.categoryShares)
-          .then((r) => {
-            const s = r.items.find((x) => categoryKey(x.category) === categoryKey(stored));
-            setWaiting(s ? s.id : null);
-          })
-          .catch(() => undefined);
-      }
       // Save turns off and Remove may go away, so the focus would fall to the page: keep it here.
       inputRef.current?.focus();
     } catch (err) {
@@ -251,7 +236,7 @@ export function CategorySection({
     <Section
       id={CATEGORY_SECTION_ID}
       title="Category"
-      description="Group this artifact with others on your dashboard. Only you see it; people you share it with do not."
+      description="Group this artifact on your dashboard."
     >
       <form
         className="pl-acct-form"
@@ -262,6 +247,7 @@ export function CategorySection({
         <Input
           label="Category"
           hideLabel
+          className="pl-category-field"
           value={value}
           list={listId}
           maxLength={LIMITS.maxCategoryLength}
@@ -281,14 +267,6 @@ export function CategorySection({
             <option key={c.name} value={c.name} />
           ))}
         </datalist>
-        {waiting && (
-          <Note>
-            It waits for your review before the people its category is shared with see it.{" "}
-            <Link to={`${APP_ROUTES.dashboard}?review=${encodeURIComponent(waiting)}`}>
-              Review now
-            </Link>
-          </Note>
-        )}
         <div className="pl-acct-save">
           <Button type="submit" disabled={!dirty || busy === "remove"} loading={busy === "save"}>
             Save category
@@ -430,9 +408,11 @@ export function AccessSection({
             }}
           />
         )}
-        {visibility === "allowlist" && people === 0 && (
-          <Note>Only you can open it for now. Add people below to share it with them.</Note>
-        )}
+        {visibility === "allowlist" &&
+          people === 0 &&
+          sharing.category_share?.state !== "shared" && (
+            <Note>Only you can open it for now. Add people below to share it with them.</Note>
+          )}
         {error && visibility !== "password" && (
           <p className="pl-field__error" role="alert">
             {error}
@@ -471,7 +451,9 @@ export function PeopleSection({
   const [busy, setBusy] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const grants: GrantDraft[] = sharing.grants.map((g) => ({ email: g.email, role: g.role }));
-  // The display name of the account behind each address, when it has one (display text only).
+  // The display name behind each address (display text only): the server sends it only once its
+  // holder has taken part in the artifact, so adding an address never shows whether it has an
+  // account.
   const names = new Map(sharing.grants.map((g) => [g.email, g.name ?? null]));
 
   const put = async (next: GrantDraft[]): Promise<boolean> => {
@@ -526,39 +508,15 @@ export function PeopleSection({
     }
   };
 
-  const viaCategory = sharing.category_share ?? null;
+  // People who see it through its shared category: one line, managed from the dashboard.
+  const via = sharing.category_share ?? null;
+  const viaShare = via?.state === "shared" && artifact.category ? via : null;
   return (
     <Section
       id="settings-people"
       title="People"
       description="Viewers can open it while it is private. Commenters can also comment; editors can also publish new versions."
     >
-      {viaCategory &&
-        (viaCategory.state === "shared" ? (
-          <Note>
-            Also visible to {viaCategory.people.length}{" "}
-            {viaCategory.people.length === 1 ? "person" : "people"} through “{viaCategory.title}” (a
-            shared category).{" "}
-            <Link
-              to={`${APP_ROUTES.dashboard}?category=${encodeURIComponent(artifact.category ?? "")}`}
-            >
-              Manage
-            </Link>
-          </Note>
-        ) : viaCategory.state === "pending" ? (
-          <Note tone="warning">
-            Its category is shared as “{viaCategory.title}”: it waits for your review before those
-            people see it.{" "}
-            <Link to={`${APP_ROUTES.dashboard}?review=${encodeURIComponent(viaCategory.id)}`}>
-              Review
-            </Link>
-          </Note>
-        ) : (
-          <Note>
-            Its category is shared as “{viaCategory.title}”, and you kept this artifact private
-            there.
-          </Note>
-        ))}
       {grants.length > 0 ? (
         <ul className="pl-acct-people" aria-busy={busy || undefined}>
           {grants.map((g) => (
@@ -594,8 +552,19 @@ export function PeopleSection({
             </li>
           ))}
         </ul>
-      ) : (
+      ) : viaShare ? null : (
         <p className="pl-acct-group__empty">Nobody else has access yet.</p>
+      )}
+      {viaShare && (
+        <p className="pl-acct-via">
+          {viaShare.people.length} {viaShare.people.length === 1 ? "person" : "people"} via{" "}
+          {artifact.category} ·{" "}
+          <Link
+            to={`${APP_ROUTES.dashboard}?category=${encodeURIComponent(artifact.category ?? "")}`}
+          >
+            Manage
+          </Link>
+        </p>
       )}
       <form className="pl-acct-add" onSubmit={add} noValidate>
         <Input
@@ -627,47 +596,6 @@ export function PeopleSection({
       <p className="type-small text-muted">
         Changes apply at once. Anyone who has it open now will need to open the link again.
       </p>
-    </Section>
-  );
-}
-
-// ---------- Publish from CI ----------
-
-/**
- * A token limited to this artifact, for a CI pipeline: it can read the artifact and publish new
- * versions of it, nothing else. The dialog shows the token once, with the workflow step.
- */
-export function CiSection({ artifact }: { artifact: ArtifactSummary }) {
-  const toast = useToast();
-  const [open, setOpen] = useState(false);
-  return (
-    <Section
-      id="settings-ci"
-      title="Publish from CI"
-      description={
-        <>
-          Publish a new version from GitHub Actions, GitLab CI or a cron job each time a build runs,
-          with a token that can only read this artifact and publish new versions of it.{" "}
-          <a href={CI_DOCS_URL} target="_blank" rel="noreferrer">
-            How it works
-          </a>
-        </>
-      }
-    >
-      <div>
-        <Button icon={KeyIcon} onClick={() => setOpen(true)}>
-          Create a token for this artifact
-        </Button>
-      </div>
-      <p className="type-small text-muted">
-        Tokens you made are listed, and revoked, on the Connections page.
-      </p>
-      <NewTokenDialog
-        open={open}
-        artifact={{ id: artifact.id, slug: artifact.slug, title: artifact.title }}
-        onClose={() => setOpen(false)}
-        onCreated={() => toast.success("Token created", "Copy it now: it is shown once.")}
-      />
     </Section>
   );
 }

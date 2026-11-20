@@ -315,7 +315,11 @@ describe("Dashboard categories", () => {
     await waitFor(() => expect(loads().length).toBe(before + 1));
     const region = screen.getByRole("region", { name: "Artifacts" });
     expect(rowTitles().sort()).toEqual(["Acme plan", "Acme report"]);
-    expect(within(region).getAllByText("Acme")).toHaveLength(2);
+    // Each row carries its category twice (the badge beside the title, and the plain text a phone
+    // shows on the second line, one of them hidden by CSS): count the badges.
+    expect(
+      within(region).getAllByText("Acme", { selector: ".pl-dash__category-name" }),
+    ).toHaveLength(2);
     expect(within(region).queryByText("Acme site")).toBeNull();
     await user.click(categoryTrigger());
     expect(screen.getByRole("menuitemradio", { name: "Acme (2)" })).toBeTruthy();

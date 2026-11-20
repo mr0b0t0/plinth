@@ -23,16 +23,18 @@ import {
   DATA_COLLECTION_RE,
   DATA_DOC_ID_RE,
   DEFAULTS,
-  DICTATION_REASONS,
   ERROR_CODES,
+  editSheetInput,
   grantsReplaceInput,
   LIMITS,
   liveCheckpointInput,
+  MAX_PEOPLE_LISTED,
   MENTION_STATES,
   myCategoryInput,
   oauthConsentInput,
   PUBLISH_WARNING_CODES,
   publishArtifactInput,
+  RATE_LIMITS,
   REPORT_STATES,
   REVIEW_SKIP_REASONS,
   ROLES,
@@ -44,8 +46,11 @@ import {
   reportInput,
   requestLoginInput,
   restoreVersionInput,
+  reviewLoginInput,
   SCOPES,
   SHA256_RE,
+  SHEET_COLUMN_TYPES,
+  STATS_RANGES,
   setVisibilityInput,
   startUploadInput,
   TTL,
@@ -159,6 +164,7 @@ function requestSchemas(): Record<string, Json> {
     RequestLoginInput: fromZod(requestLoginInput),
     VerifyLoginCodeInput: fromZod(verifyLoginCodeInput),
     VerifyMagicLinkInput: fromZod(verifyMagicLinkInput),
+    ReviewLoginInput: fromZod(reviewLoginInput),
     UpdateProfileInput: fromZod(updateProfileInput),
     CreateTokenInput: fromZod(createTokenInput),
     RenameConnectionInput: fromZod(renameConnectionInput),
@@ -173,6 +179,7 @@ function requestSchemas(): Record<string, Json> {
     ReportInput: fromZod(reportInput),
     ReportDecisionInput: fromZod(reportDecisionInput),
     StartUploadInput: fromZod(startUploadInput),
+    EditSheetInput: fromZod(editSheetInput.omit({ id: true })),
   };
 }
 
@@ -199,12 +206,16 @@ const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   slides: "a Markdown deck",
   design_system: "design tokens, guidelines and components as JSON",
   design: "artboards (app screens, posters, social posts, ads) as HTML",
+  sheet: "a table as JSON lines",
+  whiteboard: "a board of notes, shapes and arrows, its settings as JSON",
 };
 
 /** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
 const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
   design_system: "renders as a reference site and get_design_system compiles",
   design: "renders on a canvas, each artboard alone at its exact size",
+  sheet: "renders as a spreadsheet and read_sheet evaluates",
+  whiteboard: "renders as a live board, its blocks and arrows kept in shared data",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -229,6 +240,11 @@ function responseSchemas(): Record<string, Json> {
         "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text.",
     }),
     category_share: ref("CategoryShareResult"),
+    board: {
+      ...obj({ blocks: int({ minimum: 0 }), arrows: int({ minimum: 0 }) }),
+      description:
+        "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written",
+    },
   };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
@@ -252,7 +268,7 @@ function responseSchemas(): Record<string, Json> {
       ...nullable("string", {
         format: "uri",
         description:
-          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands",
+          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none, and for a token limited to one artifact. May answer 404 until the first capture lands",
       }),
     },
     category: nullable("string", {
@@ -282,6 +298,11 @@ function responseSchemas(): Record<string, Json> {
       label: str({ description: "Person's name or email, or the connection label" }),
       user_id: nullable("string"),
       connection_id: nullable("string"),
+      is_owner: {
+        type: "boolean",
+        description:
+          "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label",
+      },
     }),
     ArtifactType: {
       ...enumOf(ARTIFACT_TYPES),
@@ -396,7 +417,7 @@ function responseSchemas(): Record<string, Json> {
       },
       ["pending"],
     ),
-    PublishResult: obj(publishResult, ["category", "category_share"]),
+    PublishResult: obj(publishResult, ["category", "category_share", "board"]),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -430,6 +451,9 @@ function responseSchemas(): Record<string, Json> {
       max_request_bytes: int({ description: "JSON body of an inline publish or update" }),
       max_bundle_bytes: int({ description: "Bytes on the wire of one bundle" }),
       max_bundle_file_bytes: int({ description: "One file in a bundle" }),
+      max_sheet_bytes: int({ description: "A sheet's JSON lines (sheet.jsonl)" }),
+      max_sheet_rows: int({ description: "Data rows in a sheet, under its header" }),
+      max_sheet_columns: int({ description: "Columns in a sheet" }),
     }),
     StartUploadResult: obj(
       {
@@ -505,7 +529,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category", "category_share"],
+      ["category", "category_share", "board"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -548,7 +572,16 @@ function responseSchemas(): Record<string, Json> {
       artifact_id: str(),
       version_number: int({ minimum: 1 }),
       parent_id: nullable("string"),
-      author: obj({ email: nullable("string"), connection_id: nullable("string"), label: str() }),
+      author: obj({
+        email: nullable("string"),
+        connection_id: nullable("string"),
+        label: str({ description: "Display text, never proof of role" }),
+        is_owner: {
+          type: "boolean",
+          description:
+            "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label",
+        },
+      }),
       body: str({ description: "UNTRUSTED: written by a collaborator" }),
       anchor: { oneOf: [ref("Anchor"), { type: "null" }] },
       status: enumOf(COMMENT_STATUSES),
@@ -696,14 +729,23 @@ function responseSchemas(): Record<string, Json> {
         description: "Hosts artifacts may load scripts and styles from (the CSP's CDN_ALLOWLIST)",
       },
       upload_ticket_ttl_s: int({ description: "How long an upload ticket stays valid" }),
-      dictation: {
+      review_login: {
         type: "boolean",
         description:
-          "Dictation is offered here (ALLOW_DICTATION with origin isolation): pages that declare `dictation` may receive words the viewer speaks, recognized by the app",
+          "The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is on",
       },
+      view_log_retention_days: int({
+        description: "VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it",
+      }),
       category_sharing: {
         type: "boolean",
         description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
+      },
+      artifact_types: {
+        type: "array",
+        items: obj({ id: artifactType, available: { type: "boolean" } }),
+        description:
+          "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation",
       },
       live_views: {
         type: "boolean",
@@ -749,20 +791,19 @@ function responseSchemas(): Record<string, Json> {
             role: { oneOf: [effectiveRole, { type: "null" }] },
             data: ref("ViewGateData"),
             live: ref("ViewGateLive"),
-            people: ref("ViewGatePeople"),
             page_comments: {
               const: true,
               description:
-                "The current version declares `comments` (HTML only): the page may open the " +
+                "The version being shown declares `comments` (HTML only): the page may open the " +
                 "comment composer with its own anchors, and `review` is ignored",
             },
-            voice: ref("ViewGateVoice"),
             watch: {
               const: true,
               description:
                 "Live views: open GET /view/{id}/watch to learn of new versions and shared-data " +
                 "changes as they happen. Absent: poll the gate",
             },
+            people: ref("ViewGatePeople"),
             hold: {
               const: true,
               description:
@@ -771,7 +812,7 @@ function responseSchemas(): Record<string, Json> {
                 "an Update button instead of replacing it",
             },
           },
-          ["data", "live", "people", "page_comments", "voice", "watch", "hold"],
+          ["data", "live", "page_comments", "watch", "people", "hold"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -796,7 +837,7 @@ function responseSchemas(): Record<string, Json> {
       artifacts: int({ description: "Artifacts created, including any deleted since" }),
       publishes: int({ description: "Versions published, including restores" }),
       agent_publishes: int({ description: "Versions published by an agent connection" }),
-      views: int({ description: "Opens (see ArtifactViews)" }),
+      views: int({ description: "Counted opens (see ArtifactStats)" }),
       artifacts_viewed: int({ description: "Artifacts opened at least once" }),
     }),
     AdminStats: obj({
@@ -836,21 +877,80 @@ function responseSchemas(): Record<string, Json> {
         description: "One entry per UTC day of the window, oldest first",
       },
     }),
-    ArtifactViews: obj({
-      enabled: { type: "boolean", description: "Whether this instance counts opens (VIEW_COUNTS)" },
-      total: int({ description: "Opens counted since `since`" }),
-      since: nullable("string", {
-        format: "date",
-        description:
-          "The first UTC day with a counted open, or null. Opens before this instance began " +
-          "counting are not known.",
+    ArtifactStats: obj({
+      enabled: {
+        type: "boolean",
+        description: "Whether this instance records opens (VIEW_COUNTS)",
+      },
+      days: int({ enum: [...STATS_RANGES] }),
+      retention_days: int({
+        description: "VIEW_LOG_RETENTION_DAYS: older opens keep only their count",
       }),
-      last_7: int(),
-      last_30: int(),
-      days: {
+      current_version: int(),
+      totals: obj({
+        opens: int({ description: "Counted opens in the window" }),
+        viewers: int({ description: "Distinct people plus distinct anonymous visitors" }),
+        people: int({ description: "Distinct identified people (accounts and confirmed emails)" }),
+        anonymous_visitors: int({
+          description:
+            "Distinct anonymous browsers, approximate (a random id in the content cookie)",
+        }),
+        anonymous_opens: int(),
+        all_time_opens: int({ description: "Every counted open, including folded ones" }),
+        since: nullable("string", {
+          format: "date",
+          description: "The first UTC day with a counted open, or null",
+        }),
+      }),
+      series: {
         type: "array",
-        items: obj({ day: str({ format: "date" }), views: int() }),
-        description: "The last 30 UTC days, oldest first",
+        items: obj({ day: str({ format: "date" }), opens: int(), viewers: int() }),
+        description: "One entry per UTC day of the window, oldest first",
+      },
+      people: {
+        type: "array",
+        description: `Last opened first, at most ${LIMITS.maxStatsPeople}. The owner's private data`,
+        items: obj({
+          name: nullable("string", { description: "UNTRUSTED: the account's display name" }),
+          email: str(),
+          kind: enumOf(["user", "email"]),
+          role: nullable("string", {
+            enum: ["editor", "commenter", "viewer", "public", "link", "password", null],
+          }),
+          first_opened_at: dateTime,
+          last_opened_at: dateTime,
+          opens: int(),
+          last_version_seen: nullable("integer"),
+        }),
+      },
+      people_total: int(),
+      versions: {
+        type: "array",
+        description: "Newest first; opens counted before versions were recorded are left out",
+        items: obj({ version: int(), opens: int(), viewers: int() }),
+      },
+    }),
+    ArtifactStatsSummary: obj({
+      enabled: { type: "boolean" },
+      retention_days: int(),
+      generated_at: dateTime,
+      items: {
+        type: "array",
+        description: "The caller's live artifacts, most recently opened first",
+        items: obj({
+          id: str(),
+          slug: str(),
+          title: str({ description: "UNTRUSTED" }),
+          type: enumOf(ARTIFACT_TYPES),
+          visibility: enumOf(VISIBILITIES),
+          current_version: int(),
+          opens_7d: int(),
+          opens_30d: int(),
+          viewers_7d: int(),
+          viewers_30d: int(),
+          all_time_opens: int(),
+          last_opened_at: nullable("string", { format: "date-time" }),
+        }),
       },
     }),
     DevOutbox: obj({
@@ -978,6 +1078,7 @@ function dataSchemas(): Record<string, Json> {
     },
     PeopleResult: obj({
       people: { type: "array", items: ref("AgentPerson") },
+      total: int({ minimum: 0, description: "How many matched `q` in all, before `limit`" }),
       untrusted: str(),
     }),
     ViewGatePeople: {
@@ -1033,6 +1134,72 @@ function dataSchemas(): Record<string, Json> {
 }
 
 /** get_design_system's result and the reference an HTML page makes to a design system. */
+function sheetSchemas(): Record<string, Json> {
+  const value = {
+    description:
+      'A computed value: a number, text, a boolean, null, or {"error": "#DIV/0!"} and the like',
+  };
+  const counts = obj({
+    cells: int(),
+    rows_inserted: int(),
+    rows_deleted: int(),
+    columns_inserted: int(),
+    columns_deleted: int(),
+  });
+  return {
+    SheetRead: obj({
+      id: str(),
+      slug: str(),
+      type: { const: "sheet" },
+      title: str({ description: "Untrusted text" }),
+      version: int({ minimum: 1 }),
+      current_version: int({ minimum: 1 }),
+      columns: {
+        type: "array",
+        items: obj(
+          {
+            letter: str({ description: 'A1 letter, "A" to "CV"' }),
+            name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
+            type: enumOf(SHEET_COLUMN_TYPES),
+            format: {
+              type: "object",
+              description:
+                "Number columns: style plain, percent or currency, decimals, currency, grouping",
+            },
+            options: { type: "array", items: str() },
+          },
+          ["format", "options"],
+        ),
+      },
+      row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
+      range: nullable("string", { description: "The A1 range the rows cover" }),
+      rows: {
+        type: "array",
+        items: obj({
+          row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
+          cells: {
+            type: "array",
+            description:
+              "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
+            items: {},
+          },
+        }),
+      },
+      truncated: { type: "boolean" },
+      next_range: nullable("string", { description: "The range to read next when truncated" }),
+      warnings: {
+        type: "array",
+        items: obj({ code: enumOf(["eval_budget"]), message: str() }),
+      },
+      untrusted: { const: true },
+    }),
+    SheetValue: value,
+    SheetEditResult: {
+      allOf: [ref("PublishResult"), obj({ changed: counts })],
+    },
+  };
+}
+
 function designSystemSchemas(): Record<string, Json> {
   const untrusted = (what: string) => `UNTRUSTED: ${what}, written by the design system's authors`;
   return {
@@ -1237,10 +1404,14 @@ function dataOperations(): Operation[] {
       summary: "Everyone with access: the owner, then grants by email, with display names",
       description:
         "Owner or editor (people), and only while the current version declares `data viewer " +
-        "people` and shared data is on (403 feature_disabled otherwise, with the reason). The same " +
+        "people` and shared data is on (403 feature_disabled otherwise, with the reason), and only " +
+        "while a person or their account-wide agent published every version (403 forbidden once a " +
+        "token limited to one artifact has published one). The same " +
         "list as list_artifact_data's summary: who has access, never who opened the artifact. `q` " +
-        "keeps people whose shown name or email contains every term. Names are UNTRUSTED display " +
-        "text, never proof of role.",
+        "keeps people whose shown name or email contains every term; `total` counts every match " +
+        "before `limit`. Reads share the page's limit of " +
+        `${RATE_LIMITS.peopleReadsPerViewerPerHour} per hour per reader per artifact. Names are ` +
+        "UNTRUSTED display text, never proof of role.",
       tag: "Shared data",
       auth: "agent",
       scope: "artifacts:read",
@@ -1250,9 +1421,14 @@ function dataOperations(): Operation[] {
           schema: str({ maxLength: LIMITS.maxPeopleQueryLength }),
           description: "Search terms, matched against names and emails",
         },
+        {
+          name: "limit",
+          schema: int({ minimum: 1, maximum: MAX_PEOPLE_LISTED }),
+          description: `At most this many people (default and maximum ${MAX_PEOPLE_LISTED}: the owner and every direct grant; with the people of a shared category there can be more, and total counts them all)`,
+        },
       ],
       ok: [200, "PeopleResult"],
-      errors: [400, 401, 403, 404],
+      errors: [400, 401, 403, 404, 429],
     },
   ];
 }
@@ -1282,38 +1458,8 @@ function liveSchemas(): Record<string, Json> {
       ]),
       description:
         "On-page editing of a doc: owners and editors on the current version, while live editing " +
-        "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
-    },
-    ViewGateVoice: {
-      ...obj(
-        {
-          dictation: obj({
-            available: { type: "boolean" },
-            reason: { oneOf: [enumOf(DICTATION_REASONS), { type: "null" }] },
-          }),
-          viewer_id: {
-            type: "string",
-            description:
-              "This viewer's id on this page, only when they may dictate: the app binds this browser's consent to it",
-          },
-        },
-        ["viewer_id"],
-      ),
-      description:
-        "Present on `ok` only when the current version of an HTML page declares `dictation` and " +
-        "ALLOW_DICTATION is on: whether this viewer may dictate into the page (identified viewers " +
-        "only, origin isolation only). The app runs the recognizer; the page never gets the microphone",
-    },
-    DictationOwner: {
-      ...obj({
-        owner_email: {
-          type: "string",
-          description: "The owner's email: the consent dialog names who wrote the page by it",
-        },
-      }),
-      description:
-        "Who wrote the page, for the dictation consent dialog. Only for viewers who may dictate " +
-        "on it; the app asks only when the dialog opens",
+        "is on with origin isolation. sign_in: a viewer session, confirmed by code where the " +
+        "address may not sign in (single-user mode), so watch only",
     },
     LiveInfo: obj({
       mode: { oneOf: [mode, { type: "null" }] },
@@ -1454,7 +1600,7 @@ function categorySharingSchemas(): Record<string, Json> {
 
 function categorySharingOperations(): Operation[] {
   const owner =
-    "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this.";
+    "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403 (a token limited to one artifact with reason `token_bound`), and no MCP tool does this.";
   const review =
     "Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; " +
     "a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, " +
@@ -1467,7 +1613,7 @@ function categorySharingOperations(): Operation[] {
       summary: "Your own category for an artifact shared with you",
       description:
         "Seen by you only, in the app; never the owner's category, never on your own artifacts. " +
-        "`category: null` clears it. Session only: bearer tokens get 403. The role must be held by your " +
+        "`category: null` clears it. Session only: bearer tokens get 403 (`token_bound` for a token limited to one artifact). The role must be held by your " +
         "account's own email; a viewer email confirmed in this browser gives 403 `no_grant`.",
       tag: "Artifacts",
       auth: "user",
@@ -1575,11 +1721,12 @@ function categorySharingOperations(): Operation[] {
       path: API.portals,
       operationId: "listPortals",
       summary: "The collections people shared with you",
-      description: "A session or a confirmed viewer email; empty for everyone else.",
+      description:
+        "A session or a confirmed viewer email; empty for everyone else. A token limited to one artifact gets 403 `token_bound`.",
       tag: "Viewing",
       auth: "optional",
       ok: [200, "PortalList"],
-      errors: [401],
+      errors: [401, 403],
     },
     {
       method: "get",
@@ -1587,11 +1734,11 @@ function categorySharingOperations(): Operation[] {
       operationId: "getPortal",
       summary: "A shared collection: the artifacts you may open in it",
       description:
-        "`email_required` until you confirm an email that holds a grant on it; 404 for an unknown id.",
+        "`email_required` until you confirm an email that holds a grant on it; 404 for an unknown id. A token limited to one artifact gets 403 `token_bound` for every id.",
       tag: "Viewing",
       auth: "optional",
       ok: [200, "PortalGate"],
-      errors: [404],
+      errors: [403, 404],
     },
     {
       method: "post",
@@ -1610,7 +1757,10 @@ function categorySharingOperations(): Operation[] {
       path: API.portalCode,
       operationId: "portalCode",
       summary: "Confirm a shared collection's code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST (or signs the owner in).`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
@@ -1757,6 +1907,21 @@ function operations(): Operation[] {
       body: "VerifyMagicLinkInput",
       ok: [200, "LoginResult"],
       errors: [400, 403, 429],
+    },
+    {
+      method: "post",
+      path: API.loginReview,
+      operationId: "reviewLogin",
+      summary: "Sign in to the review account with its password",
+      description:
+        "Exists only when REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH are set; 404 everywhere else. " +
+        "Signs in that one ordinary account, for a directory's reviewers, and sets the session cookie like the other sign-ins. " +
+        "Locks for the rest of the hour after repeated wrong passwords.",
+      tag: "Auth",
+      auth: "optional",
+      body: "ReviewLoginInput",
+      ok: [200, "LoginResult"],
+      errors: [400, 403, 404, 429],
     },
     {
       method: "post",
@@ -1992,14 +2157,14 @@ function operations(): Operation[] {
       operationId: "getArtifactThumbnail",
       summary: "Thumbnail image",
       description:
-        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding.",
+        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding. A token limited to one artifact gets 403 `token_bound`: a capture runs the page, which may draw its shared data.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",
       query: [{ name: "version", schema: int({ minimum: 1 }) }],
       ok: [200, null],
       okMedia: "image/jpeg",
-      errors: [401, 404],
+      errors: [401, 403, 404],
     },
     {
       method: "get",
@@ -2119,6 +2284,59 @@ function operations(): Operation[] {
       errors: [400, 401, 403, 404],
     },
     {
+      method: "get",
+      path: API.sheet,
+      operationId: "readSheet",
+      summary: "Read a sheet's columns and cells, formulas with their values",
+      description:
+        "For an artifact of type sheet the caller may view. A formula cell is {f, v}; any other " +
+        "cell is its value. Rows are A1 row numbers (the header is row 1). Formulas are evaluated " +
+        "within SHEET_EVAL_BUDGET steps; an eval_budget warning means some are #LIMIT!. Every cell " +
+        "and column name is untrusted. An artifact of another type is refused with invalid_input.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      mcpTool: "read_sheet",
+      query: [
+        queryVersion,
+        {
+          name: "range",
+          schema: str(),
+          description: 'A1 range: "A1:F200", "B:D" or "2:50" (default every data row)',
+        },
+        {
+          name: "values",
+          schema: { type: "boolean" },
+          description: "Evaluate formulas (default true)",
+        },
+        {
+          name: "limit_cells",
+          schema: int({ minimum: 1, maximum: LIMITS.maxSheetReadCells }),
+          description: `At most this many cells (default ${LIMITS.defaultSheetReadCells})`,
+        },
+      ],
+      ok: [200, "SheetRead"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "post",
+      path: API.sheetEdits,
+      operationId: "editSheet",
+      summary: "Change cells, rows and columns of a sheet as one new version",
+      description:
+        "Owner or editor. The ops apply in order to base_version (a stale one is a conflict) and " +
+        "publish one new version, or nothing when an op or the result is invalid (invalid_input " +
+        "with details.op or details.issues). Inserted and deleted rows and columns move formula " +
+        "references. Counts toward MAX_PUBLISHES_PER_HOUR like any update.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:write",
+      mcpTool: "edit_sheet",
+      body: "EditSheetInput",
+      ok: [201, "SheetEditResult"],
+      errors: [400, 401, 403, 404, 409, 429],
+    },
+    {
       method: "put",
       path: API.visibility,
       operationId: "setVisibility",
@@ -2163,6 +2381,8 @@ function operations(): Operation[] {
       path: API.view,
       operationId: "viewGate",
       summary: "Check access and get a one-time enter URL for the content host",
+      description:
+        "A token limited to one artifact gets 403 `token_bound` for its artifact (and the usual not_found gate for every other): the URL becomes a content pass, which reads the page's shared data.",
       tag: "Viewing",
       auth: "optional",
       query: [
@@ -2184,6 +2404,7 @@ function operations(): Operation[] {
         },
       ],
       ok: [200, "ViewGate"],
+      errors: [403],
     },
     {
       method: "post",
@@ -2214,25 +2435,15 @@ function operations(): Operation[] {
       path: API.viewCode,
       operationId: "viewCode",
       summary: "Confirm an allowlisted email with its code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST.`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
       ok: [200, "ViewGate"],
       errors: [400, 403, 404, 429],
-    },
-    {
-      method: "get",
-      path: API.viewDictation,
-      operationId: "viewDictationOwner",
-      summary: "The owner's email for the dictation consent dialog",
-      description:
-        "Only for a viewer who may dictate on the page (the owner or a grant holder, signed in or " +
-        "confirmed by code, while dictation is on); 404 for everyone else.",
-      tag: "Viewing",
-      auth: "optional",
-      ok: [200, "DictationOwner"],
-      errors: [404],
     },
     // Comments and mentions
     {
@@ -2351,7 +2562,7 @@ function operations(): Operation[] {
       ok: [200, "ReportInfo"],
       errors: [400, 401, 403, 404, 409],
     },
-    // Admin stats and open counts
+    // Admin stats and artifact stats
     {
       method: "get",
       path: API.adminStats,
@@ -2372,18 +2583,40 @@ function operations(): Operation[] {
     },
     {
       method: "get",
-      path: API.artifactViews,
-      operationId: "getArtifactViews",
-      summary: "How often other people opened an artifact (owner only)",
+      path: API.artifactStats,
+      operationId: "getArtifactStats",
+      summary: "Who opened an artifact, when, how often and which version (owner only)",
       description:
-        "Owner only. Daily open counts; no viewer data. An open is one browser opening the live " +
-        "page it had not opened in the last 12 hours, or since its sharing last changed; the " +
-        "owner, agents, previews and history never count.",
+        "Owner only. An open is one browser opening the live page it had not opened in the last " +
+        "12 hours, or since its sharing last changed; the owner, agents, previews and history " +
+        "never count. People signed in, and allowlisted emails confirmed by code, are named; " +
+        "everyone else is an approximate anonymous visitor.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",
-      ok: [200, "ArtifactViews"],
-      errors: [401, 403, 404],
+      query: [
+        {
+          name: "days",
+          schema: { type: "string", enum: STATS_RANGES.map(String), default: "30" },
+          description: "Window in UTC days",
+        },
+      ],
+      ok: [200, "ArtifactStats"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.statsArtifacts,
+      operationId: "getArtifactStatsSummary",
+      summary: "Opens across the caller's own artifacts",
+      description:
+        "The caller's artifacts that are not deleted or taken down, with opens and viewers over 7 " +
+        "and 30 days, all-time opens and the last open.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      ok: [200, "ArtifactStatsSummary"],
+      errors: [401, 403],
     },
   ];
 }
@@ -2442,14 +2675,16 @@ function liveViewOperations(): Operation[] {
         `same-origin fetch metadata when sent, and the \`${VIEW_WATCH_PROTOCOL}\` subprotocol; ` +
         "access is the gate's view decision with the browser's cookies. The socket is " +
         "receive-only: the client sends the text `ping` (answered `pong`) and nothing else. " +
-        'Server frames are JSON text: `{t:"welcome",v:1,version,data}`, ' +
+        'Server frames are JSON text: `{t:"welcome",v:1,version}`, ' +
         '`{t:"version",version,spread_ms}` (re-read the gate after a random wait up to ' +
-        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data) and ' +
-        '`{t:"access",spread_ms}` (sent just before a 4401 `access_changed` close). Close ' +
-        "codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` " +
-        "frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's " +
-        "lifetime, or the credential it was opened with, ended: reconnect), 4404 gone, 4409 " +
-        "full (poll instead).",
+        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data; at most one ' +
+        'per `spread_ms`, and always one after the last change) and `{t:"access",spread_ms}` ' +
+        "(sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 " +
+        "`access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read " +
+        "the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was " +
+        "opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full " +
+        "(poll instead). After any other close the first reconnect also waits a random time up " +
+        "to 10 s.",
       tag: "Viewing",
       auth: "browser",
       ok: [101, null],
@@ -2627,6 +2862,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...liveSchemas(),
         ...categorySharingSchemas(),
         ...designSystemSchemas(),
+        ...sheetSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {

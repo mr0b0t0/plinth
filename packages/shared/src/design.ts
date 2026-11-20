@@ -111,8 +111,6 @@ export const BOARD_MESSAGE_SOURCE = "plinth-board";
 export const BOARD_PROTOCOL_VERSION = 1;
 /** Every board frame's sandbox: the opaque artifact flags, never allow-same-origin. */
 export const BOARD_IFRAME_SANDBOX = ARTIFACT_IFRAME_SANDBOX_OPAQUE;
-/** ?plinth-board=<id>: the design shows that one board alone at 100%. */
-export const DESIGN_BOARD_PARAM = "plinth-board";
 /** The board loader's file name under /__plinth/frames/design/ (the registry's renderer.frame). */
 export const BOARD_LOADER_FILE = "board.html";
 
@@ -450,7 +448,7 @@ export function designIssueSummary(issues: readonly DesignIssue[]): string {
 /**
  * The document one board frame renders: Plinth's base, viewport and reset first, then the shared
  * section, then the fragment, all verbatim. Pure. `baseHref` is where the board's relative URLs
- * resolve (the version's directory); the first <base> wins, so an author's own cannot redirect
+ * resolve (the shown version's own path, /__plinth/v/<n>/); the first <base> wins, so an author's own cannot redirect
  * them. Sizes are integers and the background passed the parser's charset, so neither can break
  * out of the reset rule.
  */
@@ -470,9 +468,4 @@ export function boardDocument(o: { board: DesignBoard; shared: string; baseHref:
     `${board.html}\n` +
     "</body></html>"
   );
-}
-
-/** A board's size as people read it: "1080 × 1080". */
-export function boardSizeLabel(b: Pick<DesignBoard, "width" | "height">): string {
-  return `${b.width} × ${b.height}`;
 }

@@ -1,0 +1,707 @@
+// CSV export (quoting, BOM, CRLF, the formula-injection guard) and CSV and .xlsx import.
+import { deflateSync, strToU8, zipSync } from "fflate";
+import { describe, expect, it, vi } from "vitest";
+import {
+  evaluateSheet,
+  importSheet,
+  numberFormatOf,
+  parseCsv,
+  parseSheet,
+  readCsv,
+  type Sheet,
+  SheetImportError,
+  serializeSheet,
+  sheetFromCsv,
+  sheetFromXlsx,
+  toCsv,
+} from "../src/index.ts";
+import { COLUMN_NAME_SOURCE_CHARS } from "../src/sheet/import.ts";
+import {
+  FieldText,
+  inflateInSlices,
+  MAX_FIELD_CHARS,
+  MAX_FORMULA_FIELD_CHARS,
+  readXlsx,
+  scanXml,
+  unescapeExcel,
+  xmlDecode,
+} from "../src/sheet/xlsxRead.ts";
+
+function sheetFrom(text: string): Sheet {
+  const r = parseSheet(text);
+  if (!r.ok) throw new Error(JSON.stringify(r.errors));
+  return r.sheet;
+}
+
+describe("toCsv", () => {
+  const s = sheetFrom(
+    [
+      '{"plinth":"sheet","v":1,"columns":[{"name":"=Name","type":"text"},{"name":"N","type":"number"},{"name":"When","type":"date"},{"name":"Ok","type":"checkbox"}]}',
+      '["a,b",-3,"2026-01-02",true]',
+      '["say \\"hi\\"","=B2*2",null,false]',
+      '["line\\nbreak","=1/0"]',
+      '["\'=1+1"]',
+      '["+x"]',
+      '["-x"]',
+      '["@x"]',
+      '["\\tx"]',
+      '["=\\"=cmd\\""]',
+    ].join("\n"),
+  );
+  const csv = toCsv(s, evaluateSheet(s, { budget: 10_000 }));
+
+  it("starts with a BOM, ends lines with CRLF, header first", () => {
+    expect(csv.startsWith('﻿"\'=Name","N","When","Ok"\r\n')).toBe(true);
+    expect(csv.endsWith("\r\n")).toBe(true);
+  });
+
+  it("quotes every text value, and guards text that a spreadsheet would run", () => {
+    const lines = csv.slice(1).split("\r\n");
+    expect(lines[1]).toBe('"a,b",-3,2026-01-02,TRUE');
+    expect(lines[2]).toBe('"say ""hi""",-6,,FALSE');
+    expect(lines[3]).toBe('"line\nbreak",#DIV/0!,,');
+    expect(lines[4]).toBe(`"'=1+1",,,`);
+    expect(lines[5]).toBe(`"'+x",,,`);
+    expect(lines[6]).toBe(`"'-x",,,`);
+    expect(lines[7]).toBe(`"'@x",,,`);
+    expect(lines[8]).toBe(`"'\tx",,,`);
+    // A formula whose result is text that starts with = is guarded too.
+    expect(lines[9]).toBe(`"'=cmd",,,`);
+  });
+
+  it("keeps a cell whole for a reader that splits on semicolons or tabs", () => {
+    const t = sheetFrom(
+      [
+        '{"plinth":"sheet","v":1,"columns":[{"name":"sep=;"},{"name":"N"}]}',
+        `["Total;=cmd|' /C calc'!A0",1]`,
+        '["x;=1+1",2]',
+        '["a\\t=1","b,@x"]',
+        '["a\\tb","2;3"]',
+        '["10;-5"]',
+      ].join("\n"),
+    );
+    const out = toCsv(t, evaluateSheet(t, { budget: 1000 }))
+      .slice(1)
+      .split("\r\n");
+    // The header is quoted too, so the file never starts with Excel's sep= directive.
+    expect(out[0]).toBe('"sep=;","N"');
+    expect(out[0]?.startsWith("sep=")).toBe(false);
+    // Every text value is one quoted field, and a formula character after a separator inside it
+    // is guarded as the first character is.
+    expect(out[1]).toBe(`"Total;'=cmd|' /C calc'!A0",1`);
+    expect(out[2]).toBe(`"x;'=1+1",2`);
+    expect(out[3]).toBe(`"a\t'=1","b,'@x"`);
+    expect(out[4]).toBe(`"a\tb","2;3"`);
+    expect(out[5]).toBe(`"10;'-5",`);
+    // Split on ; or a tab outside quotes, as a pt-PT Excel would: no field starts a formula.
+    for (const line of out.slice(1, 6)) {
+      for (const field of line.split(/[;,\t]/))
+        expect(field.replace(/^"/, "")).not.toMatch(/^[=+\-@]/);
+    }
+    // And the file reads back as one cell each.
+    const back = sheetFromCsv(toCsv(t, evaluateSheet(t, { budget: 1000 })));
+    expect(back.header.columns.map((c) => c.name)).toEqual(["sep=;", "N"]);
+    // (Column N is text, so its numbers come back as written.)
+    expect(back.rows[1]).toEqual(["x;'=1+1", "2"]);
+  });
+});
+
+describe("CSV import", () => {
+  it("parses quotes, line breaks, CRLF and the delimiter", () => {
+    expect(parseCsv('a,"b,c","d""e"\r\n1,"x\ny",\n')).toEqual([
+      ["a", "b,c", 'd"e'],
+      ["1", "x\ny", ""],
+    ]);
+    expect(parseCsv("﻿a;b\n1;2")).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+    expect(parseCsv("a\tb\n1\t2")).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+
+  it("infers column types and never makes a formula", () => {
+    const s = sheetFromCsv(
+      "Item,Qty,When,Paid,Site,Note\nApples,3,2026-01-02,TRUE,https://a.example,=SUM(1)\nPears,4.5,2026-01-03,false,https://b.example,'=x\n",
+    );
+    expect(s.header.columns.map((c) => c.type)).toEqual([
+      "text",
+      "number",
+      "date",
+      "checkbox",
+      "url",
+      "text",
+    ]);
+    expect(s.rows[0]).toEqual(["Apples", 3, "2026-01-02", true, "https://a.example", "'=SUM(1)"]);
+    // The ' a CSV export puts before = is dropped, and the text stays literal.
+    expect(s.rows[1]?.[5]).toBe("'=x");
+  });
+
+  it("round-trips its own export", () => {
+    const s = sheetFrom(
+      [
+        '{"plinth":"sheet","v":1,"columns":[{"name":"T","type":"text"},{"name":"N","type":"number"}]}',
+        '["\'=x",1]',
+        '["plain",2]',
+      ].join("\n"),
+    );
+    const back = sheetFromCsv(toCsv(s, evaluateSheet(s, { budget: 1000 })));
+    expect(back.rows).toEqual([
+      ["'=x", 1],
+      ["plain", 2],
+    ]);
+  });
+
+  it("refuses files a sheet cannot hold", () => {
+    expect(() => sheetFromCsv("")).toThrow(SheetImportError);
+    const wide = `${Array.from({ length: 101 }, (_, i) => `c${i}`).join(",")}\n`;
+    expect(() => sheetFromCsv(wide)).toThrow(/at most 100 columns/);
+  });
+
+  it("refuses too many rows with the row limit, however short the rows are", () => {
+    const tall = `a\n${"1\n".repeat(150_000)}`;
+    expect(() => sheetFromCsv(tall)).toThrow(SheetImportError);
+    expect(() => sheetFromCsv(tall)).toThrow(/at most 10000 rows; this file has 150000/);
+  });
+
+  it("keeps only the rows a sheet can hold and counts the rest", () => {
+    const { rows, rowCount } = readCsv('h\n1\n\n2\n"3"\n4\n5', 3);
+    // The header, then the first three non-blank records (and the blank line between them).
+    expect(rows).toEqual([["h"], ["1"], [""], ["2"], ["3"]]);
+    expect(rowCount).toBe(5);
+    expect(readCsv("a,b\n1,2\n", Number.POSITIVE_INFINITY)).toEqual({
+      rows: [
+        ["a", "b"],
+        ["1", "2"],
+      ],
+      rowCount: 1,
+      delimiter: ",",
+    });
+    // A 2 MB file of one-character rows is the row refusal with its count.
+    const long = `a\n${"1\n".repeat(1_048_000)}`;
+    expect(() => sheetFromCsv(long)).toThrow(/at most 10000 rows; this file has 1048000/);
+  });
+
+  it("builds fields from slices of the text, with the same quoting rules", () => {
+    expect(parseCsv('"ab"cd,a"b,"""",""\n"open')).toEqual([["abcd", 'a"b', '"', ""], ["open"]]);
+    const big = "a".repeat(1_500_000);
+    expect(parseCsv(`h\n"${big}""x"`)[1]).toEqual([`${big}"x`]);
+  });
+
+  it("reads a column name from the first 1,000 characters of its header cell", () => {
+    const s = sheetFromCsv(`x${" ".repeat(1_000)}y,b\n1,2\n`);
+    expect(s.header.columns.map((c) => c.name)).toEqual(["x", "b"]);
+    // 2 MB of one header cell, mostly spaces to collapse: only its start is read.
+    const t0 = Date.now();
+    const long = sheetFromCsv(`${" a".repeat(1_000_000)}\n1\n`);
+    expect(long.header.columns[0]?.name).toBe("a ".repeat(50).trim());
+    expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+
+  it("never runs a number pattern on a long field, and the pattern is linear", () => {
+    // 60,000 digits and an x took the old backtracking pattern about 2 s before the cell limit
+    // refused the field.
+    const start = Date.now();
+    expect(() => sheetFromCsv(`h\n${"1".repeat(60_000)}x\n`)).toThrow(/over 4000 characters/);
+    const s = sheetFromCsv(`h\n${"1".repeat(1_023)}x\n`);
+    expect(s.rows[0]?.[0]).toBe(`${"1".repeat(1_023)}x`);
+    expect(Date.now() - start).toBeLessThan(250);
+    const n = sheetFromCsv("h,p\n1.,50%\n.5,5%\n");
+    expect(n.header.columns.map((c) => c.type)).toEqual(["number", "number"]);
+    expect(n.rows).toEqual([
+      [1, 0.5],
+      [0.5, 0.05],
+    ]);
+    expect(sheetFromCsv("h\n5%%\n").rows).toEqual([["5%%"]]);
+  });
+
+  it("reads a number only when no digit is lost or invented", () => {
+    const one = (field: string, delim = ",") => {
+      const s = sheetFromCsv(`h${delim}k\n${field}${delim}x\n`);
+      return { type: s.header.columns[0]?.type, value: s.rows[0]?.[0] };
+    };
+    // Leading zeros, a leading + and more than 15 significant digits stay text, as written.
+    expect(one("00123")).toEqual({ type: "text", value: "00123" });
+    expect(one("+351912345678")).toEqual({ type: "text", value: "+351912345678" });
+    expect(one("12345678901234567890")).toEqual({ type: "text", value: "12345678901234567890" });
+    expect(one("1234567890123456")).toEqual({ type: "text", value: "1234567890123456" });
+    expect(one("123456789012345")).toEqual({ type: "number", value: 123456789012345 });
+    expect(one("0")).toEqual({ type: "number", value: 0 });
+    expect(one("0.25")).toEqual({ type: "number", value: 0.25 });
+    expect(one("-0.5")).toEqual({ type: "number", value: -0.5 });
+    expect(one("1.50")).toEqual({ type: "number", value: 1.5 });
+    expect(one("0.000000000000000000001")).toEqual({ type: "number", value: 1e-21 });
+    // Thousands separators where they cannot be the decimal mark.
+    expect(one('"1,234.50"')).toEqual({ type: "number", value: 1234.5 });
+    expect(one('"-1,234,567"')).toEqual({ type: "number", value: -1234567 });
+    expect(one('"1,500"')).toEqual({ type: "text", value: "1,500" });
+    expect(one('"1,50"')).toEqual({ type: "text", value: "1,50" });
+    // Semicolons: the decimal mark is a comma.
+    expect(one("1,50", ";")).toEqual({ type: "number", value: 1.5 });
+    expect(one("1.234,50", ";")).toEqual({ type: "number", value: 1234.5 });
+    expect(one("1.234.567", ";")).toEqual({ type: "number", value: 1234567 });
+    expect(one("12,5%", ";")).toEqual({ type: "number", value: 0.125 });
+    expect(one("1.500", ";")).toEqual({ type: "text", value: "1.500" });
+    expect(one("0.25", ";")).toEqual({ type: "text", value: "0.25" });
+    expect(one("00123", ";")).toEqual({ type: "text", value: "00123" });
+    // A semicolon file of decimal commas is a number column, not text.
+    const pt = sheetFromCsv("Item;Price;Qty\nApples;1,50;3\nPears;12,75;10\n");
+    expect(pt.header.columns.map((c) => c.type)).toEqual(["text", "number", "number"]);
+    expect(pt.rows).toEqual([
+      ["Apples", 1.5, 3],
+      ["Pears", 12.75, 10],
+    ]);
+    // One field that is not exactly a number keeps its column text, every value as written.
+    const ids = sheetFromCsv("Phone\n912345678\n+351912345678\n");
+    expect(ids.header.columns[0]?.type).toBe("text");
+    expect(ids.rows).toEqual([["912345678"], ["+351912345678"]]);
+  });
+
+  it("refuses cells a 1 MB sheet cannot hold before it makes values of them", () => {
+    const wide = Array.from({ length: 10_001 }, () => Array(100).fill("1").join(",")).join("\n");
+    expect(() => sheetFromCsv(wide)).toThrow(SheetImportError);
+    expect(() => sheetFromCsv(wide)).toThrow(/at most 1 MB; this file holds more cells/);
+  });
+});
+
+function base64(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return (globalThis as unknown as { btoa(s: string): string }).btoa(bin);
+}
+
+function xlsx(files: Record<string, string>): Uint8Array {
+  return zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)])));
+}
+
+const WORKBOOK = {
+  "xl/workbook.xml":
+    '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Budget" sheetId="1" r:id="rId1"/></sheets></workbook>',
+  "xl/_rels/workbook.xml.rels":
+    '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+  "xl/sharedStrings.xml":
+    "<sst><si><t>Item</t></si><si><t>Price</t></si><si><r><t>Ap</t></r><r><t>ples</t></r><rPh><t>x</t></rPh></si><si><t>When</t></si></sst>",
+  "xl/styles.xml":
+    '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="&quot;€&quot;#,##0.00"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="14"/></cellXfs></styleSheet>',
+};
+
+describe(".xlsx import", () => {
+  it("reads the first sheet: strings, numbers, formats, dates, formulas, widths and panes", () => {
+    const bytes = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetViews><sheetView><pane xSplit="1" ySplit="1" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="20"/></cols><sheetData>' +
+        '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>3</v></c><c r="D1" t="inlineStr"><is><t>Total</t></is></c></row>' +
+        '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" s="1"><v>1.5</v></c><c r="C2" s="2"><v>46023</v></c><c r="D2" t="str"><f>_xlfn.CONCAT(A2,"!")</f><v>Apples!</v></c></row>' +
+        '<row r="3"><c r="A3" t="inlineStr"><is><t>=evil</t></is></c><c r="B3" s="1"><v>2</v></c><c r="D3" t="str"><f>WEBSERVICE("https://x")</f><v>7</v></c></row>' +
+        "</sheetData></worksheet>",
+    });
+    const s = sheetFromXlsx(bytes);
+    expect(s.header.columns).toEqual([
+      { name: "Item", type: "text", width: 145 },
+      {
+        name: "Price",
+        type: "number",
+        format: { style: "currency", currency: "EUR", decimals: 2 },
+      },
+      { name: "When", type: "date" },
+      { name: "Total", type: "text" },
+    ]);
+    expect(s.header.freeze).toEqual({ cols: 1 });
+    expect(s.rows[0]).toEqual(["Apples", 1.5, "2026-01-01", '=CONCAT(A2,"!")']);
+    // Text stays text; a formula outside the allowlist keeps only its cached value.
+    expect(s.rows[1]).toEqual(["'=evil", 2, null, "7"]);
+    expect(parseSheet(serializeSheet(s)).ok).toBe(true);
+  });
+
+  it("refuses what it cannot read safely", () => {
+    expect(() => sheetFromXlsx(new Uint8Array([1, 2, 3]))).toThrow(/not an .xlsx/);
+    const doctype = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        '<!DOCTYPE x [<!ENTITY a "b">]><worksheet><sheetData/></worksheet>',
+    });
+    expect(() => sheetFromXlsx(doctype)).toThrow(/DOCTYPE/);
+    const bomb = zipSync(
+      {
+        ...Object.fromEntries(Object.entries(WORKBOOK).map(([k, v]) => [k, strToU8(v)])),
+        "xl/worksheets/sheet1.xml": new Uint8Array(30 * 1024 * 1024),
+      },
+      { level: 9 },
+    );
+    expect(bomb.byteLength).toBeLessThan(2 * 1024 * 1024);
+    expect(() => sheetFromXlsx(bomb)).toThrow(/expands to more than 24 MB/);
+  });
+
+  it("keeps the header's names when the worksheet skips a blank row", () => {
+    const s = sheetFromXlsx(
+      xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml":
+          '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>Qty</t></is></c></row>' +
+          '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>1</v></c></row>' +
+          '<row r="4"><c r="A4" t="inlineStr"><is><t>Pears</t></is></c><c r="B4"><v>3</v></c></row>' +
+          "</sheetData></worksheet>",
+      }),
+    );
+    expect(s.header.columns.map((c) => c.name)).toEqual(["Item", "Qty"]);
+    expect(s.rows).toEqual([["Apples", 1], [], ["Pears", 3]]);
+  });
+
+  it("refuses a cell reference below the row limit, before it builds anything", () => {
+    for (const ref of ["A2000000", "A50000000", "A10002"]) {
+      const bytes = xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row><row r="2"><c r="${ref}"><v>1</v></c></row></sheetData></worksheet>`,
+      });
+      expect(() => sheetFromXlsx(bytes)).toThrow(SheetImportError);
+      expect(() => sheetFromXlsx(bytes)).toThrow(/at most 10000 rows under its header/);
+    }
+    const zero = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetData><row r="1"><c r="A0"><v>1</v></c></row></sheetData></worksheet>',
+    });
+    expect(() => sheetFromXlsx(zero)).toThrow(/bad row number/);
+    // The last row a sheet holds is still read.
+    const last = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row><row r="10001"><c r="A10001"><v>1</v></c></row></sheetData></worksheet>',
+    });
+    const s = sheetFromXlsx(last);
+    expect(s.rows).toHaveLength(10_000);
+    expect(s.rows[9_999]).toEqual([1]);
+  });
+
+  it("reads column widths only for the columns a sheet holds, whatever min and max say", () => {
+    const sheet = (cols: string) =>
+      xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml": `<worksheet><cols>${cols}</cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c><c r="B1" t="inlineStr"><is><t>I</t></is></c></row></sheetData></worksheet>`,
+      });
+    // Past 2^53 (where c++ stops changing c) and far below zero: both used to loop forever.
+    for (const col of [
+      '<col min="9007199254740992" max="9007199254741200" width="10"/>',
+      '<col min="-1e300" max="5" width="10"/>',
+      '<col min="0" max="1" width="10"/>',
+      '<col min="1.5" max="2" width="10"/>',
+    ]) {
+      expect(readXlsx(sheet(col)).widths.size).toBe(0);
+    }
+    const s = sheetFromXlsx(sheet('<col min="2" max="9000000000" width="10"/>'));
+    expect(s.header.columns.map((c) => c.width)).toEqual([undefined, 75]);
+    expect(readXlsx(sheet('<col min="2" max="9000000000" width="10"/>')).widths.size).toBe(99);
+    // Many ranges, each past the last column, add nothing; at most 100 ranges are read at all.
+    const far = Array.from(
+      { length: 5_000 },
+      (_, k) => `<col min="${k * 101 + 101}" max="${k * 101 + 201}" width="1"/>`,
+    ).join("");
+    expect(readXlsx(sheet(far)).widths.size).toBe(0);
+    const many = '<col min="1" max="100" width="1"/>'.repeat(5_000);
+    expect(readXlsx(sheet(many)).widths.size).toBe(100);
+  });
+
+  it("scans XML in time linear in its length, refusing markup that never ends", () => {
+    const parts = (xml: string) => xlsx({ ...WORKBOOK, "xl/worksheets/sheet1.xml": xml });
+    const start = Date.now();
+    // Each "<?" used to search to the end of the part for a "?>": quadratic, seconds at this size.
+    expect(() => sheetFromXlsx(parts(`<worksheet><sheetData>${"<?".repeat(200_000)}`))).toThrow(
+      /XML is damaged/,
+    );
+    for (const open of ["<!--", "<![CDATA[", '<c r="', "<c "]) {
+      expect(() => sheetFromXlsx(parts(`<worksheet><sheetData>${open.repeat(50_000)}`))).toThrow(
+        /XML is damaged/,
+      );
+    }
+    expect(Date.now() - start).toBeLessThan(3_000);
+    const events: string[] = [];
+    scanXml(
+      '<?xml version="1.0"?><!-- c --><a x="1 > 0" y=\'"\'>t &amp; <![CDATA[<raw>]]> 1 < 2<b/></a>',
+      {
+        open: (name, attrs, selfClosing) =>
+          events.push(`open ${name} ${JSON.stringify(attrs)}${selfClosing ? " /" : ""}`),
+        close: (name) => events.push(`close ${name}`),
+        text: (s) => events.push(`text ${s}`),
+      },
+    );
+    expect(events).toEqual([
+      'open a {"x":"1 > 0","y":"\\""}',
+      "text t & ",
+      "text <raw>",
+      "text  1 < 2",
+      "open b {} /",
+      "close b",
+      "close a",
+    ]);
+  });
+
+  it("expands entities with a loop, and only the five names and character references", () => {
+    expect(xmlDecode("a&amp;b &lt;&gt;&quot;&apos; &#65;&#x42; &&amp; &amp")).toBe(
+      "a&b <>\"' AB && &amp",
+    );
+    // Anything else stays as written: other names (constructor too), bad or too-long references.
+    expect(xmlDecode("&constructor;&nbsp;&#x110000;&#0;&#X41;&#12345678;&;")).toBe(
+      "&constructor;&nbsp;&#x110000;&#0;&#X41;&#12345678;&;",
+    );
+    expect(xmlDecode("a&amp;".repeat(1_000_000))).toBe("a&".repeat(1_000_000));
+  });
+
+  it("decodes UTF-8 that a part's inflated chunks split mid-character", () => {
+    const text = "€é𝄞".repeat(500);
+    // 30 rows of 5 cells of 4.5 KB of UTF-8 each: chunks of the inflated part end inside some.
+    const row = `<row>${`<c t="inlineStr"><is><t>${text}</t></is></c>`.repeat(5)}</row>`;
+    const s = sheetFromXlsx(
+      xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml": `<worksheet><sheetData>${row.repeat(31)}</sheetData></worksheet>`,
+      }),
+    );
+    expect(s.rows).toEqual(Array(30).fill(Array(5).fill(text)));
+  });
+
+  it("inflates a part a slice at a time, so a ZIP bomb stops at the cap", () => {
+    // All zeros: about 40 MB from some 40 KB. Inflated in one push it would all exist at once.
+    const bomb = deflateSync(new Uint8Array(40 * 1024 * 1024), { level: 9 });
+    let total = 0;
+    let largest = 0;
+    const cap = 24 * 1024 * 1024;
+    expect(() =>
+      inflateInSlices(bomb, (chunk) => {
+        total += chunk.length;
+        largest = Math.max(largest, chunk.length);
+        if (total > cap) throw new SheetImportError("cap");
+      }),
+    ).toThrow("cap");
+    expect(largest).toBeLessThanOrEqual(2_200_000);
+    expect(total).toBeLessThan(cap + 2_200_000);
+    // Data that does not compress well spans many slices and comes back whole.
+    let seed = 7;
+    const cells = Array.from({ length: 30_000 }, () => {
+      seed = (seed * 48_271) % 2_147_483_647;
+      return seed;
+    });
+    const row = (n: number[]) => `<row>${n.map((v) => `<c><v>${v}</v></c>`).join("")}</row>`;
+    const rows = Array.from({ length: 300 }, (_, r) => cells.slice(r * 100, r * 100 + 100));
+    const bytes = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData>${rows.map(row).join("")}</sheetData></worksheet>`,
+    });
+    expect(bytes.byteLength).toBeGreaterThan(100_000);
+    const s = sheetFromXlsx(bytes);
+    expect(s.rows).toEqual(rows.slice(1));
+  });
+
+  it("refuses cells a 1 MB sheet cannot hold before it builds the table", () => {
+    // 6,000 rows of 100 one-digit cells: inside the row and column bounds and a small file, but
+    // more cells than 1 MB of JSON lines holds (each costs at least two bytes).
+    const row = "<c><v>1</v></c>".repeat(100);
+    const bytes = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData>${`<row>${row}</row>`.repeat(6_000)}</sheetData></worksheet>`,
+    });
+    expect(bytes.byteLength).toBeLessThan(200_000);
+    expect(() => sheetFromXlsx(bytes)).toThrow(/at most 1 MB; this file holds more cells/);
+    // Text counts by its length: 300 cells of 3,600 characters are past 1 MB too.
+    const text = `<c t="inlineStr"><is><t>${"x".repeat(3_600)}</t></is></c>`;
+    const long = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row>${text}</row>${`<row>${text}</row>`.repeat(300)}</sheetData></worksheet>`,
+    });
+    expect(() => sheetFromXlsx(long)).toThrow(/at most 1 MB; this file holds more cells/);
+  });
+
+  it("counts a formula cell as what it becomes: its source, or the cached value it falls back to", () => {
+    const sheet = (rows: string, strings = "<sst></sst>") =>
+      xlsx({
+        ...WORKBOOK,
+        "xl/sharedStrings.xml": strings,
+        "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c><v>1</v></c></row>${rows}</sheetData></worksheet>`,
+      });
+    // One 3,600-character shared string behind 300 cells whose formula does not parse: each cell
+    // becomes that string, so a 10 KB file holds more than 1 MB of sheet.
+    const strings = `<sst><si><t>${"y".repeat(3_600)}</t></si></sst>`;
+    const dropped = '<c t="s"><f>1+</f><v>0</v></c>';
+    const cached = sheet(`<row>${dropped}</row>`.repeat(300), strings);
+    expect(cached.byteLength).toBeLessThan(20_000);
+    expect(() => readXlsx(cached)).toThrow(/at most 1 MB; this file holds more cells/);
+    // 600 formulas of 1,999 characters that parse are past 1 MB too.
+    const f = Array(1_000).fill("1").join("+");
+    expect(() => readXlsx(sheet(`<row><c><f>${f}</f></c></row>`.repeat(600)))).toThrow(
+      /at most 1 MB; this file holds more cells/,
+    );
+    // Within the limit: a kept formula without its prefix, a dropped one as its cached value.
+    const few = readXlsx(
+      sheet(`<row>${dropped}<c t="str"><f>_xlfn.CONCAT("a")</f><v>a</v></c></row>`, strings),
+    );
+    expect(few.rows[1]).toEqual([
+      { t: "s", v: "y".repeat(3_600) },
+      { t: "f", f: 'CONCAT("a")', cached: { t: "s", v: "a" } },
+    ]);
+  });
+
+  it("keeps a field's text up to its cap, however many tags split it", () => {
+    // Every tag inside a field ends one text event: one += per event built a rope of a node per
+    // event, and 24 MB of "a<x/>" ran a 192 MB heap out. A field now keeps its first characters
+    // in pieces, joined once, and only counts the rest.
+    const field = new FieldText(10);
+    for (let i = 0; i < 1_000_000; i++) field.add("ab");
+    expect(field.length).toBe(10);
+    expect(field.pieces).toBe(5);
+    expect(field.text()).toBe("ababababab");
+    const split = "a<x/>".repeat(40_000);
+    const header = (cell: string, strings = "<sst></sst>") =>
+      readXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/sharedStrings.xml": strings,
+          "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row>${cell}</row></sheetData></worksheet>`,
+        }),
+      ).rows[0]?.[0];
+    const cut = { t: "s", v: "a".repeat(MAX_FIELD_CHARS) };
+    expect(header(`<c t="str"><v>${split}</v></c>`)).toEqual(cut);
+    expect(header(`<c t="inlineStr"><is><t>${split}</t></is></c>`)).toEqual(cut);
+    expect(header(`<c t="s"><v>0</v></c>`, `<sst><si><t>${split}</t></si></sst>`)).toEqual(cut);
+    // A formula split by tags is read whole, and one past what keptFormula reads falls back to
+    // its cached value.
+    expect(header("<c><f>1<x/>+<x/>2</f><v>3</v></c>")).toEqual({
+      t: "f",
+      f: "1+2",
+      cached: { t: "n", v: 3, style: 0 },
+    });
+    expect(header(`<c><f>${"1<x/>+".repeat(5_000)}1</f><v>3</v></c>`)).toEqual({
+      t: "n",
+      v: 3,
+      style: 0,
+    });
+    expect(MAX_FORMULA_FIELD_CHARS).toBe(8_000);
+    // Kept text is still longer than a cell holds, so a data cell of it is refused as before, and
+    // a header cell is named from its first 1,000 characters.
+    // 5,000 escapes for "A", 35,000 characters: the 28,007 kept still expand to 4,001.
+    const escapes = "_x0041_<x/>".repeat(5_000);
+    const s = (head: string, body: string) =>
+      sheetFromXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row>${head}</row><row>${body}</row></sheetData></worksheet>`,
+        }),
+      );
+    expect(() => s('<c t="str"><v>N</v></c>', `<c t="str"><v>${escapes}</v></c>`)).toThrow(
+      /has a cell over 4000 characters/,
+    );
+    expect(
+      s(`<c t="str"><v>${"b<x/>".repeat(60_000)}</v></c>`, "<c><v>1</v></c>").header.columns[0]
+        ?.name,
+    ).toBe("b".repeat(100));
+  });
+
+  it("expands Excel's _xHHHH_ escapes with a loop", () => {
+    expect(unescapeExcel("a_x0041_b _x00_ _x004G_ _x_x0042_ _x0043__x0044_ _x0045")).toBe(
+      "aAb _x00_ _x004G_ _xB CD _x0045",
+    );
+    expect(unescapeExcel("_x0041_".repeat(1_000_000))).toBe("A".repeat(1_000_000));
+    const s = sheetFromXlsx(
+      xlsx({
+        ...WORKBOOK,
+        "xl/sharedStrings.xml": "<sst><si><t>Item_x0021_</t></si><si><t>a_x000A_b</t></si></sst>",
+        "xl/worksheets/sheet1.xml":
+          '<worksheet><sheetData><row><c t="s"><v>0</v></c></row><row><c t="s"><v>1</v></c><c t="inlineStr"><is><t>_x0031_</t></is></c></row></sheetData></worksheet>',
+      }),
+    );
+    expect(s.header.columns.map((c) => c.name)).toEqual(["Item!", "B"]);
+    expect(s.rows).toEqual([["a\nb", "1"]]);
+  });
+
+  it("runs no replace over text a file can make long", () => {
+    // A shared string of 2 MB of escapes nobody references, and one of 2 MB of words behind
+    // every header cell: neither may reach a replace (a replace with a callback keeps every
+    // match, and the header's patterns used to run over the whole cell 100 times).
+    const subjects: number[] = [];
+    const replace = String.prototype.replace;
+    const spy = vi.spyOn(String.prototype, "replace").mockImplementation(function (
+      this: string,
+      ...args: Parameters<string["replace"]>
+    ) {
+      subjects.push(this.length);
+      return replace.apply(this, args);
+    });
+    try {
+      const s = sheetFromXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/sharedStrings.xml": `<sst><si><t>${"a b ".repeat(500_000)}</t></si><si><t>${"_x0041_".repeat(300_000)}</t></si></sst>`,
+          "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c t="s"><v>0</v></c></row><row><c><v>1</v></c></row></sheetData></worksheet>`,
+        }),
+      );
+      expect(s.header.columns[0]?.name).toBe("a b ".repeat(25).trim());
+    } finally {
+      spy.mockRestore();
+    }
+    expect(subjects.length).toBeGreaterThan(0);
+    expect(Math.max(...subjects)).toBeLessThanOrEqual(COLUMN_NAME_SOURCE_CHARS);
+  });
+
+  it("reads a long number format code in linear time, and one past 255 characters as General", () => {
+    const start = Date.now();
+    // Brackets that never close: each [ used to search to the end of the code.
+    expect(numberFormatOf(`${"[".repeat(40_000)}0.00`)).toEqual({
+      style: "plain",
+      decimals: 2,
+      grouping: false,
+    });
+    expect(numberFormatOf(`${"[$".repeat(20_000)}0.00`)).toEqual({
+      style: "currency",
+      currency: "USD",
+      decimals: 2,
+      grouping: false,
+    });
+    expect(Date.now() - start).toBeLessThan(1_000);
+    const styled = (code: string) =>
+      sheetFromXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/styles.xml": `<styleSheet><numFmts><numFmt numFmtId="164" formatCode="${code}"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>`,
+          "xl/worksheets/sheet1.xml":
+            '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>1</v></c></row><row r="2"><c r="A2" s="1"><v>2</v></c></row></sheetData></worksheet>',
+        }),
+      ).header.columns[0];
+    expect(styled("0.00%")).toEqual({
+      name: "Price",
+      type: "number",
+      format: { style: "percent", decimals: 2 },
+    });
+    expect(styled(`0.00%${" ".repeat(300)}`)).toEqual({ name: "Price", type: "number" });
+  });
+
+  it("maps number formats", () => {
+    expect(numberFormatOf("#14")).toBe("date");
+    expect(numberFormatOf("#10")).toEqual({ style: "percent", decimals: 2 });
+    expect(numberFormatOf("yyyy-mm-dd")).toBe("date");
+    expect(numberFormatOf("[$USD] #,##0.00")).toEqual({
+      style: "currency",
+      currency: "USD",
+      decimals: 2,
+    });
+    expect(numberFormatOf("[$-409]#,##0")).toEqual({ style: "plain" });
+    expect(numberFormatOf("0.0%")).toEqual({ style: "percent", decimals: 1 });
+  });
+
+  it("importSheet returns canonical text for CSV and base64 .xlsx", () => {
+    expect(importSheet("A,B\n1,2\n", "csv")).toBe(
+      '{"plinth":"sheet","v":1,"columns":[{"name":"A","type":"number"},{"name":"B","type":"number"}]}\n[1,2]',
+    );
+    const b64 = base64(
+      xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml":
+          '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="2"><c r="A2"><v>4</v></c></row></sheetData></worksheet>',
+      }),
+    );
+    expect(importSheet(b64, "xlsx")).toBe(
+      '{"plinth":"sheet","v":1,"columns":[{"name":"Item","type":"number"}]}\n[4]',
+    );
+    expect(() => importSheet("not base64!", "xlsx")).toThrow(/base64/);
+  });
+});

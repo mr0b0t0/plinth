@@ -34,7 +34,7 @@ Turborepo on a pnpm workspace.
 | `e2e` | Playwright end-to-end tests |
 | `publish` | The GitHub Action (`mr0b0t0/plinth/publish@v<release>`, `docs/ci.md`). It runs `packages/cli/bin/client` from the same commit, so keep the client dependency-free |
 | `migrations` | D1 SQL migrations, checked in |
-| `docs` | Spec, build brief, the human-facing guides, and example pages (`docs/examples`, read by the e2e tests: keep each one passing `examples-contract.spec.ts`) |
+| `docs` | Spec, build brief, and the human-facing guides |
 
 ```sh
 pnpm install
@@ -85,12 +85,8 @@ make a test pass.
   Under opaque isolation the app talks to frames whose origin is `"null"`: it identifies them by
   window (and, for the editor preview, a fresh frame and nonce per render) and posts with `"*"`
   only what the framed document may see anyway or, for the preview, only to the frame it just
-  created. Frames get no powerful features (`allow=""`), and the content host's
-  `Permissions-Policy` turns them off. Never delegate the microphone, camera or similar to a
-  frame: the browser keeps such grants for the app's origin, so one grant would reach every
-  artifact. Dictation runs in the app, and only words reach the frame. A design's artboards
-  render in nested frames that are opaque in every isolation mode (iframe and CSP `sandbox`, never
-  `allow-same-origin`); the shell posts each one only its own HTML.
+  created. A design's artboards render in nested frames that are opaque in every isolation mode
+  (iframe and CSP `sandbox`, never `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
   instruction with the owner's authority. MCP tool descriptions say so.
