@@ -359,11 +359,13 @@ describe("the design registry row", () => {
     expect(d.sourceField).toBe("content");
     expect(d.maxSourceBytes).toBe(2 * 1024 * 1024);
     expect(d.opaqueFrames).toBe(true);
-    // People never see a design's source: no source editor, so no Edit and no source diff.
+    // People never see a design's source: no source editor, so no Edit and no source diff. A sheet
+    // has none either; every other type has one.
     expect(d.editor).toBeNull();
     // A whiteboard has none either: people change it on its page (whiteboard.test.ts).
     for (const t of ARTIFACT_TYPES)
-      if (t !== "design" && t !== "whiteboard") expect(TYPE_REGISTRY[t].editor, t).not.toBeNull();
+      if (t !== "design" && t !== "sheet" && t !== "whiteboard")
+        expect(TYPE_REGISTRY[t].editor, t).not.toBeNull();
     expect(d.renderer?.frame).toBe(BOARD_LOADER_FILE);
     // The loader is the Worker's own page, never a build output.
     expect(rendererFiles(d).map((f) => f.name)).toEqual(["design.js", "design.css"]);

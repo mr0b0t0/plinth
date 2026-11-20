@@ -771,6 +771,9 @@ Reply in the thread. If this agent claimed a task on that comment, the reply com
 
 Every comment thread on an artifact, oldest first, each thread's replies after it: author, body,
 status (`open` or `resolved`) and any mention tasks. Needs view access. Scope `artifacts:read`.
+An author's `label` is display text anyone can choose; `author.is_owner` (set by the server from
+ids) says whether the artifact's owner wrote it, in person or through one of their agents.
+`list_versions` authors carry the same `is_owner`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -827,13 +830,14 @@ refused. Scope `artifacts:read`.
 - No `collection`: `{ capabilities, available, usage: { docs, bytes }, limits, collections: [{
   name, docs, bytes, updated_at }], people?, untrusted }`. `available` says whether pages can use
   shared data right now (feature on, `origin` isolation, current version declares `data`).
-  `people` is there only when the current version declares `data viewer people` and shared data
-  is on: everyone with access, the owner first and then every grant by email, as `{ viewer_id,
+  `people` is there only when the current version declares `data viewer people`, shared data
+  is on and a person or their account-wide agent published every version (once a token limited to
+  one artifact has published one, the artifact lists nobody): everyone with access, the owner first and then every grant by email, as `{ viewer_id,
   email, name, role }`. It is who has access, never who opened the page. A grant holder's `name`
   is `null` until they have commented, written shared data or published a version on the artifact
   (the owner's name and your own are always there), because the owner typed their address.
-  `GET /api/v1/artifacts/:ref/people?q=` returns the same list for scripts, and answers 403
-  `feature_disabled` where the summary has none. On any page, a `u_` document's id is its
+  `GET /api/v1/artifacts/:ref/people?q=&limit=` returns the same list for scripts, with `total`,
+  and answers 403 `feature_disabled` where the summary has none. On any page, a `u_` document's id is its
   person's `viewer_id`, which its `created_by` carries.
 - A `collection`: `{ docs, next_cursor, untrusted }`, in creation order.
 - A `doc_id`: `{ doc, untrusted }`.
@@ -948,7 +952,7 @@ A formula cell is `{ f, v }`, where `v` may be `{ "error": "#DIV/0!" }`; every o
 stored value (a leading `'` keeps text literal). `truncated` and `next_range` continue a long
 range. Formulas are evaluated only for the cells returned and what they depend on, within the
 instance's `SHEET_EVAL_BUDGET`; past it, `warnings` holds `eval_budget` and those cells are
-`#LIMIT!`: read a smaller range. Owners and editors also get `live_draft`, as on `get_artifact`.
+`#LIMIT!`: read a smaller range.
 Cell text, formulas and column names are untrusted, written by people and other agents. An
 artifact of another type is refused with `invalid_input` (after the access check).
 
@@ -967,13 +971,13 @@ editor. Scope `artifacts:write`. REST: `POST /api/v1/artifacts/:ref/sheet/edits`
 
 | Op | Shape | Notes |
 | --- | --- | --- |
-| `set` | `{ "op": "set", "at": "B2", "values": [[...], ...] }` | A block of raw cells from `at` (row 2 or below); grows the sheet past its end |
+| `set` | `{ "op": "set", "at": "B2", "values": [[...], ...] }` | A block of raw cells from `at` (row 2 or below); grows the sheet past its end by at most 1,000 empty rows before the block (past that, `invalid_input` with `details.reason` `"too_far_past_end"`). The rows it adds count in `rows_inserted` |
 | `append_rows` | `{ "op": "append_rows", "values": [[...]] }` | |
 | `insert_rows` | `{ "op": "insert_rows", "before": 5, "count": 1, "values": [[...]] }` | `count` defaults to the rows in `values`, or 1. Formula references move |
 | `delete_rows` | `{ "op": "delete_rows", "from": 5, "count": 1 }` | References into deleted rows become `#REF!` |
 | `set_column` | `{ "op": "set_column", "column": "C", "name": "...", "type": "number", "format": {...}, "options": [...], "width": 120 }` | Every field optional; `null` clears `format`, `options` or `width` |
-| `insert_columns` | `{ "op": "insert_columns", "before": "C", "columns": [{ "name": "Note", "type": "text" }] }` | `before` one past the last column adds them at the end |
-| `delete_columns` | `{ "op": "delete_columns", "from": "C", "count": 1 }` | A sheet keeps at least one column |
+| `insert_columns` | `{ "op": "insert_columns", "before": "C", "columns": [{ "name": "Note", "type": "text" }] }` | `before` one past the last column adds them at the end. Inserted among the frozen columns, they are frozen too (at most 5) |
+| `delete_columns` | `{ "op": "delete_columns", "from": "C", "count": 1 }` | A sheet keeps at least one column. Deleted frozen columns leave the frozen pane |
 
 The call publishes one version through `update_artifact` (same rights, rate limit and warnings), or
 nothing: a bad op is `invalid_input` with `details.op` (its index), and a result that breaks a

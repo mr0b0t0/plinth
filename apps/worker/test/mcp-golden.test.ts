@@ -4,17 +4,17 @@
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
-// publish note, the type and content descriptions and the instructions' deck sentence), so did
-// comments from the page (the page anchor note in list_comments and list_mentions), so did who
-// is viewing (names and the people list in list_artifact_data's description), so did the
-// slides .pptx download (its clause in the slides publish note), so did the design type
-// (its publish note, the type, content, update and get_artifact descriptions and the
-// instructions' design sentence), and so did the sheet type (read_sheet and edit_sheet, the
-// publish, update and get_artifact notes, the content and content_format descriptions, the
-// untrusted note's sheet sentence and the instructions' sheet sentence), and so did the
-// whiteboard type (its publish and update note, the type, content and get_artifact
-// descriptions, list_artifact_data's whiteboard sentence and the instructions' whiteboard
-// sentence, and its default edit setting).
+// publish note, the type and content descriptions and the instructions' deck sentence), comments
+// from the page (the page anchor note in list_comments and list_mentions), the slides .pptx
+// download (its clause in the slides publish note), the design type (its publish note, the
+// type, content, update and get_artifact descriptions and the instructions' design sentence),
+// the sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the
+// content and content_format descriptions, the untrusted note's sheet sentence, the instructions'
+// sheet sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default),
+// who is viewing (names and the people list in list_artifact_data's description), and the
+// whiteboard type (its publish and update note, the type, content and get_artifact descriptions,
+// list_artifact_data's whiteboard sentence and the instructions' whiteboard sentence, and its
+// default edit setting).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
@@ -76,7 +76,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "0be0a36396c8586ec52f6254ceaaf05373e834054e0f39389adf86ff60c4df92",
+      tools: "66a2563a10b71a833e6b1a09abc9832cb06611b8eb6f178add2909fab8c64cea",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -86,7 +86,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "5ceab1f92455bfa518ce074661435c26be34a61bb8ca6db0dd73e38040e677ef",
+      tools: "e7559feb2f134bd51759ff7154bede62ef92fc721dc323e4df74f3395bf6fe5b",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -98,7 +98,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "14b59bf0f3419a2fcb5dce33011af52717b76693a9377d6ff202f3511e2841aa",
+      tools: "c51192f8289541231e20f1abed9af51e85a381eef81e3252fb40a2cf3ddb08a6",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -108,7 +108,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "c7a665a30fa45e846fb3b023ed222676eafaa866c6fda11e56bcae47402ef8fe",
+      tools: "71a7ddfda1a5fc105e51526962d89325b7db079f6ff5b1f90cc18f251ab968af",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "c871563d3897950ed2486d494d7f8552b6d0d763fd7301e073a0f1e608e0b156",

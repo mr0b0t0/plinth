@@ -51,22 +51,58 @@ describe("toCsv", () => {
   const csv = toCsv(s, evaluateSheet(s, { budget: 10_000 }));
 
   it("starts with a BOM, ends lines with CRLF, header first", () => {
-    expect(csv.startsWith("﻿'=Name,N,When,Ok\r\n")).toBe(true);
+    expect(csv.startsWith('﻿"\'=Name","N","When","Ok"\r\n')).toBe(true);
     expect(csv.endsWith("\r\n")).toBe(true);
   });
 
-  it("quotes commas, quotes and line breaks, and guards text that a spreadsheet would run", () => {
+  it("quotes every text value, and guards text that a spreadsheet would run", () => {
     const lines = csv.slice(1).split("\r\n");
     expect(lines[1]).toBe('"a,b",-3,2026-01-02,TRUE');
     expect(lines[2]).toBe('"say ""hi""",-6,,FALSE');
     expect(lines[3]).toBe('"line\nbreak",#DIV/0!,,');
-    expect(lines[4]).toBe("'=1+1,,,");
-    expect(lines[5]).toBe("'+x,,,");
-    expect(lines[6]).toBe("'-x,,,");
-    expect(lines[7]).toBe("'@x,,,");
-    expect(lines[8]).toBe("'\tx,,,");
+    expect(lines[4]).toBe(`"'=1+1",,,`);
+    expect(lines[5]).toBe(`"'+x",,,`);
+    expect(lines[6]).toBe(`"'-x",,,`);
+    expect(lines[7]).toBe(`"'@x",,,`);
+    expect(lines[8]).toBe(`"'\tx",,,`);
     // A formula whose result is text that starts with = is guarded too.
-    expect(lines[9]).toBe("'=cmd,,,");
+    expect(lines[9]).toBe(`"'=cmd",,,`);
+  });
+
+  it("keeps a cell whole for a reader that splits on semicolons or tabs", () => {
+    const t = sheetFrom(
+      [
+        '{"plinth":"sheet","v":1,"columns":[{"name":"sep=;"},{"name":"N"}]}',
+        `["Total;=cmd|' /C calc'!A0",1]`,
+        '["x;=1+1",2]',
+        '["a\\t=1","b,@x"]',
+        '["a\\tb","2;3"]',
+        '["10;-5"]',
+      ].join("\n"),
+    );
+    const out = toCsv(t, evaluateSheet(t, { budget: 1000 }))
+      .slice(1)
+      .split("\r\n");
+    // The header is quoted too, so the file never starts with Excel's sep= directive.
+    expect(out[0]).toBe('"sep=;","N"');
+    expect(out[0]?.startsWith("sep=")).toBe(false);
+    // Every text value is one quoted field, and a formula character after a separator inside it
+    // is guarded as the first character is.
+    expect(out[1]).toBe(`"Total;'=cmd|' /C calc'!A0",1`);
+    expect(out[2]).toBe(`"x;'=1+1",2`);
+    expect(out[3]).toBe(`"a\t'=1","b,'@x"`);
+    expect(out[4]).toBe(`"a\tb","2;3"`);
+    expect(out[5]).toBe(`"10;'-5",`);
+    // Split on ; or a tab outside quotes, as a pt-PT Excel would: no field starts a formula.
+    for (const line of out.slice(1, 6)) {
+      for (const field of line.split(/[;,\t]/))
+        expect(field.replace(/^"/, "")).not.toMatch(/^[=+\-@]/);
+    }
+    // And the file reads back as one cell each.
+    const back = sheetFromCsv(toCsv(t, evaluateSheet(t, { budget: 1000 })));
+    expect(back.header.columns.map((c) => c.name)).toEqual(["sep=;", "N"]);
+    // (Column N is text, so its numbers come back as written.)
+    expect(back.rows[1]).toEqual(["x;'=1+1", "2"]);
   });
 });
 
@@ -141,6 +177,7 @@ describe("CSV import", () => {
         ["1", "2"],
       ],
       rowCount: 1,
+      delimiter: ",",
     });
     // A 2 MB file of one-character rows is the row refusal with its count.
     const long = `a\n${"1\n".repeat(1_048_000)}`;
@@ -178,6 +215,48 @@ describe("CSV import", () => {
       [0.5, 0.05],
     ]);
     expect(sheetFromCsv("h\n5%%\n").rows).toEqual([["5%%"]]);
+  });
+
+  it("reads a number only when no digit is lost or invented", () => {
+    const one = (field: string, delim = ",") => {
+      const s = sheetFromCsv(`h${delim}k\n${field}${delim}x\n`);
+      return { type: s.header.columns[0]?.type, value: s.rows[0]?.[0] };
+    };
+    // Leading zeros, a leading + and more than 15 significant digits stay text, as written.
+    expect(one("00123")).toEqual({ type: "text", value: "00123" });
+    expect(one("+351912345678")).toEqual({ type: "text", value: "+351912345678" });
+    expect(one("12345678901234567890")).toEqual({ type: "text", value: "12345678901234567890" });
+    expect(one("1234567890123456")).toEqual({ type: "text", value: "1234567890123456" });
+    expect(one("123456789012345")).toEqual({ type: "number", value: 123456789012345 });
+    expect(one("0")).toEqual({ type: "number", value: 0 });
+    expect(one("0.25")).toEqual({ type: "number", value: 0.25 });
+    expect(one("-0.5")).toEqual({ type: "number", value: -0.5 });
+    expect(one("1.50")).toEqual({ type: "number", value: 1.5 });
+    expect(one("0.000000000000000000001")).toEqual({ type: "number", value: 1e-21 });
+    // Thousands separators where they cannot be the decimal mark.
+    expect(one('"1,234.50"')).toEqual({ type: "number", value: 1234.5 });
+    expect(one('"-1,234,567"')).toEqual({ type: "number", value: -1234567 });
+    expect(one('"1,500"')).toEqual({ type: "text", value: "1,500" });
+    expect(one('"1,50"')).toEqual({ type: "text", value: "1,50" });
+    // Semicolons: the decimal mark is a comma.
+    expect(one("1,50", ";")).toEqual({ type: "number", value: 1.5 });
+    expect(one("1.234,50", ";")).toEqual({ type: "number", value: 1234.5 });
+    expect(one("1.234.567", ";")).toEqual({ type: "number", value: 1234567 });
+    expect(one("12,5%", ";")).toEqual({ type: "number", value: 0.125 });
+    expect(one("1.500", ";")).toEqual({ type: "text", value: "1.500" });
+    expect(one("0.25", ";")).toEqual({ type: "text", value: "0.25" });
+    expect(one("00123", ";")).toEqual({ type: "text", value: "00123" });
+    // A semicolon file of decimal commas is a number column, not text.
+    const pt = sheetFromCsv("Item;Price;Qty\nApples;1,50;3\nPears;12,75;10\n");
+    expect(pt.header.columns.map((c) => c.type)).toEqual(["text", "number", "number"]);
+    expect(pt.rows).toEqual([
+      ["Apples", 1.5, 3],
+      ["Pears", 12.75, 10],
+    ]);
+    // One field that is not exactly a number keeps its column text, every value as written.
+    const ids = sheetFromCsv("Phone\n912345678\n+351912345678\n");
+    expect(ids.header.columns[0]?.type).toBe("text");
+    expect(ids.rows).toEqual([["912345678"], ["+351912345678"]]);
   });
 
   it("refuses cells a 1 MB sheet cannot hold before it makes values of them", () => {

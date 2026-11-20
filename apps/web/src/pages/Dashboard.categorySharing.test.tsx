@@ -46,11 +46,16 @@ const SHARE = {
   counts: { shared: 1, pending: 2, private: 0 },
 };
 
-function backend(items: ArtifactSummary[], extra: { my?: { name: string; count: number }[] } = {}) {
+function backend(
+  items: ArtifactSummary[],
+  extra: { my?: { name: string; count: number }[]; sharing?: boolean } = {},
+) {
   return stubApi({
     me: ME,
-    config: { ...CONFIG, category_sharing: true },
+    config: { ...CONFIG, category_sharing: extra.sharing ?? true },
     handle: (c) => {
+      if (c.method === "POST" && c.path === "/categories/rename")
+        return json({ updated: 1, category: (c.body as { to: string | null }).to });
       if (c.method === "GET" && c.path.startsWith("/artifacts"))
         return json({
           items,
@@ -130,6 +135,16 @@ describe("Dashboard: category sharing", () => {
     expect(await screen.findByRole("dialog", { name: "Review “Acme”" })).toBeTruthy();
   });
 
+  it("?review= is ignored where the instance does not offer category sharing", async () => {
+    window.history.replaceState(null, "", `/dashboard?review=${SHARE.id}`);
+    const api = backend(fixture(), { sharing: false });
+    const Dashboard = await loadPage();
+    render(<Dashboard />);
+    await screen.findByText("Shared report");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.calls.some((c) => c.path.startsWith("/category-shares"))).toBe(false);
+  });
+
   it("offers Share category for an owner category", async () => {
     backend(fixture());
     const Dashboard = await loadPage();
@@ -192,5 +207,54 @@ describe("Dashboard: personal categories", () => {
     );
     const put = api.calls.find((c) => c.method === "PUT");
     expect(put?.body).toEqual({ category: "Design reviews" });
+  });
+
+  it("under All, a name that is both kinds renames the owner's category, with its own count", async () => {
+    const api = backend(fixture(), { my: [{ name: "Acme", count: 1 }] });
+    const Dashboard = await loadPage();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByText("Shared report");
+    await user.click(screen.getByRole("button", { name: /^Category: / }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Acme (3)" }));
+    await user.click(screen.getByRole("button", { name: "Rename category" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename category" });
+    expect(dialog.textContent).toContain("“Acme” is on 2 artifacts of yours.");
+    expect(dialog.textContent).toContain("rename those under Shared");
+    await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
+    await user.click(await screen.findByRole("button", { name: "Remove from 2 artifacts" }));
+    await waitFor(() =>
+      expect(api.calls.some((c) => c.method === "POST" && c.path === "/categories/rename")).toBe(
+        true,
+      ),
+    );
+    const post = api.calls.find((c) => c.method === "POST" && c.path === "/categories/rename");
+    expect(post?.body).toEqual({ from: "Acme", to: null });
+    // The owner's artifacts without a category, under All.
+    expect((screen.getByRole("radio", { name: "All" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("under All, clearing the person's own category shows Shared, where those artifacts went", async () => {
+    const api = backend(fixture(), { my: [{ name: "Clients", count: 1 }] });
+    const Dashboard = await loadPage();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByText("Their page");
+    await user.click(screen.getByRole("button", { name: /^Category: / }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Clients (1)" }));
+    await user.click(screen.getByRole("button", { name: "Rename category" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename category" });
+    expect(dialog.textContent).toContain("“Clients” is on 1 artifact.");
+    await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
+    await user.click(await screen.findByRole("button", { name: "Remove from 1 artifact" }));
+    await waitFor(() =>
+      expect(api.calls.some((c) => c.method === "POST" && c.path === "/categories/rename")).toBe(
+        true,
+      ),
+    );
+    const post = api.calls.find((c) => c.method === "POST" && c.path === "/categories/rename");
+    expect(post?.body).toEqual({ from: "Clients", to: null, personal: true });
+    const shared = screen.getByRole("radio", { name: "Shared" }) as HTMLInputElement;
+    await waitFor(() => expect(shared.checked).toBe(true));
   });
 });

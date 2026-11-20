@@ -41,9 +41,10 @@ import {
   pageDataAccess,
   pagePeopleAccess,
   peopleListOffered,
+  type VersionWriter,
 } from "../policy.ts";
 import { type Person, peopleWithAccess } from "./people.ts";
-import { namesByEmail } from "./users.ts";
+import { nameByEmail, namesByEmail } from "./users.ts";
 
 /** Who is writing, as the server knows it. Stamps come only from here, never from the request. */
 export interface DataWriter {
@@ -61,6 +62,12 @@ export interface DataTarget {
   id: string;
   ownerId: string;
   caps: Capabilities | null;
+  /**
+   * Who wrote the versions the content host serves (policy.ts peopleListOffered), loaded only on a
+   * page that declares `people`. Absent or null offers no people list, so a caller that does not
+   * load it never opens the list.
+   */
+  writers?: readonly VersionWriter[] | null;
   /**
    * The artifact's stored type (artifacts.type): policy's write floor depends on it, and a
    * whiteboard's documents are checked against the board's shapes.
@@ -161,10 +168,7 @@ export async function session(
   const access = pageDataAccess(claim, target.caps, active, target.type);
   const usage = await usageOf(d1, target.id);
   // The name is read only when the page may see who this is (a link viewer triggers no read).
-  const name =
-    claim && access.seeIdentity
-      ? ((await namesByEmail(d1, [claim.email])).get(claim.email) ?? null)
-      : null;
+  const name = claim && access.seeIdentity ? await nameByEmail(d1, claim.email) : null;
   return {
     available: true,
     viewer: claim
@@ -176,7 +180,7 @@ export async function session(
         }
       : null,
     can_write: access.write,
-    can_list_people: pagePeopleAccess(claim, target.caps, active).list,
+    can_list_people: pagePeopleAccess(claim, target.caps, active, target.writers ?? null).list,
     capabilities: capabilityList(target.caps),
     shared: target.caps?.shared ?? [],
     limits: limitsOf(config),
@@ -209,8 +213,14 @@ export async function summary(
     )
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
-  const people = peopleListOffered(target.caps, sharedDataActive(config))
-    ? await peopleWithAccess(d1, config.tokenSigningKey, target.id, readerEmail)
+  const people = peopleListOffered(target.caps, sharedDataActive(config), target.writers ?? null)
+    ? await peopleWithAccess(
+        d1,
+        config.tokenSigningKey,
+        target.id,
+        readerEmail,
+        config.allowCategorySharing,
+      )
     : null;
   return {
     capabilities: capabilityList(target.caps),

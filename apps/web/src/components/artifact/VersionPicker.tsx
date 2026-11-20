@@ -308,6 +308,9 @@ export function VersionPicker({
                       {v.author.kind === "connection" && (
                         <span className="hx-picker__agent"> (agent)</span>
                       )}
+                      {v.author.kind === "user" && v.author.is_owner && (
+                        <span className="hx-picker__agent"> (owner)</span>
+                      )}
                     </span>
                     {note && (
                       <span className="hx-picker__note">

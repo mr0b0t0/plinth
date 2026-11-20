@@ -326,7 +326,7 @@ describe("ArtifactPage", () => {
       expect(sockets).toHaveLength(1);
       expect(sockets[0]?.url).toMatch(/\/api\/v1\/view\/art123\/watch$/);
       const frame = (f: unknown) => act(() => sockets[0]?.onmessage?.({ data: JSON.stringify(f) }));
-      frame({ t: "welcome", v: 1, version: 3, data: false });
+      frame({ t: "welcome", v: 1, version: 3 });
       // While the socket is open, the gate is not read on the 15 s pace.
       await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 2);
       expect(reads).toHaveLength(1);
@@ -751,7 +751,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
-      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.frame({ t: "welcome", v: 1, version: 3 });
       roomStatus(frame, true);
       ws.revoke();
       await act(async () => {
@@ -784,7 +784,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
-      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.frame({ t: "welcome", v: 1, version: 3 });
       roomStatus(frame, true);
       ws.revoke();
       await waitFor(() => expect(screen.queryByTitle("Plan, version 3")).toBeNull());
@@ -802,7 +802,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       await screen.findByTitle("Plan, version 3");
-      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.frame({ t: "welcome", v: 1, version: 3 });
       ws.revoke();
       const fresh = await waitFor(() => {
         const f = [...document.querySelectorAll("iframe")].find(

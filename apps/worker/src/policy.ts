@@ -496,30 +496,64 @@ export function isAdmin(p: Principal): boolean {
 // ---------- who is viewing: the people list on the page ----------
 
 /**
- * Does the artifact offer its people list at all: its current version declares `data viewer
- * people` while shared data is active (`active`: sharedDataActive(config))? This one answer governs
- * every way to read the list: the page (pagePeopleAccess), owners' and editors' agents
- * (list_artifact_data's summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice
- * under the bar tells every identified viewer exactly when it is true. Without it nobody but the
- * owner (in the sharing settings) sees the access list.
+ * Who wrote a version: the person, and the artifact its agent token was limited to (null for a
+ * person, or an agent acting for them account-wide). Read from `versions.created_by_user` and the
+ * connection's `artifact_id`, the same facts the thumbnail capture uses (captureReadsData).
  */
-export function peopleListOffered(caps: Capabilities | null, active: boolean): boolean {
-  return active && caps?.data === true && caps.viewer && caps.people;
+export interface VersionWriter {
+  userId: string | null;
+  boundArtifactId: string | null;
+}
+
+/**
+ * Does the artifact offer its people list at all: its current version declares `data viewer
+ * people` while shared data is active (`active`: sharedDataActive(config)), and every version the
+ * content host serves (1 to the current one, `writers`: their distinct writers) was written by
+ * someone who may read the list (captureReadsData: a person or an agent acting for them
+ * account-wide, never a token limited to one artifact nor a writer whose account is gone)? A bound
+ * token may not read the list, so a page it wrote must not read it through the owner's or an
+ * editor's session either. Every version, not only the current one: the content host serves each
+ * at /__plinth/v/<n>/ on the artifact's one origin under the same pass, so a bound token's old
+ * version opened from History (or still open in a tab, or framing `/`) would call the people route
+ * with the reader's claim, and nothing on a request says which version's code made it. Versions are
+ * never deleted, so once a bound token has published one the artifact lists nobody. `writers` null
+ * or empty (not loaded, or no version) offers nothing. This one answer governs every way to read
+ * the list: the page (pagePeopleAccess), owners' and editors' agents (list_artifact_data's
+ * summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice under the bar tells every
+ * identified viewer exactly when it is true. Without it nobody but the owner (in the sharing
+ * settings) sees the access list.
+ */
+export function peopleListOffered(
+  caps: Capabilities | null,
+  active: boolean,
+  writers: readonly VersionWriter[] | null,
+): boolean {
+  return (
+    active &&
+    caps?.data === true &&
+    caps.viewer &&
+    caps.people &&
+    writers !== null &&
+    writers.length > 0 &&
+    writers.every(captureReadsData)
+  );
 }
 
 /**
  * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
- * with an identity claim, on a page that offers the list (peopleListOffered). Commenters, viewers
- * and anonymous link viewers never: the list holds every grant holder's email. The role comes from
- * the claim, sealed at the current access epoch, so a demoted editor's pass stops working at once.
+ * with an identity claim, on a page that offers the list (peopleListOffered, with the writers of
+ * every served version). Commenters, viewers and anonymous link viewers never: the list holds every
+ * grant holder's email. The role comes from the claim, sealed at the current access epoch, so a
+ * demoted editor's pass stops working at once.
  */
 export function pagePeopleAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   active: boolean,
+  writers: readonly VersionWriter[] | null,
 ): { list: boolean } {
   const editor = claim?.role === "owner" || claim?.role === "editor";
-  return { list: editor && peopleListOffered(caps, active) };
+  return { list: editor && peopleListOffered(caps, active, writers) };
 }
 
 /**
@@ -644,9 +678,17 @@ export interface ArtifactCategoryFacts {
   reviewShareId: string | null;
 }
 
+/**
+ * The artifact facts the category rules read: its owner and its category review. Every
+ * ArtifactFacts is one; the people list (services/people.ts) reads just these from its own query.
+ */
+export type CategoryArtifactFacts = Pick<ArtifactFacts, "ownerId" | "categoryShare">;
+
 /** A person's grant on the share of an owner's category key, as the loader found it. */
 export interface CategoryGrantFacts {
   shareId: string;
+  /** category_shares.owner_id: the grant counts only on that owner's artifacts. */
+  shareOwnerId: string;
   shareKey: string;
   role: CategoryRole;
 }
@@ -666,18 +708,23 @@ export function strongerRole(a: Role | null, b: Role | null): Role | null {
  * share is the one on the artifact's current key and the feature is on. Pending, private, moved,
  * stale or unbackfilled artifacts give the category's people nothing. Never more than commenter.
  */
-export function categoryRoleOf(artifact: ArtifactFacts, access: AccessFacts): CategoryRole | null {
+export function categoryRoleOf(
+  artifact: CategoryArtifactFacts,
+  access: AccessFacts,
+): CategoryRole | null {
   const c = artifact.categoryShare;
   const g = access.categoryGrant;
   if (access.categorySharing !== true || !c || !g) return null;
   if (c.review !== "shared" || c.key === null) return null;
   if (c.reviewShareId !== g.shareId || c.key !== g.shareKey) return null;
+  // The share is the artifact owner's own: another owner's share never reaches this artifact.
+  if (g.shareOwnerId !== artifact.ownerId) return null;
   // A stray value (a hand-edited row) clamps to the weakest role.
   return g.role === "commenter" ? "commenter" : "viewer";
 }
 
 /** The grant role that counts: the stronger of the direct grant and categoryRoleOf. */
-export function grantedRole(artifact: ArtifactFacts, access: AccessFacts): Role | null {
+export function grantedRole(artifact: CategoryArtifactFacts, access: AccessFacts): Role | null {
   return strongerRole(access.grantRole, categoryRoleOf(artifact, access));
 }
 

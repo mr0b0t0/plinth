@@ -388,12 +388,21 @@ export default function Dashboard() {
   const showCategoryMenu =
     filter === "shared" ? myCategories.length > 0 : categories.length > 0 || category !== null;
   // Renaming the selected name renames the owner's category, or under Shared (or when only the
-  // person's own list has it) their own category for shared artifacts.
-  const selectedOwn =
-    selected !== null &&
-    filter !== "shared" &&
-    ownCategories.some((c) => categoryKey(c.name) === categoryKey(selected.name));
+  // person's own list has it) their own category for shared artifacts. Under All a name can be
+  // both: the action then targets the owner's category, with that kind's own count, and says so.
+  const sameKey = (c: CategoryCount) =>
+    selected !== null && categoryKey(c.name) === categoryKey(selected.name);
+  const selectedOwn = selected !== null && filter !== "shared" && ownCategories.some(sameKey);
   const renamePersonal = selected !== null && !selectedOwn;
+  const renameTarget = selected
+    ? ((renamePersonal ? myCategories : ownCategories).find(sameKey) ?? selected)
+    : null;
+  /** Under All, a name that is both kinds: the rename dialog names whose artifacts it changes. */
+  const renameBoth =
+    selected !== null &&
+    filter === "all" &&
+    ownCategories.some(sameKey) &&
+    myCategories.some(sameKey);
   const selectedShare =
     selectedOwn && selected
       ? (shares.find((s) => categoryKey(s.category) === categoryKey(selected.name)) ?? null)
@@ -607,14 +616,15 @@ export default function Dashboard() {
         <p className="pl-dash__quota">{quotaText(me.artifact_count, me.artifact_limit)}</p>
       )}
 
-      {renaming && selected && (
+      {renaming && renameTarget && (
         <RenameCategoryDialog
-          category={selected}
+          category={renameTarget}
           categories={renamePersonal ? myCategories : ownCategories}
           personal={renamePersonal}
+          whose={renameBoth ? "own" : undefined}
           onClose={() => setRenaming(false)}
           onDone={(stored) => {
-            const from = selected;
+            const from = renameTarget;
             setRenaming(false);
             if (!renamePersonal) {
               setList((l) =>
@@ -622,7 +632,9 @@ export default function Dashboard() {
               );
             }
             if (stored === null) {
-              // Show where those artifacts went; the menu stays, and takes the focus.
+              // Show where those artifacts went; the menu stays, and takes the focus. Under All,
+              // "No category" lists the owner's own, so a personal one cleared there goes to Shared.
+              if (renamePersonal && filter === "all") setFilter("shared");
               setCategory("");
               setFocusCategoryMenu(true);
             } else {
@@ -648,7 +660,7 @@ export default function Dashboard() {
         />
       )}
 
-      {reviewing && (
+      {reviewing && categorySharing && (
         <CategoryReviewDialog
           shareId={reviewing}
           onClose={() => {

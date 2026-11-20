@@ -14,11 +14,14 @@ import { prepareBoardSource, seedBoard } from "../src/services/board.ts";
 import { measureDoc } from "../src/services/data.ts";
 import { titleFromSource } from "../src/services/stage.ts";
 import {
+  browser,
   owner as categoryOwner,
   person as categoryPerson,
+  codeFor,
   shareCategory,
 } from "./category-helpers.ts";
 import {
+  APP,
   agent,
   agentPrincipal,
   browserSession,
@@ -581,6 +584,44 @@ describe("the page's data API on a whiteboard", () => {
       );
     }
     expect(await docRows(body.id)).toEqual(before);
+    // Nor emit on its room: the category grant stops at commenter, below the board's floor.
+    expect(await json(await info(body.id, cookie))).toMatchObject({
+      available: true,
+      can_emit: "none",
+      open_topics: [],
+    });
+  });
+
+  it("an invitee signed in by the gate's code changes a default board as an editor, not as a commenter", async () => {
+    const editor = `wb-code-editor-${crypto.randomUUID()}@example.com`;
+    const commenter = `wb-code-commenter-${crypto.randomUUID()}@example.com`;
+    const { id } = await board(SEEDED, { emails: [editor, commenter] });
+    await grant(id, editor, "editor");
+    await grant(id, commenter, "commenter");
+    const signIn = async (email: string) => {
+      const headers = { ...browser(), "Content-Type": "application/json" };
+      const send = (path: string, body: unknown) =>
+        run(`${APP}/api/v1/view/${id}/${path}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+      expect((await send("email", { email })).status).toBe(200);
+      const ok = await send("code", { email, code: await codeFor(email) });
+      expect(ok.status).toBe(200);
+      const session = (ok.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+      // The code signs them in with an account (#82), and the board treats them by role alone.
+      expect(session).toMatch(/^__Host-plinth_session=/);
+      return (await cookieOf(id, { Cookie: session })).cookie;
+    };
+    const e = await signIn(editor);
+    const c = await signIn(commenter);
+    expect((await json(await api(id, "/session", e))).can_write).toBe(true);
+    expect((await json(await api(id, "/session", c))).can_write).toBe(false);
+    expect((await api(id, "/data/blocks", e, "POST", { data: block() })).status).toBe(201);
+    expect((await api(id, "/data/blocks", c, "POST", { data: block() })).status).toBe(403);
+    expect(await json(await info(id, e))).toMatchObject({ can_emit: "all" });
+    expect(await json(await info(id, c))).toMatchObject({ can_emit: "none" });
   });
 
   it("a commenter writes on a commenters board and stops at once when it becomes an editors board", async () => {

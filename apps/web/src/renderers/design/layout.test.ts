@@ -2,7 +2,7 @@
 // board, which boards are on screen, and where a board's files and the board loader come from.
 import { DESIGN_LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
-import { boardBaseUrl, boardLoaderUrl, contentBase } from "./base.ts";
+import { boardBaseUrl, boardLoaderUrl, contentBase, isVersionNumber } from "./base.ts";
 import {
   clampZoom,
   fitTransform,
@@ -182,18 +182,40 @@ describe("transforms", () => {
 });
 
 describe("where boards come from", () => {
-  it("resolves a board's files against the shell's own directory", () => {
-    expect(boardBaseUrl({ href: "https://abc.c.example/" })).toBe("https://abc.c.example/");
-    expect(boardBaseUrl({ href: "https://abc.c.example/?plinth-review=1#x" })).toBe(
-      "https://abc.c.example/",
+  it("resolves a board's files against the shown version's path, never the root", () => {
+    // At the root the content host serves the current version: v1's boards stay on v1.
+    expect(boardBaseUrl({ href: "https://abc.c.example/" }, 1)).toBe(
+      "https://abc.c.example/__plinth/v/1/",
     );
-    expect(boardBaseUrl({ href: "https://abc.c.example/__plinth/v/3/" })).toBe(
+    expect(boardBaseUrl({ href: "https://abc.c.example/?plinth-review=1#x" }, 4)).toBe(
+      "https://abc.c.example/__plinth/v/4/",
+    );
+    expect(boardBaseUrl({ href: "https://abc.c.example/__plinth/v/3/" }, 3)).toBe(
       "https://abc.c.example/__plinth/v/3/",
     );
+    // The payload's number wins over the path, which only the content host resolves.
+    expect(boardBaseUrl({ href: "https://abc.c.example/__plinth/v/3/" }, 2)).toBe(
+      "https://abc.c.example/__plinth/v/2/",
+    );
     const id = "abcdefghij0123456789";
-    expect(boardBaseUrl({ href: `https://app.example/__content/${id}/__plinth/v/2/` })).toBe(
+    expect(boardBaseUrl({ href: `https://app.example/__content/${id}/` }, 2)).toBe(
       `https://app.example/__content/${id}/__plinth/v/2/`,
     );
+    expect(boardBaseUrl({ href: `https://app.example/__content/${id}/__plinth/v/2/` }, 2)).toBe(
+      `https://app.example/__content/${id}/__plinth/v/2/`,
+    );
+    expect(boardBaseUrl({ href: "https://abc.c.example/" }, 999_999_999)).toBe(
+      "https://abc.c.example/__plinth/v/999999999/",
+    );
+  });
+
+  it("gives no base without a valid version number, so no board falls back to the root", () => {
+    const loc = { href: "https://abc.c.example/" };
+    for (const v of [undefined, null, 0, -1, 1.5, Number.NaN, Infinity, 1_000_000_000, "1", [1]]) {
+      expect(boardBaseUrl(loc, v), String(v)).toBeNull();
+      expect(isVersionNumber(v), String(v)).toBe(false);
+    }
+    expect(isVersionNumber(1)).toBe(true);
   });
 
   it("opens the fixed board loader on the artifact's origin", () => {

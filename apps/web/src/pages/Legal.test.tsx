@@ -58,7 +58,10 @@ describe("Legal", () => {
     await screen.findByRole("heading", { level: 1 });
     const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
     expect(text).toContain("Who opened a page: when someone other than its owner opens a page");
-    expect(text).toContain("the name and email address of people signed in to this service");
+    expect(text).toContain(
+      "the name and email address of people signed in to this service, including anyone who confirmed their address with a code we emailed them.",
+    );
+    expect(text).not.toContain("viewers who confirmed it with a code");
     expect(text).toContain("an approximate number of anonymous visitors, never who they are");
     expect(text).toContain("Who opened a page: 365 days, then only the number of opens");
     expect(text).toContain("holds a random visitor id");

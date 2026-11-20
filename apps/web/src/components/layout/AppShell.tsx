@@ -29,7 +29,7 @@ import {
 import { agentInitials, useAgents } from "../../lib/agents.ts";
 import { api } from "../../lib/api.ts";
 import { Link, navigate, useLocation } from "../../lib/router.tsx";
-import { useSession } from "../../lib/session.ts";
+import { setSessionMe, useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useThemePreference } from "../../lib/theme.ts";
 import { CONNECT_AGENT_HREF } from "../account/nav.ts";
 import { ProfileNameDialog } from "../account/ProfileNameDialog.tsx";
@@ -462,9 +462,9 @@ export function AppShell({
         <ProfileNameDialog
           current={me.name}
           onClose={() => setNameOpen(false)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setNameOpen(false);
-            void refresh().catch(() => undefined);
+            setSessionMe(saved);
           }}
         />
       )}

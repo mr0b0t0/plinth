@@ -4,6 +4,7 @@ import {
   type Capabilities,
   capabilityList,
   hasPageCapabilities,
+  pageDisplayName,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
@@ -33,26 +34,21 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import {
-  type Decision,
-  liveViewAccess,
-  type Principal,
-  pageDataAccess,
-  peopleListOffered,
-} from "../policy.ts";
+import { type Decision, liveViewAccess, pageDataAccess, peopleListOffered } from "../policy.ts";
 import {
   decideFor,
   denialError,
   findArtifact,
   grantFor,
+  servedVersionWriters,
   versionCapabilities,
 } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
-import { sessionCookie } from "../services/sessions.ts";
-import { namesByEmail } from "../services/users.ts";
+import { nameByEmail } from "../services/users.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import { countsAsView, openerFor } from "../services/views.ts";
+import { setCodeSession } from "./codeSession.ts";
 import {
   type AppContext,
   type AppEnv,
@@ -147,7 +143,7 @@ export async function computeGate(
       current_version: a.currentVersion,
       version,
       visibility: a.visibility,
-      owner_name: owner?.name ?? null,
+      owner_name: pageDisplayName(owner?.name),
     },
     enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView, opener }),
     role: d.role,
@@ -370,13 +366,22 @@ async function gatePeople(
   const room =
     caps.room && hasPageCapabilities(typeDef(a.type)) && roomsActive(ctx.config, ctx.env);
   if (!data && !room) return undefined;
-  const name = (await namesByEmail(ctx.env.DB, [identity.email])).get(identity.email) ?? null;
+  const name = await nameByEmail(ctx.env.DB, identity.email);
   const out: ViewGatePeople = {
     ...(name ? { name } : {}),
     // Exactly when anyone (the page, agents, REST) can read the list: policy.ts peopleListOffered.
-    ...(peopleListOffered(caps, sharedDataActive(ctx.config)) ? { list: true as const } : {}),
+    ...((await peopleOffered(ctx, a, caps)) ? { list: true as const } : {}),
   };
   return out.name || out.list ? out : undefined;
+}
+
+/**
+ * policy.ts peopleListOffered for the current version (whose declaration is `caps`), reading the
+ * writers of every served version only on a page that declares `people`.
+ */
+async function peopleOffered(ctx: Ctx, a: ArtifactRow, caps: Capabilities): Promise<boolean> {
+  const writers = caps.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
+  return peopleListOffered(caps, sharedDataActive(ctx.config), writers);
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {
@@ -390,9 +395,10 @@ function gateOptions(q: (k: string) => string | undefined): GateOptions {
 
 /**
  * The gate for this request. A signed-in person whose own email is not listed may also hold a
- * viewer session for an email that is (confirmed by code in this browser); either identity may
- * open the artifact. The viewer identity is used for this gate only, and the identity claim for
- * shared data carries the email of whichever principal produced the ok gate.
+ * viewer session for an email that is (confirmed by code in this browser where that email may not
+ * sign in, as in single-user mode, or before codes signed people in); either identity may open the
+ * artifact. The viewer identity is used for this gate only, and the identity claim for shared data
+ * carries the email of whichever principal produced the ok gate.
  */
 async function gateForRequest(c: AppContext, ref: string, opts: GateOptions): Promise<ViewGate> {
   const ctx = serviceCtx(c);
@@ -426,37 +432,16 @@ viewApi.post("/view/:ref/email", async (c) => {
 });
 
 /**
- * Allowlist: confirm the code and return the gate for that email. A listed email starts a viewer
- * session; the owner's own email signs the owner in to the app.
+ * Allowlist: confirm the code and return the gate for that email. The email, listed or the
+ * owner's, signs in to the app (the account is created on first use); where the instance does not
+ * let it sign in (single-user mode), a listed email starts a viewer session instead.
  */
 viewApi.post("/view/:ref/code", async (c) => {
   const { email, code } = await parseBody(c, viewerCodeInput);
   const ctx = serviceCtx(c);
   const ref = c.req.param("ref");
   const result = await verifyViewerCode(ctx, ref, email, code);
-  const config = c.get("config");
-  let principal: Principal;
-  if (result.kind === "user") {
-    c.header("Set-Cookie", sessionCookie(config, result.value), { append: true });
-    principal = {
-      kind: "user",
-      userId: result.user.id,
-      email: result.user.email,
-      isAdmin: config.adminEmails.includes(result.user.email),
-    };
-  } else {
-    c.header(
-      "Set-Cookie",
-      serializeCookie(appCookieName(config, "viewer"), result.value, {
-        httpOnly: true,
-        secure: secureFlag(config.scheme, config.appHost),
-        sameSite: "Lax",
-        maxAge: TTL.viewerSessionS,
-      }),
-      { append: true },
-    );
-    principal = { kind: "viewer", email };
-  }
+  const principal = await setCodeSession(c, result, email);
   const gate = await computeGate(
     { ...ctx, principal },
     ref,

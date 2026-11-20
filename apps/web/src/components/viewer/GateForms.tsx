@@ -1,7 +1,7 @@
 // The two viewer checks that come before an artifact: a password, or an allowlisted email confirmed
 // by a six-digit code. Both end with a ViewGate from the server (usually "ok" with an enter URL).
 import type { ViewGate } from "@plinth/shared";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { refreshSession } from "../../lib/session.ts";
 import { Button, Input, Stack } from "../ui/index.ts";
@@ -67,13 +67,60 @@ export function PasswordForm({ artifactRef, query, onGate }: StepProps) {
   );
 }
 
+/**
+ * What confirming a viewing code does, said before anyone asks for one (docs/spec.md "Invitees get
+ * an account"; the privacy notice says that a new address gets an account). `codeSignsIn` is false
+ * on a single-user instance, where an invited address cannot sign in and the code only opens what
+ * is shared with it.
+ */
+export function codeLead(codeSignsIn: boolean): string {
+  return codeSignsIn
+    ? "Sign in with a one-time code."
+    : "Confirm your email with a one-time code. You do not need an account.";
+}
+
+/** Which step a code form is on: the gate around it shows its lead on the email step only. */
+export type CodeStep = "email" | "code";
+
+/** Does a viewing code sign the address in on this instance? Everywhere but single-user mode. */
+export const codeSignsInFor = (config: { single_user_mode: boolean } | null): boolean =>
+  config?.single_user_mode !== true;
+
+/**
+ * Told to a signed-in person whose own address has no access, before they ask for a code: a code
+ * confirmed for another address signs them in with it instead (DECISIONS 2026-11-19), so switching
+ * accounts is never a surprise. The artifact gate and the portal both show it.
+ */
+export function SignedInNotice({ email, codeSignsIn }: { email: string; codeSignsIn: boolean }) {
+  return (
+    <p className="pl-gate__signed-in">
+      You are signed in as <strong>{email}</strong>, which has no access.{" "}
+      {codeSignsIn
+        ? "Confirming another address switches you to it."
+        : "You can confirm another address below."}
+    </p>
+  );
+}
+
 export interface EmailFormProps extends StepProps {
   /** Shown when a signed-in person's own address is not on the list. */
   signedInEmail?: string | null;
+  /** Confirming the code signs the address in (every instance but a single-user one). */
+  codeSignsIn?: boolean;
+  /** Told the step whenever it changes, so the gate can drop its lead on the code step. */
+  onStep?: (step: CodeStep) => void;
 }
 
-export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFormProps) {
-  const [step, setStep] = useState<"email" | "code">("email");
+export function EmailForm({
+  artifactRef,
+  query,
+  onGate,
+  signedInEmail,
+  codeSignsIn = true,
+  onStep,
+}: EmailFormProps) {
+  const [step, setStep] = useState<CodeStep>("email");
+  useEffect(() => onStep?.(step), [step, onStep]);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +178,8 @@ export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFo
         setError("That code did not work. Check it, or ask for a new one.");
         return;
       }
-      // The owner's own email signs them in to the app; pick that up so the header shows it.
+      // A confirmed code signs the address in to the app (except where it may not sign in, as on
+      // a single-user instance); pick that up so the header shows it.
       await refreshSession().catch(() => {});
       onGate(gate);
     } catch (err) {
@@ -205,12 +253,7 @@ export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFo
   return (
     <form onSubmit={submitEmail} noValidate>
       <Stack gap={4}>
-        {signedInEmail && (
-          <p className="pl-gate__signed-in">
-            You are signed in as <strong>{signedInEmail}</strong>, which is not on the list for this
-            artifact. If another address of yours is, confirm it below.
-          </p>
-        )}
+        {signedInEmail && <SignedInNotice email={signedInEmail} codeSignsIn={codeSignsIn} />}
         <Input
           ref={emailRef}
           label="Email"

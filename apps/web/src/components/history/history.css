@@ -34,6 +34,11 @@
 .hx-author__label {
   overflow-wrap: anywhere;
 }
+/* As quiet as the comments' "Agent" mark (.cm-agent). */
+.hx-author__owner {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
 .hx-date {
   border-radius: var(--radius-xs);
   text-decoration: underline dotted var(--color-border-strong);

@@ -40,7 +40,7 @@ import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../
 import { ApiError } from "../lib/errors.ts";
 import { type PageClaim, pageDataAccess } from "../policy.ts";
 import { notifyViewers } from "../rooms/notify.ts";
-import { versionCapabilities } from "../services/artifacts.ts";
+import { servedVersionWriters, versionCapabilities } from "../services/artifacts.ts";
 import {
   changes,
   createDoc,
@@ -175,7 +175,11 @@ function intParam(v: string | null, name: string, min: number, max: number): num
   return n;
 }
 
-/** Check 7: the artifact and its current version's declaration, in one query. */
+/**
+ * Check 7: the artifact and its current version's declaration, in one query, and on a page that
+ * declares `people` the writers of every version this origin serves (policy.ts peopleListOffered:
+ * any of them may be the code calling, since all share the origin and the pass).
+ */
 async function loadTarget(env: Bindings, artifactId: string) {
   const row = await env.DB.prepare(
     `SELECT a.id, a.owner_id, a.type, a.access_epoch, a.taken_down_at, v.capabilities
@@ -193,13 +197,15 @@ async function loadTarget(env: Bindings, artifactId: string) {
       capabilities: string | null;
     }>();
   if (!row || row.taken_down_at) return null;
+  const caps = versionCapabilities(row);
   return {
     id: row.id,
     accessEpoch: row.access_epoch,
     target: {
       id: row.id,
       ownerId: row.owner_id,
-      caps: versionCapabilities(row),
+      caps,
+      writers: caps?.people ? await servedVersionWriters(env.DB, row.id) : null,
       type: row.type,
     } satisfies DataTarget,
   };

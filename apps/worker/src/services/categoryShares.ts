@@ -19,6 +19,7 @@ import {
   categoryKey,
   LIMITS,
   normalizeCategory,
+  pageDisplayName,
   type ReviewSkipReason,
   type SharingCategoryShare,
 } from "@plinth/shared";
@@ -62,18 +63,31 @@ export async function categoryGrantFor(
     return null;
   const marks = emails.map((_, i) => `?${i + 3}`).join(", ");
   const { results } = await ctx.env.DB.prepare(
-    `SELECT s.id AS share_id, s.category_key AS share_key, g.role AS role, g.email AS email
+    `SELECT s.id AS share_id, s.owner_id AS owner_id, s.category_key AS share_key, g.role AS role,
+            g.email AS email
        FROM category_shares s JOIN category_grants g ON g.share_id = s.id
       WHERE s.owner_id = ?1 AND s.category_key = ?2 AND g.email IN (${marks})`,
   )
     .bind(a.ownerId, a.categoryKey, ...emails)
-    .all<{ share_id: string; share_key: string; role: CategoryRole; email: string }>();
+    .all<{
+      share_id: string;
+      owner_id: string;
+      share_key: string;
+      role: CategoryRole;
+      email: string;
+    }>();
   let best: (CategoryGrantFacts & { email: string }) | null = null;
   for (const r of results) {
     const stronger = !best || (r.role === "commenter" && best.role === "viewer");
     const tie = best && r.role === best.role && r.email === own;
     if (stronger || tie) {
-      best = { shareId: r.share_id, shareKey: r.share_key, role: r.role, email: r.email };
+      best = {
+        shareId: r.share_id,
+        shareOwnerId: r.owner_id,
+        shareKey: r.share_key,
+        role: r.role,
+        email: r.email,
+      };
     }
   }
   return best;
@@ -99,6 +113,7 @@ export async function callerCategoryGrants(
   for (const r of results) {
     out.set(`${r.owner_id}\n${r.share_key}`, {
       shareId: r.share_id,
+      shareOwnerId: r.owner_id,
       shareKey: r.share_key,
       role: r.role,
     });
@@ -132,13 +147,29 @@ export async function shareIdForKey(
   return r?.id ?? null;
 }
 
-/** The owner's share names (their spelling), to snap new filings onto. */
-export async function ownerShareNames(d1: D1Database, ownerId: string): Promise<string[]> {
+/** The owner's shares, each with its key and the owner's spelling, in one read. */
+export async function ownerShares(
+  d1: D1Database,
+  ownerId: string,
+): Promise<{ id: string; key: string; name: string }[]> {
   const { results } = await d1
-    .prepare("SELECT name FROM category_shares WHERE owner_id = ?1")
+    .prepare("SELECT id, category_key AS key, name FROM category_shares WHERE owner_id = ?1")
     .bind(ownerId)
-    .all<{ name: string }>();
-  return results.map((r) => r.name);
+    .all<{ id: string; key: string; name: string }>();
+  return results;
+}
+
+/** The owner's spelling of the share on `key`, or null (a filing snaps onto it). */
+export async function shareNameForKey(
+  d1: D1Database,
+  ownerId: string,
+  key: string,
+): Promise<string | null> {
+  const r = await d1
+    .prepare("SELECT name FROM category_shares WHERE owner_id = ?1 AND category_key = ?2")
+    .bind(ownerId, key)
+    .first<{ name: string }>();
+  return r?.name ?? null;
 }
 
 const reviewUrl = (config: Config, shareId: string) =>
@@ -443,7 +474,8 @@ async function shareArtifacts(ctx: Ctx, share: CategoryShareRow): Promise<Catego
       r.category_review_share === share.id && r.category_review ? r.category_review : "pending",
     taken_down: r.taken_down_at !== null,
     updated_at: r.updated_at,
-    last_author: r.conn_label ?? r.user_name ?? r.user_email ?? null,
+    // The name cleaned on read (displayName.ts pageDisplayName), as everywhere else it shows.
+    last_author: r.conn_label ?? pageDisplayName(r.user_name) ?? r.user_email ?? null,
   }));
 }
 
