@@ -1,6 +1,7 @@
 // Live views end to end, applying a new version while keeping the reader's state (docs/spec.md
 // "Live views"): a doc scrolled to a lower heading updates in place (no new enter request) and the
-// heading stays where it was; a page with the runtime hands its state and scroll to the next
+// heading stays where it was, and an image the new version changed under the same name shows the
+// new file; a page with the runtime hands its state and scroll to the next
 // version; a page that declares `hold` waits while the viewer types in it, and Update loads it.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { publishArtifact, uniqueEmail } from "../support/api.ts";
@@ -72,6 +73,45 @@ test("a doc updates in place and keeps the heading the reader was at", async ({ 
   expect(entered).toHaveLength(1);
   const after = await heading.evaluate((el) => Math.round(el.getBoundingClientRect().top));
   expect(Math.abs(after - before)).toBeLessThanOrEqual(2);
+});
+
+const CHART = (width: number) => ({
+  path: "chart.svg",
+  content: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="40"><rect width="${width}" height="40" fill="#4a7"/></svg>`,
+  content_type: "image/svg+xml",
+});
+
+test("a doc updated in place shows the new version's image under the same name", async ({
+  page,
+}) => {
+  const { token } = await seedToken(uniqueEmail("doc-live-image"));
+  const art = await publishArtifact(page.request, token, {
+    type: "doc",
+    content: "# Report\n\n![Chart](chart.svg)\n\nFirst draft.\n",
+    html: undefined,
+    assets: [CHART(100)],
+  });
+  const entered = enters(page);
+  await page.goto(`/a/${art.slug}`);
+  const current = page.frameLocator(CURRENT_FRAME);
+  await expect(current.locator('html[data-ready="ok"]')).toHaveCount(1);
+  const frame = await shownFrame(page);
+  const width = () =>
+    frame.locator("img").evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0));
+  await expect.poll(width).toBe(100);
+
+  await update(
+    token,
+    art.id,
+    { content: "# Report\n\n![Chart](chart.svg)\n\nSecond draft.\n", assets: [CHART(300)] },
+    1,
+  );
+  await expect(page.getByText("Updated to v2")).toBeVisible({ timeout: 10_000 });
+  await expect(frame.getByText("Second draft.")).toHaveCount(1);
+  // In place (the same frame, no new enter request), and the chart is v2's, not the one v1 loaded.
+  expect(await shownFrame(page)).toBe(frame);
+  expect(entered).toHaveLength(1);
+  await expect.poll(width).toBe(300);
 });
 
 const RUNTIME_PAGE = (title: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8">

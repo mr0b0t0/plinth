@@ -1408,7 +1408,11 @@ the app applies it so the reader keeps their place where it can:
   own origin with the content pass it already holds, renders it exactly as at boot (Markdown, then
   the sanitizer), keeps the block that was at the top of the viewport where it was (found again by
   its nearest heading, or by its block index when that heading is gone), and answers `{ type:
-  "shown", n, nonce, ok }`. On `ok` the frame and its enter URL stay; nothing reloads, and solo
+  "shown", n, nonce, ok }`. Its images load from that version's own path (`chart.png` becomes
+  `/__plinth/v/<n>/chart.png`), in view and in a later Edit, because a browser reuses an image it
+  already loaded in a document for the same URL without asking again: a new version that changes
+  an image under the same name shows the new image next to the new text. The source keeps the
+  author's paths. On `ok` the frame and its enter URL stay; nothing reloads, and solo
   editing afterwards starts from the version on screen. On a refusal (anything being edited, a room
   client attached, a failed or refused fetch; the renderer checks again once the text has arrived,
   so an editor opened meanwhile is kept) or no answer in 5 s, a fresh frame loads, unless the doc is

@@ -167,7 +167,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
   Migration `0021_invitation_opt_outs.sql`.
 - **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
-  not reloaded and the heading you were reading stays where it was. A page that loads
+  not reloaded, the heading you were reading stays where it was, and an image the new version
+  changed under the same name shows the new file. A page that loads
   `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
   sub-page the new version no longer has opens at its root instead), and can hand state to the
   next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`

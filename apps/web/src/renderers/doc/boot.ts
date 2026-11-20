@@ -23,7 +23,7 @@ import {
 } from "@plinth/shared";
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import { type DocBackend, DocEditor, LocalDoc } from "./edit.ts";
-import { showVersion } from "./follow.ts";
+import { pinImages, showVersion } from "./follow.ts";
 import { LiveDocClient } from "./live.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
@@ -89,7 +89,13 @@ const ERRORS: Record<string, string> = {
 };
 
 /** Wires on-page editing. Returns a function that stops it. */
-function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: string) {
+function live(
+  win: Window,
+  root: HTMLElement,
+  payload: TypedPayload,
+  appOrigin: string,
+  prepare?: (fragment: DocumentFragment) => void,
+) {
   let client: LiveDocClient | null = null;
   let local: LocalDoc | null = null;
   let editor: DocEditor | null = null;
@@ -150,7 +156,7 @@ function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: 
   const goSolo = () => {
     local ??= new LocalDoc(payload.text, events);
     if (editor) editor.setBackend(local);
-    else editor = new DocEditor(root, win, local, hooks);
+    else editor = new DocEditor(root, win, local, hooks, prepare);
   };
 
   if (payload.live === "room") {
@@ -181,7 +187,7 @@ function live(win: Window, root: HTMLElement, payload: TypedPayload, appOrigin: 
         error: (code) => editor?.notify(ERRORS[code] ?? "Something went wrong with live editing."),
       },
     });
-    editor = new DocEditor(root, win, client, hooks);
+    editor = new DocEditor(root, win, client, hooks, prepare);
     client.start();
   }
 
@@ -240,8 +246,16 @@ export function boot(win: Window): () => void {
   // The artifact page's "Print or save as PDF" item, and on-page editing. Only the app page that
   // frames this doc may ask.
   const appOrigin = payload.app_origin;
+  // The version last shown in place, if any: from then on the editor renders its images from that
+  // version's own files too, as showVersion does (follow.ts), not the ones loaded at boot.
+  let shown: number | null = null;
+  const prepare = (fragment: DocumentFragment) => {
+    if (shown !== null) pinImages(fragment, doc.baseURI, shown);
+  };
   let editing: ReturnType<typeof live> | null =
-    payload.live === "room" && appOrigin !== "" ? live(win, root, payload, appOrigin) : null;
+    payload.live === "room" && appOrigin !== ""
+      ? live(win, root, payload, appOrigin, prepare)
+      : null;
   const answer = (msg: Record<string, unknown>) => {
     try {
       win.parent.postMessage(
@@ -266,6 +280,7 @@ export function boot(win: Window): () => void {
       editing?.stop();
       editing = null;
       payload.text = text;
+      shown = n;
       answer({ type: "shown", n, nonce, ok: true });
     });
   };
@@ -275,7 +290,7 @@ export function boot(win: Window): () => void {
     if (!m) return;
     if (m.type === "print") return win.print();
     if (m.type === "version") return follow(m.n, m.nonce);
-    editing ??= live(win, root, payload, appOrigin);
+    editing ??= live(win, root, payload, appOrigin, prepare);
     editing.onMessage(m);
   };
   win.addEventListener("keydown", onKey);
