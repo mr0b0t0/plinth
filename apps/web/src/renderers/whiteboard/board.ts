@@ -185,8 +185,8 @@ export class Board {
   }
 
   /**
-   * The toolbar's standing line. `why`, when given, follows it as the reason, which at phone width
-   * is left to screen readers so the line stays short.
+   * The toolbar's standing line. `why`, when given, is the reason, left to screen readers so the
+   * line stays short.
    */
   banner(text: string, why = ""): void {
     const b = this.view.banner;

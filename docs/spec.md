@@ -1751,11 +1751,12 @@ its page without a new version each time, and agents add and move blocks with
   buttons show to people who may change the board; a selected block's colours, Connect (which
   starts from that block) and Delete show only while something is selected. On the right: the
   other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
-  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons
-  (": editors can change this board" follows it for a commenter on an `editors` board).
+  the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons,
+  at every width (for a commenter on an `editors` board, screen readers also hear ": editors can
+  change this board").
   Under 560 px a selection's controls take the add buttons' place and the row scrolls sideways
   if it must, the people here are coloured dots (the full name on hover and for screen readers),
-  a read-only line is "View only" alone (the reason for screen readers), and Fit zooms out no further than 75% so text stays readable, starting from the board's
+  and Fit zooms out no further than 75% so text stays readable, starting from the board's
   top-left.
 - **History.** A board's versions hold only its settings, so the history's restore is "Restore
   settings", and its header says only "Tick two versions to compare them."

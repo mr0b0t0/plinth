@@ -27,7 +27,10 @@ import { BoardSync, READ_ONLY_TEXT } from "./sync.ts";
 const ROOT_ID = "__plinth-whiteboard";
 const DATA_ID = "__plinth-content";
 
-/** Why a commenter's board is read-only, after "View only" (on a board only editors may change). */
+/**
+ * Why a commenter's board is read-only, after "View only" (on a board only editors may change),
+ * for screen readers only.
+ */
 export const EDITORS_ONLY_WHY = ": editors can change this board";
 /** The standing line for a commenter on a board only editors may change. */
 export const EDITORS_ONLY_TEXT = `${READ_ONLY_TEXT}${EDITORS_ONLY_WHY}`;

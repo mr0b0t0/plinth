@@ -86,6 +86,16 @@ body {
   background: var(--wb-bg);
 }
 
+/* The reason a board is read-only is for screen readers: the line itself says "View only". */
+.wb-why {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .wb-tools {
   display: flex;
   flex-wrap: wrap;
@@ -490,8 +500,8 @@ html[data-readonly="true"] .wb-block {
 }
 
 /* At phone width the bar stays one row: the tools scroll sideways, a selection's controls take
-   the add buttons' place, the people here are coloured dots (their names on hover and for
-   screen readers), and a read-only line says only "View only" (the reason, for screen readers). */
+   the add buttons' place, and the people here are coloured dots (their names on hover and for
+   screen readers). */
 @media (max-width: 560px) {
   .wb-toolbar {
     gap: 8px;
@@ -520,8 +530,7 @@ html[data-readonly="true"] .wb-block {
   .wb-people li {
     gap: 0;
   }
-  .wb-people span,
-  .wb-why {
+  .wb-people span {
     position: absolute;
     width: 1px;
     height: 1px;

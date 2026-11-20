@@ -180,7 +180,7 @@ describe("whiteboard boot", () => {
     await flush();
     await flush();
     expect(banner()).toBe(EDITORS_ONLY_TEXT);
-    // The reason is its own part, which phone widths leave to screen readers.
+    // The reason is its own part, left to screen readers: the line on screen says "View only".
     expect(document.querySelector(".wb-banner .wb-why")?.textContent).toBe(EDITORS_ONLY_WHY);
     expect(shown("Add note")).toBe(false);
   });
