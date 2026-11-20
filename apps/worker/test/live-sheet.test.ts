@@ -616,4 +616,104 @@ describe("sheet socket: versions published from outside", () => {
       a.ws.close(1000);
     });
   });
+
+  // A save that outlives the room's 30 s checkpoint lock: its version and its finish come after
+  // the lock ran out, and the rows edited meanwhile are never replaced by the saved snapshot.
+  describe("a save that outlives its checkpoint lock", () => {
+    const expire = (id: string) =>
+      runInDurableObject(stubFor(id), async (room) => {
+        (room as unknown as { doc: { lock: { until: number } } }).doc.lock.until = 0;
+      });
+    /** The room's answer to a version notify: its own checkpoint saved, or a freeze. */
+    const notified = async (c: Socket) => {
+      for (;;) {
+        const f = await c.next();
+        if (f.t === "saved" || f.t === "conflict") return f;
+      }
+    };
+
+    /** Apples edited and snapshotted; the lock runs out; Pears edited while the save runs. */
+    async function slowSave() {
+      const s = await sheetSetup(SHEET);
+      const a = await connectDoc(s.id, s.ownerP.cookie);
+      const rev = await editRow(a, 1, '["Apples",4,true]', 0);
+      const stub = stubFor(s.id);
+      const snap = await stub.docSnapshot(s.id);
+      expect(snap).toMatchObject({ state: "ready", rev });
+      await expire(s.id);
+      const after = await editRow(a, 2, '["Pears",9]', rev);
+      const later = snap.text.replace('["Pears",5]', '["Pears",9]');
+      const put = () =>
+        call(s.id, s.owner.auth, "", {
+          method: "PUT",
+          body: { content: snap.text, base_version: 1 },
+        });
+      return { ...s, a, stub, snap, after, later, put };
+    }
+
+    it("its own version, notified first, is still recognized, and the late finish keeps Pears", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "saved", version: 2, rev: after });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      expect(await stub.docPeek(id)).toMatchObject({ base_version: 2, text: later });
+      // Editing goes on, and the next save publishes the Pears edit on top of v2.
+      expect(await lease(a, 2, 3, after)).toMatchObject({ t: "leased" });
+      a.ws.close(1000);
+    });
+
+    it("its finish, arriving before the notify, keeps Pears too", async () => {
+      const { id, a, stub, snap, after, later } = await slowSave();
+      // The stager wrote v2 (no notify yet): the finish comes first, then the notify is a no-op.
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after,
+        dirty: true,
+      });
+      expect((await a.nextOf("saved")).version).toBe(2);
+      await stub.docVersion(id, 2, snap.hash);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      a.ws.close(1000);
+    });
+
+    it("frozen by its own version after the next save took the lock, the finish resumes editing with Pears", async () => {
+      const { id, a, stub, snap, after, later, put } = await slowSave();
+      // The next save's snapshot replaces the slow one's: v2's notify is not recognized, and the
+      // sheet freezes against it.
+      const next = await stub.docSnapshot(id);
+      expect(next).toMatchObject({ state: "ready", rev: after, text: later });
+      expect((await put()).status).toBe(200);
+      expect(await notified(a)).toEqual({ t: "conflict", version: 2 });
+      // The slow save's finish: v2 holds its snapshot, so the draft goes on from v2 with the
+      // Pears edit, unfrozen, instead of going back to the snapshot.
+      expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch, snap.rev)).toEqual({
+        rev: after + 1,
+        dirty: true,
+      });
+      const rebased = await a.nextOf("rebased");
+      expect(rebased).toMatchObject({ version: 2, rev: after + 1 });
+      expect(await readText(a, rebased.gen)).toBe(later);
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: later,
+      });
+      // The next save's lock is its own, and still held.
+      expect((await stub.docSnapshot(id)).state).toBe("busy");
+      await stub.docAbort(next.lock);
+      expect(await lease(a, 2, 3, after + 1)).toMatchObject({ t: "leased" });
+      a.ws.close(1000);
+    });
+  });
 });

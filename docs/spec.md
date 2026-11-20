@@ -1721,7 +1721,10 @@ its review has exactly two choices (below).
   Discard mine drops the draft only while vN is still the version it was reviewed against. A save
   that finishes after its lock ran out, onto a draft that a discard or reset replaced meanwhile, is
   handled as any version published meanwhile instead of becoming the base under the replaced
-  draft. People editing the same draft together through the room are not affected.
+  draft. Otherwise the room still knows that save's version as its own (by its content) until it
+  finishes, so the draft moves onto it with the edits made during the save, and it is never frozen
+  against it; a finish never puts the saved snapshot back over edits made after it, for docs too.
+  People editing the same draft together through the room are not affected.
   `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` reports the draft's
   metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a
@@ -1739,6 +1742,8 @@ its review has exactly two choices (below).
   came first) is asked for again on the same row or column where it is now, found by the row's
   line or the column's definition under the same columns, and dropped with "The sheet changed
   meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
+  When a freeze or a takeover closes an open cell, the notice quotes what was typed there and not
+  yet applied, so it can be typed again.
   Rows other people hold are tinted, with the holder's initials inside the row number (the name
   in full on hover and for screen readers), and their typing arrives as it is typed. Opening a
   held row does nothing on screen and tells a screen reader who holds it; a notice with Take over

@@ -114,6 +114,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   let editor: SheetEditor | null = null;
   /** Show these lines (the live draft): in place when the shape is the same, rebuilt otherwise. */
+  // Each shown change parses the whole sheet and evaluates every formula again (a cell edit too).
+  // Evaluating only a changed formula's dependents would need a dependency graph kept across
+  // changes, so it is left out; a full pass is bounded by LIMITS.maxSheetFormulaCells and the
+  // browser's step budget.
   const show = (text: string) => {
     if (text === shownText) return;
     const p = parseSheet(text);

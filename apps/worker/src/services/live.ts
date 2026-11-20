@@ -328,7 +328,7 @@ export async function liveCheckpoint(
   let live = { rev: snap.rev, dirty: false };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      live = await stub.docFinish(a.id, version.version, text, snap.lock, snap.epoch);
+      live = await stub.docFinish(a.id, version.version, text, snap.lock, snap.epoch, snap.rev);
       break;
     } catch {
       // Retried once; the version notify (its content hash) finishes it otherwise.

@@ -1801,7 +1801,11 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   the draft under a version being published from it and leave the published edits looking unsaved,
   for the next save to revert without a review. A save that finishes after its 30 s lock ran out
   is finished onto the draft only when the draft's lines were not replaced since its snapshot (the
-  draft's epoch); otherwise its version is handled as any version published meanwhile.
+  draft's epoch); otherwise its version is handled as any version published meanwhile. Until it
+  finishes, the room recognizes that save's version by its content's hash (or, from the alarm's
+  catch-up, its text) even after the lock ran out, and a finish replaces the draft's lines with
+  the saved text only when nothing was edited after the snapshot, so edits made during a slow save
+  are never dropped without a review.
   The review shows both sheets in the app as text nodes, never as HTML, as the source diff did.
 - **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
   and the column settings with `createElement` and fills them through `.value` and `textContent`;

@@ -35,6 +35,7 @@ import {
   type SheetHeader,
   type SheetNumberFormat,
   type SheetStructOp,
+  sameRowRules,
   serializeSheet,
   sheetHeaderLine,
   splitLines,
@@ -803,13 +804,29 @@ export class SheetEditor {
       };
       return;
     }
+    // What was typed since the room's last ack (the last moments before a freeze) is quoted, so
+    // the person can type it again.
+    const unsent = this.unsent(o);
     this.closeField();
-    this.showNotice(
+    const said =
       reason === "takeover"
         ? "Someone else took over this row."
-        : "Editing is paused: the sheet changed. Your cell was closed.",
+        : "Editing is paused: the sheet changed. Your cell was closed.";
+    this.showNotice(
+      unsent === null ? said : `${said} Your text in ${a1(o.row, o.col)} was not kept: ${unsent}`,
     );
     this.hooks.status();
+  }
+
+  /** The open field's text when the room does not hold it (typed after its last ack), or null. */
+  private unsent(o: Open): string | null {
+    const value = o.field.value;
+    const held = this.backend.ackedText ?? o.original;
+    const col = this.header()?.columns[o.col];
+    let kept: string;
+    if (o.row === 1) kept = sheetHeaderLine(held)?.columns[o.col]?.name ?? "";
+    else kept = col ? inputText(rowCells(held)?.[o.col] ?? null, col, this.loc) : "";
+    return value === kept ? null : value;
   }
 
   /** The backend's lines or leases changed (the grid was redrawn). */
@@ -1434,7 +1451,7 @@ export class SheetEditor {
         const line = headerWith(now, at, change);
         if (typeof line !== "string") return line;
         const next = sheetHeaderLine(line) as SheetHeader;
-        const problem = rowsProblem(lines, next);
+        const problem = sameRowRules(now, next) ? null : rowsProblem(lines, next);
         if (problem) return { error: `Some cells do not fit: ${problem}` };
         return [line];
       });

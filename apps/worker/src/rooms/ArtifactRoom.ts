@@ -856,8 +856,9 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     text: string,
     lockId: string,
     epoch?: string,
+    rev?: number,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, rev);
   }
 
   /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */

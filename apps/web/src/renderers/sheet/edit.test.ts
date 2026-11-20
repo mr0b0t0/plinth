@@ -475,6 +475,44 @@ describe("room editing", () => {
     expect(text("A5")).toBe("Total");
   });
 
+  it("a freeze that closes the cell quotes what the room did not get, and only that", async () => {
+    const { ws } = start();
+    dbl(cell("B3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    // Typed within the last moments before the freeze: not sent yet.
+    type(field() as HTMLInputElement, "6");
+    ws.frame({ t: "conflict", version: 4 });
+    ws.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    await tick();
+    expect(field()).toBeNull();
+    expect(notice()).toContain(
+      "Editing is paused: the sheet changed. Your cell was closed. Your text in B3 was not kept: 6",
+    );
+  });
+
+  it("typing the room already applied is not quoted when the cell is closed", async () => {
+    const next = start();
+    dbl(cell("B3"));
+    next.ws.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "7");
+    next.ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l2",
+      start: 2,
+      del: 1,
+      ins: '["Pears",7,0.5,false]',
+      by: "s1",
+      seq: 1,
+    });
+    next.ws.frame({ t: "lease_lost", lease: "l2", reason: "takeover" });
+    await tick();
+    expect(field()).toBeNull();
+    expect(notice()).toContain("Someone else took over this row.");
+    expect(notice()).not.toContain("not kept");
+  });
+
   it("hides the Row and Column menus while the draft waits for a review", async () => {
     const { ws } = start();
     const strip = document.querySelector(".plinth-sheet__strip") as HTMLElement;
