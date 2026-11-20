@@ -338,6 +338,13 @@ describe("ArtifactPage", () => {
       expect(await screen.findByText("Updated to v4")).toBeTruthy();
       // The same socket stays open for the new version.
       expect(sockets).toHaveLength(1);
+      // Another version right after: its notice replaces the last one; they never stack.
+      current = 5;
+      frame({ t: "version", version: 5, spread_ms: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await screen.findByText("Updated to v5")).toBeTruthy();
+      expect(screen.queryByText("Updated to v4")).toBeNull();
+      expect(screen.getAllByText(/^Updated to v/)).toHaveLength(1);
     });
 
     it("keeps a permanent version link on its version and points to the new current one", async () => {

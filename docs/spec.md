@@ -1120,6 +1120,8 @@ document through the gate and the shared-data API, with all of their checks.
   top bound), and no frame says anything about who else has the artifact open.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
+  One such notice shows at a time: a newer version's replaces the last, so versions published in
+  a row never stack.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:

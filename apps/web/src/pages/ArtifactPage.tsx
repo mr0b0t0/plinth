@@ -4,7 +4,7 @@
 import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
-import { Button, EmptyState, showToast } from "../components/ui/index.ts";
+import { Button, dismissToast, EmptyState, showToast } from "../components/ui/index.ts";
 import { GateScreen } from "../components/viewer/GateScreen.tsx";
 import { parseVersion } from "../components/viewer/gate.ts";
 import { useGate } from "../components/viewer/useGate.ts";
@@ -44,10 +44,16 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // gate poll is only a backstop while it is open.
   const checkRef = useRef<() => void>(() => undefined);
   const [dataTick, setDataTick] = useState(0);
+  // One quiet notice: a version pushed while the last one's notice is still up replaces it, so an
+  // agent publishing several versions in a row never stacks "Updated to" toasts.
+  const updatedToast = useRef<number | null>(null);
   const onNewer = (gate: Extract<ViewGate, { status: "ok" }>) => {
     const moved = gate.artifact.version !== shown?.artifact.version;
     setGate(gate);
-    if (!pinned && moved) showToast({ title: `Updated to v${gate.artifact.version}` });
+    if (!pinned && moved) {
+      if (updatedToast.current !== null) dismissToast(updatedToast.current);
+      updatedToast.current = showToast({ title: `Updated to v${gate.artifact.version}` });
+    }
   };
   const latest = useRef({ shown, pause, path, onNewer });
   latest.current = { shown, pause, path, onNewer };

@@ -11,7 +11,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 ## Unreleased
 
 - **Open pages follow new versions at once.** An artifact page that is open picks up a version an
-  agent or editor publishes within seconds, without waiting for its 15 s check, and pages that keep
+  agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
+  vN" notice at a time, however many versions arrive in a row), and pages that keep
   shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
   WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
   about the page or its data travels over it. On by default wherever the `ROOMS` binding is
