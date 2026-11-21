@@ -163,6 +163,11 @@ const reasonOf = (e: unknown): string | null =>
     ? ((e.details as { reason?: string } | undefined)?.reason ?? null)
     : null;
 
+/** A refused Publish with nothing newer to review against: the server's words, or these. */
+const NOT_PUBLISHED = "These changes could not be published. Try again.";
+const refusedText = (e: unknown): string =>
+  e instanceof Error && e.message.trim() !== "" ? e.message : NOT_PUBLISHED;
+
 const currentOf = (e: unknown): number | null => {
   const v = (e instanceof ApiRequestError ? e.details : undefined) as
     | { current_version?: unknown }
@@ -278,15 +283,16 @@ export function useLiveEdit({
    * Solo mode: a Publish was refused because version n is current now. The frame reviews its own
    * copy beside n; the app says which files n changed since the base, from the two versions'
    * file lists (it reads only their `assets`). For a copy this tab kept from before a reload
-   * (`kept`), the frame never held it: the review carries it, and the choice publishes it.
+   * (`kept`), the frame never held it: the review carries it, and the choice publishes it. A
+   * refusal (`e`) that leaves nothing newer than the base to review says why instead.
    */
   const soloReview = useCallback(
-    async (base: number, details: unknown, kept?: string) => {
-      const n =
-        typeof (details as { current_version?: unknown } | undefined)?.current_version === "number"
-          ? (details as { current_version: number }).current_version
-          : latest.current.gate.artifact.current_version;
-      if (n <= base) return;
+    async (base: number, e: unknown, kept?: string) => {
+      const n = currentOf(e) ?? latest.current.gate.artifact.current_version;
+      if (n <= base) {
+        toast(refusedText(e));
+        return;
+      }
       try {
         const [b, v] = await Promise.all([
           api<ArtifactDetail>(route(API.version, { ref: id, n: base })),
@@ -437,7 +443,7 @@ export function useLiveEdit({
       } catch (e) {
         fail(e, () => {
           if (onConflict && e instanceof ApiRequestError) onConflict(e);
-          else void soloReviewRef.current(base, e instanceof ApiRequestError ? e.details : null);
+          else void soloReviewRef.current(base, e);
         });
         return null;
       }
@@ -604,8 +610,11 @@ export function useLiveEdit({
           if (newer !== null && newer > r.current) {
             // Another version is current now: the review opens again on the whole range.
             done("conflict");
-            void soloReviewRef.current(r.base, e.details, kept);
-          } else done("failed");
+            void soloReviewRef.current(r.base, e, kept);
+          } else {
+            done("failed");
+            toast(refusedText(e));
+          }
         });
         if (ok) {
           done("done");
@@ -704,7 +713,7 @@ export function useLiveEdit({
     // Refused because a newer version is current: the frame reviews this copy, not its own (it
     // holds none, or one of the version it shows).
     await publishSolo(text, base, base, undefined, (e) => {
-      void soloReviewRef.current(base, e.details, text);
+      void soloReviewRef.current(base, e, text);
     });
   }, [restore, publishSolo]);
 

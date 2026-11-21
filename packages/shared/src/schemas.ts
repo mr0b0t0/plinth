@@ -186,7 +186,7 @@ export const restUpdateArtifactInput = updateArtifactInput.extend({
   files_from_version: versionNumberSchema
     .optional()
     .describe(
-      "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. Not with assets; a version that does not exist or is newer than the current one is 404",
+      "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. The signed-in app only: a token limited to one artifact gets 403 token_bound, any other bearer token 403 app_only. Not with assets; a version that does not exist or is newer than the current one is 404",
     ),
 });
 export type RestUpdateArtifactInput = z.input<typeof restUpdateArtifactInput>;

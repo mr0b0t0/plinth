@@ -10,22 +10,6 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
-  agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width)
-  opens the comments panel in request mode, where they point at an element or a board, describe
-  the change and, when the owner has more than one, pick the agent: Claude, Codex, or any other
-  connected client such as ChatGPT, Cursor or Gemini. It reaches that agent as a mention, and is
-  offered only when the owner has an agent that can take it. While editing a doc or a
-  sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
-  **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
-  shows Ask an agent with the reason. A toast confirms a sent request.
-  `POST /api/v1/artifacts/:ref/comments` takes `request_to`
-  (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
-  request can go to (`ask`) and why editing is off (`live_off`).
-
-- **Picking an element at phone width.** While a comment or a request picks an element, the
-  comments sheet shrinks to its bottom bar, which sits under the artifact instead of covering it.
-
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
   the review inside the page: their changes and the new version (or every version since, named as
@@ -52,7 +36,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   box around it, and a "+" shows only beside the block under the pointer or being edited; on a
   phone only the "+" above the block being edited and the one at the end show, clear of the text.
   A page Publish keeps the files of the version the changes were made from
-  (`files_from_version` on `PUT /api/v1/artifacts/:ref`). `GET /api/v1/artifacts/:ref/live/draft`
+  (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
+  get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
+  always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
   is removed, and `GET /api/v1/config` says whether editing on the page is on (`inline_editing`).
 - **A doc never starts like a web page by accident.** Typing `<html>` at the start of a block is
   kept as text, so the doc can still be published.
@@ -332,6 +318,20 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   changes: Print or save as PDF stays.
 - **Thumbnail capture failures are logged without URLs**, so a capture's one-time enter token
   never reaches the Worker's logs.
+- **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
+  agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width)
+  opens the comments panel in request mode, where they point at an element or a board, describe
+  the change and, when the owner has more than one, pick the agent: Claude, Codex, or any other
+  connected client such as ChatGPT, Cursor or Gemini. It reaches that agent as a mention, and is
+  offered only when the owner has an agent that can take it. While editing a doc or a
+  sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
+  **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
+  shows Ask an agent with the reason. A toast confirms a sent request.
+  `POST /api/v1/artifacts/:ref/comments` takes `request_to`
+  (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
+  request can go to (`ask`) and why editing is off (`live_off`).
+- **Picking an element at phone width.** While a comment or a request picks an element, the
+  comments sheet shrinks to its bottom bar, which sits under the artifact instead of covering it.
 
 ## 0.6.0 (2026-11-20)
 

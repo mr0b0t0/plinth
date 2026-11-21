@@ -101,9 +101,9 @@ export const API = {
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
   people: "/artifacts/:ref/people", // GET everyone with access (owner or editor), ?q=
-  // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
+  // on-page editing (signed-in owners and editors only; never agents, never MCP)
   live: "/artifacts/:ref/live", // GET LiveInfo
-  liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards
+  liveDraft: "/artifacts/:ref/live/draft", // DELETE ?rev=n discards (&conflict_version=n: the review)
   liveCheckpoint: "/artifacts/:ref/live/checkpoint", // POST save the draft as a version
   // out-of-band uploads (start_upload): mint a ticket (bearer only), then send one bundle
   uploads: "/uploads", // POST start_upload

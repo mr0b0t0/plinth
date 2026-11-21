@@ -169,15 +169,19 @@ export class ReviewSession {
       this.host.post({ type: "resolved", nonce, outcome });
       return;
     }
-    const c = this.host.room();
-    const range = this.review.range;
-    if (c && range) {
-      // Room mode: the frozen version and the revision reviewed; the room publishes its own draft.
+    // Only the review on screen can be chosen: while a newer one loads, nothing is posted.
+    const shown = this.review.shown;
+    if (!shown) return;
+    if (shown.mode === "room") {
+      const c = this.host.room();
+      if (!c) return;
+      // Room mode: the frozen version on screen and the revision reviewed; the room publishes
+      // its own draft, and refuses a version that is not the one it is frozen on.
       this.host.post({
         type: "resolved",
         nonce,
         outcome,
-        version: range.to,
+        version: shown.n,
         rev: c.rev,
         ...(outcome === "publish" && note ? { note } : {}),
       });
