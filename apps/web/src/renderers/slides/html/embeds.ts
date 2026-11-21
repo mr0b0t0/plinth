@@ -38,12 +38,19 @@ export class EmbedFrames {
   /** Each mounted frame's window and the page it is waiting for (answered once). */
   private readonly waiting = new Map<Window, string>();
   private readonly frames = new Set<HTMLIFrameElement>();
+  /** Frames whose page was written and has loaded. */
+  private readonly loaded = new WeakSet<HTMLIFrameElement>();
   private readonly onMessage = (e: MessageEvent) => {
     if (!isEmbedReady(e.data) || !e.source) return;
     const win = e.source as Window;
     const page = this.waiting.get(win);
     if (page === undefined) return;
     this.waiting.delete(win);
+    // The loader's own load came first; the next one is the embed's page, written over it.
+    for (const f of this.frames) {
+      if (f.contentWindow !== win) continue;
+      f.addEventListener("load", () => this.loaded.add(f), { once: true });
+    }
     win.postMessage(
       {
         source: SLIDE_EMBED_MESSAGE_SOURCE,
@@ -82,6 +89,22 @@ export class EmbedFrames {
       this.frames.add(frame);
       if (frame.contentWindow) this.waiting.set(frame.contentWindow, page);
     }
+  }
+
+  /**
+   * Resolves once every mounted frame's page is written and loaded (print waits for it, so an
+   * embed prints as it first draws), or after `ms`.
+   */
+  drawn(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        const all = [...this.frames].every((f) => this.loaded.has(f));
+        if (all || Date.now() - start >= ms) resolve();
+        else setTimeout(check, 50);
+      };
+      check();
+    });
   }
 
   private unmount(frame: HTMLIFrameElement): void {

@@ -50,8 +50,11 @@ export async function imagesReady(root: ParentNode, timeoutMs = DECODE_TIMEOUT_M
 export interface PrintOptions {
   notes: boolean;
   canvas: { width: number; height: number };
-  /** Lays every slide out for print and fits it (boot.ts). */
-  prepare: () => void;
+  /**
+   * Lays every slide out for print and fits it (boot.ts); a promise when the deck has more to wait
+   * for (an HTML deck's live embeds drawing their first frame).
+   */
+  prepare: () => void | Promise<void>;
   /** Puts the screen view back after printing. */
   restore: () => void;
 }
@@ -66,7 +69,7 @@ export async function printDeck(win: Window, root: HTMLElement, o: PrintOptions)
   const before = style.textContent ?? "";
   root.setAttribute("data-print", o.notes ? "handout" : "slides");
   await imagesReady(root);
-  o.prepare();
+  await o.prepare();
   style.textContent = pageRule(o.canvas, o.notes);
   const done = () => {
     root.removeAttribute("data-print");

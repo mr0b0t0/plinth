@@ -205,8 +205,11 @@ export class HtmlDeckRuntime {
       showSteps(this.paneCurrent.steps, s.allBuilt ? Number.POSITIVE_INFINITY : this.step);
   }
 
-  /** Every slide whole and still, laid out: before print and the .pptx measure. */
-  still(): void {
+  /**
+   * Every slide whole and still, laid out: before print and the .pptx measure. `embeds`: print
+   * shows each live embed as it first draws (a .pptx and a still leave them out).
+   */
+  still(o: { embeds?: boolean } = {}): void {
     this.running?.finish();
     this.running = null;
     for (const v of this.views) {
@@ -214,9 +217,14 @@ export class HtmlDeckRuntime {
       if (!p) continue;
       setStill(v.el, true);
       showSteps(p.steps, Number.POSITIVE_INFINITY);
-      this.embeds.set(p.embeds, false);
+      this.embeds.set(p.embeds, o.embeds === true && !this.o.noEmbeds);
       this.layout(v);
     }
+  }
+
+  /** Resolves once every mounted embed has its page and has loaded it, or after `ms`. */
+  embedsDrawn(ms = 3000): Promise<void> {
+    return this.embeds.drawn(ms);
   }
 
   /** A fresh copy of a slide for presenter view: the current pane moves, the next one is still. */

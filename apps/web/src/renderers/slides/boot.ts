@@ -372,10 +372,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     void printDeck(win, root, {
       notes,
       canvas,
-      prepare: () => {
-        // An HTML deck prints every slide whole and still.
-        htmlRuntime?.still();
+      prepare: async () => {
+        // An HTML deck prints every slide whole and still, each live embed as it first draws.
+        htmlRuntime?.still({ embeds: true });
         for (const v of views) fitView(v);
+        await htmlRuntime?.embedsDrawn();
       },
       restore: render,
     });
