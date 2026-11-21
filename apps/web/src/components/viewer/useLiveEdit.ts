@@ -344,40 +344,55 @@ export function useLiveEdit({
     [frame, target],
   );
 
-  /** Room mode: the frame reviews the room's frozen draft; nothing crosses but the request. */
-  const openReview = useCallback(async () => {
-    const s = latest.current.status;
-    if (latest.current.mode === "solo") return;
-    if (s?.conflict_version == null) {
-      toast("Nothing to review: your changes were kept on top of the new version.", "neutral");
-      return;
-    }
-    const nonce = newNonce();
-    const r: LiveReview = {
-      nonce,
-      base: s.base_version,
-      current: s.conflict_version,
-      mode: "room",
-    };
-    if (!postToRenderer(frame, target, reviewMessage(nonce))) {
-      toast("The page is not ready. Try again in a moment.");
-      return;
-    }
-    setReview(r);
-  }, [frame, target]);
+  /**
+   * Room mode: the frame reviews the room's frozen draft; nothing crosses but the request. With
+   * `tell: "report"` (Ask's Publish first, whose dialog says what happened) it shows no toast: a
+   * conflict can arrive before the room's status shows it, and "Nothing to review" would then
+   * contradict the dialog.
+   */
+  const openReview = useCallback(
+    async (tell: Tell = "toast") => {
+      const s = latest.current.status;
+      if (latest.current.mode === "solo") return;
+      const say = (text: string, tone: Tone = "danger") => {
+        if (tell === "toast") toast(text, tone);
+      };
+      if (s?.conflict_version == null) {
+        say("Nothing to review: your changes were kept on top of the new version.", "neutral");
+        return;
+      }
+      const nonce = newNonce();
+      const r: LiveReview = {
+        nonce,
+        base: s.base_version,
+        current: s.conflict_version,
+        mode: "room",
+      };
+      if (!postToRenderer(frame, target, reviewMessage(nonce))) {
+        say("The page is not ready. Try again in a moment.");
+        return;
+      }
+      setReview(r);
+    },
+    [frame, target],
+  );
 
   /**
    * Solo mode: a Publish was refused because version n is current now. The frame reviews its own
    * copy beside n; the app says which files n changed since the base, from the two versions'
    * file lists (it reads only their `assets`). For a copy this tab kept from before a reload
    * (`kept`), the frame never held it: the review carries it, and the choice publishes it. A
-   * refusal (`e`) that leaves nothing newer than the base to review says why instead.
+   * refusal (`e`) that leaves nothing newer than the base to review says why instead, unless
+   * `tell` is "report" (Ask's Publish first, whose dialog says it already).
    */
   const soloReview = useCallback(
-    async (base: number, e: unknown, kept?: string) => {
+    async (base: number, e: unknown, kept?: string, tell: Tell = "toast") => {
+      const say = (text: string) => {
+        if (tell === "toast") toast(text);
+      };
       const n = currentOf(e) ?? latest.current.gate.artifact.current_version;
       if (n <= base) {
-        toast(refusedText(e));
+        say(refusedText(e));
         return;
       }
       try {
@@ -389,16 +404,16 @@ export function useLiveEdit({
         const nonce = newNonce();
         const solo = { n, base, files, ...(kept !== undefined ? { text: kept } : {}) };
         if (!postToRenderer(frame, target, reviewMessage(nonce, solo))) {
-          toast("The page is not ready. Try again in a moment.");
+          say("The page is not ready. Try again in a moment.");
           return;
         }
         keptReview.current = kept !== undefined ? { nonce, text: kept } : null;
         setReview({ nonce, base, current: n, mode: "solo" });
       } catch (e) {
-        fail(e);
+        refuse(e, undefined, tell);
       }
     },
-    [id, frame, target, fail],
+    [id, frame, target, refuse],
   );
   const soloReviewRef = useRef(soloReview);
   soloReviewRef.current = soloReview;
@@ -579,7 +594,7 @@ export function useLiveEdit({
           e,
           () => {
             if (opts.onConflict && e instanceof ApiRequestError) opts.onConflict(e);
-            else void soloReviewRef.current(base, e);
+            else void soloReviewRef.current(base, e, undefined, opts.tell);
           },
           opts.tell,
         );
@@ -633,7 +648,7 @@ export function useLiveEdit({
           if (!quiet) toast(UNPUBLISHABLE, "neutral");
           return { error: UNPUBLISHABLE };
         }
-        return refuse(e, code === "live_conflict" ? () => void openReview() : undefined, tell);
+        return refuse(e, code === "live_conflict" ? () => void openReview(tell) : undefined, tell);
       } finally {
         savingRef.current = false;
         setSaving(false);

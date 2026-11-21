@@ -491,6 +491,9 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
       await within(dialog).findByText(/v4 was published while you edited. Review it to go on./),
     ).toBeTruthy();
     expect(s.posted).toHaveLength(0);
+    // The conflict came before the room's status showed it: the review cannot open yet, and no
+    // toast says "Nothing to review" beside a dialog that says to review.
+    expect(screen.queryByText(/Nothing to review/)).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Post without publishing" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
     expect(s.posted[0]).toMatchObject({ version_number: 3 });
@@ -580,6 +583,41 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     expect(within(dialog).getByText("Slide 4")).toBeTruthy();
   });
 
+  it("outside edit mode, takes at most one in-frame ask a second, even with the panel open", async () => {
+    stub((n) => docGate(n));
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Plan, version 3");
+    // The frame the page shows now (opening the panel may load it again in review mode).
+    const post = (data: Record<string, unknown>) => {
+      const frame = screen.getByTitle("Plan, version 3") as HTMLIFrameElement;
+      const e = new MessageEvent("message", {
+        origin: "http://art123.content.localhost:8787",
+        data: { source: "plinth-renderer", v: 1, ...data },
+      });
+      Object.defineProperty(e, "source", { value: frame.contentWindow });
+      act(() => {
+        window.dispatchEvent(e);
+      });
+    };
+    post({ type: "ask", anchor: { key: "block-1", text: "First block" } });
+    const panel = await screen.findByRole("region", { name: "Comments" });
+    expect(await within(panel).findByText("First block")).toBeTruthy();
+    // The panel is open, so nothing is reopened: still, a second ask right away changes nothing
+    // (it would point the composer elsewhere and take the focus again).
+    post({ type: "ask", anchor: { key: "block-2", text: "Second block" } });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(within(panel).queryByText("Second block")).toBeNull();
+    expect(within(panel).getByText("First block")).toBeTruthy();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1000));
+    });
+    post({ type: "ask", anchor: { key: "block-2", text: "Second block" } });
+    expect(await within(panel).findByText("Second block")).toBeTruthy();
+  });
+
   it("names a new image below a doc block, and a block only in the draft, in the chip", async () => {
     const { user, post } = await editing();
     post({
@@ -611,6 +649,25 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     expect(within(dialog).getByText(/Pointing at/).textContent).toBe(
       "Pointing at Draft words (not published yet)",
     );
+  });
+
+  it("refuses an in-frame ask while the tab is hidden", async () => {
+    const { post } = await editing();
+    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    try {
+      post({ type: "ask", anchor: { key: "block-1", text: "Intro" }, what: "paragraph" });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      // The own property shadowed the prototype's getter.
+      delete (document as { visibilityState?: unknown }).visibilityState;
+      if (visibility) expect(document.visibilityState).toBe("visible");
+    }
+    post({ type: "ask", anchor: { key: "block-1", text: "Intro" }, what: "paragraph" });
+    expect(await screen.findByRole("dialog", { name: "Ask an agent" })).toBeTruthy();
   });
 
   it("Stop pointing makes the request about the whole page", async () => {
@@ -745,6 +802,34 @@ describe("Ask an agent in edit mode, solo: Publish my changes first", () => {
     await waitFor(() => expect(sent.some((m) => m.type === "review")).toBe(true));
     expect(sent.find((m) => m.type === "review")).toMatchObject({ n: 4, base: 3 });
     expect(s.calls.some((c) => c.path === "/artifacts/art123/versions/4")).toBe(true);
+    expect(s.posted).toHaveLength(0);
+  });
+
+  it("a refusal with nothing newer to review is said in the dialog only, never in a toast", async () => {
+    const { s, user, dialog } = await soloEditing(() =>
+      json(
+        {
+          error: {
+            code: "conflict",
+            message: "The artifact changed",
+            details: { current_version: 3 },
+          },
+        },
+        409,
+      ),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(s.calls.some((c) => c.method === "PUT")).toBe(true));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    // The dialog's words, and no toast beside them that could say something else.
+    expect(within(dialog).getByText(/Nothing was sent/)).toBeTruthy();
+    const outside = screen
+      .queryAllByText("The artifact changed")
+      .filter((el) => !dialog.contains(el));
+    expect(outside).toHaveLength(0);
+    expect(sent.some((m) => m.type === "review")).toBe(false);
     expect(s.posted).toHaveLength(0);
   });
 });
