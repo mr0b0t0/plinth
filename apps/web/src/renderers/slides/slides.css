@@ -1063,7 +1063,6 @@ body {
   outline: none;
 }
 
-.plinth-slides__hidden,
 .plinth-slides__dense {
   margin: 0;
   font-size: 13px;
@@ -1081,31 +1080,18 @@ body {
 }
 
 .plinth-slides__notepad {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
   height: 100%;
-  padding: 8px 12px;
+  padding: 8px 44px 8px 12px;
   border: 1px solid var(--slides-rule);
   border-radius: 8px;
   background: var(--slides-bg);
   color: var(--slides-fg);
   font-size: 14px;
   line-height: 1.45;
-}
-
-.plinth-slides__notepad-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.plinth-slides__notepad-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--slides-muted);
 }
 
 .plinth-slides__notepad-body,
@@ -1134,6 +1120,14 @@ body {
   background: var(--slides-live-soft);
 }
 
+/* Open notes: tinted as an open block on the slide is, with no focus box. */
+.plinth-slides__notepad-edit .plinth-rich__content {
+  border-radius: 4px;
+  outline: none;
+  background: var(--slides-live-soft);
+  box-shadow: 0 0 0 4px var(--slides-live-soft);
+}
+
 .plinth-slides__notepad-body:focus-visible {
   outline: 2px solid var(--slides-live);
   outline-offset: 2px;
@@ -1143,8 +1137,6 @@ body {
   color: var(--slides-muted);
 }
 
-.plinth-slides__notepad-add,
-.plinth-slides__notepad-remove,
 .plinth-slides__ask,
 .plinth-slides__settings button {
   min-height: 32px;
@@ -1157,24 +1149,45 @@ body {
   cursor: pointer;
 }
 
+/* No notes yet: the whole panel reads "Add speaker notes", as an empty field's placeholder. */
 .plinth-slides__notepad-add {
-  align-self: flex-start;
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--slides-muted);
+  font: inherit;
+  text-align: start;
+  cursor: text;
+}
+
+.plinth-slides__notepad-add:hover {
+  color: var(--slides-fg);
 }
 
 .plinth-slides__notepad-remove {
-  border-color: transparent;
+  position: absolute;
+  top: 6px;
+  right: 6px;
   color: var(--slides-muted);
 }
 
-.plinth-slides__notepad-add:hover,
-.plinth-slides__notepad-remove:hover,
+/* Its tooltip ends at the panel's edge, so it stays on screen. */
+.plinth-slides__notepad-remove[data-tip]::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
+
 .plinth-slides__ask:hover,
 .plinth-slides__settings button:hover {
   background: var(--slides-code-bg);
 }
 
 .plinth-slides__notepad-add:focus-visible,
-.plinth-slides__notepad-remove:focus-visible,
 .plinth-slides__ask:focus-visible,
 .plinth-slides__settings :focus-visible {
   outline: 2px solid var(--slides-live);
@@ -1196,17 +1209,50 @@ body {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
 }
 
-/* Typing kept on the page because no place in the deck would take it yet, with Copy. */
-.plinth-slides__kept {
+/* Notices over the deck, one stack at its top: typing kept on the page (with Copy), and the
+   editor's last message for a few seconds (edit.ts notify). */
+.plinth-slides__notices {
   position: absolute;
   top: 12px;
   left: 50%;
   z-index: 7;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   width: max-content;
   max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.plinth-slides__notices:empty {
+  display: none;
+}
+
+.plinth-slides__kept,
+.plinth-slides__toast {
+  pointer-events: auto;
+}
+
+.plinth-slides__toast {
+  max-width: 100%;
+  padding: 8px 14px;
+  border: 1px solid var(--slides-rule);
+  border-left: 3px solid var(--slides-live);
+  border-radius: 10px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+  font: 14px / 1.4 var(--slides-font);
+}
+
+/* Typing kept on the page because no place in the deck would take it yet, with Copy. */
+.plinth-slides__kept {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
   padding: 8px 8px 8px 14px;
   border: 1px solid var(--slides-rule);
   border-radius: 10px;
@@ -1214,7 +1260,6 @@ body {
   color: var(--slides-fg);
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
   font: 14px / 1.4 var(--slides-font);
-  transform: translateX(-50%);
 }
 
 .plinth-slides__kept-copy {
@@ -1234,7 +1279,7 @@ body {
 }
 
 @media print {
-  .plinth-slides__kept {
+  .plinth-slides__notices {
     display: none;
   }
 }
@@ -1314,11 +1359,18 @@ body {
     right: 16px;
     width: auto;
   }
-  .plinth-slides__notepad-add,
-  .plinth-slides__notepad-remove,
   .plinth-slides__ask,
   .plinth-slides__settings button {
     min-height: 44px;
+  }
+  .plinth-slides__notepad {
+    padding-right: 52px;
+  }
+  .plinth-slides__notepad-remove {
+    width: 44px;
+    min-height: 44px;
+    top: 2px;
+    right: 2px;
   }
 }
 
@@ -1331,9 +1383,14 @@ body {
 
 .plinth-slides.plinth-review__deck[data-mode]
   .plinth-slides__frame[data-review-changed]
-  .plinth-slides__canvas {
-  outline: 3px solid var(--review-live, var(--slides-live));
-  outline-offset: 2px;
+  .plinth-slides__canvas::after {
+  /* Inside the slide, over it: a pane's edge never clips it, at phone width either. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 3px solid var(--review-live, var(--slides-live));
+  pointer-events: none;
 }
 
 /* A changed slide is outlined, not tinted like a doc's block. */

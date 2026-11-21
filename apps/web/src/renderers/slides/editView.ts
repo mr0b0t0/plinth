@@ -105,7 +105,6 @@ function drawPart(
 /** The labels edit mode shows, exported for tests. */
 export const EDIT_VIEW_WORDS = {
   placeholder: "Click to add a title",
-  hidden: "Empty: not shown until it has content",
 } as const;
 
 function buildEditSlide(
@@ -157,7 +156,6 @@ function buildEditSlide(
   }
   const canvas = el(doc, "div", "plinth-slides__canvas");
   canvas.append(slide);
-  if (shownN === null) frame.append(el(doc, "p", "plinth-slides__hidden", EDIT_VIEW_WORDS.hidden));
   frame.append(canvas);
   const notesHost = el(doc, "div", "plinth-slides__notepad-host");
   frame.append(notesHost);

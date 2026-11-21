@@ -85,8 +85,11 @@ import {
 import { sanitizeHtml } from "../doc/sanitize.ts";
 import { el } from "./dom.ts";
 import { blockAt, EDIT_VIEW_WORDS, type EditBlock, type EditSlideView } from "./editView.ts";
+import { iconButton } from "./icons.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
+/** How long a message stays on the page (it stays in the live region). */
+export const NOTICE_MS = 6000;
 const RULES = liveRules("slides");
 const TOOLS = docMarkdownTools();
 
@@ -111,10 +114,9 @@ export const DECK_WORDS = {
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
   fullHere: "The deck is at its size limit, so this text isn't in it. Shorten it to continue.",
-  askBlock: "Ask an agent to change this",
-  askImage: "Replace or add images: Ask an agent",
-  askNotes: "Ask an agent to change these notes",
+  ask: "Ask an agent",
   readOnly: "This part can't be edited here. An agent can change it.",
+  imageNote: "An agent adds or replaces the image.",
   delete: "Delete",
   notes: (n: number) => `Notes for slide ${n}`,
   addNotes: "Add speaker notes",
@@ -767,6 +769,10 @@ export class SlidesEditor {
   private keepAlive: ReturnType<typeof setInterval> | null = null;
   /** The notice for parked text, with Copy. */
   private keptBar: HTMLElement | null = null;
+  /** The last message, on the page for NOTICE_MS (notify), and the stack it shows in. */
+  private toast: HTMLElement | null = null;
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private noticeBox: HTMLElement | null = null;
 
   /**
    * Typing in the open place cannot be written as typed, or can again. While it cannot, nothing
@@ -810,6 +816,7 @@ export class SlidesEditor {
       this.hideBar();
     }
     this.editing = on;
+    if (!on) this.hideToast();
     this.hooks.redraw();
     if (on && this.solo && this.parked.length > 0) {
       // Alone there is no reconnect to try kept typing again: edit mode starting again does, so
@@ -950,7 +957,7 @@ export class SlidesEditor {
       if (host.contains(o.host)) return;
       panel.setAttribute("aria-label", DECK_WORDS.notes(v.shownN ?? v.n));
       panel.dataset.plinthControl = "";
-      panel.append(this.notesHead(v, true), o.host);
+      panel.append(o.host, this.removeNotesButton(v));
       host.replaceChildren(panel);
       this.refocus(o);
       return;
@@ -967,8 +974,8 @@ export class SlidesEditor {
     this.notesDrawn.set(v, key);
     panel.setAttribute("aria-label", DECK_WORDS.notes(v.shownN ?? v.n));
     panel.dataset.plinthControl = "";
-    panel.append(this.notesHead(v, range !== null));
     if (!range) {
+      // No notes yet: the panel is one quiet "Add speaker notes", as an empty notes field reads.
       const add = el(this.doc, "button", "plinth-slides__notepad-add", DECK_WORDS.addNotes);
       add.type = "button";
       add.addEventListener("click", () => this.addNotes(v));
@@ -976,6 +983,7 @@ export class SlidesEditor {
       host.replaceChildren(panel);
       return;
     }
+    panel.append(this.removeNotesButton(v));
     const lines = this.backend.lines.slice(range.start, range.end);
     const text = notesText(lines);
     const models = editableNotes(
@@ -1010,30 +1018,18 @@ export class SlidesEditor {
     } else {
       panel.append(
         body,
-        this.askButton(DECK_WORDS.askNotes, () => this.ask(v, "notes", "block")),
+        this.askButton(DECK_WORDS.readOnly, () => this.ask(v, "notes", "block")),
       );
     }
     host.replaceChildren(panel);
   }
 
-  private notesHead(v: EditSlideView, hasNotes: boolean): HTMLElement {
-    const head = el(this.doc, "div", "plinth-slides__notepad-head");
-    head.append(
-      el(this.doc, "h2", "plinth-slides__notepad-title", DECK_WORDS.notes(v.shownN ?? v.n)),
-    );
-    if (hasNotes) {
-      const remove = el(
-        this.doc,
-        "button",
-        "plinth-slides__notepad-remove",
-        DECK_WORDS.removeNotes,
-      );
-      remove.type = "button";
-      remove.addEventListener("mousedown", (e) => e.preventDefault());
-      remove.addEventListener("click", () => this.removeNotes(v));
-      head.append(remove);
-    }
-    return head;
+  /** The panel's one control besides the notes: an icon at its corner, named by its tooltip. */
+  private removeNotesButton(v: EditSlideView): HTMLButtonElement {
+    const remove = iconButton(this.doc, "trash", DECK_WORDS.removeNotes, () => this.removeNotes(v));
+    remove.classList.add("plinth-slides__notepad-remove");
+    remove.addEventListener("mousedown", (e) => e.preventDefault());
+    return remove;
   }
 
   private addNotes(v: EditSlideView): void {
@@ -2494,8 +2490,8 @@ export class SlidesEditor {
       bar.append(text, copy);
       this.keptBar = bar;
     }
-    const root = this.doc.getElementById("__plinth-slides") ?? this.doc.body;
-    if (!root.contains(this.keptBar)) root.append(this.keptBar);
+    const box = this.notices();
+    if (!box.contains(this.keptBar)) box.prepend(this.keptBar);
   }
 
   /**
@@ -2635,17 +2631,52 @@ export class SlidesEditor {
     else if (reason === "stale") this.notify(DECK_WORDS.changed);
   }
 
+  /**
+   * Says why something was not done: in the deck's live region, and on the page for a few seconds
+   * in a notice over the slide (the live region already reads it, so the notice is hidden from
+   * assistive technology).
+   */
   notify(text: string): void {
     this.hooks.announce(text);
+    if (!text || !this.editing) return;
+    if (!this.toast) {
+      const t = el(this.doc, "div", "plinth-slides__toast");
+      t.setAttribute("aria-hidden", "true");
+      t.dataset.plinthControl = "";
+      this.toast = t;
+    }
+    this.toast.textContent = text;
+    this.notices().append(this.toast);
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.hideToast(), NOTICE_MS);
+  }
+
+  private hideToast(): void {
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.toastTimer = null;
+    this.toast?.remove();
+  }
+
+  /** Where the kept notice and the messages show: one stack at the top of the deck. */
+  private notices(): HTMLElement {
+    let box = this.noticeBox;
+    if (!box) {
+      box = el(this.doc, "div", "plinth-slides__notices");
+      this.noticeBox = box;
+    }
+    const root = this.doc.getElementById("__plinth-slides") ?? this.doc.body;
+    if (!root.contains(box)) root.append(box);
+    return box;
   }
 
   // ---------- blocks not edited in place ----------
 
-  private askButton(label: string, run: () => void): HTMLButtonElement {
-    const b = el(this.doc, "button", "plinth-slides__ask", label);
+  /** "Ask an agent", described by what an agent would do there. */
+  private askButton(note: string, run: () => void): HTMLButtonElement {
+    const b = el(this.doc, "button", "plinth-slides__ask", DECK_WORDS.ask);
     b.type = "button";
-    b.title = DECK_WORDS.readOnly;
-    b.setAttribute("aria-description", DECK_WORDS.readOnly);
+    b.title = note;
+    b.setAttribute("aria-description", note);
     b.addEventListener("mousedown", (e) => e.preventDefault());
     b.addEventListener("click", (e) => {
       e.preventDefault();
@@ -2665,7 +2696,7 @@ export class SlidesEditor {
     if (image) {
       const imgIndex = this.imageIndex(b, v);
       bar.append(
-        this.askButton(DECK_WORDS.askImage, () => this.ask(v, `image-${imgIndex}`, "image")),
+        this.askButton(DECK_WORDS.imageNote, () => this.ask(v, `image-${imgIndex}`, "image")),
       );
       const del = el(this.doc, "button", "plinth-slides__ask", DECK_WORDS.delete);
       del.type = "button";
@@ -2673,7 +2704,7 @@ export class SlidesEditor {
       bar.append(del);
     } else {
       bar.append(
-        this.askButton(DECK_WORDS.askBlock, () => this.ask(v, `block-${b.index}`, "block")),
+        this.askButton(DECK_WORDS.readOnly, () => this.ask(v, `block-${b.index}`, "block")),
       );
     }
     v.frame.append(bar);

@@ -302,7 +302,7 @@ test("an image offers Ask an agent and opens the Ask dialog with its anchor", as
   await startEditing(page);
   await showSlide(page, 2);
   await activeSlide(page).getByRole("button", { name: "Slide 2, image" }).click();
-  await frameOf(page).getByRole("button", { name: "Replace or add images: Ask an agent" }).click();
+  await frameOf(page).getByRole("button", { name: "Ask an agent", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Ask an agent" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Slide 2, image 1");

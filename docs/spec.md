@@ -3120,9 +3120,9 @@ is still Markdown in `slides.md`, which agents read and write as before. Adding,
 deleting slides, and a slide's columns, stay with agents for now.
 
 - **Edit mode draws every raw slide**, one at a time and scaled to fit above its notes panel: every
-  run of lines between separators, the empty ones at the deck's start and end included (labelled
-  "Empty: not shown until it has content"), which presenting and the view leave out. Any empty
-  slide shows "Click to add a title", which starts a heading there. Each text element (a heading, a
+  run of lines between separators, the empty ones at the deck's start and end included, which
+  presenting and the view leave out. Any empty slide shows "Click to add a title", which starts a
+  heading there. Each text element (a heading, a
   paragraph, a list, a table, a quote or a code block of the slide's head or a column) is a focus
   stop named by its place and role ("Slide 3, heading 1, editable"), never its text; a click or
   Enter leases the lines of that block and opens it as formatted text, as in
@@ -3218,7 +3218,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   inserted line may hold a carriage return, and a deck's lines are read with CRLF as LF, as
   `parseDeck` does. The HTML-document rule applies as for docs. An edit that breaks any of these
   is refused (`invalid`), and the page puts the block back and says "That change would change the
-  deck's layout, so it wasn't kept." A block holding typing it cannot write as typed keeps it as
+  deck's layout, so it wasn't kept." The editor's messages (this one, "Ana is editing slide 3. Try
+  again when they finish.", and the others) go to the deck's live region and show for a few
+  seconds in a notice at the top of the deck, above which only the kept typing's notice sits. A block holding typing it cannot write as typed keeps it as
   typed, and typing kept from a lease that ended (below) is kept on the page instead.
 - **Emptying a block.** Deleting all of a block's text removes its lines. Where that would run two
   text lines together, or bring a `---` to line 0 (which would turn the next slide's
@@ -3229,11 +3231,13 @@ deleting slides, and a slide's columns, stay with agents for now.
   `"empty"`): Publish is off with "Write something on a slide to publish", autosave skips it,
   and Done leaves edit mode with the draft kept.
 - **Speaker notes** are one part, its marker line included, edited in the panel under the slide
-  ("Notes for slide 3"): one lease from the marker to the slide's last line of text. The serializer
+  (named "Notes for slide 3", with no heading shown): one lease from the marker to the slide's last
+  line of text. The serializer
   keeps the marker word (`Note` or `Notes`) and its form, the first line on the marker line
   (`Note: Welcome everyone.`) or the marker alone (it is alone when the first line starts with
-  white space or opens fenced code). "Add speaker notes" and "Remove speaker notes" are struct ops
-  (`add_notes`, `remove_notes`).
+  white space or opens fenced code). A slide without notes shows only "Add speaker notes" in the
+  panel, as a field's placeholder; notes show a trash icon at the panel's corner, "Remove speaker
+  notes". They are struct ops (`add_notes`, `remove_notes`).
 - **Deck settings** (aspect, theme, page numbers, footer) are a popover the ⋯ menu's "Deck
   settings…" opens while editing, never a lease on the front matter. Apply sends the struct op
   `set_deck`, which writes the front matter canonically, with only the keys that differ from the
@@ -3254,9 +3258,10 @@ deleting slides, and a slide's columns, stay with agents for now.
   point at q when c ≤ q ≤ d; an insertion point p overlaps a line lease `[a, b)` when a < p < b
   and an insert point at exactly p. So a person can add notes to one slide while another types on
   another, and every lease elsewhere moves with the op's line map.
-- **Images are agent-only.** Selecting an image offers "Replace or add images: Ask an agent" and
-  "Delete"; a block the formatted editor cannot show faithfully offers "Ask an agent to change
-  this", and notes that cannot "Ask an agent to change these notes". Their `ask` anchors are
+- **Images are agent-only.** Selecting an image offers "Ask an agent" (described "An agent adds
+  or replaces the image.") and "Delete"; a block the formatted editor cannot show faithfully, and
+  notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
+  can change it."), as a doc's blocks do. Their `ask` anchors are
   structural (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`, numbered as the deck shows its
   slides) with structural words ("Slide 3, image 1"), never the deck's text. Images are drawn from
   the draft's base version's files.

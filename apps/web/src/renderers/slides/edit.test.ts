@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
 import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import { boot, deckPane } from "./boot.ts";
-import { DECK_WORDS, EDIT_DEBOUNCE_MS, LocalDeck } from "./edit.ts";
+import { DECK_WORDS, EDIT_DEBOUNCE_MS, LocalDeck, NOTICE_MS } from "./edit.ts";
 import { EDIT_VIEW_WORDS } from "./editView.ts";
 import type { Geometry } from "./exportModel.ts";
 import type { PptxBuilder } from "./pptxModel.ts";
@@ -157,13 +157,12 @@ const SKILL = [
 ].join("\n");
 
 describe("edit mode", () => {
-  it("draws every raw slide, an empty one at the edge with its placeholder and label", () => {
+  it("draws every raw slide, an empty one at the edge with its placeholder", () => {
     const f = start("---\n\n# Intro\n\n---\n\n# Next\n");
     expect(document.querySelectorAll(".plinth-slides__frame")).toHaveLength(3);
     // The deck starts on the first slide it shows, now raw slide 2.
     expect(active().dataset.n).toBe("2");
     const first = document.querySelector('.plinth-slides__frame[data-n="1"]') as HTMLElement;
-    expect(first.querySelector(".plinth-slides__hidden")?.textContent).toBe(EDIT_VIEW_WORDS.hidden);
     const ph = first.querySelector(".plinth-slides__placeholder") as HTMLButtonElement;
     expect(ph.textContent).toBe(EDIT_VIEW_WORDS.placeholder);
     expect(ph.getAttribute("aria-label")).toContain(DECK_WORDS.empty(1));
@@ -253,9 +252,13 @@ describe("speaker notes", () => {
   it("edits the notes as one part and keeps the marker on its line", () => {
     const f = start(SKILL);
     const body = active().querySelector(".plinth-slides__notepad-body") as HTMLElement;
-    expect(active().querySelector(".plinth-slides__notepad-title")?.textContent).toBe(
-      DECK_WORDS.notes(1),
-    );
+    // The panel is named for its slide; it shows the notes and one icon, no heading.
+    const panel = active().querySelector(".plinth-slides__notepad") as HTMLElement;
+    expect(panel.getAttribute("aria-label")).toBe(DECK_WORDS.notes(1));
+    expect(panel.querySelector("h2")).toBeNull();
+    const remove = panel.querySelector(".plinth-slides__notepad-remove") as HTMLButtonElement;
+    expect(remove.getAttribute("aria-label")).toBe(DECK_WORDS.removeNotes);
+    expect(remove.textContent).toBe("");
     body.click();
     const ed = active().querySelector(
       '.plinth-slides__notepad-edit [contenteditable="true"]',
@@ -388,7 +391,8 @@ describe("what is left to an agent", () => {
     (img.closest("[data-plinth-edit]") as HTMLElement).click();
     const bar = active().querySelector(".plinth-slides__blockbar") as HTMLElement;
     const [ask, del] = Array.from(bar.querySelectorAll("button"));
-    expect(ask?.textContent).toBe(DECK_WORDS.askImage);
+    expect(ask?.textContent).toBe(DECK_WORDS.ask);
+    expect(ask?.getAttribute("aria-description")).toBe(DECK_WORDS.imageNote);
     ask?.click();
     const sent = posts(f)
       .filter((p) => p.type === "ask")
@@ -409,7 +413,8 @@ describe("what is left to an agent", () => {
     expect(pre.getAttribute("data-plinth-edit")).toBe("other");
     pre.click();
     const ask = active().querySelector(".plinth-slides__blockbar button") as HTMLButtonElement;
-    expect(ask.textContent).toBe(DECK_WORDS.askBlock);
+    expect(ask.textContent).toBe(DECK_WORDS.ask);
+    expect(ask.getAttribute("aria-description")).toBe(DECK_WORDS.readOnly);
     ask.click();
     expect(
       posts(f)
@@ -590,6 +595,12 @@ describe("typing a deck at its size limit cannot take, alone", () => {
     );
     expect(posts(f).some((p) => p.type === "save")).toBe(false);
     expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
+    // Said on the page too, for a few seconds, over the slide; the live region reads it.
+    const toast = document.querySelector(".plinth-slides__notices .plinth-slides__toast");
+    expect(toast?.textContent).toBe(DECK_WORDS.fullHere);
+    expect(toast?.getAttribute("aria-hidden")).toBe("true");
+    vi.advanceTimersByTime(NOTICE_MS + 1);
+    expect(document.querySelector(".plinth-slides__toast")).toBeNull();
   });
 
   it.each([false, true])(

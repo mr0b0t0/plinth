@@ -140,6 +140,9 @@ function slideSources(parsed: ParsedDeck): string[] {
  * The deck's side of the review: its slides as the deck shows them, stacked and scaled to the
  * pane, each drawn with that version's files, with the slides that differ from the base marked.
  */
+/** The widest a review pane draws its slides, gutters included. */
+const REVIEW_PANE_W = 360;
+
 export function deckPane(doc: Document): ReviewPane {
   return {
     render(host, text, version, base) {
@@ -161,10 +164,22 @@ export function deckPane(doc: Document): ReviewPane {
       wrap.append(list);
       pinFiles(wrap, version);
       const canvas = SLIDE_ASPECTS[parsed.settings.aspect];
-      const width = Math.max(200, host.clientWidth || 360);
+      // Thumbnails at most REVIEW_PANE_W wide, so a pane shows a changed slide with its neighbours.
+      const scaleTo = (measured: number) => {
+        const width = Math.max(200, Math.min(REVIEW_PANE_W, measured || REVIEW_PANE_W));
+        setScale(wrap, canvas, Math.min(1, (width - 2 * GUTTER) / canvas.width));
+      };
       wrap.style.setProperty("--cols", "1");
-      setScale(wrap, canvas, Math.min(1, (width - 2 * GUTTER) / canvas.width));
+      scaleTo(host.clientWidth);
       host.replaceChildren(wrap);
+      // The pane is laid out after this returns (and again at another width): the slides fit the
+      // pane as it is, so none is cut at its edges at phone width.
+      const Observer = doc.defaultView?.ResizeObserver;
+      if (Observer) {
+        new Observer(() => {
+          if (host.clientWidth > 0) scaleTo(host.clientWidth);
+        }).observe(host);
+      }
       for (const v of views) fitSlide(v.el, v.body);
       return (item: ChangeItem) => {
         const m = /^Slide (\d+)/.exec(item.where);
