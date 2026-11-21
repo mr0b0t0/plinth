@@ -1183,22 +1183,32 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
     its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
     to 5 decimals) and its `hex` kept in step, and a string typed in its place asks first;
-    dimensions and durations a number and a unit (an object dimension `px` or `rem`); a weight a
-    number or a keyword, whichever was used last; a font family a comma list or an array as
-    stored; a cubic Bézier four numbers; a shadow, a border or a typography token one field per
-    part; another token through "Use another token" (and back with "Use a value", the target's
-    own stored value). The name is a field; the description, the guidelines and each component's
-    description and usage are formatted text, with the doc's block editor
-    ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)); a component's status
-    is a select. Each token row has one ⋯ (dark value, description, another token, "Rename: Ask an
-    agent", remove), each group row one ⋯ ("Add a token", "Rename: Ask an agent"). The parts of a
-    shadow, border or typography token are labelled in words (Color, X, Y, Blur, Spread; Width,
-    Style; Font, Size, Weight, Line height, Letter spacing).
+    dimensions and durations a number and a unit (an object dimension `px` or `rem`); a weight
+    one select of 100 to 900, with a keyword or another number the token has kept as its own
+    option; a font family a comma list or an array as stored; a cubic Bézier one field of four
+    numbers; a shadow, a border or a typography token one field per part; another token through
+    "Use another token" (and back with "Use a value", the target's own stored value). Edit mode
+    keeps the row as it reads: a colour token's sample is its picker, with only its text field
+    beside it, and the fields sit on their own line under the variable, light then dark in the
+    samples' order, with no "Light" or "Dark" on the row (the group says it once above the
+    samples; a token with a dark value shows both samples, even when they are the same). A
+    composite's parts are a label and field grid (labels above the fields on a phone), named
+    "Light" and "Dark" only when it has both. The name is a field in the heading's place; the
+    description, the guidelines and each component's description and usage are formatted text,
+    with the doc's block editor ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)).
+    A component's status stays the pill beside its name and is set from its heading's ⋯
+    ("Status", then Stable, Beta or Deprecated). Each token row has one ⋯ (dark value,
+    description, another token, "Rename: Ask an agent", "Remove"), each group row one ⋯ ("Add a
+    token", "Rename: Ask an agent"). The parts of a shadow, border or typography token are
+    labelled in words (Color, X, Y, Blur, Spread; Width, Style; Font, Size, Weight, Line height,
+    Letter spacing).
   - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
     components), renaming tokens and groups, types, the fonts, the prefix, the format and the
     shared CSS. Each has Ask an agent on the page, in the ⋯ it belongs to: a token's or a group's
-    ("Rename: Ask an agent"), a component's ("Ask an agent") and the header's, beside the name
-    ("Change fonts or settings: Ask an agent"). A change in the review that is in a component
+    ("Rename: Ask an agent"), a component's ("Ask an agent", after "Status") and the header's,
+    beside the name ("Ask an agent", whose dialog names "Fonts and settings"). In the review both
+    sides are one height, and each opens with its first change at the top of the side, just under
+    its list of changes. A change in the review that is in a component
     names it ("Button: description changed").
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines

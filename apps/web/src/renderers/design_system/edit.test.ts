@@ -1,7 +1,7 @@
 // Editing a design system on its page (edit.ts), alone (solo): the token controls write only
 // grammar-valid values in the form each is stored in; dark values, descriptions and tokens are
 // added and removed with struct ops; a token in use cannot be removed; the guidelines and
-// descriptions are formatted text, never Markdown; a component's status is a select; renames,
+// descriptions are formatted text, never Markdown; a component's status is in its ⋯; renames,
 // component code, fonts and settings are an agent's, with Ask an agent posting a structural anchor;
 // the draft's files come from its base version; a system too large to edit says so; and each
 // example shows only its rendered preview.
@@ -148,13 +148,44 @@ describe("token values", () => {
     expect(document.querySelector(".ds-notice")?.textContent).toMatch(/color\.fg/);
   });
 
-  it("set a weight by number or keyword, whichever was used last", () => {
-    editOn();
+  it("set a weight with one select, keeping a keyword the token has as its own option", () => {
+    const ds = SYSTEM();
+    ds.tokens.weight.k = { $value: "bold" };
+    editOn(ds);
     const w = row("weight.w");
-    setField(w.querySelector("select") as HTMLSelectElement, "bold");
-    expect(draft().tokens.weight.w.$value).toBe("bold");
-    setField(w.querySelector('input[type="number"]') as HTMLInputElement, "500");
+    expect(w.querySelectorAll(".ds-token__controls :is(input, select)")).toHaveLength(1);
+    setField(w.querySelector("select") as HTMLSelectElement, "500");
     expect(draft().tokens.weight.w.$value).toBe(500);
+    const k = row("weight.k").querySelector("select") as HTMLSelectElement;
+    expect(k.value).toBe("bold");
+    expect([...k.options].map((o) => o.value).at(-1)).toBe("bold");
+    setField(k, "700");
+    expect(draft().tokens.weight.k.$value).toBe(700);
+  });
+
+  it("write a cubic Bézier from one field, and refuse anything but four numbers", () => {
+    const ds = SYSTEM();
+    ds.tokens.ease = { $type: "cubicBezier", $value: [0.4, 0, 0.2, 1] };
+    editOn(ds);
+    const f = row("ease").querySelector<HTMLInputElement>('input[type="text"]') as HTMLInputElement;
+    expect(f.value).toBe("0.4, 0, 0.2, 1");
+    setField(f, "0.2 0 0 1");
+    expect(draft().tokens.ease.$value).toEqual([0.2, 0, 0, 1]);
+    setField(row("ease").querySelector('input[type="text"]') as HTMLInputElement, "0.2, 0");
+    expect(draft().tokens.ease.$value).toEqual([0.2, 0, 0, 1]);
+    expect(document.querySelector(".ds-notice")).not.toBeNull();
+  });
+
+  it("a colour token's sample is its picker, with only its text field beside it", () => {
+    editOn();
+    const bg = row("color.bg");
+    // Light and dark: each sample holds its picker, and no "Light" or "Dark" on the row.
+    const pickers = bg.querySelectorAll(".ds-token__pair > .ds-sample > input[type='color']");
+    expect(pickers).toHaveLength(2);
+    expect(bg.querySelectorAll(".ds-token__controls input[type='color']")).toHaveLength(0);
+    expect(bg.querySelector(".ds-token__side-name")).toBeNull();
+    setField(pickers[1] as HTMLInputElement, "#101010", "input");
+    expect(draft().themes.dark.color.bg.$value).toBe("#101010");
   });
 
   it("names another token, and goes back to the value it stands for", () => {
@@ -174,7 +205,7 @@ describe("keys", () => {
     expect(
       row("color.brand.500").querySelectorAll('.ds-token__controls input[type="text"]'),
     ).toHaveLength(2);
-    choose(row("color.brand.500"), "Remove the dark value");
+    choose(row("color.brand.500"), "Remove dark value");
     expect(draft().themes.dark.color.brand).toBeUndefined();
   });
 
@@ -202,24 +233,25 @@ describe("keys", () => {
     await tick();
     expect(row("color.line")).toBeTruthy();
     // color.brand.500 is color.accent's target: it stays, and the page says why.
-    choose(row("color.brand.500"), "Remove this token");
+    choose(row("color.brand.500"), "Remove");
     expect(document.querySelector(".ds-notice span")?.textContent).toBe(
       "Used by color.accent. Change those first.",
     );
-    choose(row("color.line"), "Remove this token");
+    choose(row("color.line"), "Remove");
     const confirm = [...row("color.line").querySelectorAll<HTMLButtonElement>(".ds-form button")];
     confirm.find((b) => b.textContent === "Remove")?.click();
     expect(draft().tokens.color.line).toBeUndefined();
   });
 
-  it("set a component's status", () => {
+  it("set a component's status from its ⋯, the pill staying beside the name", () => {
     editOn();
-    const bar = root().querySelector("#ds-components-badge .ds-component__bar") as HTMLElement;
-    setField(bar.querySelector("select") as HTMLSelectElement, "deprecated");
+    const menu = (id: string) =>
+      root().querySelector(`#ds-components-${id} > .ds-menu`) as HTMLElement;
+    choose(menu("badge"), "Status", "Deprecated");
     expect(draft().components[1].status).toBe("deprecated");
-    const button = root().querySelector("#ds-components-button .ds-component__bar select");
-    setField(button as HTMLSelectElement, "beta");
+    choose(menu("button"), "Status", "Beta");
     expect(draft().components[0].status).toBe("beta");
+    expect(root().querySelector(".ds-component select")).toBeNull();
   });
 
   it("change the name in place, never to nothing", () => {
@@ -241,14 +273,11 @@ describe("what stays with agents", () => {
       root().querySelector('.ds-group[data-group="color"]') as Element,
       "Rename: Ask an agent",
     );
-    choose(
-      root().querySelector("#ds-components-button .ds-component__bar") as Element,
-      "Ask an agent",
-    );
+    choose(root().querySelector("#ds-components-button > .ds-menu") as Element, "Ask an agent");
     // The header has one ⋯, and no line of fonts and settings.
     const header = root().querySelector(".ds-header") as Element;
     expect(header.querySelectorAll("button:not(.plinth-doc__menu-button)")).toHaveLength(0);
-    choose(header, "Change fonts or settings: Ask an agent");
+    choose(header, "Ask an agent");
     expect(posted.filter((m) => m.type === "ask").map((m) => m.anchor)).toEqual([
       { key: "token:color.bg", text: "color.bg" },
       { key: "group:color", text: "color" },

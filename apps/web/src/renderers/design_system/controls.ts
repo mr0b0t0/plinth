@@ -1,10 +1,11 @@
 // The value controls of a design system's token rows in edit mode (docs/spec.md "Design systems"):
 // one control per token type, each writing the whole $value in the form it is stored in (a colour
 // string stays a string, a colour object keeps its space and alpha, a dimension object stays an
-// object) unless the person picks another form. Colours have a swatch that opens the browser's
-// picker, with a text field beside it for any colour the grammar takes; an object colour converts
-// the picked sRGB colour into its own space (colorSpaces.ts). A composite (shadow, border,
-// typography) has one field per part, each by the rules of its own type, and a part that names
+// object) unless the person picks another form. A colour token's own sample is its picker (the
+// row draws it; samplePicker), with a text field for any colour the grammar takes; a colour inside
+// a composite has a small swatch beside its field. An object colour converts the picked sRGB
+// colour into its own space (colorSpaces.ts). A composite (shadow, border, typography) has one
+// field per part on a label | field grid, each by the rules of its own type, and a part that names
 // another token picks one. Built with createElement only; every value reaches the page through
 // .value or textContent. The room checks every value with the publish grammar again.
 import {
@@ -23,6 +24,8 @@ export interface ControlContext {
   doc: Document;
   /** What the controls are named after ("color.brand.500, dark"). */
   label: string;
+  /** False when the row's sample is the colour picker (samplePicker): no swatch beside the field. */
+  swatch?: boolean;
   /** Tokens of `type` a value (or a part) may name, for the pickers. */
   targets(type: DsTokenType): string[];
   /** The person set a new value. */
@@ -170,15 +173,13 @@ export function pickedColor(stored: unknown, hex: string): unknown {
 }
 
 function colorControl(ctx: ControlContext, value: unknown): HTMLElement {
-  const swatch = input(ctx, "color", "colour", colorHex(value, ctx.doc) ?? "#000000");
-  swatch.classList.add("ds-swatch");
-  swatch.addEventListener("input", () => ctx.change(pickedColor(value, swatch.value)));
   const text = input(
     ctx,
     "text",
     "colour as text",
     typeof value === "string" ? value : isObject(value) ? objectColorText(value) : "",
   );
+  text.classList.add("ds-field--short");
   text.spellcheck = false;
   text.addEventListener("change", () => {
     const t = text.value.trim();
@@ -193,7 +194,26 @@ function colorControl(ctx: ControlContext, value: unknown): HTMLElement {
     }
     ctx.change(t);
   });
+  if (ctx.swatch === false) return group(ctx, text);
+  const swatch = input(ctx, "color", "colour", colorHex(value, ctx.doc) ?? "#000000");
+  swatch.classList.add("ds-swatch");
+  swatch.addEventListener("input", () => ctx.change(pickedColor(value, swatch.value)));
   return group(ctx, swatch, text);
+}
+
+/**
+ * A colour token's sample as its picker: a colour input over the whole sample, which shows the
+ * picked colour at once (the row is drawn again once the person leaves it).
+ */
+export function samplePicker(ctx: ControlContext, value: unknown, sample: HTMLElement): void {
+  const pick = input(ctx, "color", "colour", colorHex(value, ctx.doc) ?? "#000000");
+  pick.className = "ds-sample__picker";
+  pick.addEventListener("input", () => {
+    sample.style.setProperty("--ds-sample", pick.value);
+    ctx.change(pickedColor(value, pick.value));
+  });
+  sample.classList.add("ds-sample--pick");
+  sample.append(pick);
 }
 
 // ---------- numbers with units ----------
@@ -240,38 +260,24 @@ function unitControl(
   return group(ctx, n, u);
 }
 
-const WEIGHT_KEYWORDS = [
-  "thin",
-  "extra-light",
-  "light",
-  "normal",
-  "medium",
-  "semi-bold",
-  "bold",
-  "extra-bold",
-  "black",
-] as const;
+const WEIGHTS = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
 
+/** One select: 100 to 900, and the keyword or other number the token has, kept as it is stored. */
 function weightControl(ctx: ControlContext, value: unknown): HTMLElement {
-  const n = input(ctx, "number", "weight", typeof value === "number" ? String(value) : "");
-  n.min = "1";
-  n.max = "1000";
-  n.step = "1";
-  const k = select(
+  const current = typeof value === "number" || typeof value === "string" ? String(value) : "400";
+  const options = WEIGHTS.includes(current)
+    ? WEIGHTS
+    : /^\d+$/.test(current)
+      ? [...WEIGHTS, current].sort((a, b) => Number(a) - Number(b))
+      : [...WEIGHTS, current];
+  const s = select(
     ctx,
-    "weight keyword",
-    [["", "Number"], ...WEIGHT_KEYWORDS.map((w) => [w, w] as const)],
-    typeof value === "string" ? value : "",
+    "weight",
+    options.map((w) => [w, w] as const),
+    current,
   );
-  // The last one used wins.
-  n.addEventListener("change", () => {
-    const v = numberOf(n.value);
-    if (v !== null) ctx.change(Math.round(v));
-  });
-  k.addEventListener("change", () => {
-    if (k.value) ctx.change(k.value);
-  });
-  return group(ctx, n, k);
+  s.addEventListener("change", () => ctx.change(/^\d+$/.test(s.value) ? Number(s.value) : s.value));
+  return group(ctx, s);
 }
 
 function numberControl(ctx: ControlContext, value: unknown): HTMLElement {
@@ -292,6 +298,7 @@ function familyControl(ctx: ControlContext, value: unknown): HTMLElement {
     "font families",
     list ? (value as unknown[]).join(", ") : typeof value === "string" ? value : "",
   );
+  t.classList.add("ds-field--wide");
   t.spellcheck = false;
   t.addEventListener("change", () => {
     const s = t.value.trim();
@@ -309,25 +316,22 @@ function familyControl(ctx: ControlContext, value: unknown): HTMLElement {
   return group(ctx, t);
 }
 
+/** One field holding the four numbers ("0.4, 0, 0.2, 1"); the room checks them as on publish. */
 function bezierControl(ctx: ControlContext, value: unknown): HTMLElement {
   const v = Array.isArray(value) ? value : [0, 0, 1, 1];
-  const names = ["x1", "y1", "x2", "y2"];
-  const fields = names.map((name, i) => {
-    const f = input(ctx, "number", name, String(v[i] ?? 0));
-    f.step = "0.01";
-    if (i % 2 === 0) {
-      f.min = "0";
-      f.max = "1";
-    }
-    return f;
+  const t = input(ctx, "text", "cubic Bézier", v.join(", "));
+  t.classList.add("ds-field--short");
+  t.spellcheck = false;
+  t.addEventListener("change", () => {
+    const parts = t.value
+      .trim()
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(numberOf);
+    // Anything but four numbers goes to the check as typed, which says what a Bézier takes.
+    ctx.change(parts.length === 4 && parts.every((x) => x !== null) ? parts : t.value.trim());
   });
-  for (const f of fields) {
-    f.addEventListener("change", () => {
-      const out = fields.map((x) => numberOf(x.value));
-      if (out.every((x) => x !== null)) ctx.change(out);
-    });
-  }
-  return group(ctx, ...fields);
+  return group(ctx, t);
 }
 
 // ---------- composites ----------
@@ -341,7 +345,12 @@ function part(
   set: (v: unknown) => void,
 ): HTMLElement {
   const words = PART_WORDS[name] ?? name;
-  const sub: ControlContext = { ...ctx, label: `${ctx.label} ${words.toLowerCase()}`, change: set };
+  const sub: ControlContext = {
+    ...ctx,
+    label: `${ctx.label} ${words.toLowerCase()}`,
+    change: set,
+    swatch: true,
+  };
   const box = ctx.doc.createElement("div");
   box.className = "ds-part";
   const label = ctx.doc.createElement("span");

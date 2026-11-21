@@ -12,7 +12,7 @@
 // - the system's name, and its description, the guidelines and each component's description and
 //   usage as formatted text: the doc's own block editor (doc/edit.ts) over the part of the draft
 //   that holds them (the guidelines' lines, or one JSON string), so no Markdown is shown;
-// - a component's status.
+// - a component's status, from its ⋯ ("Status").
 // Renaming tokens and groups, component code, fonts, the prefix and the format stay with agents:
 // each has "Ask an agent", which posts `ask` with a structural anchor (token:<path>, group:<path>,
 // component:<id>, system:settings) and the app opens its Ask dialog.
@@ -21,6 +21,7 @@
 // part that held it before sends what it has pending and lets go first.
 import {
   type DesignSystem,
+  type DsComponent,
   type DsIssue,
   type DsLiveNode,
   type DsPath,
@@ -49,7 +50,7 @@ import {
 import type { ClientLease, LeaseDenial, LeaseLoss, LiveBackend } from "../common/live.ts";
 import { DocEditor, type EditorHooks } from "../doc/edit.ts";
 import { BlockMenu, type MenuGroup, type MenuItem } from "../doc/menu.ts";
-import { starterValue, valueControl } from "./controls.ts";
+import { samplePicker, starterValue, valueControl } from "./controls.ts";
 import type { SystemBackend } from "./local.ts";
 import type { PreviewTheme } from "./preview.ts";
 import { renderProblems, renderSite, sectionId, sections, tokenPage } from "./render.ts";
@@ -1052,6 +1053,7 @@ export class DsEditor {
       if (this.focusInside(old)) this.deferUntilBlur(old);
       else old.replaceWith(row);
     });
+    themesHeading(section);
     return true;
   }
 
@@ -1152,6 +1154,7 @@ export class DsEditor {
     for (const row of Array.from(el.querySelectorAll<HTMLElement>(".ds-group[data-group]"))) {
       this.decorateGroup(row);
     }
+    themesHeading(el);
     const comps = el.matches(".ds-component")
       ? [el]
       : Array.from(el.querySelectorAll<HTMLElement>(".ds-component"));
@@ -1186,7 +1189,7 @@ export class DsEditor {
         {
           items: [
             {
-              label: "Change fonts or settings: Ask an agent",
+              label: "Ask an agent",
               run: () => this.askAbout("system:settings", "Fonts and settings"),
             },
           ],
@@ -1217,28 +1220,48 @@ export class DsEditor {
     const values = row.querySelector<HTMLElement>(".ds-token__values");
     if (!info || !values) return;
     const index = ds?.tokens.indexOf(t) ?? 0;
+    // Edit mode shows a light and a dark sample whenever there is a dark value, even one that is
+    // the same, so each value has its sample (a colour's is its picker).
+    const pair = row.querySelector<HTMLElement>(".ds-token__pair");
+    const drawn = Array.from(pair?.querySelectorAll<HTMLElement>(":scope > .ds-sample") ?? []);
+    if (pair && darkValue !== undefined && drawn.length === 1) {
+      const one = drawn[0] as HTMLElement;
+      const light = one.cloneNode(true) as HTMLElement;
+      const dark = one.cloneNode(true) as HTMLElement;
+      light.dataset.theme = "light";
+      dark.dataset.theme = "dark";
+      pair.replaceChildren(light, dark);
+    }
+    const samples = Array.from(pair?.querySelectorAll<HTMLElement>(":scope > .ds-sample") ?? []);
+    // A composite's two sides are each a grid of parts, so they say which is which; one value a
+    // side sits under its sample's column order, as the "Light" and "Dark" above the samples say.
+    const composite = t.type === "shadow" || t.type === "border" || t.type === "typography";
     const controls = this.doc.createElement("div");
     controls.className = "ds-token__controls";
     const side = (which: "Light" | "Dark", value: unknown, valuePath: DsPath) => {
       const box = this.doc.createElement("div");
-      box.className = "ds-token__side";
-      if (darkValue !== undefined) {
+      box.className = composite ? "ds-token__side ds-token__side--parts" : "ds-token__side";
+      if (darkValue !== undefined && composite) {
         const l = this.doc.createElement("span");
         l.className = "ds-token__side-name";
         l.textContent = which;
         box.append(l);
       }
-      const c = valueControl(
-        {
-          doc: this.doc,
-          label: `${path}${darkValue !== undefined ? `, ${which.toLowerCase()}` : ""}`,
-          targets: (type) => this.targets(type, path),
-          change: (v) => this.writer(valuePath).write(v),
-          confirm: (q, yes, run) => this.confirm(box, q, yes, run),
-        },
-        t.type,
-        value,
-      );
+      const ctx = {
+        doc: this.doc,
+        label: `${path}${darkValue !== undefined ? `, ${which.toLowerCase()}` : ""}`,
+        targets: (type: DsTokenType) => this.targets(type, path),
+        change: (v: unknown) => this.writer(valuePath).write(v),
+        confirm: (q: string, yes: string, run: () => void) => this.confirm(box, q, yes, run),
+        swatch: t.type !== "color",
+      };
+      const c = valueControl(ctx, t.type, value);
+      const sample = samples[which === "Light" ? 0 : 1];
+      if (t.type === "color" && dsAliasOf(value) === null && sample) {
+        samplePicker(ctx, value, sample);
+        const pick = sample.querySelector<HTMLInputElement>(".ds-sample__picker");
+        if (pick) pick.disabled = !this.canWrite;
+      }
       if (!this.canWrite) {
         for (const f of Array.from(c.querySelectorAll<HTMLInputElement>("input, select"))) {
           f.disabled = true;
@@ -1251,7 +1274,11 @@ export class DsEditor {
     if (darkValue !== undefined) {
       controls.append(side("Dark", darkValue, ["themes", "dark", ...segs, "$value"]));
     }
-    values.replaceWith(controls);
+    // The fields have a line of their own under the variable, at the same left edge in every row.
+    values.remove();
+    const line = info.querySelector(".ds-token__line");
+    if (line) line.after(controls);
+    else info.append(controls);
     // The description: a field when there is one (the menu adds one).
     const desc = row.querySelector<HTMLElement>(".ds-token__desc");
     if (typeof description === "string") {
@@ -1328,7 +1355,7 @@ export class DsEditor {
       });
     } else {
       value.push({
-        label: "Remove the dark value",
+        label: "Remove dark value",
         disabled: !write,
         run: () => this.struct(null, { op: "clear_dark", token: path }),
       });
@@ -1375,7 +1402,7 @@ export class DsEditor {
             run: () => this.askAbout(anchorKey("token", path, index), path),
           },
           {
-            label: "Remove this token",
+            label: "Remove",
             disabled: !write,
             run: () => this.removeToken(row, path),
           },
@@ -1470,11 +1497,11 @@ export class DsEditor {
     const segs = group === "" ? [] : (dsTokenSegs(group) ?? []);
     const declared = dsDeclaredType(this.system, segs);
     const f = this.doc.createElement("form");
-    f.className = "ds-form";
+    f.className = "ds-form ds-form--add";
     f.setAttribute("aria-label", `Add a token to ${group || "the top level"}`);
     const name = this.doc.createElement("input");
     name.type = "text";
-    name.className = "ds-field";
+    name.className = "ds-field ds-form__name";
     name.placeholder = "Name";
     name.setAttribute("aria-label", "Token name");
     name.maxLength = 64;
@@ -1554,39 +1581,39 @@ export class DsEditor {
     const ds = this.parsed;
     const c = ds?.components.find((x) => x.id === id);
     if (!c || !ds) return;
-    const list = this.system?.components;
-    const i = Array.isArray(list) ? list.findIndex((x) => isObject(x) && x.id === id) : -1;
-    const title = section.querySelector("h2");
-    const bar = this.doc.createElement("div");
-    bar.className = "ds-component__bar";
-    const status = this.doc.createElement("select");
-    status.className = "ds-field ds-field--select";
-    status.setAttribute("aria-label", `${c.name}: status`);
-    for (const [v, label] of [
-      ["stable", "Stable"],
-      ["beta", "Beta"],
-      ["deprecated", "Deprecated"],
-    ] as const) {
-      const o = this.doc.createElement("option");
-      o.value = v;
-      o.textContent = label;
-      status.append(o);
-    }
-    status.value = c.status;
-    status.disabled = !this.canWrite || i < 0;
-    status.addEventListener("change", () => {
+    // Where the component is in the draft when the menu is used (it opens later than it is drawn).
+    const at = () => {
+      const list = this.system?.components;
+      return Array.isArray(list) ? list.findIndex((x) => isObject(x) && x.id === id) : -1;
+    };
+    const statusNow = () => this.parsed?.components.find((x) => x.id === id)?.status ?? c.status;
+    // The status stays the pill beside the name; it and Ask an agent are the heading's one ⋯.
+    const setStatus = (value: DsComponent["status"]) => {
+      const i = at();
+      if (i < 0) return;
       const p: DsPath = ["components", i, "status"];
-      if (dsGet(this.system, p) !== undefined) this.writer(p).write(status.value);
-      else if (status.value !== "stable") {
-        this.struct(null, { op: "set_text", path: `components.${id}.status`, value: status.value });
+      if (dsGet(this.system, p) !== undefined) this.writer(p).write(value);
+      else if (value !== "stable") {
+        this.struct(null, { op: "set_text", path: `components.${id}.status`, value });
       }
-    });
-    bar.append(status);
+    };
     const index = ds.components.indexOf(c);
-    bar.append(
+    section.classList.add("ds-component--editing");
+    section.querySelector("h2")?.after(
       this.menu(`${c.name}: actions`, () => [
         {
           items: [
+            {
+              label: "Status",
+              disabled: !this.canWrite || at() < 0,
+              sub: STATUSES.map(([value, label]) => ({
+                label,
+                checked: statusNow() === value,
+                run: () => {
+                  if (statusNow() !== value) setStatus(value);
+                },
+              })),
+            },
             {
               label: "Ask an agent",
               run: () => this.askAbout(anchorKey("component", id, index), c.name),
@@ -1595,11 +1622,42 @@ export class DsEditor {
         },
       ]),
     );
-    title?.after(bar);
     // In edit mode the texts are labelled, so an empty one says what it is for.
     for (const key of ["description", "usage"] as const) {
       const el = section.querySelector<HTMLElement>(`[data-text="component:${id}:${key}"]`);
       el?.setAttribute("aria-label", `${c.name}: ${key}`);
     }
+  }
+}
+
+const STATUSES: readonly (readonly [DsComponent["status"], string])[] = [
+  ["stable", "Stable"],
+  ["beta", "Beta"],
+  ["deprecated", "Deprecated"],
+];
+
+/**
+ * "Light" and "Dark" once above a token table's samples, in edit mode whenever a row shows a
+ * light and a dark sample (a dark value the same as the light one included).
+ */
+function themesHeading(el: HTMLElement): void {
+  const tables = el.matches(".ds-table")
+    ? [el]
+    : Array.from(el.querySelectorAll<HTMLElement>(".ds-table"));
+  for (const table of tables) {
+    const pairs = table.querySelector(".ds-token__pair > .ds-sample + .ds-sample") !== null;
+    const head = table.querySelector(":scope > .ds-themes");
+    if (pairs && !head) {
+      const doc = table.ownerDocument;
+      const h = doc.createElement("div");
+      h.className = "ds-themes";
+      h.setAttribute("aria-hidden", "true");
+      for (const w of ["Light", "Dark"]) {
+        const sp = doc.createElement("span");
+        sp.textContent = w;
+        h.append(sp);
+      }
+      table.prepend(h);
+    } else if (!pairs && head) head.remove();
   }
 }

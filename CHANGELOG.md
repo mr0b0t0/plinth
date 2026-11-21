@@ -11,12 +11,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 ## Unreleased
 
 - **Edit design systems on their page.** Owners and editors turn on Edit and change a design
-  system in place, live with each other: token values in light and dark (a colour picker with a
-  text field, numbers with units, weights, font families and each part of a shadow, border or
-  typography token, always in the form the value is stored in), another token instead of a value,
-  dark values, descriptions, adding and removing tokens (a token something still uses stays, and
-  the page says what uses it), the name, and the description, guidelines and each component's
-  description and usage as formatted text, never JSON or Markdown, and a component's status.
+  system in place, live with each other: token values in light and dark (a colour's own sample is
+  its picker, beside a text field; numbers with units, weights, font families and each part of a
+  shadow, border or typography token, always in the form the value is stored in), another token
+  instead of a value, dark values, descriptions, adding and removing tokens (a token something
+  still uses stays, and the page says what uses it), the name, and the description, guidelines
+  and each component's description and usage as formatted text, never JSON or Markdown, and a
+  component's status from its ⋯.
   Renames, component code, fonts and settings stay with agents, with Ask an agent on each. A
   version an agent publishes meanwhile is reviewed beside the page's changes, each side with its
   own fonts and images. A Publish from the page stores 2-space JSON, or compact JSON for the

@@ -109,15 +109,23 @@ test("a colour changed in place is published as v2, in Plinth's 2-space JSON", a
     await tokenRow(page, "color.brand.500")
       .getByRole("button", { name: /actions$/ })
       .click();
-    await frameOf(page).getByRole("menuitem", { name: "Remove this token" }).click();
+    await frameOf(page).getByRole("menuitem", { name: "Remove", exact: true }).click();
     await expect(frameOf(page).locator(".ds-notice")).toContainText(
       "Used by color.accent. Change those first.",
     );
-    // Guidelines and a component's text are formatted text: a block opens for typing.
+    // A component's status is in its heading's ⋯, the pill staying beside the name.
     await frameOf(page).locator("#ds-components-button").scrollIntoViewIfNeeded();
-    await expect(
-      frameOf(page).locator("#ds-components-button .ds-component__bar select"),
-    ).toHaveValue("stable");
+    const componentMenu = frameOf(page)
+      .locator("#ds-components-button > .ds-menu")
+      .getByRole("button", { name: /actions$/ });
+    await componentMenu.click();
+    await frameOf(page).getByRole("menuitem", { name: "Status" }).click();
+    await expect(frameOf(page).getByRole("menuitemradio", { name: "Stable" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await componentMenu.click();
+    await expect(frameOf(page).locator("#ds-components-button select")).toHaveCount(0);
     // Its examples are drawn from v1's files, which a Publish keeps.
     const preview = frameOf(page).frameLocator('iframe[title^="Button: Primary ("]');
     await expect(preview.locator("button")).toHaveText("Save", { timeout: 10_000 });
