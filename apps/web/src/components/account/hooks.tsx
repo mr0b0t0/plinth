@@ -1,9 +1,10 @@
 // Small hooks shared by the account pages.
 import { API, APP_ROUTES } from "@plinth/shared";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { api } from "../../lib/api.ts";
+import { ApiRequestError, api } from "../../lib/api.ts";
 import { navigate, Redirect, useLocation } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
+import { clearRescueStores } from "../editor/draft.ts";
 import { loginHref } from "./nav.ts";
 
 /** Sets document.title to "<title> · Plinth" (or "Plinth"). */
@@ -19,8 +20,12 @@ export function useSignOut(): () => Promise<void> {
   return useCallback(async () => {
     try {
       await api(API.logout, { method: "POST" });
-    } catch {
-      // The session may already be gone; carry on to the sign-in page either way.
+      // Signed out here on purpose: page edits kept to rescue in this tab go with the session.
+      clearRescueStores();
+    } catch (e) {
+      // The session may already be gone (then what was kept goes too); carry on to the sign-in
+      // page either way.
+      if (e instanceof ApiRequestError && e.status === 401) clearRescueStores();
     }
     try {
       await refresh();
