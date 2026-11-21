@@ -77,7 +77,7 @@ export const KEPT_CHANGING_TEXT = "Someone else kept changing this block. Try ag
 export const SAVE_FAILED_NOTE_TEXT =
   "Your change could not be saved. What you wrote is in a new note beside it.";
 /** A page older than its board's format (a 401 `stale_page`): the reload brings the current one. */
-export const OUT_OF_DATE_TEXT = "Out of date. Reload the page to edit.";
+export const OUT_OF_DATE_TEXT = "Out of date. Reload.";
 /** A save that kept conflicting; what the viewer wrote is a note beside the block. */
 export const KEPT_CHANGING_NOTE_TEXT =
   "Someone else kept changing this block. What you wrote is in a new note beside it.";
