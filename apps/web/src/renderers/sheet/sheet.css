@@ -35,6 +35,28 @@
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sheet-row-h: 32px;
   --sheet-letters-h: 24px;
+  /* The nine sheet colours (SHEET_COLORS, looks.ts holds the same light values): a fill behind
+     a cell and the text on it, for fills, highlights and option chips. */
+  --sheet-gray-bg: #eef0f2;
+  --sheet-gray-fg: #3b434b;
+  --sheet-red-bg: #fde2e1;
+  --sheet-red-fg: #9f1c1c;
+  --sheet-orange-bg: #fde7d3;
+  --sheet-orange-fg: #9a3a0b;
+  --sheet-yellow-bg: #fbf1c7;
+  --sheet-yellow-fg: #7a5a00;
+  --sheet-green-bg: #ddf3e4;
+  --sheet-green-fg: #1e6b3a;
+  --sheet-teal-bg: #d5f2ef;
+  --sheet-teal-fg: #116057;
+  --sheet-blue-bg: #dcebfd;
+  --sheet-blue-fg: #1e4f9a;
+  --sheet-purple-bg: #ebe3fb;
+  --sheet-purple-fg: #5b2fa0;
+  --sheet-pink-bg: #fbe1ef;
+  --sheet-pink-fg: #9a1f5c;
+  /* A cell's own border lines (cell styles), darker than the grid's rules. */
+  --sheet-line: #3b434b;
 }
 
 @media screen and (prefers-color-scheme: dark) {
@@ -58,6 +80,25 @@
     --sheet-focus: #d39a62;
     --sheet-primary: #ecebe7;
     --sheet-on-primary: #15181c;
+    --sheet-gray-bg: #2a3038;
+    --sheet-gray-fg: #d6dbe0;
+    --sheet-red-bg: #4a1f1f;
+    --sheet-red-fg: #ffb4ab;
+    --sheet-orange-bg: #4a2a14;
+    --sheet-orange-fg: #ffc797;
+    --sheet-yellow-bg: #42370f;
+    --sheet-yellow-fg: #f5d97a;
+    --sheet-green-bg: #173a26;
+    --sheet-green-fg: #9be1b2;
+    --sheet-teal-bg: #123b38;
+    --sheet-teal-fg: #8fe0d6;
+    --sheet-blue-bg: #172e4f;
+    --sheet-blue-fg: #a6c8ff;
+    --sheet-purple-bg: #2f2350;
+    --sheet-purple-fg: #cdb8ff;
+    --sheet-pink-bg: #4a1c35;
+    --sheet-pink-fg: #ffb0d5;
+    --sheet-line: #c3cad1;
   }
 }
 
@@ -411,6 +452,193 @@ body {
   color: var(--sheet-error);
   font-family: var(--sheet-mono);
   font-size: 12px;
+}
+
+/* ---------- looks: cell styles, highlights and option chips ---------- */
+
+/* Each colour sets two variables; a fill uses the background, a highlight and a chip both. */
+.plinth-sheet__fill--gray,
+.plinth-sheet__hl--gray,
+.plinth-sheet__chip--gray {
+  --c-bg: var(--sheet-gray-bg);
+  --c-fg: var(--sheet-gray-fg);
+}
+.plinth-sheet__fill--red,
+.plinth-sheet__hl--red,
+.plinth-sheet__chip--red {
+  --c-bg: var(--sheet-red-bg);
+  --c-fg: var(--sheet-red-fg);
+}
+.plinth-sheet__fill--orange,
+.plinth-sheet__hl--orange,
+.plinth-sheet__chip--orange {
+  --c-bg: var(--sheet-orange-bg);
+  --c-fg: var(--sheet-orange-fg);
+}
+.plinth-sheet__fill--yellow,
+.plinth-sheet__hl--yellow,
+.plinth-sheet__chip--yellow {
+  --c-bg: var(--sheet-yellow-bg);
+  --c-fg: var(--sheet-yellow-fg);
+}
+.plinth-sheet__fill--green,
+.plinth-sheet__hl--green,
+.plinth-sheet__chip--green {
+  --c-bg: var(--sheet-green-bg);
+  --c-fg: var(--sheet-green-fg);
+}
+.plinth-sheet__fill--teal,
+.plinth-sheet__hl--teal,
+.plinth-sheet__chip--teal {
+  --c-bg: var(--sheet-teal-bg);
+  --c-fg: var(--sheet-teal-fg);
+}
+.plinth-sheet__fill--blue,
+.plinth-sheet__hl--blue,
+.plinth-sheet__chip--blue {
+  --c-bg: var(--sheet-blue-bg);
+  --c-fg: var(--sheet-blue-fg);
+}
+.plinth-sheet__fill--purple,
+.plinth-sheet__hl--purple,
+.plinth-sheet__chip--purple {
+  --c-bg: var(--sheet-purple-bg);
+  --c-fg: var(--sheet-purple-fg);
+}
+.plinth-sheet__fill--pink,
+.plinth-sheet__hl--pink,
+.plinth-sheet__chip--pink {
+  --c-bg: var(--sheet-pink-bg);
+  --c-fg: var(--sheet-pink-fg);
+}
+
+.plinth-sheet__grid td[class*="plinth-sheet__fill--"],
+.plinth-sheet__grid td[class*="plinth-sheet__hl--"] {
+  background-color: var(--c-bg);
+  print-color-adjust: exact;
+}
+
+.plinth-sheet__grid td[class*="plinth-sheet__hl--"],
+.plinth-sheet__grid td[class*="plinth-sheet__hl--"] .plinth-sheet__link {
+  color: var(--c-fg);
+}
+
+.plinth-sheet__chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--c-bg);
+  color: var(--c-fg);
+  line-height: 22px;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  print-color-adjust: exact;
+}
+
+.plinth-sheet__s-bold {
+  font-weight: 600;
+}
+
+.plinth-sheet__s-italic {
+  font-style: italic;
+}
+
+.plinth-sheet__grid .plinth-sheet__cell.plinth-sheet__s-left {
+  text-align: left;
+}
+
+.plinth-sheet__grid .plinth-sheet__cell.plinth-sheet__s-center {
+  text-align: center;
+}
+
+.plinth-sheet__grid .plinth-sheet__cell.plinth-sheet__s-right {
+  text-align: right;
+}
+
+/* Long text wraps onto more lines; the row grows to hold it. */
+.plinth-sheet__grid td.plinth-sheet__s-wrap {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+/* A cell's own borders, drawn inside it over the grid's rules. A frozen cell is already
+   positioned (sticky); any other gets a position for the lines to hang on. */
+.plinth-sheet__grid td.plinth-sheet__bd:not(.plinth-sheet__frozen) {
+  position: relative;
+}
+
+.plinth-sheet__grid td.plinth-sheet__bd::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 0 solid var(--sheet-line);
+  pointer-events: none;
+}
+
+.plinth-sheet__grid td.plinth-sheet__bd--top::after {
+  border-top-width: 1px;
+}
+
+.plinth-sheet__grid td.plinth-sheet__bd--right::after {
+  border-right-width: 1px;
+}
+
+.plinth-sheet__grid td.plinth-sheet__bd--bottom::after {
+  border-bottom-width: 1px;
+}
+
+.plinth-sheet__grid td.plinth-sheet__bd--left::after {
+  border-left-width: 1px;
+}
+
+/* ---------- selection of several cells, copy and fill ---------- */
+
+.plinth-sheet__grid .plinth-sheet__in-range {
+  background-image: linear-gradient(var(--sheet-select), var(--sheet-select));
+}
+
+/* A press or a drag selects cells, never the words in them (find in page still finds them). */
+.plinth-sheet__grid td:not(:has(> .plinth-sheet__input)),
+.plinth-sheet--dragging,
+.plinth-sheet--dragging * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* What a copy selects when nothing else is (grid.ts): off screen, never read. */
+.plinth-sheet__clip {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  white-space: pre;
+}
+
+.plinth-sheet__grid td:has(> .plinth-sheet__fill-handle):not(.plinth-sheet__frozen) {
+  position: relative;
+}
+
+/* The fill handle, on the corner of the selection in edit mode: drag it down to fill. */
+.plinth-sheet__fill-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--sheet-bg);
+  background: var(--sheet-focus);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.plinth-sheet__grid .plinth-sheet__fill-target {
+  outline: 1px dashed var(--sheet-focus);
+  outline-offset: -2px;
 }
 
 /* ---------- on-page editing ---------- */
@@ -876,6 +1104,148 @@ body {
   }
 }
 
+/* A colour picker (an option's chip colour, a rule's colour): a swatch of the colour chosen that
+   opens the native list of colours. */
+.plinth-sheet__panel select.plinth-sheet__swatch-select {
+  flex: none;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 999px;
+  background: var(--c-bg, var(--sheet-bg));
+  background-image: none;
+  color: transparent;
+  cursor: pointer;
+}
+
+.plinth-sheet__panel select.plinth-sheet__swatch-select:not([class*="plinth-sheet__fill--"]) {
+  background-image: linear-gradient(
+    135deg,
+    transparent 46%,
+    var(--sheet-rule-strong) 46%,
+    var(--sheet-rule-strong) 54%,
+    transparent 54%
+  );
+}
+
+.plinth-sheet__swatch-select option {
+  background: var(--sheet-bg);
+  color: var(--sheet-fg);
+}
+
+/* Highlight rules: when, the value (two for Between), a colour and Remove on one line each. */
+.plinth-sheet__rules {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--sheet-muted);
+}
+
+.plinth-sheet__rules legend {
+  padding: 0 0 4px;
+}
+
+.plinth-sheet__rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plinth-sheet__rules-list:empty {
+  display: none;
+}
+
+.plinth-sheet__rule {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plinth-sheet__panel .plinth-sheet__rule select:not(.plinth-sheet__swatch-select) {
+  flex: 1 1 112px;
+  min-width: 0;
+}
+
+.plinth-sheet__panel .plinth-sheet__rule input {
+  flex: 1 1 64px;
+  min-width: 0;
+}
+
+.plinth-sheet__panel .plinth-sheet__rule input[hidden] {
+  display: none;
+}
+
+.plinth-sheet__ghost.plinth-sheet__rules-add {
+  align-self: flex-start;
+  width: auto;
+  padding: 0 6px;
+  color: var(--sheet-fg);
+}
+
+/* ---------- the Format menu ---------- */
+
+.plinth-sheet__menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--sheet-rule);
+}
+
+.plinth-sheet__menu-item[aria-checked="true"]::after {
+  content: "\2713";
+  float: right;
+  margin-left: 16px;
+  color: var(--sheet-muted);
+}
+
+/* No fill and the nine colours, in two rows of five. */
+.plinth-sheet__swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 20px);
+  gap: 6px;
+  padding: 4px 10px;
+}
+
+.plinth-sheet__swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 999px;
+  background: var(--c-bg, var(--sheet-bg));
+  cursor: pointer;
+}
+
+.plinth-sheet__swatch--none {
+  background-image: linear-gradient(
+    135deg,
+    transparent 44%,
+    var(--sheet-rule-strong) 44%,
+    var(--sheet-rule-strong) 56%,
+    transparent 56%
+  );
+}
+
+.plinth-sheet__swatch:hover:not(:disabled),
+.plinth-sheet__swatch:focus-visible {
+  outline: 2px solid var(--sheet-focus);
+  outline-offset: 1px;
+}
+
+.plinth-sheet__swatch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* A short muted title on the settings' sheet at phone width, which covers the column it is for. */
 .plinth-sheet__sheet-title {
   display: none;
@@ -1040,10 +1410,14 @@ body.plinth-sheet--docked .plinth-sheet__notice {
     flex-basis: 128px;
   }
 
-  /* Editing adds the Row and Column menus to the bar: the filter and the menus give the selected
-     cell's value room. */
+  /* Editing adds the Row, Column and Format menus to the bar: the selected cell's value gives them
+     room (the cell shows it, and an open cell's field docks with its address). */
   .plinth-sheet__page--editing .plinth-sheet__bar {
     gap: 6px;
+  }
+
+  .plinth-sheet__page--editing .plinth-sheet__fx-raw {
+    display: none;
   }
 
   .plinth-sheet__page--editing .plinth-sheet__fx {

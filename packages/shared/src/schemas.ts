@@ -23,7 +23,17 @@ import {
   PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENT_LIMITS,
 } from "./pageComments.ts";
-import { SHEET_COLUMN_TYPES, SHEET_CONTENT_FORMATS, SHEET_NUMBER_STYLES } from "./sheet/format.ts";
+import {
+  MAX_HIGHLIGHT_RULES,
+  MAX_HIGHLIGHT_TEXT,
+  SHEET_ALIGNS,
+  SHEET_BORDER_SIDES,
+  SHEET_COLORS,
+  SHEET_COLUMN_TYPES,
+  SHEET_CONTENT_FORMATS,
+  SHEET_HIGHLIGHT_WHEN,
+  SHEET_NUMBER_STYLES,
+} from "./sheet/format.ts";
 import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
@@ -341,6 +351,45 @@ const sheetFormatSchema = z
     grouping: z.boolean().optional(),
   })
   .strict();
+const sheetColorSchema = z.enum(SHEET_COLORS);
+const sheetColorsSchema = z
+  .record(z.string().min(1).max(100), sheetColorSchema)
+  .describe('Select columns: a colour for some options, e.g. {"Done": "green"}');
+const sheetRuleValueSchema = z.union([
+  z.number(),
+  z.string().min(1).max(MAX_HIGHLIGHT_TEXT),
+  z.boolean(),
+]);
+/** One highlight rule: the cells whose computed value matches show the colour. */
+export const sheetHighlightRuleSchema = z
+  .object({
+    when: z.enum(SHEET_HIGHLIGHT_WHEN),
+    value: sheetRuleValueSchema
+      .optional()
+      .describe("A number, text, true/false, or a date YYYY-MM-DD in a date column"),
+    to: z
+      .union([z.number(), z.string().min(1).max(MAX_HIGHLIGHT_TEXT)])
+      .optional()
+      .describe("between only: the higher end"),
+    color: sheetColorSchema,
+  })
+  .strict();
+const sheetHighlightSchema = z
+  .array(sheetHighlightRuleSchema)
+  .min(1)
+  .max(MAX_HIGHLIGHT_RULES)
+  .describe("Rules in order; the first that matches a cell colours it");
+/** A change to cells' styles (edit_sheet format): a value sets a key, null or false clears it. */
+export const sheetStyleChangeSchema = z
+  .object({
+    bold: z.boolean().nullable().optional(),
+    italic: z.boolean().nullable().optional(),
+    fill: sheetColorSchema.nullable().optional(),
+    align: z.enum(SHEET_ALIGNS).nullable().optional(),
+    wrap: z.boolean().nullable().optional(),
+    border: z.array(z.enum(SHEET_BORDER_SIDES)).max(4).nullable().optional(),
+  })
+  .strict();
 /** A new column's definition (edit_sheet insert_columns, and a live sheet's struct frame). */
 export const sheetColumnInputSchema = z
   .object({
@@ -349,6 +398,8 @@ export const sheetColumnInputSchema = z
     width: z.number().int().min(40).max(800).optional(),
     format: sheetFormatSchema.optional(),
     options: z.array(z.string().min(1).max(100)).min(1).max(100).optional(),
+    colors: sheetColorsSchema.optional(),
+    highlight: sheetHighlightSchema.optional(),
   })
   .strict();
 const rowNumberSchema = z
@@ -391,6 +442,16 @@ export const sheetOpSchema = z.discriminatedUnion("op", [
       format: sheetFormatSchema.nullable().optional().describe("null clears it"),
       options: z.array(z.string().min(1).max(100)).min(1).max(100).nullable().optional(),
       width: z.number().int().min(40).max(800).nullable().optional(),
+      colors: sheetColorsSchema
+        .nullable()
+        .optional()
+        .describe(
+          "Replaces the option colours; null clears them; left out, kept options keep theirs",
+        ),
+      highlight: sheetHighlightSchema
+        .nullable()
+        .optional()
+        .describe("Replaces the rules; null clears them"),
     })
     .strict(),
   z
@@ -407,6 +468,18 @@ export const sheetOpSchema = z.discriminatedUnion("op", [
       op: z.literal("delete_columns"),
       from: columnLetterSchema,
       count: z.number().int().min(1).max(LIMITS.maxSheetColumns).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("format"),
+      range: z
+        .string()
+        .max(40)
+        .describe('The cells to style: "B2:D9", "B:D" (their data rows) or "2:9" (every column)'),
+      style: sheetStyleChangeSchema
+        .nullable()
+        .describe("Keys to set (null or false clears one); null clears every style in the range"),
     })
     .strict(),
 ]);

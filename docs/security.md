@@ -739,7 +739,8 @@ sheets. Text passes six layers:
    `insertAdjacentHTML`, `document.write`, `DOMParser` or `srcdoc` (a test reads its sources). The
    only attributes taken from data are `href` (a url cell that passes `isSheetLinkUrl` again in
    the browser, with `target=_blank` and `rel="noopener noreferrer nofollow"`), `title` (an error's
-   fixed meaning) and a width clamped to 40 to 800 pixels. Class names come from a fixed set and
+   fixed meaning) and a width clamped to 40 to 800 pixels. Class names come from a fixed set (a
+   look's colour, alignment or border side only after it is checked against its list again) and
    cell ids from the cell's address alone (`__plinth-cell-B7`).
 4. **Evaluate.** Formulas are data for a pure interpreter (`packages/shared/src/sheet/formula/`):
    no `eval`, `Function` or `with`; a function is looked up by its upper-cased name in a `Map`
@@ -841,6 +842,35 @@ What else is new:
   25 s of CPU.
 - **Sort and filter are local.** They reorder and hide rows on the viewer's page only and are never
   saved or sent.
+- **Looks are names, never CSS.** Option colours, highlight rules and cell styles (bold, italic,
+  a fill, alignment, wrap, borders) are values from fixed lists: nine colour names, three
+  alignments, four border sides. The publish parser refuses any other key or value (a fill of
+  `red;background:url(x)` is refused with the list), and the renderer makes a class name of a
+  value only after checking it against the same list again (`cellLookClasses`), so a payload that
+  skipped the server's check adds no class. No style attribute or CSS text is ever built from
+  sheet data; every colour's light and dark value is in the renderer's own stylesheet. An option
+  named `__proto__` or `constructor` is a plain key: colours are read with `Object.hasOwn` and kept
+  in null-prototype maps. A highlight rule compares a cell's own computed value and runs no
+  formula. The .xlsx export writes styles as cell formats and rules as conditional formats whose
+  formulas Plinth builds from the rule (the value quoted as a string literal with `"` doubled, a
+  Contains value with Excel's `~`, `*` and `?` escaped), never from cell text; the import reads only
+  RGB fills and maps them to the nearest of the nine colours, and reads at most 4,096 fonts,
+  fills, borders and cell formats.
+- **Copy writes the clipboard only when a person copies.** Ctrl or Cmd+C on a selected cell sets
+  the clipboard's text and HTML inside the copy event the browser fires for that key, through the
+  event's own `clipboardData`; the frame is given no clipboard permission (`allow=""`) and never
+  reads the clipboard. Where a browser fires no copy event without a text selection, the key
+  selects one space in an element off screen first. The HTML is a table of the values as the cells
+  show them, with `&`, `<`, `>` and `"` escaped by the page, so a cell's text stays text in the app
+  it is pasted into; nothing is parsed as HTML in the frame, and the renderer still calls no HTML
+  sink (the source test). Paste reads only `text/plain`, as before.
+- **Undo, fill and Format are ordinary edits.** Each one is a row write under a lease, checked by
+  the same rules as typing and by the room, so it can never put in a row the room would refuse.
+  An undo or redo is a new edit (history is never rewritten), sent only when the rows are exactly
+  as the person left them, so it never overwrites another person's change; when they are not, it
+  is refused and nothing is sent. The empty rows an undone paste leaves past the old end are
+  deleted with the Row menu's own struct frame, only while nobody else holds a lease and only when
+  they are still empty.
 
 ## Whiteboards
 

@@ -221,6 +221,62 @@ function shiftRange(a: RangeEnd, b: RangeEnd, c: StructuralChange): [RangeEnd, R
   ];
 }
 
+/** A reference copied by an offset: its relative parts move, its $ parts stay; null off the sheet. */
+function offsetRef(ref: CellRef, dRow: number, dCol: number): CellRef | null {
+  const row = ref.rowAbs ? ref.row : ref.row + dRow;
+  const col = ref.colAbs ? ref.col : ref.col + dCol;
+  if (row < 1 || row > A1_MAX_ROW || col < 0 || col > A1_MAX_COL) return null;
+  return { ...ref, row, col };
+}
+
+function offsetEnd(e: RangeEnd, dRow: number, dCol: number): RangeEnd | null {
+  if (e.kind === "cell") {
+    const ref = offsetRef(e.ref, dRow, dCol);
+    return ref ? { kind: "cell", ref } : null;
+  }
+  if (e.kind === "col") {
+    const col = e.abs ? e.col : e.col + dCol;
+    return col < 0 || col > A1_MAX_COL ? null : { ...e, col };
+  }
+  const row = e.abs ? e.row : e.row + dRow;
+  return row < 1 || row > A1_MAX_ROW ? null : { ...e, row };
+}
+
+/**
+ * A formula copied `dRow` rows down and `dCol` columns right (negative: up, left), as Excel's fill
+ * and paste copy one: relative references move by the offset, the parts written with $ stay, and
+ * a reference that would leave the sheet becomes #REF!. Text that is not a formula, or a formula
+ * that does not lex, is returned as it is.
+ */
+export function offsetFormula(cell: string, dRow: number, dCol: number): string {
+  if (!cell.startsWith("=") || (dRow === 0 && dCol === 0)) return cell;
+  const src = cell.slice(1);
+  let toks: ReturnType<typeof lexFormula>;
+  try {
+    toks = lexFormula(src);
+  } catch {
+    return cell;
+  }
+  let out = "";
+  let last = 0;
+  for (const t of toks) {
+    let replacement: string | null = null;
+    if (t.t === "ref") {
+      const r = offsetRef(t.ref, dRow, dCol);
+      replacement = r ? cellText(r) : "#REF!";
+    } else if (t.t === "range") {
+      const a = offsetEnd(t.a, dRow, dCol);
+      const b = offsetEnd(t.b, dRow, dCol);
+      replacement = a && b ? `${endText(a)}:${endText(b)}` : "#REF!";
+    }
+    if (replacement !== null) {
+      out += src.slice(last, t.start) + replacement;
+      last = t.end;
+    }
+  }
+  return `=${out}${src.slice(last)}`;
+}
+
 /**
  * A cell's formula ("=...") with its references moved for `change`. Text that is not a formula, or
  * a formula that does not lex, is returned as it is.

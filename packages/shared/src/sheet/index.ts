@@ -11,5 +11,6 @@ export { ERROR_LITERALS, lexFormula, type Token } from "./formula/lexer.ts";
 export { type Node as FormulaNode, parseFormula } from "./formula/parser.ts";
 export * from "./formula/values.ts";
 export * from "./import.ts";
+export * from "./looks.ts";
 export * from "./ops.ts";
 export * from "./refs.ts";

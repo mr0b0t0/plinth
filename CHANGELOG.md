@@ -10,6 +10,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Sheets: ranges, copy, fill, undo, colours and cell styles.** Select a block of cells with
+  Shift and the arrows, Shift+click or a drag, and copy it with Ctrl or Cmd+C into any
+  spreadsheet. While editing, Delete clears the block, Ctrl or Cmd+D fills down (formulas move
+  their references, as in Excel), the fill handle on the selection's corner fills the rows you
+  drag it over, and Ctrl or Cmd+Z undoes your own changes (Shift to redo); an undo is refused
+  when someone else changed those rows since. A new Format menu sets bold, italic, wrap,
+  alignment, a fill from nine colours and borders, and a column's settings give a select's options
+  colours and add highlight rules ("less than 0 in red"). Colours have light and dark values.
+  Agents get the same: `edit_sheet` takes `format` and `set_column` takes `colors` and `highlight`,
+  `read_sheet` returns them, and the .xlsx download and import carry styles (the download also
+  turns rules and option colours into Excel conditional formats).
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no

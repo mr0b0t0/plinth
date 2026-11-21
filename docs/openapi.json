@@ -3266,6 +3266,94 @@
                         { "type": "integer", "minimum": 40, "maximum": 800 },
                         { "type": "null" }
                       ]
+                    },
+                    "colors": {
+                      "description": "Replaces the option colours; null clears them; left out, kept options keep theirs",
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": { "type": "string", "minLength": 1, "maxLength": 100 },
+                          "additionalProperties": {
+                            "type": "string",
+                            "enum": [
+                              "gray",
+                              "red",
+                              "orange",
+                              "yellow",
+                              "green",
+                              "teal",
+                              "blue",
+                              "purple",
+                              "pink"
+                            ]
+                          },
+                          "description": "Select columns: a colour for some options, e.g. {\"Done\": \"green\"}"
+                        },
+                        { "type": "null" }
+                      ]
+                    },
+                    "highlight": {
+                      "description": "Replaces the rules; null clears them",
+                      "anyOf": [
+                        {
+                          "minItems": 1,
+                          "maxItems": 10,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "when": {
+                                "type": "string",
+                                "enum": [
+                                  "<",
+                                  "<=",
+                                  ">",
+                                  ">=",
+                                  "=",
+                                  "<>",
+                                  "between",
+                                  "empty",
+                                  "not_empty",
+                                  "contains"
+                                ]
+                              },
+                              "value": {
+                                "description": "A number, text, true/false, or a date YYYY-MM-DD in a date column",
+                                "anyOf": [
+                                  { "type": "number" },
+                                  { "type": "string", "minLength": 1, "maxLength": 100 },
+                                  { "type": "boolean" }
+                                ]
+                              },
+                              "to": {
+                                "description": "between only: the higher end",
+                                "anyOf": [
+                                  { "type": "number" },
+                                  { "type": "string", "minLength": 1, "maxLength": 100 }
+                                ]
+                              },
+                              "color": {
+                                "type": "string",
+                                "enum": [
+                                  "gray",
+                                  "red",
+                                  "orange",
+                                  "yellow",
+                                  "green",
+                                  "teal",
+                                  "blue",
+                                  "purple",
+                                  "pink"
+                                ]
+                              }
+                            },
+                            "required": ["when", "color"],
+                            "additionalProperties": false
+                          },
+                          "description": "Rules in order; the first that matches a cell colours it"
+                        },
+                        { "type": "null" }
+                      ]
                     }
                   },
                   "required": ["op", "column"],
@@ -3312,6 +3400,82 @@
                             "maxItems": 100,
                             "type": "array",
                             "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+                          },
+                          "colors": {
+                            "type": "object",
+                            "propertyNames": { "type": "string", "minLength": 1, "maxLength": 100 },
+                            "additionalProperties": {
+                              "type": "string",
+                              "enum": [
+                                "gray",
+                                "red",
+                                "orange",
+                                "yellow",
+                                "green",
+                                "teal",
+                                "blue",
+                                "purple",
+                                "pink"
+                              ]
+                            },
+                            "description": "Select columns: a colour for some options, e.g. {\"Done\": \"green\"}"
+                          },
+                          "highlight": {
+                            "minItems": 1,
+                            "maxItems": 10,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "when": {
+                                  "type": "string",
+                                  "enum": [
+                                    "<",
+                                    "<=",
+                                    ">",
+                                    ">=",
+                                    "=",
+                                    "<>",
+                                    "between",
+                                    "empty",
+                                    "not_empty",
+                                    "contains"
+                                  ]
+                                },
+                                "value": {
+                                  "description": "A number, text, true/false, or a date YYYY-MM-DD in a date column",
+                                  "anyOf": [
+                                    { "type": "number" },
+                                    { "type": "string", "minLength": 1, "maxLength": 100 },
+                                    { "type": "boolean" }
+                                  ]
+                                },
+                                "to": {
+                                  "description": "between only: the higher end",
+                                  "anyOf": [
+                                    { "type": "number" },
+                                    { "type": "string", "minLength": 1, "maxLength": 100 }
+                                  ]
+                                },
+                                "color": {
+                                  "type": "string",
+                                  "enum": [
+                                    "gray",
+                                    "red",
+                                    "orange",
+                                    "yellow",
+                                    "green",
+                                    "teal",
+                                    "blue",
+                                    "purple",
+                                    "pink"
+                                  ]
+                                }
+                              },
+                              "required": ["when", "color"],
+                              "additionalProperties": false
+                            },
+                            "description": "Rules in order; the first that matches a cell colours it"
                           }
                         },
                         "required": ["name"],
@@ -3334,6 +3498,72 @@
                     "count": { "type": "integer", "minimum": 1, "maximum": 100 }
                   },
                   "required": ["op", "from"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "op": { "type": "string", "const": "format" },
+                    "range": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "description": "The cells to style: \"B2:D9\", \"B:D\" (their data rows) or \"2:9\" (every column)"
+                    },
+                    "style": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "bold": { "type": ["boolean", "null"] },
+                            "italic": { "type": ["boolean", "null"] },
+                            "fill": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "gray",
+                                    "red",
+                                    "orange",
+                                    "yellow",
+                                    "green",
+                                    "teal",
+                                    "blue",
+                                    "purple",
+                                    "pink"
+                                  ]
+                                },
+                                { "type": "null" }
+                              ]
+                            },
+                            "align": {
+                              "anyOf": [
+                                { "type": "string", "enum": ["left", "center", "right"] },
+                                { "type": "null" }
+                              ]
+                            },
+                            "wrap": { "type": ["boolean", "null"] },
+                            "border": {
+                              "anyOf": [
+                                {
+                                  "maxItems": 4,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": ["top", "right", "bottom", "left"]
+                                  }
+                                },
+                                { "type": "null" }
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        { "type": "null" }
+                      ],
+                      "description": "Keys to set (null or false clears one); null clears every style in the range"
+                    }
+                  },
+                  "required": ["op", "range", "style"],
                   "additionalProperties": false
                 }
               ]
@@ -6857,7 +7087,68 @@
                   "type": "object",
                   "description": "Number columns: style plain, percent or currency, decimals, currency, grouping"
                 },
-                "options": { "type": "array", "items": { "type": "string" } }
+                "options": { "type": "array", "items": { "type": "string" } },
+                "colors": {
+                  "type": "object",
+                  "description": "Select columns: a colour (gray, red, orange, yellow, green, teal, blue, purple, pink) for some options, by option",
+                  "additionalProperties": {
+                    "type": "string",
+                    "enum": [
+                      "gray",
+                      "red",
+                      "orange",
+                      "yellow",
+                      "green",
+                      "teal",
+                      "blue",
+                      "purple",
+                      "pink"
+                    ]
+                  }
+                },
+                "highlight": {
+                  "type": "array",
+                  "description": "Rules in order; the first whose condition a cell's computed value meets gives it its colour",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "<",
+                          "<=",
+                          ">",
+                          ">=",
+                          "=",
+                          "<>",
+                          "between",
+                          "empty",
+                          "not_empty",
+                          "contains"
+                        ]
+                      },
+                      "value": {
+                        "description": "A number, text, true or false, or a date YYYY-MM-DD"
+                      },
+                      "to": { "description": "between only: the higher end" },
+                      "color": {
+                        "type": "string",
+                        "enum": [
+                          "gray",
+                          "red",
+                          "orange",
+                          "yellow",
+                          "green",
+                          "teal",
+                          "blue",
+                          "purple",
+                          "pink"
+                        ]
+                      }
+                    },
+                    "required": ["when", "color"]
+                  }
+                }
               },
               "required": ["letter", "name", "type"]
             }
@@ -6881,6 +7172,38 @@
                   "type": "array",
                   "description": "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
                   "items": {}
+                },
+                "style": {
+                  "type": "object",
+                  "description": "The styles of the row's styled cells in the range, by column letter: bold, italic, fill, align, wrap and border",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "bold": { "const": true },
+                      "italic": { "const": true },
+                      "fill": {
+                        "type": "string",
+                        "enum": [
+                          "gray",
+                          "red",
+                          "orange",
+                          "yellow",
+                          "green",
+                          "teal",
+                          "blue",
+                          "purple",
+                          "pink"
+                        ]
+                      },
+                      "align": { "type": "string", "enum": ["left", "center", "right"] },
+                      "wrap": { "const": true },
+                      "border": {
+                        "type": "array",
+                        "items": { "type": "string", "enum": ["top", "right", "bottom", "left"] }
+                      }
+                    },
+                    "required": []
+                  }
                 }
               },
               "required": ["row", "cells"]
@@ -6937,14 +7260,19 @@
                   "rows_inserted": { "type": "integer" },
                   "rows_deleted": { "type": "integer" },
                   "columns_inserted": { "type": "integer" },
-                  "columns_deleted": { "type": "integer" }
+                  "columns_deleted": { "type": "integer" },
+                  "cells_styled": {
+                    "type": "integer",
+                    "description": "Cells whose style a format op set or cleared"
+                  }
                 },
                 "required": [
                   "cells",
                   "rows_inserted",
                   "rows_deleted",
                   "columns_inserted",
-                  "columns_deleted"
+                  "columns_deleted",
+                  "cells_styled"
                 ]
               }
             },

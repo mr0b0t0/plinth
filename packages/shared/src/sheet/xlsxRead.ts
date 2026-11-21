@@ -10,8 +10,16 @@
 // No replace with a callback runs on text of unbounded length: it keeps every match.
 import { Inflate } from "fflate";
 import { LIMITS } from "../constants.ts";
+import {
+  canonicalStyle,
+  SHEET_BORDER_SIDES,
+  type SheetBorderSide,
+  type SheetCellStyle,
+  type SheetColor,
+} from "./format.ts";
 import { XLFN_FUNCTIONS } from "./formula/arity.ts";
 import { parseFormula } from "./formula/parser.ts";
+import { nearestSheetColor } from "./looks.ts";
 import { platform } from "./platform.ts";
 
 export class SheetImportError extends Error {}
@@ -355,6 +363,10 @@ export interface RawSheet {
   freezeCols: number;
   /** cellXfs index to number format code (or a built-in id as "#<id>"). */
   styles: string[];
+  /** cellXfs index to the sheet style it maps to, or null. */
+  looks: (SheetCellStyle | null)[];
+  /** The cellXfs index of each data cell with a value, by A1 row number - 1, then column. */
+  cellLooks: (number[] | undefined)[];
   /** The workbook's other sheets, which are not imported: their names (at most 20) and count. */
   otherSheets: { names: string[]; count: number };
   /** Data cells (below row 1) whose formula was dropped for its cached value. */
@@ -518,31 +530,102 @@ function sharedStrings(r: Reader): string[] {
 }
 
 const MAX_FORMAT_CODE = 255;
+/** At most this many fonts, fills, borders and cell formats are read from styles.xml. */
+const MAX_STYLE_ENTRIES = 4_096;
 
-function styleFormats(r: Reader): string[] {
+/** The on/off of a font's <b/> or <i/>: on unless val says 0 or false. */
+const flagOn = (a: Record<string, string>) => a.val !== "0" && a.val !== "false";
+
+/**
+ * Each cell format (cellXfs) of styles.xml: its number format code (or a built-in id as "#<id>")
+ * and the sheet style it maps to (bold and italic from its font, a solid fill's colour matched to
+ * the nearest sheet colour, the horizontal alignment, wrapping, and the sides that have a border),
+ * or null when it sets none of those. Theme and indexed colours, which need the theme to read, are
+ * left out.
+ */
+function styleFormats(r: Reader): { codes: string[]; looks: (SheetCellStyle | null)[] } {
   const xml = r.text("xl/styles.xml");
-  if (!xml) return [];
+  if (!xml) return { codes: [], looks: [] };
   const custom = new Map<number, string>();
-  const xfs: string[] = [];
-  let inCellXfs = false;
+  const codes: string[] = [];
+  const looks: (SheetCellStyle | null)[] = [];
+  const fonts: { bold: boolean; italic: boolean }[] = [];
+  const fills: (SheetColor | null)[] = [];
+  const borders: SheetBorderSide[][] = [];
+  let section: "fonts" | "fills" | "borders" | "cellXfs" | null = null;
+  let fill: { solid: boolean; color: SheetColor | null } | null = null;
+  let border: SheetBorderSide[] | null = null;
+  let xf: SheetCellStyle | null = null;
   scanXml(xml, {
     open(name, a) {
       // A code longer than Excel's own limit of 255 characters is read as General.
       if (name === "numFmt" && a.numFmtId !== undefined) {
         const code = a.formatCode ?? "";
         custom.set(Number(a.numFmtId), code.length > MAX_FORMAT_CODE ? "" : code);
-      } else if (name === "cellXfs") inCellXfs = true;
-      else if (name === "xf" && inCellXfs) {
-        const id = Number(a.numFmtId ?? "0");
-        xfs.push(custom.get(id) ?? `#${id}`);
+        return;
+      }
+      if (name === "fonts" || name === "fills" || name === "borders" || name === "cellXfs") {
+        section = name;
+        return;
+      }
+      if (section === "fonts") {
+        if (name === "font" && fonts.length < MAX_STYLE_ENTRIES)
+          fonts.push({ bold: false, italic: false });
+        const f = fonts[fonts.length - 1];
+        if (f && name === "b") f.bold = flagOn(a);
+        if (f && name === "i") f.italic = flagOn(a);
+      } else if (section === "fills") {
+        if (name === "fill") fill = { solid: false, color: null };
+        else if (fill && name === "patternFill") fill.solid = a.patternType === "solid";
+        else if (fill && name === "fgColor" && a.rgb) fill.color = nearestSheetColor(a.rgb);
+      } else if (section === "borders") {
+        if (name === "border") border = [];
+        else if (
+          border &&
+          (SHEET_BORDER_SIDES as readonly string[]).includes(name) &&
+          a.style !== undefined &&
+          a.style !== "none"
+        ) {
+          border.push(name as SheetBorderSide);
+        }
+      } else if (section === "cellXfs") {
+        if (name === "xf") {
+          if (codes.length >= MAX_STYLE_ENTRIES) return;
+          const id = Number(a.numFmtId ?? "0");
+          codes.push(custom.get(id) ?? `#${id}`);
+          const font = fonts[Number(a.fontId ?? "0")];
+          const color = fills[Number(a.fillId ?? "0")] ?? null;
+          const sides = borders[Number(a.borderId ?? "0")] ?? [];
+          xf = {};
+          if (font?.bold) xf.bold = true;
+          if (font?.italic) xf.italic = true;
+          if (color) xf.fill = color;
+          if (sides.length > 0) xf.border = SHEET_BORDER_SIDES.filter((s) => sides.includes(s));
+          looks.push(null);
+        } else if (xf && name === "alignment") {
+          const h = a.horizontal;
+          if (h === "left" || h === "center" || h === "right") xf.align = h;
+          if (a.wrapText === "1" || a.wrapText === "true") xf.wrap = true;
+        }
       }
     },
     close(name) {
-      if (name === "cellXfs") inCellXfs = false;
+      if (name === section) section = null;
+      else if (name === "fill" && fill) {
+        if (fills.length < MAX_STYLE_ENTRIES) fills.push(fill.solid ? fill.color : null);
+        fill = null;
+      } else if (name === "border" && border) {
+        if (borders.length < MAX_STYLE_ENTRIES) borders.push(border);
+        border = null;
+      } else if (name === "xf" && xf) {
+        const canon = canonicalStyle(xf);
+        looks[looks.length - 1] = Object.keys(canon).length > 0 ? canon : null;
+        xf = null;
+      }
     },
     text() {},
   });
-  return xfs;
+  return { codes, looks };
 }
 
 const CELL_REF = /^([A-Z]{1,3})(\d+)$/;
@@ -612,7 +695,8 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
   const r = new Reader(bytes);
   const { path, others } = workbookSheets(r);
   const strings = sharedStrings(r);
-  const styles = styleFormats(r);
+  const { codes: styles, looks } = styleFormats(r);
+  const cellLooks: (number[] | undefined)[] = [];
   const xml = r.text(path) ?? "";
   const rows: RawCell[][] = [];
   const widths = new Map<number, number>();
@@ -723,6 +807,12 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
           rows[rowNum - 1] = row;
         }
         row[col] = out;
+        // A data cell's look, when its format maps to one (the header row keeps the sheet's own).
+        if (rowNum > 1 && looks[cell.s]) {
+          const at = cellLooks[rowNum - 1] ?? [];
+          at[col] = cell.s;
+          cellLooks[rowNum - 1] = at;
+        }
       }
       cell = null;
     },
@@ -732,7 +822,16 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
       else if (field === "t" && inline !== null) inline.add(s);
     },
   });
-  return { rows, widths, freezeCols, styles, otherSheets: others, formulasAsValues };
+  return {
+    rows,
+    widths,
+    freezeCols,
+    styles,
+    looks,
+    cellLooks,
+    otherSheets: others,
+    formulasAsValues,
+  };
 }
 
 function rawValue(

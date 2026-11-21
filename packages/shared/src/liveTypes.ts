@@ -21,12 +21,15 @@ import { LIMITS } from "./constants.ts";
 import type { LiveDocErrorCode } from "./liveDoc.ts";
 import type { LineRange } from "./liveLines.ts";
 import {
+  type Cell,
   checkRow,
+  checkRowMeta,
   isFormula,
   parseSheet,
   type SheetHeader,
+  serializeRow,
   serializeSheet,
-  trimRow,
+  splitRow,
 } from "./sheet/format.ts";
 import { applySheetStruct, SHEET_STRUCT_KINDS, type SheetStructOp } from "./sheet/ops.ts";
 
@@ -170,7 +173,10 @@ export function sheetRowLine(header: SheetHeader, line: string, rowNumber: numbe
     return false;
   }
   if (!Array.isArray(row) || checkRow(header, row, rowNumber).length > 0) return false;
-  return JSON.stringify(trimRow(row)) === line;
+  // Its cells and its style object, if any, in their one spelling.
+  const { cells, meta } = splitRow(row);
+  const style = checkRowMeta(meta, header.columns.length, rowNumber);
+  return style.ok && serializeRow(cells as Cell[], style.style) === line;
 }
 
 /** How many formulas the row lines hold (a malformed line counts none). */

@@ -5,19 +5,26 @@
 // every formula (refs.ts). The result is not checked against the column types here: the caller
 // parses the serialized result once, after every op, so an agent can change a column's type and
 // fix its cells in one call.
+//
+// Cell styles (sheet.styles) follow their cells: rows inserted, deleted or moved take their styles
+// with them, and so do columns. `format` changes the styles of a range and nothing else.
 import { LIMITS } from "../constants.ts";
-import { colIndex, colLetter, parseA1 } from "./address.ts";
+import { colIndex, colLetter, parseA1, parseRange } from "./address.ts";
 import {
   type Cell,
   isFormula,
   MAX_FREEZE_COLS,
   parseSheet,
   type Sheet,
+  type SheetColor,
   type SheetColumn,
   type SheetColumnType,
+  type SheetHighlightRule,
   type SheetNumberFormat,
+  type SheetRowStyle,
   serializeSheet,
 } from "./format.ts";
+import { mergeCellStyle, type SheetStyleChange } from "./looks.ts";
 import { type StructuralChange, shiftFormula } from "./refs.ts";
 
 export interface SheetColumnInput {
@@ -26,6 +33,8 @@ export interface SheetColumnInput {
   width?: number;
   format?: SheetNumberFormat;
   options?: string[];
+  colors?: Record<string, SheetColor>;
+  highlight?: SheetHighlightRule[];
 }
 
 export type SheetOp =
@@ -43,9 +52,15 @@ export type SheetOp =
       format?: SheetNumberFormat | null;
       options?: string[] | null;
       width?: number | null;
+      /** A select column's option colours (replaces them); null clears them. */
+      colors?: Record<string, SheetColor> | null;
+      /** The highlight rules (replaces them); null clears them. */
+      highlight?: SheetHighlightRule[] | null;
     }
   | { op: "insert_columns"; before: string; columns: SheetColumnInput[] }
-  | { op: "delete_columns"; from: string; count?: number };
+  | { op: "delete_columns"; from: string; count?: number }
+  /** The styles of a range's cells changed (SheetStyleChange); `style` null clears them. */
+  | { op: "format"; range: string; style: SheetStyleChange | null };
 
 export class SheetOpError extends Error {
   readonly index: number;
@@ -64,21 +79,70 @@ export interface SheetOpChanges {
   rows_deleted: number;
   columns_inserted: number;
   columns_deleted: number;
+  /** Cells whose style a `format` op set or cleared. */
+  cells_styled: number;
+}
+
+function copyColors(c: Record<string, SheetColor>): Record<string, SheetColor> {
+  return Object.assign(Object.create(null) as Record<string, SheetColor>, c);
 }
 
 function copySheet(s: Sheet): Sheet {
-  return {
+  const out: Sheet = {
     header: {
       columns: s.header.columns.map((c) => ({
         ...c,
         ...(c.format ? { format: { ...c.format } } : {}),
         ...(c.options ? { options: [...c.options] } : {}),
+        ...(c.colors ? { colors: copyColors(c.colors) } : {}),
+        ...(c.highlight ? { highlight: c.highlight.map((r) => ({ ...r })) } : {}),
       })),
       ...(s.header.freeze ? { freeze: { ...s.header.freeze } } : {}),
     },
     rows: s.rows.map((r) => [...r]),
   };
+  if (s.styles) {
+    const styles: (SheetRowStyle | undefined)[] = [];
+    s.styles.forEach((r, i) => {
+      if (r)
+        styles[i] = r.map((x) =>
+          x ? { ...x, ...(x.border ? { border: [...x.border] } : {}) } : x,
+        );
+    });
+    out.styles = styles;
+  }
+  return out;
 }
+
+/** The styles aligned with the rows (padded to their length), so a splice hits the same rows. */
+function alignedStyles(s: Sheet): (SheetRowStyle | undefined)[] | null {
+  if (!s.styles) return null;
+  if (s.styles.length < s.rows.length) s.styles.length = s.rows.length;
+  return s.styles;
+}
+
+/** Rows spliced, their styles with them. */
+function spliceRows(s: Sheet, start: number, del: number, insert: Cell[][]): Cell[][] {
+  alignedStyles(s)?.splice(start, del, ...new Array<SheetRowStyle | undefined>(insert.length));
+  return s.rows.splice(start, del, ...insert);
+}
+
+/** The option colours a column keeps for its options (a removed option's colour goes). */
+function keptColors(col: SheetColumn): Record<string, SheetColor> | undefined {
+  if (!col.colors || col.type !== "select") return undefined;
+  const out = Object.create(null) as Record<string, SheetColor>;
+  let any = false;
+  for (const o of col.options ?? []) {
+    if (Object.hasOwn(col.colors, o)) {
+      out[o] = col.colors[o] as SheetColor;
+      any = true;
+    }
+  }
+  return any ? out : undefined;
+}
+
+const WHOLE_COLUMNS = /^\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}$/;
+const WHOLE_ROWS = /^\$?\d{1,7}:\$?\d{1,7}$/;
 
 /** Moves every formula's references for `change`, charging each formula's length first. */
 function shiftAll(rows: Cell[][], change: StructuralChange, charge: (chars: number) => void): void {
@@ -98,6 +162,8 @@ function columnDef(c: SheetColumnInput): SheetColumn {
   if (c.width !== undefined) out.width = c.width;
   if (c.format !== undefined) out.format = { ...c.format };
   if (c.options !== undefined) out.options = [...c.options];
+  if (c.colors !== undefined) out.colors = copyColors(c.colors);
+  if (c.highlight !== undefined) out.highlight = c.highlight.map((r) => ({ ...r }));
   return out;
 }
 
@@ -116,6 +182,7 @@ export function applySheetOps(
     rows_deleted: 0,
     columns_inserted: 0,
     columns_deleted: 0,
+    cells_styled: 0,
   };
   let written = 0;
   const count = (n: number, i: number) => {
@@ -245,7 +312,7 @@ export function applySheetOps(
         checkRows(values, i);
         shiftAll(s.rows, { kind: "insert_rows", before: op.before, count: n }, shiftCharge(i));
         const fresh = Array.from({ length: n }, (_, k) => [...(values[k] ?? [])]);
-        s.rows.splice(op.before - 2, 0, ...fresh);
+        spliceRows(s, op.before - 2, 0, fresh);
         rowLimit(i);
         changed.rows_inserted += n;
         changed.cells += values.reduce((x, r) => x + r.length, 0);
@@ -263,7 +330,7 @@ export function applySheetOps(
         if (!Number.isInteger(n) || n < 1 || op.from + n - 1 > last) {
           throw new SheetOpError(i, `count must be from 1 to ${last - op.from + 1}`);
         }
-        s.rows.splice(op.from - 2, n);
+        spliceRows(s, op.from - 2, n, []);
         shiftAll(s.rows, { kind: "delete_rows", from: op.from, count: n }, shiftCharge(i));
         changed.rows_deleted += n;
         break;
@@ -288,8 +355,10 @@ export function applySheetOps(
           );
         }
         shiftAll(s.rows, { kind: "move_rows", from: op.from, count: n, to: op.to }, shiftCharge(i));
+        const styles = alignedStyles(s);
         const moved = s.rows.splice(op.from - 2, n);
         s.rows.splice(op.to - 2, 0, ...moved);
+        if (styles) styles.splice(op.to - 2, 0, ...styles.splice(op.from - 2, n));
         break;
       }
       case "set_column": {
@@ -303,6 +372,16 @@ export function applySheetOps(
         else if (op.format !== undefined) col.format = { ...op.format };
         if (op.options === null) delete col.options;
         else if (op.options !== undefined) col.options = [...op.options];
+        if (op.colors === null) delete col.colors;
+        else if (op.colors !== undefined) col.colors = copyColors(op.colors);
+        else if (col.colors) {
+          // Options or the type changed without new colours: each option kept keeps its colour.
+          const kept = keptColors(col);
+          if (kept) col.colors = kept;
+          else delete col.colors;
+        }
+        if (op.highlight === null) delete col.highlight;
+        else if (op.highlight !== undefined) col.highlight = op.highlight.map((r) => ({ ...r }));
         break;
       }
       case "insert_columns": {
@@ -315,6 +394,9 @@ export function applySheetOps(
         shiftAll(s.rows, { kind: "insert_columns", before: c, count: n }, shiftCharge(i));
         s.header.columns.splice(c, 0, ...op.columns.map(columnDef));
         for (const r of s.rows) if (r.length > c) r.splice(c, 0, ...new Array<Cell>(n).fill(null));
+        for (const st of s.styles ?? []) {
+          if (st && st.length > c) st.splice(c, 0, ...new Array<null>(n).fill(null));
+        }
         // Columns inserted among the frozen ones are frozen too, as formula references move (at
         // most the 5 a sheet freezes).
         const fr = s.header.freeze;
@@ -331,11 +413,58 @@ export function applySheetOps(
         if (n >= width()) throw new SheetOpError(i, "A sheet keeps at least one column");
         s.header.columns.splice(c, n);
         for (const r of s.rows) if (r.length > c) r.splice(c, n);
+        for (const st of s.styles ?? []) if (st && st.length > c) st.splice(c, n);
         shiftAll(s.rows, { kind: "delete_columns", from: c, count: n }, shiftCharge(i));
         // Frozen columns deleted leave the frozen pane, so the columns after them keep their place.
         const fr = s.header.freeze;
         if (fr && c < fr.cols) fr.cols -= Math.min(n, fr.cols - c);
         changed.columns_deleted += n;
+        break;
+      }
+      case "format": {
+        const text = op.range.trim();
+        const r = parseRange(text);
+        if (!r) {
+          throw new SheetOpError(i, `${op.range} is not an A1 range such as B2:D9, B:D or 2:9`);
+        }
+        const lastRow = s.rows.length + 1;
+        const lastCol = width() - 1;
+        // Whole columns are their data rows; whole rows are every column.
+        const r1 = WHOLE_COLUMNS.test(text) ? 2 : r.r1;
+        const r2 = WHOLE_COLUMNS.test(text) ? lastRow : r.r2;
+        const c2 = WHOLE_ROWS.test(text) ? lastCol : r.c2;
+        if (r1 < 2) {
+          throw new SheetOpError(i, "range starts at row 2 or below (row 1 is the column names)");
+        }
+        if (r2 > lastRow) {
+          throw new SheetOpError(
+            i,
+            `range reaches row ${r2}, past the sheet's last row (${lastRow}); add the rows first`,
+          );
+        }
+        if (c2 > lastCol) {
+          throw new SheetOpError(
+            i,
+            `range reaches past column ${colLetter(lastCol)} (insert_columns first)`,
+          );
+        }
+        if (r2 < r1) break;
+        const n = (r2 - r1 + 1) * (c2 - r.c1 + 1);
+        count(n, i);
+        if (!s.styles) s.styles = new Array(s.rows.length);
+        const styles = alignedStyles(s) as (SheetRowStyle | undefined)[];
+        for (let row = r1; row <= r2; row++) {
+          let st: SheetRowStyle | undefined = styles[row - 2];
+          for (let c = r.c1; c <= c2; c++) {
+            const next = mergeCellStyle(st?.[c], op.style);
+            if (next) {
+              st ??= [];
+              st[c] = next;
+            } else if (st) st[c] = null;
+          }
+          styles[row - 2] = st?.some((x: unknown) => !!x) ? st : undefined;
+        }
+        changed.cells_styled += n;
         break;
       }
       default:

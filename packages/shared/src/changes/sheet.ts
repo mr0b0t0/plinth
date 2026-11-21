@@ -9,6 +9,7 @@ import {
   type Cell,
   isFormula,
   literalText,
+  optionColor,
   parseSheet,
   type Sheet,
   type SheetColumn,
@@ -43,6 +44,26 @@ function formatText(c: SheetColumn): string {
   if (f.decimals !== undefined) parts.push(count(f.decimals, "decimal"));
   if (f.grouping === false) parts.push("no thousands separators");
   return parts.join(", ");
+}
+
+function colorsText(c: SheetColumn): string {
+  const parts = (c.options ?? []).flatMap((o) => {
+    const color = optionColor(c, o);
+    return color ? [`${o} ${color}`] : [];
+  });
+  return parts.length > 0 ? parts.join(", ") : "None";
+}
+
+function rulesText(c: SheetColumn): string {
+  const rules = c.highlight ?? [];
+  if (rules.length === 0) return "None";
+  return rules
+    .map((r) => {
+      const v = r.value === undefined ? "" : ` ${String(r.value)}`;
+      const to = r.to === undefined ? "" : ` and ${String(r.to)}`;
+      return `${r.when.replace("_", " ")}${v}${to}: ${r.color}`;
+    })
+    .join("; ");
 }
 
 function cellText(cell: Cell | undefined, column: SheetColumn | undefined): string {
@@ -203,6 +224,24 @@ function describeColumns(out: ChangeCollector, a: Sheet, b: Sheet): { pairs: [nu
         after: changeExcerpt((cb.options ?? []).join(", ")),
       });
     }
+    if (JSON.stringify(ca.colors ?? {}) !== JSON.stringify(cb.colors ?? {})) {
+      out.add({
+        kind: "changed",
+        where,
+        what: `${name}: option colours changed`,
+        before: changeExcerpt(colorsText(ca)),
+        after: changeExcerpt(colorsText(cb)),
+      });
+    }
+    if (JSON.stringify(ca.highlight ?? []) !== JSON.stringify(cb.highlight ?? [])) {
+      out.add({
+        kind: "changed",
+        where,
+        what: `${name}: highlight rules changed`,
+        before: changeExcerpt(rulesText(ca)),
+        after: changeExcerpt(rulesText(cb)),
+      });
+    }
     if (ca.width !== cb.width) {
       out.add({
         kind: "changed",
@@ -255,11 +294,20 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
     hunks.some((h) => h.aEnd - h.aStart !== h.bEnd - h.bStart);
 
   const pending: Pending[] = [];
+  // The rows matched on both sides (unchanged or paired), for the formatting count below.
+  const rowPairs: [number, number][] = [];
+  let ia = 0;
+  let ib = 0;
+  let complete = true;
   for (const h of hunks) {
     if (out.done()) {
       out.truncated = true;
+      complete = false;
       break;
     }
+    while (ia < h.aStart && ib < h.bStart) rowPairs.push([ia++, ib++]);
+    ia = h.aEnd;
+    ib = h.bEnd;
     // A row whose first shared cell is the same is the same row: a row added above "Total"
     // reads as one added row, not as "Total" overwritten.
     const labelColumn = pairs[0];
@@ -273,6 +321,7 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
             ((b.rows[y] as Cell[])[labelColumn[1]] ?? null)
         : undefined,
     );
+    rowPairs.push(...p.pairs);
     if (p.removed.length > 0) {
       const first = (p.removed[0] as number) + 2;
       const label = rowLabel(a.rows[p.removed[0] as number], ac);
@@ -336,8 +385,46 @@ export function describeSheet(out: ChangeCollector, before: string, after: strin
       });
     }
   }
+  if (complete) {
+    while (ia < a.rows.length && ib < b.rows.length) rowPairs.push([ia++, ib++]);
+    describeFormatting(out, a, b, rowPairs, pairs);
+  }
   fillResults(out, pending, a, b);
   return true;
+}
+
+/**
+ * Cells whose style changed, among the rows and columns both sides have: one item, naming the
+ * cell when it is one, else counting them from the first.
+ */
+function describeFormatting(
+  out: ChangeCollector,
+  a: Sheet,
+  b: Sheet,
+  rows: readonly [number, number][],
+  cols: readonly [number, number][],
+): void {
+  if (!a.styles && !b.styles) return;
+  let n = 0;
+  let first: [number, number] | null = null;
+  for (const [x, y] of rows) {
+    const sa = a.styles?.[x];
+    const sb = b.styles?.[y];
+    if (!sa && !sb) continue;
+    for (const [ca, cb] of cols) {
+      if (JSON.stringify(sa?.[ca] ?? null) === JSON.stringify(sb?.[cb] ?? null)) continue;
+      n++;
+      first ??= [y + 2, cb];
+    }
+  }
+  if (!first) return;
+  const [row, col] = first;
+  out.add({
+    kind: "changed",
+    where: `Row ${row}, ${quoted(b.header.columns[col]?.name ?? "")}`,
+    what:
+      n === 1 ? `${a1(row, col)} formatting changed` : `Formatting changed in ${count(n, "cell")}`,
+  });
 }
 
 function fillResults(out: ChangeCollector, pending: readonly Pending[], a: Sheet, b: Sheet): void {

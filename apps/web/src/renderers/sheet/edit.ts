@@ -23,6 +23,20 @@
 // under its address and column's name, with a check button that saves it (as Enter does), and
 // the column settings are a sheet across the bottom.
 //
+// Several cells: the grid's selection (grid.ts) is what Delete clears, Ctrl or Cmd+D fills down
+// (the top row of the selection into the rest, or the row above into one row), the fill handle on
+// its corner fills when dragged down (the selected rows repeated), and the Format menu styles
+// (bold, italic, wrap, alignment, a fill from the sheet colours, borders). Each is one write of the
+// rows it covers under one lease, and formulas filled or pasted from this sheet's own copy move
+// their relative references as Excel's do (offsetFormula).
+//
+// Undo and redo (Ctrl or Cmd+Z, Shift+Ctrl or Cmd+Z, Ctrl+Y) take back this person's own writes,
+// newest first: an undo is a new edit through the same lease and validation, which puts back the
+// rows as they were, and only when those rows are still exactly as this person left them. If
+// anyone changed them since (a cell, or a row or column change that moved their formulas), it is
+// refused with a notice and nothing changes. Row and column inserts, deletes and moves are not
+// undone here (the version history keeps them).
+//
 // Two backends, as for docs: the room's socket (../common/live.ts, "room" mode) or a local copy of
 // the lines that only this frame edits (LocalSheet, "solo" mode). Everything is built with
 // createElement and filled through .value and textContent; no data is parsed as HTML.
@@ -32,24 +46,40 @@ import {
   applySheetStruct,
   blockLines,
   type Cell,
+  cellProblem,
+  checkHighlightRule,
   checkRow,
   colLetter,
   joinLines,
   LIMITS,
   type LineRange,
   liveRules,
+  MAX_HIGHLIGHT_RULES,
+  mergeCellStyle,
+  offsetFormula,
+  optionColor,
   rangesOverlap,
+  readRowLine,
+  SHEET_COLORS,
   SHEET_COLUMN_TYPES,
+  SHEET_HIGHLIGHT_WHEN,
+  type SheetCellStyle,
+  type SheetColor,
   type SheetColumn,
   type SheetColumnType,
   type SheetHeader,
+  type SheetHighlightRule,
+  type SheetHighlightWhen,
   type SheetNumberFormat,
+  type SheetRowStyle,
   type SheetStructOp,
+  type SheetStyleChange,
   sameRowRules,
+  serializeRow,
   serializeSheet,
+  sheetColorLabel,
   sheetHeaderLine,
   splitLines,
-  trimRow,
 } from "@plinth/shared";
 import {
   type ClientLease,
@@ -58,8 +88,22 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import { clampWidth, columnWidth, freezeDropped, type Grid, personName } from "./grid.ts";
-import { cellFromInput, inputText, type NumberLocale, numberLocale, parseTsv } from "./input.ts";
+import {
+  clampWidth,
+  columnWidth,
+  freezeDropped,
+  type Grid,
+  type GridCopy,
+  personName,
+} from "./grid.ts";
+import {
+  cellFromInput,
+  inputText,
+  type NumberLocale,
+  numberLocale,
+  parseLocaleNumber,
+  parseTsv,
+} from "./input.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
 /** Alt+Left and Alt+Right change a width by this much; it is sent once the keys rest. */
@@ -215,9 +259,35 @@ type Want =
       tries: number;
       /** Said in the frame's live region once the change is sent. */
       said?: string;
-      /** Called once the change is sent (a refusal leaves whoever asked as it was). */
-      sent?: () => void;
+      /** Called once the change is sent, with the line it starts at (a refusal leaves whoever asked as it was). */
+      sent?: (start: number) => void;
+      /** An undo or redo, which keeps the history itself. */
+      noHistory?: boolean;
+      /** The column of the cell to select when this change is undone or redone. */
+      col?: number;
     };
+
+/** A menu's entry: a choice (key, label, what it does, its role), a separator, or swatches. */
+type MenuEntry =
+  | [key: string, text: string, run: () => void, role?: "menuitemcheckbox" | "menuitemradio"]
+  | "-"
+  | { swatches: string; pick: (c: SheetColor | null) => void };
+
+/** The Format menu's choices that need a selected cell below the column names. */
+const FORMAT_KEYS = [
+  "fmtBold",
+  "fmtItalic",
+  "fmtWrap",
+  "fmtLeft",
+  "fmtCenter",
+  "fmtRight",
+  "fmtBorders",
+  "fmtOutline",
+  "fmtNoBorders",
+  "fmtClear",
+  "fill:none",
+  ...SHEET_COLORS.map((c) => `fill:${c}`),
+];
 
 /** A struct frame sent and not answered yet, and how to aim it again at the lines as they are. */
 interface SentStruct {
@@ -225,6 +295,8 @@ interface SentStruct {
   tries: number;
   /** The op for the same rows or column in `lines` now, or null when they are gone. */
   again: (lines: readonly string[]) => SheetStructOp | null;
+  /** A tidy-up of its own (the empty rows an undo left): refused or gone, it says nothing. */
+  quiet?: boolean;
 }
 
 /** Whether two header lines have the same columns in the same places (their names, in order). */
@@ -263,18 +335,17 @@ function editFrameBytes(text: string): number {
   return new TextEncoder().encode(JSON.stringify(frame)).byteLength;
 }
 
-/** A row line's cells, or null. */
+/** A row line's cells (without its style object), or null. */
 function rowCells(line: string | undefined): Cell[] | null {
-  if (line === undefined) return null;
-  try {
-    const v = JSON.parse(line) as unknown;
-    return Array.isArray(v) ? (v as Cell[]) : null;
-  } catch {
-    return null;
-  }
+  return readRowLine(line)?.cells ?? null;
 }
 
-/** A row with one cell changed, canonical, or the reason it cannot hold it. */
+/** A row line's cell styles, or null. */
+function rowStyle(line: string | undefined): SheetRowStyle | null {
+  return readRowLine(line)?.style ?? null;
+}
+
+/** A row with one cell changed, canonical, or the reason it cannot hold it. Styles stay. */
 export function rowWith(
   header: SheetHeader,
   line: string,
@@ -286,18 +357,97 @@ export function rowWith(
   const next = [...cells];
   while (next.length <= col) next.push(null);
   next[col] = cell;
-  return checkedRow(header, next, row);
+  return checkedRow(header, next, row, rowStyle(line));
 }
 
-/** A row's canonical line, or the first reason it cannot be in the sheet. */
-function checkedRow(header: SheetHeader, cells: Cell[], row: number): string | { error: string } {
-  const issue = checkRow(header, cells, row)[0];
+/** A row's canonical line (its style last), or the first reason it cannot be in the sheet. */
+function checkedRow(
+  header: SheetHeader,
+  cells: Cell[],
+  row: number,
+  style: SheetRowStyle | null = null,
+): string | { error: string } {
+  const line = serializeRow(cells, style);
+  const issue = checkRow(header, JSON.parse(line) as unknown, row)[0];
   if (issue) return { error: issue.message };
-  const line = JSON.stringify(trimRow(cells));
   if (new TextEncoder().encode(line).byteLength > LIMITS.maxSheetRowBytes) {
     return { error: `Row ${row} would be over ${LIMITS.maxSheetRowBytes / 1024} KiB` };
   }
   return line;
+}
+
+/** One change of lines this person made: `before` became `after` from line `start` on. */
+interface HistoryEntry {
+  start: number;
+  before: string[];
+  after: string[];
+  /** The cell to select once it is undone or redone. */
+  col: number;
+}
+
+/** The most undo steps kept, and the most characters of lines they keep in all. */
+export const MAX_UNDO = 100;
+const MAX_UNDO_CHARS = 4 * 1024 * 1024;
+
+const entryChars = (e: HistoryEntry) =>
+  e.before.reduce((n, l) => n + l.length, 0) + e.after.reduce((n, l) => n + l.length, 0);
+
+/** `lines` padded with empty rows to `n` lines. */
+const padRows = (lines: readonly string[], n: number): string[] => [
+  ...lines,
+  ...new Array<string>(Math.max(0, n - lines.length)).fill("[]"),
+];
+
+/** How a highlight rule's `when` reads in the column settings. */
+export const WHEN_LABELS: Record<SheetHighlightWhen, string> = {
+  "<": "Less than",
+  "<=": "At most",
+  ">": "Greater than",
+  ">=": "At least",
+  "=": "Equal to",
+  "<>": "Not equal to",
+  between: "Between",
+  empty: "Empty",
+  not_empty: "Not empty",
+  contains: "Contains",
+};
+
+/**
+ * A rule as typed in the column settings (text fields) made into a rule for a column type:
+ * numbers in the viewer's locale, dates as YYYY-MM-DD, a checkbox's value as checked or not.
+ */
+export function ruleFromFields(
+  f: { when: SheetHighlightWhen; value: string; to: string; color: SheetColor },
+  type: SheetColumnType,
+  loc: NumberLocale,
+): { ok: true; rule: SheetHighlightRule } | { ok: false; message: string } {
+  const read = (s: string): unknown => {
+    const t = s.trim();
+    if (t === "") return undefined;
+    if (type === "number" || (f.when === "between" && type !== "date")) {
+      return parseLocaleNumber(t, loc) ?? t;
+    }
+    if (type === "checkbox") {
+      const l = t.toLowerCase();
+      return ["true", "yes", "checked", "1"].includes(l)
+        ? true
+        : ["false", "no", "unchecked", "0"].includes(l)
+          ? false
+          : t;
+    }
+    // A date is checked as one by the rule; text stays text (a text column's cells are text).
+    return t;
+  };
+  const raw: Record<string, unknown> = { when: f.when, color: f.color };
+  if (f.when !== "empty" && f.when !== "not_empty") {
+    const v = read(f.value);
+    if (v !== undefined) raw.value = v;
+    if (f.when === "between") {
+      const to = read(f.to);
+      if (to !== undefined) raw.to = to;
+    }
+  }
+  return checkHighlightRule(raw, type);
 }
 
 /** The header with one column changed, canonical, or the reason it cannot be. */
@@ -342,6 +492,25 @@ export function headerFrozen(header: SheetHeader, cols: number): string {
 export interface OptionEntry {
   from: string | null;
   value: string;
+  /** Its colour (a chip in the cells that hold it), or none. */
+  color?: SheetColor | null;
+}
+
+/** The colours of an edited option list, by option, for the options it keeps; null when none. */
+export function optionColors(
+  entries: readonly OptionEntry[],
+  options: readonly string[],
+): Record<string, SheetColor> | null {
+  const out = Object.create(null) as Record<string, SheetColor>;
+  let any = false;
+  for (const e of entries) {
+    const v = e.value.trim().normalize("NFC");
+    if (e.color && options.includes(v)) {
+      out[v] = e.color;
+      any = true;
+    }
+  }
+  return any ? out : null;
 }
 
 /**
@@ -410,7 +579,7 @@ function renamedRows(
     }
     const next = [...cells];
     next[col] = to;
-    const r = checkedRow(header, next, i + 1);
+    const r = checkedRow(header, next, i + 1, rowStyle(line));
     if (typeof r !== "string") return r;
     out.push(r);
   }
@@ -458,6 +627,11 @@ export class SheetEditor {
    */
   private moving: { col: number; focus: boolean; arrived: boolean } | null = null;
   private readonly dockOpt: boolean | undefined;
+  /** This person's own changes, newest last: what undo takes back and redo makes again. */
+  private undoStack: HistoryEntry[] = [];
+  private redoStack: HistoryEntry[] = [];
+  /** The last copy from this grid, so pasting it back keeps its formulas. */
+  private lastCopy: GridCopy | null = null;
 
   constructor(
     private readonly win: Window,
@@ -515,6 +689,10 @@ export class SheetEditor {
     if (old !== grid && this.editing) this.listen(grid, true);
     grid.setEditable(this.editing);
     grid.setHeaderTools(this.editing ? this.headerTools : null);
+    grid.setFillHandle(this.editing ? this.onFillPress : null);
+    grid.setCopyListener((c) => {
+      this.lastCopy = c;
+    });
     if (this.editing) this.mountStrip();
     const o = this.open;
     if (o) {
@@ -598,11 +776,15 @@ export class SheetEditor {
     if (g) this.listen(g, on);
     g?.setEditable(on);
     g?.setHeaderTools(on ? this.headerTools : null);
+    g?.setFillHandle(on ? this.onFillPress : null);
     if (on) {
       this.win.addEventListener("keydown", this.onSaveKey);
       this.mountStrip();
     } else {
       this.win.removeEventListener("keydown", this.onSaveKey);
+      // Undo is for this editing session: another one starts with nothing to take back.
+      this.undoStack = [];
+      this.redoStack = [];
       this.closeMenu(false);
       this.strip?.remove();
       this.strip = null;
@@ -620,11 +802,21 @@ export class SheetEditor {
   }
 
   private readonly onSaveKey = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (!e.shiftKey && k === "s") {
       e.preventDefault();
       this.flush();
       this.hooks.save();
+      return;
     }
+    if (k !== "z" && k !== "y") return;
+    // A field's own text undo stays the field's (an open cell, the filter, the column settings).
+    if ((this.doc.activeElement as Element | null)?.closest?.("input, select, textarea")) return;
+    if (this.open || this.panel?.contains(this.doc.activeElement)) return;
+    e.preventDefault();
+    if (k === "y" || e.shiftKey) this.redo();
+    else this.undo();
   };
 
   private header(): SheetHeader | null {
@@ -665,6 +857,25 @@ export class SheetEditor {
       }
       return;
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      // Fill down, bold and italic act on the selection (Ctrl or Cmd+C, Z and S are the page's).
+      const k = e.key.toLowerCase();
+      if (k === "d") {
+        e.preventDefault();
+        this.fillDown();
+      } else if (k === "b" || k === "i") {
+        e.preventDefault();
+        this.toggleStyle(k === "b" ? "bold" : "italic");
+      }
+      return;
+    }
+    const multi = this.grid ? this.grid.range().rows.length > 1 || this.isWide() : false;
+    if ((e.key === "Delete" || e.key === "Backspace") && (multi || !header)) {
+      e.preventDefault();
+      if (multi) this.clearRange();
+      else this.clearCell(at.row, at.col);
+      return;
+    }
     // In the header the sort button has the focus: F2 renames, Enter still sorts.
     if (header && e.key !== "F2") return;
     const col = this.header()?.columns[at.col];
@@ -674,9 +885,6 @@ export class SheetEditor {
     } else if (e.key === " " && col?.type === "checkbox" && !header) {
       e.preventDefault();
       this.toggle(at.row, at.col);
-    } else if ((e.key === "Delete" || e.key === "Backspace") && !header) {
-      e.preventDefault();
-      this.clearCell(at.row, at.col);
     } else if (isPrintable(e)) {
       e.preventDefault();
       this.openCell(at.row, at.col, e.key);
@@ -804,12 +1012,26 @@ export class SheetEditor {
   private write(
     range: LineRange,
     make: Extract<Want, { kind: "write" }>["make"],
-    opts: { what?: string; said?: string; sent?: () => void } = {},
+    opts: {
+      what?: string;
+      said?: string;
+      sent?: (start: number) => void;
+      noHistory?: boolean;
+      col?: number;
+    } = {},
   ): void {
     if (!this.canWrite()) return;
     const other = this.heldBy(range);
     if (other) {
-      this.explainHeld(other, opts.what ?? (range.start === 0 ? "the column names" : "this row"));
+      this.explainHeld(
+        other,
+        opts.what ??
+          (range.start === 0
+            ? "the column names"
+            : range.end - range.start > 1
+              ? "these rows"
+              : "this row"),
+      );
       return;
     }
     if (this.open && !this.commit()) return;
@@ -822,8 +1044,10 @@ export class SheetEditor {
       head: lines[0] ?? "",
       make,
       tries: 0,
+      col: opts.col ?? this.grid?.selected().col ?? 0,
       ...(opts.said ? { said: opts.said } : {}),
       ...(opts.sent ? { sent: opts.sent } : {}),
+      ...(opts.noHistory ? { noHistory: true } : {}),
     };
     if (!this.backend.lease(range)) {
       this.want = null;
@@ -878,23 +1102,41 @@ export class SheetEditor {
       return;
     }
     const loc = this.loc;
+    // This grid's own copy pasted back: its formulas stay formulas, moved as Excel moves them,
+    // and a value that fits its new column is kept as it was stored.
+    const copy = this.lastCopy;
+    const own =
+      copy &&
+      copy.cells.length === block.length &&
+      copy.tsv === text.replace(/\r\n?/g, "\n").replace(/\n$/, "")
+        ? copy
+        : null;
     const make = (now: readonly string[], l: LineRange): string[] | { error: string } => {
       const head = sheetHeaderLine(now[0]);
       if (!head) return { error: "The sheet changed meanwhile. Try again." };
       const out: string[] = [];
       for (let k = 0; k < block.length; k++) {
         const r = l.start + 1 + k;
-        const base = l.start + k < l.end ? (rowCells(now[l.start + k]) ?? []) : [];
-        const cells = [...base];
+        const existing = l.start + k < l.end ? now[l.start + k] : undefined;
+        const cells = [...(rowCells(existing) ?? [])];
         const values = block[k] as string[];
         for (let j = 0; j < values.length; j++) {
           const c = head.columns[col + j] as SheetColumn;
-          const v = cellFromInput(values[j] as string, c, loc);
-          if (!v.ok) return { error: `${a1(r, col + j)}: ${v.message}` };
+          const raw = own?.cells[k]?.[j];
+          let cell: Cell;
+          if (own && typeof raw === "string" && raw.startsWith("=")) {
+            cell = offsetFormula(raw, r - (own.rows[k] ?? r), col - own.c1);
+          } else if (own && raw !== undefined && cellProblem(c, raw, r, col + j) === null) {
+            cell = raw;
+          } else {
+            const v = cellFromInput(values[j] as string, c, loc);
+            if (!v.ok) return { error: `${a1(r, col + j)}: ${v.message}` };
+            cell = v.cell;
+          }
           while (cells.length <= col + j) cells.push(null);
-          cells[col + j] = v.cell;
+          cells[col + j] = cell;
         }
-        const line = checkedRow(head, cells, r);
+        const line = checkedRow(head, cells, r, rowStyle(existing));
         if (typeof line !== "string") return line;
         out.push(line);
       }
@@ -915,6 +1157,375 @@ export class SheetEditor {
       return;
     }
     this.write(range, make);
+  }
+
+  // ---------- several cells: clear, fill and format ----------
+
+  /** Whether the selection spans more than one column. */
+  private isWide(): boolean {
+    const r = this.grid?.range();
+    return !!r && r.c2 > r.c1;
+  }
+
+  /** The selection's data rows (the column names left out), in the order shown, and columns. */
+  private dataRange(): { rows: number[]; c1: number; c2: number } | null {
+    const r = this.grid?.range();
+    if (!r) return null;
+    const rows = r.rows.filter((x) => x >= 2);
+    return rows.length > 0 ? { rows, c1: r.c1, c2: r.c2 } : null;
+  }
+
+  /**
+   * One write over `rows` (A1, from row 2) under one lease on the lines from the first of them to
+   * the last: `change` makes each of those rows' cells and styles (`k` is the row's place in
+   * `rows`, `row` its A1 row when asked, `at` reads another row of the span as it is now), and the
+   * rows in between stay as they are. Checked before the lease is asked for; a change that would
+   * leave every row as it is sends nothing.
+   */
+  private editRows(
+    rows: readonly number[],
+    change: (
+      cells: Cell[],
+      style: SheetRowStyle,
+      row: number,
+      k: number,
+      at: (row: number) => { cells: Cell[]; style: SheetRowStyle | null } | null,
+    ) => string | null,
+    opts: { said?: string; col?: number } = {},
+  ): void {
+    if (!this.header() || rows.length === 0) return;
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = 0;
+    for (const r of rows) {
+      lo = Math.min(lo, r);
+      hi = Math.max(hi, r);
+    }
+    const lines = this.backend.lines;
+    if (lo < 2 || hi > lines.length) return;
+    const range = { start: lo - 1, end: hi };
+    // The rows that change by their place in the span, so a span found again elsewhere works.
+    const which = new Map<number, number>();
+    for (const [k, r] of rows.entries()) which.set(r - lo, k);
+    const make = (now: readonly string[], l: LineRange): string[] | { error: string } => {
+      const head = sheetHeaderLine(now[0]);
+      if (!head) return { error: "The sheet changed meanwhile. Try again." };
+      const shift = l.start - range.start;
+      const at = (row: number) => readRowLine(now[row - 1 + shift]);
+      const out: string[] = [];
+      for (let i = l.start; i < l.end; i++) {
+        const line = now[i] ?? "[]";
+        const k = which.get(i - l.start);
+        if (k === undefined) {
+          out.push(line);
+          continue;
+        }
+        const read = readRowLine(line);
+        if (!read) return { error: `Row ${i + 1} is not a row` };
+        const cells = [...read.cells];
+        const style: SheetRowStyle = [...(read.style ?? [])];
+        const problem = change(cells, style, i + 1 - shift, k, at);
+        if (problem) return { error: problem };
+        const next = checkedRow(head, cells, i + 1, style);
+        if (typeof next !== "string") return next;
+        out.push(next);
+      }
+      return out;
+    };
+    const first = make(lines, range);
+    if (!Array.isArray(first)) {
+      this.showNotice(first.error);
+      return;
+    }
+    if (first.every((line, i) => line === lines[range.start + i])) return;
+    if (
+      !(this.backend instanceof LocalSheet) &&
+      editFrameBytes(first.join("\n")) > LIMITS.liveDocFrameBytes
+    ) {
+      this.showNotice(
+        `That changes more than ${LIMITS.liveDocFrameBytes / 1024} KiB of rows, the most one change can send. Select fewer rows.`,
+      );
+      return;
+    }
+    this.write(range, make, opts);
+  }
+
+  /** Delete or Backspace on several cells: they are emptied (their styles stay). */
+  clearRange(): void {
+    const d = this.dataRange();
+    if (!d) return;
+    this.editRows(
+      d.rows,
+      (cells) => {
+        for (let c = d.c1; c <= Math.min(d.c2, cells.length - 1); c++) cells[c] = null;
+        return null;
+      },
+      { said: "Cleared." },
+    );
+  }
+
+  /**
+   * Ctrl or Cmd+D: the selection's top row fills the rows under it, or with one row selected, the
+   * row shown above it fills it. Not while a sort shows the rows in another order.
+   */
+  fillDown(): void {
+    const g = this.grid;
+    const d = this.dataRange();
+    if (!g || !d || !this.canWrite()) return;
+    if (g.view().sort) {
+      this.showNotice("Fill works in the sheet's own order. Turn the sort off first.");
+      return;
+    }
+    const top = d.rows[0] as number;
+    if (d.rows.length === 1) {
+      const above = g.nextShown(top, -1);
+      if (above === null || above < 2) return;
+      this.fill([above], d.rows, d.c1, d.c2);
+    } else this.fill([top], d.rows.slice(1), d.c1, d.c2);
+  }
+
+  /**
+   * Columns c1 to c2 of `targets` take the cells and styles of `sources`, repeated in order: a
+   * value as it is, a formula with its relative references moved by the rows between them.
+   */
+  private fill(sources: number[], targets: number[], c1: number, c2: number): void {
+    if (targets.length === 0) return;
+    const n = sources.length;
+    const of = (k: number) => sources[(k - n) % n] as number;
+    this.editRows(
+      [...sources, ...targets],
+      (cells, style, row, k, at) => {
+        if (k < n) return null;
+        const src = of(k);
+        const from = at(src);
+        if (!from) return "The sheet changed meanwhile. Try again.";
+        for (let c = c1; c <= c2; c++) {
+          const v = from.cells[c] ?? null;
+          while (cells.length <= c) cells.push(null);
+          cells[c] =
+            typeof v === "string" && v.startsWith("=") ? offsetFormula(v, row - src, 0) : v;
+          style[c] = from.style?.[c] ?? null;
+        }
+        return null;
+      },
+      {
+        said: targets.length === 1 ? "Filled 1 row." : `Filled ${targets.length} rows.`,
+        col: c1,
+      },
+    );
+  }
+
+  /** A press on the fill handle: dragged down, the selected rows fill the rows it reaches. */
+  private readonly onFillPress = (e: PointerEvent) => {
+    const g = this.grid;
+    const d = this.dataRange();
+    if (!g || !d || e.button !== 0 || !this.canWrite()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (g.view().sort) {
+      this.showNotice("Fill works in the sheet's own order. Turn the sort off first.");
+      return;
+    }
+    const handle = e.currentTarget as HTMLElement;
+    const last = d.rows[d.rows.length - 1] as number;
+    /** The rows shown below the selection, down to `to`. */
+    const below = (to: number): number[] => {
+      const out: number[] = [];
+      for (let r = g.nextShown(last, 1); r !== null && r <= to; r = g.nextShown(r, 1)) out.push(r);
+      return out;
+    };
+    let targets: number[] = [];
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // a synthetic pointer
+    }
+    const move = (ev: PointerEvent) => {
+      const at = this.addressOf(this.doc.elementFromPoint?.(ev.clientX, ev.clientY) ?? null);
+      if (!at) return;
+      targets = at.row > last ? below(at.row) : [];
+      g.markFill(targets, d.c1, d.c2);
+    };
+    const end = (ev: PointerEvent) => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      g.markFill(null);
+      if (ev.type === "pointerup" && targets.length > 0) {
+        this.fill(d.rows, targets, d.c1, d.c2);
+      }
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+
+  /** The style of the selected cell. */
+  private selectedStyle(): SheetCellStyle | null {
+    const s = this.grid?.selected();
+    if (!s || s.row < 2) return null;
+    return rowStyle(this.backend.lines[s.row - 1])?.[s.col] ?? null;
+  }
+
+  /** Bold, italic or wrap on for the selection, or off when the selected cell has it. */
+  toggleStyle(key: "bold" | "italic" | "wrap"): void {
+    const on = !this.selectedStyle()?.[key];
+    const name = key === "wrap" ? "Wrap text" : key === "bold" ? "Bold" : "Italic";
+    this.applyStyle(() => ({ [key]: on }), `${name} ${on ? "on" : "off"}.`);
+  }
+
+  /**
+   * A style change for each selected cell (from row 2): `change` gets the cell's style now and
+   * its place in the selection (k: its row's place, c: its column), and returns what changes.
+   */
+  applyStyle(
+    change: (
+      cur: SheetCellStyle | null,
+      place: { k: number; c: number; rows: number; c1: number; c2: number },
+    ) => SheetStyleChange | null,
+    said?: string,
+  ): void {
+    const d = this.dataRange();
+    if (!d) return;
+    this.editRows(
+      d.rows,
+      (_cells, style, _row, k) => {
+        for (let c = d.c1; c <= d.c2; c++) {
+          const cur = style[c] ?? null;
+          style[c] = mergeCellStyle(
+            cur,
+            change(cur, { k, c, rows: d.rows.length, c1: d.c1, c2: d.c2 }),
+          );
+        }
+        return null;
+      },
+      { ...(said ? { said } : {}), col: d.c1 },
+    );
+  }
+
+  // ---------- undo and redo ----------
+
+  /** One change this person made, for undo (a new change clears what redo could make again). */
+  private record(e: HistoryEntry): void {
+    if (e.before.length === e.after.length && e.before.every((l, i) => l === e.after[i])) return;
+    this.undoStack.push(e);
+    this.redoStack = [];
+    while (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
+    let chars = this.undoStack.reduce((n, x) => n + entryChars(x), 0);
+    while (chars > MAX_UNDO_CHARS && this.undoStack.length > 1) {
+      chars -= entryChars(this.undoStack.shift() as HistoryEntry);
+    }
+  }
+
+  /** Whether there is anything to undo (or redo). */
+  get canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  get canRedo(): boolean {
+    return this.redoStack.length > 0;
+  }
+
+  undo(): void {
+    this.step("undo");
+  }
+
+  redo(): void {
+    this.step("redo");
+  }
+
+  /** Where `block` is in `lines` near `start`: the header only at line 0, rows only below it. */
+  private findBlock(lines: readonly string[], block: readonly string[], start: number): number {
+    if (start === 0) {
+      return block.every((l, i) => lines[i] === l) && block.length <= lines.length ? 0 : -1;
+    }
+    const at = locateBlock(lines, joinLines(block), start);
+    return at >= 1 ? at : -1;
+  }
+
+  /**
+   * Undo or redo the newest change on its stack, as a new edit of the same rows: refused, with a
+   * notice, when they are not exactly as that change left them (someone changed them since).
+   */
+  private step(dir: "undo" | "redo"): void {
+    const stack = dir === "undo" ? this.undoStack : this.redoStack;
+    const e = stack[stack.length - 1];
+    if (!e) {
+      this.announce(dir === "undo" ? "Nothing to undo." : "Nothing to redo.");
+      return;
+    }
+    if (!this.canWrite()) return;
+    const n = e.after.length;
+    const lines = this.backend.lines;
+    // Undo puts back the rows as they were (empty rows where it had added some); redo the other
+    // way.
+    let have = dir === "undo" ? e.after : padRows(e.before, n);
+    const put = dir === "undo" ? padRows(e.before, n) : e.after;
+    let at = this.findBlock(lines, have, e.start);
+    if (at < 0 && dir === "redo" && e.before.length < n) {
+      // The empty rows the undo left were removed: the added rows go back at the end.
+      have = e.before;
+      at = this.findBlock(lines, have, e.start);
+      if (at >= 0 && at + have.length !== lines.length) at = -1;
+    }
+    const refused =
+      dir === "undo"
+        ? "Changed since, so it can't be undone."
+        : "Changed since, so it can't be redone.";
+    if (at < 0 || RULES?.checkEdit(lines, at, have.length, put)) {
+      stack.pop();
+      this.showNotice(refused);
+      return;
+    }
+    const make = (now: readonly string[], l: LineRange): string[] | { error: string } =>
+      l.end - l.start === have.length && have.every((line, i) => now[l.start + i] === line)
+        ? [...put]
+        : { error: refused };
+    this.write({ start: at, end: at + have.length }, make, {
+      noHistory: true,
+      col: e.col,
+      what: at === 0 ? "the column names" : have.length > 1 ? "these rows" : "this row",
+      said: dir === "undo" ? "Undone." : "Redone.",
+      sent: (start) => {
+        const i = stack.lastIndexOf(e);
+        if (i >= 0) stack.splice(i, 1);
+        (dir === "undo" ? this.redoStack : this.undoStack).push({ ...e, start });
+        const row = start + 1;
+        this.grid?.select(row, e.col);
+        this.grid?.focusSelected();
+        const extra = n - e.before.length;
+        if (dir === "undo" && extra > 0) this.dropBlankRows(e, start, extra);
+      },
+    });
+  }
+
+  /**
+   * After an undo of rows a paste added past the end: those rows, now empty, are deleted, when
+   * nobody else holds a lease. If that cannot be done they stay as empty rows.
+   */
+  private dropBlankRows(e: HistoryEntry, start: number, extra: number): void {
+    const b = this.backend;
+    for (const l of b.leases.values()) if (l.id !== b.mine?.id) return;
+    const blanks = (lines: readonly string[], at: number) => {
+      for (let i = 0; i < extra; i++) if (lines[at + e.before.length + i] !== "[]") return false;
+      return true;
+    };
+    const op: SheetStructOp = {
+      op: "delete_rows",
+      from: start + e.before.length + 1,
+      count: extra,
+    };
+    this.lastStruct = {
+      op,
+      tries: 0,
+      quiet: true,
+      again: (now) => {
+        const at = this.findBlock(now, padRows(e.before, e.after.length), start);
+        return at >= 1 && blanks(now, at)
+          ? { op: "delete_rows", from: at + e.before.length + 1, count: extra }
+          : null;
+      },
+    };
+    if (!b.struct(op)) this.lastStruct = null;
   }
 
   // ---------- lease events (from the backend) ----------
@@ -941,6 +1552,7 @@ export class SheetEditor {
         return;
       }
       // A refused send has said why (too large, not connected): that notice stays.
+      const before = lines.slice(lease.start, lease.end);
       this.sending = true;
       let sent: boolean;
       try {
@@ -951,8 +1563,11 @@ export class SheetEditor {
       this.backend.release();
       if (sent) {
         this.hideNotice();
+        if (!w.noHistory) {
+          this.record({ start: lease.start, before, after: r, col: w.col ?? 0 });
+        }
         if (w.said && this.editing) this.announce(w.said);
-        w.sent?.();
+        w.sent?.(lease.start);
       } else if (!this.notice) {
         this.showNotice("That change was not sent. Try again in a moment.");
       }
@@ -1133,6 +1748,7 @@ export class SheetEditor {
       }
     }
     this.lastStruct = null;
+    if (s?.quiet) return;
     this.moving = null;
     if (reason === "held") {
       this.showNotice(
@@ -1290,6 +1906,12 @@ export class SheetEditor {
       return false;
     }
     if (o.refused) this.hideNotice();
+    // What the cell's typing changed is one step to undo.
+    const mine = this.backend.mine;
+    const line = mine ? this.backend.lines[mine.start] : undefined;
+    if (mine && o.sent && line !== undefined && line !== o.original) {
+      this.record({ start: mine.start, before: [o.original], after: [line], col: o.col });
+    }
     this.close(true);
     return true;
   }
@@ -1423,13 +2045,58 @@ export class SheetEditor {
   private stripButtons = new Map<string, HTMLButtonElement>();
   private menuOpen: { button: HTMLButtonElement; list: HTMLElement } | null = null;
 
-  /** Two menus, Row and Column, acting on the selected cell. */
+  /**
+   * Three menus: Row and Column act on the selected cell, Format on the selected cells (their
+   * styles: bold, italic, wrapping, alignment, a fill, borders).
+   */
   private makeStrip(): HTMLElement {
     const d = this.doc;
     const strip = d.createElement("div");
     strip.className = "plinth-sheet__strip";
     strip.setAttribute("role", "toolbar");
-    strip.setAttribute("aria-label", "Rows and columns");
+    strip.setAttribute("aria-label", "Rows, columns and format");
+    const outline = (
+      cur: SheetCellStyle | null,
+      p: { k: number; c: number; rows: number; c1: number; c2: number },
+    ) => {
+      const sides = new Set(cur?.border ?? []);
+      if (p.k === 0) sides.add("top");
+      if (p.c === p.c2) sides.add("right");
+      if (p.k === p.rows - 1) sides.add("bottom");
+      if (p.c === p.c1) sides.add("left");
+      return { border: [...sides] };
+    };
+    const format: MenuEntry[] = [
+      ["fmtBold", "Bold", () => this.toggleStyle("bold"), "menuitemcheckbox"],
+      ["fmtItalic", "Italic", () => this.toggleStyle("italic"), "menuitemcheckbox"],
+      ["fmtWrap", "Wrap text", () => this.toggleStyle("wrap"), "menuitemcheckbox"],
+      "-",
+      ["fmtLeft", "Align left", () => this.applyStyle(() => ({ align: "left" })), "menuitemradio"],
+      [
+        "fmtCenter",
+        "Align center",
+        () => this.applyStyle(() => ({ align: "center" })),
+        "menuitemradio",
+      ],
+      [
+        "fmtRight",
+        "Align right",
+        () => this.applyStyle(() => ({ align: "right" })),
+        "menuitemradio",
+      ],
+      "-",
+      { swatches: "Fill", pick: (c) => this.applyStyle(() => ({ fill: c })) },
+      "-",
+      [
+        "fmtBorders",
+        "All borders",
+        () => this.applyStyle(() => ({ border: ["top", "right", "bottom", "left"] })),
+      ],
+      ["fmtOutline", "Outline", () => this.applyStyle(outline)],
+      ["fmtNoBorders", "No borders", () => this.applyStyle(() => ({ border: null }))],
+      "-",
+      ["fmtClear", "Clear formatting", () => this.applyStyle(() => null, "Formatting cleared.")],
+    ];
     strip.append(
       this.makeMenu("Row", [
         ["rowAbove", "Insert above", () => this.rowAction("above")],
@@ -1446,12 +2113,13 @@ export class SheetEditor {
         ["colUnfreeze", "Unfreeze columns", () => this.freezeTo(-1)],
         ["colEdit", "Column settings…", () => this.openPanel()],
       ]),
+      this.makeMenu("Format", format),
     );
     return strip;
   }
 
   /** A menu button and its list: arrows move, Escape and Tab close, a choice runs and closes. */
-  private makeMenu(label: string, items: [string, string, () => void][]): HTMLElement {
+  private makeMenu(label: string, items: MenuEntry[]): HTMLElement {
     const d = this.doc;
     const wrap = d.createElement("div");
     wrap.className = "plinth-sheet__menu";
@@ -1468,22 +2136,51 @@ export class SheetEditor {
     list.setAttribute("aria-label", label);
     list.hidden = true;
     button.setAttribute("aria-controls", list.id);
-    for (const [key, text, run] of items) {
+    const choice = (key: string, run: () => void, role = "menuitem") => {
       const item = d.createElement("button");
       item.type = "button";
       item.className = "plinth-sheet__menu-item";
-      item.setAttribute("role", "menuitem");
+      item.setAttribute("role", role);
       item.tabIndex = -1;
-      item.textContent = text;
       item.addEventListener("click", () => {
         this.closeMenu(true);
         run();
       });
       this.stripButtons.set(key, item);
-      list.append(item);
+      return item;
+    };
+    for (const entry of items) {
+      if (entry === "-") {
+        const sep = d.createElement("div");
+        sep.className = "plinth-sheet__menu-sep";
+        sep.setAttribute("role", "separator");
+        list.append(sep);
+      } else if (Array.isArray(entry)) {
+        const [key, text, run, role] = entry;
+        const item = choice(key, run, role);
+        item.textContent = text;
+        list.append(item);
+      } else {
+        // A row of colour swatches, "No fill" first: each one is a menu item named by its colour.
+        const row = d.createElement("div");
+        row.className = "plinth-sheet__swatches";
+        row.setAttribute("role", "group");
+        row.setAttribute("aria-label", entry.swatches);
+        for (const c of [null, ...SHEET_COLORS] as (SheetColor | null)[]) {
+          const item = choice(`fill:${c ?? "none"}`, () => entry.pick(c));
+          item.className = `plinth-sheet__swatch${c ? ` plinth-sheet__fill--${c}` : " plinth-sheet__swatch--none"}`;
+          const name = c
+            ? `${entry.swatches} ${sheetColorLabel(c).toLowerCase()}`
+            : `No ${entry.swatches.toLowerCase()}`;
+          item.setAttribute("aria-label", name);
+          item.title = c ? sheetColorLabel(c) : `No ${entry.swatches.toLowerCase()}`;
+          row.append(item);
+        }
+        list.append(row);
+      }
     }
     const enabled = () =>
-      [...list.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].filter(
+      [...list.querySelectorAll<HTMLButtonElement>("[role^=menuitem]")].filter(
         (b) => !b.disabled && !b.hidden,
       );
     const show = (focus: "first" | "last") => {
@@ -1583,6 +2280,18 @@ export class SheetEditor {
     set("colDelete", cols <= 1);
     set("colLeft", cols >= LIMITS.maxSheetColumns);
     set("colRight", cols >= LIMITS.maxSheetColumns);
+    // Format acts on cells below the column names, and shows what the selected cell has.
+    const noCells = this.dataRange() === null;
+    for (const k of FORMAT_KEYS) set(k, noCells);
+    const st = this.selectedStyle();
+    const checked = (k: string, on: boolean) =>
+      this.stripButtons.get(k)?.setAttribute("aria-checked", on ? "true" : "false");
+    checked("fmtBold", !!st?.bold);
+    checked("fmtItalic", !!st?.italic);
+    checked("fmtWrap", !!st?.wrap);
+    checked("fmtLeft", st?.align === "left");
+    checked("fmtCenter", st?.align === "center");
+    checked("fmtRight", st?.align === "right");
   }
 
   /** The selected cell's column. */
@@ -2047,8 +2756,10 @@ export class SheetEditor {
     grouping.checked = c.format?.grouping !== false;
     const groupingRow = field("Thousands separators", grouping);
     groupingRow.classList.add("plinth-sheet__panel-field--check");
-    const options = this.optionList(c.options ?? []);
+    const options = this.optionList(c.options ?? [], c);
     body.append(options.el);
+    const highlight = this.ruleList(c.highlight ?? [], () => type.value as SheetColumnType);
+    body.append(highlight.el);
     const sync = () => {
       const num = type.value === "number";
       styleRow.hidden = !num;
@@ -2104,6 +2815,17 @@ export class SheetEditor {
         return;
       }
       const renames = list && c.type === "select" ? list.renames : new Map<string, string>();
+      const colors =
+        list && !("error" in list) ? optionColors(options.entries(), list.options) : null;
+      const rules: SheetHighlightRule[] = [];
+      for (const [i, f] of highlight.fields().entries()) {
+        const r = ruleFromFields(f, t, this.loc);
+        if (!r.ok) {
+          this.showNotice(`Highlight rule ${i + 1}: ${r.message}.`);
+          return;
+        }
+        rules.push(r.rule);
+      }
       const change = (old: SheetColumn): SheetColumn => {
         const next: SheetColumn = { name: name.value.normalize("NFC"), type: t };
         // The width stays as it is now (dragged meanwhile, say): the header's edge sets it.
@@ -2118,6 +2840,8 @@ export class SheetEditor {
           next.format = f;
         }
         if (list && !("error" in list)) next.options = list.options;
+        if (colors) next.colors = colors;
+        if (rules.length > 0) next.highlight = rules;
         return next;
       };
       // The column as it is now: someone else may have moved it, changed it or deleted it.
@@ -2217,11 +2941,15 @@ export class SheetEditor {
   }
 
   /**
-   * A select column's options as a list: each one a field to rename it, with Move up and Move down
-   * (shown on hover or focus) and Remove, then a field where Enter adds one (at most 100, of at
-   * most 100 characters; what is left in it is added on Apply too).
+   * A select column's options as a list: each one a colour (a swatch that opens the nine colours,
+   * or none) and a field to rename it, with Move up and Move down (shown on hover or focus) and
+   * Remove, then a field where Enter adds one (at most 100, of at most 100 characters; what is
+   * left in it is added on Apply too).
    */
-  private optionList(initial: readonly string[]): { el: HTMLElement; entries(): OptionEntry[] } {
+  private optionList(
+    initial: readonly string[],
+    column?: SheetColumn,
+  ): { el: HTMLElement; entries(): OptionEntry[] } {
     const d = this.doc;
     const box = d.createElement("fieldset");
     box.className = "plinth-sheet__options";
@@ -2229,11 +2957,12 @@ export class SheetEditor {
     legend.textContent = "Options";
     const list = d.createElement("ol");
     list.className = "plinth-sheet__options-list";
-    const rows: { from: string | null; input: HTMLInputElement }[] = initial.map((o) => {
+    const makeRow = (from: string | null, value: string, color: SheetColor | null) => {
       const input = d.createElement("input");
-      input.value = o;
-      return { from: o, input };
-    });
+      input.value = value;
+      return { from, input, swatch: this.colorSelect(color) };
+    };
+    const rows = initial.map((o) => makeRow(o, o, column ? optionColor(column, o) : null));
     const addInput = d.createElement("input");
     addInput.maxLength = MAX_OPTION_CHARS;
     addInput.placeholder = "New option";
@@ -2270,12 +2999,14 @@ export class SheetEditor {
         // so the button stays shown and takes the tap.
         keepFocus(up);
         keepFocus(down);
+        r.swatch.setAttribute("aria-label", `Colour of ${shown()}`);
         r.input.oninput = () => {
           up.setAttribute("aria-label", `Move ${shown()} up`);
           down.setAttribute("aria-label", `Move ${shown()} down`);
           remove.setAttribute("aria-label", `Remove ${shown()}`);
+          r.swatch.setAttribute("aria-label", `Colour of ${shown()}`);
         };
-        li.append(r.input, up, down, remove);
+        li.append(r.swatch, r.input, up, down, remove);
         if (focus?.at === i) {
           const target = { input: r.input, up, down, remove }[focus.part];
           queueMicrotask(() => (target.disabled ? r.input : target).focus());
@@ -2303,9 +3034,7 @@ export class SheetEditor {
     const push = () => {
       const v = addInput.value.trim();
       if (v === "" || rows.length >= MAX_OPTIONS) return;
-      const input = d.createElement("input");
-      input.value = v;
-      rows.push({ from: null, input });
+      rows.push(makeRow(null, v, null));
       addInput.value = "";
       draw();
       addInput.focus();
@@ -2325,10 +3054,154 @@ export class SheetEditor {
     return {
       el: box,
       entries: () => [
-        ...rows.map((r) => ({ from: r.from, value: r.input.value })),
+        ...rows.map((r) => ({
+          from: r.from,
+          value: r.input.value,
+          color: (r.swatch.value || null) as SheetColor | null,
+        })),
         // Text left in the new option's field is added too.
         ...(addInput.value.trim() ? [{ from: null, value: addInput.value }] : []),
       ],
+    };
+  }
+
+  /**
+   * A colour picker: a native list of the nine colours (or none), drawn as a swatch of the colour
+   * chosen. Its name is set by whoever uses it.
+   */
+  private colorSelect(initial: SheetColor | null, none = "No colour"): HTMLSelectElement {
+    const d = this.doc;
+    const sel = d.createElement("select");
+    const paint = () => {
+      sel.className = `plinth-sheet__swatch-select${sel.value ? ` plinth-sheet__fill--${sel.value}` : ""}`;
+    };
+    for (const c of [null, ...SHEET_COLORS] as (SheetColor | null)[]) {
+      const o = d.createElement("option");
+      o.value = c ?? "";
+      o.textContent = c ? sheetColorLabel(c) : none;
+      sel.append(o);
+    }
+    sel.value = initial ?? "";
+    sel.addEventListener("change", paint);
+    paint();
+    return sel;
+  }
+
+  /**
+   * A column's highlight rules as a list: each one says when (Less than, Between, Contains, ...),
+   * the value (two for Between, none for Empty and Not empty) and a colour, with Remove; "Add
+   * rule" adds one (at most 10). The first rule that matches a cell colours it.
+   */
+  private ruleList(
+    initial: readonly SheetHighlightRule[],
+    type: () => SheetColumnType,
+  ): {
+    el: HTMLElement;
+    fields(): { when: SheetHighlightWhen; value: string; to: string; color: SheetColor }[];
+  } {
+    const d = this.doc;
+    const box = d.createElement("fieldset");
+    box.className = "plinth-sheet__rules";
+    const legend = d.createElement("legend");
+    legend.textContent = "Highlight";
+    const list = d.createElement("ol");
+    list.className = "plinth-sheet__rules-list";
+    const text = (v: unknown): string => {
+      if (v === undefined) return "";
+      if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+      if (typeof v === "number") {
+        const s = String(v);
+        return this.loc.decimal === "." ? s : s.replace(".", this.loc.decimal);
+      }
+      return String(v);
+    };
+    type RuleRow = {
+      when: HTMLSelectElement;
+      value: HTMLInputElement;
+      to: HTMLInputElement;
+      color: HTMLSelectElement;
+    };
+    const rows: RuleRow[] = [];
+    const add = (r: Partial<SheetHighlightRule>) => {
+      const when = d.createElement("select");
+      for (const w of SHEET_HIGHLIGHT_WHEN) {
+        const o = d.createElement("option");
+        o.value = w;
+        o.textContent = WHEN_LABELS[w];
+        when.append(o);
+      }
+      when.value = r.when ?? ">";
+      const value = d.createElement("input");
+      value.value = text(r.value);
+      value.maxLength = 100;
+      const to = d.createElement("input");
+      to.value = text(r.to);
+      to.maxLength = 100;
+      const row: RuleRow = {
+        when,
+        value,
+        to,
+        color: this.colorSelect((r.color ?? "red") as SheetColor, "Colour"),
+      };
+      // A rule always has a colour: the picker's "none" is not a choice here.
+      row.color.querySelector("option[value='']")?.remove();
+      when.addEventListener("change", () => draw());
+      rows.push(row);
+    };
+    for (const r of initial) add(r);
+    const addButton = d.createElement("button");
+    addButton.type = "button";
+    addButton.className = "plinth-sheet__ghost plinth-sheet__rules-add";
+    addButton.textContent = "Add rule";
+    addButton.addEventListener("click", () => {
+      if (rows.length >= MAX_HIGHLIGHT_RULES) return;
+      add({ when: ">", color: "red" });
+      draw();
+      queueMicrotask(() => rows[rows.length - 1]?.value.focus());
+    });
+    const draw = () => {
+      const items = rows.map((r, i) => {
+        const li = d.createElement("li");
+        li.className = "plinth-sheet__rule";
+        const n = i + 1;
+        r.when.setAttribute("aria-label", `Rule ${n}: when`);
+        r.value.setAttribute("aria-label", `Rule ${n}: value`);
+        r.to.setAttribute("aria-label", `Rule ${n}: up to`);
+        r.color.setAttribute("aria-label", `Rule ${n}: colour`);
+        const w = r.when.value as SheetHighlightWhen;
+        const none = w === "empty" || w === "not_empty";
+        r.value.hidden = none;
+        r.to.hidden = w !== "between";
+        const date = type() === "date";
+        r.value.placeholder = date ? "YYYY-MM-DD" : w === "between" ? "From" : "Value";
+        r.to.placeholder = date ? "YYYY-MM-DD" : "To";
+        const remove = d.createElement("button");
+        remove.type = "button";
+        remove.className = "plinth-sheet__ghost";
+        remove.textContent = "×";
+        remove.setAttribute("aria-label", `Remove rule ${n}`);
+        remove.addEventListener("click", () => {
+          rows.splice(i, 1);
+          draw();
+          queueMicrotask(() => (rows[i]?.when ?? rows[i - 1]?.when ?? addButton).focus());
+        });
+        li.append(r.when, r.value, r.to, r.color, remove);
+        return li;
+      });
+      list.replaceChildren(...items);
+      addButton.disabled = rows.length >= MAX_HIGHLIGHT_RULES;
+    };
+    box.append(legend, list, addButton);
+    draw();
+    return {
+      el: box,
+      fields: () =>
+        rows.map((r) => ({
+          when: r.when.value as SheetHighlightWhen,
+          value: r.value.value,
+          to: r.to.value,
+          color: (r.color.value || "red") as SheetColor,
+        })),
     };
   }
 

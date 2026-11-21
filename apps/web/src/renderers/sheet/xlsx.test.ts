@@ -1,7 +1,7 @@
 // The .xlsx download: well-formed SpreadsheetML parts, cell types, formulas with cached values,
 // the frozen pane, number formats, inline strings for text that starts with =, forbidden XML
 // characters dropped, and nothing that could reach outside the workbook.
-import { evaluateSheet, parseSheet, type Sheet } from "@plinth/shared";
+import { evaluateSheet, parseSheet, type Sheet, sheetFromXlsx } from "@plinth/shared";
 import { strFromU8, unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { exportBytes, fileName } from "./export.ts";
@@ -117,6 +117,125 @@ describe("buildXlsx", () => {
       n.getAttribute("formatCode"),
     );
     expect(codes).toEqual(['"€"#,##0.00', "yyyy-mm-dd"]);
+  });
+});
+
+describe("buildXlsx with looks", () => {
+  const LOOKS = sheetOf([
+    JSON.stringify({
+      plinth: "sheet",
+      v: 1,
+      columns: [
+        {
+          name: "Item",
+          type: "text",
+          highlight: [{ when: "contains", value: "a*b", color: "blue" }],
+        },
+        {
+          name: "Qty",
+          type: "number",
+          highlight: [
+            { when: "<", value: 0, color: "red" },
+            { when: "between", value: 0, to: 10, color: "yellow" },
+          ],
+        },
+        {
+          name: "Stage",
+          type: "select",
+          options: ["new", 'say "done"'],
+          colors: { 'say "done"': "green" },
+        },
+        {
+          name: "Due",
+          type: "date",
+          highlight: [{ when: ">=", value: "2026-12-01", color: "purple" }],
+        },
+      ],
+    }),
+    JSON.stringify([
+      "Apples",
+      3,
+      "new",
+      null,
+      {
+        style: {
+          A: { bold: true, fill: "yellow", align: "center" },
+          B: { italic: true, border: ["top", "bottom"] },
+          D: { wrap: true },
+        },
+      },
+    ]),
+    JSON.stringify(["Pears", -1, 'say "done"']),
+  ]);
+  const ev = evaluateSheet(LOOKS, { budget: 10_000 });
+  const bytes = buildXlsx(LOOKS, ev, "Looks");
+  const xml = parts(bytes);
+  const styles = xml["xl/styles.xml"] as Document;
+  const sheet = xml["xl/worksheets/sheet1.xml"] as Document;
+  const xfOf = (ref: string) =>
+    styles.getElementsByTagName("cellXfs")[0]?.getElementsByTagName("xf")[
+      Number(cellXml(sheet, ref).getAttribute("s") ?? "0")
+    ] as Element;
+
+  it("writes cell styles as cell formats, an empty styled cell too", () => {
+    const a2 = xfOf("A2");
+    expect(a2.getAttribute("fontId")).toBe("1");
+    const fill = styles.getElementsByTagName("fills")[0]?.getElementsByTagName("fill")[
+      Number(a2.getAttribute("fillId"))
+    ];
+    expect(fill?.getElementsByTagName("fgColor")[0]?.getAttribute("rgb")).toBe("FFFBF1C7");
+    expect(a2.getElementsByTagName("alignment")[0]?.getAttribute("horizontal")).toBe("center");
+    const b2 = xfOf("B2");
+    expect(b2.getAttribute("fontId")).toBe("2");
+    const border = styles.getElementsByTagName("borders")[0]?.getElementsByTagName("border")[
+      Number(b2.getAttribute("borderId"))
+    ] as Element;
+    expect(border.getElementsByTagName("top")[0]?.getAttribute("style")).toBe("thin");
+    expect(border.getElementsByTagName("left")[0]?.getAttribute("style")).toBeNull();
+    // D2 holds nothing but its style.
+    expect(cellXml(sheet, "D2").getElementsByTagName("v").length).toBe(0);
+    expect(xfOf("D2").getElementsByTagName("alignment")[0]?.getAttribute("wrapText")).toBe("1");
+  });
+
+  it("writes highlight rules and option colours as conditional formats that match as the page does", () => {
+    const formats = [...sheet.getElementsByTagName("conditionalFormatting")].map((cf) => [
+      cf.getAttribute("sqref"),
+      [...cf.getElementsByTagName("cfRule")].map((r) => [
+        r.getAttribute("dxfId"),
+        r.getAttribute("stopIfTrue"),
+        r.getElementsByTagName("formula")[0]?.textContent,
+      ]),
+    ]);
+    expect(formats).toEqual([
+      ["A2:A3", [["6", "1", 'ISNUMBER(SEARCH("a~*b",A2))']]],
+      [
+        "B2:B3",
+        [
+          ["1", "1", "AND(ISNUMBER(B2),B2<0)"],
+          ["3", "1", "AND(ISNUMBER(B2),B2>=0,B2<=10)"],
+        ],
+      ],
+      ["C2:C3", [["4", "1", 'EXACT(C2,"say ""done""")']]],
+      ["D2:D3", [["7", "1", "AND(ISNUMBER(D2),D2>=46357)"]]],
+    ]);
+    const dxf = styles.getElementsByTagName("dxfs")[0]?.getElementsByTagName("dxf")[1];
+    expect(dxf?.getElementsByTagName("bgColor")[0]?.getAttribute("rgb")).toBe("FFFDE2E1");
+    expect(dxf?.getElementsByTagName("color")[0]?.getAttribute("rgb")).toBe("FF9F1C1C");
+  });
+
+  it("reads back through the import with the same cell styles", () => {
+    const back = sheetFromXlsx(bytes);
+    expect(back.styles?.[0]).toEqual([
+      { bold: true, fill: "yellow", align: "center" },
+      { italic: true, border: ["top", "bottom"] },
+    ]);
+    expect(back.rows[0]).toEqual(["Apples", 3, "new"]);
+  });
+
+  it("leaves CSV as values only", () => {
+    const csv = exportBytes(LOOKS, ev, "t", "csv") as string;
+    expect(csv).toContain('"Apples",3,"new",');
+    expect(csv).not.toContain("style");
   });
 });
 

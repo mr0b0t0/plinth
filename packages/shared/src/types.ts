@@ -1074,6 +1074,25 @@ export interface SheetReadColumn {
   type: string;
   format?: { style: string; decimals?: number; currency?: string; grouping?: boolean };
   options?: string[];
+  /** Select columns: a colour for some options. */
+  colors?: Record<string, string>;
+  /** The rules that colour cells by their value, in order. */
+  highlight?: {
+    when: string;
+    value?: number | string | boolean;
+    to?: number | string;
+    color: string;
+  }[];
+}
+
+/** A cell's style as read_sheet returns it (only the keys it sets). */
+export interface SheetReadStyle {
+  bold?: true;
+  italic?: true;
+  fill?: string;
+  align?: string;
+  wrap?: true;
+  border?: string[];
 }
 
 /** read_sheet and GET /api/v1/artifacts/:ref/sheet. */
@@ -1089,7 +1108,8 @@ export interface SheetRead {
   row_count: number;
   /** The range the rows cover, or null when it holds no cells. */
   range: string | null;
-  rows: { row: number; cells: SheetReadCell[] }[];
+  /** Each row's cells; `style` (by column letter, within the range) when some of them have one. */
+  rows: { row: number; cells: SheetReadCell[]; style?: Record<string, SheetReadStyle> }[];
   truncated: boolean;
   /** The range to read next when truncated, else null. */
   next_range: string | null;
@@ -1105,5 +1125,6 @@ export interface SheetEditResult extends PublishResult {
     rows_deleted: number;
     columns_inserted: number;
     columns_deleted: number;
+    cells_styled: number;
   };
 }

@@ -60,6 +60,34 @@ export function canonicalSheet(text) {
       if (!Array.isArray(c.options)) return null;
       col.options = c.options.map(nfc);
     }
+    if (c.colors !== undefined) {
+      if (!isPlainObject(c.colors) || !col.options) return null;
+      // In the order of the options, each key in NFC.
+      const given = new Map(Object.entries(c.colors).map(([k, v]) => [nfc(k), v]));
+      const colors = {};
+      let any = false;
+      for (const o of col.options) {
+        if (!given.has(o)) continue;
+        Object.defineProperty(colors, o, {
+          value: given.get(o),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+        any = true;
+      }
+      if (any) col.colors = colors;
+    }
+    if (Array.isArray(c.highlight) && c.highlight.length > 0) {
+      col.highlight = c.highlight.map((r) => {
+        if (!isPlainObject(r)) return r;
+        const rule = { when: r.when };
+        if (r.value !== undefined) rule.value = nfc(r.value);
+        if (r.to !== undefined) rule.to = r.to;
+        rule.color = r.color;
+        return rule;
+      });
+    }
     columns.push(col);
   }
   const header = { plinth: "sheet", v: 1, columns };
@@ -73,11 +101,50 @@ export function canonicalSheet(text) {
       return null;
     }
     if (!Array.isArray(row)) return null;
+    // A row may end with its style object, written last after the trimmed cells.
+    const meta = row.length > 0 && isPlainObject(row[row.length - 1]) ? row.pop() : undefined;
     let end = row.length;
     while (end > 0 && (row[end - 1] === null || row[end - 1] === undefined)) end--;
-    out.push(JSON.stringify(row.slice(0, end).map((c) => (c === undefined ? null : c))));
+    const cells = row.slice(0, end).map((c) => (c === undefined ? null : c));
+    const style = meta === undefined ? null : canonicalRowStyle(meta);
+    if (style === undefined) cells.push(meta);
+    if (style) cells.push({ style });
+    out.push(JSON.stringify(cells));
   }
   return out.join("\n");
+}
+
+const STYLE_KEYS = ["bold", "italic", "fill", "align", "wrap", "border"];
+const BORDER_SIDES = ["top", "right", "bottom", "left"];
+
+const letterIndex = (s) => {
+  let n = 0;
+  for (const ch of s) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+};
+
+/** A row's styles in their canonical spelling (columns in order, keys in order); null when they set nothing, undefined when the object is not a style (the server refuses it). */
+function canonicalRowStyle(meta) {
+  if (!isPlainObject(meta.style)) return undefined;
+  const letters = Object.keys(meta.style)
+    .filter((k) => /^[A-Z]{1,3}$/.test(k))
+    .sort((a, b) => letterIndex(a) - letterIndex(b));
+  const out = {};
+  let any = false;
+  for (const letter of letters) {
+    const s = meta.style[letter];
+    if (!isPlainObject(s)) continue;
+    const st = {};
+    for (const k of STYLE_KEYS) {
+      if (s[k] === undefined) continue;
+      st[k] =
+        k === "border" && Array.isArray(s[k]) ? BORDER_SIDES.filter((x) => s[k].includes(x)) : s[k];
+    }
+    if (Object.keys(st).length === 0) continue;
+    out[letter] = st;
+    any = true;
+  }
+  return any ? out : null;
 }
 
 /** The field a type's source goes in on PUT /artifacts: html for a page, content for every typed one. */

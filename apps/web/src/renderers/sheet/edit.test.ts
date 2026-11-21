@@ -319,7 +319,7 @@ describe("solo editing", () => {
     // In the bar beside the filter, not a toolbar of their own.
     expect(strip.closest(".plinth-sheet__bar")).not.toBeNull();
     const menus = [...strip.querySelectorAll<HTMLButtonElement>("[aria-haspopup=menu]")];
-    expect(menus.map((b) => b.textContent)).toEqual(["Row", "Column"]);
+    expect(menus.map((b) => b.textContent)).toEqual(["Row", "Column", "Format"]);
     expect(strip.textContent).not.toContain("Double-click");
     const [row] = menus as [HTMLButtonElement];
     const list = document.getElementById(row.getAttribute("aria-controls") ?? "") as HTMLElement;
@@ -376,7 +376,7 @@ describe("solo editing", () => {
     expect(form.closest(".plinth-sheet__slot")).toBeNull();
     expect(form.getAttribute("aria-label")).toBe("Column B settings");
     const actions = [...form.querySelectorAll("button")].map((b) => b.textContent);
-    expect(actions).toEqual(["Cancel", "Apply"]);
+    expect(actions).toEqual(["Add rule", "Cancel", "Apply"]);
     // The selects show words, and keep the stored values.
     const [types, formats] = [...form.querySelectorAll("select")];
     expect([...(types?.options ?? [])].map((o) => [o.value, o.text])).toEqual([

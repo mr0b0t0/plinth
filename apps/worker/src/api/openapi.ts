@@ -54,7 +54,11 @@ import {
   reviewLoginInput,
   SCOPES,
   SHA256_RE,
+  SHEET_ALIGNS,
+  SHEET_BORDER_SIDES,
+  SHEET_COLORS,
   SHEET_COLUMN_TYPES,
+  SHEET_HIGHLIGHT_WHEN,
   STATS_RANGES,
   setVisibilityInput,
   startUploadInput,
@@ -1173,6 +1177,7 @@ function sheetSchemas(): Record<string, Json> {
     rows_deleted: int(),
     columns_inserted: int(),
     columns_deleted: int(),
+    cells_styled: int({ description: "Cells whose style a format op set or cleared" }),
   });
   return {
     SheetRead: obj({
@@ -1195,23 +1200,61 @@ function sheetSchemas(): Record<string, Json> {
                 "Number columns: style plain, percent or currency, decimals, currency, grouping",
             },
             options: { type: "array", items: str() },
+            colors: {
+              type: "object",
+              description: `Select columns: a colour (${SHEET_COLORS.join(", ")}) for some options, by option`,
+              additionalProperties: enumOf(SHEET_COLORS),
+            },
+            highlight: {
+              type: "array",
+              description:
+                "Rules in order; the first whose condition a cell's computed value meets gives it its colour",
+              items: obj(
+                {
+                  when: enumOf(SHEET_HIGHLIGHT_WHEN),
+                  value: { description: "A number, text, true or false, or a date YYYY-MM-DD" },
+                  to: { description: "between only: the higher end" },
+                  color: enumOf(SHEET_COLORS),
+                },
+                ["value", "to"],
+              ),
+            },
           },
-          ["format", "options"],
+          ["format", "options", "colors", "highlight"],
         ),
       },
       row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
       range: nullable("string", { description: "The A1 range the rows cover" }),
       rows: {
         type: "array",
-        items: obj({
-          row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
-          cells: {
-            type: "array",
-            description:
-              "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
-            items: {},
+        items: obj(
+          {
+            row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
+            cells: {
+              type: "array",
+              description:
+                "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
+              items: {},
+            },
+            style: {
+              type: "object",
+              description:
+                "The styles of the row's styled cells in the range, by column letter: bold, italic, fill, align, wrap and border",
+              additionalProperties: obj(
+                {
+                  bold: { const: true },
+                  italic: { const: true },
+                  fill: enumOf(SHEET_COLORS),
+                  align: enumOf(SHEET_ALIGNS),
+                  wrap: { const: true },
+                  border: { type: "array", items: enumOf(SHEET_BORDER_SIDES) },
+                },
+                ["bold", "italic", "fill", "align", "wrap", "border"],
+              ),
+            },
           },
-        }),
+          ["style"],
+        ),
       },
       truncated: { type: "boolean" },
       next_range: nullable("string", { description: "The range to read next when truncated" }),

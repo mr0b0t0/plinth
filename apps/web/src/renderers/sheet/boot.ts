@@ -112,16 +112,24 @@ export function changedCells(base: Sheet, sheet: Sheet): [number, number][] {
       out.push([1, c]);
     }
   }
-  const key = (r: readonly unknown[]) => JSON.stringify(r);
-  const { hunks } = diffSequence(base.rows.map(key), sheet.rows.map(key));
+  // A row is its cells and their styles: a cell whose style alone changed is marked too.
+  const key = (s: Sheet) => (r: readonly unknown[], i: number) =>
+    JSON.stringify(s.styles?.[i] ? [r, s.styles[i]] : r);
+  const look = (s: Sheet, i: number, c: number) => JSON.stringify(s.styles?.[i]?.[c] ?? null);
+  const { hunks } = diffSequence(base.rows.map(key(base)), sheet.rows.map(key(sheet)));
   for (const h of hunks) {
     const pairs = Math.min(h.aEnd - h.aStart, h.bEnd - h.bStart);
     for (let i = h.bStart; i < h.bEnd; i++) {
       const row = sheet.rows[i] ?? [];
-      const was = i - h.bStart < pairs ? (base.rows[h.aStart + (i - h.bStart)] ?? []) : null;
+      const at = h.aStart + (i - h.bStart);
+      const was = i - h.bStart < pairs ? (base.rows[at] ?? []) : null;
       for (let c = 0; c < cols; c++) {
         const v = row[c] ?? null;
-        if (was === null ? v !== null : v !== (was[c] ?? null)) out.push([i + 2, c]);
+        const differs =
+          was === null
+            ? v !== null
+            : v !== (was[c] ?? null) || look(sheet, i, c) !== look(base, at, c);
+        if (differs) out.push([i + 2, c]);
       }
       // A new row that is empty still shows where it went in.
       if (was === null && row.every((v) => v === null)) out.push([i + 2, 0]);

@@ -25,6 +25,7 @@ import {
   SheetOpError,
   type SheetRead,
   type SheetReadCell,
+  type SheetReadStyle,
   type SheetReadValue,
   serializeSheet,
   TYPE_REGISTRY,
@@ -110,13 +111,20 @@ export async function readSheet(ctx: Ctx, input: ReadSheetInput): Promise<SheetR
   const rows: SheetRead["rows"] = [];
   for (let r = r1; r <= end; r++) {
     const cells: SheetReadCell[] = [];
+    let style: Record<string, SheetReadStyle> | undefined;
+    const rowStyle = r > 1 ? sheet.styles?.[r - 2] : undefined;
     for (let c = c1; c <= c2; c++) {
       const cell = cellAt(r, c);
       if (r > 1 && isFormula(cell)) {
         cells.push(ev ? { f: cell, v: wireValue(ev.value(r, c)) } : { f: cell });
       } else cells.push(cell);
+      const s = rowStyle?.[c];
+      if (s) {
+        style ??= {};
+        style[colLetter(c)] = { ...s, ...(s.border ? { border: [...s.border] } : {}) };
+      }
     }
-    rows.push({ row: r, cells });
+    rows.push(style ? { row: r, cells, style } : { row: r, cells });
   }
   const truncated = !empty && end < r2;
   return {
@@ -132,6 +140,8 @@ export async function readSheet(ctx: Ctx, input: ReadSheetInput): Promise<SheetR
       type: c.type,
       ...(c.format ? { format: { ...c.format } } : {}),
       ...(c.options ? { options: [...c.options] } : {}),
+      ...(c.colors ? { colors: { ...c.colors } } : {}),
+      ...(c.highlight ? { highlight: c.highlight.map((h) => ({ ...h })) } : {}),
     })),
     row_count: sheet.rows.length,
     range: empty ? null : `${a1(r1, c1)}:${a1(end, c2)}`,

@@ -26,6 +26,7 @@ import {
   type SheetColumnType,
   type SheetContentFormat,
   type SheetNumberFormat,
+  type SheetRowStyle,
   serializeSheet,
 } from "./format.ts";
 import { isoDateSerial, MAX_CONVERTED_TEXT, MIN_DATE_SERIAL, serialIso } from "./formula/values.ts";
@@ -147,6 +148,7 @@ function build(
   warnings: SheetImportWarning[],
   widths?: Map<number, number>,
   freezeCols = 0,
+  styles?: (SheetRowStyle | undefined)[],
 ): Sheet {
   // The row count is checked first, and the width found with a loop: spreading every row into
   // Math.max throws RangeError on a long file.
@@ -176,6 +178,7 @@ function build(
   }
   const rows = data.map((r) => columns.map((col, c) => cellFor(r[c] ?? null, col.type)));
   const sheet: Sheet = { header: { columns }, rows };
+  if (styles && styles.length > 0) sheet.styles = styles.slice(0, rows.length);
   const fc = Math.min(MAX_FREEZE_COLS, freezeCols, width);
   if (fc > 0) sheet.header.freeze = { cols: fc };
   for (const row of rows) {
@@ -438,7 +441,18 @@ export function sheetFromXlsx(bytes: Uint8Array, warnings: SheetImportWarning[] 
     raw.rows[r] = [];
   }
   while (data.length > 0 && (data[data.length - 1] as In[]).length === 0) data.pop();
-  const sheet = build(names, data, found, raw.widths, raw.freezeCols);
+  // Cell styles of the data rows, from the formats their cells name (rows past the data dropped).
+  const styles: (SheetRowStyle | undefined)[] = [];
+  for (let r = 1; r < raw.cellLooks.length; r++) {
+    const at = raw.cellLooks[r];
+    if (!at) continue;
+    const row: SheetRowStyle = [];
+    at.forEach((xf, c) => {
+      if (c < width) row[c] = raw.looks[xf] ?? null;
+    });
+    styles[r - 1] = row;
+  }
+  const sheet = build(names, data, found, raw.widths, raw.freezeCols, styles);
   warnings.push(...found);
   return sheet;
 }

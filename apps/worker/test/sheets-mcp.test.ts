@@ -256,6 +256,67 @@ describe("edit_sheet", () => {
     expect(versions.items[0]).toMatchObject({ number: 2, note: "Plums" });
   });
 
+  it("styles cells, colours options and sets highlight rules; read_sheet returns them", async () => {
+    const a = await agent();
+    const p = await publishSheet(a);
+    const c = await mcpClient(a.token);
+    const r = await tool(c, "edit_sheet", {
+      id: p.id,
+      base_version: 1,
+      ops: [
+        { op: "format", range: "A4:D4", style: { bold: true, border: ["top"] } },
+        { op: "format", range: "D:D", style: { fill: "yellow" } },
+        { op: "set_column", column: "B", highlight: [{ when: "<", value: 4, color: "red" }] },
+        {
+          op: "insert_columns",
+          before: "F",
+          columns: [
+            { name: "Stage", type: "select", options: ["new", "done"], colors: { done: "green" } },
+          ],
+        },
+      ],
+    });
+    expect(r.isError, r.text).toBe(false);
+    expect(r.data.changed).toMatchObject({ cells: 0, cells_styled: 7, columns_inserted: 1 });
+    const stored = (await (await storedFile(p.id, 2, "sheet.jsonl"))?.text()) ?? "";
+    expect(stored.split("\n")[3]).toBe(
+      '["Total",null,null,"=SUM(D2:D3)",{"style":{"A":{"bold":true,"border":["top"]},"B":{"bold":true,"border":["top"]},"C":{"bold":true,"border":["top"]},"D":{"bold":true,"fill":"yellow","border":["top"]}}}]',
+    );
+    const read = await tool(c, "read_sheet", { id: p.id, range: "A3:F4" });
+    await c.close();
+    expect(read.data.columns[1].highlight).toEqual([{ when: "<", value: 4, color: "red" }]);
+    expect(read.data.columns[5]).toMatchObject({ name: "Stage", colors: { done: "green" } });
+    expect(read.data.rows[0]).toMatchObject({ row: 3, style: { D: { fill: "yellow" } } });
+    expect(read.data.rows[1].style.A).toEqual({ bold: true, border: ["top"] });
+  });
+
+  it("refuses a style or colour outside the fixed lists, and publishes nothing", async () => {
+    const a = await agent();
+    const p = await publishSheet(a);
+    const bad = await editRest(a, p.id, {
+      base_version: 1,
+      ops: [{ op: "format", range: "A2", style: { fill: "url(x)" } }],
+    });
+    expect(bad.status).toBe(400);
+    const css = await editRest(a, p.id, {
+      base_version: 1,
+      ops: [{ op: "format", range: "A2", style: { color: "red" } }],
+    });
+    expect(css.status).toBe(400);
+    const rule = await editRest(a, p.id, {
+      base_version: 1,
+      ops: [
+        { op: "set_column", column: "B", highlight: [{ when: "<", value: "x", color: "red" }] },
+      ],
+    });
+    expect(rule.status).toBe(400);
+    expect((await json(rule)).error.details.issues[0].message).toMatch(/number in a number column/);
+    const versions = await json(
+      await call(`/api/v1/artifacts/${p.id}/versions`, { headers: a.auth }),
+    );
+    expect(versions.items).toHaveLength(1);
+  });
+
   it("counts the rows a set adds past the end, and stores what it checked", async () => {
     const a = await agent();
     const p = await publishSheet(a);

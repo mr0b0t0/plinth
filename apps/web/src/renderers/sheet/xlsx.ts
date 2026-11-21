@@ -6,6 +6,11 @@
 // Excel's, so a downloaded workbook can never hold HYPERLINK, WEBSERVICE, DDE or an external
 // reference. No macros and no external relationships; docProps holds the title only. Every text
 // node and attribute goes through xmlText.
+//
+// Looks carry over where Excel has them: cell styles as cell formats (bold, italic, a solid fill
+// in the colour's light value, alignment, wrapping, thin borders), and highlight rules and option
+// colours as conditional formats over the column's data rows, as formulas that match what the
+// page matches, the first that matches stopping the rest. CSV has none of them.
 import {
   colLetter,
   isError,
@@ -13,10 +18,16 @@ import {
   isoDateSerial,
   lexFormula,
   literalText,
+  optionColor,
   round15,
+  SHEET_COLOR_HEX,
+  SHEET_COLORS,
   type Sheet,
+  type SheetCellStyle,
+  type SheetColor,
   type SheetColumn,
   type SheetEvaluation,
+  type SheetHighlightRule,
   type SheetNumberFormat,
   XLFN_FUNCTIONS,
 } from "@plinth/shared";
@@ -134,38 +145,163 @@ const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 const NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
+/** A formula's text as Excel reads it, for a highlight rule's value. */
+function ruleOperand(v: unknown, col: SheetColumn): string {
+  if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
+  if (typeof v === "number") return String(round15(v));
+  if (typeof v === "string" && col.type === "date") return String(isoDateSerial(v) ?? 0);
+  return `"${String(v).replace(/"/g, '""')}"`;
+}
+
+/**
+ * A highlight rule as an Excel conditional format formula for the cell `ref` (the range's first),
+ * written so it matches what the page matches: a comparison only a value of the same kind, an
+ * empty cell only Empty, an error only Not empty, and Contains as text without case or
+ * wildcards.
+ */
+export function ruleFormula(rule: SheetHighlightRule, ref: string, col: SheetColumn): string {
+  const v = ruleOperand(rule.value, col);
+  const kind =
+    typeof rule.value === "boolean"
+      ? `ISLOGICAL(${ref})`
+      : typeof rule.value === "number" || col.type === "date"
+        ? `ISNUMBER(${ref})`
+        : `ISTEXT(${ref})`;
+  switch (rule.when) {
+    case "empty":
+      return `IF(ISERROR(${ref}),FALSE,LEN(${ref})=0)`;
+    case "not_empty":
+      return `IF(ISERROR(${ref}),TRUE,LEN(${ref})>0)`;
+    case "contains": {
+      const needle = String(rule.value ?? "").replace(/[~*?]/g, "~$&");
+      return `ISNUMBER(SEARCH("${needle.replace(/"/g, '""')}",${ref}))`;
+    }
+    case "between":
+      return `AND(ISNUMBER(${ref}),${ref}>=${v},${ref}<=${ruleOperand(rule.to, col)})`;
+    default:
+      return `AND(${kind},${ref}${rule.when}${v})`;
+  }
+}
+
 /** The sheet's .xlsx bytes. */
 export function buildXlsx(sheet: Sheet, ev: SheetEvaluation, title: string): Uint8Array {
   const cols = sheet.header.columns;
-  // Styles: 0 default, 1 the bold header, then one per distinct number format.
+  // Styles: 0 default, 1 the bold header, then one per distinct number format, then one per
+  // distinct number format and cell style a cell has.
   const codes: string[] = [];
-  const colStyle = cols.map((c) => {
+  const colFmt = cols.map((c) => {
     const code = formatCode(c, currencySymbol);
     if (code === null) return 0;
     let i = codes.indexOf(code);
     if (i < 0) i = codes.push(code) - 1;
-    return i + 2;
+    return 164 + i;
   });
+  const colStyle = colFmt.map((id) => (id === 0 ? 0 : id - 164 + 2));
   const numFmts = codes
     .map((code, i) => `<numFmt${attr("numFmtId", 164 + i)}${attr("formatCode", code)}/>`)
     .join("");
-  const styles =
+  // Fonts: plain, bold, italic, bold italic. Fills: none, gray125 (Excel's own), then a solid fill
+  // per sheet colour. Borders: none, then one per set of sides used.
+  const fonts = ["", "<b/>", "<i/>", "<b/><i/>"].map(
+    (f) => `<font>${f}<sz val="11"/><name val="Calibri"/></font>`,
+  );
+  const fills = [
+    '<fill><patternFill patternType="none"/></fill>',
+    '<fill><patternFill patternType="gray125"/></fill>',
+    ...SHEET_COLORS.map(
+      (c) =>
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF${SHEET_COLOR_HEX[c].fill}"/><bgColor indexed="64"/></patternFill></fill>`,
+    ),
+  ];
+  const borders = ["<border><left/><right/><top/><bottom/><diagonal/></border>"];
+  const borderIds = new Map<string, number>([["", 0]]);
+  const borderOf = (sides: readonly string[]): number => {
+    const key = sides.join(",");
+    let id = borderIds.get(key);
+    if (id === undefined) {
+      const side = (s: string) =>
+        sides.includes(s) ? `<${s} style="thin"><color rgb="FF3B434B"/></${s}>` : `<${s}/>`;
+      id =
+        borders.push(
+          `<border>${side("left")}${side("right")}${side("top")}${side("bottom")}<diagonal/></border>`,
+        ) - 1;
+      borderIds.set(key, id);
+    }
+    return id;
+  };
+  const xfs = [
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>',
+    ...codes.map(
+      (_c, i) =>
+        `<xf numFmtId="${164 + i}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`,
+    ),
+  ];
+  const xfIds = new Map<string, number>();
+  /** The cell format of a data cell in column c with style `s` (its column's alone when none). */
+  const cellXf = (c: number, s: SheetCellStyle | null | undefined): number => {
+    if (!s) return colStyle[c] ?? 0;
+    const numFmt = colFmt[c] ?? 0;
+    const font = (s.bold ? 1 : 0) + (s.italic ? 2 : 0);
+    const fill = s.fill ? 2 + SHEET_COLORS.indexOf(s.fill) : 0;
+    const border = borderOf(s.border ?? []);
+    const align =
+      s.align || s.wrap
+        ? `<alignment${s.align ? ` horizontal="${s.align}"` : ""}${s.wrap ? ' wrapText="1"' : ""}/>`
+        : "";
+    const key = `${numFmt}|${font}|${fill}|${border}|${align}`;
+    let id = xfIds.get(key);
+    if (id === undefined) {
+      id =
+        xfs.push(
+          `<xf numFmtId="${numFmt}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0"` +
+            `${numFmt ? ' applyNumberFormat="1"' : ""}${font ? ' applyFont="1"' : ""}${fill ? ' applyFill="1"' : ""}` +
+            `${border ? ' applyBorder="1"' : ""}${align ? ` applyAlignment="1">${align}</xf>` : "/>"}`,
+        ) - 1;
+      xfIds.set(key, id);
+    }
+    return id;
+  };
+  // Highlight rules and option colours become conditional formats over each column's data
+  // rows, in the page's order: the rules first, each stopping the ones after it, then the options.
+  const dxfs = SHEET_COLORS.map(
+    (c) =>
+      `<dxf><font><color rgb="FF${SHEET_COLOR_HEX[c].text}"/></font><fill><patternFill patternType="solid"><bgColor rgb="FF${SHEET_COLOR_HEX[c].fill}"/></patternFill></fill></dxf>`,
+  );
+  const lastRow = sheet.rows.length + 1;
+  let priority = 0;
+  const conditional: string[] = [];
+  cols.forEach((col, c) => {
+    if (lastRow < 2) return;
+    const ref = `${colLetter(c)}2`;
+    const rules: string[] = [];
+    const rule = (formula: string, color: SheetColor) => {
+      rules.push(
+        `<cfRule type="expression" dxfId="${SHEET_COLORS.indexOf(color)}" priority="${++priority}" stopIfTrue="1"><formula>${xmlText(formula)}</formula></cfRule>`,
+      );
+    };
+    for (const r of col.highlight ?? []) rule(ruleFormula(r, ref, col), r.color);
+    for (const o of col.options ?? []) {
+      const color = optionColor(col, o);
+      if (color) rule(`EXACT(${ref},"${o.replace(/"/g, '""')}")`, color);
+    }
+    if (rules.length > 0) {
+      conditional.push(
+        `<conditionalFormatting sqref="${ref}:${colLetter(c)}${lastRow}">${rules.join("")}</conditionalFormatting>`,
+      );
+    }
+  });
+  // The cells' formats are known once the rows are written: the styles part is built after them.
+  const stylesXml = () =>
     `${XML_HEAD}<styleSheet xmlns="${NS_MAIN}">` +
     (codes.length ? `<numFmts count="${codes.length}">${numFmts}</numFmts>` : "") +
-    '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
-    '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
-    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+    `<fonts count="${fonts.length}">${fonts.join("")}</fonts>` +
+    `<fills count="${fills.length}">${fills.join("")}</fills>` +
+    `<borders count="${borders.length}">${borders.join("")}</borders>` +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    `<cellXfs count="${codes.length + 2}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
-    codes
-      .map(
-        (_c, i) =>
-          `<xf numFmtId="${164 + i}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`,
-      )
-      .join("") +
-    "</cellXfs>" +
+    `<cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs>` +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    `<dxfs count="${dxfs.length}">${dxfs.join("")}</dxfs>` +
     "</styleSheet>";
 
   const freeze = sheet.header.freeze?.cols ?? 0;
@@ -190,12 +326,18 @@ export function buildXlsx(sheet: Sheet, ev: SheetEvaluation, title: string): Uin
   sheet.rows.forEach((row, ri) => {
     const r = ri + 2;
     const cells: string[] = [];
+    const rowStyle = sheet.styles?.[ri];
     for (let c = 0; c < cols.length; c++) {
       const cell = row[c] ?? null;
-      if (cell === null) continue;
+      const look = rowStyle?.[c];
       const ref = `${colLetter(c)}${r}`;
+      if (cell === null) {
+        // An empty cell is written only for its style.
+        if (look) cells.push(`<c r="${ref}" s="${cellXf(c, look)}"/>`);
+        continue;
+      }
       const col = cols[c] as SheetColumn;
-      const s = colStyle[c] ?? 0;
+      const s = cellXf(c, look);
       const sAttr = s ? ` s="${s}"` : "";
       if (isFormula(cell)) {
         const f = `<f>${xmlText(excelFormula(cell))}</f>`;
@@ -215,7 +357,7 @@ export function buildXlsx(sheet: Sheet, ev: SheetEvaluation, title: string): Uin
         cells.push(`<c r="${ref}"${sAttr} t="b"><v>${cell ? 1 : 0}</v></c>`);
       else if (col.type === "date" && isoDateSerial(cell) !== null) {
         cells.push(`<c r="${ref}"${sAttr}><v>${isoDateSerial(cell)}</v></c>`);
-      } else cells.push(inline(ref, literalText(cell), 0));
+      } else cells.push(inline(ref, literalText(cell), look ? s : 0));
     }
     rows.push(`<row r="${r}">${cells.join("")}</row>`);
   });
@@ -224,7 +366,7 @@ export function buildXlsx(sheet: Sheet, ev: SheetEvaluation, title: string): Uin
     `${XML_HEAD}<worksheet xmlns="${NS_MAIN}" xmlns:r="${NS_REL}">` +
     `<sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews>` +
     `<cols>${widths}</cols>` +
-    `<sheetData>${rows.join("")}</sheetData>` +
+    `<sheetData>${rows.join("")}</sheetData>${conditional.join("")}` +
     "</worksheet>";
 
   const files: Zippable = {
@@ -259,7 +401,7 @@ export function buildXlsx(sheet: Sheet, ev: SheetEvaluation, title: string): Uin
         '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
         "</Relationships>",
     ),
-    "xl/styles.xml": strToU8(styles),
+    "xl/styles.xml": strToU8(stylesXml()),
     "xl/worksheets/sheet1.xml": strToU8(worksheet),
   };
   return zipSync(files, { level: 6 });

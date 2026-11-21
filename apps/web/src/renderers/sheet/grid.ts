@@ -10,17 +10,25 @@
 // Built with createElement and textContent only: no data string is ever parsed as HTML. The only
 // attributes taken from data are href (a link that passes isSheetLinkUrl again here), title (an
 // error's meaning, a fixed string) and a width clamped to 40 to 800 pixels. Cell ids come from the
-// cell's address alone (__plinth-cell-B7), never from its content.
+// cell's address alone (__plinth-cell-B7), never from its content. How a cell looks (its style,
+// a highlight rule's colour, a coloured option's chip) is class names from fixed lists
+// (cellLookClasses): a colour the parser did not accept never reaches a class.
 //
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
-// cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
-// with the view carried over), setHolders() tints the rows other people hold (the holder named on
-// the row number for a pointer, and in each of the row's cells' accessible description), and the
-// editor's Row and Column menus sit in the bar (`tools`). In edit mode the editor also puts the
-// width handle on each column header's edge (setHeaderTools) and previews a width while it changes
-// (setWidth). The scroll container keeps the sticky header rows and the frozen columns out of the
-// area a cell scrolls into (scroll-padding), so a cell that takes the focus or opens is never left
-// under them.
+// cells whose computed value or look changed when the rows and columns are the same (a rebuild
+// otherwise, with the view carried over), setHolders() tints the rows other people hold (the
+// holder named on the row number for a pointer, and in each of the row's cells' accessible
+// description), and the editor's menus sit in the bar (`tools`). In edit mode the editor also puts
+// the width handle on each column header's edge (setHeaderTools), previews a width while it changes
+// (setWidth) and puts the fill handle on the selection's corner (setFillHandle). The scroll
+// container keeps the sticky header rows and the frozen columns out of the area a cell scrolls into
+// (scroll-padding), so a cell that takes the focus or opens is never left under them.
+//
+// Selection: one cell, or a rectangle from an anchor to the selected cell in the order shown
+// (Shift with an arrow, Home or End, Shift+click, or a drag), whose cells carry aria-selected and
+// whose size is said to a screen reader. Copying (Ctrl or Cmd+C) puts the cells as the grid shows
+// them on the clipboard as tab-separated text and an HTML table, in view and edit mode alike,
+// only in the copy event a person's key or menu starts.
 //
 // Keyboard and screen readers: the table is a grid (role="grid", aria-rowcount, aria-colcount,
 // row and column indexes, aria-readonly outside edit mode) with one cell in the tab order, the
@@ -31,9 +39,14 @@ import {
   a1,
   type Cell,
   colLetter,
+  highlightColor,
   isError,
   isSheetLinkUrl,
+  optionColor,
+  SHEET_COLORS,
   type Sheet,
+  type SheetCellStyle,
+  type SheetColor,
   type SheetColumn,
   type SheetEvaluation,
   type Value,
@@ -53,19 +66,45 @@ export interface GridOptions {
   exhausted: boolean;
 }
 
+/** The selected cells: A1 rows in the order shown (1 is the header), and a span of columns. */
+export interface GridRange {
+  /** Rows a filter hides are left out. */
+  rows: number[];
+  c1: number;
+  c2: number;
+  anchor: { row: number; col: number };
+  focus: { row: number; col: number };
+}
+
+/** What a copy carries: the text pasted elsewhere, and the cells as stored, for a paste here. */
+export interface GridCopy {
+  tsv: string;
+  html: string;
+  /** The raw cells (formulas as written), by the range's rows and columns; header row omitted. */
+  cells: Cell[][];
+  /** The A1 rows the raw cells came from. */
+  rows: number[];
+  c1: number;
+}
+
 export interface Grid {
   el: HTMLElement;
   /** The cells' table, for the editor's listeners. */
   table: HTMLTableElement;
   /** Between the bar (and its note) and the cells. */
   slot: HTMLElement;
-  /** In the bar, before the filter: the editor's Row and Column menus go here. */
+  /** In the bar, before the filter: the editor's menus go here. */
   tools: HTMLElement;
   /** The bar's filter field (a rebuild gives the focus back to the new one). */
   filterInput: HTMLInputElement;
+  /** Select one cell (the anchor moves to it). */
   select(row: number, col: number): void;
+  /** Select from `anchor` to the cell given, which becomes the selected one. */
+  selectRange(anchor: { row: number; col: number }, row: number, col: number): void;
   /** The selected cell's A1 row and column. */
   selected(): { row: number; col: number };
+  /** The selected rectangle (one cell when nothing is extended). */
+  range(): GridRange;
   /** A cell by its A1 row and column (row 1 is the header), or null. */
   cell(row: number, col: number): HTMLElement | null;
   sortBy(col: number): void;
@@ -74,8 +113,8 @@ export interface Grid {
   showRaw(text: string): void;
   /**
    * Show `sheet` in place when it has the same columns and number of rows: only cells whose
-   * value changed are repainted, and cells `locked` holds (the open editor's) are left alone.
-   * False when the shape changed (the caller builds a new grid and carries the view over).
+   * value or look changed are repainted, and cells `locked` holds (the open editor's) are left
+   * alone. False when the shape changed (the caller builds a new grid and carries the view over).
    */
   update(sheet: Sheet, ev: SheetEvaluation): boolean;
   /** Paint a cell again from its computed value (after its field closed). */
@@ -88,6 +127,12 @@ export interface Grid {
   setEditable(on: boolean): void;
   /** The editor's controls in each column header (edit mode), or none. */
   setHeaderTools(make: ((col: number, column: SheetColumn) => HTMLElement[]) | null): void;
+  /** The fill handle on the selection's corner (edit mode), with what a press on it does. */
+  setFillHandle(press: ((e: PointerEvent) => void) | null): void;
+  /** Mark the cells a fill would write (null: none). */
+  markFill(rows: readonly number[] | null, c1?: number, c2?: number): void;
+  /** Told what each copy carried (the editor pastes copied formulas as formulas). */
+  setCopyListener(fn: ((c: GridCopy) => void) | null): void;
   /** Show a column `px` wide (clamped) until the next rebuild: a width while it changes. */
   setWidth(col: number, px: number): void;
   /** A column's width as shown now. */
@@ -113,6 +158,8 @@ export interface GridView {
   left: number;
   row: number;
   col: number;
+  /** The selection's anchor, when it spans more than one cell. */
+  anchor?: { row: number; col: number };
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -200,8 +247,52 @@ export function rawText(cell: Cell): string {
   return String(cell);
 }
 
-function fillCell(doc: Document, td: HTMLElement, d: Display): void {
+/** How a cell looks apart from its value: its style, its highlight, its option's chip. */
+export interface CellLook {
+  style: SheetCellStyle | null;
+  highlight: SheetColor | null;
+  chip: SheetColor | null;
+}
+
+const NO_LOOK: CellLook = { style: null, highlight: null, chip: null };
+
+/** A colour as a class name part, only when it is one of the sheet colours. */
+function colorPart(c: SheetColor | null | undefined): string | null {
+  return c && (SHEET_COLORS as readonly string[]).includes(c) ? c : null;
+}
+
+/**
+ * The classes a cell's look adds, from fixed lists only: bold, italic, a fill or a highlight
+ * colour (the highlight wins), an alignment, wrapping and the sides with a border.
+ */
+export function cellLookClasses(look: CellLook): string[] {
+  const out: string[] = [];
+  const s = look.style;
+  if (s?.bold) out.push("plinth-sheet__s-bold");
+  if (s?.italic) out.push("plinth-sheet__s-italic");
+  const hl = colorPart(look.highlight);
+  const fill = colorPart(s?.fill);
+  if (hl) out.push(`plinth-sheet__hl--${hl}`);
+  else if (fill) out.push(`plinth-sheet__fill--${fill}`);
+  if (s?.align === "left" || s?.align === "center" || s?.align === "right") {
+    out.push(`plinth-sheet__s-${s.align}`);
+  }
+  if (s?.wrap) out.push("plinth-sheet__s-wrap");
+  if (s?.border && s.border.length > 0) {
+    out.push("plinth-sheet__bd");
+    for (const side of s.border) {
+      if (side === "top" || side === "right" || side === "bottom" || side === "left") {
+        out.push(`plinth-sheet__bd--${side}`);
+      }
+    }
+  }
+  return out;
+}
+
+function fillCell(doc: Document, td: HTMLElement, d: Display, look: CellLook = NO_LOOK): void {
   td.className = `plinth-sheet__cell plinth-sheet__cell--${d.kind}`;
+  const classes = cellLookClasses(look);
+  if (classes.length > 0) td.classList.add(...classes);
   switch (d.kind) {
     case "empty":
       return;
@@ -231,9 +322,50 @@ function fillCell(doc: Document, td: HTMLElement, d: Display): void {
       td.append(s);
       return;
     }
-    default:
+    default: {
+      const chip = colorPart(look.chip);
+      if (chip && d.kind === "text") {
+        td.append(el(doc, "span", `plinth-sheet__chip plinth-sheet__chip--${chip}`, d.text));
+        return;
+      }
       td.textContent = d.text;
+    }
   }
+}
+
+/** A cell's look from the sheet: the row's style for it, its column's rules and option colours. */
+function lookAt(sheet: Sheet, ri: number, c: number, col: SheetColumn, v: Value): CellLook {
+  const style = sheet.styles?.[ri]?.[c] ?? null;
+  const highlight = col.highlight ? highlightColor(col, v) : null;
+  const chip = col.type === "select" && typeof v === "string" ? optionColor(col, v) : null;
+  if (!style && !highlight && !chip) return NO_LOOK;
+  return { style, highlight, chip };
+}
+
+const lookKey = (l: CellLook) =>
+  l === NO_LOOK ? "" : JSON.stringify([l.style, l.highlight, l.chip]);
+
+/** A cell's text as a copy carries it: its shown text, a checkbox as TRUE or FALSE. */
+function copyTextOf(d: Display): string {
+  if (d.kind === "check") return d.label === "Yes" ? "TRUE" : "FALSE";
+  return d.text;
+}
+
+/**
+ * Text for the HTML table a copy carries (to the clipboard only, never parsed here): & < > and "
+ * escaped, so a cell's text is only ever text in the app it is pasted into.
+ */
+export function htmlText(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** One field of tab-separated text, quoted when it holds a tab, a newline or a quote. */
+export function tsvField(s: string): string {
+  return /[\t\n\r"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /** Build the sheet's page. */
@@ -278,6 +410,12 @@ export function buildGrid(
         "Some formulas were not calculated here (#LIMIT!). A download calculates them.",
       )
     : null;
+  // A selection of more than one cell is said here ("B2 to D5 selected, 12 cells").
+  const rangeSaid = el(doc, "span", "plinth-sheet__sr");
+  rangeSaid.setAttribute("aria-live", "polite");
+  // What a copy selects when nothing else is selected (some browsers fire no copy event then).
+  const clip = el(doc, "div", "plinth-sheet__clip", " ");
+  clip.setAttribute("aria-hidden", "true");
 
   // ---------- grid ----------
   const scroll = el(doc, "div", "plinth-sheet__scroll");
@@ -289,6 +427,7 @@ export function buildGrid(
   table.setAttribute("role", "grid");
   table.setAttribute("aria-label", opts.title || "Sheet");
   table.setAttribute("aria-readonly", "true");
+  table.setAttribute("aria-multiselectable", "true");
   table.setAttribute("aria-rowcount", String(sheet.rows.length + 1));
   table.setAttribute("aria-colcount", String(cols.length + 1));
   const colgroup = el(doc, "colgroup");
@@ -397,14 +536,22 @@ export function buildGrid(
   const rows: HTMLTableRowElement[] = [];
   const texts: string[][] = [];
   const values: Value[][] = [];
+  const looks: string[][] = [];
   let current = sheet;
   let locked: (td: HTMLElement) => boolean = () => false;
-  const paint = (td: HTMLElement, d: Display, c: number) => {
+  /** The cells a range marks, and the one that carries the fill handle. */
+  let marked = new Set<HTMLElement>();
+  let handleCell: HTMLElement | null = null;
+  let handle: HTMLElement | null = null;
+  const paint = (td: HTMLElement, d: Display, c: number, look: CellLook) => {
     const sel = td.classList.contains("plinth-sheet__selected");
+    const inRange = marked.has(td);
     td.replaceChildren();
-    fillCell(doc, td, d);
+    fillCell(doc, td, d, look);
     freezeCell(td, c);
     if (sel) td.classList.add("plinth-sheet__selected");
+    if (inRange) td.classList.add("plinth-sheet__in-range");
+    if (td === handleCell && handle) td.append(handle);
   };
   sheet.rows.forEach((_row, ri) => {
     const r = ri + 2;
@@ -415,29 +562,40 @@ export function buildGrid(
     tr.append(th);
     const rowTexts: string[] = [];
     const rowValues: Value[] = [];
+    const rowLooks: string[] = [];
     for (let c = 0; c < cols.length; c++) {
       const td = el(doc, "td");
       td.id = `__plinth-cell-${a1(r, c)}`;
       byAddress.set(a1(r, c), td);
       td.tabIndex = -1;
+      const col = cols[c] as SheetColumn;
       const v = ev.value(r, c);
-      const d = displayValue(v, cols[c] as SheetColumn);
-      fillCell(doc, td, d);
+      const d = displayValue(v, col);
+      const look = lookAt(sheet, ri, c, col, v);
+      fillCell(doc, td, d, look);
       freezeCell(td, c);
       rowTexts.push(d.kind === "check" ? d.label : d.text);
       rowValues.push(v);
+      rowLooks.push(lookKey(look));
       tr.append(td);
     }
     texts.push(rowTexts);
     values.push(rowValues);
+    looks.push(rowLooks);
     rows.push(tr);
   });
 
   let order = rows.map((_, i) => i);
+  /** Where each stored row is shown (its index in `order`). */
+  let shownAt: number[] = order.slice();
   let bodies: HTMLTableSectionElement[] = [];
   const layout = () => {
     for (const b of bodies) b.remove();
     bodies = [];
+    shownAt = new Array<number>(order.length);
+    order.forEach((k, i) => {
+      shownAt[k] = i;
+    });
     for (let i = 0; i < order.length; i += CHUNK_ROWS) {
       const body = el(doc, "tbody", "plinth-sheet__chunk");
       order.slice(i, i + CHUNK_ROWS).forEach((k, j) => {
@@ -469,7 +627,14 @@ export function buildGrid(
 
   let selRow = rows.length > 0 ? 2 : 1;
   let selCol = 0;
+  let anchorRow = selRow;
+  let anchorCol = selCol;
+  /** The next focus move extends the selection instead of starting a new one. */
+  let extending = false;
   let sort: SortState | null = null;
+  let fillPress: ((e: PointerEvent) => void) | null = null;
+  let copyListener: ((c: GridCopy) => void) | null = null;
+  let fillMarked: HTMLElement[] = [];
   const holderTags = new Map<number, HTMLElement>();
   /** What takes the focus for a cell: a header's sort button, or the cell itself. */
   const stop = (cell: HTMLElement): HTMLElement =>
@@ -482,7 +647,128 @@ export function buildGrid(
   const resort = () => {
     order = sortedOrder(rows.length, (i) => (values[i] as Value[])[sort?.col ?? 0] ?? null, sort);
     layout();
+    paintRange();
   };
+
+  /** An A1 row's place in the order shown (the header first), or null for a row not there. */
+  const placeOf = (row: number): number | null => {
+    if (row === 1) return -1;
+    const p = shownAt[row - 2];
+    return p === undefined ? null : p;
+  };
+  /** The selected rows from the anchor's to the selected cell's, in the order shown. */
+  const rangeRows = (): number[] => {
+    const a = placeOf(anchorRow);
+    const b = placeOf(selRow);
+    if (a === null || b === null) return [selRow];
+    const out: number[] = [];
+    for (let p = Math.min(a, b); p <= Math.max(a, b); p++) {
+      if (p === -1) {
+        out.push(1);
+        continue;
+      }
+      const k = order[p] as number;
+      if (!(rows[k] as HTMLTableRowElement).hidden || k + 2 === selRow || k + 2 === anchorRow)
+        out.push(k + 2);
+    }
+    return out;
+  };
+  const currentRange = (): GridRange => ({
+    rows: rangeRows(),
+    c1: Math.min(anchorCol, selCol),
+    c2: Math.max(anchorCol, selCol),
+    anchor: { row: anchorRow, col: anchorCol },
+    focus: { row: selRow, col: selCol },
+  });
+  const isSingle = () => anchorRow === selRow && anchorCol === selCol;
+  /** Mark the range's cells (one cell marks none), and put the fill handle on its corner. */
+  function paintRange(say = false): void {
+    const next = new Set<HTMLElement>();
+    const r = currentRange();
+    if (!isSingle()) {
+      for (const row of r.rows) {
+        for (let c = r.c1; c <= r.c2; c++) {
+          const td = byAddress.get(a1(row, c));
+          if (td) next.add(td);
+        }
+      }
+    }
+    for (const td of marked) {
+      if (next.has(td)) continue;
+      td.classList.remove("plinth-sheet__in-range");
+      td.removeAttribute("aria-selected");
+    }
+    for (const td of next) {
+      if (marked.has(td)) continue;
+      td.classList.add("plinth-sheet__in-range");
+      td.setAttribute("aria-selected", "true");
+    }
+    marked = next;
+    const last = r.rows[r.rows.length - 1] ?? selRow;
+    const cornerCell = last > 1 ? (byAddress.get(a1(last, r.c2)) ?? null) : null;
+    if (handleCell !== cornerCell || !fillPress) {
+      handle?.remove();
+      handleCell = fillPress ? cornerCell : null;
+    }
+    if (handleCell && fillPress && !locked(handleCell)) {
+      handle ??= makeHandle();
+      if (handle.parentNode !== handleCell) handleCell.append(handle);
+    }
+    const n = r.rows.length * (r.c2 - r.c1 + 1);
+    fxAddr.textContent = isSingle()
+      ? a1(selRow, selCol)
+      : `${a1(r.rows[0] ?? selRow, r.c1)}:${a1(last, r.c2)}`;
+    if (say && !isSingle()) {
+      rangeSaid.textContent = `${a1(r.rows[0] ?? selRow, r.c1)} to ${a1(last, r.c2)} selected, ${n} cells`;
+    }
+  }
+  function makeHandle(): HTMLElement {
+    const h = el(doc, "span", "plinth-sheet__fill-handle");
+    // Pointer only: Ctrl or Cmd+D fills down from the keyboard.
+    h.setAttribute("aria-hidden", "true");
+    h.addEventListener("pointerdown", (e) => fillPress?.(e));
+    return h;
+  }
+
+  /** The selection's cells as text, an HTML table and the stored cells. */
+  const copyOf = (): GridCopy => {
+    const r = currentRange();
+    const lines: string[] = [];
+    const html: string[] = [];
+    const cells: Cell[][] = [];
+    const dataRows: number[] = [];
+    for (const row of r.rows) {
+      const fields: string[] = [];
+      const tags: string[] = [];
+      const raw: Cell[] = [];
+      const tag = row === 1 ? "th" : "td";
+      for (let c = r.c1; c <= r.c2; c++) {
+        let text: string;
+        if (row === 1) text = cols[c]?.name ?? "";
+        else {
+          const col = cols[c] as SheetColumn;
+          text = copyTextOf(displayValue((values[row - 2] as Value[])[c] ?? null, col));
+          raw.push((current.rows[row - 2] ?? [])[c] ?? null);
+        }
+        fields.push(tsvField(text));
+        tags.push(`<${tag}>${htmlText(text)}</${tag}>`);
+      }
+      if (row > 1) {
+        cells.push(raw);
+        dataRows.push(row);
+      }
+      lines.push(fields.join("\t"));
+      html.push(`<tr>${tags.join("")}</tr>`);
+    }
+    return {
+      tsv: lines.join("\n"),
+      html: `<table>${html.join("")}</table>`,
+      cells,
+      rows: dataRows,
+      c1: r.c1,
+    };
+  };
+
   const grid: Grid = {
     el: root,
     table,
@@ -490,8 +776,12 @@ export function buildGrid(
     tools,
     filterInput,
     selected: () => ({ row: selRow, col: selCol }),
+    range: currentRange,
     cell: (row, col) => byAddress.get(a1(row, col)) ?? null,
     select(row, col) {
+      grid.selectRange({ row, col }, row, col);
+    },
+    selectRange(anchor, row, col) {
       const cell = byAddress.get(a1(row, col));
       if (!cell) return;
       selected?.classList.remove("plinth-sheet__selected");
@@ -501,12 +791,15 @@ export function buildGrid(
       selected = cell;
       selRow = row;
       selCol = col;
+      const a = byAddress.get(a1(anchor.row, anchor.col));
+      anchorRow = a ? anchor.row : row;
+      anchorCol = a ? anchor.col : col;
       cell.classList.add("plinth-sheet__selected");
-      fxAddr.textContent = a1(row, col);
       const stored = row === 1 ? null : ((current.rows[row - 2] ?? [])[col] ?? null);
       fxRaw.textContent = row === 1 ? (cols[col]?.name ?? "") : rawText(stored);
       // Monospace only for a formula, so a plain value reads as it does in the grid.
       fxRaw.classList.toggle("plinth-sheet__fx-raw--formula", isFormula(stored));
+      paintRange();
     },
     showRaw(text) {
       fxRaw.textContent = text;
@@ -523,6 +816,7 @@ export function buildGrid(
       filterValue = text;
       applyFilter();
       updateCount();
+      paintRange();
     },
     update(next, nextEv) {
       if (
@@ -537,15 +831,21 @@ export function buildGrid(
         const r = ri + 2;
         const rowValues = values[ri] as Value[];
         const rowTexts = texts[ri] as string[];
+        const rowLooks = looks[ri] as string[];
         for (let c = 0; c < cols.length; c++) {
+          const col = cols[c] as SheetColumn;
           const v = nextEv.value(r, c);
-          if (sameValue(v, rowValues[c] ?? null)) continue;
+          const look = lookAt(next, ri, c, col, v);
+          const key = lookKey(look);
+          const same = sameValue(v, rowValues[c] ?? null);
+          if (same && key === rowLooks[c]) continue;
           rowValues[c] = v;
-          const d = displayValue(v, cols[c] as SheetColumn);
+          rowLooks[c] = key;
+          const d = displayValue(v, col);
           rowTexts[c] = d.kind === "check" ? d.label : d.text;
-          changed = true;
+          if (!same) changed = true;
           const td = byAddress.get(a1(r, c));
-          if (td && !locked(td)) paint(td, d, c);
+          if (td && !locked(td)) paint(td, d, c, look);
         }
       }
       if (changed) {
@@ -553,7 +853,7 @@ export function buildGrid(
         updateCount();
         if (sort) resort();
       }
-      grid.select(selRow, selCol);
+      grid.selectRange({ row: anchorRow, col: anchorCol }, selRow, selCol);
       return true;
     },
     repaint(row, col) {
@@ -563,7 +863,9 @@ export function buildGrid(
         if (td && c && row === 1) fillHeader(td, c, col);
         return;
       }
-      paint(td, displayValue((values[row - 2] as Value[])[col] ?? null, c), col);
+      const v = (values[row - 2] as Value[])[col] ?? null;
+      paint(td, displayValue(v, c), col, lookAt(current, row - 2, col, c, v));
+      paintRange();
     },
     setHolders(held) {
       for (const [row, tag] of holderTags) {
@@ -609,6 +911,25 @@ export function buildGrid(
         if (th) fillHeader(th, c, i);
       });
     },
+    setFillHandle(press) {
+      fillPress = press;
+      paintRange();
+    },
+    markFill(list, c1 = 0, c2 = 0) {
+      for (const td of fillMarked) td.classList.remove("plinth-sheet__fill-target");
+      fillMarked = [];
+      for (const row of list ?? []) {
+        for (let c = c1; c <= c2; c++) {
+          const td = byAddress.get(a1(row, c));
+          if (!td) continue;
+          td.classList.add("plinth-sheet__fill-target");
+          fillMarked.push(td);
+        }
+      }
+    },
+    setCopyListener(fn) {
+      copyListener = fn;
+    },
     setWidth(col, px) {
       if (col < 0 || col >= widths.length) return;
       widths[col] = clampWidth(px);
@@ -638,6 +959,7 @@ export function buildGrid(
       left: scroll.scrollLeft,
       row: selRow,
       col: selCol,
+      ...(isSingle() ? {} : { anchor: { row: anchorRow, col: anchorCol } }),
     }),
     restore(v) {
       if (v.sort && v.sort.col < cols.length) {
@@ -653,14 +975,22 @@ export function buildGrid(
       }
       scroll.scrollTop = v.top;
       scroll.scrollLeft = v.left;
-      grid.select(Math.min(v.row, rows.length + 1), Math.min(v.col, cols.length - 1));
+      const row = Math.min(v.row, rows.length + 1);
+      const col = Math.min(v.col, cols.length - 1);
+      const anchor = v.anchor
+        ? {
+            row: Math.min(v.anchor.row, rows.length + 1),
+            col: Math.min(v.anchor.col, cols.length - 1),
+          }
+        : { row, col };
+      grid.selectRange(anchor, row, col);
     },
   };
   filterInput.addEventListener("input", () => grid.filter(filterInput.value));
 
   /** The next row shown above or below an A1 row (1 is the header), in the order shown. */
   const nextShown = (row: number, step: -1 | 1): number | null => {
-    let at = row === 1 ? -1 : order.indexOf(row - 2);
+    let at = row === 1 ? -1 : (shownAt[row - 2] ?? -2);
     if (row !== 1 && at < 0) return null;
     for (at += step; at >= 0 && at < order.length; at += step) {
       const k = order[at] as number;
@@ -684,10 +1014,22 @@ export function buildGrid(
     for (const ch of m[1] as string) c = c * 26 + (ch.charCodeAt(0) - 64);
     return [Number(m[2]), c - 1];
   };
+  /** Move the focus to a cell, extending the selection to it rather than starting a new one. */
+  const extendTo = (cell: HTMLElement) => {
+    extending = true;
+    try {
+      stop(cell).focus({ preventScroll: false });
+    } finally {
+      extending = false;
+    }
+  };
   table.addEventListener("focusin", (e) => {
     const at = addressOf((e.target as Element).closest?.("td, th") ?? null);
     if (!at) return;
-    grid.select(at[0], at[1]);
+    if (extending) {
+      grid.selectRange({ row: anchorRow, col: anchorCol }, at[0], at[1]);
+      paintRange(true);
+    } else grid.select(at[0], at[1]);
     // After the browser's own scroll for the focus, which can leave a wide cell under the frozen
     // columns.
     queueMicrotask(() => grid.reveal(at[0], at[1]));
@@ -696,8 +1038,46 @@ export function buildGrid(
     const td = (e.target as Element).closest?.("td");
     if (td && !(e.target as Element).closest("a")) (td as HTMLElement).focus();
   });
+  // A press on a cell selects it (Shift: extends to it) and a drag from it extends the selection
+  // over the cells it crosses; no words are selected on the way. Fields, links and buttons in a
+  // cell keep their own presses.
+  let dragging = false;
+  const endDrag = () => {
+    dragging = false;
+    root.classList.remove("plinth-sheet--dragging");
+    doc.removeEventListener("mouseup", endDrag, true);
+  };
+  table.addEventListener("mousedown", (e) => {
+    const t = e.target as Element;
+    if (e.button !== 0 || t.closest?.("input, select, textarea, a, button, .plinth-sheet__tool")) {
+      return;
+    }
+    if (t.closest?.(".plinth-sheet__fill-handle")) return;
+    const td = t.closest?.("td") as HTMLElement | null;
+    if (!td || !addressOf(td)) return;
+    if (e.shiftKey) {
+      // The cells between the two are selected, not the words.
+      e.preventDefault();
+      extendTo(td);
+      return;
+    }
+    // The press focuses the cell as it always has; a cell's words are never selected (sheet.css).
+    dragging = true;
+    root.classList.add("plinth-sheet--dragging");
+    doc.addEventListener("mouseup", endDrag, true);
+  });
+  table.addEventListener("mouseover", (e) => {
+    if (!dragging) return;
+    if (((e as MouseEvent).buttons & 1) === 0) {
+      endDrag();
+      return;
+    }
+    const td = (e.target as Element).closest?.("td") as HTMLElement | null;
+    if (td && td !== selected && addressOf(td)) extendTo(td);
+  });
   // The arrows, Home and End move between the cells shown, the header row included: not while a
-  // cell's own field has the keys, and not with Alt, which the editor takes.
+  // cell's own field has the keys, and not with Alt, which the editor takes. With Shift they
+  // extend the selection.
   table.addEventListener("keydown", (e) => {
     const t = e.target as Element;
     if (e.altKey || t.closest?.("input, select, textarea")) return;
@@ -714,12 +1094,48 @@ export function buildGrid(
       to = r === null ? null : [r, col];
     } else if (e.key === "Home") to = ctrl ? [1, 0] : [row, 0];
     else if (e.key === "End") to = ctrl ? [lastShown(), last] : [row, last];
-    else return;
+    else if (e.key === "Escape" && !isSingle()) {
+      // Escape drops a selection of several cells first.
+      e.preventDefault();
+      grid.select(row, col);
+      return;
+    } else return;
     const cell = to ? byAddress.get(a1(to[0], to[1])) : undefined;
     if (cell) {
       e.preventDefault();
-      stop(cell).focus();
+      if (e.shiftKey) extendTo(cell);
+      else stop(cell).focus();
+    } else if (e.shiftKey) e.preventDefault();
+  });
+
+  // Copy: the selected cells, whenever the focus is on one of them and no field is open there.
+  const copyHere = (): boolean => {
+    const a = doc.activeElement;
+    return !!a && table.contains(a) && !a.closest?.("input, select, textarea");
+  };
+  root.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "c" || !copyHere()) return;
+    // A browser that fires no copy event without a selection gets one, off screen; the event
+    // below puts the cells on the clipboard instead of it.
+    const sel = doc.getSelection?.();
+    if (sel?.isCollapsed) {
+      const r = doc.createRange();
+      r.selectNodeContents(clip);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      setTimeout(() => {
+        if (sel.rangeCount > 0 && sel.getRangeAt(0).startContainer === clip) sel.removeAllRanges();
+      }, 0);
     }
+  });
+  // The event starts at the focused cell or at the selection made above, both inside the page.
+  root.addEventListener("copy", (e) => {
+    if (!copyHere() || !e.clipboardData) return;
+    const c = copyOf();
+    e.clipboardData.setData("text/plain", c.tsv);
+    e.clipboardData.setData("text/html", c.html);
+    e.preventDefault();
+    copyListener?.(c);
   });
 
   // Frozen columns wider than half the frame scroll with the rest (unfreezeQuery). A grid that
@@ -746,7 +1162,7 @@ export function buildGrid(
 
   root.append(heading, bar);
   if (note) root.append(note);
-  root.append(grid.slot, scroll);
+  root.append(grid.slot, scroll, rangeSaid, clip);
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;

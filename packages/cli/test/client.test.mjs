@@ -443,6 +443,8 @@ describe("plinth publish", () => {
         '{"plinth":"sheet","v":1,"columns":[{"options":["Café","Tea"],"type":"select","name":"Café"}]}\n["Tea"]',
         '{"plinth":"sheet","v":1,"columns":[{"name":"P","width":120,"type":"number","format":{"grouping":false,"decimals":2,"currency":"EUR","style":"currency"}}]}\n[12.50]\n["=SUM(A2:A2)"]',
         '﻿{"plinth":"sheet","v":1,"columns":[{"name":"T"},{"name":"C","type":"checkbox"}]}\n["\\u0041\\n\\"q\\"",true]\n[-0,false]\n',
+        // Option colours in the order of the options, rules' keys in order, a row's styles last.
+        '{"plinth":"sheet","v":1,"columns":[{"name":"S","type":"select","options":["Café","Done"],"colors":{"Done":"green","Café":"red"}},{"name":"N","type":"number","highlight":[{"color":"red","value":0,"when":"<"},{"to":9,"when":"between","color":"blue","value":1}]}]}\n["Done",null,{"style":{"B":{"fill":"gray","bold":true},"A":{"border":["left","top"]}}}]\n[null,2]\n[{"style":{"B":{"wrap":true}}}]',
       ];
       for (const text of cases) {
         // The server receives the text without a leading BOM (it is dropped on decoding).

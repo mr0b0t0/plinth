@@ -875,6 +875,16 @@ A chart or a dashboard stays HTML.
   `currency`; `grouping: false` drops thousands separators); any column may have `"width"` in
   pixels (40 to 800). Literal cells must fit their column; a refusal lists each problem with its
   cell (`B7: "abc" is not a number`).
+- **Looks:** colours are names, never CSS: `gray`, `red`, `orange`, `yellow`, `green`, `teal`,
+  `blue`, `purple`, `pink` (each has a light and a dark value). A select column may colour its
+  options, `"colors":{"Done":"green","Blocked":"red"}`, shown as chips. Any column may have
+  `"highlight":[{"when":"<","value":0,"color":"red"}]`, the first matching rule colouring the cell
+  by its computed value: `<` `<=` `>` `>=` `=` `<>` (a number in a number column, `"YYYY-MM-DD"` in
+  a date column), `between` with `value` and `to`, `contains` (text, no case), `empty`,
+  `not_empty`. A row may end with one object styling its cells by column letter:
+  `["Total","=SUM(B2:B9)",{"style":{"A":{"bold":true},"B":{"bold":true,"fill":"yellow","border":["top"]}}}]`
+  (`bold`, `italic`, `fill`, `align` `left`/`center`/`right`, `wrap`, `border` sides). Use looks
+  sparingly: a bold total row, a status colour, a highlight for what needs attention.
 - **Formulas:** a string starting with `=` is an Excel formula. The header is row 1, so data starts
   at row 2: `"=B2*C2"`, `"=SUM(D2:D40)"`, `"=SUM(B:B)"`, `$` for absolute references. Functions:
   SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTBLANK, COUNTIF(S), SUMIF(S), AVERAGEIF(S), PRODUCT,
@@ -910,8 +920,12 @@ An `eval_budget` warning means some values are `#LIMIT!`: read a smaller range.
 **Changing a sheet.** Use `edit_sheet` with `base_version` and `ops` for cell, row and column
 changes: `set` (`{"op":"set","at":"B2","values":[[4]]}`; past the last row it adds at most 1,000
 empty rows before what it writes, so add rows with `append_rows`), `append_rows`, `insert_rows`,
-`delete_rows`, `set_column`, `insert_columns`, `delete_columns`. One call publishes one version or
-nothing; inserted and deleted rows and columns move formula references. Each insert or delete
+`delete_rows`, `set_column` (also `colors` and `highlight`; `null` clears), `insert_columns`,
+`delete_columns`, and `format` (`{"op":"format","range":"A10:D10","style":{"bold":true}}`; `null`
+or `false` clears a key, `"style":null` clears the range's styles; `"B:B"` is a column's data
+rows). One call publishes one version or nothing; inserted and deleted rows and columns move
+formula references, and styles move with their cells. `read_sheet` returns `style` on rows with
+styled cells, and each column's `colors` and `highlight`. Each insert or delete
 rewrites every formula, and one call rewrites at most 4 MB of formula text: insert or delete
 several adjacent rows in one op (`count`) rather than one op per row. Send `update_artifact` with
 the whole JSON lines only to rewrite the sheet. On a conflict, `read_sheet` again and re-apply your
@@ -1280,12 +1294,13 @@ request reaches you as a mention.
 
 On a sheet's page, owners and editors also set what you set with `set_column` and the header:
 column widths, thousands separators (`format.grouping`), a select column's options (renamed,
-reordered, added and removed as a list) and frozen columns (`freeze`), and they move rows up and
-down. Each is part of their next version, like a cell they change.
+reordered, added and removed as a list) and their colours, highlight rules and frozen columns
+(`freeze`), and they move rows up and down, style cells from a Format menu, fill down and undo
+their own changes. Each is part of their next version, like a cell they change.
 
-- `read_sheet` before you change a sheet's columns: widths, `format`, `options` and `freeze` may
-  have changed since you last read it. Send `set_column` with only what you mean to change, so you
-  keep what people set.
+- `read_sheet` before you change a sheet's columns or styles: widths, `format`, `options`,
+  `colors`, `highlight`, `freeze` and cell styles may have changed since you last read it. Send
+  `set_column` with only what you mean to change, so you keep what people set.
 - When people move a row, references into it follow it, and a range keeps its rows when the
   move starts and lands inside it (one the moved rows leave shrinks, one they land in grows).
   `edit_sheet` has no move op: to move rows, `delete_rows` and

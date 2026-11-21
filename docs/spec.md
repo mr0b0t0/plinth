@@ -1886,7 +1886,29 @@ edits one.
   `mailto:` link of at most 2,000 characters with no whitespace in a url column; a text column
   takes any cell. Formulas are allowed in every column. No blank lines; one final newline is
   dropped. The parser is one module (`packages/shared/src/sheet/`) for the Worker, the renderer
-  and the editor.
+  and the editor. A column may also have `colors` (a select column's colour for some of its
+  options, `{"Done":"green"}`) and `highlight` (rules, below), and a row may end with one object,
+  `{"style":{"B":{...}}}`, that styles its cells by column letter ([Looks](#sheet-looks)).
+- <a id="sheet-looks"></a>**Looks.** Every colour is one of nine names, `gray`, `red`, `orange`,
+  `yellow`, `green`, `teal`, `blue`, `purple` and `pink`, never CSS: the renderer draws each as a
+  class with a light value and a dark one (the .xlsx export takes the light one). A cell's style
+  has any of `bold: true`, `italic: true`, `fill` (a colour), `align` (`left`, `center` or
+  `right`), `wrap: true` and `border` (the sides drawn, from `top`, `right`, `bottom`, `left`);
+  any other key or value is refused at publish, and a style that sets nothing is left out. The
+  style object is the row's last element, after its cells with trailing empty ones trimmed, so a
+  styled empty cell needs no cell; its letters are in column order and each style's keys in that
+  order. A highlight rule is `{"when": w, "value"?: v, "to"?: v, "color": c}`, at most 10 a
+  column, the first that matches a cell's computed value giving it its colour (over the cell's own
+  fill): `<`, `<=`, `>`, `>=`, `=` and `<>` compare with `value` (a number in a number column, a
+  date `YYYY-MM-DD` in a date column, `true` or `false` with `=` and `<>` in a checkbox column, a
+  number or 1 to 100 characters of text in any other) and match only a value of the same kind,
+  text without case; `between` takes `value` and `to` (numbers, or dates, lower first) and includes
+  both; `contains` takes text and matches the value as text without case; `empty` and
+  `not_empty` take no value. An empty cell matches only `empty`, and an error only `not_empty`. A
+  select cell whose option has a colour shows as a chip of that colour. Rules compare a cell's own
+  value: a rule that reads other cells (Excel's "use a formula") is not part of the format, since
+  its references would need to follow row and column changes. The page shows looks the same in
+  view and edit mode, and print keeps fills.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
   Each row therefore has one spelling, and a version's file differs from the last only in the
@@ -1929,7 +1951,14 @@ edits one.
   format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
   a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
   back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter
-  are the viewer's only and never saved. Arrow keys move between cells. Rows are in chunks of 200
+  are the viewer's only and never saved. Arrow keys move between cells. Shift with an arrow, Home
+  or End, Shift+click or a drag selects a rectangle of cells in the order shown (rows a filter
+  hides are left out): the bar shows its address (`B2:D5`), its cells carry `aria-selected`, a
+  screen reader is told its size ("B2 to D5 selected, 12 cells"), and Escape goes back to one
+  cell. Ctrl or Cmd+C copies the selected cells (or the one selected) for anyone who can view the
+  sheet: tab-separated text and an HTML table of the values as the cells show them, a checkbox
+  as `TRUE` or `FALSE`, set only in the copy event the person's key starts, and the page never
+  reads the clipboard. A cell's words are never selected by a press or a drag. Rows are in chunks of 200
   that the browser lays out only on screen, so 10,000 rows stay usable while find in page, comment
   pins (cell ids `__plinth-cell-B7`), print and screen readers see every cell. Light and dark,
   phone width (the grid scrolls in its own box), and print (the title instead of the bar, the
@@ -1947,7 +1976,12 @@ edits one.
   in bold, column widths, the frozen pane, number formats from the column formats, text as inline
   strings (text starting with `=` stays text), formulas with Plinth's computed values cached
   (`fullCalcOnLoad`, so Excel computes its own; newer functions carry Excel's `_xlfn.` prefix), the
-  title as its only document property, no macros and no external relationships.
+  title as its only document property, no macros and no external relationships. Looks carry over
+  where Excel has them: cell styles as cell formats (bold, italic, a solid fill in the colour's
+  light value, alignment, wrapping, thin borders, an empty styled cell written for its style),
+  and highlight rules and option colours as conditional formats over the column's data rows, as
+  formulas written to match what the page matches (`AND(ISNUMBER(B2),B2<0)`, Contains through
+  `SEARCH` with Excel's wildcards escaped), each stopping the ones after it. CSV holds values only.
 - **Imports.** `content_format` on `publish_artifact` and `update_artifact` (type sheet only) takes
   `"csv"` (CSV text) or `"xlsx"` (an .xlsx file in base64, at most 2 MB, of which at most 24 MB of
   its parts is ever decompressed) instead of JSON lines; `"jsonl"` is the default. The first row
@@ -1962,6 +1996,11 @@ edits one.
   stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
   (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
   value is used, and number formats, column widths and frozen columns carry over where they map.
+  So do the styles of data cells that hold a value: bold and italic from the cell's font, a solid
+  fill's RGB colour matched by hue to the nearest sheet colour (white and near white are no
+  fill), the horizontal alignment, wrapping and the sides with a border. Theme and indexed
+  colours, the header row's styles and conditional formats are left out (at most 4,096 fonts,
+  fills, borders and cell formats are read).
   Rows are bounded as they are read: a worksheet row or cell reference below row 10,001 is
   refused before anything is built, and a blank row the file leaves out stays an empty row.
   Cells are bounded the same way: each cell with a value counts at least two bytes of JSON lines
@@ -1980,9 +2019,10 @@ edits one.
   spreadsheet" and a sheet's "Replace with a file…" send the file to the Worker, which converts it
   the same way ([New and Import](#new-and-import-decided-2026-11-19)).
 - **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
-  their letters, types and formats) and the cells of an A1 range (default every data row), a
-  formula as `{f, v}`, every other cell as itself, at most `limit_cells` cells (default 2,000, at
-  most 10,000) with `next_range` to continue. It evaluates only the requested formulas and what
+  their letters, types and formats, option `colors` and `highlight` rules) and the cells of an A1
+  range (default every data row), a formula as `{f, v}`, every other cell as itself, a row with
+  styled cells in the range with `style` by column letter, at most `limit_cells` cells (default
+  2,000, at most 10,000) with `next_range` to continue. It evaluates only the requested formulas and what
   they depend on, within `SHEET_EVAL_BUDGET` steps (default 200,000); past it the result carries an
   `eval_budget` warning and those cells are `#LIMIT!`. It is the `view` action, like `get_artifact`.
   `edit_sheet(id, base_version, ops, note?)` applies 1 to 200 ops (at most 10,000 cells written)
@@ -1990,7 +2030,12 @@ edits one.
   `set` (a block of raw cells from a cell, growing the sheet past its end by at most 1,000 empty
   rows before the block, else refused with `details.reason` `"too_far_past_end"`; every row it adds
   counts in `changed.rows_inserted`), `append_rows`, `insert_rows`, `delete_rows`, `set_column`
-  (name, type, format, options, width; `null` clears), `insert_columns` and `delete_columns`.
+  (name, type, format, options, colors, highlight, width; `null` clears; options or a type changed
+  without `colors` keep the colours of the options kept), `insert_columns`, `delete_columns` and
+  `format` (`{range, style}`: the cells of `"B2:D9"`, `"B:D"` (their data rows) or `"2:9"`
+  (every column) take the style's keys, `null` or `false` clearing one and `style: null` clearing
+  all; counted in `changed.cells_styled` and toward the cells a call writes). Styles move with
+  their cells when rows and columns are inserted, deleted or moved.
   Frozen columns follow column inserts and deletes: columns inserted among them are frozen too (at
   most 5), and deleted frozen columns leave the frozen pane. An op that would take the sheet past 10,000 data rows
   (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
@@ -2011,10 +2056,14 @@ edits one.
   frame exchange only `print` and `export { format }`, which carry no data; the frame acts on them
   only from its parent at the app origin. On-page editing uses the doc renderer's messages and the
   room's draft channel ([Live sheets](#live-sheets-decided-2026-11-19)). Cell text and column
-  names are untrusted data for agents. See
+  names are untrusted data for agents. Looks are names from fixed lists, checked at publish by the
+  shared parser and again where the renderer makes a class of them, never a style attribute or
+  CSS text. A copy writes the clipboard only inside the copy event a person's key starts (the
+  frame keeps no clipboard permission), and the HTML it puts there is text the page escaped. See
   [docs/security.md](security.md#sheets).
-- **Not in this slice.** Multiple worksheets, charts, conditional formatting, merged cells, cell
-  styles and server-side exports are not planned. Cells are edited on the page as
+- **Not in this slice.** Multiple worksheets, charts, merged cells, frozen rows, declared tables,
+  pivots, person cells, text colours, row heights, highlight rules that read other cells, and
+  server-side exports are not planned. Cells are edited on the page as
   [Live sheets](#live-sheets-decided-2026-11-19) describes.
 
 ### Category sharing and personal categories (decided 2026-11-19)
@@ -2616,11 +2665,35 @@ and the whole-draft review is the only way on (below).
   tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
   carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
-  takes 12.5 for 12.5%. Two menus in the bar, beside the filter, act on the selected cell, and
-  they are the one way in to rows and columns: Row (insert above, insert below, move row up, move
-  row down, delete) and Column (insert left, insert right, delete, "Freeze up to this column",
+  takes 12.5 for 12.5%. Three menus in the bar, beside the filter, are the one way in to rows,
+  columns and cell styles: Row (insert above, insert below, move row up, move row down, delete)
+  and Column (insert left, insert right, delete, "Freeze up to this column",
   "Unfreeze columns", and the column's settings, in a popover under the column's name that Escape
-  or Cancel closes). A freeze item shows only where it does something: "Freeze up to this column"
+  or Cancel closes) act on the selected cell, and Format (Bold, Italic, Wrap text, Align left,
+  center or right, a fill from No fill and the nine colours, All borders, Outline, No borders,
+  Clear formatting) on the selected cells below the column names; Bold, Italic and Wrap text turn
+  off for the whole selection when the selected cell has them, and Ctrl or Cmd+B and +I do the same.
+  With several cells selected (see Viewing in [Sheets](#sheets-decided-2026-11-19)), Delete
+  empties them all and keeps their styles; Ctrl or Cmd+D fills the selection's top row into the
+  rows under it, or with one row selected fills it from the row shown above; and the fill handle
+  on the selection's corner, dragged down, fills the rows it reaches with the selected rows
+  repeated. A fill copies values and styles, and a formula with its relative references moved as
+  Excel moves them (`=B2*C2` becomes `=B3*C3`; `$` parts stay; a reference that would leave the
+  sheet is `#REF!`); it is refused while a sort is on, and with a filter it fills the rows shown.
+  Pasting this grid's own copy back keeps its formulas, moved the same way. Each of these is one
+  write of the rows it spans under one lease, checked as a paste is (at most one edit frame).
+  Undo (Ctrl or Cmd+Z) and redo (Shift+Ctrl or Cmd+Z, Ctrl+Y) take back and make again this
+  person's own changes of cells, styles and column settings in this editing session, newest
+  first (at most 100 steps), each as a new edit through the room under the same lease and
+  validation, never a rewrite of history: an undo puts the rows back only when they are still
+  exactly as this person left them, and when anyone changed them since (a cell, or a row or column
+  change that moved their formulas) it is refused with "Changed since, so it can't be undone." and
+  nothing changes. Rows a paste added past the end are emptied by its undo and then deleted when
+  nobody holds a lease. Inserting, deleting and moving rows and columns is not undone here; the
+  version history keeps it. A field's own text undo stays the field's. The column settings also
+  give each option of a select column a colour (a swatch beside it, or none) and list the
+  column's highlight rules (when, the value or the two of Between, a colour, Remove, and "Add
+  rule", at most 10), typed in the viewer's locale and checked as the parser checks them. A freeze item shows only where it does something: "Freeze up to this column"
   up to the fifth column and not when the columns are frozen up to that one already, "Unfreeze
   columns" while some are frozen, and neither for frozen columns that this frame lets scroll with
   the rest (less than twice as wide as the row numbers and those columns together, a phone
