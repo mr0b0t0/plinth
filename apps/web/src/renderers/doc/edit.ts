@@ -47,6 +47,7 @@ import {
   rangesOverlap,
   serializeBlock,
   splitLines,
+  stripUnsafeText,
   verifyBlock,
 } from "@plinth/shared";
 import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
@@ -67,6 +68,7 @@ import {
   reveal,
   type SplitMore,
 } from "../common/richblock.ts";
+import { type AskImage, askKey } from "./askAnchor.ts";
 import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./blocks.ts";
 import {
   docEnv,
@@ -257,6 +259,8 @@ export interface EditorHooks {
    * for the dialog's "Pointing at" chip.
    */
   ask?(anchor: AskAnchor, what: AskWhat): void;
+  /** The published version's text the frame was served, which Ask anchors are named in. */
+  published?(): string;
   /** The rescue store changed: the app merges this into its copy (see RescueReport). */
   rescue?(report: RescueReport): void;
 }
@@ -281,8 +285,10 @@ const WORD_BREAKS = new Set([
 
 /**
  * The first words of a block as the person sees them, for the Ask dialog's "Pointing at" chip: spaces
- * between cells and lines, " · " between a list's items, every run of white space or control
- * characters one space, at most the page anchor's length.
+ * between cells and lines, " · " between a list's items, every run of white space one space,
+ * without the characters no label may hold (UNSAFE_TEXT_RE: control and format characters, emoji
+ * joiners among them, which the server would refuse), at most the page anchor's length in UTF-16
+ * code units (as the app and the server count it), never cutting a character in two.
  */
 export function blockWords(nodes: Node[]): string {
   // Runs of text, cut at each list item's edges.
@@ -306,14 +312,19 @@ export function blockWords(nodes: Node[]): string {
     }
   };
   for (const n of nodes) walk(n);
-  // Control characters (none of them shown) read as spaces, as white space does.
+  // White space (line breaks and tabs among it) reads as one space; what no label shows goes
+  // (the BOM too, which JavaScript counts as white space).
   const words = (run: string) =>
-    Array.from(run, (c) => (c < " " || c === "\u007f" ? " " : c))
-      .join("")
-      .replace(/\s+/g, " ")
+    stripUnsafeText(run.replace(/[^\S\ufeff]+/g, " "))
+      .replace(/ +/g, " ")
       .trim();
   const text = runs.map(words).filter(Boolean).join(" · ");
-  return Array.from(text).slice(0, PAGE_COMMENT_LIMITS.maxText).join("").trimEnd();
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > PAGE_COMMENT_LIMITS.maxText) break;
+    out += ch;
+  }
+  return out.trimEnd();
 }
 
 /** What a drawn block is, in the Ask dialog's words ("Pointing at the list"), for one with no text. */
@@ -343,6 +354,24 @@ function whatOf(nodes: Node[]): AskWhat {
     default:
       return "block";
   }
+}
+
+/** An open block's first words, as blockWords reads the drawn block (an image's alt for one). */
+function modelWords(doc: Document, b: RichBlock): string {
+  if (b.t === "image") return blockWords([doc.createTextNode(b.alt)]);
+  // An atom reads as the page draws it: an image as nothing, a link as its label, an autolink as
+  // its address.
+  const atom = (md: string) =>
+    md.startsWith("!")
+      ? ""
+      : md.startsWith("<")
+        ? md.slice(1, -1)
+        : (/^\[([^\]]*)\]/.exec(md)?.[1] ?? "");
+  const words = (c: RichInline) =>
+    c.map((s) => (s.k === "text" ? s.text : s.k === "atom" ? atom(s.md) : " ")).join("");
+  const runs = runsOf(b).map(words);
+  const text = b.t === "bullet" || b.t === "ordered" ? runs.join(" · ") : runs.join(" ");
+  return blockWords([doc.createTextNode(text)]);
 }
 
 /** The same for a block's model (an open block). */
@@ -1365,7 +1394,7 @@ export class DocEditor {
     ask.setAttribute("aria-description", READ_ONLY_NOTE);
     ask.addEventListener("click", (e) => {
       e.preventDefault();
-      this.ask(block.start, false);
+      this.ask(block.start, null);
     });
     const menu = new BlockMenu(this.doc, () =>
       this.menuGroups({ start: block.start }, null, this.tableForm(block.start)),
@@ -1418,7 +1447,7 @@ export class DocEditor {
         label: "Image",
         disabled: start === null,
         run: () => {
-          if (start !== null) this.ask(start, true);
+          if (start !== null) this.ask(start, "add");
         },
       });
     }
@@ -1463,34 +1492,49 @@ export class DocEditor {
     return { insert: (rows: number, cols: number) => this.insertTable(start, rows, cols) };
   }
 
-  /** Ask an agent about block `start` (its image, with `image`): the app opens its Ask dialog. */
-  private ask(start: number, image: boolean): void {
-    const index = this.blockAt(start)?.index ?? 0;
+  /**
+   * Ask an agent about block `start` (its image, or a new image below it, with `image`): the app
+   * opens its Ask dialog. The key names the block as the published version has it (askKey), so the
+   * agent finds it in the version it reads; a block only in the draft is named after the published
+   * block above it, with its draft words.
+   */
+  private ask(start: number, image: AskImage): void {
+    const found = this.blockAt(start);
+    const index = found?.index ?? 0;
     const sel = this.selected;
-    const open = this.open?.rich.model;
+    const place = this.open ? this.openPlace(start) : null;
+    const open = place && "start" in place && place.start === start ? this.open?.rich.model : null;
     const nodes =
-      sel?.start === start ? Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar) : null;
-    const what: AskWhat = image
-      ? "image"
-      : nodes
-        ? whatOf(nodes)
+      sel?.start === start
+        ? Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar)
         : open
-          ? whatOfModel(open)
-          : "block";
-    // The block's first words, as the person sees them (an open image's alt text): its number
-    // would mean nothing to the person asking. "Insert below, Image" asks about an image that is
-    // not there yet, and the dialog names the kind of block instead. The frame posts them only
-    // when the published version has them too (boot.ts).
+          ? null
+          : this.drawnBlock(start);
+    const what: AskWhat =
+      image === "replace" ? "image" : nodes ? whatOf(nodes) : open ? whatOfModel(open) : "block";
+    // The block's first words, as the person sees them (an image's alt text): its number would
+    // mean nothing to the person asking.
     const text =
       open?.t === "image"
         ? blockWords([this.doc.createTextNode(open.alt)])
-        : !image && nodes
-          ? blockWords(nodes)
-          : "";
+        : open
+          ? modelWords(this.doc, open)
+          : nodes
+            ? blockWords(nodes)
+            : "";
     if (!this.close(true)) return;
     this.deselect();
-    const n = index + 1;
-    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text }, what);
+    const draft = joinLines(this.backend.lines);
+    const { key } = askKey(draft, this.hooks.published?.() ?? draft, index, image);
+    this.hooks.ask?.({ key, text }, what);
+  }
+
+  /** The drawn nodes of block `start` in the page (none for an open or a missing block). */
+  private drawnBlock(start: number): Node[] | null {
+    for (const n of Array.from(this.root.childNodes)) {
+      if (n.nodeType === 1 && rangeOf(n)?.start === start) return [n];
+    }
+    return null;
   }
 
   private turn(kind: BlockKind): void {
@@ -1958,7 +2002,7 @@ export class DocEditor {
         e.preventDefault();
         const place = this.openPlace(start);
         const at = "start" in place ? place.start : place.above;
-        if (at !== null) this.ask(at, true);
+        if (at !== null) this.ask(at, "replace");
       });
       extra.push(ask);
     }

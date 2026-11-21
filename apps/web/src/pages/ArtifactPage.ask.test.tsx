@@ -580,6 +580,39 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     expect(within(dialog).getByText("Slide 4")).toBeTruthy();
   });
 
+  it("names a new image below a doc block, and a block only in the draft, in the chip", async () => {
+    const { user, post } = await editing();
+    post({
+      type: "ask",
+      anchor: { key: "block-2:add-image", text: "Intro" },
+      what: "paragraph",
+    });
+    let dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    // Not "Pointing at the image": there is no image there yet.
+    expect(within(dialog).getByText(/New image below/).textContent).toBe("New image below Intro");
+    expect(dialog.querySelector(".cm-anchor-chip q")?.textContent).toBe("Intro");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1000));
+    });
+    post({ type: "ask", anchor: { key: "new-1:add-image", text: "" }, what: "divider" });
+    dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    expect(within(dialog).getByText(/New image below/).textContent).toBe(
+      "New image below the divider (not published yet)",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1000));
+    });
+    post({ type: "ask", anchor: { key: "new-1", text: "Draft words" }, what: "paragraph" });
+    dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    expect(within(dialog).getByText(/Pointing at/).textContent).toBe(
+      "Pointing at Draft words (not published yet)",
+    );
+  });
+
   it("Stop pointing makes the request about the whole page", async () => {
     const { s, user, post } = await editing();
     post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });

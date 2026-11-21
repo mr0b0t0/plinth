@@ -723,7 +723,7 @@ describe("import warnings", () => {
     const names = [
       "Budget",
       "Q3",
-      "No\u202Ets\u0007",
+      "No\u202Et\u2028s\u0007\u200D",
       ...Array.from({ length: 25 }, (_, i) => `S${i}`),
     ];
     const workbook = `<?xml version="1.0"?><workbook xmlns:r="r"><sheets>${names

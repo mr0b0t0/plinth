@@ -2684,11 +2684,16 @@ CSP, sandbox flag or env var was added.
   next to a mark may be written as a numeric character reference, never for ASCII punctuation
   (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
   blocks, and the reference definitions after a block, keep their bytes.
-- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
-  `block-3:image`) and, as its text, the block's first words (an image's alt text), at most the
-  page anchor's 120 characters with control characters as spaces. The frame posts those words only
-  when a block of the published version it was served (or an image in it) has the same words, and
-  an empty text otherwise, so no draft text reaches the app page; the app shows them as text and
+- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor naming the
+  block as the published version it was served has it (`block-3`, `block-3:image`,
+  `block-3:add-image`; `new-3` for a block only in the draft, after published block 3) and, as its
+  text, the block's first words (an image's alt text): at most the page anchor's 120 UTF-16 code
+  units, never cutting a character in two, with white space folded and control and format
+  characters and the line and paragraph separators stripped (`UNSAFE_TEXT_RE`, the set the server
+  refuses in a page anchor, emoji joiners included), so a dialog never opens about a label the
+  server would refuse. For a block only in the draft those words are the draft's: the person who
+  asks is editing it, sees them in the dialog's chip ("not published yet") and can remove the chip
+  before posting. The app shows them as text, refuses a label with any of those characters, and
   accepts the message only as an editing message, with the frame key (see
   [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "Pointing at" chip, is
   one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the

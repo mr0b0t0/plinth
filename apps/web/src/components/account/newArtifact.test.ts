@@ -148,6 +148,10 @@ describe("spreadsheet files", () => {
     // Letters, accents and other scripts stay.
     expect(cleanFileName("Résumé — 東京.csv")).toBe("Résumé — 東京.csv");
     expect(cleanFileName("\u202E")).toBe("the file");
+    // Zero-width characters, emoji joiners and the line and paragraph separators go too
+    // (UNSAFE_TEXT_RE, shared with Ask anchors, titles and sheet names).
+    expect(cleanFileName("a\u200Bb\u200Dc\u2028d\u2029e\uFEFF.csv")).toBe("abcde.csv");
+    expect(titleFromFileName("Q4\u2028plan\u200D.csv")).toBe("Q4plan");
   });
 });
 

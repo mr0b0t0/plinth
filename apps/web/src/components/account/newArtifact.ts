@@ -21,6 +21,8 @@ import {
   LIMITS,
   route,
   type SheetImportWarning,
+  stripUnsafeText,
+  UNSAFE_TEXT_RE,
 } from "@plinth/shared";
 import { ApiRequestError } from "../../lib/api.ts";
 
@@ -107,16 +109,13 @@ export function pickSpreadsheetFile(onPick: (file: File) => void): void {
   input.click();
 }
 
-// C0 and C1 controls, and the bidi marks, embeddings, overrides and isolates (U+061C, U+200E/F,
-// U+202A to U+202E, U+2066 to U+2069), which could make a name read as something else.
-const UNSAFE_NAME_CHARS = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]+/gu;
-
 /**
  * A picked file's name as the app shows it and writes it in a version note ("Imported from …",
- * "Replaced from …"): without control and bidi characters, never empty.
+ * "Replaced from …"): without control, format (bidi, zero-width) and separator characters
+ * (stripUnsafeText), which could make a name read as something else; never empty.
  */
 export function cleanFileName(name: string): string {
-  return name.replace(UNSAFE_NAME_CHARS, "").trim() || "the file";
+  return stripUnsafeText(name).trim() || "the file";
 }
 
 /** v1's note for a sheet imported from a file. */
@@ -136,7 +135,7 @@ export function titleFromFileName(name: string): string {
   const clean = base
     .replace(/[_]+/g, " ")
     // Control and format characters never reach a title.
-    .replace(/[\p{Cc}\p{Cf}]+/gu, "")
+    .replace(UNSAFE_TEXT_RE, "")
     .replace(/\s+/g, " ")
     .trim();
   const cut = [...clean].slice(0, LIMITS.maxTitleLength).join("").trim();

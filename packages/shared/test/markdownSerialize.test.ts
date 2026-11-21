@@ -302,12 +302,12 @@ describe("recordSources", () => {
     const children = tokens[0]?.children ?? [];
     const link = children.find((t) => t.type === "link_open");
     const image = children.find((t) => t.type === "image");
-    expect(link?.meta.plinthSource).toEqual({
+    expect(link?.meta?.plinthSource).toEqual({
       src: '[a *b*](https://x.example "T")',
       label: "a *b*",
       after: '(https://x.example "T")',
     });
-    expect(image?.meta.plinthSource).toEqual({
+    expect(image?.meta?.plinthSource).toEqual({
       src: "![c [d]](e.png)",
       label: "c [d]",
       after: "(e.png)",

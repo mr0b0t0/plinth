@@ -3,7 +3,7 @@
 // back as Markdown by the serializer; Esc gives the block back; Cmd/Ctrl+S goes to the app; blocks
 // other people hold show who holds them; the block menu turns, inserts, moves and deletes blocks;
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
-import { LIMITS } from "@plinth/shared";
+import { LIMITS, PAGE_ANCHOR_UNSAFE_RE, PAGE_COMMENT_LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
 import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
@@ -1309,7 +1309,8 @@ describe("DocEditor: read-only blocks and images", () => {
     setup("one\n\ntwo");
     click(root.querySelectorAll("p")[1] as Element);
     menu("Image", "Insert below");
-    expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "" }, "image");
+    // A new image below the block: not the image a block has, which `block-2:image` would be.
+    expect(ask).toHaveBeenCalledWith({ key: "block-2:add-image", text: "two" }, "paragraph");
   });
 
   it("the menu's top level is five items; Turn into and Insert below open in its place", () => {
@@ -2184,6 +2185,27 @@ describe("DocEditor: a block op, with a room", () => {
   });
 });
 
+describe("Ask anchors", () => {
+  it("name the published block the agent reads, past blocks added above it in the draft", () => {
+    const published = "one\n\n- item\n\n  ```\n  code\n  ```\n\nEnd";
+    const { editor } = setup(`new above\n\n${published}`, { published: () => published });
+    click(root.querySelector("ul") as Element);
+    const bar = root.querySelector(".plinth-doc__blockbar") as HTMLElement;
+    click(
+      [...bar.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
+    );
+    expect(ask).toHaveBeenLastCalledWith({ key: "block-2", text: "item code" }, "list");
+    // A block only in the draft: its draft words, named after the published block above it.
+    click(root.querySelector("p") as Element);
+    menu("Image", "Insert below");
+    expect(ask).toHaveBeenLastCalledWith(
+      { key: "new-0:add-image", text: "new above" },
+      "paragraph",
+    );
+    expect(editor.openEditor).toBeNull();
+  });
+});
+
 describe("blockWords", () => {
   it("reads a list's items apart, with a dot between them, and a table's cells with spaces", () => {
     const host = document.createElement("div");
@@ -2192,6 +2214,30 @@ describe("blockWords", () => {
     expect(blockWords([...host.childNodes])).toBe("Maria: launch post · Ana: emails subject: Hi");
     host.innerHTML = "<table><tr><th>Risk</th><th>Owner</th></tr><tr><td>PSL</td></tr></table>";
     expect(blockWords([...host.childNodes])).toBe("Risk Owner PSL");
+  });
+
+  it("drops what no label may hold, emoji joiners and bidi controls among it", () => {
+    const words = (t: string) => blockWords([document.createTextNode(t)]);
+    // The family emoji's joiners are format characters the server refuses: they go, so the Ask
+    // dialog's anchor is one the server takes.
+    expect(words("👨\u200d👩\u200d👧 Family plan")).toBe("👨👩👧 Family plan");
+    expect(words("a\u202eb\u2066c\u200bd\ufeffe")).toBe("abcde");
+    expect(words("one\u2028two\u2029three\tfour\u0007five")).toBe("one two three fourfive");
+    for (const t of ["👨\u200d👩\u200d👧 Family plan", "x\u202ey"]) {
+      expect(PAGE_ANCHOR_UNSAFE_RE.test(words(t))).toBe(false);
+    }
+  });
+
+  it("cuts at the page anchor's length in UTF-16 units, never inside a surrogate pair", () => {
+    const words = (t: string) => blockWords([document.createTextNode(t)]);
+    const max = PAGE_COMMENT_LIMITS.maxText;
+    // 119 letters and an emoji (two units): the emoji would make 121, so it is left out.
+    expect(words(`${"a".repeat(max - 1)}😀 tail`)).toBe("a".repeat(max - 1));
+    // Emoji all the way: 60 of them fill 120 units exactly.
+    const emoji = words("😀".repeat(100));
+    expect(emoji.length).toBe(max);
+    expect(emoji).toBe("😀".repeat(max / 2));
+    expect(words("é".repeat(200)).length).toBe(max);
   });
 });
 

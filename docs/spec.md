@@ -2823,7 +2823,12 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
   "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
   kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
-  which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
+  which is never posted); a renderer releases its own lease before it asks. A doc names blocks as
+  the published version the agent reads has them, matching the draft's blocks to it by their
+  Markdown: `block-3` is its third top-level block, `new-3` a block only in the draft after it
+  (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
+  published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
+  Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
   `ask` with block anchors; other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may

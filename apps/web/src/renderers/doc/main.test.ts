@@ -328,7 +328,7 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
-  it("asks the app about a block by its place and its published words, never draft text", async () => {
+  it("asks the app about a block by its place in the published version, and its words", async () => {
     mountShell("Intro\n\n- first item\n\n  ```\n  fenced in a list\n  ```\n\n![Old alt](x.png)");
     stop = boot(window);
     post({ ...base, type: "edit", on: true });
@@ -356,7 +356,8 @@ describe("doc renderer on-page editing (#36)", () => {
       anchor: { key: "block-3:image", text: "Old alt" },
       what: "image",
     });
-    // Alt text changed in the draft is not posted: the dialog names the kind of block instead.
+    // Alt text changed in the draft: the block is not the published one any more. Its draft
+    // words go, named after the published block above it, as not published yet ("new-…").
     image().click();
     const alt = root().querySelector(".plinth-rich__alt input") as HTMLInputElement;
     alt.value = "Draft alt";
@@ -365,10 +366,9 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(posted("ask").at(-1)).toEqual({
       ...base,
       type: "ask",
-      anchor: { key: "block-3:image", text: "" },
+      anchor: { key: "new-2:image", text: "Draft alt" },
       what: "image",
     });
-    expect(JSON.stringify(posted("ask"))).not.toContain("Draft");
   });
 
   it("with live: room, follows the live draft over the doc socket, never sending text to the app", async () => {

@@ -414,6 +414,10 @@ describe("renderer protocol: the frame key and the review", () => {
       type: "ask",
       anchor: { key: "slide-3:block-4", text: "Intro" },
     });
+    expect(ask({ key: "new-2:add-image", text: "😀".repeat(60) })).toEqual({
+      type: "ask",
+      anchor: { key: "new-2:add-image", text: "😀".repeat(60) },
+    });
     // Outside edit mode there is no key to carry: it only opens a composer to confirm.
     expect(ask({ key: "component:button", text: "Button" }, undefined)).toEqual({
       type: "ask",
@@ -424,6 +428,12 @@ describe("renderer protocol: the frame key and the review", () => {
       { key: "x y", text: "a" },
       { key: "x", text: "a".repeat(121) },
       { key: "x", text: "line\nbreak" },
+      // Format characters and separators, which the server refuses in a page anchor.
+      { key: "x", text: "family \u200d joined" },
+      { key: "x", text: "a\u202eb" },
+      { key: "x", text: "a\u2028b" },
+      // 120 is counted in UTF-16 units: 61 emoji are 122.
+      { key: "x", text: "😀".repeat(61) },
       { key: "x" },
       "x",
     ]) {
