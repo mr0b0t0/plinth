@@ -311,8 +311,9 @@ when they fit, and `background` sets the board's color. `height="auto"` with a `
 makes a fluid page board: it is as tall as its content once it loads (at least the size's height,
 or 10/16 of the width, and at most 8000 px), for a responsive web page. `x` and `y` (both, whole
 CSS px) place a board on the canvas; boards without them are packed in rows under the placed ones.
-A whole line `<!-- note -->` or `<!-- note kind="title" -->` followed by lines of plain text adds a
-sticky note or a title to the canvas (`width`, a sticky's `color`, and `x`, `y`; a title without
+A whole line `<!-- note kind="sticky" -->` or `<!-- note kind="title" -->` followed by lines of
+plain text adds a sticky note or a title (`kind` is required: without it the line is an ordinary
+HTML comment) to the canvas (`width`, a sticky's `color`, and `x`, `y`; a title without
 them heads the boards after it). A link inside a board whose `href` is exactly `#board=<id>` moves
 the canvas to that board and puts it in use, for a clickable prototype, and the design's app link
 with `#board=<id>` opens it on that board. Plinth lays the boards out on a canvas

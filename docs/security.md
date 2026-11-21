@@ -668,11 +668,14 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   reaches beyond the canvas's own view: `loaded`, which only counts towards print readiness;
   `size`, for a fluid board (`height="auto"`) only, which sets that board's height between its
   least height and 8,000 px; and `goto` with a board id, which the canvas follows (zooming to the
-  board and putting it in use) only from the board in use. The loader itself posts `size` from
+  board and putting it in use) only from the board in use, only while the shell has transient user
+  activation (a click in the board activates its ancestors; a script's own post has none), and at
+  most once every 500 ms, so two boards cannot bounce the canvas or flood the app's history writes,
+  which the app also spaces 250 ms apart. The loader itself posts `size` from
   its own measurement and turns a click on a link whose `href` attribute is exactly
   `#board=<id>` into `goto`, without following it (the `<base>` would resolve it to the version's
   root).
-- **Notes are text in the shell.** A canvas note's text (`<!-- note -->`) is set with
+- **Notes are text in the shell.** A canvas note's text (`<!-- note kind="sticky" -->`) is set with
   `textContent`, so markup in it shows as written and never runs.
 - **Deep links carry ids only.** The shell tells the app which board it shows (`ready`, `board`)
   with a board id or null, posted to the exact app origin, and takes `goto` from the app window at

@@ -885,10 +885,11 @@ pan, zoom and print, each board alone at its exact size.
   under the placed ones.
 - **Notes on the canvas.** A whole line `<!-- note kind="title" -->` followed by plain text adds a
   title; without `x` and `y` it heads the boards after it, so use one per group of boards, never
-  for a single board (its name is already over it). `<!-- note -->` adds a sticky (`color`
+  for a single board (its name is already over it). `<!-- note kind="sticky" -->` adds a sticky (`color`
   `yellow`, `gray`, `red`, `orange`, `green`, `teal`, `blue`, `purple` or `pink`; `width` in px)
-  for a comment or an open question. Note text is plain text, up to 1,000 characters; HTML in it
-  shows as written.
+  for a comment or an open question. Always write `kind`: a note line without it, or with any
+  other attribute, is an ordinary HTML comment in the board above. Note text is plain text, up to
+  1,000 characters; HTML in it shows as written.
 - **Prototype flows.** A link inside a board whose `href` is exactly `#board=<id>` moves the canvas
   to that board and puts it in use, so people click through a flow (cart, then pay, then done).
   It works only while the board is in use. To point someone at one board, give them the design's

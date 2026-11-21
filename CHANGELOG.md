@@ -12,10 +12,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 - **Designs: fluid pages, notes, flows and links to one board.** An artboard with `height="auto"`
   is as tall as its content, so a responsive web page shows whole on the canvas, in print and in
-  exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note -->` and
-  `<!-- note kind="title" -->` add stickies and titles to the canvas. A link to `#board=<id>`
+  exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note kind="sticky" -->`
+  and `<!-- note kind="title" -->` add stickies and titles to the canvas (any other `<!-- note`
+  comment stays part of its board, as before). A link to `#board=<id>`
   inside a board moves to that board, for clickable prototypes, and the app's address keeps the
-  board on view (`#board=<id>`), so a reload or a shared link opens on it.
+  board on view (`#board=<id>`), so a reload or a shared link opens on it. A flow moves only on a
+  click, a board in use stays still while a page next to it grows, and a link to a board that is
+  gone drops out of the address.
 
 - **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
   card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen

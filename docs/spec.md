@@ -1803,10 +1803,13 @@ is a new version, which owners and editors can revert by restoring an older one.
   bad marker is refused with a fix-it message for the first problem and every problem with its
   line in `details.issues`. The title is the shared section's `<title>`, else the first board's
   name. One parser for the Worker and the renderer.
-- **Canvas notes** (decided 2026-11-21). A whole line `<!-- note -->` (a sticky) or
+- **Canvas notes** (decided 2026-11-21). A whole line `<!-- note kind="sticky" -->` or
   `<!-- note kind="title" -->` starts a note, and the lines up to the next marker are its plain
-  text (blank lines round it dropped, at most 1,000 characters, at most 60 notes). Attributes are
-  `kind`, `x` and `y` (as for a board), `width` (80 to 4,096 px: a sticky's width, 240 by default,
+  text (blank lines round it dropped, at most 1,000 characters, at most 60 notes). A line is a note
+  marker only when it is one in full: `kind` given as `sticky` or `title`, and only note
+  attributes as `name="value"`. Any other whole-line `<!-- note ... -->` (`<!-- note -->`,
+  `<!-- note the padding -->`) is an ordinary HTML comment in its board, so a design written
+  before notes reads as it did. Attributes are `kind` (required), `x` and `y` (as for a board), `width` (80 to 4,096 px: a sticky's width, 240 by default,
   or where a title wraps) and a sticky's `color` (`yellow` by default, `gray`, `red`, `orange`,
   `green`, `teal`, `blue`, `purple`, `pink`). The shell shows the text with `textContent`, so markup
   in it is never parsed. Notes are not boards: they are not exported, printed, commented on or
@@ -1827,10 +1830,12 @@ is a new version, which owners and editors can revert by restoring an older one.
   fills the screen. Boards and notes with `x` and `y` sit exactly there, and the packed rows start
   under them; a design with neither lays out as before. A title note without them starts a row and
   heads the boards after it; a sticky without them takes a place in its row like a board. Notes
-  move and zoom with the boards, and their type grows with the design's gaps (a design of tall
-  boards has larger notes). A fluid board that grows or shrinks lays the rows out again; the view
-  stays where it is unless it is fitting, or still on the board last zoomed to, which it zooms to
-  again. Zooming to a fluid board too tall to read whole shows it at its width from its top. A
+  move and zoom with the boards, and their type grows with the design's sizes as written (a design
+  of tall boards has larger notes; a fluid board counts at its least height, so a long page does
+  not enlarge them). A fluid board that grows or shrinks lays the rows out again. While a board is
+  in use the view moves with that board, so it stays still on screen under the pointer; otherwise
+  the view stays where it is unless it is fitting, or still on the board last zoomed to, which it
+  zooms to again. Zooming to a fluid board too tall to read whole shows it at its width from its top. A
   fluid board not yet mounted shows at its least height, and keeps its measured height while its
   frame is away. Fit keeps every board clear of the toolbar at the bottom. Drag, the
   wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
@@ -1844,13 +1849,18 @@ is a new version, which owners and editors can revert by restoring an older one.
   Done; Done, Escape or a click outside puts the cover back. **Prototype flows** (decided
   2026-11-21): in the board in use, a click on a link whose `href` is exactly `#board=<id>` is not
   followed; the canvas zooms to that board and puts it in use instead, so people click through a
-  flow. A board not in use cannot move the canvas, and an unknown id does nothing. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  flow. A board not in use cannot move the canvas, and an unknown id does nothing. A flow moves
+  only on a person's click (the shell's `navigator.userActivation.isActive`, which a click in a
+  board frame sets for its ancestors; a browser without the API skips this check) and at most once
+  every 500 ms, so two boards' scripts cannot bounce the canvas between them. At most 24 board frames are alive at once; boards far off screen are placeholders until
   they come back (a board's own state starts again then).
 - **Deep links** (decided 2026-11-21). The app keeps the board on view in its address's fragment,
   `#board=<id>`, as a deck keeps `#slide=N`: written with `history.replaceState`, never sent to
   the server, set when the canvas zooms to a board (its name, a flow, the app's `goto`) and taken
   out after Fit. A reload, a shared link or a new frame (a newer version, review mode) opens on
-  that board. The shell says `ready` and `board` with only a board id (or null), to the exact app
+  that board; a frame asked for a board its version does not have answers with the board it shows,
+  so a stale `#board=` leaves the address. Writes are at least 250 ms apart, the last board
+  winning, so a frame that reports boards fast cannot flood the browser's history API. The shell says `ready` and `board` with only a board id (or null), to the exact app
   origin, and the app answers `goto` with one. The app accepts them from the shell's window alone
   (its origin, or `"null"` under opaque isolation, as for a deck), never from a board, whose window
   is another.
