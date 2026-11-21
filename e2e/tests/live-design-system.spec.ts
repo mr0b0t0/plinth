@@ -119,7 +119,7 @@ test("a colour changed in place is published as v2, in Plinth's 2-space JSON", a
       frameOf(page).locator("#ds-components-button .ds-component__bar select"),
     ).toHaveValue("stable");
     // Its examples are drawn from v1's files, which a Publish keeps.
-    const preview = frameOf(page).frameLocator('iframe[title="Button: Primary (light)"]');
+    const preview = frameOf(page).frameLocator('iframe[title^="Button: Primary ("]');
     await expect(preview.locator("button")).toHaveText("Save", { timeout: 10_000 });
     await expect(preview.locator('img[src="img/logo.png"]')).toHaveCount(0);
     await shot(page, info, "edit-component");
