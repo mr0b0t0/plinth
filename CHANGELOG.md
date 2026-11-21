@@ -10,6 +10,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Design systems that other artifacts use.** Mark one of your design systems as your default
+  from its menu on the dashboard (**Set as default**); agents then use it for pages, decks and
+  designs without asking. A publish or update can now copy files from another artifact you can
+  view, on the server (`copy_files`), so an agent installs a design system's `tokens.css`,
+  `fonts.css`, `components.css`, `tokens.json`, fonts and images into a page under `ds/<prefix>/`
+  in the same call (`get_design_system` lists the entries to send). The copies become the page's
+  own files and record where they came from. Designs name the design system they were built on,
+  like pages, and get the same outdated warning. Apply migration `0022_design_system_reuse.sql`.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no
