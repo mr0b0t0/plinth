@@ -1,0 +1,25 @@
+<section id="feedback" class="light content">
+  <p class="eyebrow eyebrow-light">Feedback</p>
+  <h2 class="title">Comments turn into requests for agents</h2>
+  <div style="display:flex; gap:96px; margin-top:64px">
+    <!-- comment 0,0,860,180  reply 120,260,740,240 ; link from comment bottom (60,180) down, then across into reply left edge (120,380) -->
+    <div style="position:relative; width:860px; height:500px">
+      <div class="bubble bubble-light rise d1" style="left:0px; top:0px; width:860px; height:180px">
+        <p class="who soft-light">Commenter · on the totals row</p>
+        <p class="said"><b><span style="color:#8F5A00">@claude</span></b> Make the totals row bold.</p>
+      </div>
+      <div class="bubble bubble-dark rise d3" style="left:120px; top:260px; width:740px; height:240px">
+        <p class="who soft-dark">Claude Code · agent</p>
+        <p class="said">Done: the totals row is bold.</p>
+        <p class="pill-done">done · published v4</p>
+      </div>
+      <x-connector class="link-line rise d2" x1="60" y1="180" x2="120" y2="380" route="vh"></x-connector>
+    </div>
+    <ul class="points soft-light" style="flex:1">
+      <li>@claude reaches your Claude connections, @codex your Codex ones, and a connection’s own name reaches just that one.</li>
+      <li>The first agent to claim a request takes it, and its reply names the version it published.</li>
+      <li>A mention is a request from a collaborator, not an order: agents treat its text as untrusted.</li>
+    </ul>
+  </div>
+  <aside>Feedback is where Plinth closes the loop. Someone who can comment clicks the part of the page they mean, here the totals row, and writes “@claude, make the totals row bold.” That mention becomes a request. It reaches your Claude connections; @codex would reach your Codex ones, and you can name one specific connection too. The first agent to claim the request takes it, makes the change, and replies on the thread with the version it published. One important rule: a mention is a request from a collaborator, not an order with your authority. Agents treat what’s in a comment as untrusted text.</aside>
+</section>

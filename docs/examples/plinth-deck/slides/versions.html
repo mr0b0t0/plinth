@@ -1,0 +1,66 @@
+<section id="versions" class="dark content">
+  <p class="eyebrow eyebrow-dark">Versions</p>
+  <h2 class="title">Every change is a new version</h2>
+  <ul class="points soft-dark" style="width:640px; margin-top:64px">
+    <li>A saved version never changes. Each edit, by a person or an agent, is the next one.</li>
+    <li>Anyone can restore an old version: it comes back as the next version.</li>
+    <li>A save based on a stale version is refused, so nothing is overwritten.</li>
+  </ul>
+  <x-embed style="position:absolute; left:896px; top:312px; width:896px; height:520px">
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #F5F2EC; }
+  .panel { box-sizing: border-box; width: 896px; height: 520px; background: #1B2230; border: 1px solid rgba(255,255,255,.12); border-radius: 24px; padding: 40px 44px; display: flex; flex-direction: column; gap: 16px; }
+  .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .label { font-size: 24px; font-weight: 600; letter-spacing: 3px; text-transform: uppercase; color: #B7BFCC; }
+  .live { display: flex; align-items: center; gap: 12px; font-size: 24px; color: #7EE0A1; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: #7EE0A1; animation: pulse 1.6s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: .35; transform: scale(.8); } to { opacity: 1; transform: scale(1.15); } }
+  .row { box-sizing: border-box; display: flex; align-items: center; gap: 24px; height: 84px; padding: 0 24px; border-radius: 16px; border: 2px solid transparent; background: rgba(255,255,255,.04); opacity: 1; transform: none; transition: opacity .5s ease, transform .5s ease; }
+  .row.off { opacity: 0; transform: translateY(16px); }
+  .v { box-sizing: border-box; width: 72px; height: 48px; border-radius: 12px; border: 2px solid #F0B23E; color: #F0B23E; font-size: 26px; font-weight: 700; display: flex; align-items: center; justify-content: center; transition: background .5s, color .5s; }
+  .row.cur .v { background: #F0B23E; color: #10151E; }
+  .what { flex: 1; font-size: 28px; }
+  .who { font-size: 24px; color: #B7BFCC; }
+  .row.no { background: transparent; border: 2px dashed rgba(255,138,122,.7); }
+  .row.no .v { border-color: #FF8A7A; color: #FF8A7A; }
+  .row.no .what, .row.no .who { color: #FF8A7A; }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } .row { transition: none; } }
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="top"><span class="label">Version history</span><span class="live"><span class="dot"></span>Same link</span></div>
+  <div class="row" id="r1"><span class="v">v1</span><span class="what">First publish</span><span class="who">Claude Code</span></div>
+  <div class="row" id="r2"><span class="v">v2</span><span class="what">Edit after a comment</span><span class="who">Codex</span></div>
+  <div class="row cur" id="r3"><span class="v">v3</span><span class="what">Restore of v1</span><span class="who">You</span></div>
+  <div class="row no" id="r4"><span class="v">v2</span><span class="what">Save based on v2: refused</span><span class="who">Stale</span></div>
+</div>
+<script>
+  (function () {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var rows = [1, 2, 3, 4].map(function (n) { return document.getElementById("r" + n); });
+    // Each step shows this many rows; the newest saved version is the current one.
+    var plan = [4, 4, 0, 1, 2, 3, 4, 4, 4];
+    var step = 0;
+    function show(count) {
+      rows.forEach(function (row, i) {
+        row.classList.toggle("off", i >= count);
+        if (i < 3) row.classList.toggle("cur", i === Math.min(count, 3) - 1);
+      });
+    }
+    setInterval(function () {
+      step = (step + 1) % plan.length;
+      show(plan[step]);
+    }, 1300);
+  })();
+</script>
+</body>
+</html>
+  </x-embed>
+  <aside>Versions are the heart of Plinth. A saved version never changes. Every edit, whether you made it or an agent did, becomes the next version. On the right you can watch that happen: Claude Code publishes version one, Codex edits it after a comment, and then you restore the first version, which doesn’t rewind anything; it comes back as version three. And look at the last row. Someone tried to save on top of version two, which is out of date. Plinth refuses that save instead of quietly overwriting the newer work. So nothing gets lost, and anyone can undo what an agent did.</aside>
+</section>

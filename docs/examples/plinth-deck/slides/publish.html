@@ -1,0 +1,34 @@
+<section id="publish" class="light content">
+  <p class="eyebrow eyebrow-light">How it works</p>
+  <h2 class="title">From agent to link in four steps</h2>
+  <div class="spacer"></div>
+  <!-- step1 0,0,344,400  step2 440,0,344,400  step3 880,0,344,400  step4 1320,0,344,400 ; links at y 200 -->
+  <div style="position:relative; width:1664px; height:400px">
+    <div class="step rise d1" style="left:0px">
+      <p class="step-num">01</p>
+      <p class="step-title">The agent writes a page</p>
+      <p class="step-text">HTML, Markdown or a deck, made in the session.</p>
+    </div>
+    <div class="step fragment" data-fragment-index="1" style="left:440px">
+      <p class="step-num">02</p>
+      <p class="step-title">It publishes over MCP</p>
+      <p class="step-text">One publish_artifact call, from Claude, Codex or any MCP client.</p>
+    </div>
+    <div class="step fragment" data-fragment-index="2" style="left:880px">
+      <p class="step-num">03</p>
+      <p class="step-title">Plinth keeps version 1</p>
+      <p class="step-text">Private by default, at a link that stays the same.</p>
+    </div>
+    <div class="step fragment" data-fragment-index="3" style="left:1320px">
+      <p class="step-num">04</p>
+      <p class="step-title">You share the link</p>
+      <p class="step-text">With people you invite by email, or anyone with the link.</p>
+    </div>
+    <x-connector class="link-line fragment" data-fragment-index="1" x1="344" y1="200" x2="440" y2="200"></x-connector>
+    <x-connector class="link-line fragment" data-fragment-index="2" x1="784" y1="200" x2="880" y2="200"></x-connector>
+    <x-connector class="link-line fragment" data-fragment-index="3" x1="1224" y1="200" x2="1320" y2="200"></x-connector>
+  </div>
+  <p class="soft-light" style="margin-top:48px">Every later change is a new version at that same link.</p>
+  <div class="spacer"></div>
+  <aside>Here’s what a publish looks like, one click at a time. It starts in the agent’s session: it writes a page, a Markdown doc or a deck. [click] Then it makes one call over MCP, publish_artifact. That works the same from Claude, from Codex or from any other MCP client. [click] Plinth stores that as version one. It’s private by default, and the link it gets never changes. [click] And then you share it: with specific people you invite by email, or with anyone who has the link. From then on, every change, whether a person or an agent makes it, is a new version at that same link.</aside>
+</section>
