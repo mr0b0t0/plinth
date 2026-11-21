@@ -47,8 +47,12 @@ const SOURCE = JSON.stringify(FIXTURE);
 const LIVE = designSystemToLive(SOURCE);
 
 let stop: (() => void) | null = null;
+let posted: Json[] = [];
 beforeEach(() => {
-  vi.spyOn(window.parent, "postMessage").mockImplementation(() => undefined);
+  posted = [];
+  vi.spyOn(window.parent, "postMessage").mockImplementation((m: unknown) => {
+    posted.push(m as Json);
+  });
 });
 afterEach(() => {
   stop?.();
@@ -71,8 +75,8 @@ const root = () => document.getElementById("__plinth-design_system") as HTMLElem
 const row = (path: string) =>
   root().querySelector<HTMLElement>(`.ds-token[data-path="${path}"]`) as HTMLElement;
 
-/** The room's draft and its socket, after welcome and the projection. */
-function connected() {
+/** The frame in room mode, and its socket before the room said anything. */
+function opened() {
   const html = typedShellHtml(TYPE_REGISTRY.design_system, {
     title: "T",
     text: SOURCE,
@@ -84,7 +88,11 @@ function connected() {
   const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0] ?? "";
   document.body.innerHTML = main + data;
   stop = boot(window, { connect: () => new FakeSocket() as unknown as WebSocket });
-  const ws = FakeSocket.all.at(-1) as FakeSocket;
+  return FakeSocket.all.at(-1) as FakeSocket;
+}
+
+/** The room's welcome, then its draft (`text`) in one chunk. */
+function welcome(ws: FakeSocket, text = LIVE) {
   ws.frame({
     t: "welcome",
     v: 1,
@@ -98,10 +106,19 @@ function connected() {
     leases: [],
     peers: [],
   });
-  ws.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: LIVE });
+  ws.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: text });
+}
+
+/** The room's draft and its socket, after welcome and the projection. */
+function connected() {
+  const ws = opened();
+  welcome(ws);
   send({ type: "edit", on: true });
   return ws;
 }
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const lastLive = () => posted.filter((m) => m.type === "live").at(-1);
 
 const lastOf = (ws: FakeSocket, t: string) => ws.sent.filter((f) => f.t === t).at(-1);
 
@@ -217,5 +234,50 @@ describe("with the room", () => {
       lease: "L2",
       text: dsNodeLines(node, "Marks something new and shiny").join("\n"),
     });
+  });
+});
+
+describe("edit mode asked for before the room's draft arrives", () => {
+  it("edits once the draft is here, and is not called too large while it is on its way", async () => {
+    const ws = opened();
+    // `?edit` and a frame reload send this on the frame's load, before the room's welcome.
+    send({ type: "edit", on: true, focus: "first" });
+    await tick();
+    expect(lastLive()).toMatchObject({ editing: true, connected: false });
+    expect(lastLive()).not.toHaveProperty("unavailable");
+    expect(document.querySelector(".ds-notice")?.textContent ?? "").not.toMatch(/too large/);
+    welcome(ws);
+    await tick();
+    expect(lastLive()).toMatchObject({ editing: true, connected: true });
+    expect(lastLive()).not.toHaveProperty("unavailable");
+    // The focus asked for with it lands once the editable page is drawn.
+    expect(document.activeElement?.classList.contains("ds-name")).toBe(true);
+    const field = row("color.bg").querySelector<HTMLInputElement>('input[type="text"]');
+    if (!field) throw new Error("no field");
+    field.value = "#fafafa";
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(lastOf(ws, "lease")).toMatchObject({ t: "lease", rev: 0 });
+  });
+
+  it("checks the size when the draft comes, and says a draft too large to edit is", async () => {
+    const ws = opened();
+    send({ type: "edit", on: true });
+    await tick();
+    expect(lastLive()).toMatchObject({ editing: true });
+    // Past the projection's line cap.
+    welcome(ws, LIVE + "\n".repeat(200_000));
+    await tick();
+    expect(lastLive()).toMatchObject({ editing: false, unavailable: "too_large" });
+    expect(document.querySelector(".ds-notice")?.textContent).toMatch(/too large to edit/);
+  });
+
+  it("forgets the check when edit mode ends before the draft comes", async () => {
+    const ws = opened();
+    send({ type: "edit", on: true });
+    send({ type: "edit", on: false });
+    welcome(ws, LIVE + "\n".repeat(200_000));
+    await tick();
+    expect(lastLive()).toMatchObject({ editing: false });
+    expect(lastLive()).not.toHaveProperty("unavailable");
   });
 });

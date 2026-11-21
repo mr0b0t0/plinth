@@ -198,6 +198,12 @@ function live(
   let editor: DsEditor | null = null;
   let queued = false;
   let unavailable = false;
+  /**
+   * Edit mode was asked for before the room's text arrived: its size is checked when the text
+   * comes (an empty draft is not a projection, so checking it then would refuse every page).
+   * `focus` is the focus asked for with it.
+   */
+  let sizeDue: { focus: boolean } | null = null;
   /** Solo: the version shown, whose files the draft is drawn with. */
   let soloBase: number | null = null;
   let words: Set<string> | null = null;
@@ -307,6 +313,29 @@ function live(
     else editor = new DsEditor(root, win, local, hooks);
   };
 
+  /** The draft is here: the room's text has arrived, or the frame edits on its own. */
+  const draftHere = () => local !== null || (client?.ready ?? false);
+  /** Too large to edit on the page: say so, and stay as it is. */
+  const refuseIfTooLarge = (): boolean => {
+    const text = local ? local.text : (client?.text ?? "");
+    unavailable = rules.tooLarge(text) || (editor?.tooLarge ?? false);
+    if (unavailable) {
+      editor?.setEditing(false);
+      editor?.say(
+        "This design system is too large to edit on the page. Ask an agent to change it.",
+      );
+    }
+    return unavailable;
+  };
+  /** The draft arrived after edit mode was asked for: check its size now. */
+  const checkDueSize = () => {
+    if (!sizeDue || !draftHere()) return;
+    const { focus } = sizeDue;
+    sizeDue = null;
+    if (!refuseIfTooLarge() && focus) editor?.focusFirst();
+    status();
+  };
+
   if (payload.live === "room") {
     client = new LiveDocClient({
       win,
@@ -314,10 +343,12 @@ function live(
       listener: {
         changed: () => {
           if (!local) editor?.changed();
+          checkDueSize();
         },
         status: () => {
           if (client && !client.connected && !local) editor?.disconnected();
           if (client?.failed && !local && editor?.editing) goSolo();
+          checkDueSize();
           status();
         },
         granted: (l) => {
@@ -357,16 +388,17 @@ function live(
     if (m.type === "edit") {
       if (m.base !== undefined) soloBase = m.base;
       if (m.on && (!client || client.failed)) goSolo();
-      // Too large to edit on the page: say so, and stay as it is.
-      const text = local ? local.text : (client?.text ?? "");
-      unavailable = m.on && (rules.tooLarge(text) || (editor?.tooLarge ?? false));
-      if (unavailable) {
+      sizeDue = null;
+      unavailable = false;
+      if (!m.on) {
         editor?.setEditing(false);
-        editor?.say(
-          "This design system is too large to edit on the page. Ask an agent to change it.",
-        );
-      } else {
-        editor?.setEditing(m.on);
+      } else if (!draftHere()) {
+        // The room's text is still on its way: edit mode starts (nothing is leased before the text
+        // is here), and the size is checked when it comes.
+        editor?.setEditing(true);
+        sizeDue = { focus: m.focus === "first" };
+      } else if (!refuseIfTooLarge()) {
+        editor?.setEditing(true);
         if (m.focus === "first") editor?.focusFirst();
       }
       status();
