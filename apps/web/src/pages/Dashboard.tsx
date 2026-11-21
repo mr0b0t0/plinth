@@ -60,8 +60,9 @@ import {
   SegmentedControl,
   Spinner,
   Tooltip,
+  useToast,
 } from "../components/ui/index.ts";
-import { ApiRequestError, api } from "../lib/api.ts";
+import { ApiRequestError, api, setDefaultDesignSystem } from "../lib/api.ts";
 import { useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 
@@ -185,6 +186,20 @@ export function applyCategoryRename(
   return { items, categories };
 }
 
+/**
+ * The list after the person set (`on`) or removed their default design system `id`: only one of
+ * their own design systems is ever marked.
+ */
+export function applyDefault(items: ArtifactSummary[], id: string, on: boolean): ArtifactSummary[] {
+  return items.map((a) => {
+    if (a.role !== "owner" || a.type !== "design_system") return a;
+    const marked = on ? a.id === id : a.default === true && a.id !== id;
+    if (marked === (a.default === true)) return a;
+    const { default: _old, ...rest } = a;
+    return marked ? { ...rest, default: true } : rest;
+  });
+}
+
 export function sortArtifacts(items: ArtifactSummary[], sort: Sort): ArtifactSummary[] {
   const out = [...items];
   if (sort === "title") out.sort((a, b) => a.title.localeCompare(b.title));
@@ -226,6 +241,22 @@ export default function Dashboard() {
   const chooseView = (v: DashboardView) => {
     setView(v);
     saveView(v);
+  };
+
+  const toast = useToast();
+  const chooseDefault = async (a: ArtifactSummary, on: boolean) => {
+    try {
+      await setDefaultDesignSystem(a.id, on);
+      setList((l) => (l.status === "ready" ? { ...l, items: applyDefault(l.items, a.id, on) } : l));
+      toast.success(
+        on ? "Set as your default design system" : "Removed as your default design system",
+      );
+    } catch (e) {
+      toast.error(
+        "Could not change your default design system",
+        e instanceof ApiRequestError ? e.message : undefined,
+      );
+    }
   };
 
   // The quota count may have changed since the session loaded (publishes, deletes).
@@ -616,7 +647,14 @@ export default function Dashboard() {
           ) : view === "grid" ? (
             <ul className="pl-dash__grid">
               {shown.map((a) => (
-                <ArtifactCard key={a.id} artifact={a} now={now} you={you} onFile={setFiling} />
+                <ArtifactCard
+                  key={a.id}
+                  artifact={a}
+                  now={now}
+                  you={you}
+                  onFile={setFiling}
+                  onDefault={chooseDefault}
+                />
               ))}
             </ul>
           ) : (
@@ -624,7 +662,14 @@ export default function Dashboard() {
               <ArtifactListHeader />
               <ul className="pl-dash__rows">
                 {shown.map((a) => (
-                  <ArtifactRow key={a.id} artifact={a} now={now} you={you} onFile={setFiling} />
+                  <ArtifactRow
+                    key={a.id}
+                    artifact={a}
+                    now={now}
+                    you={you}
+                    onFile={setFiling}
+                    onDefault={chooseDefault}
+                  />
                 ))}
               </ul>
             </div>
