@@ -631,6 +631,41 @@ describe("useLiveEdit", () => {
     expect(again.result.current.restore).toMatchObject({ text: "# Plan\n\nabc", base: 3 });
   });
 
+  it("keeps the frame's rescue items in app storage, warns before leaving, and offers them to a new frame", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const first = hook(gate("room"));
+    act(() => first.result.current.start());
+    fromFrame({ type: "live", ...STATUS, unflushed: false });
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+    const items = [{ id: "r1", text: "Kept *text*", near: 4 }];
+    fromFrame({ type: "rescue", items });
+    expect(leave()).toBe(true);
+    // In the app's own storage, never the content origin's.
+    expect(JSON.parse(sessionStorage.getItem("plinth-draft:page-rescue:art1") ?? "null")).toEqual(
+      items,
+    );
+    // Without the frame's key, or malformed, it changes nothing.
+    fromFrame({ type: "rescue", items: [] }, ORIGIN, null);
+    fromFrame({ type: "rescue", items: [{ id: "bad id!", text: "x", near: 0 }] });
+    expect(sessionStorage.getItem("plinth-draft:page-rescue:art1")).not.toBeNull();
+    first.unmount();
+    // A reload: the new frame is offered them with the edit message.
+    toFrame.mockClear();
+    const second = hook(gate("room"));
+    act(() => second.result.current.start());
+    expect(sentToFrame("rescue").at(-1)?.[0]).toMatchObject({ type: "rescue", items });
+    // The frame wrote them: the store is cleared, and leaving is quiet again.
+    fromFrame({ type: "live", ...STATUS, unflushed: false });
+    fromFrame({ type: "rescue", items: [] });
+    expect(sessionStorage.getItem("plinth-draft:page-rescue:art1")).toBeNull();
+    expect(leave()).toBe(false);
+  });
+
   it("an idle autosave refused as too soon is tried again when the server says", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let answers = 0;

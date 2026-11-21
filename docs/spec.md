@@ -3010,6 +3010,15 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   lost: in place of the block, or, when someone else took the block, as a new block below it; when
   there is no lease to write it with (not connected, or a review waits), it is written once there
   is.
+- **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
+  until the room's lines hold it: the frame posts it to the app, which keeps it in its own storage
+  and offers it to the frame again after a reload. A write of it that a review refuses goes in once
+  the review ends; one whose place someone else holds, or that keeps meeting changed lines, goes
+  in as a new block at the nearest free place (else after the last block), three places at most;
+  one that still cannot be written stays kept, counts as unsent changes (the page asks before it
+  is left, and a hidden tab keeps its socket), and the page says "What you typed couldn't be added
+  to the doc yet. It is kept here." with **Copy**. A room's refusal never resets a block holding
+  such typing.
 - **Opening a block for editing again.** A block saved with such a character reference opens for
   editing as any other: the fidelity check tries the same written form.
 - **Formatting and the block menu.** A format bar (bold, italic, code, strikethrough, link), shown

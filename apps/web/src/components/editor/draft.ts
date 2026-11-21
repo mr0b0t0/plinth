@@ -152,3 +152,42 @@ export function clearPageDraft(artifactId: string): void {
     // storage blocked: nothing was kept
   }
 }
+
+// ---------- the doc frame's rescue store ----------
+// Text typed in a doc block on the page that the room's draft does not hold yet (the frame's
+// rescue store, renderers/doc/edit.ts): one list per artifact's live draft, in this app origin's
+// session storage beside the kept copy, never in the content origin's. Storage can be blocked or
+// full, so a copy stays in memory too; the frame is offered the items again after a reload.
+
+const RESCUE_PREFIX = "plinth-draft:page-rescue:";
+const rescueMemory = new Map<string, unknown>();
+
+export function rescueKey(artifactId: string): string {
+  return `${RESCUE_PREFIX}${artifactId}`;
+}
+
+/** Keeps the frame's rescue items (`[]` clears them). */
+export function saveRescue(artifactId: string, items: unknown[]): void {
+  const key = rescueKey(artifactId);
+  if (items.length === 0) rescueMemory.delete(key);
+  else rescueMemory.set(key, items);
+  try {
+    const s = storage();
+    if (items.length === 0) s?.removeItem(key);
+    else s?.setItem(key, JSON.stringify(items));
+  } catch {
+    // storage blocked or full: the copy in memory stays
+  }
+}
+
+/** The kept rescue items, unchecked (the caller reads them field by field), or null. */
+export function loadRescue(artifactId: string): unknown {
+  const key = rescueKey(artifactId);
+  try {
+    const raw = storage()?.getItem(key);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // storage blocked or the copy unreadable: the one in memory
+  }
+  return rescueMemory.get(key) ?? null;
+}

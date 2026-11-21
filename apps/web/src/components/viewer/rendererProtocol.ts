@@ -366,8 +366,40 @@ export type ReviewChoice =
   | { outcome: "discard"; version?: number; rev?: number }
   | { outcome: "cancelled" };
 
+/**
+ * Typed text a doc block could not get into the room's draft yet (the frame's rescue store). The
+ * app keeps the items in its own storage and offers them back to a new frame; never content the
+ * app shows or sends anywhere else.
+ */
+export interface RescueItem {
+  id: string;
+  text: string;
+  near: number;
+}
+export const MAX_RESCUE_ITEMS = 20;
+const RESCUE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+/** A list of rescue items, checked field by field (from the frame, or from storage), or null. */
+export function readRescueItems(v: unknown): RescueItem[] | null {
+  if (!Array.isArray(v) || v.length > MAX_RESCUE_ITEMS) return null;
+  const out: RescueItem[] = [];
+  for (const it of v) {
+    if (typeof it !== "object" || it === null) return null;
+    const { id, text, near } = it as Record<string, unknown>;
+    if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
+    if (typeof text !== "string" || text.length > LIMITS.liveDocFrameBytes) return null;
+    if (typeof near !== "number" || !Number.isInteger(near) || near < 0 || near >= MAX_INT) {
+      return null;
+    }
+    out.push({ id, text, near });
+  }
+  return out;
+}
+
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
+  /** The frame's whole rescue store (empty when nothing is left to rescue). */
+  | { type: "rescue"; items: RescueItem[] }
   | { type: "save" }
   /**
    * Solo: the frame's text for `collect`. `unsavable` when a block holds typing that cannot be
@@ -437,6 +469,18 @@ export function withFrameKey(url: string, key: string): string {
   return `${url.slice(0, at)}#plinth-k=${key}&h=${url.slice(at + 1)}`;
 }
 
+export interface RescueMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "rescue";
+  items: RescueItem[];
+}
+
+/** The rescue items the app kept, offered to a frame (after a reload): it writes what is missing. */
+export function rescueMessage(items: RescueItem[]): RescueMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "rescue", items };
+}
+
 export function collectMessage(nonce: string): CollectMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "collect", nonce };
 }
@@ -498,6 +542,7 @@ export const APP_MESSAGE_KINDS = [
   "lead",
   "review",
   "reviewed",
+  "rescue",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -513,7 +558,8 @@ export type AppToFrameMessage =
   | PairedMessage
   | LeadMessage
   | ReviewMessage
-  | ReviewedMessage;
+  | ReviewedMessage
+  | RescueMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -522,7 +568,13 @@ export type AppToFrameMessage =
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: EditMessage | CollectMessage | VersionMessage | ReviewMessage | ReviewedMessage,
+  message:
+    | EditMessage
+    | CollectMessage
+    | VersionMessage
+    | ReviewMessage
+    | ReviewedMessage
+    | RescueMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -596,6 +648,7 @@ interface ReadOptions {
 /** The kinds that carry the frame key. `shown` (live views) and `ask` outside edit mode do not. */
 const KEYED: ReadonlySet<FrameMessageKind> = new Set([
   "live",
+  "rescue",
   "save",
   "draft",
   "resolved",
@@ -700,6 +753,10 @@ const FRAME_READERS: {
     return { type: "ask", anchor: { key, text }, what: m.what as AskWhat };
   },
   leave: () => ({ type: "leave" }),
+  rescue(m) {
+    const items = readRescueItems(m.items);
+    return items ? { type: "rescue", items } : null;
+  },
   shown(m, opts) {
     if (!opts.shown || m.nonce !== opts.shown || !isInt(m.n, 1) || !isBool(m.ok)) return null;
     return { type: "shown", n: m.n, nonce: m.nonce, ok: m.ok };

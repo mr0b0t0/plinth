@@ -43,7 +43,14 @@ import {
 } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, liveCheckpoint, liveDiscard, liveInfo } from "../../lib/api.ts";
-import { clearPageDraft, loadPageDraft, type PageDraft, savePageDraft } from "../editor/draft.ts";
+import {
+  clearPageDraft,
+  loadPageDraft,
+  loadRescue,
+  type PageDraft,
+  savePageDraft,
+  saveRescue,
+} from "../editor/draft.ts";
 import { showToast } from "../ui/index.ts";
 import {
   type AskWhat,
@@ -57,6 +64,8 @@ import {
   postToRenderer,
   type ReviewResult,
   readFrameMessage,
+  readRescueItems,
+  rescueMessage,
   reviewedMessage,
   reviewMessage,
 } from "./rendererProtocol.ts";
@@ -234,6 +243,10 @@ export function useLiveEdit({
   const [discardAsk, setDiscardAsk] = useState<Resolved | null>(null);
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
+  /** How many typed texts the frame's rescue store holds (kept in app storage meanwhile). */
+  const [rescued, setRescued] = useState(
+    () => readRescueItems(loadRescue(gate.artifact.id))?.length ?? 0,
+  );
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
@@ -421,13 +434,18 @@ export function useLiveEdit({
         leave() {
           latest.current.onLeave?.();
         },
+        rescue({ items }) {
+          // Typed text the room's draft does not hold yet: kept here until the frame says it does.
+          saveRescue(id, items);
+          setRescued(items.length);
+        },
         // A version shown in place is the live-view update's answer (useViewUpdate.ts).
         shown() {},
       });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, maxBytes, frameKey]);
+  }, [available, frame, target, maxBytes, frameKey, id]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
@@ -441,11 +459,15 @@ export function useLiveEdit({
       // The frame's own focus() moves the keyboard only once its window has the focus.
       if (focus) frame.focus();
       postToRenderer(frame, target, editMessage(editing, soloBase, focus));
+      // Typed text a frame before this one could not get into the draft: offered to this one,
+      // which writes what the draft does not hold yet.
+      const kept = editing ? readRescueItems(loadRescue(id)) : null;
+      if (kept && kept.length > 0) postToRenderer(frame, target, rescueMessage(kept));
     };
     send();
     frame.addEventListener("load", send);
     return () => frame.removeEventListener("load", send);
-  }, [available, frame, target, editing, soloBase]);
+  }, [available, frame, target, editing, soloBase, id]);
 
   /**
    * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
@@ -886,7 +908,8 @@ export function useLiveEdit({
   const unsaved =
     (mode === "room" && status?.unflushed === true) ||
     (mode === "solo" && soloDirty) ||
-    status?.unsavable === true;
+    status?.unsavable === true ||
+    rescued > 0;
   useEffect(() => {
     if (!unsaved) return;
     const onLeavePage = (e: BeforeUnloadEvent) => {

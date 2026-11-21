@@ -20,6 +20,9 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  RESCUE_STUCK,
+  RESCUE_WAITS,
+  type RescueItem,
   TAKEN_KEPT,
   TOO_LONG,
   UNSAVABLE,
@@ -2313,5 +2316,232 @@ describe("typing next to a mark", () => {
     }
     expect(tried).toBeGreaterThan(300);
     expect(lost).toEqual([]);
+  });
+});
+
+// ---------- the rescue store (rooms) ----------
+
+/**
+ * A room as the editor sees it, answering lease requests when the test says (or at once while
+ * `auto`): its lines change only with an edit the room took, as the real client's do on an ack.
+ */
+class FakeRoom {
+  lines: string[];
+  readonly ready = true;
+  connected = true;
+  readonly settled = true;
+  mine: ClientLease | null = null;
+  readonly leases = new Map<string, ClientLease>();
+  readonly you = { id: "me", email: "ada@example.org", right: "write" as const };
+  conflictVersion: number | null = null;
+  ackedText: string | null = null;
+  readonly durableText = null;
+  asked: { start: number; end: number } | null = null;
+  auto = true;
+  editor!: DocEditor;
+  keep = vi.fn(() => true);
+  private n = 0;
+  constructor(text: string) {
+    this.lines = text.split("\n");
+  }
+  get text() {
+    return this.lines.join("\n");
+  }
+  lease(r: { start: number; end: number }) {
+    if (!this.connected || this.conflictVersion !== null) return false;
+    this.asked = { start: r.start, end: r.end };
+    if (this.auto) this.grant();
+    return true;
+  }
+  grant() {
+    const r = this.asked as { start: number; end: number };
+    this.asked = null;
+    this.mine = { id: `l${++this.n}`, ...r, by: "", holder: "me", at: 0 };
+    this.leases.set(this.mine.id, this.mine);
+    this.ackedText = this.lines.slice(r.start, r.end).join("\n");
+    this.editor.granted(this.mine);
+  }
+  deny(reason: LeaseDenial, by?: string) {
+    this.asked = null;
+    this.editor.denied(reason, by);
+  }
+  edit(text: string) {
+    const l = this.mine;
+    if (!l || !this.connected) return false;
+    const ins = text === "" ? [] : text.split("\n");
+    this.lines = [...this.lines.slice(0, l.start), ...ins, ...this.lines.slice(l.end)];
+    this.mine = { ...l, end: l.start + ins.length };
+    this.leases.set(l.id, this.mine);
+    this.ackedText = text;
+    this.editor.changed();
+    return true;
+  }
+  release() {
+    if (!this.mine) return;
+    this.leases.delete(this.mine.id);
+    this.mine = null;
+    this.editor.changed();
+  }
+  takeover() {
+    return false;
+  }
+  /** The room takes this socket's lease away (a takeover, a freeze, a dropped socket). */
+  lose(reason: LeaseLoss) {
+    if (this.mine) this.leases.delete(this.mine.id);
+    this.mine = null;
+    this.editor.lost(reason);
+  }
+}
+
+describe("the rescue store", () => {
+  let rescued: RescueItem[][];
+
+  function roomSetup(text: string) {
+    const room = new FakeRoom(text);
+    rescued = [];
+    room.editor = new DocEditor(root, window, room, {
+      save,
+      status: () => undefined,
+      ask,
+      rescue: (items) => rescued.push(items),
+    });
+    room.editor.setEditing(true);
+    return room;
+  }
+
+  /** Lets queued work run (the store writes from a microtask). */
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  /** Opens the first paragraph and leaves typing in it that cannot be written as typed. */
+  function stick(room: FakeRoom) {
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    r.editable.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(room.editor.unsavable).toBe(true);
+  }
+
+  const kept = () => rescued.at(-1)?.map((i) => i.text) ?? [];
+
+  it("keeps the typing the moment it cannot be written, for the app to hold", () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+  });
+
+  it("1. a freeze that takes the lease before the room says it froze: written after the review", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.auto = false;
+    // The room revokes the lease ("closed") while the draft does not look frozen yet.
+    room.lose("closed");
+    expect(room.asked).not.toBeNull();
+    // Then the conflict frame, then the answer to the lease request.
+    room.conflictVersion = 4;
+    room.editor.roomStatus();
+    room.deny("frozen");
+    await settle();
+    expect(notice()).toContain(RESCUE_WAITS);
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+    expect(room.asked).toBeNull();
+    // The review ends (the draft is reset to the new version): the text goes in.
+    room.conflictVersion = null;
+    room.lines = ["ab", "", "next", "", "From the agent."];
+    room.editor.roomStatus();
+    room.editor.changed();
+    await settle();
+    expect(room.asked).not.toBeNull();
+    room.grant();
+    await settle();
+    expect(room.text).toContain("abc");
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("2. edit mode ended while offline, and someone took the block meanwhile: written next to it", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.connected = false;
+    room.lose("reconnect");
+    room.editor.setEditing(false);
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+    // Back, with someone else on the block: its place is held, so it goes in at a free place.
+    room.leases.set("o1", {
+      id: "o1",
+      start: 0,
+      end: 1,
+      by: "bo@example.org",
+      holder: "s2",
+      at: 0,
+    });
+    room.connected = true;
+    room.auto = false;
+    room.editor.changed();
+    await settle();
+    expect(room.asked).toEqual({ start: 0, end: 1 });
+    room.deny("held", "bo@example.org");
+    await settle();
+    expect(room.asked?.start).toBe(room.asked?.end);
+    expect(room.asked?.start).toBeGreaterThan(1);
+    room.grant();
+    await settle();
+    expect(room.text).toContain("ab\n\nabc");
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("3. a refusal from the room never resets typing that cannot be written", () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.editor.refused(REFUSED_EDIT);
+    expect(rich(room.editor).editable.textContent).toBe("abc");
+    expect(room.editor.unsavable).toBe(true);
+    expect(kept()).toEqual(["abc"]);
+  });
+
+  it("4. a takeover whose salvage keeps meeting stale answers stays kept, with Copy", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.auto = false;
+    room.lose("takeover");
+    for (let i = 0; i < 40 && room.asked; i++) {
+      room.deny("stale");
+      await settle();
+    }
+    expect(room.asked).toBeNull();
+    expect(room.text).toBe("ab\n\nnext");
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain(RESCUE_STUCK);
+    const copy = [
+      ...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button"),
+    ].find((b) => b.textContent === "Copy");
+    expect(copy).toBeDefined();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    copy?.click();
+    expect(writeText).toHaveBeenCalledWith("abc");
+  });
+
+  it("writes what the app kept from before a reload, once, and not what the draft has already", async () => {
+    const room = roomSetup("ab\n\nnext");
+    room.editor.offerRescue([
+      { id: "r1", text: "abc", near: 0 },
+      { id: "r2", text: "next", near: 2 },
+    ]);
+    await settle();
+    expect(room.text).toContain("abc");
+    expect(room.text.match(/next/g)?.length).toBe(1);
+    expect(kept()).toEqual([]);
+    // Offered again (another load of the same frame): nothing is written twice.
+    room.editor.offerRescue([{ id: "r1", text: "abc", near: 0 }]);
+    await settle();
+    expect(room.text.match(/abc/g)?.length).toBe(1);
   });
 });

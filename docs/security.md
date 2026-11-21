@@ -2531,6 +2531,16 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   and their places ("row 12", built by the renderer from lease positions, never content) become
   text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
+- **The rescue store.** A doc block's typing the room's draft does not hold yet (typing that
+  cannot be written as typed, or that a lost lease, a freeze or a takeover kept from being
+  written) is held by the frame and posted to the app as a keyed editing message (`rescue`: at
+  most 20 items of an id, the block's text without its marks, and a line number). The app keeps
+  it in its own origin's `sessionStorage` (key `plinth-draft:page-rescue:<artifact id>`, beside the
+  solo kept copy, with a copy in memory when storage is blocked), never in the content origin's
+  storage, and only offers it back to the artifact's frame at its exact origin after a reload; it
+  never renders or sends it anywhere else. The frame writes it through its own leases like typing,
+  and the store empties once the room's lines hold it. A room's `keep` frame is answered `kept`;
+  an older room's `invalid` answer only stops `keep` and never reaches the editor.
 - **Per-type rules mirror the stager.** The room checks every edit and structural change with the
   type's rules, which hold every check the type's publish hook makes on the source alone (a doc
   must not start like a whole HTML document; a sheet keeps its row, header and size rules, and a
