@@ -3105,14 +3105,20 @@ deleting slides, and a slide's columns, stay with agents for now.
   Enter leases the lines of that block and opens it as formatted text, as in
   [Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19) (the same model, format
   bar, shortcuts, fidelity check and verify step). Enter at the end of a heading or paragraph opens
-  a new paragraph below it. The slide fits again as text changes. Presenting, full screen and
+  a new paragraph below it; Enter inside one sends the text before and after the caret as two
+  blocks in one edit and then opens the second, so the text after the caret is in the draft at
+  once. The slide fits again as text changes. Presenting, full screen and
   following the presenter wait until editing ends (Present is not offered while editing; Done
   publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
   Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
   neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
   or when the room merges a version into the draft, is taken again once the draft (after a merge,
-  the merged draft) is back, where the draft holds its text nearest to where it was (two slides
-  may share a title), and what was typed since is sent there. A place clicked whose lines move
+  the merged draft) is back, where the draft holds a text the room may have of it nearest to where
+  it was (two slides may share a title), and what was typed since is sent there. After a drop that
+  is the text sent last (it may have arrived without its answer), the text the room acknowledged
+  or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.
+  An empty one (an insert point, or a block emptied) is found by the lines around it, and an
+  insert point nothing was typed in closes. A place clicked whose lines move
   before the room reads its lease is looked for again the same way (an insert point by the lines
   before and at it), at most three times, and nothing opens on lines that no longer hold what was
   clicked.

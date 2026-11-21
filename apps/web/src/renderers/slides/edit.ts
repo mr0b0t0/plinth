@@ -246,6 +246,11 @@ interface Open {
   /** Where its lease started when last seen: a block taken again is looked for nearest here. */
   start: number;
   /**
+   * The lines just above and below its lease when last seen: an insert point (an empty lease) is
+   * taken again where the same lines are around it.
+   */
+  around: { above: string | null; below: string | null };
+  /**
    * Where the caret was last seen in it (which editor, and where), while it has the focus: a
    * slide drawn again around it takes the focus away, and it is put back there.
    */
@@ -262,9 +267,14 @@ interface Want {
    * when the lines moved meanwhile, the place is looked for again by them.
    */
   mark: Mark;
+  /**
+   * Taken again after its lease ended: each text the room may hold of it (what was sent last, what
+   * the room acked, what it last wrote to D1). The one found nearest where it was is asked for.
+   */
+  alts?: Mark[];
   /** How many times it was looked for again after the lines moved. */
   tries: number;
-  open: Omit<Open, "host" | "editors" | "sent" | "start" | "caret" | "focused"> & {
+  open: Omit<Open, "host" | "editors" | "sent" | "start" | "around" | "caret" | "focused"> & {
     models: RichBlock[];
   };
   focus: "start" | "end";
@@ -496,7 +506,10 @@ export class SlidesEditor {
         o.ctx = { ...o.ctx, settings: afterBareOpen(this.backend.lines, o.n) };
       }
     }
-    if (this.open && mine) this.open.start = mine.start;
+    if (this.open && mine) {
+      this.open.start = mine.start;
+      this.open.around = this.aroundOf(mine);
+    }
     for (const v of views) {
       pinFiles(v.frame, base);
       if (!this.decorated.has(v.frame)) {
@@ -871,6 +884,7 @@ export class SlidesEditor {
       editors: [],
       sent: joinLines(this.backend.lines.slice(lease.start, lease.end)),
       start: lease.start,
+      around: this.aroundOf(lease),
     };
     for (const m of w.open.models) o.editors.push(this.makeEditor(o, m));
     host.append(...o.editors.map((r) => r.el));
@@ -894,6 +908,12 @@ export class SlidesEditor {
     if (w.select) first?.selectText();
     if (w.resend) this.schedule();
     this.hooks.status();
+  }
+
+  /** The lines just above and below a range of the backend's lines. */
+  private aroundOf(range: LineRange): Open["around"] {
+    const lines = this.backend.lines;
+    return { above: lines[range.start - 1] ?? null, below: lines[range.end] ?? null };
   }
 
   private makeEditor(o: Open, model: RichBlock): RichBlockEditor {
@@ -988,8 +1008,12 @@ export class SlidesEditor {
     }, EDIT_DEBOUNCE_MS);
   }
 
-  /** The lines the open place is sent as now, or null when it cannot be written as typed. */
-  private linesNow(o: Open): string[] | null {
+  /**
+   * The lines the open place is sent as now, or null when it cannot be written as typed. A block
+   * split by Enter is sent as `blocks`: the text before the caret and the text after it, as two
+   * blocks of the same lease (an empty one is left out).
+   */
+  private linesNow(o: Open, blocks?: RichBlock[]): string[] | null {
     if (o.kind === "notes") {
       const models = o.editors.map((r) => r.model);
       for (const m of models) if (verifyBlock(m, TOOLS, o.env) === null) return null;
@@ -1001,17 +1025,24 @@ export class SlidesEditor {
     }
     const model = o.editors[0]?.model;
     if (!model) return null;
-    const lines = deckBlockLines(model, o.ctx, o.env);
-    if (lines === null || lines.length === 0) return lines;
+    const lines: string[] = [];
+    for (const m of blocks ?? [model]) {
+      const part = deckBlockLines(m, o.ctx, o.env);
+      if (part === null) return null;
+      if (part.length === 0) continue;
+      if (lines.length > 0) lines.push("");
+      lines.push(...part);
+    }
+    if (lines.length === 0) return lines;
     return [...(o.pad.before ? [""] : []), ...lines, ...(o.pad.after ? [""] : [])];
   }
 
-  /** Sends the open place's text. False when it was not sent. */
-  private send(): boolean {
+  /** Sends the open place's text (or `blocks`, a split: linesNow). False when it was not sent. */
+  private send(blocks?: RichBlock[]): boolean {
     const o = this.open;
     const mine = this.backend.mine;
     if (!o || !mine || this.trimming) return false;
-    const lines = this.linesNow(o);
+    const lines = this.linesNow(o, blocks);
     if (lines === null) {
       this.stuck = true;
       this.notify(DECK_WORDS.unsavable);
@@ -1102,28 +1133,41 @@ export class SlidesEditor {
       this.edited();
       return;
     }
-    rich.setModel(keep);
+    // The text after the caret is sent in the same edit as the text before it, so it is in the
+    // deck at once, whatever happens to the lease asked for next; its block then opens on its own
+    // lines. With nothing after the caret, the new block is an insert point below.
+    const tail = next ? deckBlockLines(next, o.ctx, o.env) : [];
+    if (tail === null || this.linesNow(o, [keep, ...(next ? [next] : [])]) === null) {
+      // Nothing changes: the block stays as typed.
+      this.notify(DECK_WORDS.unsavable);
+      return;
+    }
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    if (!this.send()) return;
+    const sent = tail.length > 0 && next ? this.send([keep, next]) : this.send([keep]);
+    // Not sent: the block stays as it was (or as the room has it, after a refusal).
+    if (!sent) return;
+    rich.setModel(keep);
     const n = o.n;
     const model = next ?? para();
     const go = () => {
       const mine = this.backend.mine;
       if (!mine || this.open !== o) return;
-      const at = mine.end;
       const ctx = o.ctx;
       const env = o.env;
+      const end = mine.end - (tail.length > 0 && o.pad.after ? 1 : 0);
+      const range =
+        tail.length > 0 ? { start: end - tail.length, end } : { start: mine.end, end: mine.end };
       this.close(true);
       this.request({
-        range: { start: at, end: at },
+        range,
         focus: "start",
         open: {
           kind: "block",
           n,
           ctx,
           env,
-          pad: this.padAt(at),
+          pad: tail.length > 0 ? { before: false, after: false } : this.padAt(range.start),
           form: notesFormOf(undefined),
           models: [model],
         },
@@ -1236,29 +1280,49 @@ export class SlidesEditor {
   lost(reason: LeaseLoss): void {
     const o = this.open;
     if (!o) return;
+    // What was typed, read while the editors are there: null when it cannot be written as typed.
+    const typed = this.linesNow(o);
     this.open = null;
     const models = o.editors.map((r) => r.model);
     for (const r of o.editors) r.destroy();
-    // The room's text of the block as it ended: after a merge, what the room acked of it.
-    const text = reason === "rebased" ? (this.backend.ackedText ?? o.sent) : o.sent;
-    if ((reason === "reconnect" || reason === "rebased") && text) {
+    if (reason === "reconnect" || reason === "rebased") {
       // The room merged a version or the socket dropped: take the block again once the draft is
-      // back, and send what was typed since. A merge's text comes after the lease's end (with a
-      // higher rev), so the block is looked for in it, not in the lines from before it.
-      const { kind, n, ctx, env, pad, form } = o;
-      this.retake = {
-        near: o.start,
-        after: reason === "rebased" ? this.backend.rev : null,
-        want: {
-          range: { start: o.start, end: o.start },
-          mark: { text, above: null, below: null },
-          tries: 0,
-          focus: "end",
-          open: { kind, n, ctx, env, pad, form, models },
-          resend: true,
-        },
-      };
-      this.tryRetake();
+      // back, and send what was typed since. It is looked for by each text the room may hold of
+      // it: after a merge, what the room acked of it; after a dropped socket, the text sent last
+      // (it may have arrived without its answer), the text acked (the room kept running) or the
+      // text last written to D1 (the room was evicted meanwhile). An empty one is an insert point,
+      // found by the lines around it. A merge's text comes after the lease's end (with a higher
+      // rev), so the block is looked for in it, not in the lines from before it.
+      const b = this.backend;
+      const texts =
+        reason === "rebased"
+          ? [b.ackedText, o.sent, b.durableText]
+          : [o.sent, b.ackedText, b.durableText];
+      const alts: Mark[] = [];
+      for (const text of texts) {
+        if (text === null || alts.some((m) => m.text === text)) continue;
+        alts.push(text === "" ? { text, ...o.around } : { text, above: null, below: null });
+      }
+      // An insert point nothing was typed in just closes.
+      const keep = alts.some((m) => m.text !== "") || typed === null || typed.length > 0;
+      const mark = alts[0];
+      if (keep && mark) {
+        const { kind, n, ctx, env, pad, form } = o;
+        this.retake = {
+          near: o.start,
+          after: reason === "rebased" ? b.rev : null,
+          want: {
+            range: { start: o.start, end: o.start },
+            mark,
+            alts,
+            tries: 0,
+            focus: "end",
+            open: { kind, n, ctx, env, pad, form, models },
+            resend: true,
+          },
+        };
+        this.tryRetake();
+      }
     }
     this.hooks.redraw();
     this.hooks.status();
@@ -1292,7 +1356,15 @@ export class SlidesEditor {
     // nearest where the block was is the one taken.
     const lines = b.lines;
     const w = r.want;
-    const at = markAt(lines, w.mark, r.near);
+    let at = -1;
+    let mark = w.mark;
+    for (const m of w.alts ?? [w.mark]) {
+      const p = markAt(lines, m, r.near);
+      if (p >= 0 && (at < 0 || Math.abs(p - r.near) < Math.abs(at - r.near))) {
+        at = p;
+        mark = m;
+      }
+    }
     if (at < 0) {
       this.notify(w.resend ? DECK_WORDS.notKept : DECK_WORDS.changed);
       return;
@@ -1302,7 +1374,8 @@ export class SlidesEditor {
     const want: Want = {
       ...w,
       open: { ...w.open, n, ctx: { ...w.open.ctx, settings: afterBareOpen(lines, n) } },
-      range: { start: at, end: at + blockLines(w.mark.text).length },
+      mark,
+      range: { start: at, end: at + blockLines(mark.text).length },
     };
     this.want = want;
     if (!b.lease(want.range)) {
