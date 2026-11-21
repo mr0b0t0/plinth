@@ -22,6 +22,7 @@ import {
   SERVER_NAME,
   T3_CODE_USES_AGENTS,
   typeDef,
+  versionSourcePath,
 } from "@plinth/shared";
 import { type AppContext, clientIp } from "../api/context.ts";
 import { type Config, thumbnailsActive } from "../config.ts";
@@ -31,7 +32,7 @@ import { hit } from "../lib/ratelimit.ts";
 import { MCP_TOOL_SUMMARIES } from "../mcp/server.ts";
 import { decideFor, findArtifact, getVersionRow } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
-import { readText } from "../services/storage.ts";
+import { parseManifest, readText } from "../services/storage.ts";
 import {
   scheduleThumbnail,
   THUMB,
@@ -445,7 +446,10 @@ export async function serveSource(c: AppContext): Promise<Response> {
   // does not know has no source to show.
   const def = typeDef(a.type);
   if (!def) return notFound();
-  const text = await readText(c.env.FILES, `${v.r2Prefix}${def.sourcePath}`);
+  const text = await readText(
+    c.env.FILES,
+    `${v.r2Prefix}${versionSourcePath(def, parseManifest(v.manifest))}`,
+  );
   if (text === null) return notFound();
   return new Response(text, { status: 200, headers: sourceHeaders(config) });
 }

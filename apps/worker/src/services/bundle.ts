@@ -28,6 +28,8 @@ export interface BundleBounds {
   maxMetaBytes?: number;
   /** The target type's source file ("index.html" or "content.md"), for the prefix strip. */
   sourcePath: string;
+  /** The type's second source file, if it has one (an HTML deck's deck.json beside slides.md). */
+  altSourcePath?: string;
   /**
    * Awaited with a file's size just before its bytes are allocated: the stager's back-pressure
    * (Stager.reserve), so the next file is not read while the in-flight budget is full.
@@ -835,7 +837,7 @@ async function* entries(
     }
 
     if (badCount > 0) throw badPaths(bad, badCount);
-    summary.strippedPrefix = stripPrefixFor(kept, bounds.sourcePath);
+    summary.strippedPrefix = stripPrefixFor(kept, bounds.sourcePath, bounds.altSourcePath);
   } finally {
     await src.cancel();
   }
@@ -878,11 +880,16 @@ function badPaths(bad: { path: string; reason: PathReason }[], count: number): A
  * The prefix to strip: null when the source file is at the root; "<dir>/" when every kept file is
  * under that one directory and it holds the source file. Anything else has no entry file.
  */
-export function stripPrefixFor(kept: ReadonlySet<string>, sourcePath: string): string | null {
-  if (kept.has(sourcePath)) return null;
-  const noEntry = new ApiError("invalid_input", `The bundle has no ${sourcePath} at its top`, {
+export function stripPrefixFor(
+  kept: ReadonlySet<string>,
+  sourcePath: string,
+  altSourcePath?: string,
+): string | null {
+  if (kept.has(sourcePath) || (altSourcePath !== undefined && kept.has(altSourcePath))) return null;
+  const names = altSourcePath ? `${sourcePath} or ${altSourcePath}` : sourcePath;
+  const noEntry = new ApiError("invalid_input", `The bundle has no ${names} at its top`, {
     reason: "no_entry_file",
-    next: `Run tar from inside the build folder (the one with ${sourcePath} at its top)`,
+    next: `Run tar from inside the build folder (the one with ${names} at its top)`,
   });
   let top: string | null = null;
   for (const p of kept) {
@@ -892,7 +899,12 @@ export function stripPrefixFor(kept: ReadonlySet<string>, sourcePath: string): s
     if (top === null) top = dir;
     else if (dir !== top) throw noEntry;
   }
-  if (top === null || !kept.has(`${top}${sourcePath}`)) throw noEntry;
+  if (
+    top === null ||
+    !(kept.has(`${top}${sourcePath}`) || (altSourcePath && kept.has(`${top}${altSourcePath}`)))
+  ) {
+    throw noEntry;
+  }
   const bad: { path: string; reason: PathReason }[] = [];
   let count = 0;
   for (const p of kept) {

@@ -705,7 +705,9 @@ describe("printing", () => {
     await printDeck(f.win, root(), {
       notes: true,
       canvas: { width: 1280, height: 720 },
-      prepare: () => order.push("prepare"),
+      prepare: () => {
+        order.push("prepare");
+      },
       restore: () => order.push("restore"),
     });
     expect(order).toEqual(["decode", "prepare", "print"]);

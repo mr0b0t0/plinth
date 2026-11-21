@@ -9,6 +9,9 @@ import {
   BLOCK_KINDS,
   BOARD_COLORS,
   DESIGN_PRESETS,
+  HTML_DECK_CANVAS,
+  HTML_DECK_LIMITS,
+  HTML_DECK_MARGIN,
   SHEET_COLUMN_TYPES,
   SLIDE_DENSE,
 } from "@plinth/shared";
@@ -97,9 +100,34 @@ describe("the craft guides", () => {
     expect(slides).toContain(
       `past ${SLIDE_DENSE.lines} lines or ${SLIDE_DENSE.chars} characters on a slide`,
     );
-    // Today's decks are Markdown: the guide teaches no HTML or CSS of its own.
+    // The guide teaches no markup of its own, in either format: an HTML deck's markup is the
+    // skill's to describe.
     expect(slides).not.toMatch(/<[a-z]+[\s>]/);
     expect(slides).not.toMatch(/\bstyle=|\bbackground:/);
+  });
+
+  it("the slides guide's HTML deck numbers are the format's", () => {
+    const all = guide("slides");
+    const at = all.indexOf("\n## HTML decks (deck.json)\n");
+    expect(at).toBeGreaterThan(0);
+    const htmlDeck = flat(all.slice(at));
+    const { width, height } = HTML_DECK_CANVAS["16:9"];
+    const four = HTML_DECK_CANVAS["4:3"];
+    expect(htmlDeck).toContain(
+      `${width} by ${height} page (${four.width} by ${four.height} at 4:3)`,
+    );
+    expect(htmlDeck).toContain(`The standard margin is ${HTML_DECK_MARGIN} px`);
+    expect(htmlDeck).toContain(`flow is ${width - 2 * HTML_DECK_MARGIN} px wide`);
+    expect(htmlDeck).toContain(`height inside the margins is ${height - 2 * HTML_DECK_MARGIN} px`);
+    expect(htmlDeck).toContain(
+      `at most ${HTML_DECK_LIMITS.maxDivDepth} nested boxes, ${HTML_DECK_LIMITS.maxBoxes} boxes and ${HTML_DECK_LIMITS.maxPinned} pinned children`,
+    );
+    expect(htmlDeck).toContain(`at most ${HTML_DECK_LIMITS.maxFamilies} families`);
+    expect(htmlDeck).toContain(
+      `at most ${HTML_DECK_LIMITS.maxNotes.toLocaleString("en")} characters`,
+    );
+    // An HTML slide is cut at its canvas, never shrunk (Markdown slides shrink).
+    expect(htmlDeck).toContain("a slide never shrinks to fit");
   });
 
   it("the design guide names only presets that exist", () => {

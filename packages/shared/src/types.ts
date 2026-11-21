@@ -111,6 +111,12 @@ export interface ArtifactDetailBase extends ArtifactSummary {
    */
   design_system?: DesignSystemReference | null;
   /**
+   * An HTML deck (source deck.json): the text of deck.css and of every slides/<id>.html, so an
+   * agent can change one slide and send the others back by sha256 (each is also in `assets`).
+   * Untrusted, like all artifact text. Absent for other types and for a Markdown deck.
+   */
+  files?: { path: string; content: string }[];
+  /**
    * The files this version holds that were copied from other artifacts (copy_files), one record
    * per source version and copy time. `title` and `current_version` only when the caller may view
    * that source now (null otherwise). Absent when the version holds no copies.
@@ -639,6 +645,11 @@ export type ViewGate =
        * version, and why: the Edit slot shows Ask an agent instead. Never together with `live`.
        */
       live_off?: ViewGateLiveOff;
+      /**
+       * The version shown has no source editor although its type has one: an HTML deck, whose
+       * source is deck.json and its slide files. The menus offer no Edit. Absent otherwise.
+       */
+      no_editor?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

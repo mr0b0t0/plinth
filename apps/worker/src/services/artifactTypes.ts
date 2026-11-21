@@ -57,15 +57,18 @@ export interface CommittedVersion {
 
 /** What one type does differently on the Worker. Every type has an entry in TYPE_HOOKS. */
 export interface TypeHooks {
-  /** The title the source names for itself, or null (the version is then "Untitled"). */
-  title(text: string): string | null;
+  /**
+   * The title the source names for itself, or null (the version is then "Untitled"). `sourcePath`:
+   * the file the source is stored as, when known (a deck's format is its file, not its text).
+   */
+  title(text: string, sourcePath?: string): string | null;
   /** What the source declares, as versions.capabilities stores it, or null. */
   capabilities(text: string): string | null;
   /**
    * Refuse a source the type cannot hold, after the wire-field checks (throws invalid_input).
    * Runs for inline publishes and updates and for bundle uploads.
    */
-  validate?(def: ArtifactTypeDef, text: string): void;
+  validate?(def: ArtifactTypeDef, text: string, sourcePath?: string): void;
   /** Said to the agent when an asset is of a content type the type does not take. */
   assetRule?: string;
   /**
@@ -82,7 +85,33 @@ export interface TypeHooks {
     def: ArtifactTypeDef,
     text: string,
     manifestPaths: ReadonlySet<string>,
+    sourcePath?: string,
   ): PublishWarning[];
+  /**
+   * Paths of text files the version check reads (an HTML deck's deck.css and slide files): the
+   * stager keeps the bytes this request sends for them, so the check reads only carried and reused
+   * files from R2. Absent: none.
+   */
+  keepsText?(path: string): boolean;
+  /**
+   * On an update that sends assets: paths of the current version the list leaves out that are
+   * carried as if sent as {path, sha256} (an HTML deck keeps every file but a slide its new order
+   * drops). Absent: the list sent is the version's files.
+   */
+  impliedFiles?(u: ImpliedFilesInput): Promise<string[]>;
+  /**
+   * On an update that sends no assets: whether a current file is carried into a version whose
+   * source is stored as `sourcePath` (a deck switched from deck.json to slides.md keeps its images
+   * and leaves its slide files, deck.css and fonts, which a Markdown deck cannot hold). Absent: all.
+   */
+  carries?(sourcePath: string, path: string, contentType: string): boolean;
+  /**
+   * Refuse a version whose files the type cannot hold together (throws invalid_input), after every
+   * file is staged and the source passed validate, and return publish warnings about those files.
+   * Runs for inline publishes and updates and for bundle uploads, never on a restore (which copies
+   * stored files without checking them again).
+   */
+  validateVersion?(v: VersionCheck): Promise<PublishWarning[]>;
   /**
    * After the commit, outside its error handling: never makes the commit look failed. Returns
    * the result, with any per-type publish warnings added.
@@ -126,6 +155,30 @@ export interface TypeHooks {
   prepare?(ctx: Ctx, p: PrepareInput): Promise<PreparedSource>;
 }
 
+/** What a type's version check gets: the source, every file of the version, and a reader. */
+export interface VersionCheck {
+  def: ArtifactTypeDef;
+  /** The source's text, as it will be stored. */
+  text: string;
+  /** Where the source is stored (the type's sourcePath or altSource). */
+  sourcePath: string;
+  /** Every file of the version, the source included, with its stored Content-Type and size. */
+  files: readonly { path: string; contentType: string; size: number }[];
+  /** A file's text (the bytes this request sent, else the stored object), or null when gone. */
+  read(path: string): Promise<string | null>;
+}
+
+/** What a type's impliedFiles hook gets. */
+export interface ImpliedFilesInput {
+  /** The new source's text, and the file it is stored as. */
+  text: string;
+  sourcePath: string;
+  /** The files this update sends (contents and references), by path, the source included. */
+  sent: ReadonlyMap<string, { size: number }>;
+  /** The current version's files, by path. */
+  current: ReadonlyMap<string, { size: number }>;
+}
+
 /** What a type's prepare hook gets: the source as sent, and what the version will become. */
 export interface PrepareInput {
   def: ArtifactTypeDef;
@@ -154,6 +207,8 @@ export interface StagedSource {
   def: ArtifactTypeDef;
   text: string;
   paths: ReadonlySet<string>;
+  /** The file the source is stored as. */
+  sourcePath?: string;
 }
 
 /** Every type's hooks, keyed by its id. One type per line, in ARTIFACT_TYPES order. */
@@ -216,7 +271,7 @@ export function typeSourceWarnings(v: StagedSource): PublishWarning[] {
   const hook = typeHooks(v.def).sourceWarnings;
   if (!hook) return [];
   try {
-    return hook(v.def, v.text, v.paths);
+    return hook(v.def, v.text, v.paths, v.sourcePath);
   } catch (e) {
     console.error(
       "source warnings hook failed:",
@@ -254,6 +309,8 @@ export function requireTypeDef(type: string): ArtifactTypeDef {
 export function resolveSource(
   input: SourceInput,
   currentType: ArtifactType | null,
+  /** The file the source is stored as, when known (a stored version's, or a staged one's). */
+  sourcePath?: string,
 ): { def: ArtifactTypeDef; text: string } {
   const publishing = currentType === null;
   const requested = publishing ? (input.type ?? "html") : currentType;
@@ -308,7 +365,7 @@ export function resolveSource(
     input.content_format !== undefined && hooks.importSource
       ? hooks.importSource(def, input.content, input.content_format)
       : input.content;
-  hooks.validate?.(def, text);
+  hooks.validate?.(def, text, sourcePath);
   return { def, text: hooks.canonical?.(def, text) ?? text };
 }
 
@@ -325,11 +382,16 @@ export function noAssetsError(def: ArtifactTypeDef, path?: string): ApiError {
 export function checkAsset(def: ArtifactTypeDef, path: string, contentType: string): void {
   if (def.reservedPaths.includes(path)) {
     const others = def.reservedPaths.filter((p) => p !== def.sourcePath);
+    const names = [def.sourcePath, ...others];
+    const list =
+      names.length > 2
+        ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+        : names.join(" and ");
     throw new ApiError(
       "invalid_input",
       others.length === 0
         ? `${path} is the ${def.sourceField} field, not an asset`
-        : `${[def.sourcePath, ...others].join(" and ")} belong to the ${def.id}, not its assets`,
+        : `${list} belong to the ${def.id}, not its assets`,
       { type: def.id, field: "assets", path },
     );
   }

@@ -105,7 +105,13 @@ export const SLIDES_PUBLISH_NOTE =
   "fixed 16:9 or 4:3 slides with automatic layouts, shrink to fit, paging, presenter view, PDF " +
   "export and a .pptx download (viewers download it from the deck's menu; do not build one). Raw " +
   "HTML shows as text. Assets are images; at most 500 slides and 1 MB. Speaker notes are visible to " +
-  "anyone who can open the deck. ";
+  "anyone who can open the deck. " +
+  "For a designed deck, use Claude's HTML slide format instead: content is deck.json (a JSON object: " +
+  "title, order of slide ids, sections, cover, size 16:9 or 4:3, faces), and assets are deck.css " +
+  'and one slides/<id>.html per slide, each one <section id="<id>"> on a 1920x1080 canvas (1440x1080 ' +
+  "at 4:3) with an <aside> of speaker notes; images are the version's own files by path. No script " +
+  "runs on a slide (live code goes in an <x-embed>, which has no network); see the plinth-artifacts " +
+  "skill for the elements and limits. A refusal lists each problem with its file and line. ";
 
 /** What publish_artifact says about the design_system type. */
 export const DESIGN_SYSTEM_PUBLISH_NOTE =
@@ -289,7 +295,10 @@ export const CATEGORY_INSTRUCTION =
 /** What update_artifact says about types. */
 export const TYPE_UPDATE_NOTE =
   "Send the source field that matches the artifact's type (get_artifact says which): html for an " +
-  "HTML page, content (Markdown) for a doc or a deck (slides), content (JSON) for a design_system, " +
+  "HTML page, content (Markdown) for a doc or a deck (slides), or deck.json for an HTML deck (send " +
+  "in assets only the files you changed: every other file is kept from the current version, " +
+  "except a slide the new order drops, which is removed), content (JSON) " +
+  "for a design_system, " +
   "content (artboard HTML) for a design, " +
   "content (JSON lines, or content_format csv or xlsx) for a sheet, " +
   "content (board JSON: settings) for a whiteboard; prefer edit_sheet to change a sheet's cells. " +

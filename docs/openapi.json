@@ -986,6 +986,13 @@
           {
             "in": "query",
             "required": false,
+            "name": "deck_format",
+            "schema": { "type": "string", "enum": ["markdown", "html"] },
+            "description": "With install_for slides: the deck's format (default markdown). A Markdown deck takes the system's images; an HTML deck its tokens.json, font files and images"
+          },
+          {
+            "in": "query",
+            "required": false,
             "name": "folder",
             "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
             "description": "Install under ds/<folder>/ instead of the default"
@@ -2768,7 +2775,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format; for type \"whiteboard\", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md), or for an HTML deck its index, a JSON object (stored as deck.json, with deck.css and slides/<id>.html sent as assets); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format; for type \"whiteboard\", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). Not for html artifacts, which send html."
           },
           "content_format": {
             "type": "string",
@@ -2872,7 +2879,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format; for type \"whiteboard\", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md), or for an HTML deck its index, a JSON object (stored as deck.json, with deck.css and slides/<id>.html sent as assets); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format; for type \"whiteboard\", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). Not for html artifacts, which send html."
           },
           "content_format": {
             "type": "string",
@@ -3565,7 +3572,7 @@
       "ArtifactType": {
         "type": "string",
         "enum": ["html", "doc", "slides", "design_system", "design", "sheet", "whiteboard"],
-        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. \"whiteboard\": a board of notes, shapes and arrows, its settings as JSON (source board.json) that Plinth renders as a live board, its blocks and arrows kept in shared data. Fixed at publish."
+        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a deck in Markdown, or an HTML deck (source slides.md, or deck.json with deck.css and slides/<id>.html) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. \"whiteboard\": a board of notes, shapes and arrows, its settings as JSON (source board.json) that Plinth renders as a live board, its blocks and arrows kept in shared data. Fixed at publish."
       },
       "ArtifactSummary": {
         "type": "object",
@@ -4048,16 +4055,25 @@
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
             "type": "string",
-            "enum": ["slides.md"],
-            "description": "The version file holding the source"
+            "enum": ["slides.md", "deck.json"],
+            "description": "The version file holding the source: slides.md, or deck.json (deck index (deck.json))"
           },
           "content": {
             "type": "string",
             "description": "UNTRUSTED Markdown, written by the artifact's authors"
           },
+          "files": {
+            "type": "array",
+            "description": "An HTML deck (source_path deck.json) only: the text of deck.css and of every slides/<id>.html, each also in assets. UNTRUSTED, written by the artifact's authors",
+            "items": {
+              "type": "object",
+              "properties": { "path": { "type": "string" }, "content": { "type": "string" } },
+              "required": ["path", "content"]
+            }
+          },
           "assets": {
             "type": "array",
-            "description": "The version's other files; never index.html or slides.md",
+            "description": "The version's other files; never index.html or slides.md or deck.json",
             "items": {
               "type": "object",
               "properties": {
@@ -4120,6 +4136,7 @@
           "version",
           "source_path",
           "content",
+          "files",
           "assets",
           "capabilities",
           "data_usage"
@@ -4980,6 +4997,7 @@
               "slides_setting",
               "slide_empty",
               "slide_dense",
+              "slide_markup",
               "ds_inert_markup",
               "ds_missing_font",
               "ds_no_dark_theme",
@@ -5794,7 +5812,11 @@
                 "description": "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the viewer is using the page (focus inside its frame), a newer version waits behind an Update button instead of replacing it"
               },
               "ask": { "$ref": "#/components/schemas/ViewGateAsk" },
-              "live_off": { "$ref": "#/components/schemas/ViewGateLiveOff" }
+              "live_off": { "$ref": "#/components/schemas/ViewGateLiveOff" },
+              "no_editor": {
+                "const": true,
+                "description": "The version shown has no source editor although its type has one (an HTML deck): offer no Edit"
+              }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },

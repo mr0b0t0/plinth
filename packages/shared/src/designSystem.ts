@@ -318,9 +318,10 @@ const CSS_STRING_URL_FN =
 /**
  * Why a free-form CSS block is refused, or null. Defence in depth: the CSP of the page the CSS ends
  * up in is the boundary that stops loads from other hosts. These checks keep the block from ending
- * a <style> element, from escaping its way past them, and from naming another host at all.
+ * a <style> element, from escaping its way past them, and from naming another host at all. An HTML
+ * deck's deck.css and style attributes pass the same checks (slidesHtml.ts).
  */
-function cssBlockProblem(s: string): string | null {
+export function cssBlockProblem(s: string): string | null {
   if (s.includes("<")) return "may not contain <";
   if (s.includes("\\")) return "may not contain \\";
   if (/@import/i.test(s)) return "may not use @import: fonts go in fonts[]";

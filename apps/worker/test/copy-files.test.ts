@@ -517,6 +517,75 @@ describe("installing a design system", () => {
     expect(design.res.status, JSON.stringify(design.body)).toBe(201);
   });
 
+  it("install_for slides lists what each deck format takes, and each list publishes as given", async () => {
+    const a = await agent();
+    const { body: ds } = await publish(a.auth, {
+      html: undefined,
+      title: "Acme UI",
+      type: "design_system",
+      content: JSON.stringify({
+        ...acme,
+        css: `${acme.css} .acme-hero { background: url(img/hero.png) }`,
+      }),
+      assets: [
+        { path: "fonts/acme-mono.woff2", content: MONO },
+        { path: "img/hero.png", content: "iVBORw0KGgo=", encoding: "base64" },
+      ],
+    });
+    const read = async (q: string) =>
+      json(
+        await call(`/api/v1/artifacts/${ds.id}/design-system?install_for=slides${q}`, {
+          headers: a.auth,
+        }),
+      );
+    // A Markdown deck (the default): its images only, as before.
+    const md = await read("");
+    expect(md.install.copy_files.map((c: Json) => c.path)).toEqual(["img/hero.png"]);
+    expect(md.install.stylesheets).toEqual([]);
+    expect((await read("&deck_format=markdown")).install.copy_files).toEqual(md.install.copy_files);
+    const mdDeck = await publish(a.auth, {
+      html: undefined,
+      type: "slides",
+      content: "# Talk\n\n![](ds/acme/img/hero.png)\n",
+      copy_files: md.install.copy_files,
+    });
+    expect(mdDeck.res.status, JSON.stringify(mdDeck.body)).toBe(201);
+    // An HTML deck: tokens.json, the font files and the images, never the generated CSS.
+    const html = await read("&deck_format=html");
+    expect(html.install.copy_files.map((c: Json) => c.path).sort()).toEqual([
+      "fonts/acme-mono.woff2",
+      "img/hero.png",
+      "tokens.json",
+    ]);
+    expect(html.install.faces["acme-mono"]).toMatchObject({ src: "ds/acme/fonts/acme-mono.woff2" });
+    const deck = await publish(a.auth, {
+      html: undefined,
+      type: "slides",
+      content: JSON.stringify({
+        title: "Deck",
+        order: ["a"],
+        faces: html.install.faces,
+        designSystems: [html.install.record],
+      }),
+      assets: [
+        {
+          path: "slides/a.html",
+          content: '<section id="a"><img src="ds/acme/img/hero.png" alt=""></section>',
+        },
+      ],
+      copy_files: html.install.copy_files,
+    });
+    expect(deck.res.status, JSON.stringify(deck.body)).toBe(201);
+    // A format the schema does not know is refused.
+    const bad = await call(
+      `/api/v1/artifacts/${ds.id}/design-system?install_for=slides&deck_format=pdf`,
+      {
+        headers: a.auth,
+      },
+    );
+    expect(bad.status).toBe(400);
+  });
+
   it("names the folder after the title for a system that kept the default prefix", async () => {
     const a = await agent();
     const plain = { ...acme, prefix: undefined };

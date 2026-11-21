@@ -50,7 +50,7 @@ export function typeFrameRequest(path: string): ArtifactTypeDef | null {
   if (!path.startsWith(TYPE_FRAMES_PREFIX)) return null;
   const m = /^([^/]+)\/([^/]+)$/.exec(path.slice(TYPE_FRAMES_PREFIX.length));
   const def = m?.[1] ? typeDef(m[1]) : null;
-  return def?.renderer?.frame && def.opaqueFrames && m?.[2] === def.renderer.frame ? def : null;
+  return def?.renderer?.frame && m?.[2] === def.renderer.frame ? def : null;
 }
 
 /** Whether an If-None-Match header matches an ETag (weak comparison, RFC 9110 13.1.2). */
@@ -135,10 +135,15 @@ export async function serveTypedEntry(
      * renderer opens the slides socket to present or to follow (payload `follow`).
      */
     follow?: "present" | "watch";
+    /** The version's source file (versionSourcePath); the type's sourcePath when absent. */
+    sourcePath?: string;
+    /** An HTML deck's deck.css and slide files, by path, embedded for the renderer. */
+    files?: Record<string, string>;
   },
 ): Promise<Response> {
   const { artifact, version, def, base, url, framing, socket, live, follow } = o;
-  const obj = await env.FILES.get(version.r2Prefix + def.sourcePath);
+  const sourcePath = o.sourcePath ?? def.sourcePath;
+  const obj = await env.FILES.get(version.r2Prefix + sourcePath);
   if (!obj) return notFound(config);
   const review = url.searchParams.has(REVIEW_MODE_PARAM);
   const html = typedShellHtml(def, {
@@ -153,6 +158,7 @@ export async function serveTypedEntry(
     // A type with opaque frames (a design) pins its boards' files to the version this shell shows:
     // a board mounts late and again after it scrolls back, and the current version may have moved.
     ...(def.opaqueFrames ? { version: version.number } : {}),
+    ...(sourcePath !== def.sourcePath ? { path: sourcePath, files: o.files ?? {} } : {}),
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
   applyContentHeaders(config, headers, { scripts: "self", framing, ...(socket ? { socket } : {}) });

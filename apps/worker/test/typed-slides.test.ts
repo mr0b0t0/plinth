@@ -157,12 +157,13 @@ describe("slides over REST", () => {
       await publishDeck(a.auth, { assets: [{ path: "app.js", content: "alert(1)" }] }),
     );
     expect(script).toMatchObject({
-      message: "A deck's assets are images (png, jpg, gif, webp, avif, svg)",
+      message:
+        "A deck's assets are images (png, jpg, gif, webp, avif, svg); an HTML deck's also slides/<id>.html, deck.css and fonts (woff2, woff, ttf, otf)",
       details: { type: "slides", field: "assets", path: "app.js" },
     });
     expect(
       errorOf(await publishDeck(a.auth, { assets: [{ path: "slides.md", content: "x" }] })).message,
-    ).toBe("slides.md and index.html belong to the slides, not its assets");
+    ).toBe("slides.md, index.html and deck.json belong to the slides, not its assets");
   });
 
   it("checks assets and sources the same way the per-type hooks do", () => {

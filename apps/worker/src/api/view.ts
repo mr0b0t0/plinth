@@ -16,6 +16,7 @@ import {
   type ViewGateLive,
   type ViewGateLiveOff,
   type ViewGatePeople,
+  versionSourcePath,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
@@ -212,7 +213,25 @@ export const GATE_PARTS: readonly GatePart[] = [
     const liveOff = gateLiveOff(ctx, a, d, opts);
     return liveOff ? { live_off: liveOff } : undefined;
   },
+  async ({ ctx, a, version }) =>
+    (await altSourceShown(ctx, a, version)) ? { no_editor: true as const } : undefined,
 ];
+
+/**
+ * Whether the version shown keeps its source in the type's second format (an HTML deck's
+ * deck.json), which has no source editor: people see the deck, and agents change it.
+ */
+async function altSourceShown(ctx: Ctx, a: ArtifactRow, version: number): Promise<boolean> {
+  const def = typeDef(a.type);
+  if (!def?.altSource) return false;
+  const row = await ctx.db
+    .select({ manifest: versions.manifest })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), eq(versions.number, version)))
+    .get();
+  if (!row) return false;
+  return versionSourcePath(def, parseManifest(row.manifest)) === def.altSource.path;
+}
 
 // ---------- Ask an agent ----------
 

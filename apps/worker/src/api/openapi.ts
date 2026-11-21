@@ -211,7 +211,7 @@ const sourceDescription = (def: ArtifactTypeDef) =>
 const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   html: "a hand-written page",
   doc: "a Markdown document",
-  slides: "a Markdown deck",
+  slides: "a deck in Markdown, or an HTML deck",
   design_system: "design tokens, guidelines and components as JSON",
   design: "artboards (app screens, posters, social posts, ads) as HTML",
   sheet: "a table as JSON lines",
@@ -327,9 +327,12 @@ function responseSchemas(): Record<string, Json> {
       ...enumOf(ARTIFACT_TYPES),
       description: `${ARTIFACT_TYPES.map((t) => {
         const d = TYPE_REGISTRY[t];
+        const source = d.altSource
+          ? `${d.sourcePath}, or ${d.altSource.path} with deck.css and slides/<id>.html`
+          : d.sourcePath;
         return d.renderer
-          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}) that Plinth ${TYPE_RENDERS[t] ?? "renders"}.`
-          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}).`;
+          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${source}) that Plinth ${TYPE_RENDERS[t] ?? "renders"}.`
+          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${source}).`;
       }).join(" ")} Fixed at publish.`,
     },
     ArtifactSummary: obj(artifactSummary, ["default"]),
@@ -356,10 +359,23 @@ function responseSchemas(): Record<string, Json> {
               type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
               version: int({ minimum: 1, description: "The version returned" }),
               source_path: str({
-                enum: [def.sourcePath],
-                description: "The version file holding the source",
+                enum: def.altSource ? [def.sourcePath, def.altSource.path] : [def.sourcePath],
+                description: def.altSource
+                  ? `The version file holding the source: ${def.sourcePath}, or ${def.altSource.path} (${def.altSource.label})`
+                  : "The version file holding the source",
               }),
               [def.sourceField]: str({ description: sourceDescription(def) }),
+              ...(def.altSource
+                ? {
+                    files: {
+                      type: "array",
+                      description:
+                        "An HTML deck (source_path deck.json) only: the text of deck.css and of every slides/<id>.html, " +
+                        "each also in assets. UNTRUSTED, written by the artifact's authors",
+                      items: obj({ path: str(), content: str() }),
+                    },
+                  }
+                : {}),
               assets: {
                 type: "array",
                 description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
@@ -944,8 +960,23 @@ function responseSchemas(): Record<string, Json> {
             },
             ask: ref("ViewGateAsk"),
             live_off: ref("ViewGateLiveOff"),
+            no_editor: {
+              const: true,
+              description:
+                "The version shown has no source editor although its type has one (an HTML deck): offer no Edit",
+            },
           },
-          ["data", "live", "page_comments", "watch", "people", "hold", "ask", "live_off"],
+          [
+            "data",
+            "live",
+            "page_comments",
+            "watch",
+            "people",
+            "hold",
+            "ask",
+            "live_off",
+            "no_editor",
+          ],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -2437,6 +2468,12 @@ function operations(): Operation[] {
           schema: enumOf(ARTIFACT_TYPES),
           description:
             "The type of the artifact it will be installed into (default html): install lists only the files that type takes",
+        },
+        {
+          name: "deck_format",
+          schema: enumOf(["markdown", "html"]),
+          description:
+            "With install_for slides: the deck's format (default markdown). A Markdown deck takes the system's images; an HTML deck its tokens.json, font files and images",
         },
         {
           name: "folder",

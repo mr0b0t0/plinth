@@ -23,7 +23,8 @@ export const registerUploadTools: ToolRegistrar = ({ server, ctx, opaque }) => {
         `at most ${LIMITS.maxTicketAttempts} attempts) and commands.curl, one shell line (bash or zsh) that ` +
         "tars the folder and sends it; the bundle request itself publishes the version and prints the " +
         "result (url, warnings, stored). Omit id for a new artifact (optional type and title; the title " +
-        "defaults to the page's <title>). With id it updates that artifact (with id, category is owner " +
+        "defaults to the page's <title>; a deck folder has slides.md, or deck.json with deck.css and " +
+        "slides/<id>.html for an HTML deck, at its top). With id it updates that artifact (with id, category is owner " +
         "only): base_version, the version you " +
         "read with get_artifact, is required, and a stale base is refused instead of overwriting " +
         "(list_versions gives the current number without the page's files). Run " +

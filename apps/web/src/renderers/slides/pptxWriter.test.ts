@@ -214,6 +214,35 @@ describe("buildPptx", () => {
   });
 });
 
+describe("buildPptx, face names", () => {
+  it("writes a plain face name and falls back to Arial for any other, so none reaches the XML raw", async () => {
+    const model: DeckModel = {
+      ...MODEL,
+      slides: [
+        {
+          n: 1,
+          notes: "",
+          background: "FFFFFF",
+          items: [
+            {
+              kind: "text",
+              box: { x: 1, y: 1, w: 4, h: 1 },
+              paras: [
+                para({ font: "Inter Tight", runs: [{ text: "Plain" }] }),
+                para({ font: 'a"/><a:evil x="', runs: [{ text: "Hostile" }] }),
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const slide = (await files(model)).text("ppt/slides/slide1.xml");
+    expect(slide).toContain('typeface="Inter Tight"');
+    expect(slide).not.toContain("a:evil");
+    expect(slide).toContain('typeface="Arial"');
+  });
+});
+
 describe("buildPptx, characters XML cannot hold", () => {
   /** What XML 1.0 forbids in a part: C0 controls but tab, LF and CR, U+FFFE, U+FFFF, lone surrogates. */
   const NOT_XML =

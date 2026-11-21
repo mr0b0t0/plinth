@@ -30,6 +30,7 @@ export const PUBLISH_WARNING_CODES = [
   "slides_setting",
   "slide_empty",
   "slide_dense",
+  "slide_markup",
   "ds_inert_markup",
   "ds_missing_font",
   "ds_no_dark_theme",

@@ -10,6 +10,13 @@ import type { Cell, DeckModel, Item, Para, PptxBuilder, Run } from "./pptxModel.
 
 const SANS = "Arial";
 const MONO = "Courier New";
+/**
+ * A face name PptxGenJS may write: it puts fontFace into typeface="…" unescaped, so only a plain
+ * name (the shared DECK_FAMILY_RE, repeated here to keep the writer bundle free of the parser) is
+ * passed; any other falls back to Arial.
+ */
+const FACE_RE = /^[A-Za-z][A-Za-z0-9 _-]{0,39}$/;
+const face = (f: string | undefined): string => (f !== undefined && FACE_RE.test(f) ? f : SANS);
 
 type TextProps = PptxGenJS.TextProps;
 type Slide = PptxGenJS.Slide;
@@ -29,14 +36,15 @@ export function xmlText(s: string): string {
   return s.replace(NOT_XML, "");
 }
 
-function runOptions(r: Run, p: Pick<Para, "size" | "color" | "bold" | "mono">) {
+function runOptions(r: Run, p: Pick<Para, "size" | "color" | "bold" | "mono" | "font">) {
   return {
-    fontFace: r.code || p.mono ? MONO : SANS,
+    fontFace: r.code || p.mono ? MONO : face(p.font),
     fontSize: p.size,
     color: r.color ?? p.color,
     bold: p.bold || r.bold === true,
     ...(r.italic ? { italic: true } : {}),
     ...(r.strike ? { strike: "sngStrike" as const } : {}),
+    ...(r.underline ? { underline: { style: "sng" as const } } : {}),
     ...(r.href ? { hyperlink: { url: xmlText(r.href) } } : {}),
     ...(r.slide ? { hyperlink: { slide: r.slide } } : {}),
   };
@@ -128,9 +136,35 @@ function addItem(slide: Slide, item: Item, images: ReadonlyMap<string, string>):
     );
     return true;
   }
+  if (item.kind === "shape") {
+    slide.addShape(item.shape, {
+      x,
+      y,
+      w,
+      h,
+      fill: item.fill
+        ? { color: item.fill.color, transparency: item.fill.transparency }
+        : { type: "none" },
+      line: item.line
+        ? { color: item.line.color, width: item.line.width, dashType: item.line.dash }
+        : { type: "none" },
+      ...(item.radius !== undefined ? { rectRadius: item.radius } : {}),
+    });
+    return true;
+  }
   const data = images.get(item.src);
   if (!data) return false;
-  slide.addImage({ data, x, y, w, h, altText: xmlText(item.alt) });
+  slide.addImage({
+    data,
+    x,
+    y,
+    w,
+    h,
+    altText: xmlText(item.alt),
+    // A cropped picture: PptxGenJS reads the picture's own shape from w and h, and draws it in
+    // the sizing box.
+    ...(item.cover ? { w, h: w * item.cover.ratio, sizing: { type: "cover" as const, w, h } } : {}),
+  });
   return true;
 }
 

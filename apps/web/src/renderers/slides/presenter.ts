@@ -135,6 +135,11 @@ export class Presenter {
       measure?: Measure;
       /** More controls for the bar, before Exit (a presenter's Lead viewers toggle). */
       bar?: readonly HTMLElement[];
+      /**
+       * A pane's copy of a slide made by its deck (an HTML slide's shadow root does not clone),
+       * already fitted; absent or null: a clone of the slide's frame, fitted here.
+       */
+      copy?: (v: SlideView, pane: "current" | "next") => HTMLElement | null;
     },
   ) {
     const clock = this.clock;
@@ -242,6 +247,11 @@ export class Presenter {
     const place = (pane: HTMLElement, v: SlideView | undefined): boolean => {
       pane.replaceChildren();
       if (!v) return false;
+      const own = this.o.copy?.(v, pane === this.current ? "current" : "next") ?? null;
+      if (own) {
+        pane.append(own);
+        return true;
+      }
       const copy = copyOf(v);
       pane.append(copy);
       const slide = copy.querySelector<HTMLElement>(".plinth-slides__slide");

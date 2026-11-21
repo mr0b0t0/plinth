@@ -10,6 +10,19 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **HTML decks in Claude's slide format.** A deck can now be `deck.json`, `deck.css` and one
+  `slides/<id>.html` per slide, as Claude's Slides writes them, beside Markdown decks, which work as
+  before. Plinth checks each slide against Claude's element list and limits at publish. Each slide
+  is shown on its 1920x1080 (or 1440x1080) canvas with its own CSS and fonts, and Plinth draws its
+  shapes, icons and connectors. Fragments, transitions and arrival animations play (off under
+  reduced motion and in print), and live embeds run in a sandboxed frame with no network. Paging,
+  presenter view, the audience window, Lead viewers, print to PDF, thumbnails and Download .pptx
+  all work, and the .pptx keeps text, boxes, shapes and tables editable. Agents read every slide
+  with `get_artifact` and, as on Claude, send only the files they change: the rest of the deck is
+  kept. A deck written for Claude, with its `project/` paths, publishes as it is, and
+  `get_design_system` installs a design system into an HTML deck with `deck_format: "html"`. A
+  sample deck is in `docs/examples/plinth-deck`.
+
 - **Designs: fluid pages, notes, flows and links to one board.** An artboard with `height="auto"`
   is as tall as its content, so a responsive web page shows whole on the canvas, in print and in
   exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note kind="sticky" -->`

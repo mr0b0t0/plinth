@@ -20,6 +20,7 @@ import {
   readStoredCapabilities,
   type VersionInfo,
   type Visibility,
+  versionSourcePath,
 } from "@plinth/shared";
 import { and, desc, eq, inArray, isNull, like, or, type SQL, sql } from "drizzle-orm";
 import { appUrl, contentOrigin, thumbnailsActive } from "../config.ts";
@@ -86,6 +87,7 @@ import {
   resolveCopies,
   stageCopies,
 } from "./copies.ts";
+import { readDeckFiles } from "./deckFiles.ts";
 import { newInvitees, sendInvitations } from "./invitations.ts";
 import { readLiveDraftMeta } from "./live.ts";
 import {
@@ -575,6 +577,8 @@ async function stageInline(
     }
   }
   await stageCopies(stager, copies);
+  // Files the new source needs that the list left out (an HTML deck's other slides) carry over.
+  if (assets !== undefined) await stager.carryImplied(text);
   return stager.finish();
 }
 
@@ -802,14 +806,24 @@ export async function loadArtifactDetail(
   const { artifact, role } = await requireArtifact(ctx, ref, "view");
   const def = requireTypeDef(artifact.type);
   const v = await requireVersion(ctx, artifact, version ?? artifact.currentVersion);
-  const text = await readText(ctx.env.FILES, `${v.r2Prefix}${def.sourcePath}`);
-  if (text === null) throw new ApiError("internal", `Stored ${def.sourceLabel} is missing`);
   const manifest = parseManifest(v.manifest);
+  // A deck's source is slides.md (Markdown) or deck.json (an HTML deck), whichever it holds.
+  const sourcePath = versionSourcePath(def, manifest);
+  const text = await readText(ctx.env.FILES, `${v.r2Prefix}${sourcePath}`);
+  if (text === null) throw new ApiError("internal", `Stored ${def.sourceLabel} is missing`);
+  // An HTML deck's slides and shared rules, as text, so an agent can change one and keep the rest.
+  const deckFiles =
+    def.altSource && sourcePath === def.altSource.path
+      ? Object.entries(await readDeckFiles(ctx.env.FILES, artifact.id, v, manifest)).map(
+          ([path, content]) => ({ path, content }),
+        )
+      : null;
   const copied = await copiedFromOf(ctx, manifest);
   const base = {
     ...(await summaryFor(ctx, artifact, role)),
     version: v.number,
-    source_path: def.sourcePath,
+    source_path: sourcePath,
+    ...(deckFiles ? { files: deckFiles } : {}),
     ...(copied ? { copied_from: copied } : {}),
     assets: manifest
       .filter((m) => !def.reservedPaths.includes(m.path))
@@ -1075,14 +1089,16 @@ export async function restoreVersion(
       // One get of the old source and one put under the new prefix; every asset is a reference.
       stager.scan = false;
       stager.capabilitiesOverride = old.capabilities ?? null;
-      const entry = manifest.find((m) => m.path === def.sourcePath) ?? {
-        path: def.sourcePath,
+      const sourcePath = versionSourcePath(def, manifest);
+      const entry = manifest.find((m) => m.path === sourcePath) ?? {
+        path: sourcePath,
         size_bytes: 0,
         content_type: def.contentType,
       };
       const obj = await ctx.env.FILES.get(fileKey(artifact.id, old, entry));
       if (!obj) throw new ApiError("internal", `Stored ${def.sourceLabel} is missing`);
-      await stager.addSource(new Uint8Array(await obj.arrayBuffer()));
+      // Stored where the old version stored it: its file, not its text, says which format it is.
+      await stager.addSource(new Uint8Array(await obj.arrayBuffer()), sourcePath);
       for (const m of manifest) if (!def.reservedPaths.includes(m.path)) stager.carry(old, m);
       return stager.finish();
     },

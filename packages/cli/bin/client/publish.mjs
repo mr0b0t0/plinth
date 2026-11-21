@@ -19,6 +19,7 @@
 import { lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  ALT_SOURCE_FILES,
   badPaths,
   canonicalSheet,
   checkLimits,
@@ -245,9 +246,17 @@ const nounOf = (type) => TYPE_NOUNS[type] ?? "page";
 function typeOfFolder(files) {
   const has = new Set(files.map((f) => f.path));
   for (const [type, source] of Object.entries(SOURCE_FILES)) if (has.has(source)) return type;
+  for (const [type, source] of Object.entries(ALT_SOURCE_FILES)) if (has.has(source)) return type;
   throw new CliError(
-    "No index.html (or content.md for a document, slides.md for a deck, design.html for a design, sheet.jsonl for a sheet, system.json for a design system) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
+    "No index.html (or content.md for a document, slides.md or deck.json for a deck, design.html for a design, sheet.jsonl for a sheet, system.json for a design system) at the top of the folder. Publish the build folder itself, the one with index.html in it.",
   );
+}
+
+/** The source file of a folder of this type: its second format's (deck.json) when only that is there. */
+function folderSourcePath(type, files) {
+  const alt = ALT_SOURCE_FILES[type];
+  const has = (p) => files.some((f) => f.path === p);
+  return alt && !has(SOURCE_FILES[type]) && has(alt) ? alt : SOURCE_FILES[type];
 }
 
 /** Source first (so the server meets it early), then the rest in path order. */
@@ -866,7 +875,7 @@ export async function publish(dir, givenOpts, ctx) {
 
   if (opts.id === undefined) {
     const type = typeOfFolder(files);
-    const sourcePath = SOURCE_FILES[type];
+    const sourcePath = folderSourcePath(type, files);
     const { total } = checkLimits(files, sourcePath, type, limits);
     hashFiles(files);
     if (opts["dry-run"]) {
@@ -923,7 +932,12 @@ export async function publish(dir, givenOpts, ctx) {
       throw apiFailure(e);
     }
     const type = detail.type;
-    const sourcePath = detail.source_path ?? SOURCE_FILES[type] ?? "index.html";
+    // A deck may change format: a folder with deck.json updates a Markdown deck, and back.
+    const stored = detail.source_path ?? SOURCE_FILES[type] ?? "index.html";
+    const sourcePath =
+      source.kind !== "file" && !files.some((f) => f.path === stored) && ALT_SOURCE_FILES[type]
+        ? folderSourcePath(type, files)
+        : stored;
     if (!files.some((f) => f.path === sourcePath)) {
       // One file can stand in for a page's index.html or a document's content.md, not for the
       // source of a deck or a design.
@@ -1132,7 +1146,7 @@ export async function upload(dir, opts, ctx) {
   const { files, skipped } = collect(folder, { includeMaps: opts["include-maps"] === true });
   if (skipped.length) ctx.stderr(`Left out ${skipped.length} dotfiles and source maps.`);
   const type = typeOfFolder(files);
-  const sourcePath = SOURCE_FILES[type];
+  const sourcePath = folderSourcePath(type, files);
   const { limits } = await instanceLimits(origin, ctx);
   checkLimits(files, sourcePath, type, limits);
   const changed = (now) =>
