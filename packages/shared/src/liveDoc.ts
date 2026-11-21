@@ -129,6 +129,7 @@ export const sheetStructOpSchema = z.discriminatedUnion("op", [
       count: z.number().int().min(1).max(LIMITS.maxSheetColumns),
     })
     .strict(),
+  z.object({ op: z.literal("move_rows"), from: sheetRow, count: rowCount, to: sheetRow }).strict(),
 ]);
 
 /**

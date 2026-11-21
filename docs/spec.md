@@ -1920,7 +1920,8 @@ edits one.
 - **Viewing.** The page shows one bar (the selected cell's address and its raw text, and a filter
   field with the shown row count beside it while a filter is set) and the grid: column letters and
   the header row stay at the top, frozen columns at the left (in a frame less than twice as wide
-  as the row numbers and frozen columns together, a phone mostly, they scroll with the rest),
+  as the row numbers and frozen columns together, a phone mostly, they scroll with the rest), one
+  ring colour for focus and the selection (the app's focus colour; blue is left for links),
   numbers right-aligned in their
   format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
   a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
@@ -2547,7 +2548,7 @@ and the whole-draft review is the only way on (below).
   [Sheets](#sheets-decided-2026-11-19)): line 1 is the header (row 1), and row *r* is line *r*. A
   lease on a row is a lease on its line, so two people never edit the same row, and typing sends
   the whole row line again at most every 250 ms. The header's line is leased to rename a column or
-  change its type or format.
+  change its type, format, thousands separators, width or options, and to freeze columns.
 - **What the room accepts.** Every line an edit puts in must be a valid row of the sheet in its one
   canonical spelling, or, on line 1, a header with the same number of columns; a changed header is
   checked against every row, so a type the cells do not fit is refused. Nothing goes above the
@@ -2557,13 +2558,25 @@ and the whole-draft review is the only way on (below).
   move shifts, so no text edit can shift rows under another row's formula. A refused edit is not
   applied and its sender gets `invalid` (or `too_large`). So the draft is always a valid sheet, and
   a checkpoint stores it byte for byte.
-- **Rows and columns.** Inserting and deleting rows and columns is one more frame, `struct`, with
-  the op as `edit_sheet` would take it (`insert_rows`, `delete_rows`, `insert_columns`,
-  `delete_columns`) and no text. The room applies it only from a writer, at the draft's current
-  `rev`, while nobody else holds a lease (`struct_denied` `held`, `stale`, `frozen` or `watch`
-  otherwise) and only when the result is a valid sheet; the sender's own lease ends first. Every
-  socket then applies the same op to the same lines with the same pure function
-  (`applySheetStruct`), which moves formula references as `edit_sheet` does.
+- **Rows and columns.** Inserting, deleting and moving rows and inserting and deleting columns is
+  one more frame, `struct`, with the op as `edit_sheet` would take it (`insert_rows`,
+  `delete_rows`, `insert_columns`, `delete_columns`) or `move_rows` `{from, count, to}` (rows
+  `from` to `from + count - 1` taken out and put back so that the first of them is row `to`), and
+  no text. The room applies it only from a writer, at the draft's current `rev`, while nobody else
+  holds a lease (`struct_denied` `held`, `stale`, `frozen` or `watch` otherwise) and only when the
+  result is a valid sheet; the sender's own lease ends first. Every socket then applies the same op
+  to the same lines with the same pure function (`applySheetStruct`), which moves formula
+  references as `edit_sheet` does. A move is a cut and an insert: a reference into the moved rows
+  follows them, every other reference shifts as for a delete of the moved rows followed by an
+  insert where they land, and a range is the span of rows it covers. A range that holds every row
+  the move reorders stays as it is. Otherwise the move is read both ways (the rows moved, or the
+  rows they pass moved the other way, which gives the same order): in each reading a range inside
+  the moved rows follows them and any other shrinks or grows as that delete and insert would, and
+  the range takes the reading that drops the fewest of its rows plus takes in the fewest others
+  (on a tie the shorter, then the one higher up). So one new order of the rows gives one result,
+  and a total moved next to its own range (row 5's `=SUM(B2:B4)` up one) adds the rows above it
+  (`=SUM(B2:B3)`), never itself. Nothing becomes `#REF!`. `move_rows` is the page's own op:
+  `edit_sheet` does not take it, and an agent moves rows by deleting and inserting them.
 - **Versions from elsewhere.** A sheet's draft is never merged with a version published meanwhile
   (an agent's `edit_sheet` or `update_artifact`, the CLI, REST, a restore or any other way).
   Rows and formulas refer to each other by position, and a line merge cannot tell a row edited in
@@ -2595,14 +2608,40 @@ and the whole-draft review is the only way on (below).
   tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
   carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
-  takes 12.5 for 12.5%. Two menus in the bar, beside the filter, act on the selected cell: Row
-  (insert above, insert below, delete) and Column (insert left, insert right, delete, and the
-  column's settings: name, type, number format, currency, decimals, options, in a popover under
-  the column's name that Escape or Cancel closes). A value the room would refuse stays in its
-  field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
-  came first) is asked for again on the same row or column where it is now, found by the row's
-  line or the column's definition under the same columns, and dropped with "The sheet changed
-  meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
+  takes 12.5 for 12.5%. Two menus in the bar, beside the filter, act on the selected cell, and
+  they are the one way in to rows and columns: Row (insert above, insert below, move row up, move
+  row down, delete) and Column (insert left, insert right, delete, "Freeze up to this column",
+  "Unfreeze columns", and the column's settings, in a popover under the column's name that Escape
+  or Cancel closes). A freeze item shows only where it does something: "Freeze up to this column"
+  up to the fifth column and not when the columns are frozen up to that one already, "Unfreeze
+  columns" while some are frozen, and neither for frozen columns that this frame lets scroll with
+  the rest (less than twice as wide as the row numbers and those columns together, a phone
+  mostly). A menu near the right edge of the page opens leftwards as far as it needs to stay in
+  view. Alt+Shift+Up and Alt+Shift+Down move the selected row too, and a move is
+  announced ("Row 4 moved to row 3") once the room says it applied it, with its row selected where
+  it went; rows move in the sheet's own order, so not while a sort is on. Freezing keeps up to five
+  columns in view. The column settings set the name, type, number format, currency, decimals,
+  thousands separators (on unless turned off) and a select column's options, as a list: rename one
+  in place, move it up or down (its arrows show on hover or focus), remove it with ×, or type one
+  in "New option" and press Enter to add it (text left there is added on Apply too; at most 100,
+  of at most 100 characters each). An option a cell holds cannot be removed (the settings name the
+  cell); renaming one that cells hold renames it in those cells too, in one change of the whole
+  sheet under a lease on every line, up to what one edit frame carries. A width (40 to 800 pixels)
+  changes by dragging the header's edge, or with Alt+Left and Alt+Right on the header in steps of
+  8 pixels, sent once the keys rest (and still sent when edit mode ends first). Each of these is a
+  lease on the header's line (freezing moves no rows, so it is not a `struct`). A value the room
+  would refuse stays in its field with the reason. A lease or `struct` the room refuses as `stale`
+  (someone else's change came first) is asked for again on the same row or column where it is now,
+  found by the row's line or the column's definition under the same columns, and dropped with "The
+  sheet changed meanwhile" when it is gone; a write is made from the row as it is when the lease is
+  granted. The column settings find their column by its definition apart from its width, so a
+  width changed while they are open (dragged, set with the keys or by someone else) is no
+  conflict: Apply keeps that width. They follow their column the same way through any change while
+  they are open, so a column inserted or deleted before it changes the letter they name and the
+  cells they check for options in use. When the column itself is deleted or changed by someone
+  else, they stay open with what was typed and say so, and Apply is refused. They close only once
+  the change is sent; a change refused when its lease is granted leaves them open, and Cancel drops
+  a change still waiting for its lease.
   When a freeze or a takeover closes an open cell, the notice quotes what was typed there and not
   yet applied, so it can be typed again: one line, at most 40 characters of it, all of it on hover.
   A double-click outside an open cell never selects words in the grid.
@@ -2611,6 +2650,22 @@ and the whole-draft review is the only way on (below).
   held row does nothing on screen and tells a screen reader who holds it; a notice with Take over
   shows only when the holder has gone idle. Sort and filter stay the viewer's own while editing;
   downloads give what the page shows.
+- **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
+  bottom of the page under the cell's address and the column's name ("B6 · Owner"), with one
+  button, a check named "Save cell" (Enter saves too); the formula bar is hidden while it is open,
+  and the page keeps the cell, ringed, in view above it. The column settings are a sheet across the
+  bottom there, titled with the column ("Column C"), with Cancel and Apply pinned under fields that
+  scroll. A cell that is focused or opened is scrolled clear of the sticky header rows and sideways
+  clear of the frozen columns, its start first when it is wider than the space beside them.
+- **Keyboard and screen readers.** The cells are a grid (`role="grid"` with `aria-rowcount`,
+  `aria-colcount`, row and column indexes, and `aria-readonly` outside edit mode) with one tab
+  stop, the selected cell (a header's stop is its sort button). The arrows, Home and End move among
+  the rows shown, the header included, and Ctrl+Home and Ctrl+End to the first and the last cell.
+  The cells of a row someone else holds name the holder in their accessible description. When
+  someone else's change redraws the grid (new columns, a width, a row count), the focus stays where
+  it was: in the column settings or an open cell's field with its selection, in the filter with
+  its text, or on the selected cell when a cell had it. It never moves onto a cell from anywhere
+  else, since a key typed in a selected cell starts editing it.
 - **One way in.** The Edit toggle (at phone width, "Edit on the page" in the ⋯ menu) is the only
   way a person edits a sheet: a sheet has no source editor, so the menu has no source item beside
   it. Where on-page editing is not available (opaque isolation, the path fallback,

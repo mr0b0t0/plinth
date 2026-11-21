@@ -232,6 +232,50 @@ describe("sheet socket: rows and columns (struct)", () => {
     expect(await peek(id)).toBe(SHEET);
     for (const c of [a, b, w]) c.ws.close(1000);
   });
+
+  it("moves rows (move_rows): every socket gets the same lines, and the formulas follow the rows", async () => {
+    const { id, ownerP } = await sheetSetup(SHEET);
+    const ed = await person(id, "editor");
+    const a = await connectDoc(id, ownerP.cookie);
+    const b = await connectDoc(id, ed.cookie);
+    // Plums above Apples: the total's range keeps adding the same three rows.
+    const op = { op: "move_rows", from: 4, count: 1, to: 2 };
+    expect(await struct(a, op, 0)).toEqual({
+      t: "struct",
+      gen: a.welcome.gen,
+      rev: 1,
+      op,
+      by: a.welcome.you.id,
+    });
+    expect((await b.nextOf("struct")).op).toEqual(op);
+    expect((await peek(id))?.split("\n")).toEqual([
+      HEADER,
+      '["Plums"]',
+      '["Apples",3,true]',
+      '["Pears",5]',
+      '["Total","=SUM(B2:B4)"]',
+    ]);
+    // Like the other row ops: refused while someone else holds a lease, or when it does not fit.
+    const held = await lease(b, 2, 3, 1);
+    expect(held.t).toBe("leased");
+    expect(await struct(a, { op: "move_rows", from: 2, count: 1, to: 3 }, 1)).toEqual({
+      t: "struct_denied",
+      reason: "held",
+      by: ed.email,
+    });
+    b.send({ t: "release", lease: held.lease });
+    await a.nextOf("released");
+    for (const bad of [
+      { op: "move_rows", from: 2, count: 1, to: 2 },
+      { op: "move_rows", from: 5, count: 1, to: 6 },
+      { op: "move_rows", from: 3, count: 3, to: 4 },
+    ]) {
+      expect(await struct(a, bad, 1), JSON.stringify(bad)).toEqual({ t: "error", code: "invalid" });
+    }
+    expect((await peek(id))?.split("\n")[1]).toBe('["Plums"]');
+    a.ws.close(1000);
+    b.ws.close(1000);
+  });
 });
 
 describe("sheet socket: versions published from outside", () => {

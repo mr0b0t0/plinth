@@ -2448,8 +2448,9 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   references the move shifts. A refused edit is not applied. So a modified client cannot put into
   the draft anything a publish would refuse, and a checkpoint stores the draft as it is.
 - **Rows and columns move only under no one else's lease.** A `struct` frame carries an op of a
-  fixed shape (a row number and count, or a column letter and new column definitions, checked by a
-  strict schema before it is read) and no text. The room applies it only from a writer, at the
+  fixed shape (a row number and count, a row move's first row, count and landing row, or a column
+  letter and new column definitions, checked by a strict schema before it is read, on the room and
+  again in the renderer) and no text. The room applies it only from a writer, at the
   draft's current `rev`, while it is not frozen and no other socket holds a lease, and only when
   the result is a valid sheet; it ends the sender's own lease first. Every socket applies the same
   op with the same pure function (`applySheetStruct`); a client that cannot apply it, or sees a gap
@@ -2473,10 +2474,22 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   only when nothing was edited after the snapshot, so edits made during a slow save are never
   dropped without a review. The review draws both sheets in the frame with the sheet's own
   renderer, as text nodes, never as HTML.
-- **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
-  and the column settings with `createElement` and fills them through `.value` and `textContent`;
-  the source test that keeps HTML sinks out of the sheet renderer covers the editor's files. Values
-  are checked in the frame with the same rules before they are sent.
+- **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the Row and
+  Column menus, the column settings with their option list and the docked cell editor with
+  `createElement` and fills them through `.value` and `textContent` (a column's name reaches an
+  `aria-label` only as an attribute value); the source test that keeps HTML sinks out of the sheet
+  renderer covers the editor's files. Values are checked in the frame with the same rules before
+  they are sent.
+- **Column settings are header edits, checked like any header.** Widths (whole pixels from 40 to
+  800), thousands separators, a select column's options (at most 100, each at most 100 characters,
+  no control or invisible characters, none listed twice) and freezing (at most five columns) all
+  reach the room as a new header line under a lease on line 1, so the room's header rule (one
+  canonical header, the same number of columns, and every row checked against it whenever a
+  column's type or options change) refuses anything a publish would. Renaming an option that cells
+  hold is one edit of every line under a lease on every line, so it waits for every other lease and
+  is checked row by row like any edit, and it is refused in the frame before any lease when it
+  would pass one 64 KiB edit frame. A width being dragged is drawn only in this frame until the
+  header edit is sent. None of this adds a frame, endpoint or setting.
 - **Agents.** Agents never join the room; they change a sheet with `edit_sheet` or
   `update_artifact`, which publish versions that freeze the draft for the editors' review, and see
   only that a draft exists (`live_draft`), never its text. They are told that the people editing
