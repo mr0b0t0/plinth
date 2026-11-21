@@ -2380,9 +2380,15 @@ class FakeRoom {
     this.asked = null;
     this.editor.denied(reason, by);
   }
+  /** Edits are sent but never reach the room (the socket is about to close). */
+  dropEdits = false;
   edit(text: string) {
     const l = this.mine;
     if (!l || !this.connected) return false;
+    if (this.dropEdits) {
+      this.seq += 1;
+      return true;
+    }
     const ins = text === "" ? [] : text.split("\n");
     this.lines = [...this.lines.slice(0, l.start), ...ins, ...this.lines.slice(l.end)];
     this.mine = { ...l, end: l.start + ins.length };
@@ -2546,7 +2552,7 @@ describe("the rescue store", () => {
     expect(writeText).toHaveBeenCalledWith("abc");
   });
 
-  it("1. never takes a same block elsewhere for the kept text: a reload writes it, unless it landed at its place", async () => {
+  it("1. never takes a same block elsewhere for the kept text: a reload writes it", async () => {
     // The person's stuck "abc" replaces "ab"; another "abc" block already sits below it.
     const room = roomSetup("ab\n\nabc\n\nnext");
     stick(room);
@@ -2561,15 +2567,39 @@ describe("the rescue store", () => {
     expect(again.text.match(/^abc$/gm)?.length).toBe(2);
     expect(kept()).toEqual([]);
     expect(again.editor.pending).toBe(false);
-    // An item whose write was sent at line 0 before the reload, unacknowledged: it landed only if
-    // line 0 holds it. Here it does: nothing is written twice.
-    const third = new FakeRoom("abc\n\nnext");
-    third.editor = again.editor;
-    again.editor.setBackend(third);
-    again.editor.offerRescue([{ id: "r2", text: "abc", near: 0, at: { start: 0, text: "abc" } }]);
+  });
+
+  it("2. an insert whose send never reached the room is written again, even before a same block", async () => {
+    // "ab" is taken over by someone else; the stuck "abc" goes in after it, at a free place just
+    // before another "abc" block. The send is lost with the socket.
+    const room = roomSetup("ab\n\nabc\n\nnext");
+    stick(room);
+    room.ackNow = false;
+    room.dropEdits = true;
+    room.lose("takeover");
+    room.leases.set("o1", {
+      id: "o1",
+      start: 0,
+      end: 1,
+      by: "bo@example.org",
+      holder: "s2",
+      at: 0,
+    });
     await settle();
-    expect(third.text).toBe("abc\n\nnext");
+    expect(room.text).toBe("ab\n\nabc\n\nnext");
+    expect(kept()).toEqual(["abc"]);
+    room.connected = false;
+    room.mine = null;
+    room.editor.disconnected();
+    // Back: the place it was sent to holds an "abc" (the other block), which proves nothing.
+    room.connected = true;
+    room.dropEdits = false;
+    room.ackNow = true;
+    room.editor.changed();
+    await settle();
+    expect(room.text.match(/^abc$/gm)?.length).toBe(2);
     expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
   });
 
   it("drops the kept copy only on the room's ack, and keeps it while a send is unacknowledged", async () => {
@@ -2581,9 +2611,7 @@ describe("the rescue store", () => {
     await settle();
     // Written in place, sent, not acknowledged yet: still kept, with where it went.
     expect(room.text).toBe("abc\n\nnext");
-    expect(rescued.at(-1)).toEqual([
-      { id: expect.any(String), text: "abc", near: 0, at: { start: 0, text: "abc" } },
-    ]);
+    expect(rescued.at(-1)).toEqual([{ id: expect.any(String), text: "abc", near: 0 }]);
     expect(room.editor.pending).toBe(true);
     room.ack();
     expect(kept()).toEqual([]);
@@ -2614,7 +2642,7 @@ describe("the rescue store", () => {
     expect(room.text).toBe("*a*bc more\n\nnext");
   });
 
-  it("2. an unacknowledged send that did land is not written again after a reload", async () => {
+  it("2. an unacknowledged send is written again after a reload: a copy at worst, never a loss", async () => {
     const room = roomSetup("ab\n\nnext");
     stick(room);
     const r = rich(room.editor);
@@ -2622,16 +2650,17 @@ describe("the rescue store", () => {
     r.editable.innerHTML = "<em>a</em>bc more";
     r.editable.dispatchEvent(new Event("input", { bubbles: true }));
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
-    // Sent, landed, but the tab reloads before the ack: the app keeps the item with where it went.
+    // Sent and landed, but the tab reloads before the ack: the app still has the item.
     const item = rescued.at(-1)?.[0] as RescueItem;
-    expect(item.at).toEqual({ start: 0, text: "*a*bc more" });
+    expect(item.text).toBe("abc");
     document.body.innerHTML = "";
     root = document.createElement("main");
     document.body.append(root);
     const again = roomSetup(room.text);
     again.editor.offerRescue([item]);
     await settle();
-    expect(again.text).toBe("*a*bc more\n\nnext");
+    expect(again.text).toContain("*a*bc more");
+    expect(again.text).toContain("abc");
     expect(kept()).toEqual([]);
   });
 
@@ -2668,17 +2697,35 @@ describe("the rescue store", () => {
     expect(notice()).toContain(RESCUE_STUCK);
   });
 
-  it("posts the newest items up to the size cap, and offers Copy for the rest", () => {
+  it("posts the newest items up to the app's limits (20 items, 256 KiB), and keeps Copy while any is over", () => {
     const room = roomSetup("ab\n\nnext");
     room.connected = false;
+    room.editor.offerRescue(
+      Array.from({ length: 21 }, (_, n) => ({ id: `i${n}`, text: `item ${n}`, near: 0 })),
+    );
+    const posted = rescued.at(-1)?.map((i) => i.id) ?? [];
+    expect(posted).toHaveLength(20);
+    expect(posted).not.toContain("i0");
+    expect(posted).toContain("i20");
+    expect(notice()).toContain(RESCUE_STUCK);
+    // Another notice replaces it; once that one goes, Copy is back.
+    room.editor.notify("Not connected. Try again in a moment.");
+    expect(notice()).not.toContain(RESCUE_STUCK);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_STUCK);
+    expect(room.editor.pending).toBe(true);
+    // Text over 256 KiB in all: the newest that fit.
+    document.body.innerHTML = "";
+    root = document.createElement("main");
+    document.body.append(root);
+    const big = roomSetup("ab");
+    big.connected = false;
     const chunk = "y".repeat(100 * 1024);
-    room.editor.offerRescue([
+    big.editor.offerRescue([
       { id: "old", text: `old ${chunk}`, near: 0 },
       { id: "mid", text: `mid ${chunk}`, near: 0 },
       { id: "new", text: `new ${chunk}`, near: 0 },
     ]);
     expect(rescued.at(-1)?.map((i) => i.id)).toEqual(["mid", "new"]);
-    expect(notice()).toContain(RESCUE_STUCK);
-    expect(room.editor.pending).toBe(true);
   });
 });

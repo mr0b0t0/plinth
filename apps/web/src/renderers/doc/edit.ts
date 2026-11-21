@@ -49,7 +49,11 @@ import {
   splitLines,
   verifyBlock,
 } from "@plinth/shared";
-import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
+import {
+  type AskWhat,
+  MAX_RESCUE_ITEMS,
+  MAX_RESCUE_TOTAL,
+} from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
@@ -147,15 +151,7 @@ export interface RescueItem {
   text: string;
   /** The line it belongs at, as near as the draft allows. */
   near: number;
-  /**
-   * Where its last write went, if the room has not acknowledged it yet: the text written and its
-   * first line. After a reload, a match there (and only there) means it landed.
-   */
-  at?: { start: number; text: string };
 }
-
-/** The rescue store a frame posts to the app holds at most this much text in all. */
-export const RESCUE_TOTAL_MAX = 256 * 1024;
 export const NOT_KEPT = "What you typed in the block you closed couldn't be added. Type it again.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
@@ -665,7 +661,7 @@ export class DocEditor {
   private readonly rescues = new Map<string, Rescue>();
   /** The rescue item of the open block (made when it was `stuck`), until the block closes. */
   private blockRescue: string | null = null;
-  /** Items over RESCUE_TOTAL_MAX were left out of the app's copy: the page says so with Copy. */
+  /** Items over the app's limits were left out of its copy: the page says so with Copy. */
   private overCap = false;
   private rescueN = 0;
   /** A rescue write was refused because a review waits: none is tried until the review ends. */
@@ -2862,26 +2858,30 @@ export class DocEditor {
   }
 
   /**
-   * Posts the store to the app, newest items first up to RESCUE_TOTAL_MAX in all. Items left out
-   * stay here and are still written; the page says so, with Copy.
+   * Posts the store to the app, newest items first, at most MAX_RESCUE_ITEMS of them and
+   * MAX_RESCUE_TOTAL of text (the limits the app reads with). Items left out stay here and are
+   * still written; while there are any, the page offers Copy.
    */
   private postRescues(): void {
     const items: RescueItem[] = [];
     let total = 0;
     let over = false;
     for (const r of [...this.rescues.values()].sort((a, b) => b.n - a.n)) {
-      const at = r.sent ? { start: r.sent.start, text: r.sent.text } : r.at;
-      const size = r.text.length + (at?.text.length ?? 0);
-      if (total + size > RESCUE_TOTAL_MAX) {
+      if (items.length >= MAX_RESCUE_ITEMS || total + r.text.length > MAX_RESCUE_TOTAL) {
         over = true;
         continue;
       }
-      total += size;
-      items.push({ id: r.id, text: r.text, near: r.near, ...(at ? { at } : {}) });
+      total += r.text.length;
+      items.push({ id: r.id, text: r.text, near: r.near });
     }
     this.hooks.rescue?.(items.reverse());
-    if (over && !this.overCap) this.showRescueNotice();
     this.overCap = over;
+    if (over && !this.notice) this.showRescueNotice();
+  }
+
+  /** Something kept can only be copied for now: items over the cap, or ones tried too often. */
+  private get needsCopy(): boolean {
+    return this.overCap || [...this.rescues.values()].some((r) => r.parked);
   }
 
   /** Items the app kept from before a reload: each one not in the draft already is written. */
@@ -2936,11 +2936,11 @@ export class DocEditor {
         if (sent.seq !== null && b.acked?.(sent.seq)) this.dropRescue(r.id);
         continue;
       }
-      // The socket closed before the ack: once the draft is back, it landed only if its own
-      // place holds what was written; else it is written again.
+      // The socket closed before the ack: it may or may not have landed, and matching text at its
+      // place proves nothing (an insert can sit right before a same block). Written again once
+      // the draft is back: a copy at worst, never a loss.
       if (!b.connected || !b.settled) continue;
-      if (landedAt(b.lines, sent.start, sent.text)) this.dropRescue(r.id);
-      else r.sent = null;
+      r.sent = null;
     }
   }
 
@@ -2957,17 +2957,6 @@ export class DocEditor {
       (x) => x.sent === null && x.owner === null && !x.parked,
     );
     if (!r) return;
-    if (r.at) {
-      // Offered after a reload with a write whose ack the app never heard of: it landed only if
-      // its own place holds it. A match anywhere else is someone's other block.
-      const at = r.at;
-      r.at = undefined;
-      if (landedAt(b.lines, at.start, at.text)) {
-        this.dropRescue(r.id);
-        queueMicrotask(() => this.flushRescues());
-        return;
-      }
-    }
     const point = this.freePoint(r.near);
     const c: Clearing = {
       phase: "insert",
@@ -3137,8 +3126,11 @@ export class DocEditor {
   }
 
   private hideNotice(): void {
+    const was = this.notice?.textContent ?? "";
     this.notice?.remove();
     this.notice = null;
+    // Kept text that can only be copied keeps its notice: it comes back once another one goes.
+    if (this.needsCopy && !was.startsWith(RESCUE_STUCK)) this.showRescueNotice();
   }
 
   /** For tests and the status line: the open block's editor. */
@@ -3290,11 +3282,4 @@ function withoutMarks(b: RichBlock): RichBlock {
     return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, strip(x)]));
   };
   return strip(b) as RichBlock;
-}
-
-/** Whether `lines` hold `text` starting exactly at line `start`. */
-function landedAt(lines: readonly string[], start: number, text: string): boolean {
-  const want = blockLines(text);
-  if (want.length === 0 || start + want.length > lines.length) return false;
-  return want.every((l, i) => lines[start + i] === l);
 }
