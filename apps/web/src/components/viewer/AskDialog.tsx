@@ -21,6 +21,7 @@ import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { askTargetInText } from "../comments/askTargets.ts";
 import { AgentChoice, askSendLabel, PointingChip } from "../comments/Composer.tsx";
+import { excerpt } from "../comments/model.ts";
 import "../comments/comments.css";
 import {
   Button,
@@ -53,20 +54,44 @@ export interface AskDialogProps {
 }
 
 /**
- * The "Pointing at" chip for a place the frame named by its kind only (a doc's divider, or a block
- * whose words are not in the published version): "Pointing at the list", unquoted.
+ * The chip for a place in a doc the frame named (askAnchor.ts): "Pointing at “words”", or at the
+ * kind of block for one with no words ("Pointing at the list", unquoted); "New image below …" for
+ * Insert below's Image (`…:add-image`), which is not about the image a block has; and "(not
+ * published yet)" after a block only in the draft (`new-…`). The words are untrusted: text only.
  */
-function KindChip({ what, onRemove }: { what: AskWhat; onRemove: () => void }) {
+function PlaceChip({
+  anchor,
+  what,
+  onRemove,
+}: {
+  anchor: AskAnchor;
+  what: AskWhat | null;
+  onRemove: () => void;
+}) {
+  const words = anchor.text?.trim();
+  const target = words ? (
+    <q>
+      <bdi>{excerpt(words, 40)}</bdi>
+    </q>
+  ) : what && what !== "block" ? (
+    `the ${what}`
+  ) : (
+    "this block"
+  );
   return (
     <div className="cm-anchor-chip">
       <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
       <span className="cm-anchor-chip__text">
-        Pointing at {what === "block" ? "this block" : `the ${what}`}
+        {anchor.key.endsWith(":add-image") ? "New image below" : "Pointing at"} {target}
+        {anchor.key.startsWith("new-") ? " (not published yet)" : ""}
       </span>
       <IconButton size="sm" icon={XIcon} label="Stop pointing" onClick={onRemove} />
     </div>
   );
 }
+
+/** Whether the frame named a doc block (askAnchor.ts), which PlaceChip describes. */
+const DOC_PLACE_RE = /^(block|new)-\d+(:image|:add-image)?$/;
 
 /** The words a refused comment gets in the dialog; `stale` when the agent went away meanwhile. */
 function postError(e: unknown): { text: string; stale: boolean } {
@@ -219,8 +244,8 @@ export function AskDialog({
     >
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
         {anchor &&
-          (what && !anchor.text?.trim() ? (
-            <KindChip what={what} onRemove={() => setAnchor(null)} />
+          (DOC_PLACE_RE.test(anchor.key) && (what || anchor.text?.trim()) ? (
+            <PlaceChip anchor={anchor} what={what} onRemove={() => setAnchor(null)} />
           ) : (
             <PointingChip text={anchor.text || anchor.key} onRemove={() => setAnchor(null)} />
           ))}

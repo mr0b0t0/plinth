@@ -239,6 +239,82 @@ describe("escaping", () => {
   });
 });
 
+describe("nested marks", () => {
+  // The model holds a set of marks per run; the serializer nests them as they run, so a mark
+  // inside another is written inside it, and what was written that way opens for editing.
+  const nested: [string, string][] = [
+    ["**bold with [link](https://x.example)**", "**bold with [link](https://x.example)**"],
+    ["**[a](https://x.example)**", "[**a**](https://x.example)"],
+    ["*[a](https://x.example)*", "[*a*](https://x.example)"],
+    ["*a **b** c*", "*a **b** c*"],
+    ["**a *b* c**", "**a *b* c**"],
+    ["[a **b** c](https://x.example)", "[a **b** c](https://x.example)"],
+    ["**[a](https://x.example) b**", "**[a](https://x.example) b**"],
+    ["~~struck *em* [l](https://x.example)~~", "~~struck *em* [l](https://x.example)~~"],
+    ["***both***", "***both***"],
+    ["*em **strong `code`** em*", "*em **strong `code`** em*"],
+  ];
+  for (const [md, out] of nested) {
+    it(`${JSON.stringify(md)} opens for editing and is written as ${JSON.stringify(out)}`, () => {
+      expect(roundTrip(md)).toBe(out);
+    });
+  }
+
+  it("bolds a word inside italic and links a word inside bold", () => {
+    const em = editableBlock("*one two three*", DOC, ENV) as Extract<RichBlock, { t: "paragraph" }>;
+    const bolded = applyMark(em.c, 4, 7, "strong", true);
+    expect(verifyBlock(para(...bolded), DOC, ENV)).toBe("*one **two** three*");
+    const strong = editableBlock("**one two three**", DOC, ENV) as Extract<
+      RichBlock,
+      { t: "paragraph" }
+    >;
+    const linked = applyMark(strong.c, 4, 7, "link", true, {
+      href: "https://x.example",
+      title: "",
+    });
+    const out = verifyBlock(para(...linked), DOC, ENV);
+    expect(out).toBe("**one [two](https://x.example) three**");
+    expect(editableBlock(out as string, DOC, ENV)).not.toBeNull();
+  });
+});
+
+describe("recordSources", () => {
+  it("finds each link's label once, and records where it came from", () => {
+    const src = '[a *b*](https://x.example "T") and ![c [d]](e.png)';
+    const counted = (record: boolean) => {
+      const md = new MarkdownIt({ html: false, linkify: true });
+      if (record) recordSources(md as unknown as RecordableMarkdown);
+      const real = md.helpers.parseLinkLabel;
+      const box = { calls: 0, md };
+      md.helpers.parseLinkLabel = (...args: Parameters<typeof real>) => {
+        box.calls++;
+        return real(...args);
+      };
+      return box;
+    };
+    const plain = counted(false);
+    plain.md.parseInline(src, {});
+    const recorded = counted(true);
+    const tokens = recorded.md.parseInline(src, {});
+    // No more label parsing than markdown-it does by itself.
+    expect(plain.calls).toBeGreaterThan(0);
+    expect(recorded.calls).toBe(plain.calls);
+    const children = tokens[0]?.children ?? [];
+    const link = children.find((t) => t.type === "link_open");
+    const image = children.find((t) => t.type === "image");
+    expect(link?.meta?.plinthSource).toEqual({
+      src: '[a *b*](https://x.example "T")',
+      label: "a *b*",
+      after: '(https://x.example "T")',
+    });
+    expect(image?.meta?.plinthSource).toEqual({
+      src: "![c [d]](e.png)",
+      label: "c [d]",
+      after: "(e.png)",
+    });
+  });
+});
+
 describe("editing helpers", () => {
   it("splits and marks ranges of inline content", () => {
     const c: RichInline = [text("hello "), text("world", { em: true })];
@@ -393,6 +469,78 @@ describe("random models read back as themselves", () => {
   }
 });
 
+/** Inline content with marks that nest: spans of words, each span a mark, inner spans inside. */
+function nestedInline(r: () => number, d: MarkdownDialect): RichInline {
+  const n = 2 + Math.floor(r() * 6);
+  const words = Array.from({ length: n }, () => ({
+    word: ["alpha", "beta", "gamma", "délta", "日本", "x1"][Math.floor(r() * 6)] as string,
+    m: {} as RichMarks,
+  }));
+  const kinds: ("strong" | "em" | "strike" | "link" | "code")[] = ["strong", "em", "link"];
+  if (d.gfm) kinds.push("strike");
+  // Up to three spans, each inside the one before it (or beside it), never crossing.
+  let lo = 0;
+  let hi = n;
+  const used = new Set<string>();
+  for (let s = 0; s < 3 && lo < hi; s++) {
+    const k = kinds[Math.floor(r() * kinds.length)] as (typeof kinds)[number];
+    if (used.has(k)) continue;
+    used.add(k);
+    const a = lo + Math.floor(r() * (hi - lo));
+    const b = a + 1 + Math.floor(r() * (hi - a));
+    for (let i = a; i < b; i++) {
+      const m = (words[i] as { m: RichMarks }).m;
+      if (k === "link") m.link = { href: "https://example.com/n", title: "" };
+      else m[k] = true;
+    }
+    lo = a;
+    hi = b;
+  }
+  // The innermost word is sometimes code.
+  if (r() < 0.3) (words[lo] as { m: RichMarks }).m.code = true;
+  const out: RichInline = [];
+  words.forEach((w, i) => {
+    if (i > 0) {
+      // The space takes the marks both neighbours share, so a span stays one run.
+      const prev = (words[i - 1] as { m: RichMarks }).m;
+      const m: RichMarks = {};
+      if (prev.strong && w.m.strong) m.strong = true;
+      if (prev.em && w.m.em) m.em = true;
+      if (prev.strike && w.m.strike) m.strike = true;
+      if (prev.link && w.m.link) m.link = prev.link;
+      out.push(text(" ", m));
+    }
+    out.push(text(w.word, w.m));
+  });
+  return out;
+}
+
+describe("random nested marks read back as themselves, and reopen for editing", () => {
+  for (const [name, t] of [
+    ["doc", DOC],
+    ["commonmark", CM],
+  ] as const) {
+    it(`${name}: every properly nested model is written, read back and reopened`, () => {
+      const failed: string[] = [];
+      for (let seed = 1; seed <= 600; seed++) {
+        const m = normalizeBlock(para(...nestedInline(rng(seed), t.dialect)));
+        const out = verifyBlock(m, t, ENV);
+        if (out === null) {
+          failed.push(`seed ${seed}: refused ${serializeBlock(m, t.dialect)}`);
+          continue;
+        }
+        const back = blockFromSource(out, t.source, ENV);
+        if (!back || !sameBlock(back, m))
+          failed.push(`seed ${seed}: ${out} reads back differently`);
+        const reopened = editableBlock(out, t, ENV);
+        if (!reopened || !sameBlock(reopened, m))
+          failed.push(`seed ${seed}: ${out} reopens read-only`);
+      }
+      expect(failed).toEqual([]);
+    });
+  }
+});
+
 describe("a mark next to punctuation", () => {
   // CommonMark opens and closes `*`, `**` and `~~` by the characters on either side, so a mark
   // that ends in punctuation right before a letter ("*重要，*的") closes nothing as written. The
@@ -443,6 +591,9 @@ describe("a mark next to punctuation", () => {
     "*a*,b",
     "a.*b*",
     "~~a~~*b*",
+    "**bold [link](https://x.example)**",
+    "*a **b** c*",
+    "**[a](https://x.example)**",
   ];
   const CHARS = [..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", " ", "a", "中", "，", "。", "1", "é"];
   it("takes every single-character insertion in or next to a formatted run, and reopens it", () => {

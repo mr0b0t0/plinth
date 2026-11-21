@@ -24,6 +24,7 @@ import {
   PAGE_COMMENT_LIMITS,
 } from "./pageComments.ts";
 import { SHEET_COLUMN_TYPES, SHEET_CONTENT_FORMATS, SHEET_NUMBER_STYLES } from "./sheet/format.ts";
+import { stripUnsafeText } from "./text.ts";
 import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
@@ -733,7 +734,6 @@ export const viewerCodeInput = z.object({
 });
 
 /** A comment pinned to an element: what the review-mode bridge picks. Stored without a `kind`. */
-const UNSAFE_ALL = new RegExp(PAGE_ANCHOR_UNSAFE_RE.source, "gu");
 
 export const elementAnchorSchema = z.object({
   selector: z.string().max(1000),
@@ -742,11 +742,7 @@ export const elementAnchorSchema = z.object({
    * joiners are common, so control and format characters are removed rather than refused (stored
    * anchors read back the same way).
    */
-  text: z
-    .string()
-    .max(500)
-    .transform((t) => t.replace(UNSAFE_ALL, ""))
-    .optional(),
+  text: z.string().max(500).transform(stripUnsafeText).optional(),
   /** Position inside the element, 0..1 of its box, so a pin lands where it was dropped. */
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),

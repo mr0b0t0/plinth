@@ -12,6 +12,7 @@
 //                 | composed { req, status, id? } | focus { id }
 // App -> frame messages never carry comment text, authors, emails, roles or mention state: under
 // opaque isolation they are posted with "*".
+import { REFUSED_CHARS } from "./text.ts";
 
 export const PAGE_COMMENTS_SOURCE = "plinth-comments";
 export const PAGE_COMMENTS_VERSION = 1;
@@ -53,11 +54,12 @@ export const PAGE_ANCHOR_KEY_RE = new RegExp(
   `^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,${PAGE_COMMENT_LIMITS.maxKey - 1}}$`,
 );
 /**
- * What an anchor's label and data strings may not hold: control characters (Cc) and format
- * characters (Cf: bidi overrides and isolates, zero-width spaces and joiners, the BOM). They can
- * reorder or hide what the label says in the panel, so the page cannot use them.
+ * What an anchor's label and data strings may not hold (UNSAFE_TEXT_RE, text.ts): control and
+ * format characters (bidi overrides and isolates, zero-width spaces and joiners, the BOM) and the
+ * line and paragraph separators. They can reorder or hide what the label says in the panel, so the
+ * page cannot use them.
  */
-export const PAGE_ANCHOR_UNSAFE_RE = /[\p{Cc}\p{Cf}]/u;
+export const PAGE_ANCHOR_UNSAFE_RE = REFUSED_CHARS;
 /** Keys of a page anchor's `data`. */
 export const PAGE_ANCHOR_DATA_KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
 /** A compose request id: random, URL-safe. */

@@ -75,6 +75,24 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   if even the note cannot be saved, the page holds your text with Copy until it can. A board tab
   opened before this release keeps working on the blocks it can read, and turns read-only and
   asks for a reload instead of saving over newer ones.
+- **Doc editing, Ask and import follow-ups.** Bold, italic, strikethrough and links nest on a
+  doc's page: a link inside bold, bold inside italic and the like open for editing and can be
+  made. Pasting several paragraphs makes a block of each (an item in a list, a paragraph in a
+  quote). Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z undo and redo typing, formatting, links, Enter, list
+  moves, paste and Turn into in the block being edited, and Undo right after an Enter joins the
+  two blocks again. Turn into refuses a change that would drop part of a block (a table or a
+  divider in a quote, an image), and says so. Ask an agent names a doc's block as the version the
+  agent reads has it, even after blocks were added or removed above it; a block not published yet
+  is sent with its words and marked so, and Insert below's Image reads "New image below …". Block
+  words with emoji or invisible characters no longer stop a request from sending. Typing that
+  could not be added to the doc yet can be dismissed from its notice once copied, and a store
+  left by another account no longer warns the next person in the same tab. The Ask dialog's
+  Publish first no longer shows a toast that disagrees with it. A CSV that is too large once
+  converted to UTF-8 says so, and a UTF-16 file without a byte order mark is read as such (or
+  refused with a clear message) instead of filling every cell with NULs. Typing a doc could not
+  take (at its size limit, a block too long, or not sent) stays in its block, unsent, instead of
+  being dropped when the block closes, and an edit the room refuses keeps what was typed, with
+  Copy, before the block goes back.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
@@ -112,9 +130,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   status says "Draft saved", "Publishing…" and "Published as v7", on one line at any width.
   **Discard unpublished changes** is in the ⋯ menu. The strip shows how many others are editing,
   with who and where in a tooltip. A doc's block being edited keeps the page's own type, with no
-  box around it, and a "+" shows only beside the block under the pointer or being edited; on a
-  phone only the "+" above the block being edited and the one at the end show, clear of the text.
-  A page Publish keeps the files of the version the changes were made from
+  box around it. A page Publish keeps the files of the version the changes were made from
   (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
   get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
   always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
@@ -442,32 +458,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   from its permanent version link now shows the new version on the sheet's own link. New appears
   once the list has loaded, so it no longer jumps from the top bar to the empty state, and file
   names in version notes drop control and bidi characters.
-- **Edit docs as formatted text.** On a doc's page, a block opens as formatted text, with a
-  format bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its
-  corner: **Turn into** another kind,
-  **Insert below** (any kind, a divider, a table or an image), **Move up**, **Move down** and
-  **Delete**. No
-  Markdown is shown anywhere; Plinth writes the changes back as Markdown and keeps every block
-  nobody touched byte for byte. A Move, Delete, Turn into or Insert below never runs the blocks
-  around it together, even with no blank lines between them (a list that would join another takes a different bullet or
-  number style, which looks the same), and neither does clearing a block's text, which removes the
-  block the same way at once, so a Publish made while it is still open never has the old text, and what is typed in it meanwhile reaches the doc even when the block is closed first. The menu of a new, still empty block acts on that block. A
-  link can go to any address the page links, spaces and
-  accented letters included. A change the doc cannot take (at its size limit, or while not
-  connected) says so and keeps the block open with what was typed. A block op cut off by a dropped
-  connection says so and leaves editing free, and typing waiting for a lease is asked for again once
-  the draft is back. An image's alt text opens from its menu (**Alt text**), and its **Ask an
-  agent** (or **Insert below**, **Image**) opens the Ask dialog, whose "Pointing at" chip names
-  the block by its first words as published, a list's items apart ("Pointing at “Maria: launch
-  post · Ana…”"), or by its kind when it has none ("Pointing at the image"). The link field opens under the selected text (docked in the block at phone
-  width), and the block menu stays inside the frame. Blocks the
-  page cannot show faithfully as formatted text are shown as they are, with **Ask an agent** and
-  the block menu (Move and Delete). The **+** between blocks is gone: **Insert below** or Enter
-  adds a block. Opening a block moves nothing on the page and hides next to nothing: the format bar
-  shows only for selected text, the block's menu sits on its edge, and heading anchors are hidden
-  while editing. Punctuation typed at the edge of bold, italic or strikethrough is kept, and text
-  the page cannot save as typed stays in its block, which stays open and keeps Publish off until
-  it is changed.
+- **Edit docs as formatted text.** On a doc's page a block opens as formatted text, with a format
+  bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its corner
+  (**Turn into**, **Insert below**, **Move up**, **Move down**, **Delete**). No Markdown is shown
+  anywhere: Plinth writes changes back as Markdown and keeps every untouched block byte for byte.
+  No block op, and no block cleared of its text, runs the blocks around it together. Blocks the
+  page cannot show faithfully are shown as they are, with **Ask an agent**, Move and Delete; an
+  image's **Ask an agent** (or **Insert below**, **Image**) opens the Ask dialog about that place.
+  The **+** between blocks is gone: **Insert below** or Enter adds a block. A change the doc
+  cannot take says so and keeps the block open with what was typed.
 
 ## 0.6.0 (2026-11-20)
 

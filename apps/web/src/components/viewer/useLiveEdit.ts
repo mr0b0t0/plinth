@@ -95,6 +95,12 @@ export const LIVE_NOTE = "Edited on the page";
 export const SOLO_KEEP_MS = 5000;
 /** How long the frame has to answer a collect. */
 export const COLLECT_TIMEOUT_MS = 5000;
+/**
+ * Solo: how often keeping the tab's copy with rescue items the frame wrote is tried (storage full
+ * or blocked), the first retry after this long, each next one twice as late.
+ */
+export const SOLO_KEEP_TRIES = 4;
+export const SOLO_KEEP_RETRY_MS = 1000;
 /** Editors whose edit was not the last one autosave this much later. */
 export const AUTOSAVE_FALLBACK_MS = 30_000;
 /** A choice or a discard refused because another one or a save holds the room's lock. */
@@ -257,10 +263,11 @@ export function useLiveEdit({
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
   /**
-   * How many typed texts are kept to rescue for this artifact in this tab (any account's store,
-   * and what the frame reported before the session was known): leaving the page warns while any.
+   * How many typed texts are kept to rescue for this artifact in this tab (the signed-in account's
+   * store, any account's while the session is unknown, and what the frame reported before it was
+   * known): leaving the page warns while any.
    */
-  const [rescued, setRescued] = useState(() => countRescue(gate.artifact.id));
+  const [rescued, setRescued] = useState(() => countRescue(gate.artifact.id, userId));
   /** The frame's rescue reports, in order, while there is no known account to keep them under. */
   const unkept = useRef<RescueReportMsg[]>([]);
   /** What a `rescue` report from the frame does (set once collect exists, below). */
@@ -337,40 +344,55 @@ export function useLiveEdit({
     [frame, target],
   );
 
-  /** Room mode: the frame reviews the room's frozen draft; nothing crosses but the request. */
-  const openReview = useCallback(async () => {
-    const s = latest.current.status;
-    if (latest.current.mode === "solo") return;
-    if (s?.conflict_version == null) {
-      toast("Nothing to review: your changes were kept on top of the new version.", "neutral");
-      return;
-    }
-    const nonce = newNonce();
-    const r: LiveReview = {
-      nonce,
-      base: s.base_version,
-      current: s.conflict_version,
-      mode: "room",
-    };
-    if (!postToRenderer(frame, target, reviewMessage(nonce))) {
-      toast("The page is not ready. Try again in a moment.");
-      return;
-    }
-    setReview(r);
-  }, [frame, target]);
+  /**
+   * Room mode: the frame reviews the room's frozen draft; nothing crosses but the request. With
+   * `tell: "report"` (Ask's Publish first, whose dialog says what happened) it shows no toast: a
+   * conflict can arrive before the room's status shows it, and "Nothing to review" would then
+   * contradict the dialog.
+   */
+  const openReview = useCallback(
+    async (tell: Tell = "toast") => {
+      const s = latest.current.status;
+      if (latest.current.mode === "solo") return;
+      const say = (text: string, tone: Tone = "danger") => {
+        if (tell === "toast") toast(text, tone);
+      };
+      if (s?.conflict_version == null) {
+        say("Nothing to review: your changes were kept on top of the new version.", "neutral");
+        return;
+      }
+      const nonce = newNonce();
+      const r: LiveReview = {
+        nonce,
+        base: s.base_version,
+        current: s.conflict_version,
+        mode: "room",
+      };
+      if (!postToRenderer(frame, target, reviewMessage(nonce))) {
+        say("The page is not ready. Try again in a moment.");
+        return;
+      }
+      setReview(r);
+    },
+    [frame, target],
+  );
 
   /**
    * Solo mode: a Publish was refused because version n is current now. The frame reviews its own
    * copy beside n; the app says which files n changed since the base, from the two versions'
    * file lists (it reads only their `assets`). For a copy this tab kept from before a reload
    * (`kept`), the frame never held it: the review carries it, and the choice publishes it. A
-   * refusal (`e`) that leaves nothing newer than the base to review says why instead.
+   * refusal (`e`) that leaves nothing newer than the base to review says why instead, unless
+   * `tell` is "report" (Ask's Publish first, whose dialog says it already).
    */
   const soloReview = useCallback(
-    async (base: number, e: unknown, kept?: string) => {
+    async (base: number, e: unknown, kept?: string, tell: Tell = "toast") => {
+      const say = (text: string) => {
+        if (tell === "toast") toast(text);
+      };
       const n = currentOf(e) ?? latest.current.gate.artifact.current_version;
       if (n <= base) {
-        toast(refusedText(e));
+        say(refusedText(e));
         return;
       }
       try {
@@ -382,16 +404,16 @@ export function useLiveEdit({
         const nonce = newNonce();
         const solo = { n, base, files, ...(kept !== undefined ? { text: kept } : {}) };
         if (!postToRenderer(frame, target, reviewMessage(nonce, solo))) {
-          toast("The page is not ready. Try again in a moment.");
+          say("The page is not ready. Try again in a moment.");
           return;
         }
         keptReview.current = kept !== undefined ? { nonce, text: kept } : null;
         setReview({ nonce, base, current: n, mode: "solo" });
       } catch (e) {
-        fail(e);
+        refuse(e, undefined, tell);
       }
     },
-    [id, frame, target, fail],
+    [id, frame, target, refuse],
   );
   const soloReviewRef = useRef(soloReview);
   soloReviewRef.current = soloReview;
@@ -488,12 +510,16 @@ export function useLiveEdit({
   // kept from an earlier frame is counted and offered to this one (again on each load), which
   // writes what the draft does not hold yet. Nothing is read, offered or dropped before.
   useEffect(() => {
-    if (!who) return;
+    if (!who) {
+      // No account (yet): no store of anyone else's counts once no one is signed in.
+      setRescued(countRescue(id, userId) + unkept.current.reduce((n, x) => n + x.upsert.length, 0));
+      return;
+    }
     // Merged in order, as they came: the store only grows by them, minus ids named as written.
     const waiting = unkept.current;
     unkept.current = [];
     for (const r of waiting) onRescue.current(r);
-    setRescued(countRescue(id));
+    setRescued(countRescue(id, userId));
     if (!available || !frame || !editing) return;
     const offer = () => {
       const items = readRescueItems(loadRescue(who, id)) ?? [];
@@ -502,7 +528,7 @@ export function useLiveEdit({
     offer();
     frame.addEventListener("load", offer);
     return () => frame.removeEventListener("load", offer);
-  }, [who, id, available, frame, target, editing]);
+  }, [who, userId, id, available, frame, target, editing]);
 
   /**
    * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
@@ -568,7 +594,7 @@ export function useLiveEdit({
           e,
           () => {
             if (opts.onConflict && e instanceof ApiRequestError) opts.onConflict(e);
-            else void soloReviewRef.current(base, e);
+            else void soloReviewRef.current(base, e, undefined, opts.tell);
           },
           opts.tell,
         );
@@ -622,7 +648,7 @@ export function useLiveEdit({
           if (!quiet) toast(UNPUBLISHABLE, "neutral");
           return { error: UNPUBLISHABLE };
         }
-        return refuse(e, code === "live_conflict" ? () => void openReview() : undefined, tell);
+        return refuse(e, code === "live_conflict" ? () => void openReview(tell) : undefined, tell);
       } finally {
         savingRef.current = false;
         setSaving(false);
@@ -740,7 +766,7 @@ export function useLiveEdit({
             // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
             if (who) clearRescue(who, id);
             unkept.current = [];
-            setRescued(countRescue(id));
+            setRescued(countRescue(id, userId));
             done("done");
           }
           setReview(null);
@@ -835,7 +861,7 @@ export function useLiveEdit({
       setRestore(null);
       if (who) clearRescue(who, id);
       unkept.current = [];
-      setRescued(countRescue(id));
+      setRescued(countRescue(id, userId));
       latest.current.onReload();
       return;
     }
@@ -850,12 +876,12 @@ export function useLiveEdit({
       // What was kept to rescue goes too; the frame drops its own on the room's reset.
       if (who) clearRescue(who, id);
       unkept.current = [];
-      setRescued(countRescue(id));
+      setRescued(countRescue(id, userId));
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }
-  }, [id, who, fail]);
+  }, [id, who, userId, fail]);
 
   // ---------- solo: keep a copy, offer it back after a reload ----------
 
@@ -867,11 +893,11 @@ export function useLiveEdit({
   onRescue.current = (r) => {
     if (!who) {
       unkept.current.push(r);
-      setRescued(countRescue(id) + unkept.current.reduce((n, x) => n + x.upsert.length, 0));
+      setRescued(countRescue(id, userId) + unkept.current.reduce((n, x) => n + x.upsert.length, 0));
       return;
     }
     const answer = (ids: string[]) => {
-      setRescued(countRescue(id));
+      setRescued(countRescue(id, userId));
       // The ids the store holds: an item the frame sent that is not among them stays only there.
       postToRenderer(frame, target, rescueMessage([], { ids, n: r.n }));
     };
@@ -881,11 +907,28 @@ export function useLiveEdit({
       // kept, the store keeps them.
       answer(mergeRescue(who, id, r.upsert, r.gone));
       const base = gate.artifact.version;
-      collect({ keep: true })
-        .then((text) => {
-          if (savePageDraft(id, base, text)) answer(mergeRescue(who, id, [], r.written));
-        })
-        .catch(() => undefined);
+      // Storage full or blocked: tried again a few times, further apart, then the frame shows them
+      // with Copy (they are in its text, so it does not write them again).
+      const keepWritten = (tries: number) => {
+        const again = () => {
+          if (tries + 1 < SOLO_KEEP_TRIES) {
+            setTimeout(() => keepWritten(tries + 1), SOLO_KEEP_RETRY_MS * 2 ** tries);
+            return;
+          }
+          const items = (readRescueItems(loadRescue(who, id)) ?? []).filter((i) =>
+            r.written.includes(i.id),
+          );
+          if (items.length > 0)
+            postToRenderer(frame, target, rescueMessage(items, undefined, true));
+        };
+        collect({ keep: true })
+          .then((text) => {
+            if (savePageDraft(id, base, text)) answer(mergeRescue(who, id, [], r.written));
+            else again();
+          })
+          .catch(again);
+      };
+      keepWritten(0);
       return;
     }
     answer(mergeRescue(who, id, r.upsert, [...r.written, ...r.gone]));

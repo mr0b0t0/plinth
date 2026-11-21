@@ -2915,11 +2915,16 @@ CSP, sandbox flag or env var was added.
   next to a mark may be written as a numeric character reference, never for ASCII punctuation
   (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
   blocks, and the reference definitions after a block, keep their bytes.
-- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
-  `block-3:image`) and, as its text, the block's first words (an image's alt text), at most the
-  page anchor's 120 characters with control characters as spaces. The frame posts those words only
-  when a block of the published version it was served (or an image in it) has the same words, and
-  an empty text otherwise, so no draft text reaches the app page; the app shows them as text and
+- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor naming the
+  block as the published version it was served has it (`block-3`, `block-3:image`,
+  `block-3:add-image`; `new-3` for a block only in the draft, after published block 3) and, as its
+  text, the block's first words (an image's alt text): at most the page anchor's 120 UTF-16 code
+  units, never cutting a character in two, with white space folded and control and format
+  characters and the line and paragraph separators stripped (`UNSAFE_TEXT_RE`, the set the server
+  refuses in a page anchor, emoji joiners included), so a dialog never opens about a label the
+  server would refuse. For a block only in the draft those words are the draft's: the person who
+  asks is editing it, sees them in the dialog's chip ("not published yet") and can remove the chip
+  before posting. The app shows them as text, refuses a label with any of those characters, and
   accepts the message only as an editing message, with the frame key (see
   [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "Pointing at" chip, is
   one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the
@@ -3000,10 +3005,14 @@ flag, env var or MCP tool was added.
 - **An account publishes.** A version is stamped with the account that made it, so an editor
   confirmed by code without an account cannot publish one: the Worker refuses the save (401), and
   the item opens the dialog's sign-in step instead of a file picker.
-- **The Worker's reading is the one that counts.** The app sends a picked file as it is (CSV and
-  TSV as text, an .xlsx as base64): the bounded importer of [Sheets](#sheets) converts and checks
-  it, and its refusal reaches the app as a sentence and cell messages, rendered as React text
-  nodes. The app checks the name and the 2 MB limit before sending; the Worker checks both again.
+- **The Worker's reading is the one that counts.** The app sends a picked .xlsx as it is, as
+  base64, and a CSV or TSV as text: one that is not UTF-8 is re-encoded to UTF-8 first (read as
+  UTF-16 by its byte order mark or by where its NUL bytes fall, else as Windows-1252; NUL bytes
+  that fall as no UTF-16 does are refused, never read as cells). The bounded importer of
+  [Sheets](#sheets) converts and checks it, and its refusal reaches the app as a sentence and cell
+  messages, rendered as React text nodes. The app checks the name and the 2 MB limit before
+  sending, a CSV's again as converted to UTF-8 (a Windows-1252 file can grow past it); the Worker
+  checks both again.
 - **The app's own reading only says what is left out.** To warn before a replace (and in Import's
   toast), the app runs the same shared importer on the file, in the person's own tab, on a file
   they picked themselves: the 2 MB cap, the 24 MB inflate cap, the linear XML scanner and the row,
@@ -3013,10 +3022,11 @@ flag, env var or MCP tool was added.
   result never decides anything: when it throws, the file is sent and the Worker answers. The worst
   a crafted file can do there is keep that tab busy for the bounded work. A CSV that is not UTF-8
   is decoded as Windows-1252 by a fixed table, which reads every byte as one character.
-- **File names are shown and noted without control or bidi characters.** "Imported from …",
-  "Replaced from …", the dialogs and the toasts drop C0 and C1 controls and U+061C, U+200E, U+200F,
-  U+202A to U+202E and U+2066 to U+2069, so a name like `invoice<U+202E>vsc.xlsx` cannot read as another
-  in History or in the app.
+- **File names are shown and noted without control or format characters.** "Imported from …",
+  "Replaced from …", the dialogs and the toasts drop control (Cc) and format (Cf: bidi marks,
+  embeddings, overrides and isolates, zero-width characters) characters and the line and
+  paragraph separators (`UNSAFE_TEXT_RE`, the set Ask anchors, titles and sheet names use too), so
+  a name like `invoice<U+202E>vsc.xlsx` cannot read as another in History or in the app.
 - **v1's note.** `POST /api/v1/artifacts` takes `note` for v1 (the zod note schema, at most 500
   characters), which History shows as text. MCP's `publish_artifact` does not list it.
 - **`?edit` starts editing only where the gate allows it.** The page starts edit mode from `?edit`

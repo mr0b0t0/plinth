@@ -156,7 +156,7 @@ is published and their unsaved edits are merged onto it or reviewed by them. It 
 never wait, poll or retry for them. The draft text is never shown to you.
 
 People edit a doc on its page as formatted text, never as Markdown, and Plinth writes their
-changes back as Markdown: emphasis as `*…*`, a `<` at the start of a block as `\<`, now and then a
+changes back as Markdown: emphasis as `*…*`, every `<` in their text as `\<`, now and then a
 character next to a mark as a character reference (`*重要，*&#x7684;`, which renders as "的"), and
 a block they did not touch keeps its bytes. Constructs the page cannot show faithfully as formatted text
 (a code block inside a list item, a reference definition inside a quote) stay as you wrote them;
@@ -1460,9 +1460,12 @@ request reaches you as a mention.
   that is not Claude or Codex (ChatGPT, Cursor, Gemini…). Its `anchor` is the element on an HTML
   page (`selector`, `text`) or the design board the person picked, or, from a doc being edited, a
   page anchor (`kind: "page"`): the doc renderer sends `ask` with block anchors; other types don't
-  yet. `block-3` is the doc's third top-level block (a heading, paragraph, list, table, quote, code
-  block or image, counted from the top of the draft the person was editing), and `block-3:image`
-  asks you to add or replace an image there. No anchor means the whole page.
+  yet. They name blocks of the version you read (`version_number`), not of the person's draft:
+  `block-3` is its third top-level block (a heading, paragraph, list, table, quote, code block or
+  image), and the anchor's `text` is that block's first words. `new-3` is a block only in their
+  draft, not published yet, after block 3 (`new-0`: above the first); its `text` is its draft
+  words. `:image` after either asks you to replace the image in that block, and `:add-image` to
+  add a new image below it. No anchor means the whole page.
 - `claim_mention` it, read the artifact with `get_artifact` at its `version_number`, publish the
   change with `update_artifact` and `base_version`, then `reply_comment` with `result_version`
   (or `failed: true` and why). The thread shows the request done and links your version.

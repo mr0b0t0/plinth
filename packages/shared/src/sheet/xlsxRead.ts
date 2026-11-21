@@ -10,6 +10,7 @@
 // No replace with a callback runs on text of unbounded length: it keeps every match.
 import { Inflate } from "fflate";
 import { LIMITS } from "../constants.ts";
+import { UNSAFE_TEXT_RE } from "../text.ts";
 import { XLFN_FUNCTIONS } from "./formula/arity.ts";
 import { parseFormula } from "./formula/parser.ts";
 import { platform } from "./platform.ts";
@@ -372,7 +373,7 @@ function sheetName(raw: string): string {
   return [
     ...raw
       .slice(0, MAX_SHEET_NAME_CHARS * 4)
-      .replace(/[\p{Cc}\p{Cf}]+/gu, "")
+      .replace(UNSAFE_TEXT_RE, "")
       .trim(),
   ]
     .slice(0, MAX_SHEET_NAME_CHARS)

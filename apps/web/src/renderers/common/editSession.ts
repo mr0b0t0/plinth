@@ -38,7 +38,13 @@ export type EditAppMessage =
     }
   | { type: "reviewed"; nonce: string; result: ReviewResult }
   /** Typed text the app kept from an earlier frame's rescue store (doc editing). */
-  | { type: "rescue"; items: RescueItem[]; stored?: { ids: string[]; n: number } };
+  | {
+      type: "rescue";
+      items: RescueItem[];
+      stored?: { ids: string[]; n: number };
+      /** Offered for copying only (RescueMessage.copy). */
+      copy?: true;
+    };
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 /** The longest kept copy a `review` may carry, in UTF-16 units; the type's rules check it exactly. */
@@ -101,10 +107,12 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
   if (m.type === "rescue") {
     const items = readRescueItems(m.items);
     if (!items) return null;
-    if (m.stored === undefined && m.n === undefined) return { type: "rescue", items };
+    if (m.copy !== undefined && m.copy !== true) return null;
+    const copy = m.copy === true ? { copy: true as const } : {};
+    if (m.stored === undefined && m.n === undefined) return { type: "rescue", items, ...copy };
     const ids = readRescueIds(m.stored);
     if (!ids || !isRescueN(m.n)) return null;
-    return { type: "rescue", items, stored: { ids, n: m.n } };
+    return { type: "rescue", items, stored: { ids, n: m.n }, ...copy };
   }
   if (typeof m.nonce !== "string" || !NONCE_RE.test(m.nonce)) return null;
   if (m.type === "collect") return { type: "collect", nonce: m.nonce };

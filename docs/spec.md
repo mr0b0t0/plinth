@@ -3182,7 +3182,12 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
   "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
   kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
-  which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
+  which is never posted); a renderer releases its own lease before it asks. A doc names blocks as
+  the published version the agent reads has them, matching the draft's blocks to it by their
+  Markdown: `block-3` is its third top-level block, `new-3` a block only in the draft after it
+  (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
+  published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
+  Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
   `ask` with block anchors; other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
@@ -3254,14 +3259,18 @@ pages and designs come only from agents.
   toward `MAX_PUBLISHES_PER_HOUR`, the artifact quota and the storage quota. A token limited to one
   artifact cannot create one (`mayCreateArtifacts`), as everywhere.
 - **Import.** A file picker for `.xlsx`, `.csv` and `.tsv`, at most 2 MB (the same picker as
-  Replace's). The app sends the file as
-  it is: CSV and TSV as text and an .xlsx as base64, with `content_format` `csv` or `xlsx`, the file
-  name without its extension as the title, and the note "Imported from <file name>". The file name
-  in the note, and wherever the app shows it, drops control characters (C0 and C1) and bidi marks,
-  embeddings, overrides and isolates (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069).
-  A CSV or TSV is read as UTF-8 (UTF-16 when it starts with that byte order mark); bytes that are
-  not UTF-8 are read as Windows-1252, which Excel on Windows saves a "CSV" in, so "Café" stays
-  "Café" and is never U+FFFD, and the person is told. The Worker
+  Replace's). The app sends an .xlsx as it is, as base64, and a CSV or TSV as UTF-8 text, with
+  `content_format` `csv` or `xlsx`, the file name without its extension as the title, and the note
+  "Imported from <file name>". The file name in the note, and wherever the app shows it, drops
+  control and format characters (bidi marks, embeddings, overrides and isolates, zero-width
+  characters) and the line and paragraph separators. A CSV or TSV is read as UTF-8, as UTF-16 when
+  it starts with that byte order mark or, without one, when its NUL bytes fall as UTF-16's do
+  (nearly every second byte); NUL bytes otherwise are refused ("<file name> isn't a text file
+  Plinth can read. Save it as CSV UTF-8 and import it again."). Other bytes that are not UTF-8 are
+  read as Windows-1252, which Excel on Windows saves a "CSV" in, so "Café" stays "Café" and is
+  never U+FFFD, and the person is told. A file not in UTF-8 is re-encoded to UTF-8 before it is
+  sent, and one that is then over 2 MB is refused in the app: "<file name> is larger than 2 MB once
+  converted to UTF-8, the most a spreadsheet import takes." The Worker
   converts and checks it exactly as it does for agents (see Imports under
   [Sheets](#sheets-decided-2026-11-19)), and its answer is the one that counts. The sheet then
   opens in edit mode where editing on the page works, and on its page otherwise.
@@ -3337,10 +3346,18 @@ the same leases, room, drafts and Publish as [Editing](#editing).
 - **Reading the page back.** After every input the renderer reads the edited DOM against an
   allowlist (bold, italic, code, strikethrough, line breaks, text, and the links and kept parts it
   drew itself); anything else counts as its text, so nothing a browser inserts becomes markup.
-  Paste is plain text only.
+  Paste is plain text only; a paste of several paragraphs (blank lines between them) makes a block
+  of each, the first joining the text before the caret and the last the text after it (in a list
+  an item of each, in a quote a paragraph of each; a table cell takes it on one line).
+- **Undo.** Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z (Ctrl+Y) undo and redo in the open block: typing (a
+  run of it, until a pause of a second, is one step), formatting, links, line breaks, Enter and
+  Tab in a list or quote, paste and Turn into. Right after an Enter or a multi-paragraph paste,
+  Undo with nothing left in the new block joins the blocks it made back into the one it was,
+  with the caret where it was, unless they changed meanwhile.
 - **Writing it back.** The serializer writes the model as CommonMark with GitHub tables,
-  strikethrough and bare-URL links (the doc's dialect, html off): emphasis as `*…*`, escapes
-  wherever text would start syntax, a `<` at the start of any top-level block as `\<`, lists from
+  strikethrough and bare-URL links (the doc's dialect, html off): emphasis as `*…*`, marks nested
+  as they run (a link inside bold, bold inside italic), escapes wherever text would start syntax,
+  every `<` in text as `\<`, lists from
   their own start number, and code fences lengthened when the code holds one. Reference
   definitions that follow a block stay byte for byte after it. Only the leased block's lines are
   ever replaced, so a block nobody edited keeps its bytes.
@@ -3368,7 +3385,12 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   taken over or the draft changes under it, its text is written without its formatting rather than
   lost: in place of the block, or, when someone else took the block, as a new block below it; when
   there is no lease to write it with (not connected, or a review waits), it is written once there
-  is.
+  is. A send that is refused (the doc is at its size limit, the block is over one frame of the
+  room, or the socket did not take it) is handled the same way: the text stays in the open block
+  with the reason, counts as unsent and `unsavable`, goes to the rescue store (a room) or the kept
+  copy (solo), and is sent again once it fits or the draft is back. An edit the room refuses as
+  invalid puts the block back as the room has it, but what was typed is kept first, in the rescue
+  store with Copy and Dismiss, and written as a block of its own after a reload.
 - **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
   until the room acknowledges a write of it (without that acknowledgement it is written again,
   a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which
@@ -3379,9 +3401,14 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   one that still cannot be written stays kept, counts as unsent changes (the page asks before it
   is left, and a hidden tab keeps its socket), and the page says "What you typed couldn't be added
   to the doc yet. It is kept here." with **Copy**, or, for text the app's store could not take (over
-  20 items or 256 KiB), "… It's kept on this page until you reload. Copy it to be safe." The app's
-  store only merges what the frame reports (items in, ids out), so nothing leaves it unnamed. A room's refusal never resets a block holding
-  such typing.
+  20 items or 256 KiB, or longer than one frame of the room), "… It's kept on this page until you
+  reload. Copy it to be safe." The frame offers such text to the app's store again once something
+  leaves it. Next to **Copy** is **Dismiss**, which asks once ("Dismiss drops it for good: copy it
+  first to keep it.") and then drops every kept text, here and in the app's store; it is offered
+  too, with Copy, while the person can no longer write the doc. The app's store only merges what
+  the frame reports (items in, ids out), so nothing leaves it unnamed; the page warns before it is
+  left about the signed-in account's store only (any account's while the session is unknown). A
+  room's refusal never resets a block holding such typing.
 - **Opening a block for editing again.** A block saved with such a character reference opens for
   editing as any other: the fidelity check tries the same written form.
 - **Formatting and the block menu.** A format bar (bold, italic, code, strikethrough, link), shown
@@ -3407,7 +3434,10 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   `.` and `)`, or an indented block that would continue the list above) is not made, and the page
   says why. The same holds for "Turn into" and "Insert below": a new block that would join a block
   next to it or take one in (a numbered list between lists that use both `.` and `)`, or a list
-  right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
+  right above an indented block) is not made, the block stays as it was, and the page says why.
+  Turn into that would drop text, or a table, a divider or an image in the block, is not made
+  either ("That would drop part of this block, so it wasn't changed."); one that changes only
+  white space or formatting is, and Undo puts it back. A block op the doc has no room for, or that cannot be sent, says so and changes
   nothing. A block op or a block to open whose lease request is cut off by a dropped connection is
   not made either, the page says "Not connected. Try again in a moment.", and nothing else waits
   for it; typing that waits for a lease (a block taken again after a reconnect, or typing kept

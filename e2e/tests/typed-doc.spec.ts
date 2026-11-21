@@ -639,8 +639,7 @@ test.describe("editing a doc on its page as formatted text", () => {
 
       // Nowhere is there Markdown or a source field.
       await expect(frame.locator("textarea")).toHaveCount(0);
-      // biome-ignore lint/performance/useDomNodeTextContent: a Playwright locator, not a DOM node.
-      const shown = (await frame.locator("main").innerText()).replace(/\s+/g, " ");
+      const shown = ((await frame.locator("main").textContent()) ?? "").replace(/\s+/g, " ");
       expect(shown).not.toContain("**");
       expect(shown).not.toContain("## ");
       expect(shown).not.toContain("![");
