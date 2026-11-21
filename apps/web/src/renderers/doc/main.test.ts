@@ -7,7 +7,7 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { boot } from "./boot.ts";
+import { boot, roomError } from "./boot.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
@@ -487,5 +487,22 @@ describe("doc renderer entry", () => {
     vi.resetModules();
     await import("./main.ts");
     expect(root().querySelector("h2")?.id).toBe("from-the-entry");
+  });
+});
+
+describe("doc renderer room errors", () => {
+  it("hands an edit the room refused to the editor, which keeps the typing, never only a notice", () => {
+    const editor = { roomRefused: vi.fn(), notify: vi.fn() };
+    roomError(editor, "invalid");
+    roomError(editor, "too_large");
+    expect(editor.roomRefused.mock.calls).toEqual([["invalid"], ["too_large"]]);
+    expect(editor.notify).not.toHaveBeenCalled();
+    // A lease that went before its frame was answered: the editor said so already.
+    roomError(editor, "not_held");
+    expect(editor.notify).not.toHaveBeenCalled();
+    roomError(editor, "rate_limited");
+    expect(editor.notify).toHaveBeenCalledWith(
+      "Typing too fast for the room. Your text is kept and sent again.",
+    );
   });
 });

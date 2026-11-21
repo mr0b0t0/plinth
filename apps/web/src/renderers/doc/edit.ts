@@ -527,6 +527,7 @@ interface Split {
 }
 
 const isBlank = (s: string | undefined) => s === undefined || s.trim() === "";
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).byteLength;
 
 /** The field's text as the room stores it: an inserted block keeps a blank line on each side. */
 export function padded(value: string, pad: Pad): string {
@@ -778,6 +779,12 @@ export class DocEditor {
   private rescueN = 0;
   /** A rescue write was refused because a review waits: none is tried until the review ends. */
   private rescueFrozen: { seen: boolean } | null = null;
+  /**
+   * The last block send in a room, until the room acknowledges it: its seq, its lease, and what it
+   * wrote as the block's own Markdown (`core`, at line `near`). A refusal that arrives after the
+   * block closed (or its lease went) keeps that text, parked (roomRefused).
+   */
+  private lastSend: { seq: number; lease: string; core: string; near: number } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -874,6 +881,7 @@ export class DocEditor {
       if (r.owner === "op") r.owner = null;
     }
     if (this.want?.rescue) this.want = null;
+    this.lastSend = null;
     if (this.rescues.size > 0) queueMicrotask(() => this.flushRescues());
   }
 
@@ -2137,9 +2145,7 @@ export class DocEditor {
     if (result.blocks !== undefined && parseBlocks(joinLines(after)).length !== result.blocks) {
       return { refusal: JOINED_BLOCKS };
     }
-    if (new TextEncoder().encode(joinLines(after)).byteLength > LIMITS.maxDocBytes) {
-      return { refusal: DOC_FULL };
-    }
+    if (this.tooLarge(joinLines(after))) return { refusal: DOC_FULL };
     return { text: fitted };
   }
 
@@ -2256,6 +2262,8 @@ export class DocEditor {
     for (const r of this.rescues.values()) {
       if (r.sent && !(r.sent.seq !== null && this.backend.acked?.(r.sent.seq))) r.sent.lost = true;
     }
+    // No refusal of a frame sent over the closed socket can come any more.
+    this.lastSend = null;
     if (this.clearing) this.lost("reconnect");
     if (!this.asking) return;
     this.asking = false;
@@ -2365,6 +2373,7 @@ export class DocEditor {
       this.retake(w);
     }
     this.clearedSent();
+    if (this.lastSend && this.backend.acked?.(this.lastSend.seq)) this.lastSend = null;
     // The rescue store: what the room's lines hold now goes, a review that ended lets the rest in.
     this.roomStatus();
     this.checkRescues();
@@ -2466,6 +2475,8 @@ export class DocEditor {
         if (pending) this.schedule(EDIT_DEBOUNCE_MS);
         return;
       }
+      // The block closes now: a refusal the room sends later keeps what this wrote (roomRefused).
+      this.noteSent(mine, core);
     }
     this.backend.release();
     this.dropOpen();
@@ -2629,6 +2640,7 @@ export class DocEditor {
     const refusal =
       this.unsendable(lines, mine, text) ?? (this.backend.edit(text) ? null : NOT_SENT);
     if (refusal) return stick(refusal);
+    this.noteSent(mine, verifyBlock(this.open.rich.model, TOOLS, this.open.env) ?? "");
     // Every accepted send from a block with a rescue copy replaces what that copy waits for.
     this.rescueSent(this.blockRescue, this.backend.lastSeq ?? null, mine.start, text);
     return true;
@@ -2875,23 +2887,50 @@ export class DocEditor {
     this.hooks.status();
   }
 
-  /** Why `text` in place of the leased lines cannot be sent, checked first; null when it can. */
+  /**
+   * Why `text` in place of the leased lines cannot be sent, checked first; null when it can. The
+   * frame carries the text as JSON (where quotes, backslashes and line breaks take two bytes), and
+   * the doc after it must pass the room's own size check (RULES.tooLarge: bytes and lines).
+   */
   private unsendable(lines: readonly string[], mine: LineRange, text: string): string | null {
-    const bytes = (s: string) => new TextEncoder().encode(s).byteLength;
-    if (bytes(text) > LIMITS.liveDocFrameBytes - 256) return TOO_LONG;
+    if (utf8Bytes(JSON.stringify(text)) > LIMITS.liveDocFrameBytes - 256) return TOO_LONG;
     const after = [...lines.slice(0, mine.start), ...blockLines(text), ...lines.slice(mine.end)];
-    if (bytes(joinLines(after)) > LIMITS.maxDocBytes) return DOC_FULL;
+    if (this.tooLarge(joinLines(after))) return DOC_FULL;
     return null;
   }
 
   /**
-   * An edit was refused (by this frame's check, or by the room because the lines changed first):
-   * the block goes back to the room's text and stays open, and the frame says why. When the room
-   * refused it (`fromRoom`), what was typed is kept first, parked in the rescue store with Copy and
-   * Dismiss: it counts as unsent and survives a reload, where it is written as a block of its own.
+   * More than the doc may hold: LIMITS.maxDocBytes, and in a room also its line limit (the room's
+   * own check, RULES.tooLarge), so a room never has to refuse a send for its size.
    */
-  refused(reason: string, fromRoom = false): void {
-    this.cancelTimer();
+  private tooLarge(doc: string): boolean {
+    if (utf8Bytes(doc) > LIMITS.maxDocBytes) return true;
+    return this.backend.keep !== undefined && (RULES?.tooLarge(doc) ?? false);
+  }
+
+  /**
+   * A block send the room took into its socket (`lease`, writing `core`): kept until it is
+   * acknowledged, for a refusal that comes once the block has closed. Rooms only.
+   */
+  private noteSent(lease: ClientLease, core: string): void {
+    const b = this.backend;
+    this.lastSend =
+      b.acked && b.lastSeq !== undefined
+        ? { seq: b.lastSeq, lease: lease.id, core, near: lease.start }
+        : null;
+  }
+
+  /**
+   * The room refused one of this socket's frames: `invalid` (its rules: the doc would start like a
+   * web page) or `too_large` (its size check: bytes or lines). What was typed is never dropped:
+   * - A send of a block that has closed since, or lost its lease, keeps what it wrote, parked in
+   *   the rescue store (park).
+   * - `too_large` for the open block's own send: the block stays open with its typing, `stuck`, as
+   *   when this frame finds the doc full first.
+   * - `invalid` for the open block: as refused().
+   */
+  roomRefused(code: "invalid" | "too_large"): void {
+    const reason = code === "invalid" ? REFUSED_EDIT : DOC_FULL;
     const open = this.open;
     const mine = this.backend.mine;
     // A rescue write the room refused after it was sent: tried again elsewhere, never dropped.
@@ -2899,11 +2938,48 @@ export class DocEditor {
       .filter((r) => r.sent?.seq != null && !this.backend.acked?.(r.sent.seq))
       .sort((a, b) => (b.sent?.seq ?? 0) - (a.sent?.seq ?? 0))[0];
     if (sent && sent.owner !== "block") {
+      // A block's send that was the write of a rescue item it had: that item is the one kept.
+      if (this.lastSend?.seq === sent.sent?.seq) this.lastSend = null;
       this.rescueFailed(sent.id, "moved");
       return;
     }
     if (sent) sent.sent = null;
-    // Typing that cannot be written as typed stays as typed: the room's text does not replace it.
+    // The room answers a socket's frames in order: a send not acknowledged yet is the one refused.
+    const last = this.lastSend;
+    const unanswered = last !== null && !(this.backend.acked?.(last.seq) ?? true);
+    this.lastSend = null;
+    if (last && unanswered && last.lease !== mine?.id) {
+      // Its block closed (or its lease went) before the answer: the open block, if any, is another.
+      if (this.park(last.core, last.near)) this.showRescueNotice();
+      else this.showNotice(reason);
+      this.hooks.status();
+      return;
+    }
+    if (code === "too_large") {
+      // The open block's send did not fit: it stays as typed, to be made smaller or sent again.
+      if (unanswered && open && mine && this.typedDiffers(mine)) {
+        this.cancelTimer();
+        this.setStuck(true);
+        this.stuckWhy = reason;
+        this.noteStuck();
+      }
+      this.showNotice(reason);
+      this.hooks.status();
+      return;
+    }
+    this.refused(reason);
+  }
+
+  /**
+   * An edit of the open block was refused by the doc's rules (this frame's check before sending,
+   * or the room's: roomRefused): the block goes back to the room's text and stays open, and its
+   * typing is kept first, parked in the rescue store with Copy and Dismiss (park). Typing that
+   * cannot be written as typed (`stuck`) stays as typed instead.
+   */
+  refused(reason: string): void {
+    this.cancelTimer();
+    const open = this.open;
+    const mine = this.backend.mine;
     if (this.stuck) {
       this.showNotice(reason);
       this.hooks.status();
@@ -2916,7 +2992,7 @@ export class DocEditor {
         (b) => b.core.start >= mine.start && b.core.end <= mine.end,
       );
       const own = block ? joinLines(lines.slice(block.core.start, block.core.end)) : "";
-      if (fromRoom) parked = this.parkTyped(open, own, mine.start);
+      parked = this.parkTyped(open, own, mine.start);
       const model = block ? editableBlock(own, TOOLS, open.env) : null;
       open.rich.setModel(model ?? para());
     }
@@ -2925,10 +3001,16 @@ export class DocEditor {
     this.hooks.status();
   }
 
+  /** The open block holds text its leased lines do not (or text that cannot be written). */
+  private typedDiffers(mine: LineRange): boolean {
+    const block = this.currentText();
+    if (block === null) return true;
+    return padded(block, this.pad) !== joinLines(this.backend.lines.slice(mine.start, mine.end));
+  }
+
   /**
    * The open block's typing, about to be replaced by the room's text (`own`), kept as a parked
-   * rescue item: the app keeps it, the page offers Copy and Dismiss, and nothing writes it until a
-   * reload. Whether there was anything to keep.
+   * rescue item (park). Whether there was anything to keep.
    */
   private parkTyped(open: Open, own: string, near: number): boolean {
     const model = open.rich.model;
@@ -2936,6 +3018,16 @@ export class DocEditor {
     const core =
       verifyBlock(model, TOOLS, open.env) ?? verifyBlock(withoutMarks(model), TOOLS, open.env);
     if (!core || core === own) return false;
+    return this.park(core, near);
+  }
+
+  /**
+   * Typed text that did not go in, kept as a parked rescue item near line `near`: the app keeps
+   * it, the page offers Copy and Dismiss, and nothing writes it until a reload. Whether it was kept
+   * (blank text is nothing to keep).
+   */
+  private park(core: string, near: number): boolean {
+    if (core.trim() === "") return false;
     const id = `r${Date.now().toString(36)}${++this.rescueN}`;
     const r: Rescue = {
       id,
@@ -3143,6 +3235,8 @@ export class DocEditor {
 
   /** Everything kept is dropped: the unpublished changes were discarded. */
   clearRescues(): void {
+    // A send to the discarded draft that the room refuses keeps nothing either.
+    this.lastSend = null;
     if (this.rescues.size === 0 && !this.want?.rescue) return;
     const ids = [...this.rescues.keys()];
     this.rescues.clear();
