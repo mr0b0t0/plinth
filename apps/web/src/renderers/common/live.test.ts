@@ -322,6 +322,57 @@ describe("LiveDocClient", () => {
     expect(FakeSocket.all.length).toBe(2);
   });
 
+  it("keep: answered `kept`; a room without it (invalid) gets no more, and not_held says nothing", () => {
+    client.start();
+    welcome(sock(), "a");
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    expect(client.keep()).toBe(true);
+    expect(sock().last()).toEqual({ t: "keep", lease: "mine" });
+    sock().frame({ t: "kept", lease: "mine" });
+    // A keep racing a takeover: the lease went, and the room says not_held. Nothing for the editor.
+    expect(client.keep()).toBe(true);
+    sock().frame({ t: "error", code: "not_held" });
+    // A room deployed before `keep` refuses it as invalid: none is sent again, and the editor
+    // hears nothing (its block is not reset).
+    expect(client.keep()).toBe(true);
+    sock().frame({ t: "error", code: "invalid" });
+    const sent = sock().sent.length;
+    expect(client.keep()).toBe(false);
+    expect(sock().sent.length).toBe(sent);
+    expect(L.calls.filter((c) => c.startsWith("error"))).toEqual([]);
+    // An edit's own error still reaches the editor.
+    client.edit("a!");
+    sock().frame({ t: "error", code: "invalid" });
+    expect(L.calls).toContain("error:invalid");
+  });
+
+  it("keeps a hidden tab's socket while the editor holds text not in the draft (keepOpen)", () => {
+    let state: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => state);
+    let holding = true;
+    const kept = new LiveDocClient({
+      win: window,
+      listener: listener(),
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      keepOpen: () => holding,
+    });
+    kept.start();
+    welcome(sock(), "a");
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(HIDDEN_CLOSE_MS + 10);
+    expect(sock().closed).toBeNull();
+    holding = false;
+    state = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(HIDDEN_CLOSE_MS + 10);
+    expect(sock().closed).toBe(1000);
+    kept.stop();
+  });
+
   it("follows reset, rebased, saved and conflict", () => {
     client.start();
     welcome(sock(), "a\nb");
@@ -560,6 +611,7 @@ describe("readServerFrame", () => {
     },
     { t: "struct_denied", reason: "held", by: "a@b.c" },
     { t: "struct_denied", reason: "stale" },
+    { t: "kept", lease: "l_abc" },
   ];
 
   it("accepts every well-formed frame, as the shared schema does", () => {

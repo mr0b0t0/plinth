@@ -639,7 +639,8 @@ page shows the strip and makes the REST calls, and renders no content.
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
   client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
-  lease idle for 60 s can be taken over.
+  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block
+  holding typing it cannot write yet), starts that minute again.
 - **Per-type rules.** The room checks every edit with the type's rules
   (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
   a refused edit means someone else changed the lines first or the edit was forged; the renderer
@@ -3006,9 +3007,31 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   numeric character reference ("*重要，*&#x7684;"), which renders the same. Typing that still
   cannot be written stays in the block as typed (the keystroke is not undone): the page says
   "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab, a
-  click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and Publish
-  and autosave are off until the text changes. If edit mode ends anyway, its text is written
-  without its formatting rather than lost.
+  click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and every
+  way to publish (the strip, Cmd/Ctrl+S in the frame or the app, Done, Ask's "Publish my changes
+  first", autosave) waits until the text changes; the page asks before it is left, and in solo mode
+  the tab's kept copy has the text without its formatting. In a room the holder sends `keep` every
+  20 s (`LIMITS.liveLeaseKeepS`) while connected, so the lease is not taken over as idle; a holder
+  that sends neither edits nor `keep` for 60 s still can be. If edit mode ends anyway, the block is
+  taken over or the draft changes under it, its text is written without its formatting rather than
+  lost: in place of the block, or, when someone else took the block, as a new block below it; when
+  there is no lease to write it with (not connected, or a review waits), it is written once there
+  is.
+- **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
+  until the room acknowledges a write of it (without that acknowledgement it is written again,
+  a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which
+  the app keeps before it lets them go): the frame posts it to the app, which keeps it in its own storage
+  and offers it to the frame again after a reload. A write of it that a review refuses goes in once
+  the review ends; one whose place someone else holds, or that keeps meeting changed lines, goes
+  in as a new block at the nearest free place (else after the last block), three places at most;
+  one that still cannot be written stays kept, counts as unsent changes (the page asks before it
+  is left, and a hidden tab keeps its socket), and the page says "What you typed couldn't be added
+  to the doc yet. It is kept here." with **Copy**, or, for text the app's store could not take (over
+  20 items or 256 KiB), "… It's kept on this page until you reload. Copy it to be safe." The app's
+  store only merges what the frame reports (items in, ids out), so nothing leaves it unnamed. A room's refusal never resets a block holding
+  such typing.
+- **Opening a block for editing again.** A block saved with such a character reference opens for
+  editing as any other: the fidelity check tries the same written form.
 - **Formatting and the block menu.** A format bar (bold, italic, code, strikethrough, link), shown
   only while text that takes marks is selected, next to the selection (below it on touch screens,
   where the browser's own selection menu is above), and the shortcuts Cmd/Ctrl+B, I, E (code), K (a

@@ -10,21 +10,6 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **Edit a deck on its page.** Owners and editors now edit a deck's slide text, speaker notes and
-  settings right on its page, as formatted text with no Markdown shown, live with each other like
-  docs and sheets. Edit mode shows every slide, empty ones included ("Click to add a title"), with
-  the slide's notes in a panel under it ("Add speaker notes", "Remove speaker notes"); **Deck
-  settings…** in the ⋯ menu sets the aspect, theme, page numbers and footer. Whatever is typed
-  stays text: a `---`, `Note:` or `Date: 3 March` never splits a slide, eats its notes or becomes a
-  setting, and the room refuses any edit that would change the deck's structure. Images, and
-  blocks the editor cannot show as they are, offer **Ask an agent**. A deck whose every slide was
-  emptied cannot be published until it has text again, and a version published while people edit
-  a deck is reviewed beside their changes, never merged. **New** on the dashboard offers a blank
-  slide deck. Outside edit mode the deck shows the live draft, but while it is presented (full
-  screen, presenter view) or someone leads viewers, it shows the published deck, so nobody's
-  half-typed text reaches the audience and every follower is on the presenter's slide. Print and
-  Download .pptx wait until editing ends, as Present does.
-
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no
@@ -417,6 +402,21 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   while editing. Punctuation typed at the edge of bold, italic or strikethrough is kept, and text
   the page cannot save as typed stays in its block, which stays open and keeps Publish off until
   it is changed.
+
+- **Edit a deck on its page.** Owners and editors now edit a deck's slide text, speaker notes and
+  settings right on its page, as formatted text with no Markdown shown, live with each other like
+  docs and sheets. Edit mode shows every slide, empty ones included ("Click to add a title"), with
+  the slide's notes in a panel under it ("Add speaker notes", "Remove speaker notes"); **Deck
+  settings…** in the ⋯ menu sets the aspect, theme, page numbers and footer. Whatever is typed
+  stays text: a `---`, `Note:` or `Date: 3 March` never splits a slide, eats its notes or becomes a
+  setting, and the room refuses any edit that would change the deck's structure. Images, and
+  blocks the editor cannot show as they are, offer **Ask an agent**. A deck whose every slide was
+  emptied cannot be published until it has text again, and a version published while people edit
+  a deck is reviewed beside their changes, never merged. **New** on the dashboard offers a blank
+  slide deck. Outside edit mode the deck shows the live draft, but while it is presented (full
+  screen, presenter view) or someone leads viewers, it shows the published deck, so nobody's
+  half-typed text reaches the audience and every follower is on the presenter's slide. Print and
+  Download .pptx wait until editing ends, as Present does.
 
 ## 0.6.0 (2026-11-20)
 

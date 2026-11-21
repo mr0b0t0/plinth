@@ -41,7 +41,14 @@ import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
 import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
-import { blockWords, type DocBackend, DocEditor, LocalDoc, REFUSED_EDIT } from "./edit.ts";
+import {
+  blockWords,
+  type DocBackend,
+  DocEditor,
+  LocalDoc,
+  REFUSED_EDIT,
+  type RescueReport,
+} from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
@@ -210,6 +217,8 @@ function live(
   const hooks = {
     save: () => post({ type: "save" }),
     status,
+    // The rescue store: the app keeps a copy in its own storage (never this origin's).
+    rescue: (r: RescueReport) => post({ type: "rescue", ...r }),
     leave: () => {
       if (!session.isOpen) post({ type: "leave" });
     },
@@ -260,6 +269,8 @@ function live(
   if (payload.live === "room") {
     client = new LiveDocClient({
       win,
+      // Typed text not in the draft yet keeps a hidden tab's socket, as unflushed text does.
+      keepOpen: () => editor?.pending ?? false,
       listener: {
         changed: () => {
           if (!local) editor?.changed();
@@ -267,6 +278,7 @@ function live(
         status: () => {
           // A lease asked for over a socket that closed is never answered.
           if (client && !client.connected && !local) editor?.disconnected();
+          if (!local) editor?.roomStatus();
           if (client?.failed && !local && editor?.editing) {
             // The room never answered: keep editing alone.
             goSolo();
@@ -284,11 +296,16 @@ function live(
           if (!local) editor?.lost(r);
         },
         version: (kind, n, info) => {
+          // The unpublished changes were discarded: so is everything kept to rescue.
+          if (kind === "reset" && info.why === "discarded") editor?.clearRescues();
           if (!local) session.version(kind, n, info);
           status();
         },
         error: (code) => {
           if (code === "invalid") editor?.refused(REFUSED_EDIT);
+          // A lease that went before its last frame was answered (a takeover): the editor says
+          // what happened already.
+          else if (code === "not_held") return;
           else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
         },
       },
@@ -305,9 +322,16 @@ function live(
       if (m.focus === "first") editor?.focusFirst();
       editor?.render();
       status();
+    } else if (m.type === "rescue") {
+      if (m.items.length > 0) editor?.offerRescue(m.items);
+      if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
     } else if (m.type === "collect" && local) {
       editor?.flush();
-      post({ type: "draft", nonce: m.nonce, text: local.text });
+      // Typing that cannot be written as typed is not in the doc: the app publishes nothing, and
+      // keeps a copy with it, without its formatting.
+      const kept = editor?.unsavable ? editor.textWithTyping() : null;
+      if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
+      else post({ type: "draft", nonce: m.nonce, text: local.text });
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);

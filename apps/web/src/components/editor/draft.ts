@@ -2,6 +2,13 @@
 // a reload (or a crash) does not lose work. Storage can be blocked or full: every access is wrapped,
 // and the editor works without it.
 
+import {
+  MAX_RESCUE_ITEMS,
+  MAX_RESCUE_TOTAL,
+  type RescueItem,
+  readRescueItems,
+} from "../viewer/rendererProtocol.ts";
+
 const PREFIX = "plinth-draft:";
 
 export interface Draft {
@@ -151,4 +158,139 @@ export function clearPageDraft(artifactId: string): void {
   } catch {
     // storage blocked: nothing was kept
   }
+}
+
+// ---------- the doc frame's rescue store ----------
+// Text typed in a doc block on the page that the room's draft does not hold yet (the frame's
+// rescue store, renderers/doc/edit.ts): one list per artifact's live draft, in this app origin's
+// session storage beside the kept copy, never in the content origin's. Storage can be blocked or
+// full, so a copy stays in memory too; the frame is offered the items again after a reload.
+
+const RESCUE_PREFIX = "plinth-draft:page-rescue:";
+const rescueMemory = new Map<string, unknown>();
+
+/**
+ * One per person and artifact: after an account switch in the tab, the next person is never
+ * offered (or writes) the last one's text, which waits under its own key.
+ */
+export function rescueKey(userId: string, artifactId: string): string {
+  return `${RESCUE_PREFIX}${userId}:${artifactId}`;
+}
+
+/**
+ * Drops every account's rescue store in this tab: only on an explicit sign-out here. A store is
+ * never dropped because someone else (or no one yet) is signed in: it is ignored then.
+ */
+export function clearRescueStores(): void {
+  rescueMemory.clear();
+  try {
+    const s = storage();
+    if (!s) return;
+    const gone: string[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k?.startsWith(RESCUE_PREFIX)) gone.push(k);
+    }
+    for (const k of gone) s.removeItem(k);
+  } catch {
+    // storage blocked: nothing kept there
+  }
+}
+
+/** Writes a store as the merge below computed it; empty removes it. */
+function writeRescue(key: string, items: RescueItem[]): void {
+  // Memory holds a store only while storage cannot (blocked or full).
+  rescueMemory.delete(key);
+  try {
+    const s = storage();
+    if (!s) throw new Error("no storage");
+    if (items.length === 0) s.removeItem(key);
+    else s.setItem(key, JSON.stringify(items));
+  } catch {
+    if (items.length > 0) rescueMemory.set(key, items);
+  }
+}
+
+/**
+ * Merges a frame's report into this person's store for the artifact, which only ever grows by
+ * it: each upserted item is added or updated by id while the store stays within
+ * MAX_RESCUE_ITEMS and MAX_RESCUE_TOTAL (newest first; one that does not fit leaves what is there
+ * as it was), then the ids in `remove` (written or gone, named one by one) leave it. Nothing else
+ * takes an item out but clearRescue (a discard) and clearRescueStores (a sign-out). Returns the
+ * ids the store holds.
+ */
+export function mergeRescue(
+  userId: string,
+  artifactId: string,
+  upsert: readonly RescueItem[],
+  remove: readonly string[],
+): string[] {
+  const key = rescueKey(userId, artifactId);
+  const byId = new Map(
+    (readRescueItems(loadRescue(userId, artifactId)) ?? []).map((i) => [i.id, i]),
+  );
+  const fits = (m: Map<string, RescueItem>) => {
+    let total = 0;
+    for (const i of m.values()) total += i.text.length;
+    return m.size <= MAX_RESCUE_ITEMS && total <= MAX_RESCUE_TOTAL;
+  };
+  for (const it of [...upsert].reverse()) {
+    const next = new Map(byId);
+    next.set(it.id, it);
+    if (fits(next)) byId.set(it.id, it);
+  }
+  for (const id of remove) byId.delete(id);
+  writeRescue(key, [...byId.values()]);
+  return [...byId.keys()];
+}
+
+/** Drops this person's store for the artifact: its unpublished changes were discarded. */
+export function clearRescue(userId: string, artifactId: string): void {
+  writeRescue(rescueKey(userId, artifactId), []);
+}
+
+/**
+ * How many items any account's store for the artifact holds in this tab (for the warning before
+ * leaving, which needs no session): what this tab kept is there whoever is signed in now.
+ */
+export function countRescue(artifactId: string): number {
+  const suffix = `:${artifactId}`;
+  const keys = new Set<string>();
+  for (const k of rescueMemory.keys()) if (k.endsWith(suffix)) keys.add(k);
+  try {
+    const s = storage();
+    for (let i = 0; s && i < s.length; i++) {
+      const k = s.key(i);
+      if (k?.startsWith(RESCUE_PREFIX) && k.endsWith(suffix)) keys.add(k);
+    }
+  } catch {
+    // storage blocked: memory only
+  }
+  let n = 0;
+  for (const k of keys) {
+    let v: unknown = rescueMemory.get(k) ?? null;
+    if (v === null) {
+      try {
+        const raw = storage()?.getItem(k);
+        if (raw) v = JSON.parse(raw);
+      } catch {
+        // unreadable: nothing counted
+      }
+    }
+    n += readRescueItems(v)?.length ?? 0;
+  }
+  return n;
+}
+
+/** The kept rescue items, unchecked (the caller reads them field by field), or null. */
+export function loadRescue(userId: string, artifactId: string): unknown {
+  const key = rescueKey(userId, artifactId);
+  if (rescueMemory.has(key)) return rescueMemory.get(key);
+  try {
+    const raw = storage()?.getItem(key);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // storage blocked or the copy unreadable
+  }
+  return null;
 }

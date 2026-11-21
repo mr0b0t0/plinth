@@ -43,7 +43,16 @@ import {
 } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, liveCheckpoint, liveDiscard, liveInfo } from "../../lib/api.ts";
-import { clearPageDraft, loadPageDraft, type PageDraft, savePageDraft } from "../editor/draft.ts";
+import {
+  clearPageDraft,
+  clearRescue,
+  countRescue,
+  loadPageDraft,
+  loadRescue,
+  mergeRescue,
+  type PageDraft,
+  savePageDraft,
+} from "../editor/draft.ts";
 import { showToast } from "../ui/index.ts";
 import { unpublishableReason } from "./deckItems.ts";
 import {
@@ -58,6 +67,8 @@ import {
   postToRenderer,
   type ReviewResult,
   readFrameMessage,
+  readRescueItems,
+  rescueMessage,
   reviewedMessage,
   reviewMessage,
 } from "./rendererProtocol.ts";
@@ -90,6 +101,8 @@ export const AUTOSAVE_FALLBACK_MS = 30_000;
 /** A choice or a discard refused because another one or a save holds the room's lock. */
 export const CHOOSING_BUSY = "Someone else is publishing or discarding these changes right now.";
 
+type RescueReportMsg = Extract<FrameMessage, { type: "rescue" }>;
+
 export interface UseLiveEditOptions {
   gate: OkGate;
   frame: HTMLIFrameElement | null;
@@ -99,6 +112,12 @@ export interface UseLiveEditOptions {
   frameKey: string | null;
   /** Fetch a fresh gate (a solo publish, a discard, a lost session). */
   onReload: () => void;
+  /**
+   * The signed-in account, whose rescue store this is: null when no one is signed in, undefined
+   * while the session is still loading. The store is read, offered and written only for a known
+   * account.
+   */
+  userId?: string | null;
   /** Esc at the top level of edit mode in the frame. */
   onLeave?: () => void;
   /** "Ask an agent" about a place on the page, from the frame (with the kind of block it is). */
@@ -184,6 +203,8 @@ const reasonOf = (e: unknown): string | null =>
     : null;
 
 const UNPUBLISHABLE = "These changes can't be published yet.";
+/** A block holds typing the page cannot save as typed (the frame's `unsavable`). */
+const UNSAVABLE = "Some text on the page can't be saved as typed. Change it to continue.";
 const NOT_CONNECTED = "Not connected, your changes are kept.";
 const conflictText = (n: number | null) =>
   n
@@ -211,9 +232,12 @@ export function useLiveEdit({
   onReload,
   onLeave,
   onAsk,
+  userId,
 }: UseLiveEditOptions): LiveEdit {
   const { artifact } = gate;
   const id = artifact.id;
+  /** Whose rescue store this is, once known (never while the session loads or no one is in). */
+  const who = typeof userId === "string" ? userId : null;
   const def = typeDef(artifact.type);
   const merges = liveRules(artifact.type)?.merge === "lines";
   // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
@@ -235,6 +259,15 @@ export function useLiveEdit({
   const [discardAsk, setDiscardAsk] = useState<Resolved | null>(null);
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
+  /**
+   * How many typed texts are kept to rescue for this artifact in this tab (any account's store,
+   * and what the frame reported before the session was known): leaving the page warns while any.
+   */
+  const [rescued, setRescued] = useState(() => countRescue(gate.artifact.id));
+  /** The frame's rescue reports, in order, while there is no known account to keep them under. */
+  const unkept = useRef<RescueReportMsg[]>([]);
+  /** What a `rescue` report from the frame does (set once collect exists, below). */
+  const onRescue = useRef<(r: RescueReportMsg) => void>(() => undefined);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
@@ -245,7 +278,10 @@ export function useLiveEdit({
 
   const latest = useRef({ status, mode, saving, editing, gate, onReload, review, onLeave, onAsk });
   latest.current = { status, mode, saving, editing, gate, onReload, review, onLeave, onAsk };
-  const collecting = useRef<{ nonce: string; resolve: (t: string) => void } | null>(null);
+  const collecting = useRef<{
+    nonce: string;
+    resolve: (t: string, unsavable: boolean) => void;
+  } | null>(null);
   const savingRef = useRef(false);
   const reviewRef = useRef<LiveReview | null>(null);
   reviewRef.current = review;
@@ -404,11 +440,11 @@ export function useLiveEdit({
         save() {
           void publishRef.current();
         },
-        draft({ nonce, text }) {
+        draft({ nonce, text, unsavable }) {
           const c = collecting.current;
           if (c?.nonce !== nonce) return;
           collecting.current = null;
-          c.resolve(text);
+          c.resolve(text, unsavable === true);
         },
         resolved(r) {
           onResolvedRef.current(r);
@@ -418,6 +454,10 @@ export function useLiveEdit({
         },
         leave() {
           latest.current.onLeave?.();
+        },
+        rescue(r) {
+          // Typed text the room's draft does not hold yet: merged into the store here.
+          onRescue.current(r);
         },
         // A version shown in place is the live-view update's answer (useViewUpdate.ts).
         shown() {},
@@ -445,27 +485,57 @@ export function useLiveEdit({
     return () => frame.removeEventListener("load", send);
   }, [available, frame, target, editing, soloBase]);
 
-  const collect = useCallback((): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const nonce = newNonce();
-      const timer = window.setTimeout(() => {
-        if (collecting.current?.nonce === nonce) collecting.current = null;
-        reject(new Error("The page did not answer."));
-      }, COLLECT_TIMEOUT_MS);
-      collecting.current = {
-        nonce,
-        resolve: (t) => {
+  // ---------- the frame's rescue store ----------
+
+  // Once the account is known: what the frame reported meanwhile is kept under it, and what was
+  // kept from an earlier frame is counted and offered to this one (again on each load), which
+  // writes what the draft does not hold yet. Nothing is read, offered or dropped before.
+  useEffect(() => {
+    if (!who) return;
+    // Merged in order, as they came: the store only grows by them, minus ids named as written.
+    const waiting = unkept.current;
+    unkept.current = [];
+    for (const r of waiting) onRescue.current(r);
+    setRescued(countRescue(id));
+    if (!available || !frame || !editing) return;
+    const offer = () => {
+      const items = readRescueItems(loadRescue(who, id)) ?? [];
+      if (items.length > 0) postToRenderer(frame, target, rescueMessage(items));
+    };
+    offer();
+    frame.addEventListener("load", offer);
+    return () => frame.removeEventListener("load", offer);
+  }, [who, id, available, frame, target, editing]);
+
+  /**
+   * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
+   * unless `keep` (the kept copy, which then has that typing without its formatting).
+   */
+  const collect = useCallback(
+    (opts: { keep?: boolean } = {}): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const nonce = newNonce();
+        const timer = window.setTimeout(() => {
+          if (collecting.current?.nonce === nonce) collecting.current = null;
+          reject(new Error("The page did not answer."));
+        }, COLLECT_TIMEOUT_MS);
+        collecting.current = {
+          nonce,
+          resolve: (t, unsavable) => {
+            window.clearTimeout(timer);
+            if (unsavable && !opts.keep) reject(new Error(UNSAVABLE));
+            else resolve(t);
+          },
+        };
+        if (!postToRenderer(frame, target, collectMessage(nonce))) {
           window.clearTimeout(timer);
-          resolve(t);
-        },
-      };
-      if (!postToRenderer(frame, target, collectMessage(nonce))) {
-        window.clearTimeout(timer);
-        collecting.current = null;
-        reject(new Error("The page is not ready."));
-      }
-    });
-  }, [frame, target]);
+          collecting.current = null;
+          reject(new Error("The page is not ready."));
+        }
+      });
+    },
+    [frame, target],
+  );
 
   // ---------- publishing ----------
 
@@ -572,6 +642,17 @@ export function useLiveEdit({
   const publishNow = useCallback(
     async (note: string | undefined, tell: Tell): Promise<PublishOutcome> => {
       const m = latest.current.mode;
+      const s = latest.current.status;
+      // Every way to publish (the strip, Cmd/Ctrl+S, Done, Ask's publish first) comes here: nothing
+      // goes out while a block holds typing the page cannot save, or the draft cannot be a version.
+      if (s?.unsavable) {
+        if (tell === "toast") toast(UNSAVABLE, "neutral");
+        return { error: UNSAVABLE };
+      }
+      if (s?.publishable === false) {
+        if (tell === "toast") toast(unpublishable, "neutral");
+        return { error: unpublishable };
+      }
       if (m === "room") return checkpoint("save", { note, tell });
       if (m !== "solo") return { error: "Editing on the page is not available." };
       if (savingRef.current) return { error: CHOOSING_BUSY };
@@ -588,7 +669,7 @@ export function useLiveEdit({
         setSaving(false);
       }
     },
-    [checkpoint, collect, publishSolo, refuse],
+    [checkpoint, collect, publishSolo, refuse, unpublishable],
   );
   const publish = useCallback(
     async (note?: string) => {
@@ -659,6 +740,10 @@ export function useLiveEdit({
             done("done");
           } else {
             await liveDiscard(id, rev, version);
+            // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
+            if (who) clearRescue(who, id);
+            unkept.current = [];
+            setRescued(countRescue(id));
             done("done");
           }
           setReview(null);
@@ -751,6 +836,9 @@ export function useLiveEdit({
     if (m === "solo") {
       clearPageDraft(id);
       setRestore(null);
+      if (who) clearRescue(who, id);
+      unkept.current = [];
+      setRescued(countRescue(id));
       latest.current.onReload();
       return;
     }
@@ -762,11 +850,15 @@ export function useLiveEdit({
     }
     try {
       await liveDiscard(id, s.rev);
+      // What was kept to rescue goes too; the frame drops its own on the room's reset.
+      if (who) clearRescue(who, id);
+      unkept.current = [];
+      setRescued(countRescue(id));
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }
-  }, [id, fail]);
+  }, [id, who, fail]);
 
   // ---------- solo: keep a copy, offer it back after a reload ----------
 
@@ -775,17 +867,47 @@ export function useLiveEdit({
     setRestore(loadPageDraft(id));
   }, [available, gate.live?.mode, id]);
 
+  onRescue.current = (r) => {
+    if (!who) {
+      unkept.current.push(r);
+      setRescued(countRescue(id) + unkept.current.reduce((n, x) => n + x.upsert.length, 0));
+      return;
+    }
+    const answer = (ids: string[]) => {
+      setRescued(countRescue(id));
+      // The ids the store holds: an item the frame sent that is not among them stays only there.
+      postToRenderer(frame, target, rescueMessage([], { ids, n: r.n }));
+    };
+    if (latest.current.mode === "solo" && r.written.length > 0) {
+      // Solo: items the frame wrote into its own text are in no copy yet (the tab's copy is taken
+      // every few seconds). That text is kept first, then they leave the store; if it cannot be
+      // kept, the store keeps them.
+      answer(mergeRescue(who, id, r.upsert, r.gone));
+      const base = gate.artifact.version;
+      collect({ keep: true })
+        .then((text) => {
+          if (savePageDraft(id, base, text)) answer(mergeRescue(who, id, [], r.written));
+        })
+        .catch(() => undefined);
+      return;
+    }
+    answer(mergeRescue(who, id, r.upsert, [...r.written, ...r.gone]));
+  };
+
   const soloDirty = mode === "solo" && editing && status?.dirty === true;
+  // Typing a block cannot save as typed is not in the frame's text, so it does not make it dirty:
+  // it is kept (without its formatting) and warned about all the same.
+  const soloStuck = mode === "solo" && editing && status?.unsavable === true;
   useEffect(() => {
-    if (!soloDirty) return;
+    if (!soloDirty && !soloStuck) return;
     const base = gate.artifact.version;
     const t = window.setInterval(() => {
-      collect()
+      collect({ keep: true })
         .then((text) => savePageDraft(id, base, text))
         .catch(() => undefined);
     }, SOLO_KEEP_MS);
     return () => window.clearInterval(t);
-  }, [soloDirty, collect, id, gate.artifact.version]);
+  }, [soloDirty, soloStuck, collect, id, gate.artifact.version]);
 
   const saveRestore = useCallback(async () => {
     if (!restore) return;
@@ -811,6 +933,7 @@ export function useLiveEdit({
     if (m === "room" || m === "solo") {
       if (savingRef.current) return { error: CHOOSING_BUSY };
       if (s?.conflict_version != null) return { error: conflictText(s.conflict_version) };
+      if (s?.unsavable) return { error: UNSAVABLE };
       if (s?.publishable === false) return { error: unpublishable };
       if (m === "room" && !s?.connected) return { error: NOT_CONNECTED };
     }
@@ -858,7 +981,11 @@ export function useLiveEdit({
 
   // ---------- leaving the page, the publish shortcut ----------
 
-  const unsaved = (mode === "room" && status?.unflushed === true) || (mode === "solo" && soloDirty);
+  const unsaved =
+    (mode === "room" && status?.unflushed === true) ||
+    (mode === "solo" && soloDirty) ||
+    status?.unsavable === true ||
+    rescued > 0;
   useEffect(() => {
     if (!unsaved) return;
     const onLeavePage = (e: BeforeUnloadEvent) => {

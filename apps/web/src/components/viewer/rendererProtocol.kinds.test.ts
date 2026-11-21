@@ -17,6 +17,7 @@ import {
   presentingMessage,
   printMessage,
   readFrameMessage,
+  rescueMessage,
   reviewedMessage,
   reviewMessage,
   sheetExportMessage,
@@ -49,6 +50,7 @@ describe("renderer protocol kinds", () => {
       "lead",
       "review",
       "reviewed",
+      "rescue",
       "deck_settings",
       "presenting",
     ]);
@@ -59,6 +61,7 @@ describe("renderer protocol kinds", () => {
       "resolved",
       "ask",
       "leave",
+      "rescue",
       "shown",
     ]);
     expect(
@@ -74,6 +77,7 @@ describe("renderer protocol kinds", () => {
         leadMessage(),
         reviewMessage("n".repeat(16)),
         reviewedMessage("n".repeat(16), "busy"),
+        rescueMessage([]),
         deckSettingsMessage(),
         presentingMessage(true),
       ].map((m) => m.type),
@@ -92,6 +96,7 @@ describe("renderer protocol kinds", () => {
       leadMessage(),
       reviewMessage("x".repeat(16)),
       reviewedMessage("x".repeat(16), "done"),
+      rescueMessage([{ id: "r1", text: "Kept", near: 0 }]),
       deckSettingsMessage(),
       presentingMessage(false),
     ];
@@ -115,6 +120,7 @@ describe("renderer protocol kinds", () => {
       resolved: vi.fn(() => "resolved"),
       ask: vi.fn(() => "ask"),
       leave: vi.fn(() => "leave"),
+      rescue: vi.fn(() => "rescue"),
       shown: vi.fn(() => "shown"),
     };
     const messages: FrameMessage[] = [

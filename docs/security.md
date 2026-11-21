@@ -2538,6 +2538,24 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   and their places ("row 12", built by the renderer from lease positions, never content) become
   text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
+- **The rescue store.** A doc block's typing the room's draft does not hold yet (typing that
+  cannot be written as typed, or that a lost lease, a freeze or a takeover kept from being
+  written) is held by the frame and posted to the app as a keyed editing message (`rescue`: at
+  most 20 items and 256 KiB of text in all, the same limits on both sides: an id, the block's
+  text without its marks, and a line number). The app keeps it in its own origin's
+  `sessionStorage` under the signed-in account and the artifact
+  (`plinth-draft:page-rescue:<user id>:<artifact id>`, beside the solo kept copy, with a copy in
+  memory when storage is blocked), never in the content origin's storage. The frame sends changes
+  only (`upsert`, and the ids `written` or `gone`), and the app's store only merges them: an item
+  leaves it by its id, by a discard or by a sign-out, never because a report left it out. It reads,
+  offers and writes the store only once the session says who is signed in; other accounts' stores
+  are ignored (the next person in a tab is never offered the last one's text) and are removed only
+  by an explicit sign-out in the tab (any sign-out path). It offers the store back only to the artifact's frame at its
+  exact origin; it never renders or sends it anywhere else. The frame writes it through its own
+  leases like typing and drops an item only on the room's acknowledgement of its write; a write
+  whose acknowledgement never came is written again, since matching text proves nothing (a copy
+  at worst, never a loss). A discard clears the store, in the app and in the frame. A room's `keep` frame is answered `kept`;
+  an older room's `invalid` answer only stops `keep` and never reaches the editor.
 - **Per-type rules mirror the stager.** The room checks every edit and structural change with the
   type's rules, which hold every check the type's publish hook makes on the source alone (a doc
   must not start like a whole HTML document; a sheet keeps its row, header and size rules, and a
@@ -2668,7 +2686,10 @@ CSP, sandbox flag or env var was added.
   same model, so the editor cannot turn a block into something that renders differently. A block
   that fails is read-only (Ask an agent, Move and Delete, byte for byte). Every text the editor
   sends is read back first and is not sent when it would not round trip; such typing stays in the
-  open block and counts as unsent, so it is never dropped without the page saying so. A character
+  open block and counts as unsent, so it is never dropped without the page saying so, and no
+  publish (any of its ways in) goes out without it. The room's `keep` frame only restarts the idle
+  clock of a lease the socket holds (`not_held` otherwise), so it cannot touch anyone else's; a
+  holder can keep a lease no longer than by typing. A character
   next to a mark may be written as a numeric character reference, never for ASCII punctuation
   (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
   blocks, and the reference definitions after a block, keep their bytes.

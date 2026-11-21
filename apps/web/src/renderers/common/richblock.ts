@@ -910,12 +910,14 @@ export class RichBlockEditor {
 
   /** Shows the format bar at a selection of text that takes marks, and hides it otherwise. */
   private updateBar(s: { from: RichPoint; to: RichPoint } | null): void {
+    if (this.placing) return;
     const q = this.quiet;
     if (q && s && samePoint(s.from, q.from) && samePoint(s.to, q.to)) {
       if (!this.toolbar.contains(this.doc.activeElement)) this.toolbar.hidden = true;
       return;
     }
-    if (s) this.quiet = null;
+    // Any other selection, or none, ends it: a later one the person makes shows the bar.
+    this.quiet = null;
     const show =
       s !== null &&
       takesMarks(this.shape) &&
@@ -977,9 +979,18 @@ export class RichBlockEditor {
     const refs = leafRefs(this.shape);
     const from = { leaf: 0, offset: 0 };
     const to = { leaf: last, offset: inlineLength(refs[last]?.get() ?? []) };
+    // Selection events while placing it (some engines send them at once) are the page's own.
+    this.placing = true;
+    try {
+      this.place(from, to);
+    } finally {
+      this.placing = false;
+    }
     this.quiet = { from, to };
-    this.place(from, to);
   }
+
+  /** selectText is placing its selection: selection events meanwhile change nothing. */
+  private placing = false;
 
   /** A selection selectText() made, which shows no format bar while it stays as it is. */
   private quiet: { from: RichPoint; to: RichPoint } | null = null;
