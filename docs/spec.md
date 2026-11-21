@@ -1152,21 +1152,31 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   `system.json` and its images and fonts, four files generated from `system.json` that
   `copy_files` copies like stored ones (`packages/shared/src/designSystemFiles.ts`): `tokens.css`
   (the tokens as custom properties, light and dark, as `get_design_system`'s `css`), `fonts.css`
-  (`@font-face` rules for the design system's own font files, by relative path), `components.css`
+  (`@font-face` rules for the font files the version stores, by relative path), `components.css`
   (the shared and component CSS) and `tokens.json` (the resolved tokens in format
   `plinth.design-system-tokens/1`, with the design system's id and version). Its assets are images
   and fonts only, so no stored file can take these names. `get_design_system` returns `files`
-  (every path it can copy) and `install`: `folder` (`ds/<prefix>`), `copy_files` (each entry with
-  the design system's id, the path, `to` under the folder and the version read: `fonts.css` with
-  the font files when it has its own, `tokens.css`, `components.css` when it has CSS, `tokens.json`,
-  and every stored file a CSS block names) and `stylesheets` to link in that order. Every file
-  lands at the same relative path under the folder, so the `url()`s in the CSS still resolve. This
-  is Claude's `project/ds/<folder>/` layout in Plinth's flat file model: a version's files sit at
-  its root, so the folder is `ds/<prefix>/`, named by the design system's own `prefix` (already
-  `[a-z][a-z0-9]{0,15}`), never by text from the system. A design takes the CSS and images only
-  (its artboards cannot load font or JSON files, so those entries are refused by its asset rule
-  and the agent leaves them out); a deck takes what its type's assets allow. An update installs a
-  newer version by copying again: each copy replaces the file at its path.
+  (every path it can copy) and `install`, for the type `install_for` names (default `html`):
+  `folder` (`ds/<folder>`), `copy_files` (each entry with the design system's id, the path, `to`
+  under the folder and the version read: `fonts.css` with the font files when it stores its own,
+  `tokens.css`, `components.css` when it has CSS, `tokens.json`, and every stored file a CSS block
+  names, keeping only what that type's asset rules take, so a design gets no font files,
+  `fonts.css` or `tokens.json` and the list works as given), `stylesheets` to link in that order,
+  `faces` (a deck's `faces` map, keyed by family lowercased with spaces as `-`: a Google face by
+  `href`, an installed font file by `src` under the folder) and `record` (`title`, `namespace`,
+  `artifact`, `version`, `copiedAt`), what a deck's or canvas's `designSystems` list keeps. Every
+  file lands at the same relative path under the folder, so the `url()`s in the CSS still resolve.
+  This is Claude's `project/ds/<folder>/` layout in Plinth's flat file model: a version's files sit
+  at its root, so the folder is `ds/<folder>/`. The folder is the design system's own `prefix`
+  (already `[a-z][a-z0-9]{0,15}`), or, for one that kept the default prefix `ds` (which would give
+  `ds/ds/`), a name made from its title (lowercase, each run of other characters one `-`,
+  `design-system` when that leaves nothing); `folder` on `get_design_system` asks for another name
+  (`[a-z0-9][a-z0-9_-]{0,63}`). Two artifacts' copies never share a folder: a publish that would put
+  files copied from a second artifact into a `ds/<folder>/` that holds another's is refused with
+  `copy_folder_taken` ([Copying files](#copying-files-from-another-artifact-decided-2026-11-21)).
+  `fonts[].portable` is `true` for a Google font and for a font file the version stores (install
+  copies it), `false` for a font file it lacks. An update installs a newer version by copying
+  again: each copy replaces the file at its path.
 - **The default design system (decided 2026-11-21).** A person marks one of their own design
   systems as the default from its ⋯ menu on the dashboard (Set as default, Remove as default), and
   its badge reads "Default design system". One per person (`users.default_design_system`), so
@@ -1176,7 +1186,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   an agent or bearer token (403 `app_only`), and only a design system that is not taken down (400
   `not_design_system` for another type). `list_artifacts` and `get_artifact` mark it
   `default: true` for its owner only (never for a collaborator or a token limited to one
-  artifact). Agents read it from `list_artifacts` with `type: "design_system"` and build slides,
+  artifact), and not while it is taken down, which no agent could read. Setting or removing it
+  needs no toast: the badge says so. Agents read it from `list_artifacts` with `type: "design_system"` and build slides,
   designs and pages with it without asking, as Claude does with a default. With none, they use the
   one the person names, ask when there are several and someone can answer, and otherwise use their
   own look. An organization default and an explicit "no default" choice are not offered (Plinth has
@@ -3437,9 +3448,13 @@ files are copied between artifacts.
   the rest); `to` is where the copy lands (default `path`); `version` defaults to the source's
   current one. Not with `files_from_version`.
 - **The rule.** Each source is read as the caller through the policy module, with the `view`
-  action (`requireArtifact`), once, when the publish runs: before the publish rate and any write,
-  and for an upload when the ticket is minted and again, as the ticket's principal, when the
-  bundle commits. A source the caller cannot view is the same 404 as a missing id. A token limited
+  decision minus an admin's review access (`policy.ts decideCopySource`: an admin may look at a
+  reported artifact, never take its files), once, when the publish runs: after the publish rate
+  (and an upload's ticket rate) is counted, so refused copies count too, and before any write; for
+  an upload when the ticket is minted and again, as the ticket's principal, when the bundle
+  commits. A source the caller cannot view is the same 404 as a missing id; a password-protected
+  one needs a grant (agents never send passwords, 403 `password_required`); a taken-down one is 403
+  `taken_down`. A token limited
   to one artifact cannot copy at all (403 `token_bound`, before any lookup; `mayCopyFiles`). The
   target needs `edit`, or is a new artifact, as for any publish. The address comes only from the
   caller's request: the server never copies because a page, a comment or a design system names
@@ -3448,17 +3463,22 @@ files are copied between artifacts.
   target type), the target type's asset rules apply (a design refuses font files with its own
   message), and the copy keeps its source's content type: a `to` whose ending would serve another
   type is 400 `copy_type_mismatch`. A `to` given twice is `copy_twice`; one that is also among
-  `assets` is listed twice. A missing source file is 400 `copy_missing_file`.
+  `assets` is listed twice. A missing source file is 400 `copy_missing_file`. A `ds/<folder>/`
+  that would hold files copied from two different artifacts, one of them copied by this call, is
+  400 `copy_folder_taken` (checked on the version's final files, carried ones included).
 - **What the version holds.** The bytes are written under the target's own prefix, so they count
   toward its size, its file count and its owner's storage, and they are scanned for publish
   warnings like any file (they are never reported as sent by the request). An update that sends no
   `assets` keeps the current files and the copy replaces one at the same path. A bundle's prefix
   strip never moves a copy. Each copied file's manifest entry records `copied_from`
-  `{artifact, version, path, copied_at}`, kept as the file is carried into later versions and by
-  restores. The publish result has `copied_from` (one record per source version: `artifact`,
-  `version`, `copied_at`, `files` with `path` and `from`), and `get_artifact` returns the same
-  records with the source's `title` and `current_version` when the caller may view it now (null
-  otherwise, and for every source after the first 16, which are not looked up).
+  `{artifact, version, path, copied_at}`, kept as the file is carried into later versions, by
+  restores, and when it is sent back as `{path, sha256}`. The publish result has `copied_from`
+  (one record per source version: `artifact`, `version`, `copied_at`, `files` with `path` and
+  `from`), and `get_artifact` returns the same records with the source's `title` and
+  `current_version` when the reader may view the source now. For a reader who may not (and for
+  every source after the first 16, which are not looked up) a record keeps only `version`,
+  `copied_at` and each copy's `path`: `artifact`, `title` and `current_version` are null and
+  `from` is left out.
 - **Why it is safe.** Nothing loads across artifacts when a page is served: the copy is the
   target's own file, served from the target's origin under the target's CSP, exactly as if the
   caller had downloaded the file and sent it with `assets`, which the caller could always do since

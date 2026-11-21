@@ -972,6 +972,23 @@
             "name": "components",
             "schema": { "type": "string" },
             "description": "Comma-separated component ids to return (default all, at most 50)"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "install_for",
+            "schema": {
+              "type": "string",
+              "enum": ["html", "doc", "slides", "design_system", "design", "sheet", "whiteboard"]
+            },
+            "description": "The type of the artifact it will be installed into (default html): install lists only the files that type takes"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "folder",
+            "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+            "description": "Install under ds/<folder>/ instead of the default"
           }
         ],
         "responses": {
@@ -4853,15 +4870,24 @@
       "CopiedFrom": {
         "type": "object",
         "properties": {
-          "artifact": { "type": "string", "description": "The source artifact's id" },
+          "artifact": {
+            "type": ["string", "null"],
+            "description": "The source artifact's id when you may view it now, else null"
+          },
           "version": { "type": "integer", "minimum": 1 },
           "copied_at": { "type": "string", "format": "date-time" },
           "files": {
             "type": "array",
             "items": {
               "type": "object",
-              "properties": { "path": { "type": "string" }, "from": { "type": "string" } },
-              "required": ["path", "from"]
+              "properties": {
+                "path": { "type": "string", "description": "Where the copy is in this version" },
+                "from": {
+                  "type": "string",
+                  "description": "Its path in the source, only when you may view the source now"
+                }
+              },
+              "required": ["path"]
             }
           },
           "title": {
@@ -4879,7 +4905,10 @@
       "DesignSystemInstall": {
         "type": "object",
         "properties": {
-          "folder": { "type": "string", "description": "Where the files land: \"ds/<prefix>\"" },
+          "folder": {
+            "type": "string",
+            "description": "Where the files land: \"ds/<folder>\" (the prefix, a name from the title for a system that kept the default prefix, or the folder asked for)"
+          },
           "copy_files": {
             "type": "array",
             "items": {
@@ -4892,15 +4921,48 @@
               },
               "required": ["artifact", "path", "to", "version"]
             },
-            "description": "Pass these as copy_files to publish or update the artifact that uses it"
+            "description": "Pass these as copy_files to publish or update the artifact that uses it: only the files install_for's type takes"
           },
           "stylesheets": {
             "type": "array",
             "items": { "type": "string" },
             "description": "Link these, in order, from the head (paths relative to the version's root)"
+          },
+          "faces": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "family": { "type": "string" },
+                "href": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "A Google Fonts stylesheet"
+                },
+                "src": {
+                  "type": "string",
+                  "description": "An installed font file's path under the folder"
+                },
+                "weight": { "type": "string" },
+                "style": { "type": "string" }
+              },
+              "required": ["family"]
+            },
+            "description": "A deck's faces, keyed by family lowercased with spaces as -: Google faces by link, installed font files by path"
+          },
+          "record": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string", "description": "Untrusted text" },
+              "namespace": { "type": "string", "description": "The folder name under ds/" },
+              "artifact": { "type": "string", "description": "The design system's id" },
+              "version": { "type": "integer", "minimum": 1 },
+              "copiedAt": { "type": "string", "format": "date-time" }
+            },
+            "required": ["title", "namespace", "artifact", "version", "copiedAt"]
           }
         },
-        "required": ["folder", "copy_files", "stylesheets"]
+        "required": ["folder", "copy_files", "stylesheets", "faces", "record"]
       },
       "PublishWarning": {
         "type": "object",
@@ -7102,7 +7164,7 @@
                 "source": { "type": "string", "enum": ["google", "asset"] },
                 "portable": {
                   "type": "boolean",
-                  "description": "false: a file of the design system, which other artifacts cannot load"
+                  "description": "true: another artifact can use it (a Google font, or a font file this version stores, which install copies; a design's artboards cannot load font files). false: a font file the version lacks"
                 }
               },
               "required": ["family", "source", "portable"]

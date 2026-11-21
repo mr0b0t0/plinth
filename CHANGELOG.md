@@ -16,6 +16,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `<!-- note kind="title" -->` add stickies and titles to the canvas. A link to `#board=<id>`
   inside a board moves to that board, for clickable prototypes, and the app's address keeps the
   board on view (`#board=<id>`), so a reload or a shared link opens on it.
+- **Installing design systems, tightened.** `get_design_system` takes `install_for` and `folder`:
+  its install list holds only what the target type takes (a design gets no fonts or
+  `tokens.json`), and it also gives a deck's `faces` and `designSystems` record. A design system
+  without its own prefix installs under a name from its title instead of `ds/ds/`, and two systems
+  can no longer share a folder. Copies are checked after the publish rate, an admin's review
+  access never lets them copy, and `get_artifact` names a copy's source only to people who can
+  open it. A taken-down default design system is no longer reported as the default.
 
 - **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
   card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen

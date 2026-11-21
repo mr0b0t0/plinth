@@ -460,12 +460,22 @@ function responseSchemas(): Record<string, Json> {
     }),
     CopiedFrom: {
       ...obj({
-        artifact: str({ description: "The source artifact's id" }),
+        artifact: nullable("string", {
+          description: "The source artifact's id when you may view it now, else null",
+        }),
         version: int({ minimum: 1 }),
         copied_at: dateTime,
         files: {
           type: "array",
-          items: obj({ path: str(), from: str() }),
+          items: obj(
+            {
+              path: str({ description: "Where the copy is in this version" }),
+              from: str({
+                description: "Its path in the source, only when you may view the source now",
+              }),
+            },
+            ["from"],
+          ),
         },
         title: nullable("string", {
           description: "The source's title when you may view it now, else null. Untrusted text",
@@ -477,7 +487,10 @@ function responseSchemas(): Record<string, Json> {
       description: "Files of this version copied from one version of another artifact",
     },
     DesignSystemInstall: obj({
-      folder: str({ description: 'Where the files land: "ds/<prefix>"' }),
+      folder: str({
+        description:
+          'Where the files land: "ds/<folder>" (the prefix, a name from the title for a system that kept the default prefix, or the folder asked for)',
+      }),
       copy_files: {
         type: "array",
         items: obj({
@@ -486,13 +499,36 @@ function responseSchemas(): Record<string, Json> {
           to: str(),
           version: int({ minimum: 1 }),
         }),
-        description: "Pass these as copy_files to publish or update the artifact that uses it",
+        description:
+          "Pass these as copy_files to publish or update the artifact that uses it: only the files install_for's type takes",
       },
       stylesheets: {
         type: "array",
         items: str(),
         description: "Link these, in order, from the head (paths relative to the version's root)",
       },
+      faces: {
+        type: "object",
+        additionalProperties: obj(
+          {
+            family: str(),
+            href: str({ format: "uri", description: "A Google Fonts stylesheet" }),
+            src: str({ description: "An installed font file's path under the folder" }),
+            weight: str(),
+            style: str(),
+          },
+          ["href", "src", "weight", "style"],
+        ),
+        description:
+          "A deck's faces, keyed by family lowercased with spaces as -: Google faces by link, installed font files by path",
+      },
+      record: obj({
+        title: str({ description: "Untrusted text" }),
+        namespace: str({ description: "The folder name under ds/" }),
+        artifact: str({ description: "The design system's id" }),
+        version: int({ minimum: 1 }),
+        copiedAt: dateTime,
+      }),
     }),
     PublishWarning: obj(
       {
@@ -1358,7 +1394,8 @@ function designSystemSchemas(): Record<string, Json> {
             source: enumOf(["google", "asset"]),
             portable: {
               type: "boolean",
-              description: "false: a file of the design system, which other artifacts cannot load",
+              description:
+                "true: another artifact can use it (a Google font, or a font file this version stores, which install copies; a design's artboards cannot load font files). false: a font file the version lacks",
             },
           }),
         },
@@ -2393,6 +2430,17 @@ function operations(): Operation[] {
           name: "components",
           schema: str(),
           description: "Comma-separated component ids to return (default all, at most 50)",
+        },
+        {
+          name: "install_for",
+          schema: enumOf(ARTIFACT_TYPES),
+          description:
+            "The type of the artifact it will be installed into (default html): install lists only the files that type takes",
+        },
+        {
+          name: "folder",
+          schema: str({ pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" }),
+          description: "Install under ds/<folder>/ instead of the default",
         },
       ],
       ok: [200, "DesignSystemRead"],

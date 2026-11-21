@@ -54,11 +54,11 @@ export const designSystemHooks: TypeHooks = {
   // tokens.css, fonts.css, components.css and tokens.json, generated from the version's
   // system.json for copy_files (shared designSystemFiles.ts). Its assets are images and fonts only,
   // so no stored file has these names.
-  copySource(text, path, ref) {
+  copySource(text, path, ref, stored) {
     if (!isDsGeneratedFile(path)) return null;
     const r = parseDesignSystem(text);
     if (!r.ok) return null;
-    const file = designSystemGeneratedFile(r.value, path, ref);
+    const file = designSystemGeneratedFile(r.value, path, ref, stored);
     return file && { bytes: new TextEncoder().encode(file.text), contentType: file.contentType };
   },
   async publishWarnings(_ctx, v) {

@@ -2,6 +2,7 @@
 // signed-in owner marks one of their design systems as the default from the app, only one can be,
 // and list_artifacts marks it `default: true` for the owner. Also the design type's reference to a
 // design system: the meta in a design's shared section is checked like a page's.
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import acme from "./fixtures/design-systems/acme.json";
 import {
@@ -122,6 +123,21 @@ describe("the default design system", () => {
         })
       ).status,
     ).toBeGreaterThanOrEqual(401);
+  });
+
+  it("is not reported while the design system is taken down", async () => {
+    const a = await agent();
+    const one = await ds(a);
+    const s = await browserSession(a.user.id);
+    await choose(s.headers, one.id, true);
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = ?2 WHERE id = ?1")
+      .bind(one.id, new Date().toISOString())
+      .run();
+    expect(defaults(await listed(a.auth))).toEqual([]);
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = NULL WHERE id = ?1")
+      .bind(one.id)
+      .run();
+    expect(defaults(await listed(a.auth))).toEqual([one.id]);
   });
 
   it("a deleted design system is no longer the default", async () => {

@@ -614,8 +614,9 @@ served with `script-src 'none'`. What it adds:
   `components.css` and `tokens.json`, generated for `copy_files` from a version's `system.json`,
   hold only what the parser accepted (the value grammar above, font names quoted by Plinth) and a
   first-line comment of ids and numbers, never a name or description. They are copied to the same
-  relative paths under `ds/<prefix>/`, and `prefix` is `[a-z][a-z0-9]{0,15}`, so no text from the
-  system names a path.
+  relative paths under `ds/<folder>/`, and the folder is the `prefix` (`[a-z][a-z0-9]{0,15}`), a
+  slug of the title, or a name the caller passed that matches `[a-z0-9][a-z0-9_-]{0,63}`, so no raw
+  text from the system names a path. `fonts.css` declares only the font files the version stores.
 - **Linear-time reference check.** The `<meta name="plinth-design-system">` check runs on every
   HTML or design publish and every `get_artifact` of an HTML page or design, on text anyone may have written, so it is
   a single forward pass over at most 256 KB with no regular expression that can backtrack, and it
@@ -1230,11 +1231,13 @@ artifact"). It replaces the earlier rule that no files are copied between artifa
 why it holds:
 
 - **As the caller, through the policy module, at publish time.** Each distinct source goes through
-  `requireArtifact(ctx, ref, "view")` and `requireVersion`, so the decision is `decide(view)`
-  exactly as `get_artifact` makes it: owners, grants, unlisted and public links, never a password
-  (agents send none), never a taken-down artifact. A source the caller cannot view answers the same
-  404 as a missing id, before anything about its files is said. The check runs once, before the
-  publish rate and any R2 write; an upload checks when the ticket is minted and again, as the
+  `decideCopySource` and `requireVersion`: `decide(view)` as `get_artifact` makes it (owners,
+  grants, unlisted and public links, never a password for agents, which send none, never a
+  taken-down artifact) except that an instance admin's review access does not count, so reviewing
+  a reported artifact never lets an admin take its files. A source the caller cannot view answers
+  the same 404 as a missing id, before anything about its files is said. The check runs once, after
+  the publish rate (and an upload's ticket rate) is counted, so a stream of refused copies is
+  rate-limited like publishes, and before any R2 write; an upload checks when the ticket is minted and again, as the
   ticket's principal re-read from its connection, when the bundle commits. The target's own `edit`
   check (or a new artifact) is the publish's, unchanged.
 - **Tokens limited to one artifact cannot copy.** `mayCopyFiles` refuses them with 403
@@ -1259,11 +1262,15 @@ why it holds:
   `assets`; the server doing it saves the round trip and records where it came from
   (`copied_from` on the manifest entry: id, version, path, time). Deleting the source, or the
   caller losing access to it later, changes nothing already published, as with a downloaded file.
-- **What get_artifact says.** `copied_from` lists the source ids, versions and paths to anyone who
-  may view the target (provenance is part of the immutable version, like a page's
-  `plinth-design-system` meta, which viewers read in the HTML). The source's `title` and
-  `current_version` are added only when that reader may view the source now; otherwise null, the
-  same answer for a source that is missing, deleted or private.
+- **What get_artifact says.** `copied_from` names a source (its id, its title, its current
+  version and each file's path in it) only to a reader who may view that source now. Anyone else
+  sees only that files were copied: each copy's path here, the version number and the time, with
+  no id and no source path, the same answer for a source that is missing, deleted or private.
+- **One artifact per folder.** A `ds/<folder>/` never holds copies from two artifacts: a publish
+  that would mix them is refused (`copy_folder_taken`), so a second design system with the same
+  prefix cannot overwrite the first one's tokens or fonts in a page. The default folder of a system
+  that kept the default prefix is a slug of its title (letters, digits and `-` only), never raw
+  text.
 
 ## Stored files: reuse by hash, commit last
 

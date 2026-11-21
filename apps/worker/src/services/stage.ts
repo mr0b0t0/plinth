@@ -50,6 +50,7 @@ import {
   resolveCategory,
 } from "./categories.ts";
 import type { Ctx } from "./context.ts";
+import { copyFolderClash, copyFolderError } from "./copies.ts";
 import { scanPublish } from "./publishCheck.ts";
 import {
   assetContentType,
@@ -329,6 +330,8 @@ interface Reusable {
   stored_at: string;
   size_bytes: number;
   content_type: string;
+  /** A copied file's record (copy_files), kept when it is reused as {path, sha256}. */
+  copied_from?: CopiedFromEntry;
 }
 
 /** What finish learned that commitStaged needs, kept beside the pinned StagedVersion shape. */
@@ -452,6 +455,7 @@ export class VersionStager implements Stager {
             stored_at: storedAt,
             size_bytes: e.size_bytes,
             content_type: e.content_type,
+            ...(e.copied_from ? { copied_from: e.copied_from } : {}),
           });
         }
       }
@@ -686,6 +690,8 @@ export class VersionStager implements Stager {
       content_type: contentType,
       sha256,
       stored_at: origin.stored_at,
+      // The bytes are the copy's: they keep the record of where they came from.
+      ...(origin.copied_from ? { copied_from: origin.copied_from } : {}),
       own: false,
     });
     this.checkCount();
@@ -822,6 +828,9 @@ export class VersionStager implements Stager {
       if (this.badPaths.length > 0) throw pathError(this.badPaths);
     }
 
+    // Two artifacts' copies in one ds/<folder>/, one of them new: refused before anything commits.
+    const clash = copyFolderClash(list.map((e) => ({ ...e, fresh: e.fixed === true })));
+    if (clash) throw copyFolderError(clash.folder);
     const source = list.find((e) => e.path === def.sourcePath);
     if (source && !source.pending && source.size_bytes > def.maxSourceBytes) {
       throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, source.size_bytes);

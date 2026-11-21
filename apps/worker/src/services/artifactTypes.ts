@@ -104,6 +104,8 @@ export interface TypeHooks {
     text: string,
     path: string,
     ref: { id: string; version: number },
+    /** The paths the version stores. */
+    stored: ReadonlySet<string>,
   ): { bytes: Uint8Array; contentType: string } | null;
   /**
    * The text a version stores for a source validate accepted, when the type stores one canonical

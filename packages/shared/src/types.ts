@@ -130,7 +130,11 @@ export interface CopyRecord {
 }
 
 /** A CopyRecord as get_artifact returns it, with the source as the caller may see it now. */
-export interface CopiedFrom extends CopyRecord {
+export interface CopiedFrom extends Omit<CopyRecord, "artifact" | "files"> {
+  /** The source's id, or null when the caller may not view it now. */
+  artifact: string | null;
+  /** `from`, the file's path in the source, only when the caller may view it now. */
+  files: { path: string; from?: string }[];
   title: string | null;
   current_version: number | null;
 }
@@ -1074,12 +1078,35 @@ export interface DesignSystemComponentRead {
  */
 /** How get_design_system says to install a design system's files into another artifact. */
 export interface DesignSystemInstall {
-  /** The folder the files land in: `ds/<prefix>`. */
+  /** The folder the files land in: `ds/<folder>` (the prefix, or the folder asked for). */
   folder: string;
-  /** Pass these as copy_files (artifact, path, to, version) to publish or update the artifact. */
+  /**
+   * Pass these as copy_files (artifact, path, to, version) to publish or update the artifact.
+   * Only the files the target type (get_design_system's install_for) takes.
+   */
   copy_files: { artifact: string; path: string; to: string; version: number }[];
   /** Link these, in order, from the page's head (relative to the version's root). */
   stylesheets: string[];
+  /**
+   * A deck's `faces`, keyed by family lowercased with spaces as "-": a Google face by its
+   * stylesheet link, an installed font file by its path under the folder. Faces whose file the
+   * target cannot take are left out.
+   */
+  faces: Record<
+    string,
+    { family: string; href?: string; src?: string; weight?: string; style?: string }
+  >;
+  /** What a deck's or canvas's designSystems list keeps for this install. */
+  record: {
+    title: string;
+    /** The folder name under ds/. */
+    namespace: string;
+    /** The design system's id. */
+    artifact: string;
+    version: number;
+    /** When get_design_system answered (RFC 3339); the publish's copied_from has the copy's time. */
+    copiedAt: string;
+  };
 }
 
 export interface DesignSystemRead {
