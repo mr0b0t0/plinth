@@ -400,6 +400,10 @@
 .plinth-doc__notice span {
   overflow-wrap: anywhere;
 }
+/* Two actions (Copy and Dismiss) sit together on a row under the message. */
+.plinth-doc__notice--two span {
+  flex-basis: 100%;
+}
 .plinth-doc__notice button {
   padding: 0.2rem 0.6rem;
   border: 1px solid var(--doc-border);

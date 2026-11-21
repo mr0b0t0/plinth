@@ -3411,6 +3411,7 @@ export class DocEditor {
     close.setAttribute("aria-label", second?.label === "Dismiss" ? "Close" : "Dismiss");
     close.addEventListener("click", () => this.hideNotice());
     parts.push(close);
+    el.classList.toggle("plinth-doc__notice--two", second !== undefined);
     el.replaceChildren(...parts);
   }
 
