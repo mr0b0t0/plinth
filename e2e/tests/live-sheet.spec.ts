@@ -514,7 +514,7 @@ test("an agent's version during a row move or a width change is never merged: th
   await expect(cell(page, "A2")).toHaveText("Pears");
   await expect(bar).toContainText(/Draft saved|Saving draft/);
   await agentSets("B4", 9, 1);
-  await expect(bar).toContainText("v2 was published while you edited.", { timeout: 10_000 });
+  await expect(bar).toContainText("v2 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
   const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
   const mine = review.getByRole("region", { name: "Your changes" });
@@ -537,7 +537,7 @@ test("an agent's version during a row move or a width change is never merged: th
   await page.waitForTimeout(800);
   await expect(bar).toContainText(/Draft saved|Saving draft/, { timeout: 10_000 });
   await agentSets("B4", 4, 3);
-  await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
+  await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
   const second = frameOf(page).getByRole("region", { name: "Review v4 and your changes" });
   await expect(second.getByRole("region", { name: "Your changes" })).toContainText("width changed");
