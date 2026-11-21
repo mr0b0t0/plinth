@@ -7,6 +7,8 @@
 // and offers to post without publishing. It matches the request composer: the same "Pointing at"
 // chip, and the same agent choice ("Ask: Claude | Codex") under the description, so the footer
 // holds only Cancel and Send.
+
+import { MapPinIcon, XIcon } from "@phosphor-icons/react";
 import {
   API,
   type ClientType,
@@ -20,9 +22,18 @@ import { ApiRequestError, api } from "../../lib/api.ts";
 import { askTargetInText } from "../comments/askTargets.ts";
 import { AgentChoice, askSendLabel, PointingChip } from "../comments/Composer.tsx";
 import "../comments/comments.css";
-import { Button, Checkbox, Dialog, showToast, Textarea } from "../ui/index.ts";
+import {
+  Button,
+  Checkbox,
+  Dialog,
+  ICON_SIZE,
+  IconButton,
+  showToast,
+  Textarea,
+} from "../ui/index.ts";
 // Types only: askAgent.tsx imports this file.
 import type { AskAnchor } from "./askAgent.tsx";
+import type { AskWhat } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 
 export interface AskDialogProps {
@@ -33,10 +44,28 @@ export interface AskDialogProps {
   owner: boolean;
   /** The place the renderer named (an in-frame `ask`), or null for the whole page. */
   anchor: AskAnchor | null;
+  /** What kind of block that place is, for an anchor without text ("Pointing at the list"). */
+  what?: AskWhat | null;
   live: Pick<LiveEdit, "status" | "mode" | "publishFirst">;
   /** The version being edited. */
   version: number;
   onClose: () => void;
+}
+
+/**
+ * The "Pointing at" chip for a place the frame named by its kind only (a doc's divider, or a block
+ * whose words are not in the published version): "Pointing at the list", unquoted.
+ */
+function KindChip({ what, onRemove }: { what: AskWhat; onRemove: () => void }) {
+  return (
+    <div className="cm-anchor-chip">
+      <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
+      <span className="cm-anchor-chip__text">
+        Pointing at {what === "block" ? "this block" : `the ${what}`}
+      </span>
+      <IconButton size="sm" icon={XIcon} label="Stop pointing" onClick={onRemove} />
+    </div>
+  );
 }
 
 /** The words a refused comment gets in the dialog; `stale` when the agent went away meanwhile. */
@@ -67,6 +96,7 @@ export function AskDialog({
   targets: initialTargets,
   owner,
   anchor: initialAnchor,
+  what = null,
   live,
   version,
   onClose,
@@ -188,9 +218,12 @@ export function AskDialog({
       }
     >
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
-        {anchor && (
-          <PointingChip text={anchor.text || anchor.key} onRemove={() => setAnchor(null)} />
-        )}
+        {anchor &&
+          (what && !anchor.text?.trim() ? (
+            <KindChip what={what} onRemove={() => setAnchor(null)} />
+          ) : (
+            <PointingChip text={anchor.text || anchor.key} onRemove={() => setAnchor(null)} />
+          ))}
         <Textarea
           label="What should change?"
           hideLabel

@@ -125,86 +125,240 @@
 
 .plinth-doc--editing {
   position: relative;
+  /* One tint for blocks, drawn outside the layout so opening a block moves nothing: a faint
+     bronze fill on hover, the same fill a step deeper with a bronze edge when a block is open,
+     selected or held by someone else. */
+  --doc-block-pad: 8px;
+  --doc-block-hover: color-mix(in srgb, var(--doc-live) 6%, transparent);
+  --doc-block-open: color-mix(in srgb, var(--doc-live) 12%, transparent);
 }
-.plinth-doc--editing > :not(.plinth-doc__insert):not(.plinth-doc__holder):not(.plinth-doc__field) {
+/* A table's cells keep the page's own background (and stripes), so a tint on a table shows only
+   around it, never in some rows and not others. */
+.plinth-doc--editing td {
+  background-color: var(--doc-bg);
+}
+/* Heading anchors are links to follow, which the editor does not: no "#" while editing. */
+.plinth-doc--editing .plinth-doc__anchor {
+  display: none;
+}
+.plinth-doc--editing > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected) {
   cursor: text;
   border-radius: 4px;
 }
-.plinth-doc--editing
-  > :not(.plinth-doc__insert):not(.plinth-doc__holder):not(.plinth-doc__field):not(
-    .plinth-doc__held
-  ):hover {
-  outline: 1px dashed var(--doc-border);
-  outline-offset: 4px;
+@media (hover: hover) {
+  .plinth-doc--editing
+    > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected):not(
+      .plinth-doc__held
+    ):hover {
+    background-image: linear-gradient(var(--doc-block-hover), var(--doc-block-hover));
+    box-shadow: 0 0 0 var(--doc-block-pad) var(--doc-block-hover);
+  }
 }
 .plinth-doc--editing > :focus-visible {
-  outline: 2px solid var(--doc-focus);
-  outline-offset: 4px;
+  outline: 2px solid var(--doc-live);
+  outline-offset: var(--doc-block-pad);
 }
-.plinth-doc__field {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 2.5em;
-  margin: 0.75em 0;
-  padding: 0.5em 0.75em;
-  overflow: hidden;
-  resize: none;
-  border: 1px solid var(--doc-border);
+/* The block being edited, as formatted text: the page's own look in its own place, tinted, with a
+   bronze edge. A block shown as it is (it cannot be edited in place), selected, is drawn the same
+   way, with what can be done with it at its corner, where an open block has its menu. */
+.plinth-doc__open,
+.plinth-doc__selected,
+.plinth-doc__held {
+  position: relative;
+}
+.plinth-doc__open::before,
+.plinth-doc__selected::before,
+.plinth-doc__held::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: calc(-1 * var(--doc-block-pad));
+  left: calc(-1 * var(--doc-block-pad) - 3px);
   border-left: 3px solid var(--doc-live);
+  border-radius: 6px;
+  background: var(--doc-block-open);
+  pointer-events: none;
+}
+/* A table scrolls in its own box, which would clip the fill around it: a ring of the same tint
+   (opaque, so the edge under it shows only at the left) and the bronze edge, drawn outside it. */
+.plinth-doc__table.plinth-doc__held {
+  box-shadow:
+    0 0 0 var(--doc-block-pad) color-mix(in srgb, var(--doc-live) 12%, var(--doc-bg)),
+    -3px 0 0 var(--doc-block-pad) var(--doc-live);
+}
+.plinth-doc__table.plinth-doc__held::before {
+  content: none;
+}
+.plinth-doc__selected > :focus-visible {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 2px;
+}
+.plinth-doc__open .plinth-rich__content,
+.plinth-doc__open .plinth-rich__content code {
+  outline: none;
+}
+/* A table's cells are edited one at a time: the cell with the caret takes the accent ring. */
+.plinth-doc__open .plinth-rich__content :is(th, td):focus {
+  outline: 2px solid var(--doc-live);
+  outline-offset: -2px;
+}
+/* A panel's first and last blocks keep the page's outer margins, as they had unopened. */
+.plinth-doc > :first-child > .plinth-rich__content,
+.plinth-doc > .plinth-doc__selected:first-child > .plinth-doc__blockbar + * {
+  margin-top: 0;
+}
+.plinth-doc > :last-child > .plinth-rich__content,
+.plinth-doc > :last-child > .plinth-rich__link,
+.plinth-doc > .plinth-doc__selected:last-child > :last-child {
+  margin-bottom: 0;
+}
+.plinth-doc__placeholder {
+  color: var(--doc-muted);
+  cursor: text;
+}
+/* The block menu: below its button, above the page. Sub-menus open in its place. */
+.plinth-doc__menu {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  top: 100%;
+  min-width: 12rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+  /* The editor keeps it inside the frame (menu.ts); this is the most it may take. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  margin-top: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--doc-border);
+  border-radius: 8px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+  font: 0.875rem / 1.4 var(--doc-font);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+}
+.plinth-doc__menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.25rem 0.625rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.plinth-doc__menu-item:focus-visible {
+  background: var(--doc-code-bg);
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--doc-live);
+}
+/* Opened with a pointer, the menu shows no focus ring until a key is pressed in it. */
+.plinth-doc__menu--pointer .plinth-doc__menu-item:focus-visible {
+  background: none;
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .plinth-doc__menu .plinth-doc__menu-item:hover {
+    background: var(--doc-code-bg);
+  }
+}
+.plinth-doc__menu-item[aria-checked="true"]::after {
+  /* Drawn only: aria-checked says it, and the glyphs stay out of the items' names. */
+  content: "✓" / "";
+  color: var(--doc-live);
+}
+.plinth-doc__menu-sub::after {
+  content: "›" / "";
+  color: var(--doc-muted);
+}
+.plinth-doc__menu-back {
+  justify-content: flex-start;
+  gap: 0.375rem;
+  color: var(--doc-muted);
+  font-weight: 600;
+}
+.plinth-doc__menu-back::before {
+  content: "‹" / "";
+}
+.plinth-doc__menu-item[aria-disabled="true"] {
+  color: var(--doc-muted);
+  cursor: default;
+}
+.plinth-doc__menu-sep {
+  height: 1px;
+  margin: 0.25rem 0;
+  background: var(--doc-rule);
+}
+.plinth-doc__menu-table {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+}
+.plinth-doc__menu-table label {
+  display: grid;
+  gap: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--doc-muted);
+}
+.plinth-doc__menu-table input {
+  width: 4rem;
+  min-height: 2rem;
+  padding: 0.125rem 0.375rem;
+  border: 1px solid var(--doc-border);
   border-radius: 4px;
   background: var(--doc-bg);
   color: var(--doc-fg);
-  font: 0.9375rem / 1.6 var(--doc-mono);
-  tab-size: 2;
+  font: inherit;
+  appearance: textfield;
 }
-/* One focus mark: the open block's bronze border goes all the way round, with no second ring. */
-.plinth-doc__field:focus {
-  outline: none;
+/* No spinners: the two size fields look alike, and the arrow keys still step them. */
+.plinth-doc__menu-table input::-webkit-inner-spin-button,
+.plinth-doc__menu-table input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.plinth-doc__menu-table input:focus-visible {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 0;
   border-color: var(--doc-live);
 }
-@media (forced-colors: active) {
-  .plinth-doc__field:focus {
-    outline: 2px solid Highlight;
-  }
-}
-/* A one-line heading (data-heading, set by the editor) is typed in its heading's type. */
-.plinth-doc__field[data-heading] {
-  color: var(--doc-heading);
-  font-family: var(--doc-font);
-  font-weight: 650;
-  line-height: 1.25;
-  min-height: 0;
-  margin-block: 0.5rem;
+/* The form's action: a small primary button on the fields' baseline. */
+.plinth-doc__menu-table .plinth-doc__menu-item {
+  width: auto;
+  min-height: 2rem;
   padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  background: var(--doc-live);
+  color: var(--doc-bg);
+  font-weight: 600;
 }
-.plinth-doc__field[data-heading="1"] {
-  font-size: 2.1rem;
-  letter-spacing: -0.02em;
-}
-.plinth-doc__field[data-heading="2"] {
-  font-size: 1.5rem;
-}
-.plinth-doc__field[data-heading="3"] {
-  font-size: 1.22rem;
-}
-@media (max-width: 480px) {
-  .plinth-doc__field[data-heading="1"] {
-    font-size: 1.75rem;
+@media (hover: hover) {
+  .plinth-doc__menu .plinth-doc__menu-table .plinth-doc__menu-item:hover {
+    background: color-mix(in srgb, var(--doc-live) 85%, var(--doc-fg));
   }
-  .plinth-doc__field[data-heading="2"] {
-    font-size: 1.35rem;
-  }
+}
+.plinth-doc__menu .plinth-doc__menu-table .plinth-doc__menu-item:focus-visible {
+  background: var(--doc-live);
+  outline: 2px solid var(--doc-live);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 @media (pointer: coarse) {
-  .plinth-doc__field {
+  /* 16px keeps mobile browsers from zooming when a size field is focused. */
+  .plinth-doc__menu-table input {
     font-size: 16px;
   }
 }
-/* Blocks someone else holds: a bronze rule and their email; their text arrives as they type. */
+/* Blocks someone else holds: tinted like an open block, with their email; their text arrives as
+   they type. */
 .plinth-doc__held {
-  box-shadow: -10px 0 0 -7px var(--doc-live);
-  background: var(--doc-live-soft);
   cursor: not-allowed;
 }
 .plinth-doc__holder {
@@ -220,55 +374,6 @@
   max-width: 60%;
   pointer-events: none;
   z-index: 1;
-}
-/* "+" between blocks: out of the flow, so the page keeps its spacing. */
-.plinth-doc__insert {
-  position: absolute;
-  left: -1.75rem;
-  width: 1.5rem;
-  height: 1.5rem;
-  margin-top: -0.75rem;
-  padding: 0;
-  border: 1px solid var(--doc-border);
-  border-radius: 50%;
-  background: var(--doc-bg);
-  color: var(--doc-muted);
-  font: 600 0.875rem / 1 var(--doc-font);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms;
-}
-.plinth-doc__insert:hover,
-.plinth-doc__insert:focus-visible,
-.plinth-doc--editing:hover > .plinth-doc__insert:hover {
-  opacity: 1;
-  color: var(--doc-live);
-  border-color: var(--doc-live);
-}
-.plinth-doc--editing:hover > .plinth-doc__insert {
-  opacity: 0.45;
-}
-/* In the left margin only when there is one wide enough: the doc is at most 68ch plus padding
-   (about 670 to 730px at its 17px type), and the button needs 28px beside it. Narrower windows
-   (a phone, a split screen, a tablet multitasking) get it inside the right edge instead, never
-   clipped off-screen. */
-@media (max-width: 50rem) {
-  .plinth-doc__insert {
-    left: auto;
-    right: 0;
-  }
-  /* There it would sit on the open block's corner: hidden until the block closes. */
-  .plinth-doc__insert:has(+ .plinth-doc__field) {
-    display: none;
-  }
-}
-/* Touch has no hover: always visible, with an outline of at least 3:1 against the page. */
-@media (pointer: coarse) {
-  .plinth-doc__insert {
-    opacity: 1;
-    border-color: var(--doc-muted);
-    color: var(--doc-muted);
-  }
 }
 /* The frame's own status line, for lease messages. */
 .plinth-doc__notice {
@@ -311,64 +416,13 @@
   color: var(--doc-muted);
 }
 @media print {
-  .plinth-doc__insert,
   .plinth-doc__holder,
-  .plinth-doc__notice {
+  .plinth-doc__notice,
+  .plinth-doc__blockbar,
+  .plinth-rich__toolbar,
+  .plinth-rich__link,
+  .plinth-rich__corner,
+  .plinth-rich__alt {
     display: none;
-  }
-}
-
-/* ---------- Added after the prose split (prose.test.ts checks the text above this line) ---------- */
-
-/* Narrow windows: the side margin is too narrow for a "+" beside every block. Only the one above
-   the block being edited and the one at the end show, each on a line of its own at the right,
-   clear of rules and text; the others wait, out of reach of a tap, until keyboard focus reaches
-   them. */
-@media screen and (max-width: 50rem) {
-  .plinth-doc--editing > .plinth-doc__insert:is(:has(+ .plinth-doc__field), :last-of-type) {
-    position: static;
-    display: block;
-    margin: 0.25rem 0 0.25rem auto;
-  }
-  .plinth-doc--editing
-    > .plinth-doc__insert:not(:has(+ .plinth-doc__field)):not(:last-of-type):not(:focus-visible) {
-    opacity: 0;
-    pointer-events: none;
-  }
-  /* The last "+" keeps clear of the page's bottom edge and the app's footer under it. */
-  .plinth-doc--editing > .plinth-doc__insert:last-of-type {
-    margin-bottom: 1.5rem;
-  }
-}
-
-/* The block being edited looks like the page: the doc's own type, size, line height and spacing,
-   with one focus indicator (the outline every block gets in edit mode), and no box around it. */
-.plinth-doc__field {
-  min-height: 0;
-  margin: 0 0 1.1em;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  font: inherit;
-}
-.plinth-doc__field:focus {
-  outline: 2px solid var(--doc-focus);
-  outline-offset: 4px;
-}
-
-/* With a pointer that hovers, a "+" shows beside the block under it or being edited (above and
-   below it), not beside every block at once; keyboard focus shows it too. */
-@media (hover: hover) {
-  .plinth-doc--editing:hover > .plinth-doc__insert {
-    opacity: 0;
-  }
-  .plinth-doc--editing
-    > .plinth-doc__insert:is(:has(+ :hover), :has(+ :focus-visible), :has(+ .plinth-doc__field)),
-  .plinth-doc--editing > :is(:hover, :focus-visible, .plinth-doc__field) + .plinth-doc__insert {
-    opacity: 0.45;
-  }
-  .plinth-doc--editing > .plinth-doc__insert:is(:hover, :focus-visible) {
-    opacity: 1;
   }
 }

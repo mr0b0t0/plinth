@@ -313,9 +313,11 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(live).toMatchObject({ editing: true, connected: false, dirty: false });
     expect(JSON.stringify(live)).not.toContain("one");
     (root().querySelector("p") as HTMLElement).click();
-    const field = root().querySelector("textarea") as HTMLTextAreaElement;
-    field.value = "uno";
-    field.dispatchEvent(new Event("input"));
+    // The block opens as formatted text (no Markdown field); typing goes to the solo copy.
+    const field = root().querySelector('[contenteditable="true"]') as HTMLElement;
+    expect(root().querySelector("textarea")).toBeNull();
+    field.textContent = "uno";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
     // A collect from another origin, or with a malformed nonce, is ignored.
     post({ ...base, type: "collect", nonce: NONCE }, "https://evil.example");
     post({ ...base, type: "collect", nonce: "short" });
@@ -323,7 +325,50 @@ describe("doc renderer on-page editing (#36)", () => {
     post({ ...base, type: "collect", nonce: NONCE });
     expect(posted("draft")).toEqual([{ ...base, type: "draft", nonce: NONCE, text: "uno\n\ntwo" }]);
     post({ ...base, type: "edit", on: false });
-    expect(root().querySelector("textarea")).toBeNull();
+    expect(root().querySelector("[contenteditable]")).toBeNull();
+  });
+
+  it("asks the app about a block by its place and its published words, never draft text", async () => {
+    mountShell("Intro\n\n- first item\n\n  ```\n  fenced in a list\n  ```\n\n![Old alt](x.png)");
+    stop = boot(window);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    const askButton = () =>
+      [...root().querySelectorAll("button")].find(
+        (b) => b.textContent === "Ask an agent",
+      ) as HTMLElement;
+    (root().querySelector("ul") as HTMLElement).click();
+    askButton().click();
+    expect(posted("ask")).toEqual([
+      {
+        ...base,
+        type: "ask",
+        anchor: { key: "block-2", text: "first item fenced in a list" },
+        what: "list",
+      },
+    ]);
+    const image = () => (root().querySelector("img") as HTMLElement).closest("p") as HTMLElement;
+    image().click();
+    askButton().click();
+    expect(posted("ask").at(-1)).toEqual({
+      ...base,
+      type: "ask",
+      anchor: { key: "block-3:image", text: "Old alt" },
+      what: "image",
+    });
+    // Alt text changed in the draft is not posted: the dialog names the kind of block instead.
+    image().click();
+    const alt = root().querySelector(".plinth-rich__alt input") as HTMLInputElement;
+    alt.value = "Draft alt";
+    alt.dispatchEvent(new Event("input", { bubbles: true }));
+    askButton().click();
+    expect(posted("ask").at(-1)).toEqual({
+      ...base,
+      type: "ask",
+      anchor: { key: "block-3:image", text: "" },
+      what: "image",
+    });
+    expect(JSON.stringify(posted("ask"))).not.toContain("Draft");
   });
 
   it("with live: room, follows the live draft over the doc socket, never sending text to the app", async () => {
@@ -369,6 +414,70 @@ describe("doc renderer on-page editing (#36)", () => {
     post({ ...base, type: "collect", nonce: NONCE });
     expect(posted("draft")).toHaveLength(0);
     expect(root().classList.contains("plinth-doc--editing")).toBe(true);
+  });
+
+  it("with live: room, a block op whose lease request the socket took with it waits for nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const html = typedShellHtml(TYPE_REGISTRY.doc, {
+        title: "T",
+        text: "",
+        base: "",
+        appOrigin: APP,
+        live: "room",
+      });
+      const main = /<main [^>]*><\/main>/.exec(html)?.[0] ?? "";
+      const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0] ?? "";
+      document.body.innerHTML = main + data;
+      stop = boot(window);
+      const frame = (i: number, f: unknown) =>
+        sockets[i]?.onmessage?.(new MessageEvent("message", { data: JSON.stringify(f) }));
+      const welcome = (i: number) => {
+        frame(i, {
+          t: "welcome",
+          v: 1,
+          you: { id: `s${i}`, email: "ada@example.org", right: "write" },
+          gen: "g",
+          rev: 1,
+          base_version: 1,
+          flushed_rev: 1,
+          conflict_version: null,
+          last_by_you: false,
+          leases: [],
+          peers: [],
+        });
+        frame(i, { t: "text", gen: "g", part: 0, of: 1, chunk: "one\n\ntwo\n\nthree" });
+      };
+      const sent = (i: number, t: string) =>
+        (sockets[i]?.sent ?? []).map((s) => JSON.parse(s)).filter((f) => f.t === t);
+      welcome(0);
+      post({ ...base, type: "edit", on: true });
+      (root().querySelector("p") as HTMLElement).click();
+      expect(sent(0, "lease")).toHaveLength(1);
+      frame(0, { t: "leased", lease: "l1", start: 0, end: 1, holder: "s0", by: "ada@example.org" });
+      const button = root().querySelector(".plinth-doc__menu-button") as HTMLElement;
+      button.click();
+      const del = [...document.querySelectorAll<HTMLElement>("[role^='menuitem']")].find(
+        (i) => i.textContent === "Delete",
+      ) as HTMLElement;
+      del.click();
+      // The open block's lease is let go and the Delete's asked for; the socket drops before
+      // the room answers either.
+      expect(sent(0, "release")).toHaveLength(1);
+      expect(sent(0, "lease")).toHaveLength(2);
+      const ws = sockets[0] as unknown as { onclose: (e: { code: number }) => void };
+      ws.onclose({ code: 1006 });
+      expect(document.querySelector('[role="status"]')?.textContent).toContain("Not connected");
+      vi.advanceTimersByTime(60_000);
+      expect(sockets).toHaveLength(2);
+      welcome(1);
+      // Nothing waits for the Delete: a click opens a block at once.
+      (root().querySelectorAll("p")[1] as HTMLElement).click();
+      expect(sent(1, "lease")).toEqual([{ t: "lease", rev: 1, start: 2, end: 3 }]);
+      expect(root().textContent).toContain("one");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

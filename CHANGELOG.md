@@ -376,6 +376,32 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   from its permanent version link now shows the new version on the sheet's own link. New appears
   once the list has loaded, so it no longer jumps from the top bar to the empty state, and file
   names in version notes drop control and bidi characters.
+- **Edit docs as formatted text.** On a doc's page, a block opens as formatted text, with a
+  format bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its
+  corner: **Turn into** another kind,
+  **Insert below** (any kind, a divider, a table or an image), **Move up**, **Move down** and
+  **Delete**. No
+  Markdown is shown anywhere; Plinth writes the changes back as Markdown and keeps every block
+  nobody touched byte for byte. A Move, Delete, Turn into or Insert below never runs the blocks
+  around it together, even with no blank lines between them (a list that would join another takes a different bullet or
+  number style, which looks the same), and neither does clearing a block's text, which removes the
+  block the same way at once, so a Publish made while it is still open never has the old text, and what is typed in it meanwhile reaches the doc even when the block is closed first. The menu of a new, still empty block acts on that block. A
+  link can go to any address the page links, spaces and
+  accented letters included. A change the doc cannot take (at its size limit, or while not
+  connected) says so and keeps the block open with what was typed. A block op cut off by a dropped
+  connection says so and leaves editing free, and typing waiting for a lease is asked for again once
+  the draft is back. An image's alt text opens from its menu (**Alt text**), and its **Ask an
+  agent** (or **Insert below**, **Image**) opens the Ask dialog, whose "Pointing at" chip names
+  the block by its first words as published, a list's items apart ("Pointing at “Maria: launch
+  post · Ana…”"), or by its kind when it has none ("Pointing at the image"). The link field opens under the selected text (docked in the block at phone
+  width), and the block menu stays inside the frame. Blocks the
+  page cannot show faithfully as formatted text are shown as they are, with **Ask an agent** and
+  the block menu (Move and Delete). The **+** between blocks is gone: **Insert below** or Enter
+  adds a block. Opening a block moves nothing on the page and hides next to nothing: the format bar
+  shows only for selected text, the block's menu sits on its edge, and heading anchors are hidden
+  while editing. Punctuation typed at the edge of bold, italic or strikethrough is kept, and text
+  the page cannot save as typed stays in its block, which stays open and keeps Publish off until
+  it is changed.
 
 ## 0.6.0 (2026-11-20)
 

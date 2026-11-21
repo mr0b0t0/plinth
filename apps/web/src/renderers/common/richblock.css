@@ -1,0 +1,209 @@
+/* Formatted-text editing of one block (richblock.ts): the format bar, the link field, the block's
+   corner, the alt text field and the editable text. The block keeps the page's own look and place,
+   and its controls hide as little of the page as they can: the format bar shows only while text
+   is selected, next to the selection (the link field opens in its place, under the text), and the
+   rest of the time
+   the block has only its corner, a small bar on its top right edge (its bottom edge with
+   plinth-rich--below) where an image's alt text field opens too. Colours come from the renderer's
+   own palette (--doc-* on a doc), with neutral fallbacks; every focus ring is the editing accent
+   (--doc-live), as on the open block. --doc-block-pad is how far the open block's tint reaches
+   past its text. */
+
+.plinth-rich {
+  position: relative;
+}
+.plinth-rich__toolbar,
+.plinth-rich__link,
+.plinth-rich__corner,
+.plinth-rich__alt {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  margin: 0;
+  border: 1px solid var(--doc-border, #d8dee4);
+  border-radius: 8px;
+  background: var(--doc-bg, #ffffff);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+  font: 0.8125rem / 1.2 var(--doc-font, system-ui, sans-serif);
+}
+/* Placed by the editor next to the selection, inside the frame's width. */
+.plinth-rich__toolbar,
+.plinth-rich__link {
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 0.125rem;
+}
+/* Under the text it links, inside the block's column. */
+.plinth-rich__link {
+  width: min(28rem, 100%);
+  gap: 0.25rem;
+}
+/* At phone width it docks in the block, under its text, and covers nothing. As the block's last
+   line it keeps the block's own gap below (a paragraph's 1.1em), so the open block's tint ends
+   before the next block, as it does without the field. */
+@media (max-width: 480px) {
+  .plinth-rich__link {
+    position: static;
+    width: auto;
+    margin: 0.5rem 0 1.1rem;
+    box-shadow: none;
+  }
+  .plinth-rich__content:has(+ .plinth-rich__link:not([hidden])) {
+    margin-bottom: 0;
+  }
+}
+/* On the open block's top right edge, half over the gap above it, so it covers next to nothing. */
+.plinth-rich__corner,
+.plinth-rich__alt {
+  top: calc(-1 * var(--doc-block-pad, 8px));
+  right: calc(-1 * var(--doc-block-pad, 8px));
+  transform: translateY(-50%);
+  padding: 1px;
+}
+.plinth-rich--below > .plinth-rich__corner {
+  top: auto;
+  bottom: calc(-1 * var(--doc-block-pad, 8px));
+  transform: translateY(50%);
+}
+/* An image's alt text field hangs from the same edge into the image, so it covers no text. */
+.plinth-rich__alt {
+  width: min(20rem, calc(100% + 2 * var(--doc-block-pad, 8px)));
+  transform: none;
+}
+.plinth-rich--below > .plinth-rich__alt {
+  top: auto;
+  bottom: calc(-1 * var(--doc-block-pad, 8px));
+}
+.plinth-rich__toolbar[hidden],
+.plinth-rich__link[hidden],
+.plinth-rich__corner[hidden],
+.plinth-rich__alt[hidden] {
+  display: none;
+}
+/* Plain buttons, as in the page's own menus: no box until hovered, pressed or focused. */
+.plinth-rich__btn {
+  flex: none;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--doc-fg, #1f2328);
+  font: inherit;
+  cursor: pointer;
+}
+/* Small, so the corner straddles the gap between blocks without reaching their text. */
+.plinth-rich__corner .plinth-rich__btn {
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  padding: 0 0.5rem;
+  border-radius: 5px;
+}
+/* Hover only where there is one, so a tap leaves no tint behind. */
+@media (hover: hover) {
+  .plinth-rich__btn:hover {
+    background: color-mix(in srgb, var(--doc-fg, #1f2328) 8%, transparent);
+  }
+}
+.plinth-rich__btn:focus-visible {
+  outline: 2px solid var(--doc-live, #8f5a2a);
+  outline-offset: 1px;
+}
+.plinth-rich__btn[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--doc-fg, #1f2328) 14%, transparent);
+  color: var(--doc-fg, #1f2328);
+}
+.plinth-rich__fmt-strong {
+  font-weight: 700;
+}
+.plinth-rich__fmt-em {
+  font-style: italic;
+}
+.plinth-rich__fmt-code {
+  font-family: var(--doc-mono, ui-monospace, monospace);
+}
+.plinth-rich__fmt-strike {
+  text-decoration: line-through;
+}
+.plinth-rich__link input,
+.plinth-rich__alt input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--doc-border, #d8dee4);
+  border-radius: 4px;
+  background: var(--doc-bg, #ffffff);
+  color: var(--doc-fg, #1f2328);
+  /* 16px keeps mobile browsers from zooming when the field is focused. */
+  font: 1rem / 1.3 var(--doc-font, system-ui, sans-serif);
+}
+.plinth-rich__alt input {
+  border: 0;
+  border-radius: 7px;
+}
+.plinth-rich__link input:focus-visible,
+.plinth-rich__alt input:focus-visible {
+  outline: 2px solid var(--doc-live, #8f5a2a);
+  outline-offset: 0;
+  border-color: var(--doc-live, #8f5a2a);
+}
+.plinth-rich__content [contenteditable="true"],
+.plinth-rich__content[contenteditable="true"] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  caret-color: var(--doc-live, #8f5a2a);
+}
+.plinth-rich__content p:empty,
+.plinth-rich__content li:empty,
+.plinth-rich__content th:empty,
+.plinth-rich__content td:empty,
+.plinth-rich__content code:empty,
+p.plinth-rich__content:empty,
+.plinth-rich__content:is(h1, h2, h3, h4, h5, h6):empty {
+  min-height: 1.5em;
+}
+p.plinth-rich__content:empty::before {
+  content: "Write something";
+  color: var(--doc-muted, #59636e);
+}
+.plinth-rich__tight {
+  margin: 0;
+}
+.plinth-rich__atom {
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--doc-border, #d8dee4);
+  cursor: default;
+  user-select: all;
+}
+@media (pointer: coarse) {
+  .plinth-rich__btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+  /* The corner stays small (it sits on the block's edge, over the gap between blocks), a little
+     larger for a finger and lifted by as much, to stay clear of the block's first line. */
+  .plinth-rich__corner .plinth-rich__btn {
+    min-width: 1.75rem;
+    min-height: 1.75rem;
+  }
+  .plinth-rich__corner {
+    transform: translateY(calc(-50% - 2px));
+  }
+  .plinth-rich--below > .plinth-rich__corner {
+    transform: translateY(calc(50% + 2px));
+  }
+}
+@media print {
+  .plinth-rich__toolbar,
+  .plinth-rich__link,
+  .plinth-rich__corner,
+  .plinth-rich__alt {
+    display: none;
+  }
+}

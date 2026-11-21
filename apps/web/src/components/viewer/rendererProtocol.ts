@@ -336,7 +336,29 @@ export interface LiveFrameStatus {
   publishable: boolean;
   /** The frame cannot edit this artifact on its page (it is too large to). */
   unavailable?: "too_large";
+  /**
+   * An open block holds text the page cannot write as typed yet (the frame says so): it is not
+   * in the draft, so editing may not end and nothing may be published until it is changed.
+   */
+  unsavable?: true;
 }
+
+/**
+ * What kind of block an `ask` is about, for the Ask dialog's "Pointing at" chip when the anchor has no
+ * text (a doc's divider, or the image "Insert below" asks for). Never posted.
+ */
+export const ASK_WHAT = [
+  "paragraph",
+  "heading",
+  "list",
+  "quote",
+  "code block",
+  "table",
+  "divider",
+  "image",
+  "block",
+] as const;
+export type AskWhat = (typeof ASK_WHAT)[number];
 
 /** The review's choice, as the frame sends it. */
 export type ReviewChoice =
@@ -344,12 +366,71 @@ export type ReviewChoice =
   | { outcome: "discard"; version?: number; rev?: number }
   | { outcome: "cancelled" };
 
+/**
+ * Typed text a doc block could not get into the room's draft yet (the frame's rescue store). The
+ * app keeps the items in its own storage and offers them back to a new frame; never content the
+ * app shows or sends anywhere else.
+ */
+export interface RescueItem {
+  id: string;
+  text: string;
+  near: number;
+}
+/** A rescue store holds at most this many items, and this much text in all (UTF-16 units). */
+export const MAX_RESCUE_ITEMS = 20;
+export const MAX_RESCUE_TOTAL = 256 * 1024;
+const RESCUE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+/** A list of rescue items, checked field by field (from the frame, or from storage), or null. */
+export function readRescueItems(v: unknown): RescueItem[] | null {
+  if (!Array.isArray(v) || v.length > MAX_RESCUE_ITEMS) return null;
+  const out: RescueItem[] = [];
+  const isLine = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0 && n < MAX_INT;
+  let total = 0;
+  for (const it of v) {
+    if (typeof it !== "object" || it === null) return null;
+    const { id, text, near } = it as Record<string, unknown>;
+    if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
+    if (typeof text !== "string" || text.length > LIMITS.liveDocFrameBytes) return null;
+    if (!isLine(near)) return null;
+    total += text.length;
+    if (total > MAX_RESCUE_TOTAL) return null;
+    out.push({ id, text, near });
+  }
+  return out;
+}
+
+/** At most this many ids in one list of a rescue message. */
+const MAX_RESCUE_IDS = 200;
+
+/** A list of rescue item ids, each checked, or null. */
+export function readRescueIds(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > MAX_RESCUE_IDS) return null;
+  for (const id of v) if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
+  return v as string[];
+}
+
+/** A rescue report's order number. */
+export function isRescueN(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 && n < MAX_INT;
+}
+
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
+  /**
+   * A change to the frame's rescue store, which the app merges into its copy: items added or
+   * updated, and ids that leave it (written, or gone on purpose). Never a whole list.
+   */
+  | { type: "rescue"; upsert: RescueItem[]; written: string[]; gone: string[]; n: number }
   | { type: "save" }
-  | { type: "draft"; nonce: string; text: string }
+  /**
+   * Solo: the frame's text for `collect`. `unsavable` when a block holds typing that cannot be
+   * written as typed: `text` then has that typing without its formatting (for the kept copy only).
+   */
+  | { type: "draft"; nonce: string; text: string; unsavable?: true }
   | ({ type: "resolved"; nonce: string } & ReviewChoice)
-  | { type: "ask"; anchor: { key: string; text: string } | null }
+  | { type: "ask"; anchor: { key: string; text: string } | null; what?: AskWhat }
   | { type: "leave" }
   | { type: "shown"; n: number; nonce: string; ok: boolean };
 
@@ -409,6 +490,30 @@ export function withFrameKey(url: string, key: string): string {
   const at = url.indexOf("#");
   if (at < 0) return `${url}#plinth-k=${key}`;
   return `${url.slice(0, at)}#plinth-k=${key}&h=${url.slice(at + 1)}`;
+}
+
+export interface RescueMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "rescue";
+  /** Items the app kept from an earlier frame, offered to this one: it writes what is missing. */
+  items: RescueItem[];
+  /** The ids the app's store holds now, as of the frame's report `n` (the answer to it). */
+  stored?: string[];
+  n?: number;
+}
+
+export function rescueMessage(
+  items: RescueItem[],
+  stored?: { ids: string[]; n: number },
+): RescueMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "rescue",
+    items,
+    ...(stored ? { stored: stored.ids, n: stored.n } : {}),
+  };
 }
 
 export function collectMessage(nonce: string): CollectMessage {
@@ -472,6 +577,7 @@ export const APP_MESSAGE_KINDS = [
   "lead",
   "review",
   "reviewed",
+  "rescue",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -487,7 +593,8 @@ export type AppToFrameMessage =
   | PairedMessage
   | LeadMessage
   | ReviewMessage
-  | ReviewedMessage;
+  | ReviewedMessage
+  | RescueMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -496,7 +603,13 @@ export type AppToFrameMessage =
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: EditMessage | CollectMessage | VersionMessage | ReviewMessage | ReviewedMessage,
+  message:
+    | EditMessage
+    | CollectMessage
+    | VersionMessage
+    | ReviewMessage
+    | ReviewedMessage
+    | RescueMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -531,6 +644,7 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
   const publishable = m.publishable === undefined ? true : m.publishable;
   if (!isBool(publishable)) return null;
   if (m.unavailable !== undefined && m.unavailable !== "too_large") return null;
+  if (m.unsavable !== undefined && m.unsavable !== true) return null;
   return {
     connected: connected as boolean,
     failed: failed as boolean,
@@ -546,6 +660,7 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
     editors: list,
     publishable,
     ...(m.unavailable === "too_large" ? { unavailable: "too_large" as const } : {}),
+    ...(m.unsavable === true ? { unsavable: true as const } : {}),
   };
 }
 
@@ -568,6 +683,7 @@ interface ReadOptions {
 /** The kinds that carry the frame key. `shown` (live views) and `ask` outside edit mode do not. */
 const KEYED: ReadonlySet<FrameMessageKind> = new Set([
   "live",
+  "rescue",
   "save",
   "draft",
   "resolved",
@@ -601,7 +717,13 @@ const FRAME_READERS: {
     }
     const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
-    return { type: "draft", nonce: m.nonce, text: m.text };
+    if (m.unsavable !== undefined && m.unsavable !== true) return null;
+    return {
+      type: "draft",
+      nonce: m.nonce,
+      text: m.text,
+      ...(m.unsavable === true ? { unsavable: true as const } : {}),
+    };
   },
   resolved(m, opts) {
     if (!opts.review || m.nonce !== opts.review) return null;
@@ -661,9 +783,18 @@ const FRAME_READERS: {
     if (typeof text !== "string" || text.length > PAGE_COMMENT_LIMITS.maxText || hasControl(text)) {
       return null;
     }
-    return { type: "ask", anchor: { key, text } };
+    if (m.what === undefined) return { type: "ask", anchor: { key, text } };
+    if (!(ASK_WHAT as readonly unknown[]).includes(m.what)) return null;
+    return { type: "ask", anchor: { key, text }, what: m.what as AskWhat };
   },
   leave: () => ({ type: "leave" }),
+  rescue(m) {
+    const upsert = readRescueItems(m.upsert);
+    const written = readRescueIds(m.written);
+    const gone = readRescueIds(m.gone);
+    if (!upsert || !written || !gone || !isRescueN(m.n)) return null;
+    return { type: "rescue", upsert, written, gone, n: m.n };
+  },
   shown(m, opts) {
     if (!opts.shown || m.nonce !== opts.shown || !isInt(m.n, 1) || !isBool(m.ok)) return null;
     return { type: "shown", n: m.n, nonce: m.nonce, ok: m.ok };

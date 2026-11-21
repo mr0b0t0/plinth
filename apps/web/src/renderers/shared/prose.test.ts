@@ -2,10 +2,8 @@
 // page's reading CSS must not change: with the import inlined and comments and whitespace
 // collapsed, doc.css up to its on-page editing section is the same text as before the split (its
 // sha256 was taken from doc.css at that point). The built doc.css was also compared byte for byte
-// when the split was made. The editing section after it belongs to on-page editing, whose look
-// changes with the editor (the open block's focus mark and heading type), so it is not pinned here.
-// Rules added since (narrow-window insert buttons) go below the file's "Added after the prose
-// split" line, after the editing section.
+// when the split was made. The editing section after it belongs to on-page editing (doc-blocks
+// replaced the Markdown field there with formatted-text editing), so it is not pinned here.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -24,10 +22,7 @@ const DOC_READING_CSS_BEFORE_SPLIT =
 
 describe("shared prose styles", () => {
   it("leave the doc page's reading CSS as it was", () => {
-    const later = "/* ---------- Added after the prose split";
     const doc = read("../doc/doc.css");
-    expect(doc.split(later)).toHaveLength(2);
-    expect(doc.indexOf(later)).toBeGreaterThan(doc.indexOf(EDITING_SECTION));
     const prose = read("./prose.css");
     const importLine = '@import "../shared/prose.css";';
     expect(doc.split(importLine)).toHaveLength(2);

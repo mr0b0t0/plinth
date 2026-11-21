@@ -84,11 +84,12 @@ make a test pass.
 | A request carries the owner's authority it does not have | A commenter's Ask an agent request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Ask an agent](#ask-an-agent)) |
 | A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The Worker's bounded importer converts and checks the file as it is sent, and its refusal comes back as text; the app runs the same bounded importer on the person's own pick only to list what it would leave out, as text, and never blocks on it; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is hidden while page changes exist or someone edits on the page, checked again on Replace; a draft started later is frozen for review against the new version ([New and Import](#new-and-import)) |
 | A viewer steers the audience's decks | Someone with view access to a deck (or a page script elsewhere) sends `goto` frames on the deck's `slides` socket to move everyone's slide, or reads the socket to learn who is watching | Only owners' and editors' sockets carry `present`, stamped by the gate from policy; a `watch` socket may send nothing but `ping` (anything else is `forbidden` and a rate drop); the handshake has the room's hijacking checks; frames carry only slide numbers, the leading socket's random id and, to the leader alone, a count of viewers ([Live rooms](#live-rooms)) |
-
 | A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
 | A design export leaks a pass, an identity or another version | The export's enter URL, or a pass for the person exporting, reaches the page, a log or the caller and opens the artifact as them; or a board's page runs the current version's code, or reads shared data its writer may not | The thumbnail's capture load: a pass with no identity, bound to the exported version, with the no-data flag when a token limited to one artifact wrote it, minted and used inside the Worker's own browser and never returned; every request held to the capture's scope; error messages logged with every URL removed |
 | An address opens the export layout | Someone links people to a shell address that lays every board out, or one board alone, to frame or picture it outside the canvas | No URL parameter or message selects the export layout and there is no single-board view: only a shell that boots top-level in print media, which Plinth's export browser sets through the DevTools protocol, takes it, and one board is the export removing the others from its own copy of the page |
 | Design exports drain Browser Rendering | Someone with a link, or a script with a token, asks for exports in a loop or in parallel to run up the operator's browser hours or take every browser the account may run | Only people who may view the artifact, and no token limited to one artifact; `DESIGN_EXPORTS_PER_HOUR` per person (per client network signed out, an IPv6 /64 as one), `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` per design for everyone but its owner and editors and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` for the whole instance, all reserved before the browser starts and never given back, refused requests spending none; at most two exports at once instance-wide, held until the browser has closed; 25 s per render, then the browser is closed; `DESIGN_EXPORT=false` turns it off |
+| A browser or paste puts markup into an edited doc block | An extension or a paste leaves `<img onerror>` or a styled `<span>` in the `contenteditable` block | The editor reads the block back by allowlist (bold, italic, code, strikethrough, breaks, text, and links and kept parts it drew, known by reference); anything else is text, paste is `text/plain`, and every block renders through the sanitizer ([Docs as formatted text](#docs-as-formatted-text)) |
+| A person's edit makes the doc unpublishable or changes other blocks | Typing `<html>` as a paragraph, or deleting the block above an agent's `<html>` block | The serializer escapes a block's leading `<`, a Delete or Move re-sends the agent's block escaped, the room checks the doc's rules, and only the leased block's lines are replaced; blocks the model would change are read-only |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2530,13 +2531,33 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   and their places ("row 12", built by the renderer from lease positions, never content) become
   text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
+- **The rescue store.** A doc block's typing the room's draft does not hold yet (typing that
+  cannot be written as typed, or that a lost lease, a freeze or a takeover kept from being
+  written) is held by the frame and posted to the app as a keyed editing message (`rescue`: at
+  most 20 items and 256 KiB of text in all, the same limits on both sides: an id, the block's
+  text without its marks, and a line number). The app keeps it in its own origin's
+  `sessionStorage` under the signed-in account and the artifact
+  (`plinth-draft:page-rescue:<user id>:<artifact id>`, beside the solo kept copy, with a copy in
+  memory when storage is blocked), never in the content origin's storage. The frame sends changes
+  only (`upsert`, and the ids `written` or `gone`), and the app's store only merges them: an item
+  leaves it by its id, by a discard or by a sign-out, never because a report left it out. It reads,
+  offers and writes the store only once the session says who is signed in; other accounts' stores
+  are ignored (the next person in a tab is never offered the last one's text) and are removed only
+  by an explicit sign-out in the tab (any sign-out path). It offers the store back only to the artifact's frame at its
+  exact origin; it never renders or sends it anywhere else. The frame writes it through its own
+  leases like typing and drops an item only on the room's acknowledgement of its write; a write
+  whose acknowledgement never came is written again, since matching text proves nothing (a copy
+  at worst, never a loss). A discard clears the store, in the app and in the frame. A room's `keep` frame is answered `kept`;
+  an older room's `invalid` answer only stops `keep` and never reaches the editor.
 - **Per-type rules mirror the stager.** The room checks every edit and structural change with the
   type's rules, which hold every check the type's publish hook makes on the source alone (a doc
   must not start like a whole HTML document; a sheet keeps its row, header and size rules, and a
   text edit changes its line count only by appending at the end), and a parity test runs the rules
   against the Worker's real publish hooks. So a modified client cannot leave a draft that a
   Publish would refuse, and a person's natural edit cannot either: the doc editor escapes a
-  leading `<html` or `<!doctype html` in any block as `\<`. Structural ops must be of a kind the
+  leading `<` of any block it writes as `\<`, and a Delete or Move that would bring an agent's
+  block starting like an HTML document to the top writes that block escaped in the same edit
+  ([Docs as formatted text](#docs-as-formatted-text)). Structural ops must be of a kind the
   artifact's type takes, and may not touch another socket's lease.
 - **Never merged, except a doc's clean merge.** A doc's draft is merged with a version published
   meanwhile only when `merge3` is clean, the result fits and it passes the doc's rules (#49). A
@@ -2614,15 +2635,64 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   presses Send. An `ask` that passes these checks is still only a hint: the app takes it while the
   tab is visible and no dialog is open, and one that would open the closed comments panel or the
   Ask dialog at most once a second (the reopen limit of comments from the page), so a frame
-  cannot keep reopening what the person closed. No renderer sends `ask` yet. Outside edit mode Ask
-  an agent uses the comments panel and its review-mode bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose origin is
-  `"null"`; the bar's Ask an agent and the comments panel need none.
+  cannot keep reopening what the person closed. The doc renderer sends `ask` with block anchors;
+  other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
+  bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose
+  origin is `"null"`; the bar's Ask an agent and the comments panel need none.
 - **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path
   (the room checkpoint, or the solo `PUT` with `base_version` and `files_from_version`), with every
   check it has, reporting its refusal to the dialog instead of as a toast; when it does not succeed
   nothing is posted, so a request never points at a version that does not hold what the person saw.
 - **Refused before it counts.** A `request_to` that no agent can take (`no_agent`), or from someone
   without the mention right, is refused before the comment rate limit counts it.
+
+## Docs as formatted text
+
+People edit a doc on its page as formatted text and never see Markdown (spec: "Docs as formatted
+text"). It changes only which Markdown a person's typing produces: nothing new is reachable from a
+page, the room accepts any doc lines and checks the doc's rules as before, and no endpoint, cookie,
+CSP, sandbox flag or env var was added.
+
+- **No HTML parsing in the editor.** The editable block is drawn from its model with
+  `createElement` and `textContent`. The parts of a block the model keeps as written (an image in
+  text, a reference link, an autolink) are drawn by the page's own pipeline, markdown-it with html
+  off and the URL allowlist, and then the unchanged DOM sanitizer, exactly as the page draws them.
+- **Reading the page back by allowlist.** A `contenteditable` element can hold anything a browser,
+  an extension or a paste puts there. After each input the editor walks it and keeps only bold,
+  italic, inline code, strikethrough, line breaks, text, and the links and kept parts it drew
+  itself, which it knows by a `WeakMap` reference, never by an attribute; any other element counts
+  as its text. A copied or forged element is text. Paste and drop insert `text/plain` only, and the
+  browser's own formatting commands are refused.
+- **Links.** A link a person sets is checked by the same rule as the page's own links (`http`,
+  `https`, `mailto`, a `#fragment` or a path on the artifact's origin), and the page's renderer
+  checks it again when the block renders. Editing never follows a link.
+- **What is written.** The serializer escapes every character that would start syntax, so text
+  stays text: a person can type `<script>`, `**`, `[x](javascript:…)` or `<html>` and the doc shows
+  exactly that. A `<` at the start of a block is written `\<`, so no block a person writes can make
+  the doc start like an HTML document, which the stager refuses. A Delete or Move that would bring
+  an agent's block starting like one to the top writes it escaped in the same lease; the room's
+  check still refuses anything else.
+- **Fidelity before editing, verification after.** A block is editable only when its model,
+  written back, renders exactly as the original with the page's own parser and reads back into the
+  same model, so the editor cannot turn a block into something that renders differently. A block
+  that fails is read-only (Ask an agent, Move and Delete, byte for byte). Every text the editor
+  sends is read back first and is not sent when it would not round trip; such typing stays in the
+  open block and counts as unsent, so it is never dropped without the page saying so, and no
+  publish (any of its ways in) goes out without it. The room's `keep` frame only restarts the idle
+  clock of a lease the socket holds (`not_held` otherwise), so it cannot touch anyone else's; a
+  holder can keep a lease no longer than by typing. A character
+  next to a mark may be written as a numeric character reference, never for ASCII punctuation
+  (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
+  blocks, and the reference definitions after a block, keep their bytes.
+- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
+  `block-3:image`) and, as its text, the block's first words (an image's alt text), at most the
+  page anchor's 120 characters with control characters as spaces. The frame posts those words only
+  when a block of the published version it was served (or an image in it) has the same words, and
+  an empty text otherwise, so no draft text reaches the app page; the app shows them as text and
+  accepts the message only as an editing message, with the frame key (see
+  [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "Pointing at" chip, is
+  one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the
+  message for any other value, renders it as text, and never posts it.
 
 ## Comparing versions
 

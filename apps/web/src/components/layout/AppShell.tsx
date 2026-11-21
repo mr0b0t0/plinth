@@ -16,7 +16,7 @@ import {
   UserCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { API, APP_ROUTES } from "@plinth/shared";
+import { APP_ROUTES } from "@plinth/shared";
 import {
   Fragment,
   type KeyboardEvent,
@@ -27,10 +27,10 @@ import {
   useState,
 } from "react";
 import { agentInitials, useAgents } from "../../lib/agents.ts";
-import { api } from "../../lib/api.ts";
-import { Link, navigate, useLocation } from "../../lib/router.tsx";
+import { Link, useLocation } from "../../lib/router.tsx";
 import { setSessionMe, useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useThemePreference } from "../../lib/theme.ts";
+import { useSignOut } from "../account/hooks.tsx";
 import { CONNECT_AGENT_HREF } from "../account/nav.ts";
 import { ProfileNameDialog } from "../account/ProfileNameDialog.tsx";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
@@ -134,7 +134,7 @@ export function AppShell({
   actions,
 }: AppShellProps) {
   const { pathname } = useLocation();
-  const { me, loading, refresh } = useSession();
+  const { me, loading } = useSession();
   // The Connections page publishes its own list (see publishAgents); elsewhere the sidebar loads it.
   const agents = useAgents(me?.id, pathname !== APP_ROUTES.connections);
   const [preference, setPreference] = useThemePreference();
@@ -154,16 +154,8 @@ export function AppShell({
   }
   const section = nav.find((n) => isActive(pathname, n.to));
 
-  const signOut =
-    onSignOut ??
-    (async () => {
-      try {
-        await api(API.logout, { method: "POST" });
-      } finally {
-        await refresh().catch(() => undefined);
-        navigate(APP_ROUTES.login);
-      }
-    });
+  const defaultSignOut = useSignOut();
+  const signOut = onSignOut ?? defaultSignOut;
 
   const menuItems: MenuEntry[] = [
     ...userMenuItems,

@@ -19,6 +19,12 @@ export interface LineSpan {
 export interface Block extends LineSpan {
   /** The block's HTML from the Markdown layer, before the sanitizer. */
   html: string;
+  /**
+   * The lines its tokens came from, inside [start, end): the rest of the range is blank lines and
+   * the reference definitions that follow it (or, for the first block, come before it), which the
+   * formatted-text editor keeps byte for byte.
+   */
+  core: LineSpan;
 }
 
 const isBlank = (line: string | undefined) => line === undefined || line.trim() === "";
@@ -48,7 +54,14 @@ export function parseBlocks(text: string): Block[] {
     const prevEnd = out.at(-1)?.end ?? 0;
     const start = first.map?.[0] ?? prevEnd;
     const end = Math.max(first.map?.[1] ?? start, start);
-    out.push({ start, end, html: md.renderer.render(group, md.options, env) });
+    let coreEnd = end;
+    while (coreEnd > start && isBlank(lines[coreEnd - 1])) coreEnd--;
+    out.push({
+      start,
+      end,
+      html: md.renderer.render(group, md.options, env),
+      core: { start, end: coreEnd },
+    });
     i = j;
   }
   for (let k = 0; k < out.length; k++) {

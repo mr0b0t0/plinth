@@ -27,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type ReopenGate, reopenGate } from "../comments/reopenGate.ts";
 import { Button, Tooltip } from "../ui/index.ts";
 import { AskDialog } from "./AskDialog.tsx";
+import type { AskWhat } from "./rendererProtocol.ts";
 // Types only: stageItems.tsx imports this file, so a value import back would be a cycle.
 import type { MenuItem, StageContext, StageDialog, StageNode } from "./stageItems.tsx";
 
@@ -62,15 +63,17 @@ export interface AskAgent {
   reason: string | null;
   targets: ClientType[];
   /** Open Ask an agent: the Ask dialog in edit mode, the comments panel in request mode otherwise. */
-  open(anchor?: AskAnchor | null): void;
+  open(anchor?: AskAnchor | null, what?: AskWhat): void;
   /**
    * An `ask` the renderer posted: `open`, as a hint the app may refuse, under the rules for a
    * page's own compose (usePageComments.ts): only while the tab is visible and no dialog is open,
    * and one that would open the closed panel or the Ask dialog at most once a second.
    */
-  fromFrame(anchor: AskAnchor | null): void;
+  fromFrame(anchor: AskAnchor | null, what?: AskWhat): void;
   /** The anchor the Ask dialog opened with (edit mode), or null for the whole page. */
   dialogAnchor: AskAnchor | null;
+  /** What kind of block that anchor is, when the frame said (a doc block, which has no text). */
+  dialogWhat: AskWhat | null;
 }
 
 /** Remove one search parameter from the address, keeping the rest and the history entry. */
@@ -108,14 +111,16 @@ export function useAskAgent({
   const inSlot = available && (def?.edit === "ask" || gate.live_off !== undefined);
   const reason = gate.live_off ? LIVE_OFF_TEXT[gate.live_off.reason] : null;
   const [dialogAnchor, setDialogAnchor] = useState<AskAnchor | null>(null);
+  const [dialogWhat, setDialogWhat] = useState<AskWhat | null>(null);
 
   const latest = useRef({ editing, openDialog, openRequest, available, blocked, panelOpen });
   latest.current = { editing, openDialog, openRequest, available, blocked, panelOpen };
-  const open = useCallback((anchor: AskAnchor | null = null) => {
+  const open = useCallback((anchor: AskAnchor | null = null, what?: AskWhat) => {
     const l = latest.current;
     if (!l.available) return;
     if (l.editing) {
       setDialogAnchor(anchor);
+      setDialogWhat(anchor ? (what ?? null) : null);
       l.openDialog(ASK_DIALOG);
     } else {
       l.openRequest(anchor);
@@ -123,7 +128,7 @@ export function useAskAgent({
   }, []);
   const reopen = useRef<ReopenGate | null>(null);
   const fromFrame = useCallback(
-    (anchor: AskAnchor | null) => {
+    (anchor: AskAnchor | null, what?: AskWhat) => {
       const l = latest.current;
       if (!l.available || l.blocked || document.visibilityState !== "visible") return;
       // In edit mode it opens the Ask dialog, which is closed whenever nothing blocks; otherwise
@@ -133,7 +138,7 @@ export function useAskAgent({
       reopen.current ??= reopenGate();
       if (reopen.current.refused(t, closed)) return;
       reopen.current.take(t, closed);
-      open(anchor);
+      open(anchor, what);
     },
     [open],
   );
@@ -166,6 +171,7 @@ export function useAskAgent({
     open,
     fromFrame,
     dialogAnchor,
+    dialogWhat,
   };
 }
 
@@ -203,6 +209,7 @@ export const askAgentDialog: StageDialog = {
       targets={c.ask.targets}
       owner={c.gate.role === "owner"}
       anchor={c.ask.dialogAnchor}
+      what={c.ask.dialogWhat}
       live={c.live}
       version={c.live.status?.base_version || c.gate.artifact.version}
       onClose={close}

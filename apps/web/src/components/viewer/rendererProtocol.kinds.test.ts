@@ -15,6 +15,7 @@ import {
   pairedMessage,
   printMessage,
   readFrameMessage,
+  rescueMessage,
   reviewedMessage,
   reviewMessage,
   sheetExportMessage,
@@ -47,6 +48,7 @@ describe("renderer protocol kinds", () => {
       "lead",
       "review",
       "reviewed",
+      "rescue",
     ]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual([
       "live",
@@ -55,6 +57,7 @@ describe("renderer protocol kinds", () => {
       "resolved",
       "ask",
       "leave",
+      "rescue",
       "shown",
     ]);
     expect(
@@ -70,6 +73,7 @@ describe("renderer protocol kinds", () => {
         leadMessage(),
         reviewMessage("n".repeat(16)),
         reviewedMessage("n".repeat(16), "busy"),
+        rescueMessage([]),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -86,6 +90,7 @@ describe("renderer protocol kinds", () => {
       leadMessage(),
       reviewMessage("x".repeat(16)),
       reviewedMessage("x".repeat(16), "done"),
+      rescueMessage([{ id: "r1", text: "Kept", near: 0 }]),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
@@ -107,6 +112,7 @@ describe("renderer protocol kinds", () => {
       resolved: vi.fn(() => "resolved"),
       ask: vi.fn(() => "ask"),
       leave: vi.fn(() => "leave"),
+      rescue: vi.fn(() => "rescue"),
       shown: vi.fn(() => "shown"),
     };
     const messages: FrameMessage[] = [

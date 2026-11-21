@@ -12,7 +12,10 @@
 // text, which the app saves through its own session after asking for it with `collect`. A frozen
 // draft is reviewed whole in the frame (common/review.ts) when the app sends `review`. Every
 // editing message to the app carries the frame key the app put in the address
-// (common/frameKey.ts), which is taken out of it before anything renders.
+// (common/frameKey.ts), which is taken out of it before anything renders. Blocks are edited as
+// formatted text (edit.ts); "Ask an agent" on a block posts `ask` with a structural anchor
+// ("block-3", "block-3:image") with the block's first words, and the kind of block ("list"), and
+// the app opens its Ask dialog.
 //
 // Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
 // { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
@@ -26,7 +29,7 @@ import {
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
-import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
+import type { AskWhat, LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
   type EditAppMessage,
@@ -38,7 +41,14 @@ import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
 import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
-import { type DocBackend, DocEditor, LocalDoc, REFUSED_EDIT } from "./edit.ts";
+import {
+  blockWords,
+  type DocBackend,
+  DocEditor,
+  LocalDoc,
+  REFUSED_EDIT,
+  type RescueReport,
+} from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
@@ -155,6 +165,19 @@ function live(
   /** Solo: the version shown, whose files the draft is drawn with. */
   let soloBase: number | null = null;
 
+  /** The first words of each block of the published version, and of its images' alt text. */
+  let published: Set<string> | null = null;
+  const publishedWords = (): Set<string> => {
+    if (published) return published;
+    const doc = win.document;
+    const shown = sanitizeHtml(renderMarkdown(payload.text), doc);
+    published = new Set(Array.from(shown.childNodes, (n) => blockWords([n])));
+    for (const img of Array.from(shown.querySelectorAll("img"))) {
+      published.add(blockWords([doc.createTextNode(img.alt)]));
+    }
+    return published;
+  };
+
   const poster = appPoster(win, appOrigin, key);
   const post = poster.post;
   const statusNow = () => {
@@ -174,14 +197,15 @@ function live(
       editing: editor?.editing ?? false,
       holding: (editor?.editing ?? false) && backend?.mine != null,
       dirty: local ? local.dirty : (c?.dirty ?? false),
-      unflushed: c ? c.unflushed || (editor?.pending ?? false) : false,
+      unflushed: c ? c.unflushed || (editor?.pending ?? false) : (editor?.unsavable ?? false),
       rev: c?.rev ?? 0,
       base_version: c?.baseVersion ?? 0,
       conflict_version: c?.conflictVersion ?? null,
       last_by_you: c?.lastByYou ?? false,
       last_edit_at: c?.lastEditAt ?? null,
       editors,
-      publishable: RULES?.unpublishable(text) === null,
+      publishable: RULES?.unpublishable(text) === null && !(editor?.unsavable ?? false),
+      ...(editor?.unsavable ? { unsavable: true as const } : {}),
     };
     post({ type: "live", ...s });
   };
@@ -193,6 +217,8 @@ function live(
   const hooks = {
     save: () => post({ type: "save" }),
     status,
+    // The rescue store: the app keeps a copy in its own storage (never this origin's).
+    rescue: (r: RescueReport) => post({ type: "rescue", ...r }),
     leave: () => {
       if (!session.isOpen) post({ type: "leave" });
     },
@@ -200,6 +226,16 @@ function live(
       if (local) return soloBase;
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
+    // A place the person wants an agent to change (an image, a block shown read-only): the app
+    // opens its Ask dialog. The anchor is a structural key and the block's first words, posted
+    // only when the published version has a block with the same words (so no draft text reaches
+    // the app); `what` is the kind of block, for the dialog's "Pointing at" chip without them.
+    ask: (anchor: { key: string; text: string }, what: AskWhat) =>
+      post({
+        type: "ask",
+        anchor: { key: anchor.key, text: publishedWords().has(anchor.text) ? anchor.text : "" },
+        what,
+      }),
   };
   const events = {
     granted: (l: Parameters<DocEditor["granted"]>[0]) => editor?.granted(l),
@@ -233,11 +269,16 @@ function live(
   if (payload.live === "room") {
     client = new LiveDocClient({
       win,
+      // Typed text not in the draft yet keeps a hidden tab's socket, as unflushed text does.
+      keepOpen: () => editor?.pending ?? false,
       listener: {
         changed: () => {
           if (!local) editor?.changed();
         },
         status: () => {
+          // A lease asked for over a socket that closed is never answered.
+          if (client && !client.connected && !local) editor?.disconnected();
+          if (!local) editor?.roomStatus();
           if (client?.failed && !local && editor?.editing) {
             // The room never answered: keep editing alone.
             goSolo();
@@ -255,11 +296,16 @@ function live(
           if (!local) editor?.lost(r);
         },
         version: (kind, n, info) => {
+          // The unpublished changes were discarded: so is everything kept to rescue.
+          if (kind === "reset" && info.why === "discarded") editor?.clearRescues();
           if (!local) session.version(kind, n, info);
           status();
         },
         error: (code) => {
           if (code === "invalid") editor?.refused(REFUSED_EDIT);
+          // A lease that went before its last frame was answered (a takeover): the editor says
+          // what happened already.
+          else if (code === "not_held") return;
           else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
         },
       },
@@ -276,9 +322,16 @@ function live(
       if (m.focus === "first") editor?.focusFirst();
       editor?.render();
       status();
+    } else if (m.type === "rescue") {
+      if (m.items.length > 0) editor?.offerRescue(m.items);
+      if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
     } else if (m.type === "collect" && local) {
       editor?.flush();
-      post({ type: "draft", nonce: m.nonce, text: local.text });
+      // Typing that cannot be written as typed is not in the doc: the app publishes nothing, and
+      // keeps a copy with it, without its formatting.
+      const kept = editor?.unsavable ? editor.textWithTyping() : null;
+      if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
+      else post({ type: "draft", nonce: m.nonce, text: local.text });
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);

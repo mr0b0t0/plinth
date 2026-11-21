@@ -257,7 +257,7 @@ test("in edit mode the Ask dialog keeps editing, and publishes first only when a
   const bar = page.getByRole("region", { name: "Editing on the page" });
   await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
   await frame.locator("p", { hasText: "First paragraph." }).click();
-  const field = frame.locator("textarea.plinth-doc__field");
+  const field = frame.locator('.plinth-doc__open [contenteditable="true"]');
   await field.press("End");
   await field.pressSequentially(" Mine.");
   await field.press("Escape");

@@ -1,0 +1,170 @@
+{
+  "features": {
+    "field notes": [
+      "1: heading 1",
+      "3: paragraph",
+      "5: heading 2",
+      "7: table",
+      "12: heading 2",
+      "14: code",
+      "19: image",
+      "21: image",
+      "23: paragraph"
+    ],
+    "launch plan": [
+      "1: heading 1 (setext)",
+      "4: heading 2 (setext)",
+      "7: bullet",
+      "12: ordered",
+      "15: quote",
+      "20: divider",
+      "22: paragraph",
+      "26: indented"
+    ],
+    "what the model lacks": [
+      "1: read-only",
+      "7: quote",
+      "10: read-only",
+      "13: read-only",
+      "17: paragraph"
+    ]
+  },
+  "hostile": {
+    "raw script": [
+      "1: paragraph",
+      "3: paragraph"
+    ],
+    "inline script": [
+      "1: paragraph"
+    ],
+    "img onerror": [
+      "1: paragraph"
+    ],
+    "iframe": [
+      "1: paragraph"
+    ],
+    "style": [
+      "1: paragraph"
+    ],
+    "comment": [
+      "1: paragraph"
+    ],
+    "javascript link": [
+      "1: paragraph"
+    ],
+    "mixed case scheme": [
+      "1: paragraph"
+    ],
+    "tab in scheme": [
+      "1: paragraph"
+    ],
+    "newline entity in scheme": [
+      "1: read-only"
+    ],
+    "entity scheme": [
+      "1: paragraph"
+    ],
+    "hex entity scheme": [
+      "1: paragraph"
+    ],
+    "leading space scheme": [
+      "1: paragraph"
+    ],
+    "vbscript": [
+      "1: paragraph"
+    ],
+    "data html": [
+      "1: paragraph"
+    ],
+    "data image as link": [
+      "1: paragraph"
+    ],
+    "file": [
+      "1: paragraph"
+    ],
+    "protocol relative": [
+      "1: paragraph"
+    ],
+    "backslash": [
+      "1: paragraph"
+    ],
+    "backslash host": [
+      "1: paragraph"
+    ],
+    "autolink javascript": [
+      "1: paragraph"
+    ],
+    "autolink data": [
+      "1: paragraph"
+    ],
+    "reference link": [
+      "1: paragraph",
+      "3: paragraph"
+    ],
+    "reference image": [
+      "1: paragraph",
+      "3: paragraph"
+    ],
+    "reference ok then bad": [
+      "1: paragraph",
+      "4: paragraph"
+    ],
+    "table cell payloads": [
+      "1: table"
+    ],
+    "image alt payload": [
+      "1: image"
+    ],
+    "image title payload": [
+      "1: image"
+    ],
+    "link title payload": [
+      "1: paragraph"
+    ],
+    "svg data image": [
+      "1: paragraph"
+    ],
+    "javascript image": [
+      "1: paragraph"
+    ],
+    "mailto image": [
+      "1: image"
+    ],
+    "fragment image": [
+      "1: image"
+    ],
+    "linkify javascript": [
+      "1: paragraph"
+    ],
+    "linkify protocol relative": [
+      "1: paragraph"
+    ],
+    "hostile fence info": [
+      "1: code"
+    ],
+    "fence info with class": [
+      "1: code"
+    ],
+    "html entities": [
+      "1: paragraph"
+    ],
+    "heading payload": [
+      "1: heading 1"
+    ],
+    "nested link image": [
+      "1: paragraph"
+    ],
+    "colon in first segment": [
+      "1: paragraph"
+    ],
+    "encoded colon": [
+      "1: paragraph"
+    ],
+    "control char": [
+      "1: paragraph"
+    ],
+    "zero width": [
+      "1: paragraph"
+    ]
+  }
+}

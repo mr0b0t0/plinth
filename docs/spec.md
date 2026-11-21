@@ -437,7 +437,8 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview, and Compare lists what changed between two
+The source editor edits the Markdown with a live preview (on the page, people edit a doc as
+formatted text and never see Markdown), and Compare lists what changed between two
 versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
@@ -638,7 +639,8 @@ page shows the strip and makes the REST calls, and renders no content.
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
   client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
-  lease idle for 60 s can be taken over.
+  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block
+  holding typing it cannot write yet), starts that minute again.
 - **Per-type rules.** The room checks every edit with the type's rules
   (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
   a refused edit means someone else changed the lines first or the edit was forged; the renderer
@@ -646,11 +648,11 @@ page shows the strip and makes the REST calls, and renders no content.
   check the type's publish hook makes on the source alone, so a draft can always be published: a
   doc never starts like a whole HTML document (`<html` or `<!doctype html` first, which the stager
   refuses), and a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19). To keep
-  that rule out of people's way, the doc editor writes a `<` that would open `<html` or
-  `<!doctype html` at the start of any top-level block as `\<`, which renders as `<`, so any block
-  can become the first one when the block above it is deleted. A block an agent wrote that way is
-  not escaped; deleting the block above it is refused with the reason, and an agent's version can
-  change it.
+  that rule out of people's way, the doc editor writes a `<` at the start of any top-level block
+  it writes as `\<`, which renders as `<`, so any block a person wrote can become the first one.
+  When a Delete or a Move would leave a block an agent wrote first while it starts like an HTML
+  document, the same edit writes that block again with its `<` escaped. Only emptying the first
+  block by typing, above such a block, is still refused, with the reason.
 - **Drafts are not versions.** The draft is one `live_drafts` row per artifact, written by the room
   at most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a
   save). It never moves backwards, never comes back after a delete or takedown, and an owner keeps
@@ -770,12 +772,11 @@ page shows the strip and makes the REST calls, and renders no content.
   status has a short form at phone width ("Merged with v5", "Not connected", "Kept in this tab",
   "v6 published"), so the strip stays one line. "Discard unpublished changes" is in the artifact's
   ⋯ menu while editing with changes and nothing to review, behind the same confirmation. A doc's
-  block opens as a text field holding its Markdown, in the page's own type, size and line height,
-  with one focus outline and no box, so editing looks like the page; blocks other people hold show
-  their email and their text as it arrives. A "+" to add a block shows beside the block under the
-  pointer or being edited, above and below it, not beside every block; on touch, and at phone width
-  only the one above the block being edited and the one at the end, each on a line of its own, so
-  none covers a rule or text, the last clear of the page's bottom edge. Esc at the
+  block opens as formatted text, never as Markdown, in the page's own type, size and line height,
+  so editing looks like the page
+  ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)); blocks other people hold
+  show their email and their text as it arrives. There is no "+" between blocks: "Insert below" in
+  a block's menu, or Enter, adds one. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
   line when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
   the email on hover), when someone is editing ("Ana is editing"), or when a version needs review;
@@ -2817,11 +2818,13 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
-  draft. It opens from the ⋯ item. The renderer protocol also has an `ask` message, which opens it
-  about a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural
-  name shown as text); a renderer releases its own lease before it asks. No renderer sends one
-  yet: the doc, sheet, deck and design renderers have no control of their own to ask from, so a
-  request from the Ask dialog has no page anchor today. While the app is in edit mode, an `ask`
+  draft. It opens from the ⋯ item, or from an `ask` message a renderer posts, which opens it about
+  a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural name such
+  as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
+  "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
+  kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
+  which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
+  `ask` with block anchors; other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
   refuse, under the rules for a page's own compose ([comments from the
@@ -2956,6 +2959,151 @@ pages and designs come only from agents.
 - **REST.** `POST /api/v1/artifacts` takes `note`, v1's version note (at most 500 characters,
   trimmed; empty for none). MCP's `publish_artifact` does not list it. New and Import add no
   route, table, env var or MCP tool.
+
+### Docs as formatted text (decided 2026-11-19)
+
+People edit a doc on its page as formatted text: no person sees Markdown or any source. A doc is
+still Markdown in `content.md`, which agents read and write as before; the page turns what people
+do into Markdown. Everything runs in the doc renderer on the artifact's content origin, through
+the same leases, room, drafts and Publish as [Editing](#editing).
+
+- **The model.** A click or Enter on a block takes its lease and draws it again as editable text,
+  in a small closed model (`packages/shared/src/markdownSerialize.ts`): headings (level, and `#`
+  or underlined style), paragraphs, quotes, bulleted lists (marker, tight or loose), numbered lists
+  (start number and `.` or `)`), GitHub tables (each column's alignment), fenced code (fence and
+  info string), indented code, dividers and images. Inline text carries bold, italic, inline code,
+  links and strikethrough. Anything else inline (an image in text, a reference link, an autolink)
+  is kept as written and cannot be changed in place. A bare URL a person types stays text and
+  becomes a link when the block renders.
+- **Reading the page back.** After every input the renderer reads the edited DOM against an
+  allowlist (bold, italic, code, strikethrough, line breaks, text, and the links and kept parts it
+  drew itself); anything else counts as its text, so nothing a browser inserts becomes markup.
+  Paste is plain text only.
+- **Writing it back.** The serializer writes the model as CommonMark with GitHub tables,
+  strikethrough and bare-URL links (the doc's dialect, html off): emphasis as `*…*`, escapes
+  wherever text would start syntax, a `<` at the start of any top-level block as `\<`, lists from
+  their own start number, and code fences lengthened when the code holds one. Reference
+  definitions that follow a block stay byte for byte after it. Only the leased block's lines are
+  ever replaced, so a block nobody edited keeps its bytes.
+- **The fidelity check.** A block is editable in place only when its model, written back,
+  renders exactly as the original (the same markdown-it tokens with the page's own instance and
+  the doc's reference definitions) and reads back into the same model, and the block defines no
+  references itself. A block that fails (a code block in a list item, a quote in a list item, a
+  definition inside a quote) is shown read-only. Selected, it is drawn like an open block, with
+  "Ask an agent" (its description says the block can't be edited here) and the block menu at its
+  corner, where an open block has its menu; the menu's Move and Delete move or remove its lines
+  byte for byte.
+- **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
+  formatting command whose result CommonMark cannot express is undone, with "That formatting can't
+  be kept here.", and nothing is sent. A mark next to punctuation that would not open or close as
+  written ("*重要，*的") is written with the character outside it, or white space inside it, as a
+  numeric character reference ("*重要，*&#x7684;"), which renders the same. Typing that still
+  cannot be written stays in the block as typed (the keystroke is not undone): the page says
+  "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab, a
+  click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and every
+  way to publish (the strip, Cmd/Ctrl+S in the frame or the app, Done, Ask's "Publish my changes
+  first", autosave) waits until the text changes; the page asks before it is left, and in solo mode
+  the tab's kept copy has the text without its formatting. In a room the holder sends `keep` every
+  20 s (`LIMITS.liveLeaseKeepS`) while connected, so the lease is not taken over as idle; a holder
+  that sends neither edits nor `keep` for 60 s still can be. If edit mode ends anyway, the block is
+  taken over or the draft changes under it, its text is written without its formatting rather than
+  lost: in place of the block, or, when someone else took the block, as a new block below it; when
+  there is no lease to write it with (not connected, or a review waits), it is written once there
+  is.
+- **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
+  until the room acknowledges a write of it (without that acknowledgement it is written again,
+  a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which
+  the app keeps before it lets them go): the frame posts it to the app, which keeps it in its own storage
+  and offers it to the frame again after a reload. A write of it that a review refuses goes in once
+  the review ends; one whose place someone else holds, or that keeps meeting changed lines, goes
+  in as a new block at the nearest free place (else after the last block), three places at most;
+  one that still cannot be written stays kept, counts as unsent changes (the page asks before it
+  is left, and a hidden tab keeps its socket), and the page says "What you typed couldn't be added
+  to the doc yet. It is kept here." with **Copy**, or, for text the app's store could not take (over
+  20 items or 256 KiB), "… It's kept on this page until you reload. Copy it to be safe." The app's
+  store only merges what the frame reports (items in, ids out), so nothing leaves it unnamed. A room's refusal never resets a block holding
+  such typing.
+- **Opening a block for editing again.** A block saved with such a character reference opens for
+  editing as any other: the fidelity check tries the same written form.
+- **Formatting and the block menu.** A format bar (bold, italic, code, strikethrough, link), shown
+  only while text that takes marks is selected, next to the selection (below it on touch screens,
+  where the browser's own selection menu is above), and the shortcuts Cmd/Ctrl+B, I, E (code), K (a
+  link, checked by the same rule as the page's links and stored as the page's parser writes the
+  address, percent-encoded with the host in punycode) and Shift+X (strikethrough). Enter ends a
+  block (a new item in a list, a new paragraph in a quote), Shift+Enter is a line break, Tab and
+  Shift+Tab indent and outdent list items (three levels at most) and move between table cells,
+  and Esc gives the block back. The link field opens in the format bar's place, under the text it
+  links, and offers "Remove link" only on a link. The rest of the time an open block shows only its menu button, "⋯", at
+  its corner. Each block's menu has five items: "Turn into" (paragraph, heading 1 to 3, bulleted or numbered
+  list, quote, code block), "Insert below" (the same kinds, "Divider", "Table", which asks for a
+  size, and "Image", which asks an agent), "Move up", "Move down" and "Delete". "Turn into",
+  "Insert below" and "Table" open in place of the menu, with a way back (ArrowLeft or Esc). There
+  is no "+" between blocks: "Insert below" and Enter (at the end of a block, or at the start of one
+  for a paragraph above it) are the ways to add one. A move
+  takes one lease over both blocks and swaps their lines. A new list never joins
+  the list next to it. A Move or a Delete never runs the blocks around it together: a blank line
+  goes wherever a block would touch the next one, a moved list that would sit next to a list of
+  its own marker takes another marker, and so does the list after a deleted block, written again
+  in the same lease. One that would still join blocks (two numbered lists around it that use both
+  `.` and `)`, or an indented block that would continue the list above) is not made, and the page
+  says why. The same holds for "Turn into" and "Insert below": a new block that would join a block
+  next to it or take one in (a numbered list between lists that use both `.` and `)`, or a list
+  right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
+  nothing. A block op or a block to open whose lease request is cut off by a dropped connection is
+  not made either, the page says "Not connected. Try again in a moment.", and nothing else waits
+  for it; typing that waits for a lease (a block taken again after a reconnect, or typing kept
+  from a closed block) is asked for again once the draft is back. So does an Enter or typing that cannot be sent; after an Enter the block stays open
+  with what was typed, still waiting to be sent. A block whose text is cleared where its empty
+  lines would run the blocks around it together is removed at once, by the same one edit as
+  "Delete" (the list after it takes another marker), under one lease over its lines and the lines
+  that edit writes again. The doc then has what the page shows at every moment, so a Publish,
+  Done or an autosave made while the block is still open never has the old text. The block stays
+  open, empty, where it was, and what is typed in it becomes a new block there. When the removal
+  is refused (someone holds the lines next to it, the page is not connected, or the doc cannot
+  take it), the block stays open with its last text, which is what the doc has, and the page says
+  so: "Couldn't remove this block now. Try again.", or why the doc cannot take it. Nothing typed
+  in the block while its removal is on its way is lost: it goes into the doc once the removal is
+  in, also when the block is closed first (Esc, Tab, a click on another block or Done), in which
+  case the page reports unsent changes until it is; it takes the block's place when the removal is
+  refused or lost with a reconnect; and an open block keeps it on screen through a reconnect, as
+  any block does. When even that cannot be written, the page says "What you typed in the block you
+  closed couldn't be added. Type it again." A new block
+  not typed into yet has no lines in the doc: its menu's "Insert below" puts the block where the
+  new one is, "Move up" and "Move down" are off, and "Delete" gives it up, leaving the doc as it
+  was.
+- **Images are agent-only.** An image block's menu has "Alt text" in place of "Turn into", which
+  opens the alt text field at the block's corner (Enter or Esc closes it); the image itself, and
+  adding one, are left to agents through Ask an agent, whose page anchor names the place
+  (`block-3`, or `block-3:image`, never a block number the person would have to count) with the
+  block's first words, or an image's alt text, as its text, so the Ask dialog's "Pointing at" chip
+  reads as the block does, a list's items with " · " between them ("Pointing at “Maria: launch post
+  and pricing page · Ana…”"). The frame posts those
+  words only when a block of the published version has the same words, so no draft text reaches
+  the app; otherwise, and for a block with no text, the chip names the kind of block ("Pointing at
+  the list", "Pointing at the image"). An open image block has its
+  own "Ask an agent" for its image at its corner, beside the menu, as a read-only block has, and
+  its "Insert below" has no "Image" (it would ask the same).
+- **An empty doc** shows "Write something", which starts a new paragraph.
+- **Opening a block moves nothing and hides next to nothing.** An open block keeps its place and
+  the page's look: its tint and bronze edge are drawn outside the layout, and its corner (the menu,
+  and Ask an agent where it has one) is a small bar on the block's top right edge, over the gap
+  between blocks, or on its bottom edge when the block opens too near the top of the frame. An
+  image's alt text field hangs from the same edge over the image. The format bar and the link
+  field show only for selected text; the link field opens under that text, inside the block's
+  column, so it covers neither the text nor a heading above it, and at phone width it docks in the
+  block under its text, with the block's usual gap below it. The block menu opens below its button, above it when there is no room
+  below, or moved up as far as it must, so every item ("Table" and "Image" at the end of "Insert
+  below" too) shows without scrolling the frame. Opening a block, its link field or its alt text field scrolls
+  the page by the least that shows the block and the field. A selected read-only block and a block
+  someone else holds are drawn the same way; in a table the cells keep the page's background and
+  stripes, so only the frame around it is tinted. Hovering a block gives it a fainter tint of the
+  same colour, only on devices that hover, so a tap leaves none. Heading anchors ("#") are hidden
+  while editing. The block menu opened with a pointer shows no focus ring until a key is pressed
+  in it; opened from the keyboard, it does.
+- **Security.** Nothing new reaches the content host or the app: the room accepts any doc lines as
+  before and checks the doc's rules, the sanitizer runs on every rendered block and every kept part,
+  and the editor builds its DOM with `createElement` and `textContent` only. The serializer only
+  changes which Markdown a person's typing produces.
 
 ### Big builds and reuse by hash
 
