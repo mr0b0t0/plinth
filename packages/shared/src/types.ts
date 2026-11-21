@@ -3,6 +3,7 @@
 import type { ArtifactSource, ArtifactType } from "./artifactTypes.ts";
 import type { CategoryRole, CategoryShareState, ReviewSkipReason } from "./categories.ts";
 import type {
+  ArtifactEditing,
   ClientType,
   CommentStatus,
   ContentIsolation,
@@ -98,6 +99,12 @@ export interface ArtifactDetailBase extends ArtifactSummary {
    * never returned to agents). Null when there are none. Absent for other types and roles.
    */
   live_draft?: LiveDraftMeta | null;
+  /**
+   * Where it is edited, for owners and editors (docs/spec.md "Published from code"): "code" when
+   * its publisher said its source lives in code, so the next publish from there replaces page
+   * edits; "page" otherwise. Absent for everyone else.
+   */
+  editing?: ArtifactEditing;
   /**
    * HTML pages that name a design system (`<meta name="plinth-design-system">`): that design
    * system, when the caller may view it and it is one; null otherwise. Absent when the page names
@@ -600,6 +607,12 @@ export type ViewGate =
        * version, and why: the Edit slot shows Ask an agent instead. Never together with `live`.
        */
       live_off?: ViewGateLiveOff;
+      /**
+       * Published from code (docs/spec.md "Published from code"): with `live` only, the artifact's
+       * publisher said its source lives in code, so edit mode says that the next publish from
+       * there replaces page edits. Absent otherwise.
+       */
+      from_code?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

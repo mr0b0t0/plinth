@@ -65,6 +65,11 @@ export const artifacts = sqliteTable("artifacts", {
   categoryRev: integer("category_rev").notNull().default(0),
   categoryReview: text("category_review", { enum: ["shared", "private"] }),
   categoryReviewShare: text("category_review_share"),
+  /**
+   * migrations/0022 (docs/spec.md "Published from code"): "code" when the publisher said the
+   * artifact's source lives in code, null = edited on the page. Never versioned.
+   */
+  editing: text("editing", { enum: ["code"] }),
 });
 
 export const versions = sqliteTable("versions", {

@@ -3,6 +3,7 @@
 import {
   ARTIFACT_ID_RE,
   type ArtifactDetail,
+  type ArtifactEditing,
   type ArtifactList,
   type ArtifactSummary,
   type ArtifactType,
@@ -493,6 +494,8 @@ export interface PublishInput {
   category?: string;
   /** v1's note (REST only: the app's New and Import; docs/spec.md "New and Import"). */
   note?: string;
+  /** Where it is edited (docs/spec.md "Published from code"); default the page. */
+  editing?: ArtifactEditing;
 }
 
 /** The stored category, echoed only when the call set one (the caller is then the owner). */
@@ -602,6 +605,7 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     type: def.id,
     title: input.title,
     ...(input.category !== undefined ? { category: input.category } : {}),
+    ...(input.editing !== undefined ? { editing: input.editing } : {}),
   });
   const p = ctx.principal;
   const userId = p.kind === "user" || p.kind === "agent" ? p.userId : null;
@@ -650,6 +654,8 @@ export interface UpdateInput {
   base_version?: number;
   /** Owner only; omitted keeps the current category. */
   category?: string;
+  /** Where it is edited from now on (docs/spec.md "Published from code"); omitted keeps it. */
+  editing?: ArtifactEditing;
   /**
    * Carry every file of this version, by reference, instead of the current version's: a page
    * Publish stages exactly its draft, the source plus the files of the version the draft is based
@@ -694,6 +700,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     note: input.note,
   });
   if (target.mode !== "update") throw new ApiError("internal", "Not an update");
+  if (input.editing !== undefined) target.editing = input.editing;
   // The type is fixed at publish: the input must carry the artifact's own source field.
   const { def, text } = resolveSource(input, requireTypeDef(target.artifact.type).id);
   checkSourceSize(def, text);
@@ -780,13 +787,16 @@ export async function loadArtifactDetail(
     isLiveType(def) && (role === "owner" || role === "editor")
       ? { live_draft: await readLiveDraftMeta(ctx.env.DB, artifact.id) }
       : {};
+  // Where it is edited (docs/spec.md "Published from code"), for owners and editors only.
+  const editing: { editing?: ArtifactEditing } =
+    role === "owner" || role === "editor" ? { editing: artifact.editing ?? "page" } : {};
   // Per-type fields (an HTML page's design system reference), read as the caller.
   const extra = (await typeHooks(def).detail?.(ctx, text)) ?? {};
   // html for a page, content for every typed artifact; never both.
   const detail: ArtifactDetail =
     def.id === "html"
-      ? { ...base, ...live, ...extra, type: "html", html: text }
-      : { ...base, ...live, ...extra, type: def.id, content: text };
+      ? { ...base, ...editing, ...live, ...extra, type: "html", html: text }
+      : { ...base, ...editing, ...live, ...extra, type: def.id, content: text };
   return { detail, row: artifact };
 }
 

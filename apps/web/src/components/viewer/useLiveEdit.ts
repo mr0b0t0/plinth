@@ -134,6 +134,11 @@ export interface LiveEdit {
   merges: boolean;
   /** Confirmed by code without an account: they must sign in to edit. */
   signIn: boolean;
+  /**
+   * Why Edit is off although editing on the page exists here: the version has problems only an
+   * agent can fix (the frame said so), in words for the Edit button. Null otherwise.
+   */
+  blocked: string | null;
   mode: "room" | "solo" | null;
   editing: boolean;
   phase: LivePhase;
@@ -445,6 +450,9 @@ export function useLiveEdit({
                 : {}),
             });
           }
+          // Problems only an agent can fix (a design system the format refuses): the page says so
+          // and offers Ask an agent; Edit stays off (LiveEdit.blocked).
+          if (next.unavailable === "invalid" && latest.current.editing) setEditing(false);
           setStatus(next);
         },
         save() {
@@ -480,6 +488,8 @@ export function useLiveEdit({
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
   const soloBase = gate.live?.mode === "solo" || status?.failed ? artifact.version : undefined;
+  // Published from code (gate `from_code`): the frame says so in edit mode.
+  const fromCode = gate.from_code === true;
   useEffect(() => {
     if (!available || !frame) return;
     if (!editing && !told.current) return;
@@ -488,12 +498,12 @@ export function useLiveEdit({
       const focus = editing && focusFirst.current ? ("first" as const) : undefined;
       // The frame's own focus() moves the keyboard only once its window has the focus.
       if (focus) frame.focus();
-      postToRenderer(frame, target, editMessage(editing, soloBase, focus));
+      postToRenderer(frame, target, editMessage(editing, soloBase, focus, fromCode));
     };
     send();
     frame.addEventListener("load", send);
     return () => frame.removeEventListener("load", send);
-  }, [available, frame, target, editing, soloBase]);
+  }, [available, frame, target, editing, soloBase, fromCode]);
 
   // ---------- the frame's rescue store ----------
 
@@ -814,6 +824,7 @@ export function useLiveEdit({
   const start = useCallback(
     (opts?: { focus?: "first" }) => {
       if (!available || signIn) return;
+      if (latest.current.status?.unavailable === "invalid") return;
       focusFirst.current = opts?.focus === "first";
       setSavedVersion(null);
       setRebasedVersion(null);
@@ -1040,6 +1051,10 @@ export function useLiveEdit({
     available,
     merges,
     signIn,
+    blocked:
+      status?.unavailable === "invalid"
+        ? `This ${noun} has problems an agent needs to fix. Ask an agent to fix them.`
+        : null,
     mode,
     editing,
     phase,

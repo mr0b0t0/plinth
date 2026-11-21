@@ -255,6 +255,8 @@ export interface EditorHooks {
   ask?(anchor: AskAnchor, what: AskWhat): void;
   /** The rescue store changed: the app merges this into its copy (see RescueReport). */
   rescue?(report: RescueReport): void;
+  /** The words of an empty text's place to write in (EMPTY_DOC when not given). */
+  empty?: string;
 }
 
 /** Elements whose text reads as separate words from the text next to them. */
@@ -942,7 +944,7 @@ export class DocEditor {
     p.className = "plinth-doc__placeholder";
     p.tabIndex = 0;
     p.setAttribute("role", "button");
-    p.textContent = EMPTY_DOC;
+    p.textContent = this.hooks.empty ?? EMPTY_DOC;
     return p;
   }
 

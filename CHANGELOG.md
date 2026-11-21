@@ -415,10 +415,19 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   version an agent publishes meanwhile is reviewed beside the page's changes, each side with its
   own fonts and images. A Publish from the page stores 2-space JSON, or compact JSON for the
   largest systems, with the guidelines last; an agent's own publishes keep their bytes. A system
-  that no longer parses lists what an agent needs to fix. A design system may nest objects and
+  that no longer parses lists what an agent needs to fix, and its Edit stays off with that reason,
+  so Ask an agent is the way in. A design system may nest objects and
   arrays at most 32 levels deep (`$extensions` included); a publish past that is refused. Typing
   in its formatted texts keeps the doc's rules: text the page cannot save as typed stays in its
   block, keeps Publish off and is kept until the draft has it, across a takeover or a reload.
+
+- **Published from code.** `publish_artifact`, `update_artifact` and `start_upload` take
+  `editing: "code"` for an artifact whose source lives in a repository you publish from, kept
+  until a publish says `"page"`; `get_artifact` returns it to owners and editors. `plinth publish`
+  and the GitHub Action (its new `editing` input, `code` by default) set it for you. People who
+  start editing such a design system on its page are told that the next publish from code
+  replaces their changes, with Ask an agent; editing is not blocked. Migration
+  `0022_artifact_editing.sql`.
 
 ## 0.6.0 (2026-11-20)
 

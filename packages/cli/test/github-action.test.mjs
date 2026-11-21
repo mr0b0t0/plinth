@@ -168,7 +168,11 @@ describe("the GitHub Action", () => {
     assert.equal(o.verified, "true");
     assert.match(r.summary, /### Plinth: published v1/);
     assert.match(r.summary, new RegExp(`Add \`id: ${o.id}\` to this step`));
-    assert.deepEqual(fake.state.lastUploadInput, { type: "html", title: "Coverage" });
+    assert.deepEqual(fake.state.lastUploadInput, {
+      type: "html",
+      title: "Coverage",
+      editing: "code",
+    });
     // The client says who is calling.
     const ua = fake.state.requests.filter((q) => q.path.startsWith("/api/v1/")).at(-1).ua;
     assert.match(ua, /^plinth-cli\/\S+ github-action$/);
@@ -652,18 +656,26 @@ describe("the Action's helpers", () => {
     assert.throws(() => readInputs({ ...base, "INPUT_LINK-RUN": "1" }), /link-run input/);
     assert.throws(() => readInputs({ ...base, "INPUT_BASE-VERSION": "v2" }), /base-version/);
     assert.throws(() => readInputs({ INPUT_PATH: "dist" }), /token input is empty/);
+    // The workflow publishes from the repository: published from code unless editing says page.
+    assert.equal(i.editing, "code");
+    assert.equal(readInputs({ ...base, INPUT_EDITING: "Page" }).editing, "page");
+    assert.throws(() => readInputs({ ...base, INPUT_EDITING: "repo" }), /editing input/);
     assert.deepEqual(buildArgv({ ...i, title: "T" }, "", null), [
       "publish",
       "dist",
       "--json",
       "--title",
       "T",
+      "--editing",
+      "code",
     ]);
     // base-version goes with an update only (the step refuses it without an id before this).
-    assert.deepEqual(buildArgv({ ...i, baseVersion: "7" }, "", null), [
+    assert.deepEqual(buildArgv({ ...i, baseVersion: "7", editing: "page" }, "", null), [
       "publish",
       "dist",
       "--json",
+      "--editing",
+      "page",
     ]);
     assert.deepEqual(buildArgv({ ...i, baseVersion: "3", includeMaps: true }, "abc", "n"), [
       "publish",
@@ -675,6 +687,8 @@ describe("the Action's helpers", () => {
       "n",
       "--base-version",
       "3",
+      "--editing",
+      "code",
       "--include-maps",
     ]);
   });

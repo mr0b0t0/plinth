@@ -8,6 +8,13 @@ export const VISIBILITIES = ["public", "unlisted", "password", "allowlist"];
 
 export const ROLES = ["viewer", "commenter", "editor"];
 
+/**
+ * Where an artifact is edited (docs/spec.md "Published from code"): "code" when its source lives
+ * in code that is published from (the CLI's folder publish and the GitHub Action say so), "page"
+ * otherwise.
+ */
+export const ARTIFACT_EDITING = ["code", "page"];
+
 /** Effective role of a principal on one artifact. `owner` is never stored in access_grants. */
 
 export const CLIENT_TYPES = ["claude", "codex", "other"];

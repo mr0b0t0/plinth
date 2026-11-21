@@ -149,7 +149,7 @@ const compactShareHistory: MenuItem = (c) =>
 
 /** At phone width the Edit toggle folds in here; while editing, the strip's Done is the way out. */
 const compactEditToggle: MenuItem = (c) =>
-  c.compact && c.live.available && !c.live.signIn && !c.editing
+  c.compact && c.live.available && !c.live.signIn && !c.editing && !c.live.blocked
     ? [{ label: "Edit on the page", icon: PencilSimpleIcon, onSelect: c.actions.toggleEditing }]
     : [];
 
@@ -389,15 +389,21 @@ const editToggle: StageNode = (c) =>
   c.live.available &&
   !c.compact &&
   !c.live.signIn && (
-    <Tooltip content={c.editing ? "Done editing" : "Edit on the page"} placement="bottom">
+    <Tooltip
+      content={c.editing ? "Done editing" : (c.live.blocked ?? "Edit on the page")}
+      placement="bottom"
+    >
+      {/* Off while the page has problems only an agent can fix: still focusable, so its reason
+          (the tooltip) can be read; Ask an agent is the way in. */}
       <Button
         ref={c.refs.edit}
         variant="ghost"
         icon={PencilSimpleIcon}
         aria-label="Edit"
         aria-pressed={c.editing}
+        aria-disabled={c.live.blocked && !c.editing ? true : undefined}
         className="pl-viewer__edit"
-        onClick={c.actions.toggleEditing}
+        onClick={c.live.blocked && !c.editing ? undefined : c.actions.toggleEditing}
       />
     </Tooltip>
   );

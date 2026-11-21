@@ -7,6 +7,7 @@
 // example shows only its rendered preview.
 import {
   designSystemToLive,
+  parseDesignSystem,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
   TYPE_REGISTRY,
@@ -137,7 +138,7 @@ describe("token values", () => {
   it("keeps a dimension object an object, and refuses a value the grammar does not take", () => {
     editOn();
     const o = row("space.o");
-    const [n] = [...o.querySelectorAll<HTMLInputElement>('input[type="number"]')];
+    const [n] = [...o.querySelectorAll<HTMLInputElement>("input.ds-field--number")];
     setField(n as HTMLInputElement, "24");
     expect(draft().tokens.space.o.$value).toEqual({ value: 24, unit: "px" });
     // The object form takes px and rem only.
@@ -146,6 +147,27 @@ describe("token values", () => {
     setField(fg as HTMLInputElement, "red; background: url(x)");
     expect(draft().tokens.color.fg.$value).toBe("#1f2328");
     expect(document.querySelector(".ds-notice")?.textContent).toMatch(/color\.fg/);
+  });
+
+  it("show numbers as stored, in text fields with the decimal keypad where they cannot be negative", () => {
+    const ds = SYSTEM();
+    ds.tokens.font.body.$value.letterSpacing = "-0.01em";
+    editOn(ds);
+    const fields = [
+      ...row("font.body").querySelectorAll<HTMLInputElement>("input.ds-field--number"),
+    ];
+    const [size, line, spacing] = fields;
+    // Never a locale number field, which would show "1,5" for 1.5.
+    expect(fields.every((f) => f.type === "text")).toBe(true);
+    expect(line?.value).toBe("1.5");
+    expect([size?.inputMode, line?.inputMode, spacing?.inputMode]).toEqual([
+      "decimal",
+      "decimal",
+      "text",
+    ]);
+    // A decimal comma, as a phone's keypad may type it, reads as a point.
+    setField(line as HTMLInputElement, "1,4");
+    expect(draft().tokens.font.body.$value.lineHeight).toBe(1.4);
   });
 
   it("set a weight with one select, keeping a keyword the token has as its own option", () => {
@@ -286,7 +308,7 @@ describe("what stays with agents", () => {
     ]);
   });
 
-  it("never names a token only the draft has: it asks about its place, with no words", async () => {
+  it("never names or places a token only the draft has: just its kind, with no words", async () => {
     editOn();
     const group = root().querySelector('.ds-group[data-group="color"]') as HTMLElement;
     choose(group, "Add a token");
@@ -300,10 +322,54 @@ describe("what stays with agents", () => {
     choose(row("color.bg"), "Rename: Ask an agent");
     const asks = posted.filter((m) => m.type === "ask");
     expect(asks.map((m) => m.anchor)).toEqual([
-      { key: expect.stringMatching(/^token:\d+$/), text: "" },
+      { key: "token", text: "" },
       { key: "token:color.bg", text: "color.bg" },
     ]);
     expect(JSON.stringify(asks)).not.toContain("rebrand");
+  });
+
+  it("keys a published name too long for a key by its place in the published version", async () => {
+    const ds = SYSTEM();
+    const seg = "x".repeat(64);
+    ds.tokens.zz = { $type: "color", [seg]: { [seg]: { $value: "#654321" } } };
+    const path = `zz.${seg}.${seg}`;
+    const parsed = parseDesignSystem(JSON.stringify(ds));
+    if (!parsed.ok) throw new Error("fixture");
+    const at = parsed.value.tokens.findIndex((t) => t.path === path);
+    expect(at).toBeGreaterThan(0);
+    editOn(ds);
+    // A token added on the page before it moves its place in the draft, not in the version.
+    const group = root().querySelector('.ds-group[data-group="color"]') as HTMLElement;
+    choose(group, "Add a token");
+    const form = group.querySelector("form") as HTMLFormElement;
+    (form.querySelector("input") as HTMLInputElement).value = "aaa";
+    form.requestSubmit();
+    await tick();
+    choose(row(path), "Rename: Ask an agent");
+    const ask = posted.filter((m) => m.type === "ask").at(-1);
+    expect(ask?.anchor).toEqual({ key: `token:${at}`, text: path });
+  });
+
+  it("says once, when editing starts, that a system published from code is replaced from there", () => {
+    mount(SYSTEM());
+    stop = boot(window);
+    send({ type: "edit", on: true, base: 3 });
+    expect(document.querySelector(".ds-notice")).toBeNull();
+    send({ type: "edit", on: false });
+    send({ type: "edit", on: true, base: 3, code: true });
+    const notice = document.querySelector(".ds-notice") as HTMLElement;
+    expect(notice.textContent).toContain(
+      "This design system is published from code. Changes made here are replaced the next time it is published.",
+    );
+    // Editing goes on; Ask an agent asks about the whole system, with no anchor.
+    expect(row("color.bg").classList.contains("ds-token--editing")).toBe(true);
+    const ask = [...notice.querySelectorAll("button")].find(
+      (b) => b.textContent === "Ask an agent",
+    );
+    ask?.click();
+    const asked = posted.filter((m) => m.type === "ask").at(-1);
+    expect(asked).toBeTruthy();
+    expect(asked).not.toHaveProperty("anchor");
   });
 
   it("shows component code only as its rendered preview, and no source anywhere", () => {
@@ -327,6 +393,17 @@ describe("what stays with agents", () => {
     expect(usage.querySelector("li")?.textContent).toBe("Do: one per view");
     // The badge has no description: its place is there to write one in.
     expect(root().querySelector('[data-text="component:badge:description"]')).toBeTruthy();
+  });
+
+  it("names an empty text's place by what it holds: Description, Usage", () => {
+    editOn();
+    const place = (key: string) =>
+      root().querySelector(`[data-text="${key}"] .plinth-doc__placeholder`)?.textContent;
+    expect(place("component:badge:description")).toBe("Description");
+    expect(place("component:badge:usage")).toBe("Usage");
+    expect(
+      root().querySelector<HTMLElement>('[data-text="component:badge:usage"]')?.dataset.placeholder,
+    ).toBe("Usage");
   });
 });
 

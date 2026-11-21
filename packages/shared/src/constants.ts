@@ -9,6 +9,14 @@ export type Visibility = (typeof VISIBILITIES)[number];
 export const ROLES = ["viewer", "commenter", "editor"] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * Where an artifact is edited (docs/spec.md "Published from code"): "code" when its source lives
+ * in code that is published from (the CLI's folder publish and the GitHub Action say so), "page"
+ * otherwise.
+ */
+export const ARTIFACT_EDITING = ["code", "page"] as const;
+export type ArtifactEditing = (typeof ARTIFACT_EDITING)[number];
+
 /** Effective role of a principal on one artifact. `owner` is never stored in access_grants. */
 export type EffectiveRole = Role | "owner";
 

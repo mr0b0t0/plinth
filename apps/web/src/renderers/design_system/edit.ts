@@ -44,8 +44,6 @@ import {
   LIMITS,
   type LineRange,
   type LiveStructOp,
-  PAGE_ANCHOR_KEY_RE,
-  PAGE_COMMENT_LIMITS,
   parseDesignSystemValue,
   splitLines,
 } from "@plinth/shared";
@@ -65,10 +63,13 @@ export interface DsEditorHooks {
   /** The version whose files the draft is drawn with (its base), or null for the page's own. */
   fileVersion(): number | null;
   /**
-   * Ask an agent about a place on the page; `text` only words the published version has, and
-   * `key` only a name it has (else `fallback`, the place).
+   * Ask an agent about a place on the page: a fixed key, or a token, group or component by its
+   * name, which the frame keys from the published version alone (boot.ts). The frame sends `text`
+   * only when the published version has those words.
    */
-  ask(anchor: { key: string; text: string; fallback?: string }): void;
+  ask(anchor: DsAskAnchor): void;
+  /** Ask an agent about the whole design system (no anchor): the published-from-code notice. */
+  askPage?(): void;
   theme(): PreviewTheme;
   /** The site was drawn from the draft: load its fonts (from the draft's base files). */
   drawn?(ds: DesignSystem): void;
@@ -91,6 +92,8 @@ export const WORDS = {
     `Used by ${users.slice(0, 3).join(", ")}${users.length > 3 ? ` and ${users.length - 3} more` : ""}. Change those first.`,
   invalid: "That value can't be used here, so it wasn't kept.",
   tooLarge: "That is more than a design system can hold, so it wasn't kept.",
+  fromCode:
+    "This design system is published from code. Changes made here are replaced the next time it is published.",
 } as const;
 
 const NONE: unique symbol = Symbol("none");
@@ -112,17 +115,14 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const samePath = (a: DsPath, b: DsPath) => a.length === b.length && a.every((s, i) => s === b[i]);
 
 /**
- * A structural anchor: its key by name, or by place when the name does not fit one, and the key by
- * place (`fallback`), which the frame sends instead when the name is not in the published version.
+ * What Ask an agent points at: a fixed key (`system:settings`, a formatted text's block), or a
+ * token, group or component by its name in the draft. The frame keys the named kinds from the
+ * published version alone, so a name only the draft has never leaves the frame.
  */
-function anchorKey(kind: string, name: string, index: number): { key: string; fallback: string } {
-  const key = `${kind}:${name}`;
-  const fallback = `${kind}:${index}`;
-  return {
-    key: key.length <= PAGE_COMMENT_LIMITS.maxKey && PAGE_ANCHOR_KEY_RE.test(key) ? key : fallback,
-    fallback,
-  };
-}
+export type DsAskAnchor =
+  | { key: string; text: string }
+  | { kind: DsAskKind; name: string; text: string };
+export type DsAskKind = "token" | "group" | "component";
 
 // ---------- the parts of the draft the doc's block editor edits ----------
 
@@ -707,6 +707,11 @@ interface TextPart {
 
 export class DsEditor {
   editing = false;
+  /**
+   * Published from code (the app's `edit` message says so, from the gate's `from_code`): starting
+   * edit mode says that the next publish from code replaces the changes made here.
+   */
+  fromCode = false;
   backend: SystemBackend;
   /** The draft's system.json value, and the system it parses to (null when it does not). */
   system: Record<string, unknown> | null = null;
@@ -898,8 +903,8 @@ export class DsEditor {
 
   // ---------- messages ----------
 
-  /** The frame's own status line: what was not done, and why. */
-  say(text: string): void {
+  /** The frame's own status line: what was not done, and why (with one thing to do about it). */
+  say(text: string, action?: { label: string; run: () => void }): void {
     let el = this.notice;
     if (!el) {
       el = this.doc.createElement("div");
@@ -910,12 +915,20 @@ export class DsEditor {
     }
     const msg = this.doc.createElement("span");
     msg.textContent = text;
+    const parts: HTMLElement[] = [msg];
+    if (action) {
+      const b = this.doc.createElement("button");
+      b.type = "button";
+      b.textContent = action.label;
+      b.addEventListener("click", action.run);
+      parts.push(b);
+    }
     const close = this.doc.createElement("button");
     close.type = "button";
     close.className = "plinth-doc__notice-close";
     close.textContent = "Dismiss";
     close.addEventListener("click", () => this.hideNotice());
-    el.replaceChildren(msg, close);
+    el.replaceChildren(...parts, close);
   }
 
   /** Said after the doc editor's own words for the same refusal. */
@@ -975,6 +988,10 @@ export class DsEditor {
     if (on) for (const t of this.texts.values()) t.editor.setEditing(true);
     this.drawn.clear();
     this.draw();
+    // Published from code: once each time edit mode starts, never blocking it.
+    if (on && this.fromCode) {
+      this.say(WORDS.fromCode, { label: "Ask an agent", run: () => this.hooks.askPage?.() });
+    }
     this.statusSoon();
   }
 
@@ -1218,6 +1235,10 @@ export class DsEditor {
       );
     }
     const el = this.doc.createElement("div");
+    // An empty text in edit mode is named by what it holds, where it goes.
+    const empty =
+      key === "guidelines" ? "Guidelines" : key.endsWith(":usage") ? "Usage" : "Description";
+    el.dataset.placeholder = empty;
     const prefix = key === "guidelines" ? "guidelines" : key;
     const hooks: EditorHooks = {
       save: () => this.save(),
@@ -1227,6 +1248,7 @@ export class DsEditor {
       fileVersion: () => this.hooks.fileVersion(),
       ask: (anchor) =>
         this.hooks.ask({ key: `${prefix}:${anchor.key}`.slice(0, 128), text: anchor.text }),
+      empty,
     };
     const editor = new DocEditor(el, this.win, part, hooks);
     part.editor = editor;
@@ -1459,8 +1481,8 @@ export class DsEditor {
     return this.backend.you?.right === "write" && this.backend.conflictVersion === null;
   }
 
-  /** Ask an agent about a place on the page, with its anchor's name and words only when published. */
-  private askAbout(anchor: string | { key: string; fallback: string }, text: string): void {
+  /** Ask an agent about a place on the page (the frame keeps draft names and words out). */
+  private askAbout(anchor: string | { kind: DsAskKind; name: string }, text: string): void {
     this.hooks.ask(typeof anchor === "string" ? { key: anchor, text } : { ...anchor, text });
   }
 
@@ -1547,7 +1569,6 @@ export class DsEditor {
     const info = row.querySelector<HTMLElement>(".ds-token__info");
     const values = row.querySelector<HTMLElement>(".ds-token__values");
     if (!info || !values) return;
-    const index = ds?.tokens.indexOf(t) ?? 0;
     // Edit mode shows a light and a dark sample whenever there is a dark value, even one that is
     // the same, so each value has its sample (a colour's is its picker).
     const pair = row.querySelector<HTMLElement>(".ds-token__pair");
@@ -1617,7 +1638,7 @@ export class DsEditor {
     row.querySelector(".ds-token__alias")?.remove();
     info.append(
       this.menu(`${path}: actions`, () =>
-        this.tokenMenu(row, path, segs, index, lightValue, darkValue, description),
+        this.tokenMenu(row, path, segs, lightValue, darkValue, description),
       ),
     );
   }
@@ -1667,7 +1688,6 @@ export class DsEditor {
     row: HTMLElement,
     path: string,
     segs: string[],
-    index: number,
     light: unknown,
     dark: unknown,
     description: unknown,
@@ -1727,7 +1747,7 @@ export class DsEditor {
         items: [
           {
             label: "Rename: Ask an agent",
-            run: () => this.askAbout(anchorKey("token", path, index), path),
+            run: () => this.askAbout({ kind: "token", name: path }, path),
           },
           {
             label: "Remove",
@@ -1760,6 +1780,7 @@ export class DsEditor {
     f.setAttribute("role", "group");
     f.setAttribute("aria-label", question);
     const q = this.doc.createElement("span");
+    q.className = "ds-form__question";
     q.textContent = question;
     const ok = this.doc.createElement("button");
     ok.type = "button";
@@ -1784,7 +1805,11 @@ export class DsEditor {
         done();
       }
     });
-    f.append(q, ok, cancel);
+    // The two buttons wrap together, so on a phone the question has its line and they the next.
+    const actions = this.doc.createElement("span");
+    actions.className = "ds-form__actions";
+    actions.append(ok, cancel);
+    f.append(q, actions);
     near.append(f);
     cancel.focus();
   }
@@ -1793,7 +1818,6 @@ export class DsEditor {
     const group = row.dataset.group ?? "";
     const cell = row.querySelector<HTMLElement>("th");
     if (!cell) return;
-    const index = Array.from(this.root.querySelectorAll(".ds-group")).indexOf(row);
     cell.append(
       this.menu(`${group || "Top level"}: actions`, () => [
         {
@@ -1807,7 +1831,7 @@ export class DsEditor {
               ? [
                   {
                     label: "Rename: Ask an agent",
-                    run: () => this.askAbout(anchorKey("group", group, Math.max(0, index)), group),
+                    run: () => this.askAbout({ kind: "group", name: group }, group),
                   },
                 ]
               : []),
@@ -1925,7 +1949,6 @@ export class DsEditor {
         this.struct(null, { op: "set_text", path: `components.${id}.status`, value });
       }
     };
-    const index = ds.components.indexOf(c);
     section.classList.add("ds-component--editing");
     section.querySelector("h2")?.after(
       this.menu(`${c.name}: actions`, () => [
@@ -1944,7 +1967,7 @@ export class DsEditor {
             },
             {
               label: "Ask an agent",
-              run: () => this.askAbout(anchorKey("component", id, index), c.name),
+              run: () => this.askAbout({ kind: "component", name: id }, c.name),
             },
           ],
         },

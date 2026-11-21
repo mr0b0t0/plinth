@@ -117,7 +117,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`), `design` (artboards in `design.html`), `sheet` (JSON lines in `sheet.jsonl`, no assets) or `whiteboard` (settings in `board.json`; its blocks and arrows are shared data), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, editing, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`), `design` (artboards in `design.html`), `sheet` (JSON lines in `sheet.jsonl`, no assets) or `whiteboard` (settings in `board.json`; its blocks and arrows are shared data), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner. `editing` is `code` when the publisher said its source lives in code, NULL for the page ([Published from code](#published-from-code-decided-2026-11-21)) |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -330,10 +330,10 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
-| `update_artifact(id, html \| content, content_format?, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?, editing?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
+| `update_artifact(id, html \| content, content_format?, assets?, base_version?, note?, category?, editing?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. `editing` (`code` or `page`, [Published from code](#published-from-code-decided-2026-11-21)) is kept when left out. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?, category?, editing?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. Owners and editors also get `editing` (`code` or `page`). An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
@@ -1114,7 +1114,11 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   shows "This design system has problems an agent needs to fix:" and up to 10 of its problems,
   each its path and words as text, with "Ask an agent" (an `ask` anchored at `system:problems`)
   for the owner and editors where they edit with the room; a page whose payload cannot be read
-  shows one line, "This design system could not be shown."
+  shows one line, "This design system could not be shown." Such a system is not edited on the
+  page: the owner's and editors' frame tells the app so (its status's `unavailable: "invalid"`),
+  the bar's Edit stays off with its reason in its tooltip ("This design system has problems an
+  agent needs to fix. Ask an agent to fix them."), the phone's ⋯ leaves "Edit on the page" out,
+  and Ask an agent is the way in.
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1185,7 +1189,11 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
     its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
     to 5 decimals) and its `hex` kept in step, and a string typed in its place asks first;
-    dimensions and durations a number and a unit (an object dimension `px` or `rem`); a weight
+    dimensions and durations a number and a unit (an object dimension `px` or `rem`), every
+    number in a text field that shows it as stored ("1.5", never a locale's "1,5"; a typed decimal
+    comma reads as a point), with the decimal keypad on phones except for a part that may be below
+    zero (a letter spacing, a shadow's offsets and spread, a value that is), which keeps the full
+    keyboard for its minus; a weight
     one select of 100 to 900, with a keyword or another number the token has kept as its own
     option; a font family a comma list or an array as stored; a cubic Bézier one field of four
     numbers; a shadow, a border or a typography token one field per part; another token through
@@ -1197,8 +1205,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     composite's parts are a label and field grid (labels above the fields on a phone), named
     "Light" and "Dark" only when it has both. The name is a field in the heading's place; the
     description, the guidelines and each component's description and usage are formatted text,
-    with the doc's block editor ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)),
-    and typing in them keeps the doc's rules for text the page cannot write yet: the block stays
+    with the doc's block editor ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19));
+    an empty one names what goes there in its place ("Description", "Usage", "Guidelines"), and
+    a block's ⋯ sits in the same right-hand column as the page's other ⋯. Typing in them keeps the doc's rules for text the page cannot write yet: the block stays
     open and every way to publish waits, the holder sends `keep`, the solo kept copy has the text
     without its formatting, and the rescue store keeps it until the room acknowledges a write of
     it. Each item's id starts with its text's code (`g_` the guidelines, `d_` the description, `c`
@@ -1211,7 +1220,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     A component's status stays the pill beside its name and is set from its heading's ⋯
     ("Status", then Stable, Beta or Deprecated). Each token row has one ⋯ (dark value,
     description, another token, "Rename: Ask an agent", "Remove"), each group row one ⋯ ("Add a
-    token", "Rename: Ask an agent"). The parts of a shadow, border or typography token are
+    token", "Rename: Ask an agent"); on a phone a row's ⋯ is centred on the token's name and a
+    group's on its label. "Remove" asks in place, its two buttons always together (on a phone the
+    question has its own line). The parts of a shadow, border or typography token are
     labelled in words (Color, X, Y, Blur, Spread; Width, Style; Font, Size, Weight, Line height,
     Letter spacing).
   - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
@@ -1220,8 +1231,15 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     ("Rename: Ask an agent"), a component's ("Ask an agent", after "Status") and the header's,
     beside the name ("Ask an agent", whose dialog names "Fonts and settings"). In the review both
     sides are one height, and each opens with its first change at the top of the side, just under
-    its list of changes. A change in the review that is in a component
+    its list of changes; on a phone a side's values wrap inside it, with as much room on a row's
+    right as on its left. A change in the review that is in a component
     names it ("Button: description changed").
+  - **Published from code** ([Published from code](#published-from-code-decided-2026-11-21)).
+    When the design system's publisher said its source lives in code (the gate's `from_code`),
+    starting edit mode shows one short notice in the frame's status line: "This design system is
+    published from code. Changes made here are replaced the next time it is published.", with
+    "Ask an agent" (about the whole design system, no anchor) as the way to change it in the code,
+    and Dismiss. Editing is not blocked.
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
     (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
@@ -1630,7 +1648,9 @@ keeps every run. Guide: `docs/ci.md`.
   `index.html`, `content.md`, `slides.md`, or `system.json` to update a design system; or one
   `.html`/`.md` file), `id`, `url`
   (the instance, hosted by default), `title` and `category` (a new artifact only), `note`,
-  `link-run`, `base-version`, `include-maps`, `dry-run`, `fail-on-warnings`, `summary`. **Outputs**:
+  `link-run`, `base-version`, `editing` (`code` by default, passed as the CLI's `--editing`:
+  [Published from code](#published-from-code-decided-2026-11-21)), `include-maps`, `dry-run`,
+  `fail-on-warnings`, `summary`. **Outputs**:
   `id`, `slug`, `version`, `url`, `version-url`, `compare-url`, `outcome` (`published`,
   `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error`),
   `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`).
@@ -2935,8 +2955,10 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
   which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
   `ask` with block anchors, and the design system renderer with `token:<path>`, `group:<path>`,
-  `component:<id>` and `system:settings` (a path too long for an anchor key, or a token the
-  published version does not have, gives its index), and
+  `component:<id>` and `system:settings` (keys made from the published version only: a path too
+  long for an anchor key gives its index in the published version, `token:12`, and a token or
+  group only the draft has is just `token` or `group`, with no words), with no anchor for the
+  whole design system (the published-from-code notice's Ask an agent), and
   with the block anchors of its formatted texts behind the text's part (`guidelines:block-3`);
   other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
@@ -3218,6 +3240,35 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   before and checks the doc's rules, the sanitizer runs on every rendered block and every kept part,
   and the editor builds its DOM with `createElement` and `textContent` only. The serializer only
   changes which Markdown a person's typing produces.
+
+### Published from code (decided 2026-11-21)
+
+A design system (or any artifact) whose source lives in a repository is published from there by
+the CLI or the GitHub Action, and each such publish is the whole next version: what people changed
+on the page since then is replaced, with nothing to warn them. So the publisher says where the
+artifact is edited, and the page tells the people who edit it there.
+
+- **The flag.** `editing`, `"code"` or `"page"`, on `publish_artifact`, `update_artifact` and
+  `start_upload` (and `POST`/`PUT /api/v1/artifacts`, `POST /api/v1/uploads`). It is stored on
+  the artifact (`artifacts.editing`, migration `0022_artifact_editing.sql`: `'code'` or NULL for
+  the page, the default), not on a version, and commits with the version that carries it, behind
+  the same guards (a refused or stale publish changes neither); an upload ticket keeps it until its
+  commit. A publish or update without it keeps what is there. Whoever may publish the version may
+  set it, a token limited to one artifact included. It changes no permission and blocks nothing.
+- **Who reads it.** `get_artifact` and `GET /api/v1/artifacts/:ref` return `editing` (`"code"` or
+  `"page"`) to owners and editors (and their agents) only. The view gate adds `from_code: true`
+  beside `live` (only where `live` is: an owner or editor of a live type on the current version,
+  with editing on the page on), and the app passes it to the frame in its `edit` message
+  (`code: true`).
+- **What the page does.** A design system shows the notice of [Design systems](#design-systems-decided-2026-11-19)
+  ("Published from code") when edit mode starts. Docs, sheets and decks keep the flag and do not
+  show it yet.
+- **Who sets it.** The CLI's `plinth publish` sends `editing: "code"` for a folder or a single
+  `.html` or `.md` file (its files are the artifact's source), and nothing for a `.csv` or `.xlsx`
+  import (data to edit on the page) unless asked; `--editing code|page` says otherwise. The GitHub
+  Action passes its `editing` input (default `code`) as `--editing`. Agents set `editing: "code"`
+  when they publish an artifact from files in a repository they will publish from again, and
+  `"page"` when people are to take over editing it on the page.
 
 ### Big builds and reuse by hash
 

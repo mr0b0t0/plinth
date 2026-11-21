@@ -127,7 +127,11 @@ describe("plinth publish", () => {
     assert.equal(out.verified, true);
     assert.equal(out.stored.files, 4);
     assert.match(r.stderr, new RegExp(`plinth: ${fake.origin} \\(PLINTH_URL\\)`));
-    assert.deepEqual(fake.state.lastUploadInput, { type: "html", title: "My site" });
+    assert.deepEqual(fake.state.lastUploadInput, {
+      type: "html",
+      title: "My site",
+      editing: "code",
+    });
 
     const reqs = since(from);
     for (const q of reqs) assert.equal(q.ua, `plinth-cli/${VERSION}`, `${q.method} ${q.path}`);
@@ -224,7 +228,7 @@ describe("plinth publish", () => {
     const from = fake.state.requests.length;
     const r = await plinth(["publish", dir, "--id", a.slug, "--json"], { extraEnv: asPat() });
     assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { id: a.id, base_version: 1 });
+    assert.deepEqual(fake.state.lastUploadInput, { id: a.id, base_version: 1, editing: "code" });
     assert.ok(since(from).some((q) => q.path.endsWith("/bundle")));
     assert.ok(!since(from).some((q) => q.method === "PUT"));
     assert.equal(JSON.parse(r.stdout).verified, true);
@@ -404,7 +408,7 @@ describe("plinth publish", () => {
     assert.match(dry.stdout, /as a new sheet/);
     const r = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
     assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { type: "sheet" });
+    assert.deepEqual(fake.state.lastUploadInput, { type: "sheet", editing: "code" });
     const out = JSON.parse(r.stdout);
     assert.equal(out.verified, true);
     const stored = fake.state.artifacts.get(out.id).versions[0];
@@ -582,7 +586,7 @@ describe("plinth publish", () => {
     assert.match(dry.stdout, /as a new deck/);
     const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
     assert.equal(first.code, 0, first.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { type: "slides" });
+    assert.deepEqual(fake.state.lastUploadInput, { type: "slides", editing: "code" });
     const out = JSON.parse(first.stdout);
     assert.equal(out.verified, true);
     const stored = fake.state.artifacts.get(out.id).versions[0];
@@ -614,7 +618,7 @@ describe("plinth publish", () => {
     assert.match(dry.stdout, /as a new design/);
     const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
     assert.equal(first.code, 0, first.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { type: "design" });
+    assert.deepEqual(fake.state.lastUploadInput, { type: "design", editing: "code" });
     const out = JSON.parse(first.stdout);
     assert.equal(out.verified, true);
     const stored = fake.state.artifacts.get(out.id).versions[0];
@@ -665,7 +669,11 @@ describe("plinth publish", () => {
       extraEnv: asPat(),
     });
     assert.equal(first.code, 0, first.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { type: "design_system", title: "Acme UI" });
+    assert.deepEqual(fake.state.lastUploadInput, {
+      type: "design_system",
+      title: "Acme UI",
+      editing: "code",
+    });
     const out = JSON.parse(first.stdout);
     assert.equal(out.verified, true);
     const stored = fake.state.artifacts.get(out.id).versions[0];
@@ -703,11 +711,46 @@ describe("plinth publish", () => {
     );
   });
 
+  it("marks what it publishes as published from code; --editing page says otherwise", async () => {
+    const dir = build(site(1));
+    const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(fake.state.lastUploadInput.editing, "code");
+    const { id } = JSON.parse(first.stdout);
+    // An inline update carries it too, and --editing page clears it.
+    writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>Site</title><p>2</p>");
+    const up = await plinth(["publish", dir, "--id", id, "--json"], { extraEnv: asPat() });
+    assert.equal(up.code, 0, up.stderr);
+    assert.equal(fake.state.lastPut.editing, "code");
+    writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>Site</title><p>3</p>");
+    const page = await plinth(["publish", dir, "--id", id, "--json", "--editing", "page"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(page.code, 0, page.stderr);
+    assert.equal(fake.state.lastPut.editing, "page");
+    // A value it does not know is a usage error, before any request.
+    const sent = fake.state.requests.length;
+    const bad = await plinth(["publish", dir, "--editing", "repo"], { extraEnv: asPat() });
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /--editing is code or page/);
+    assert.equal(fake.state.requests.length, sent);
+    // An import is data to edit on the page: it says so only when asked.
+    const csv = path.join(build({ "q.csv": "Item\nApples\n" }), "q.csv");
+    const plain = await plinth(["publish", csv, "--json"], { extraEnv: asPat() });
+    assert.equal(plain.code, 0, plain.stderr);
+    assert.ok(!("editing" in fake.state.lastPost));
+    const asked = await plinth(["publish", csv, "--json", "--editing", "code"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(asked.code, 0, asked.stderr);
+    assert.equal(fake.state.lastPost.editing, "code");
+  });
+
   it("keeps a folder with index.html a page when it also holds system.json", async () => {
     const dir = build({ ...site(1), "system.json": '{"format":"plinth.design-system/1"}' });
     const r = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
     assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { type: "html" });
+    assert.deepEqual(fake.state.lastUploadInput, { type: "html", editing: "code" });
     const stored = fake.state.artifacts.get(JSON.parse(r.stdout).id).versions[0];
     assert.ok(stored.has("system.json"), "system.json travels as one of the page's files");
   });
@@ -778,7 +821,11 @@ describe("plinth publish --category", () => {
       extraEnv: asPat(),
     });
     assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(fake.state.lastUploadInput, { type: "html", category: "acme site" });
+    assert.deepEqual(fake.state.lastUploadInput, {
+      type: "html",
+      category: "acme site",
+      editing: "code",
+    });
     assert.equal(JSON.parse(r.stdout).category, "acme site");
 
     const text = await plinth(["publish", build(site(1)), "--category", "Acme site"], {
@@ -815,6 +862,7 @@ describe("plinth publish --category", () => {
       base_version: 1,
       note: "n",
       category: "Acme site",
+      editing: "code",
     });
     assert.equal(JSON.parse(b.stdout).category, "Acme site");
   });

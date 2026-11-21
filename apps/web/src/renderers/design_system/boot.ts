@@ -22,6 +22,8 @@ import {
   type DsStructOp,
   type LiveStructOp,
   liveRules,
+  PAGE_ANCHOR_KEY_RE,
+  PAGE_COMMENT_LIMITS,
   parseDesignSystem,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -41,7 +43,7 @@ import { DraftReview } from "../common/review.ts";
 import { blockWords, type RescueReport } from "../doc/edit.ts";
 import { renderMarkdown } from "../doc/markdown.ts";
 import { sanitizeHtml } from "../doc/sanitize.ts";
-import { DsEditor } from "./edit.ts";
+import { type DsAskAnchor, type DsAskKind, DsEditor } from "./edit.ts";
 import { LocalSystem } from "./local.ts";
 import { applyFonts, systemPane } from "./pane.ts";
 import type { PreviewTheme } from "./preview.ts";
@@ -165,18 +167,38 @@ function publishedWords(doc: Document, ds: DesignSystem | null): Set<string> {
 }
 
 /**
- * The anchor keys that name something the published version has (a token, a group, a component),
- * so a key naming what only the draft has (a token added on the page) never reaches the app.
+ * The names of what the published version has, in its order: its tokens' paths, their groups
+ * (first appearance), its components' ids. Anchor keys are made from these alone.
  */
-function publishedKeys(ds: DesignSystem | null): Set<string> {
-  const out = new Set<string>();
+function publishedNames(ds: DesignSystem | null): Record<DsAskKind, string[]> {
+  const out: Record<DsAskKind, string[]> = { token: [], group: [], component: [] };
   if (!ds) return out;
+  const groups = new Set<string>();
   for (const t of ds.tokens) {
-    out.add(`token:${t.path}`);
-    out.add(`group:${tokenGroup(t.path)}`);
+    out.token.push(t.path);
+    groups.add(tokenGroup(t.path));
   }
-  for (const c of ds.components) out.add(`component:${c.id}`);
+  out.group = [...groups];
+  out.component = ds.components.map((c) => c.id);
   return out;
+}
+
+/**
+ * The anchor key of a token, group or component, from the published version only: by its name
+ * when the name fits a key, else by its place in the published version (`token:12`), and just the
+ * kind (`token`) for one only the draft has, so no draft name or position reaches the app.
+ */
+function publishedAnchorKey(
+  names: Record<DsAskKind, string[]>,
+  kind: DsAskKind,
+  name: string,
+): string {
+  const at = names[kind].indexOf(name);
+  if (at < 0) return kind;
+  const key = `${kind}:${name}`;
+  return key.length <= PAGE_COMMENT_LIMITS.maxKey && PAGE_ANCHOR_KEY_RE.test(key)
+    ? key
+    : `${kind}:${at}`;
 }
 
 /** Wires on-page editing. Returns its message handler and how to stop it. */
@@ -207,7 +229,9 @@ function live(
   /** Solo: the version shown, whose files the draft is drawn with. */
   let soloBase: number | null = null;
   let words: Set<string> | null = null;
-  let keys: Set<string> | null = null;
+  let names: Record<DsAskKind, string[]> | null = null;
+  // The published version has problems only an agent can fix: it is not edited on the page.
+  const invalid = published === null;
 
   const poster = appPoster(win, appOrigin, key);
   const post = poster.post;
@@ -244,7 +268,11 @@ function live(
       last_edit_at: c?.lastEditAt ?? null,
       editors,
       publishable: editor?.parsed != null && !(editor?.unsavable ?? false),
-      ...(unavailable ? { unavailable: "too_large" as const } : {}),
+      ...(unavailable
+        ? { unavailable: "too_large" as const }
+        : invalid
+          ? { unavailable: "invalid" as const }
+          : {}),
       ...(editor?.unsavable ? { unsavable: true as const } : {}),
     };
     post({ type: "live", ...s });
@@ -267,18 +295,20 @@ function live(
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
     // A place the person wants an agent to change: the app opens its Ask dialog. The anchor is a
-    // structural key, by name only when the published version has that name (else by place),
-    // with words only the published version has.
-    ask: (anchor: { key: string; text: string; fallback?: string }) => {
+    // structural key made from the published version only (publishedAnchorKey), with words only
+    // the published version has.
+    ask: (anchor: DsAskAnchor) => {
       words ??= publishedWords(win.document, published);
-      keys ??= publishedKeys(published);
+      names ??= publishedNames(published);
       const key =
-        anchor.fallback === undefined || keys.has(anchor.key) ? anchor.key : anchor.fallback;
+        "kind" in anchor ? publishedAnchorKey(names, anchor.kind, anchor.name) : anchor.key;
       post({
         type: "ask",
         anchor: { key, text: words.has(anchor.text) ? anchor.text : "" },
       });
     },
+    // About the whole design system: no anchor.
+    askPage: () => post({ type: "ask" }),
     theme,
     drawn: (ds: DesignSystem) => {
       applyFonts(win.document, ds, hooks.fileVersion(), "site");
@@ -397,7 +427,14 @@ function live(
   const onMessage = (m: EditAppMessage) => {
     if (m.type === "edit") {
       if (m.base !== undefined) soloBase = m.base;
+      // Problems only an agent can fix: the page stays as it is (the status says why). One too
+      // large to edit on the page says that first, as it always has.
+      if (m.on && invalid && !rules.tooLarge(rules.toLive(payload.text))) {
+        status();
+        return;
+      }
       if (m.on && (!client || client.failed)) goSolo();
+      if (editor && m.on) editor.fromCode = m.code === true;
       sizeDue = null;
       unavailable = false;
       if (!m.on) {
@@ -433,6 +470,8 @@ function live(
   };
   return {
     onMessage,
+    /** Tell the app where editing stands now (an invalid system, before any message). */
+    status,
     stop: () => {
       client?.stop();
       editor?.setEditing(false);
@@ -492,6 +531,9 @@ export function boot(win: Window, opts: { connect?: LiveDocOptions["connect"] } 
   }
   let stopTracking = trackSection(win, root);
   if (payload.live === "room" && appOrigin !== "") start();
+  // Problems only an agent can fix: the app keeps its Edit off and says why. Only a frame the app
+  // gave its key (the owner's and editors') tells it.
+  if (!parsed.ok && appOrigin !== "" && key !== null) start().status();
 
   const onScheme = () => setPreviewTheme(root, theme());
   scheme?.addEventListener?.("change", onScheme);

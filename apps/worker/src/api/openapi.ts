@@ -3,6 +3,7 @@
 // Served at /openapi.json; `pnpm openapi` writes docs/openapi.json from the same function.
 import {
   API,
+  ARTIFACT_EDITING,
   ARTIFACT_TYPES,
   type ArtifactType,
   type ArtifactTypeDef,
@@ -839,8 +840,24 @@ function responseSchemas(): Record<string, Json> {
             },
             ask: ref("ViewGateAsk"),
             live_off: ref("ViewGateLiveOff"),
+            from_code: {
+              const: true,
+              description:
+                "With `live` only: the artifact's publisher said its source lives in code, so " +
+                "the next publish from there replaces page edits; edit mode says so",
+            },
           },
-          ["data", "live", "page_comments", "watch", "people", "hold", "ask", "live_off"],
+          [
+            "data",
+            "live",
+            "page_comments",
+            "watch",
+            "people",
+            "hold",
+            "ask",
+            "live_off",
+            "from_code",
+          ],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -1332,6 +1349,12 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
           "never returned). Null when there are none",
       };
     }
+    detail.properties.editing = {
+      ...enumOf(ARTIFACT_EDITING),
+      description:
+        'Owners and editors only: "code" when the publisher said its source lives in code (the ' +
+        'next publish from there replaces page edits), else "page"',
+    };
     detail.properties.capabilities = {
       type: "array",
       items: enumOf(DATA_CAPABILITIES),

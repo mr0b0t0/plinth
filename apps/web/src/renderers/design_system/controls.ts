@@ -26,6 +26,8 @@ export interface ControlContext {
   label: string;
   /** False when the row's sample is the colour picker (samplePicker): no swatch beside the field. */
   swatch?: boolean;
+  /** A part whose value may be below zero (a letter spacing, a shadow's offset or spread). */
+  signed?: boolean;
   /** Tokens of `type` a value (or a part) may name, for the pickers. */
   targets(type: DsTokenType): string[];
   /** The person set a new value. */
@@ -76,11 +78,27 @@ function group(ctx: ControlContext, ...children: HTMLElement[]): HTMLElement {
   return g;
 }
 
-/** A finite number from a field, or null. */
+/** A finite number from a field, or null. A decimal comma ("1,5") reads as a point. */
 function numberOf(s: string): number | null {
-  if (s.trim() === "") return null;
-  const n = Number(s);
+  const t = s.trim();
+  if (t === "") return null;
+  const n = Number(/^-?\d*,\d+$/.test(t) ? t.replace(",", ".") : t);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * A number field: a text field, so the value reads as it is stored ("1.5", never a locale's
+ * "1,5"), with the decimal keypad on phones. A field whose value may be below zero (a letter
+ * spacing, a shadow's offset) keeps the full keyboard, whose minus the decimal keypad lacks on
+ * some phones.
+ */
+function numberField(ctx: ControlContext, value: string, signed: boolean): HTMLInputElement {
+  const n = input(ctx, "text", "number", value);
+  n.className = "ds-field ds-field--number";
+  n.inputMode = signed ? "text" : "decimal";
+  n.autocomplete = "off";
+  n.spellcheck = false;
+  return n;
 }
 
 /** `o` with `key` set to `value`, keeping the order of its keys (a new key goes last). */
@@ -242,8 +260,7 @@ function unitControl(
     }
   }
   const allowed = asObject ? objectUnits : units;
-  const n = input(ctx, "number", "number", String(num));
-  n.step = "any";
+  const n = numberField(ctx, String(num), ctx.signed === true || num < 0);
   const u = select(
     ctx,
     "unit",
@@ -281,8 +298,11 @@ function weightControl(ctx: ControlContext, value: unknown): HTMLElement {
 }
 
 function numberControl(ctx: ControlContext, value: unknown): HTMLElement {
-  const n = input(ctx, "number", "number", typeof value === "number" ? String(value) : "");
-  n.step = "any";
+  const n = numberField(
+    ctx,
+    typeof value === "number" ? String(value) : "",
+    typeof value === "number" && value < 0,
+  );
   n.addEventListener("change", () => {
     const v = numberOf(n.value);
     if (v !== null) ctx.change(v);
@@ -350,6 +370,7 @@ function part(
     label: `${ctx.label} ${words.toLowerCase()}`,
     change: set,
     swatch: true,
+    signed: SIGNED_PARTS.has(name),
   };
   const box = ctx.doc.createElement("div");
   box.className = "ds-part";
@@ -359,6 +380,9 @@ function part(
   box.append(label, valueControl(sub, type, value));
   return box;
 }
+
+/** The parts whose value may be below zero. */
+const SIGNED_PARTS = new Set(["offsetX", "offsetY", "spread", "letterSpacing"]);
 
 /** What a composite's part is called on the page (its key is what the JSON says). */
 const PART_WORDS: Record<string, string> = {

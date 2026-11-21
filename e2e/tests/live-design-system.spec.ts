@@ -3,7 +3,8 @@
 // JSON with that colour; a version an agent publishes meanwhile is never merged: the page edits
 // freeze, and the whole-draft review shows both sites and publishes the page's as they are; a
 // token row's "Rename: Ask an agent" opens the Ask dialog pointing at that token; and a compact
-// system of about 900 KB, changed in place, is published compact. With PLINTH_E2E_SHOTS set, the
+// system of about 900 KB, changed in place, is published compact; one published from code says so
+// when editing starts. With PLINTH_E2E_SHOTS set, the
 // edit mode, the menus, the Ask dialog and the review are saved for review in each project.
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { apiGet, uniqueEmail } from "../support/api.ts";
@@ -24,7 +25,7 @@ async function shot(page: Page, info: TestInfo, name: string) {
 }
 
 /** An owner whose agent publishes `content` as a design system, signed in on the page. */
-async function publishDs(page: Page, content: string) {
+async function publishDs(page: Page, content: string, extra: Json = {}) {
   const email = uniqueEmail("ds-live");
   const { token } = await seedToken(email, { label: "Design agent", clientType: "claude" });
   await seedSession(page.context(), email);
@@ -34,6 +35,7 @@ async function publishDs(page: Page, content: string) {
     type: "design_system",
     content,
     assets: ACME_ASSETS,
+    ...extra,
   });
   expect(r.isError, r.text).toBe(false);
   return { client, id: r.data.id, slug: r.data.slug };
@@ -214,6 +216,34 @@ test("Rename: Ask an agent on a token row opens the Ask dialog pointing at the t
     await dialog.getByRole("button", { name: "Cancel" }).click();
     // Still editing.
     await expect(page.getByRole("region", { name: "Editing on the page" })).toBeVisible();
+  } finally {
+    await client.close();
+  }
+});
+
+test("a design system published from code says so when editing starts, and Ask an agent asks about all of it", async ({
+  page,
+}, info) => {
+  await stubGoogleFonts(page);
+  const { client, slug } = await publishDs(page, JSON.stringify(ACME), { editing: "code" });
+  try {
+    await open(page, slug);
+    await startEditing(page);
+    const notice = frameOf(page).locator(".ds-notice");
+    await expect(notice).toContainText(
+      "This design system is published from code. Changes made here are replaced the next time it is published.",
+    );
+    await shot(page, info, "from-code");
+    // Editing is not blocked.
+    await setColor(page, "color.bg", "#fafafa");
+    await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
+      "Draft saved",
+      { timeout: 10_000 },
+    );
+    await notice.getByRole("button", { name: "Ask an agent" }).click();
+    const dialog = page.getByRole("dialog", { name: "Ask an agent" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).not.toContainText("Pointing at");
   } finally {
     await client.close();
   }

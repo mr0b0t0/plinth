@@ -2676,8 +2676,10 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   (`token:<path>`, `group:<path>`, `component:<id>`, `system:settings`) and its formatted texts'
   block anchors behind the text's part; a label is sent only when the published version has the
   same words (a token's path, a component's name, a block's first words), and a token, group or
-  component key by name only when the published version has that name (else by its index), so no
-  draft text reaches the app. Other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
+  component key is made from the published version only: by name when it has that name and the
+  name fits a key, by its index in the published version when it does not fit, and as the bare
+  kind (`token`, `group`) for one only the draft has, so no draft name, text or position reaches
+  the app. Other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
   bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose
   origin is `"null"`; the bar's Ask an agent and the comments panel need none.
 - **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path

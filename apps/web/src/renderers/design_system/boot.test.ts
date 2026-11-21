@@ -421,6 +421,46 @@ describe("boot", () => {
     }
   });
 
+  it("tells the app an invalid system is not edited on the page, and stays as it is", async () => {
+    const KEY = "K".repeat(43);
+    mountShell(JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" }));
+    const posted: Record<string, unknown>[] = [];
+    const spy = vi.spyOn(window.parent, "postMessage").mockImplementation((m: unknown) => {
+      posted.push(m as Record<string, unknown>);
+    });
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      // A viewer's frame has no key: it tells the app nothing.
+      stop = boot(window);
+      await flush();
+      expect(posted.filter((m) => m.type === "live")).toHaveLength(0);
+      stop();
+      // An owner's or editor's frame (the app put its key in the address) says why.
+      window.location.hash = `#plinth-k=${KEY}`;
+      stop = boot(window);
+      await flush();
+      const live = posted.filter((m) => m.type === "live");
+      expect(live.at(-1)).toMatchObject({ key: KEY, editing: false, unavailable: "invalid" });
+      // Edit mode asked for anyway: nothing changes on the page.
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "plinth-renderer", v: 1, type: "edit", on: true },
+          origin: APP,
+          source: window.parent as never,
+        }),
+      );
+      await flush();
+      expect(posted.filter((m) => m.type === "live").at(-1)).toMatchObject({
+        editing: false,
+        unavailable: "invalid",
+      });
+      expect(root().querySelector(".ds-error")).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+      window.location.hash = "";
+    }
+  });
+
   it("refuses a payload for another type or that is not JSON", () => {
     mountPayload(
       jsonForScript({ v: 1, type: "doc", path: "content.md", app_origin: APP, text: "{}" }),

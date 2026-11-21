@@ -2763,6 +2763,11 @@
             "maxLength": 60,
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
           },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there replaces what people change on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
+          },
           "note": {
             "description": "A note for v1, shown in History (e.g. \"Imported from sales.xlsx\"). Empty: none",
             "type": "string",
@@ -2819,6 +2824,11 @@
             "minLength": 1,
             "maxLength": 60,
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+          },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there replaces what people change on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
           },
           "files_from_version": {
             "description": "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. The signed-in app only: a token limited to one artifact gets 403 token_bound, any other bearer token 403 app_only. Not with assets; a version that does not exist or is newer than the current one is 404",
@@ -3109,6 +3119,11 @@
             "minLength": 1,
             "maxLength": 60,
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+          },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there replaces what people change on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
           }
         }
       },
@@ -3599,6 +3614,11 @@
             "oneOf": [{ "$ref": "#/components/schemas/DesignSystemReference" }, { "type": "null" }],
             "description": "Only for a page with <meta name=\"plinth-design-system\">: that design system when you may view it and it is one, else null"
           },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+          },
           "capabilities": {
             "type": "array",
             "items": {
@@ -3738,6 +3758,11 @@
             "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
             "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
           },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+          },
           "capabilities": {
             "type": "array",
             "items": {
@@ -3876,6 +3901,11 @@
               },
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
+          },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4020,6 +4050,11 @@
             "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
             "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
           },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+          },
           "capabilities": {
             "type": "array",
             "items": {
@@ -4158,6 +4193,11 @@
               },
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
+          },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4298,6 +4338,11 @@
             "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
             "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
           },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+          },
           "capabilities": {
             "type": "array",
             "items": {
@@ -4436,6 +4481,11 @@
               },
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
+          },
+          "editing": {
+            "type": "string",
+            "enum": ["code", "page"],
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -5426,7 +5476,11 @@
                 "description": "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the viewer is using the page (focus inside its frame), a newer version waits behind an Update button instead of replacing it"
               },
               "ask": { "$ref": "#/components/schemas/ViewGateAsk" },
-              "live_off": { "$ref": "#/components/schemas/ViewGateLiveOff" }
+              "live_off": { "$ref": "#/components/schemas/ViewGateLiveOff" },
+              "from_code": {
+                "const": true,
+                "description": "With `live` only: the artifact's publisher said its source lives in code, so the next publish from there replaces page edits; edit mode says so"
+              }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },

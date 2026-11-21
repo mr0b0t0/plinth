@@ -690,6 +690,13 @@
   font-weight: 400;
 }
 
+/* A question's two buttons stay together: when the line is short they wrap as one, under it. */
+.ds-form__actions {
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+}
+
 /* Add a token: the name takes the room, its buttons stay on its line. */
 .ds-form--add {
   flex-wrap: nowrap;
@@ -719,9 +726,30 @@
   top: 0;
 }
 
-/* An empty formatted text in edit mode still has a place to write in. */
+/* A formatted text's block ⋯ sits in the same right-hand column as every other ⋯ of the page (the
+   header's, the rows', the components'), not at the end of the text's narrower measure: these
+   boxes are the width the ⋯ are placed against. */
+.ds-header--editing,
+.ds-component--editing,
+.ds-overview:has(> .plinth-doc--editing) {
+  container-type: inline-size;
+}
+
+/* A container keeps its last child's bottom margin inside: the section's own (larger) margin
+   stays the only gap, as in view mode, so nothing moves when editing starts. */
+.ds-component--editing > :last-child,
+.ds-overview:has(> .plinth-doc--editing) > :last-child {
+  margin-bottom: 0;
+}
+
+.ds-prose.plinth-doc--editing .plinth-rich__corner {
+  right: calc(100% - 100cqi + 6px);
+}
+
+/* An empty formatted text in edit mode still has a place to write in, named by what it holds
+   ("Description", "Usage", "Guidelines"; edit.ts), also where the person cannot write. */
 .ds-prose.plinth-doc--editing:empty::before {
-  content: "Write something";
+  content: attr(data-placeholder);
   color: var(--doc-muted);
 }
 
@@ -881,12 +909,33 @@
     border: 0;
   }
 
-  .ds-group .ds-menu {
-    top: -4px;
+  /* A row's ⋯ is centred on the token's name, a group's on the group's label: half a line down,
+     then up by half the button (2rem, or 2.75rem for a finger). */
+  .ds-group .ds-menu,
+  .ds-token--editing .ds-token__info > .ds-menu {
+    display: flex;
+    top: 0.5lh;
+    margin-top: -1rem;
   }
 
   .ds-token--editing .ds-token__info {
     padding-right: 40px;
+  }
+
+  /* A question has its own line, its two buttons the next. */
+  .ds-form__question {
+    flex: 1 1 100%;
+  }
+
+  /* The review's sides: the values wrap inside the side, with as much room on the right of a row
+     as on its left, and a changed row's tint reaches the side's edges. */
+  .ds-site--pane {
+    padding-inline: 8px;
+  }
+
+  .ds-site--pane [data-review-changed] {
+    margin-inline: -8px;
+    padding-inline: 8px;
   }
 
   .ds-field--text,
@@ -953,6 +1002,14 @@
 
 @page {
   margin: 16mm;
+}
+
+/* After the narrow rules: a finger's ⋯ is 2.75rem, so half of it up. */
+@media (max-width: 760px) and (pointer: coarse) {
+  .ds-group .ds-menu,
+  .ds-token--editing .ds-token__info > .ds-menu {
+    margin-top: -1.375rem;
+  }
 }
 
 @media print {

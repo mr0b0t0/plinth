@@ -24,8 +24,11 @@ import type { DraftReview, ReviewOutcome } from "./review.ts";
 export type ReviewResult = "busy" | "resolved" | "conflict" | "failed" | "done";
 
 export type EditAppMessage =
-  /** `focus: "first"` (from the app's `?edit`): focus the first block or cell once there is one. */
-  | { type: "edit"; on: boolean; base?: number; focus?: "first" }
+  /**
+   * `focus: "first"` (from the app's `?edit`): focus the first block or cell once there is one.
+   * `code` (gate `from_code`): the artifact is published from code, and the frame says so.
+   */
+  | { type: "edit"; on: boolean; base?: number; focus?: "first"; code?: true }
   | { type: "collect"; nonce: string }
   | {
       type: "review";
@@ -95,11 +98,13 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
   if (m.type === "edit" && typeof m.on === "boolean") {
     if (m.base !== undefined && !isVersion(m.base)) return null;
     if (m.focus !== undefined && m.focus !== "first") return null;
+    if (m.code !== undefined && m.code !== true) return null;
     return {
       type: "edit",
       on: m.on,
       ...(isVersion(m.base) ? { base: m.base } : {}),
       ...(m.on && m.focus === "first" ? { focus: "first" as const } : {}),
+      ...(m.on && m.code === true ? { code: true as const } : {}),
     };
   }
   if (m.type === "rescue") {

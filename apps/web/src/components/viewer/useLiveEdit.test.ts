@@ -180,6 +180,41 @@ describe("useLiveEdit", () => {
     expect(toasts).toHaveLength(before);
   });
 
+  it("tells the frame an artifact published from code is, only when the gate says so", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const { result } = hook(gate("room", { from_code: true }));
+    act(() => result.current.start());
+    expect(sentToFrame("edit").at(-1)?.[0]).toEqual({
+      source: "plinth-renderer",
+      v: 1,
+      type: "edit",
+      on: true,
+      code: true,
+    });
+    cleanup();
+    toFrame.mockClear();
+    const plain = hook(gate("room"));
+    act(() => plain.result.current.start());
+    expect(sentToFrame("edit").at(-1)?.[0]).not.toHaveProperty("code");
+  });
+
+  it("keeps Edit off, with why, while the frame says only an agent can fix the page", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const { result } = hook(
+      gate("room", {
+        artifact: { ...gate("room").artifact, type: "design_system" },
+      }),
+    );
+    expect(result.current.blocked).toBeNull();
+    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "invalid" });
+    expect(result.current.blocked).toBe(
+      "This design system has problems an agent needs to fix. Ask an agent to fix them.",
+    );
+    act(() => result.current.start());
+    expect(result.current.editing).toBe(false);
+    expect(sentToFrame("edit")).toHaveLength(0);
+  });
+
   it("has no on-page editing under opaque isolation", () => {
     stubApi();
     const { result } = renderHook(() =>

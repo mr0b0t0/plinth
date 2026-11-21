@@ -27,6 +27,7 @@
 // stay the same), and sensitive_file in the instructions only.
 // Ask an agent adds list_mentions' sentence on requests sent from the app (the "@agent:other" target
 // for every other client) and the untrusted note's Ask an agent sentence, on every instance.
+// Published from code adds `editing` to publish_artifact, update_artifact and start_upload.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -85,7 +86,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "46a5e900dbebe8902bc226c0805fd033cf50f619929edbcd76af47052809128a",
+      tools: "1b252d450ce98c484d9a4ee35de792a530556304bd6e6875d26ac24674e36db1",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -95,7 +96,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "b3d121d5a7471b6a47acd01f1be908ba3b89478ad015a381f0ba0951908fad89",
+      tools: "5d938234ead52ef7239738d7fcd8b4455af644b0fc64abea757cc8ddd576ebe8",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -107,7 +108,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "081492e2186f1ad3cc827da417c3d78ba4c1fa8a6edfb6a483ae89e032982825",
+      tools: "9fa313eda7510e3e30b6441f3d1e5660fb13ccf047401f6278c4017494390769",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -117,7 +118,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "64296160944bc36b7075272a305b1238983910a02a3b4f1ee1c53ecbe135bc5a",
+      tools: "970521102b489c83e0527a150084fa2fef1b6145721be23d5f6c217f9fd3329f",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "2a24eb0eedee809683ad4aec0509c0bb0626a4a53ffd5ee771625da43f35a1ee",

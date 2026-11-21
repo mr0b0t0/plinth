@@ -144,6 +144,7 @@ is safe.
 | `note` | empty | The version note. Empty: the commit subject and short SHA. `-`: no note |
 | `link-run` | `false` | Append this run's URL to the note |
 | `base-version` | empty | Publish only if the artifact is still at this version. Needs an artifact to update (`id`, or a token limited to one): without one the step fails with exit code 2 and creates nothing |
+| `editing` | `code` | `code`: the artifact is published from this repository, so people who edit it on its page (a design system) are told that the next run replaces their changes. `page`: no such notice. See [Published from code](#published-from-code) |
 | `include-maps` | `false` | Also send source maps |
 | `dry-run` | `false` | Check the build and report what would be sent; publish nothing |
 | `fail-on-warnings` | `false` | Fail the step when the publish reports warnings (it is still published). `not_scanned` and `live_draft` need no action and never fail it |
@@ -258,6 +259,17 @@ With `--dry-run` it prints what would be sent, and sends nothing:
 `files` and `bytes` count the whole version. For an update, `changed` and `reused` count its asset
 files (the source is always sent), and `send` is `inline` (one request) or `bundle`. A new artifact
 has only `type`, `files`, `bytes` and `send`.
+
+## Published from code
+
+A publish from CI is the whole new version: it replaces whatever people changed on the artifact's
+page since the last run. So the Action and `plinth publish` mark the artifact as published from
+code (`editing: code`), and the mark stays until a publish says otherwise. On a design system,
+people who start editing it on its page are then told "This design system is published from
+code. Changes made here are replaced the next time it is published.", with Ask an agent as the
+way to change it in the repository. Editing is not blocked. Set the `editing` input (or
+`--editing page`) to `page` to clear the mark, for an artifact you publish once and then edit on
+its page. A `.csv` or `.xlsx` import sends no mark unless `--editing` is given.
 
 ## Your own instance
 

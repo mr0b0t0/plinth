@@ -168,6 +168,11 @@ npx @mr0b0t0/plinth publish budget.xlsx   # a sheet (budget.csv works too)
   artifact's owner may pass it; when the folder already matches and nothing is sent, the category is
   not applied either, and the command says so.
   The command never guesses it (from git or anything else); only you or your agent set it.
+- **Published from code.** A folder or an `.html` or `.md` file you publish is the artifact's
+  source, so the command marks the artifact as published from code (`editing: "code"`): people
+  who edit a design system on its page are told the next publish from here replaces their
+  changes. `--editing page` clears the mark, for an artifact people are to edit on its page from
+  now on. A `.csv` or `.xlsx` import sends no mark unless `--editing` is given.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 
 Which instance: `--url`, else the instance `--name` and `--home` pick, else `PLINTH_URL`, else
@@ -204,7 +209,7 @@ Client commands (they work with any instance, need no Cloudflare account and no 
 | `plinth login` | Sign in to an instance in the browser (`--no-browser` prints the address) |
 | `plinth logout` | Revoke and forget that sign-in |
 | `plinth whoami` | The account you are signed in as, and on which instance (and the artifact a token is limited to) |
-| `plinth publish <dir\|file.html\|file.md\|file.csv\|file.xlsx>` | Publish a build folder or one file (a `.csv` or `.xlsx` becomes a sheet); `--id`, `--title`, `--category`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
+| `plinth publish <dir\|file.html\|file.md\|file.csv\|file.xlsx>` | Publish a build folder or one file (a `.csv` or `.xlsx` becomes a sheet); `--id`, `--title`, `--category`, `--note`, `--base-version`, `--editing`, `--include-maps`, `--dry-run`, `--json` |
 | `plinth upload <dir> --to <upload_url>` | Send a folder with a `start_upload` ticket (token in `PLINTH_UPLOAD_TOKEN`) |
 
 Exit codes: 0 done, 1 error, 2 wrong usage, 3 the artifact changed since the version you read.

@@ -43,7 +43,7 @@ import {
   readJson,
 } from "./http.mjs";
 import { gzipTarStream } from "./tar.mjs";
-import { LIMITS, UPLOAD_TOKEN_PREFIX } from "./vendor/constants.mjs";
+import { ARTIFACT_EDITING, LIMITS, UPLOAD_TOKEN_PREFIX } from "./vendor/constants.mjs";
 import { isLoopbackHost } from "./vendor/plinth-oauth.mjs";
 
 /** Updates whose source plus changed files stay under this go inline (base64 in one JSON body). */
@@ -97,6 +97,18 @@ export function checkCategory(raw) {
           : null;
   if (why) throw new CliError(`--category ${why} (a short project or repo name)`, EXIT.usage);
   return name;
+}
+
+/**
+ * `--editing` as the server takes it (docs/spec.md "Published from code"). A folder or a source
+ * file published from here is the artifact's source, so it is "code" unless --editing page says
+ * otherwise: the next publish from it replaces what people change on the page, and edit mode tells
+ * them. An imported .csv or .xlsx is data to edit on the page: nothing is sent unless asked.
+ */
+export function editingOf(raw, kind) {
+  if (raw === undefined) return kind === "import" ? {} : { editing: "code" };
+  if (!ARTIFACT_EDITING.includes(raw)) throw new CliError("--editing is code or page", EXIT.usage);
+  return { editing: raw };
 }
 
 /** The name a single published file takes, by extension; null for one that cannot be published. */
@@ -820,6 +832,7 @@ export async function publish(dir, givenOpts, ctx) {
   if (givenOpts.id !== undefined && givenOpts.title !== undefined)
     throw new CliError("--title applies to a new artifact only", EXIT.usage);
   if (givenOpts.category !== undefined) checkCategory(givenOpts.category);
+  editingOf(givenOpts.editing, source.kind);
   let base;
   if (givenOpts["base-version"] !== undefined) {
     base = Number(givenOpts["base-version"]);
@@ -851,7 +864,9 @@ export async function publish(dir, givenOpts, ctx) {
       throw new CliError("--base-version applies to an update (--id)", EXIT.usage);
   }
   const category = opts.category !== undefined ? { category: checkCategory(opts.category) } : {};
-  if (source.kind === "import") return publishImport(source, opts, ctx, { base, category });
+  const editing = editingOf(opts.editing, source.kind);
+  if (source.kind === "import")
+    return publishImport(source, opts, ctx, { base, category: { ...category, ...editing } });
 
   const { files, skipped } = collectSource(source, {
     includeMaps: opts["include-maps"] === true,
@@ -887,6 +902,7 @@ export async function publish(dir, givenOpts, ctx) {
         type,
         ...(opts.title ? { title: opts.title } : {}),
         ...category,
+        ...editing,
       });
     } catch (e) {
       throw apiFailure(e);
@@ -1032,6 +1048,7 @@ export async function publish(dir, givenOpts, ctx) {
           base_version: base,
           ...note,
           ...category,
+          ...editing,
         });
         try {
           try {
@@ -1056,6 +1073,7 @@ export async function publish(dir, givenOpts, ctx) {
           base_version: base,
           ...note,
           ...category,
+          ...editing,
         });
         const uploadUrl = checkUploadUrl(ticket.upload_url, {
           expectedOrigin: ctx.origin,

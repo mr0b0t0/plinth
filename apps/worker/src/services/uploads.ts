@@ -8,6 +8,7 @@
 // in a header, and dies with its connection (or with ADMIN_TOKEN and single-user mode).
 import {
   ARTIFACT_ID_RE,
+  type ArtifactEditing,
   type ArtifactType,
   type BundleResult,
   LIMITS,
@@ -90,6 +91,8 @@ export interface TicketRow {
   note: string | null;
   /** The category start_upload was given (migrations/0009_categories.sql); NULL = none given. */
   category: string | null;
+  /** start_upload's `editing` (migrations/0022_artifact_editing.sql); NULL = none given. */
+  editing: ArtifactEditing | null;
   base_version: number | null;
   state: "open" | "used" | "dead";
   /** Why a dead ticket ended: a version conflict, or a takedown of its artifact. */
@@ -232,8 +235,8 @@ export async function startUpload(
   await ctx.env.DB.prepare(
     `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, admin_token_hash,
        scopes, mode, artifact_id, artifact_type, title, note, base_version, state, attempts,
-       created_at, expires_at, reserved_artifact_id, category)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17)`,
+       created_at, expires_at, reserved_artifact_id, category, editing)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17, ?18)`,
   )
     .bind(
       id,
@@ -253,6 +256,7 @@ export async function startUpload(
       expiresAt,
       fresh ? fresh.artifactId : null,
       target.category ?? null,
+      input.editing ?? null,
     )
     .run();
   // No cron under `wrangler dev`: clear abandoned attempts and old tickets here too (capped,
@@ -973,6 +977,7 @@ async function ticketTarget(
         target.artifact.id,
       );
     }
+    if (t.editing !== null) target.editing = t.editing;
     return target;
   }
   if (!hasWriteScope(ctx.principal)) throw forbidden("This token lacks the artifacts:write scope");
@@ -980,6 +985,7 @@ async function ticketTarget(
     type: t.artifact_type as ArtifactType,
     title: t.title ?? undefined,
     ...(t.category !== null ? { category: t.category } : {}),
+    ...(t.editing !== null ? { editing: t.editing } : {}),
     ...(t.reserved_artifact_id ? { artifactId: t.reserved_artifact_id } : {}),
   });
 }

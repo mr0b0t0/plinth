@@ -39,6 +39,10 @@ inputs:
     description: Publish only if the artifact is still at this version (exit 3 otherwise)
     required: false
     default: ""
+  editing:
+    description: 'Where the artifact is edited. "code" (the default): it is published from this repository, and people editing it on its page are told the next run replaces their changes. "page": no such notice'
+    required: false
+    default: code
   include-maps:
     description: Also send source maps
     required: false
