@@ -10,6 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **HTML decks in Claude's slide format.** A deck can now be `deck.json`, `deck.css` and one
+  `slides/<id>.html` per slide, as Claude's Slides writes them, beside Markdown decks, which work as
+  before. Plinth checks each slide against Claude's element list and limits at publish. Each slide
+  is shown on its 1920x1080 (or 1440x1080) canvas with its own CSS and fonts, and Plinth draws its
+  shapes, icons and connectors. Fragments, transitions and arrival animations play (off under
+  reduced motion and in print), and live embeds run in a sandboxed frame with no network. Paging,
+  presenter view, the audience window, Lead viewers, print to PDF, thumbnails and Download .pptx
+  all work, and the .pptx keeps text, boxes, shapes and tables editable. Agents read every slide
+  with `get_artifact` and change one with `{path, sha256}` for the rest. A sample deck is in
+  `docs/examples/plinth-deck`.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no

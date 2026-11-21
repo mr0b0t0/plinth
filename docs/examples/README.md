@@ -17,6 +17,10 @@ available. The end-to-end tests publish every file here and check that contract
 The first three are built for people outside the owner's team: a client or an approver who has no
 Plinth account and confirms their email by code.
 
+[`plinth-deck/`](plinth-deck) is a different kind of example: a deck in Claude's HTML slide format
+(type `slides`, published with `deck.json` as its content and the other files as assets; see
+[docs/mcp.md](../mcp.md)). Its tests check that it passes Plinth's deck parser with no warning.
+
 ## One rule: decisions in the page, contributions in data
 
 What only the owner's side may decide lives in the page's HTML: the thing being approved and its

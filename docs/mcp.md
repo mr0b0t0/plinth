@@ -294,6 +294,47 @@ A deck's publish result also warns `slides_setting` (an ignored setting or colum
 `slide_empty`, `slide_dense` (a slide that will be shrunk to fit: split it or move detail into its
 notes) and `missing_file` for an image it shows that is not in `assets`.
 
+An HTML deck (Claude's slide format) is the same type with another source. `content` is
+`deck.json`, a JSON object. `assets` are `deck.css` and one `slides/<id>.html` per slide, plus
+images and font files. Plinth stores the index as `deck.json` (`source_path: "deck.json"`).
+
+- **`deck.json`** holds `title`, `order` (the slide ids), `sections`, `cover` and `size` (`"4:3"`
+  for 1440x1080, else 1920x1080). It also holds `faces`, at most 4 families, each a Google Fonts
+  `css2` `href` or a `src` path to a font file of the version, and `designSystems`, the systems
+  installed under `ds/<folder>/`.
+- **A slide file** is one `<section id="<id>">`, the id its file name, with an `<aside>` of speaker
+  notes as its last child. It is written in the element allowlist: `h1` to `h3`, `p`, lists, `br`,
+  `b`, `i`, `u`, `a`, `span`, `div`, `img`, tables, inline `svg`, `hr`, and Plinth's `x-shape`,
+  `x-icon`, `x-connector` and `x-embed`.
+- **Nothing runs on a slide** but an `x-embed`, which runs in a sandboxed frame with no network.
+- **Images and `url()`s** name only the version's own files, by path from the deck's root.
+
+A publish is refused with each problem's file and line in `details.issues` when a slide holds
+script, a handler, a frame, a `javascript:` URL, an outside image, markup the parser cannot read,
+or a slide over Claude's caps. The caps are 200 boxes, 15 nested `div`s, 24 pinned children of
+one box, an `svg` of 52 KB, tables of 100 by 24, 8 embeds of 16 KB, 20,000 characters, a 256 KB
+file, 4 MB of deck text and 500 slides. `deck.css` passes the same CSS check as a design system's
+blocks. Markup that shows differently (another HTML tag shown as a plain box, an unknown icon, a
+second `<aside>`, notes over 4,000 characters) is a `slide_markup` warning, and an image, font or
+`url()` the version lacks is a `missing_file` warning.
+
+`get_artifact` returns the slide files too, in `files`. To change one slide, call
+`update_artifact` with `content` (the index) and `assets` listing every file the deck keeps: the
+changed slide with `content`, the rest as `{path, sha256}`. Leaving out `assets` keeps every file.
+
+```json
+{
+  "title": "Launch",
+  "type": "slides",
+  "content": "{\"title\":\"Launch\",\"order\":[\"cover\",\"plan\"]}",
+  "assets": [
+    { "path": "deck.css", "content": "body { font-family: Inter, Arial, sans-serif } .dark { background: #14213D; color: #FBFBF8 }" },
+    { "path": "slides/cover.html", "content": "<section id=\"cover\" class=\"dark\"><h1>Launch</h1><aside>Open with the date.</aside></section>" },
+    { "path": "slides/plan.html", "content": "<section id=\"plan\"><h2>Plan</h2><p class=\"fragment\">Beta in April</p></section>" }
+  ]
+}
+```
+
 A design system (type `design_system`): send its JSON (format `plinth.design-system/1`) in
 `content`. Plinth renders it as a reference site with token samples and live component previews.
 Its assets are images and fonts (woff2, woff, ttf, otf); `system.json` and `index.html` are
@@ -441,7 +482,7 @@ sends the folder as a tar. Scope `artifacts:write`.
 | `id` | string, optional | Update this artifact. Omit for a new one |
 | `base_version` | integer | **Required with `id`**: the version you read with `get_artifact` (`list_versions` gives the current number without the page's HTML and file list). Refused without `id` |
 | `title` | string, optional | New artifact only. Default: the `<title>` of `index.html` (a doc or a deck: its first `# ` line; a design system: its `name`), else "Untitled" |
-| `type` | `html` \| `doc` \| `slides` \| `design_system`, optional | New artifact only. Default `html`. A deck's bundle has `slides.md` at its top, a design system's `system.json` |
+| `type` | `html` \| `doc` \| `slides` \| `design_system`, optional | New artifact only. Default `html`. A deck's bundle has `slides.md` at its top (or `deck.json`, `deck.css` and `slides/<id>.html` for an HTML deck), a design system's `system.json` |
 | `note` | string, optional | Update only |
 | `category` | string, 1-60, optional | Either mode; with `id`, owner only. Applied when the bundle commits, and echoed in its result |
 
@@ -550,6 +591,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `slides_setting` | A deck setting Plinth ignores or cuts: an unknown key, a value that is not allowed, a footer over its length; or a slide with one `\|\|\|` column marker or more than three columns |
 | `slide_empty` | A deck slide with no content, usually an extra `---` line |
 | `slide_dense` | A deck slide over 900 characters or 14 non-blank lines (notes not counted) that will be shrunk to fit: split it or move detail into its `Note:` |
+| `slide_markup` | An HTML deck's slide shows differently from its markup: another HTML tag shows as a plain box or phrase, an `x-icon` name Plinth does not draw, content inside an `x-shape`, an `<aside>` that is not last or a second one, notes over 4,000 characters (cut) |
 | `ds_inert_markup` | A design system's component example holds script, an event handler, a form, a frame or a meta; previews run none of them and remove them. `path` says which example |
 | `ds_missing_font` | A design system's `fonts[].src` names a file the version does not have |
 | `ds_no_dark_theme` | A design system has no `themes.dark`, so pages built on it will not follow dark mode |
@@ -566,7 +608,9 @@ At most 50 are listed, then one "and N more".
 Read metadata, the source and the asset list. Scope `artifacts:read`. The result has `type`
 and `source_path`, then `html` for an HTML page (`source_path: "index.html"`) or `content`, the
 Markdown, for a doc (`source_path: "content.md"`) or a deck (`source_path: "slides.md"`, speaker
-notes included), never both. `assets` never lists those paths;
+notes included), never both. An HTML deck returns its index in `content` (`source_path:
+"deck.json"`) and the text of `deck.css` and every `slides/<id>.html` in `files`
+(`[{ path, content }]`), untrusted like HTML. `assets` never lists those paths;
 each asset has `path`, `size_bytes`, `content_type` and `sha256` (`null` for files stored before
 the release that added hashes). Markdown is untrusted text like HTML. A design system returns its
 JSON in `content` (`source_path: "system.json"`); [`get_design_system`](#get_design_system) returns

@@ -548,6 +548,106 @@ What is new:
   Plinth's renderer runs on a deck's origin, so the frames it sends are Plinth's; the room still
   enforces the rights on every frame.
 
+### HTML decks
+
+An HTML deck is a deck whose source is `deck.json`, with `deck.css` and one `slides/<id>.html`
+per slide among the version's files (Claude's slide format,
+[spec](spec.md#slides-decided-2026-11-19)). The author writes HTML and CSS, so this is the one deck
+where author markup reaches a browser. It is shown in the same typed shell, under the same strict
+CSP, as a Markdown deck. Three things keep it inert:
+
+- **The browser never parses the author's markup.** The shared parser
+  (`packages/shared/src/slidesHtml.ts`) reads each slide file with a strict tokenizer at publish
+  and again in the renderer, and gives back a tree of allowlisted elements and attributes. The
+  renderer builds exactly that tree with `createElement` and `setAttribute`, never `innerHTML`.
+  The Worker refuses a publish with `invalid_input` for any of these, with each problem's file and
+  line:
+  - script, a `<style>`, a frame, an object, a form, an input or a media element;
+  - an `on*` attribute or a `javascript:` URL;
+  - an image that is not a plain relative path to one of the version's own files (no `data:`, no
+    URL, no `..`);
+  - a link other than https, http, mailto or `#N`;
+  - markup the tokenizer cannot read plainly (an unclosed or crossed tag, an unknown entity);
+  - any of Claude's caps.
+
+  An attribute the allowlist does not name is dropped. `deck.css` and every `style` attribute pass
+  the design-system CSS check (no `@import`, `<`, backslash, string URL functions,
+  `expression()`, `behavior` or `-moz-binding`), and their `url()`s may name only the version's
+  own files.
+- **No author script runs in the shell.** Even a tree that slipped past the parser could not run
+  anything there: the shell's CSP is `script-src 'self'` (Plinth's renderer only), which also
+  blocks inline handlers and `javascript:` URLs. The CSP's other sources are unchanged: images,
+  fonts and styles from the artifact's own origin and Google Fonts, `connect-src 'self'`. So
+  author CSS cannot load from any other host either. An inline `<svg>` never enters the DOM as
+  markup: the parser checks it and the renderer shows it as an `<img>` of a `data:image/svg+xml`
+  URL, which runs no script and loads nothing. It refuses script, handlers, `foreignObject`,
+  `<image>`, `<a>`, any `href` other than `#id`, any `url()` other than `url(#id)` and an animated
+  `href`.
+- **Each slide is in its own shadow root.** `deck.css` (with `:root` and `:host` read as the
+  slide's own `html`, and `@media` read at the slide's size) styles only that slide, never the
+  renderer's controls, presenter view or another slide. The host has `contain: strict` and
+  `overflow: hidden`, and is scaled with a transform, so nothing a slide draws paints outside its
+  canvas, including a `position: fixed` box. The shell's DOM holds nothing secret: it holds the
+  deck itself, which the viewer can read anyway.
+
+**Why not frames, as for designs.** A design's artboards run author script, so they need opaque
+frames. An HTML deck runs none outside its embeds, and a frame per slide would break what a deck
+needs:
+
+- An opaque frame cannot load the deck's own font files: they need CORS, which the content host
+  never sends.
+- The `.pptx` export and the overflow mark measure the rendered slide, which a cross-origin frame
+  hides from the shell.
+- Fragments, transitions and presenter view's copies change a slide's DOM.
+- The overview would need a frame per slide.
+
+A same-origin frame without `allow-scripts` would hide nothing more than the shadow root does, and
+under opaque isolation it becomes opaque too. The shadow root works the same in every isolation
+mode.
+
+**Live embeds (`<x-embed>`).** The only author script a deck runs is an embed's small page (at most
+16 KB, 8 a slide). It runs in a nested iframe of Plinth's fixed loader,
+`/__plinth/frames/slides/embed.html`. The iframe sandbox is `allow-scripts` only, never
+`allow-same-origin`, and the loader's own response adds the CSP `sandbox allow-scripts` in every
+isolation mode, so the embed has an opaque origin. That means no cookies, no storage, no service
+workers, and no access to the shell, the app, another embed or the deck's files. The loader's CSP
+allows inline script and styles, and `data:` and `blob:` images, fonts and media, and nothing else:
+`default-src 'none'`, with `connect-src`, `frame-src`, `child-src`, `worker-src`, `object-src`,
+`base-uri` and `form-action` all `'none'`. So an embed reaches no network, opens no popup, submits
+nothing and cannot navigate the deck. The frame has `pointer-events: none`, so a viewer cannot
+click or type into it. The renderer mounts an embed only while its slide is on stage: never in the
+overview, in print, in a `.pptx` (where it is left out and counted) or in a still such as a
+thumbnail.
+
+The loader works like a design's board loader:
+
+- It is served only behind this artifact's content pass, and only for a deck.
+- It keeps `frame-ancestors` under origin isolation for view and capture passes.
+- It writes only what its parent window posts, once, after it says `ready`. The renderer answers
+  only the `ready` whose `event.source` is that iframe's own window, and posts the embed's page
+  with `"*"`: an opaque origin cannot be named, and the page is what the deck may see anyway.
+
+An embed can still use WebRTC, which CSP does not govern. It would reach a STUN server with nothing
+more than that the deck is open, since the embed holds no data of the viewer's.
+
+**Fonts.** A face is a Google Fonts `css2` link (`style-src` already allows
+`fonts.googleapis.com`) or a font file of the version, declared by the renderer in an
+`@font-face` it writes itself. The family name and path have passed the parser's character rules,
+so neither can end the rule. At most 4 families. Under opaque isolation a font file of the
+version does not load (it would need CORS), and the deck falls back to its stack.
+
+**Other files and readers.**
+
+- A slide file, `deck.json` and `deck.css` are served with `script-src 'none'`, like every other
+  file of a typed artifact. A slide file (`text/html`) is served as `text/plain`, so opening one
+  shows its source and runs nothing.
+- A Markdown deck still takes only images. An HTML deck's HTML files must be `slides/<id>.html`,
+  and its CSS must be `deck.css` (or a design system's under `ds/`).
+- `get_artifact` returns the slide files' text in `files`, as untrusted as artifact HTML.
+- The shell embeds every slide in its JSON payload. They are read through the version's manifest
+  and `fileKey`, so a read never leaves the artifact, and they are escaped as every payload is.
+- The view gate's `no_editor` hides the source editor: people see the deck, and agents change it.
+
 ## Design systems
 
 A design system (`artifacts.type = 'design_system'`) stores JSON in `system.json` and is shown by a
