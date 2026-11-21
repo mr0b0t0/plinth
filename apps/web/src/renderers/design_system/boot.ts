@@ -174,6 +174,8 @@ function live(
   theme: () => PreviewTheme,
   published: DesignSystem | null,
   connect?: LiveDocOptions["connect"],
+  /** The site was drawn again (from the draft): the navigation follows the new sections. */
+  redrawn: () => void = () => undefined,
 ) {
   const rules = RULES as NonNullable<typeof RULES>;
   let client: LiveDocClient | null = null;
@@ -250,7 +252,10 @@ function live(
       });
     },
     theme,
-    drawn: (ds: DesignSystem) => applyFonts(win.document, ds, hooks.fileVersion(), "site"),
+    drawn: (ds: DesignSystem) => {
+      applyFonts(win.document, ds, hooks.fileVersion(), "site");
+      redrawn();
+    },
   };
   const events = {
     granted: (l: ClientLease) => editor?.granted(l),
@@ -389,7 +394,10 @@ export function boot(win: Window, opts: { connect?: LiveDocOptions["connect"] } 
   const parsed = parseDesignSystem(payload.text);
   const published = parsed.ok ? parsed.value : null;
   const start = () => {
-    editing ??= live(win, root, payload, appOrigin, key, theme, published, opts.connect);
+    editing ??= live(win, root, payload, appOrigin, key, theme, published, opts.connect, () => {
+      stopTracking();
+      stopTracking = trackSection(win, root);
+    });
     return editing;
   };
   if (!parsed.ok) {
@@ -412,7 +420,7 @@ export function boot(win: Window, opts: { connect?: LiveDocOptions["connect"] } 
     html.setAttribute("data-ready", "ok");
     follow(doc);
   }
-  const stopTracking = trackSection(win, root);
+  let stopTracking = trackSection(win, root);
   if (payload.live === "room" && appOrigin !== "") start();
 
   const onScheme = () => setPreviewTheme(root, theme());
