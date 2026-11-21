@@ -16,6 +16,11 @@ export const users = sqliteTable("users", {
    * category shares; a category rename guards its batch on it.
    */
   categoryShareRev: integer("category_share_rev").notNull().default(0),
+  /**
+   * migrations/0022: the id of the person's default design system (one of their own design_system
+   * artifacts), or null. Owner-only metadata; list_artifacts marks it `default: true`.
+   */
+  defaultDesignSystem: text("default_design_system"),
 });
 
 export const agentConnections = sqliteTable("agent_connections", {

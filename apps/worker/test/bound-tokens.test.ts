@@ -965,7 +965,12 @@ describe("a token limited to one artifact, on the tools that read other artifact
     const c = await mcpClient(t.token);
     const m = await tool(c, "get_design_system", { id: ds.id });
     expect(m.isError).toBe(false);
-    expect(m.data).toEqual(r.body);
+    // Each answer stamps its own install.record.copiedAt.
+    const untimed = (b: Record<string, any>) => ({
+      ...b,
+      install: { ...b.install, record: { ...b.install.record, copiedAt: "" } },
+    });
+    expect(untimed(m.data)).toEqual(untimed(r.body));
     await c.close();
   });
 });

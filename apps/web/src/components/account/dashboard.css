@@ -279,6 +279,11 @@
   display: flex;
   justify-content: flex-end;
 }
+/* Every card's menu sits at the same level, so a later card's button would paint over an earlier
+   card's open list: the open one rises above its siblings. */
+.pl-dash__menu:has(> .pl-button[aria-expanded="true"]) {
+  z-index: 2;
+}
 @media (hover: hover) {
   .pl-dash__row .pl-dash__menu > .pl-button,
   .pl-dash__card .pl-dash__menu > .pl-button {

@@ -1,6 +1,7 @@
 // The design type's content format (design.html): shared <head> tags, then artboards, each one
 // starting with a whole line <!-- artboard name="Home" size="iphone" --> and followed by its HTML
-// fragment. One pure parser for the Worker (validation, titles) and the design renderer
+// fragment, and canvas notes, each a whole line <!-- note kind="title" --> followed by its plain
+// text. One pure parser for the Worker (validation, titles) and the design renderer
 // (apps/web/src/renderers/design/), and the document one artboard frame renders.
 //
 // The parser is a hand-written line scanner with a linear attribute tokenizer (no regular
@@ -22,6 +23,17 @@ export const DESIGN_LIMITS = {
   maxLiveFrames: 24,
   minZoom: 0.05,
   maxZoom: 4,
+  /** The tallest a board with height="auto" grows to fit its content. */
+  maxAutoHeight: 8000,
+  /** x and y on the canvas, in CSS px either side of 0. */
+  maxCoord: 100_000,
+  maxNotes: 60,
+  maxNoteLength: 1000,
+  /** A note's width (a sticky's, or the most a title takes before it wraps). */
+  minNoteWidth: 80,
+  maxNoteWidth: 4096,
+  /** A sticky's width when it gives none. */
+  stickyWidth: 240,
 } as const;
 
 export interface DesignPreset {
@@ -84,16 +96,55 @@ export interface DesignBoard {
   preset: string | null;
   background: string;
   section: string | null;
+  /**
+   * height="auto": a fluid page, as tall as its content once it has loaded, from `height` (its
+   * least height: the size's height, or 10/16 of the width) up to DESIGN_LIMITS.maxAutoHeight.
+   */
+  autoHeight: boolean;
+  /** Where the board sits on the canvas (its top-left corner), or null to be packed in rows. */
+  x: number | null;
+  y: number | null;
   /** 1-based line of the marker. */
   line: number;
   /** The fragment, verbatim. */
   html: string;
 }
 
+/** Sticky note fills (a title note takes the canvas's own ink). */
+export const DESIGN_NOTE_COLORS = [
+  "yellow",
+  "gray",
+  "red",
+  "orange",
+  "green",
+  "teal",
+  "blue",
+  "purple",
+  "pink",
+] as const;
+export type DesignNoteColor = (typeof DESIGN_NOTE_COLORS)[number];
+
+/** Text on the canvas itself, never in a board: a title over a group of boards, or a sticky. */
+export interface DesignNote {
+  kind: "title" | "sticky";
+  /** Plain text, shown as text (never read as HTML); line breaks kept. */
+  text: string;
+  /** A sticky's width, or the most a title takes before it wraps; null for the default. */
+  width: number | null;
+  color: DesignNoteColor;
+  x: number | null;
+  y: number | null;
+  /** How many boards come before it in the source: its place among the packed rows. */
+  after: number;
+  /** 1-based line of the marker. */
+  line: number;
+}
+
 export interface DesignSource {
   /** Everything before the first marker, verbatim: copied into every board's <head>. */
   shared: string;
   boards: DesignBoard[];
+  notes: DesignNote[];
 }
 
 export interface DesignIssue {
@@ -113,6 +164,25 @@ export const BOARD_PROTOCOL_VERSION = 1;
 export const BOARD_IFRAME_SANDBOX = ARTIFACT_IFRAME_SANDBOX_OPAQUE;
 /** The board loader's file name under /__plinth/frames/design/ (the registry's renderer.frame). */
 export const BOARD_LOADER_FILE = "board.html";
+
+/**
+ * A link to one board: `#board=<id>` is the app address's fragment for a design opened at that
+ * board (a deep link), and a link inside a board with that exact href moves the canvas to the
+ * other board (a prototype flow).
+ */
+export const BOARD_LINK_PREFIX = "#board=";
+
+/** Whether a value is a board id as the parser makes them: a-z, 0-9 and -, up to 40. */
+export function isArtboardId(v: unknown): v is string {
+  return typeof v === "string" && v.length <= DESIGN_LIMITS.maxIdLength && ID_RE.test(v);
+}
+
+/** The board an href or fragment names (`#board=<id>`), or null. */
+export function boardLinkId(href: string): string | null {
+  if (!href.startsWith(BOARD_LINK_PREFIX)) return null;
+  const id = href.slice(BOARD_LINK_PREFIX.length);
+  return isArtboardId(id) ? id : null;
+}
 
 // The server's PNG and PDF export (services/designExport.ts in the Worker) opens the shell
 // top-level with print media emulated, where the renderer lays every board out at 100% (boot.ts),
@@ -145,11 +215,18 @@ export function designExportBoardSelector(id: string): string {
   return `${EXPORT_BOARD_SELECTOR}[data-board=${JSON.stringify(id)}]`;
 }
 
-const ATTRS = ["id", "name", "size", "width", "height", "background", "section"] as const;
+const ATTRS = ["id", "name", "size", "width", "height", "background", "section", "x", "y"] as const;
 type Attr = (typeof ATTRS)[number];
 const ATTR_SET: ReadonlySet<string> = new Set(ATTRS);
+const NOTE_ATTRS = ["kind", "x", "y", "width", "color"] as const;
+type NoteAttr = (typeof NOTE_ATTRS)[number];
+const NOTE_ATTR_SET: ReadonlySet<string> = new Set(NOTE_ATTRS);
+const NOTE_COLOR_SET: ReadonlySet<string> = new Set(DESIGN_NOTE_COLORS);
+const COORD_RE = /^-?[0-9]{1,6}$/;
 
 const ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+/** The board id pattern, for the board loader's own script (which links it follows). */
+export const BOARD_ID_PATTERN = ID_RE.source;
 const SIDE_RE = /^[0-9]{1,5}$/;
 const SIZE_RE = /^([0-9]{1,5})x([0-9]{1,5})$/;
 const COLOR_RE =
@@ -166,16 +243,24 @@ export const DESIGN_MESSAGES = {
     'A design is shared <head> tags followed by artboards, not a whole HTML document. Start each artboard with a line <!-- artboard name="Home" size="iphone" -->, or publish type "html" for one page.',
 } as const;
 
-/** The marker's attribute text (after the word `artboard`), or null for a line that is not one. */
-function markerBody(line: string): string | null {
+type MarkerKind = "artboard" | "note";
+
+/**
+ * The marker's kind and attribute text (after the word `artboard` or `note`), or null for a line
+ * that is not one.
+ */
+function markerBody(line: string): { kind: MarkerKind; body: string } | null {
   const t = line.trim();
   if (t.length < 7 || !t.startsWith("<!--") || !t.endsWith("-->")) return null;
   const inner = t.slice(4, -3).trim();
-  if (!inner.startsWith("artboard")) return null;
-  const after = inner.charCodeAt(8);
-  // "artboard" alone, or followed by whitespace; never "artboards".
-  if (inner.length > 8 && after !== 0x20 && after !== 0x09) return null;
-  return inner.slice(8);
+  for (const kind of ["artboard", "note"] as const) {
+    if (!inner.startsWith(kind)) continue;
+    const after = inner.charCodeAt(kind.length);
+    // The word alone, or followed by whitespace; never "artboards" or "notes".
+    if (inner.length > kind.length && after !== 0x20 && after !== 0x09) return null;
+    return { kind, body: inner.slice(kind.length) };
+  }
+  return null;
 }
 
 function isControl(c: number): boolean {
@@ -183,11 +268,13 @@ function isControl(c: number): boolean {
 }
 
 /** name="value" pairs, read once from left to right. A string is the reason it cannot be read. */
-function tokenize(body: string): Map<string, string> | { error: string } {
+function tokenize(body: string, kind: MarkerKind): Map<string, string> | { error: string } {
+  const allowed = kind === "note" ? NOTE_ATTR_SET : ATTR_SET;
+  const names = kind === "note" ? NOTE_ATTRS : ATTRS;
   const out = new Map<string, string>();
   let i = 0;
   const n = body.length;
-  const unreadable = { error: 'write artboard attributes as name="value".' };
+  const unreadable = { error: `write ${kind} attributes as name="value".` };
   while (i < n) {
     const c = body.charCodeAt(i);
     if (c === 0x20 || c === 0x09) {
@@ -221,12 +308,12 @@ function tokenize(body: string): Map<string, string> | { error: string } {
         error: `the value of ${name} is longer than ${DESIGN_LIMITS.maxAttrLength} characters.`,
       };
     }
-    if (!ATTR_SET.has(name)) {
+    if (!allowed.has(name)) {
       return {
-        error: `artboard attribute "${name}" is not one of ${ATTRS.join(", ")}.`,
+        error: `${kind} attribute "${name}" is not one of ${names.join(", ")}.`,
       };
     }
-    if (out.has(name)) return { error: `artboard attribute "${name}" is given twice.` };
+    if (out.has(name)) return { error: `${kind} attribute "${name}" is given twice.` };
     out.set(name, value);
   }
   return out;
@@ -261,16 +348,65 @@ function side(v: string): number | null {
 const PRESET_LIST = Object.keys(DESIGN_PRESETS).join(", ");
 
 interface Marker {
+  kind: MarkerKind;
   line: number;
   attrs: Map<string, string>;
   /** Index into the source's lines of the marker line. */
   index: number;
 }
 
+/** x and y, both or neither: null when neither, a string when they cannot be read. */
+function readPlace(
+  x: string | undefined,
+  y: string | undefined,
+  at: string,
+  what: string,
+): { x: number; y: number } | null | string {
+  if (x === undefined && y === undefined) return null;
+  const max = DESIGN_LIMITS.maxCoord;
+  const help = `${at} give the ${what} both x and y, whole CSS px from -${max} to ${max}, or neither.`;
+  if (x === undefined || y === undefined || !COORD_RE.test(x) || !COORD_RE.test(y)) return help;
+  const px = Number(x);
+  const py = Number(y);
+  if (Math.abs(px) > max || Math.abs(py) > max) return help;
+  return { x: px === 0 ? 0 : px, y: py === 0 ? 0 : py };
+}
+
+/**
+ * Whether a `<!-- note ... -->` line is a note marker: name="value" pairs of note attributes only,
+ * with kind="sticky" or kind="title". Anything else is an ordinary HTML comment.
+ */
+function isNoteMarker(
+  parsed: Map<string, string> | { error: string },
+): parsed is Map<string, string> {
+  if (!(parsed instanceof Map)) return false;
+  const kind = parsed.get("kind");
+  return kind === "sticky" || kind === "title";
+}
+
+/** A note's text: the lines after its marker, without blank lines round them. */
+function noteText(lines: readonly string[]): string {
+  const clean = lines.map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l).trimEnd());
+  let a = 0;
+  let b = clean.length;
+  while (a < b && clean[a]?.trim() === "") a++;
+  while (b > a && clean[b - 1]?.trim() === "") b--;
+  return clean.slice(a, b).join("\n");
+}
+
+/** The least height of a fluid board given only a width: 10/16 of it, within the side limits. */
+export function autoStartHeight(width: number): number {
+  return Math.min(
+    DESIGN_LIMITS.maxSide,
+    Math.max(DESIGN_LIMITS.minSide, Math.round((width * 10) / 16)),
+  );
+}
+
 /**
  * Parse a design source. At most DESIGN_LIMITS.maxIssues problems, in line order; the first one is
  * what a refusal says. A marker line inside a <script> at the start of a line still starts a board
- * (only whole lines are read, never HTML).
+ * or a note (only whole lines are read, never HTML). A note's lines are its text, not part of the
+ * board before it.
  */
 export function parseDesign(input: string): DesignParse {
   const text = input.charCodeAt(0) === 0xfeff ? input.slice(1) : input;
@@ -285,31 +421,49 @@ export function parseDesign(input: string): DesignParse {
     issues.push(issue);
   };
   const markers: Marker[] = [];
+  let boardMarkers = 0;
+  let noteMarkers = 0;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] ?? "";
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-    const body = markerBody(line);
-    if (body === null) continue;
-    const parsed = tokenize(body);
+    const found = markerBody(line);
+    if (found === null) continue;
+    const parsed = tokenize(found.body, found.kind);
+    // A note marker is only one that is a note in full: designs from before notes may hold a
+    // whole-line comment such as <!-- note the padding -->, which stays part of its board.
+    if (found.kind === "note" && !isNoteMarker(parsed)) continue;
+    if (found.kind === "artboard") boardMarkers++;
+    else noteMarkers++;
     if ("error" in parsed) {
       if (issues.length < DESIGN_LIMITS.maxIssues) {
         add({ line: i + 1, message: `Line ${i + 1}: ${parsed.error}` });
       }
-      markers.push({ line: i + 1, attrs: new Map(), index: i });
+      markers.push({ kind: found.kind, line: i + 1, attrs: new Map(), index: i });
       continue;
     }
-    markers.push({ line: i + 1, attrs: parsed, index: i });
+    markers.push({ kind: found.kind, line: i + 1, attrs: parsed, index: i });
   }
-  if (markers.length === 0) {
+  if (boardMarkers === 0) {
     return { ok: false, issues: [{ line: 0, message: DESIGN_MESSAGES.noBoards }] };
   }
-  if (markers.length > DESIGN_LIMITS.maxBoards) {
+  if (boardMarkers > DESIGN_LIMITS.maxBoards) {
     return {
       ok: false,
       issues: [
         {
           line: 0,
-          message: `A design has at most ${DESIGN_LIMITS.maxBoards} artboards; this one has ${markers.length}. Split it into two designs.`,
+          message: `A design has at most ${DESIGN_LIMITS.maxBoards} artboards; this one has ${boardMarkers}. Split it into two designs.`,
+        },
+      ],
+    };
+  }
+  if (noteMarkers > DESIGN_LIMITS.maxNotes) {
+    return {
+      ok: false,
+      issues: [
+        {
+          line: 0,
+          message: `A design has at most ${DESIGN_LIMITS.maxNotes} notes; this one has ${noteMarkers}.`,
         },
       ],
     };
@@ -319,6 +473,7 @@ export function parseDesign(input: string): DesignParse {
   const taken = new Map<string, number>();
   const unreadable = new Set(issues.map((x) => x.line));
   for (const m of markers) {
+    if (m.kind !== "artboard") continue;
     const id = m.attrs.get("id");
     if (id === undefined) continue;
     if (!ID_RE.test(id)) {
@@ -340,9 +495,20 @@ export function parseDesign(input: string): DesignParse {
   }
 
   const boards: DesignBoard[] = [];
+  const notes: DesignNote[] = [];
+  let boardsSoFar = 0;
   for (const [n, m] of markers.entries()) {
+    const end = markers[n + 1]?.index ?? lines.length;
+    if (m.kind === "note") {
+      if (!unreadable.has(m.line)) {
+        const note = readNote(m, lines.slice(m.index + 1, end), boardsSoFar, add);
+        if (note) notes.push(note);
+      }
+      continue;
+    }
+    const k = boardsSoFar++;
     if (unreadable.has(m.line)) continue;
-    const a = (k: Attr) => m.attrs.get(k);
+    const a = (key: Attr) => m.attrs.get(key);
     const at = `Line ${m.line}:`;
     const nameRaw = a("name");
     const name = nameRaw === undefined ? "" : decodeEntities(nameRaw).trim();
@@ -361,7 +527,10 @@ export function parseDesign(input: string): DesignParse {
 
     const size = a("size");
     const w = a("width");
-    const h = a("height");
+    const hRaw = a("height");
+    // height="auto": a fluid board, its width from `size` or `width`.
+    const autoHeight = hRaw === "auto";
+    const h = autoHeight ? undefined : hRaw;
     let width: number | null = null;
     let height: number | null = null;
     let presetKey: string | null = null;
@@ -389,6 +558,14 @@ export function parseDesign(input: string): DesignParse {
         });
         continue;
       }
+    } else if (w !== undefined && autoHeight) {
+      width = side(w);
+      shown = `${w}x${hRaw}`;
+      if (width === null) {
+        add({ ...label, message: sizeHelp });
+        continue;
+      }
+      height = autoStartHeight(width);
     } else if (w !== undefined && h !== undefined) {
       width = side(w);
       height = side(h);
@@ -429,12 +606,18 @@ export function parseDesign(input: string): DesignParse {
       }
     }
 
+    const place = readPlace(a("x"), a("y"), at, "artboard");
+    if (typeof place === "string") {
+      add({ ...label, message: place });
+      continue;
+    }
+
     let id = a("id");
     if (id === undefined) {
-      const base = slugBoardId(name) || `board-${n + 1}`;
+      const base = slugBoardId(name) || `board-${k + 1}`;
       id = base;
-      for (let k = 2; taken.has(id); k++) {
-        const suffix = `-${k}`;
+      for (let j = 2; taken.has(id); j++) {
+        const suffix = `-${j}`;
         id = `${slugBoardId(base, DESIGN_LIMITS.maxIdLength - suffix.length)}${suffix}`;
       }
       taken.set(id, m.line);
@@ -443,7 +626,6 @@ export function parseDesign(input: string): DesignParse {
       continue;
     }
 
-    const end = markers[n + 1]?.index ?? lines.length;
     boards.push({
       id,
       name,
@@ -452,6 +634,9 @@ export function parseDesign(input: string): DesignParse {
       preset: presetKey,
       background: bg ?? DEFAULT_BACKGROUND,
       section,
+      autoHeight,
+      x: place?.x ?? null,
+      y: place?.y ?? null,
       line: m.line,
       html: lines.slice(m.index + 1, end).join("\n"),
     });
@@ -464,7 +649,59 @@ export function parseDesign(input: string): DesignParse {
   const first = markers[0] as Marker;
   return {
     ok: true,
-    design: { shared: lines.slice(0, first.index).join("\n"), boards },
+    design: { shared: lines.slice(0, first.index).join("\n"), boards, notes },
+  };
+}
+
+/** A note marker and its lines, read, or null after reporting why not. */
+function readNote(
+  m: Marker,
+  body: readonly string[],
+  after: number,
+  add: (issue: DesignIssue) => void,
+): DesignNote | null {
+  const a = (key: NoteAttr) => m.attrs.get(key);
+  const at = `Line ${m.line}:`;
+  const issue = (message: string) => {
+    add({ line: m.line, message });
+    return null;
+  };
+  const kind = a("kind") === "title" ? "title" : "sticky";
+  const text = noteText(body);
+  if (!text) {
+    return issue(`${at} write the note's text on the lines after its marker.`);
+  }
+  if (text.length > DESIGN_LIMITS.maxNoteLength) {
+    return issue(`${at} a note's text is at most ${DESIGN_LIMITS.maxNoteLength} characters.`);
+  }
+  let width: number | null = null;
+  const w = a("width");
+  if (w !== undefined) {
+    width = side(w);
+    const { minNoteWidth: lo, maxNoteWidth: hi } = DESIGN_LIMITS;
+    if (width === null || width < lo || width > hi) {
+      return issue(`${at} a note's width is ${lo} to ${hi} px.`);
+    }
+  }
+  const colorRaw = a("color");
+  if (kind === "title" && colorRaw !== undefined) {
+    return issue(`${at} color is for a sticky note; a title takes the canvas's own ink.`);
+  }
+  const color = colorRaw ?? "yellow";
+  if (!NOTE_COLOR_SET.has(color)) {
+    return issue(`${at} a note's color is one of ${DESIGN_NOTE_COLORS.join(", ")}.`);
+  }
+  const place = readPlace(a("x"), a("y"), at, "note");
+  if (typeof place === "string") return issue(place);
+  return {
+    kind,
+    text,
+    width,
+    color: color as DesignNoteColor,
+    x: place?.x ?? null,
+    y: place?.y ?? null,
+    after,
+    line: m.line,
   };
 }
 
@@ -481,19 +718,24 @@ export function designIssueSummary(issues: readonly DesignIssue[]): string {
  * section, then the fragment, all verbatim. Pure. `baseHref` is where the board's relative URLs
  * resolve (the shown version's own path, /__plinth/v/<n>/); the first <base> wins, so an author's own cannot redirect
  * them. Sizes are integers and the background passed the parser's charset, so neither can break
- * out of the reset rule.
+ * out of the reset rule. A fluid board (height="auto") gets no height, so its document is as tall
+ * as its content, which the board loader measures.
  */
 export function boardDocument(o: { board: DesignBoard; shared: string; baseHref: string }): string {
   const { board } = o;
   const w = Math.trunc(board.width);
   const h = Math.trunc(board.height);
   const bg = COLOR_RE.test(board.background) ? board.background : DEFAULT_BACKGROUND;
+  const reset =
+    board.autoHeight === true
+      ? `html{width:${w}px;overflow:hidden;background:${bg}}body{margin:0}`
+      : `html{width:${w}px;height:${h}px;overflow:hidden;background:${bg}}body{margin:0;min-height:100%}`;
   return (
     '<!doctype html><html lang="en"><head><meta charset="utf-8">\n' +
     `<base href="${escapeHtml(o.baseHref)}">\n` +
     `<meta name="viewport" content="width=${w}, initial-scale=1">\n` +
     `<title>${escapeHtml(board.name)}</title>\n` +
-    `<style>html{width:${w}px;height:${h}px;overflow:hidden;background:${bg}}body{margin:0;min-height:100%}</style>\n` +
+    `<style>${reset}</style>\n` +
     `${o.shared}\n` +
     "</head><body>\n" +
     `${board.html}\n` +

@@ -21,6 +21,44 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   with `get_artifact` and change one with `{path, sha256}` for the rest. A sample deck is in
   `docs/examples/plinth-deck`.
 
+- **Designs: fluid pages, notes, flows and links to one board.** An artboard with `height="auto"`
+  is as tall as its content, so a responsive web page shows whole on the canvas, in print and in
+  exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note kind="sticky" -->`
+  and `<!-- note kind="title" -->` add stickies and titles to the canvas (any other `<!-- note`
+  comment stays part of its board, as before). A link to `#board=<id>`
+  inside a board moves to that board, for clickable prototypes, and the app's address keeps the
+  board on view (`#board=<id>`), so a reload or a shared link opens on it. A flow moves only on a
+  click, a board in use stays still while a page next to it grows, and a link to a board that is
+  gone drops out of the address.
+- **Installing design systems, tightened.** `get_design_system` takes `install_for` and `folder`:
+  its install list holds only what the target type takes (a design gets no fonts or
+  `tokens.json`), and it also gives a deck's `faces` and `designSystems` record. A design system
+  without its own prefix installs under a name from its title instead of `ds/ds/`, and two systems
+  can no longer share a folder. Copies are checked after the publish rate, an admin's review
+  access never lets them copy, and `get_artifact` names a copy's source only to people who can
+  open it. A taken-down default design system is no longer reported as the default.
+
+- **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
+  card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen
+  instead of running past its edge.
+- **Craft guides for agents.** The plinth-artifacts skill now teaches how to make each type of
+  artifact read and look finished, not only what Plinth accepts: one guide per type, for pages and
+  dashboards (chart and KPI craft, summary before detail, every number from the data), docs (lead
+  with the answer, sized to the ask, sources and an as-of date), decks (one idea per slide, heading
+  levels and slide kinds used on purpose), sheets (important columns first, a build order, types,
+  widths and a notes column), designs (placeholders, no AI tropes, contrast, touch targets and real
+  controls), design systems (a brand-book guide, exact values, contrast in every theme) and
+  whiteboards (the idea's shape, a size budget, at most four colors, extending a board without
+  disturbing people's work). The MCP tool descriptions point agents without the skill at them.
+- **Design systems that other artifacts use.** Mark one of your design systems as your default
+  from its menu on the dashboard (**Set as default**); agents then use it for pages, decks and
+  designs without asking. A publish or update can now copy files from another artifact you can
+  view, on the server (`copy_files`), so an agent installs a design system's `tokens.css`,
+  `fonts.css`, `components.css`, `tokens.json`, fonts and images into a page under `ds/<prefix>/`
+  in the same call (`get_design_system` lists the entries to send). The copies become the page's
+  own files and record where they came from. Designs name the design system they were built on,
+  like pages, and get the same outdated warning. Apply migration `0022_design_system_reuse.sql`.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no

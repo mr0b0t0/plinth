@@ -109,6 +109,18 @@ export interface TypeHooks {
   /** Extra fields of get_artifact for a version of this type, read as the caller. */
   detail?(ctx: Ctx, text: string): Promise<Partial<ArtifactDetailBase>>;
   /**
+   * A file the type generates from a version's source for copy_files (a design system's
+   * tokens.css), or null when `path` names none. Called only for a path the version does not store,
+   * after the caller's `view` on the version passed. `ref` is the version copied from.
+   */
+  copySource?(
+    text: string,
+    path: string,
+    ref: { id: string; version: number },
+    /** The paths the version stores. */
+    stored: ReadonlySet<string>,
+  ): { bytes: Uint8Array; contentType: string } | null;
+  /**
    * The text a version stores for a source validate accepted, when the type stores one canonical
    * spelling (a sheet). Absent: the source is stored as sent.
    */

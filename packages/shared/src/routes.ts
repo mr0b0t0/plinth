@@ -58,6 +58,7 @@ export const API = {
   restore: "/artifacts/:ref/versions/:n/restore", // POST restore_version
   visibility: "/artifacts/:ref/visibility", // PUT set_visibility
   designSystem: "/artifacts/:ref/design-system", // GET get_design_system
+  defaultDesignSystem: "/artifacts/:ref/default-design-system", // PUT {default} (people, in the app)
   designExportOptions: "/artifacts/:ref/export/options", // GET a design's boards and export formats
   designExport: "/artifacts/:ref/export", // GET a design as PNG or PDF (Browser Rendering only)
   sheet: "/artifacts/:ref/sheet", // GET read_sheet

@@ -42,6 +42,7 @@ import {
   type StageContext,
   type StageItem,
 } from "./stageItems.tsx";
+import { useDesignLink } from "./useDesignLink.ts";
 import { useEditStart } from "./useEditStart.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
@@ -230,6 +231,8 @@ export function ViewerStage({
     review,
     leaveReview: onLeaveReview,
   });
+  // A design keeps the board on view in the address (#board=<id>).
+  useDesignLink({ available: artifact.type === "design", frame, contentOrigin, config });
   const pause: WatchPause = live.pause ?? present.pause;
   // Live views: shared-data changes reach the page's runtime (origin isolation only).
   useLiveDataRelay({

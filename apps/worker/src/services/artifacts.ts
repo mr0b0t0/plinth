@@ -10,6 +10,7 @@ import {
   type AssetInput,
   type Author,
   type Capabilities,
+  type CopyFileInput,
   type EffectiveRole,
   type InvitationReport,
   isLiveType,
@@ -78,6 +79,14 @@ import {
 } from "./categoryShares.ts";
 import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
+import {
+  type CopyPlan,
+  copiedFromOf,
+  copyRecords,
+  copyTargets,
+  resolveCopies,
+  stageCopies,
+} from "./copies.ts";
 import { readDeckFiles } from "./deckFiles.ts";
 import { newInvitees, sendInvitations } from "./invitations.ts";
 import { readLiveDraftMeta } from "./live.ts";
@@ -325,12 +334,16 @@ export function shareStateOf(
 export function toSummary(
   ctx: Ctx,
   a: ArtifactRow,
-  owner: Pick<UserRow, "id" | "email" | "name">,
+  owner: Pick<UserRow, "id" | "email" | "name"> & { defaultDesignSystem?: string | null },
   versionCount: number,
   role: EffectiveRole | null,
   extra: SummaryExtra = {},
 ): ArtifactSummary {
   const ownerView = seesOwnerMetadata(ctx.principal, role);
+  // The owner's default design system is owner-only metadata, like the category.
+  // A taken-down design system is never reported as the default: an agent could not read it.
+  const isDefault =
+    ownerView && a.type === "design_system" && !a.takenDownAt && owner.defaultDesignSystem === a.id;
   return {
     id: a.id,
     slug: a.slug,
@@ -363,6 +376,7 @@ export function toSummary(
       ownerView && ctx.config.allowCategorySharing ? shareStateOf(a, extra.shareId) : null,
     // A collaborator's own category: the signed-in person only, never an agent.
     my_category: seesPersonalCategory(ctx.principal, role) ? (extra.myCategory ?? null) : null,
+    ...(isDefault ? { default: true as const } : {}),
   };
 }
 
@@ -488,6 +502,8 @@ export interface PublishInput {
   html?: string;
   content?: string;
   assets?: AssetInput[];
+  /** Files copied from other artifacts the caller can view (services/copies.ts). */
+  copy_files?: CopyFileInput[];
   visibility: Visibility;
   password?: string;
   emails?: string[];
@@ -545,9 +561,11 @@ async function stageInline(
   stager: VersionStager,
   text: string,
   assets: AssetInput[] | undefined,
+  copies: CopyPlan | null = null,
 ): Promise<StagedVersion> {
   await stager.addSource(text);
-  if (assets === undefined) stager.carryCurrent();
+  // A copy replaces a carried file at the same path; beside assets sent, the same path is twice.
+  if (assets === undefined) stager.carryCurrent(copyTargets(copies));
   for (const a of assets ?? []) {
     if (a.content === undefined) {
       stager.addRefTyped(a.path, a.sha256 as string, a.content_type);
@@ -558,6 +576,7 @@ async function stageInline(
       });
     }
   }
+  await stageCopies(stager, copies);
   return stager.finish();
 }
 
@@ -573,6 +592,12 @@ async function stageWithFilesOf(
     if (!def.reservedPaths.includes(m.path)) stager.carry(from, m);
   }
   return stager.finish();
+}
+
+/** The result, saying what the call copied from other artifacts (nothing added when none). */
+function withCopies(result: PublishResult, copies: CopyPlan | null): PublishResult {
+  const copied = copyRecords(copies);
+  return copied ? { ...result, copied_from: copied } : result;
 }
 
 /** Stage with `run`, then commit; on any failure the attempt's objects are deleted. */
@@ -628,15 +653,21 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     },
   });
   await enforcePublishRate(ctx);
+  // Every source is authorized as the caller (view) after the rate hit, so refused copies still
+  // count, and before any R2 write.
+  const copies = await resolveCopies(ctx, input.copy_files, def);
   const passwordHash =
     input.visibility === "password" && input.password ? await hashPassword(input.password) : null;
   const staged = prepared?.text ?? text;
   const note = input.note?.trim();
   const v1 = note ? { ...target, note } : target;
-  let result = await writeVersion(ctx, v1, (s) => stageInline(s, staged, input.assets ?? []), {
-    visibility: input.visibility,
-    passwordHash,
-  });
+  let result = await writeVersion(
+    ctx,
+    v1,
+    (s) => stageInline(s, staged, input.assets ?? [], copies),
+    { visibility: input.visibility, passwordHash },
+  );
+  result = withCopies(result, copies);
   if (prepared?.afterCommit) result = await prepared.afterCommit(result);
   if (input.emails?.length) await replaceViewerGrants(ctx, result.id, input.emails);
   return withCategoryShare(ctx, withCategory(result, target), "owner");
@@ -648,6 +679,8 @@ export interface UpdateInput {
   html?: string;
   content?: string;
   assets?: AssetInput[];
+  /** Files copied from other artifacts the caller can view (services/copies.ts). */
+  copy_files?: CopyFileInput[];
   note?: string;
   base_version?: number;
   /** Owner only; omitted keeps the current category. */
@@ -709,6 +742,11 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
         reason: "files_from_with_assets",
       });
     }
+    if (input.copy_files !== undefined) {
+      throw new ApiError("invalid_input", "files_from_version cannot be sent with copy_files", {
+        reason: "files_from_with_copies",
+      });
+    }
     filesFrom = await requireVersion(ctx, target.artifact, input.files_from_version);
   }
   // The category is the owner's: an editor's call that carries one is refused here, before the
@@ -729,6 +767,9 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     target: { mode: "update", artifact: target.artifact },
   });
   await enforcePublishRate(ctx);
+  // Every source is authorized as the caller (view) after the rate hit, so refused copies still
+  // count, and before any R2 write.
+  const copies = await resolveCopies(ctx, input.copy_files, def);
   // No assets given: the current version's assets (or those of files_from_version) are carried
   // forward as references.
   const staged = prepared?.text ?? text;
@@ -738,9 +779,10 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     target,
     from
       ? (s) => stageWithFilesOf(s, staged, def, from)
-      : (s) => stageInline(s, staged, input.assets),
+      : (s) => stageInline(s, staged, input.assets, copies),
     input.checkpoint ? { liveCheckpoint: true } : {},
   );
+  result = withCopies(result, copies);
   if (prepared?.afterCommit) result = await prepared.afterCommit(result);
   return withCategoryShare(ctx, withCategory(result, target), target.role);
 }
@@ -774,11 +816,13 @@ export async function loadArtifactDetail(
           ([path, content]) => ({ path, content }),
         )
       : null;
+  const copied = await copiedFromOf(ctx, manifest);
   const base = {
     ...(await summaryFor(ctx, artifact, role)),
     version: v.number,
     source_path: sourcePath,
     ...(deckFiles ? { files: deckFiles } : {}),
+    ...(copied ? { copied_from: copied } : {}),
     assets: manifest
       .filter((m) => !def.reservedPaths.includes(m.path))
       .map((m) => ({
@@ -1184,6 +1228,10 @@ export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
     ...artifactWipe(ctx.env.DB, artifact.id, Date.now()).statements,
+    // A deleted design system is nobody's default any more.
+    ctx.env.DB.prepare(
+      "UPDATE users SET default_design_system = NULL WHERE id = ?1 AND default_design_system = ?2",
+    ).bind(artifact.ownerId, artifact.id),
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
   notifyRoom(ctx, artifact.id, "gone");

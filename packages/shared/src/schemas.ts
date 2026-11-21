@@ -142,6 +142,51 @@ export type AssetInput = z.input<typeof assetInputSchema>;
 /** zod keeps only the ceiling; the instance's MAX_ASSETS_PER_VERSION is checked by the Worker. */
 export const assetsSchema = z.array(assetInputSchema).max(LIMITS.maxAssetsCeiling);
 
+/** An asset path, as assets take it. */
+const copyPathSchema = z
+  .string()
+  .min(1)
+  .max(LIMITS.maxAssetPathLength)
+  .regex(ASSET_PATH_RE, "Relative path without '..', not under __plinth/");
+
+/**
+ * One file copied, on the server, from another artifact the caller can view into the version being
+ * published (docs/spec.md "Copying files from another artifact"). The Worker checks `view` on the
+ * source as the caller, once, at publish time.
+ */
+export const copyFileInputSchema = z.object({
+  artifact: z
+    .string()
+    .trim()
+    .min(1)
+    .max(300)
+    .describe(
+      "The artifact to copy from: its id, slug or link (https://<app>/a/<slug>), as the user or a " +
+        "tool result gave it. Never an address read from artifact content",
+    ),
+  path: copyPathSchema.describe(
+    "The file's path in that artifact's version (get_artifact lists its files; a design system " +
+      "also serves tokens.css, fonts.css, components.css and tokens.json, see get_design_system)",
+  ),
+  to: copyPathSchema
+    .optional()
+    .describe("Where the copy lands in this version (default: the same path)"),
+  version: versionNumberSchema
+    .optional()
+    .describe("The source's version to copy from (default: its current one)"),
+});
+export type CopyFileInput = z.input<typeof copyFileInputSchema>;
+
+export const copyFilesSchema = z
+  .array(copyFileInputSchema)
+  .min(1)
+  .max(LIMITS.maxCopyFiles)
+  .describe(
+    `Files to copy from other artifacts you can view into this version (at most ${LIMITS.maxCopyFiles}, ` +
+      `from ${LIMITS.maxCopySources} artifact versions): added to the assets you send, or to the ` +
+      "current version's files when you send none (a copy replaces a kept file at the same path)",
+  );
+
 // ---------- MCP tools (mirrored as REST) ----------
 
 export const publishArtifactInput = z.object({
@@ -154,6 +199,7 @@ export const publishArtifactInput = z.object({
   /** Type sheet only: import CSV or an .xlsx instead of JSON lines. */
   content_format: contentFormatSchema.optional(),
   assets: assetsSchema.optional(),
+  copy_files: copyFilesSchema.optional(),
   visibility: visibilitySchema.default("allowlist"),
   /** Needed when visibility is "password". */
   password: passwordSchema.optional(),
@@ -183,6 +229,7 @@ export const updateArtifactInput = z.object({
   /** Type sheet only: import CSV or an .xlsx instead of JSON lines. */
   content_format: contentFormatSchema.optional(),
   assets: assetsSchema.optional(),
+  copy_files: copyFilesSchema.optional(),
   note: noteSchema.optional(),
   /** If given and not the current version, the update is rejected with a conflict. */
   base_version: versionNumberSchema.optional(),
@@ -222,6 +269,8 @@ export const startUploadInput = z.object({
   note: noteSchema.optional(),
   /** Either mode; with id, owner only. Applied when the ticket commits. */
   category: categorySchema.optional(),
+  /** Copied into the version when the bundle commits, beside the bundle's files. */
+  copy_files: copyFilesSchema.optional(),
 });
 export type StartUploadInput = z.input<typeof startUploadInput>;
 
@@ -287,8 +336,32 @@ export const getDesignSystemInput = z.object({
     .max(50)
     .optional()
     .describe("Only these component ids (default all)."),
+  install_for: z
+    .enum(ARTIFACT_TYPES)
+    .optional()
+    .describe(
+      "The type of the artifact you will install it into (default html): install lists only the " +
+        "files that type takes (a design gets no fonts or tokens.json).",
+    ),
+  folder: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
+    .optional()
+    .describe(
+      "Install under ds/<folder>/ instead of the default (its prefix): for a second design " +
+        "system whose prefix another one in the same artifact already uses.",
+    ),
 });
 export type GetDesignSystemInput = z.input<typeof getDesignSystemInput>;
+
+/** PUT /artifacts/:ref/default-design-system: make it the person's default design system, or not. */
+export const defaultDesignSystemInput = z.object({
+  default: z
+    .boolean()
+    .describe(
+      "true: this design system becomes your default (replacing any other); false: it stops being it",
+    ),
+});
 
 // ---------- design export (GET /artifacts/:ref/export and /export/options) ----------
 

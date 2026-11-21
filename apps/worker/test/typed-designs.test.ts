@@ -6,7 +6,7 @@
 // assets, update, restore, titles, warnings and what the content host serves.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { DESIGN_MESSAGES, TYPE_REGISTRY } from "@plinth/shared";
+import { DESIGN_LIMITS, DESIGN_MESSAGES, TYPE_REGISTRY } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { boardLoaderHtml } from "../src/content/boardLoader.ts";
 import { contentCsp, OPAQUE_SANDBOX } from "../src/content/csp.ts";
@@ -345,6 +345,8 @@ describe("designs over MCP", () => {
       'Pass type "design" with content for visual designs',
     );
     expect(byName.get("publish_artifact")).toContain("Up to 60 artboards, 2 MB.");
+    expect(byName.get("publish_artifact")).toContain('height="auto" with a size or width');
+    expect(byName.get("publish_artifact")).toContain('a link href="#board=<id>"');
     expect(byName.get("get_artifact")).toContain('For type "design", content is its artboard HTML');
     expect(byName.get("update_artifact")).toContain("content (artboard HTML) for a design");
     expect(mcp.getInstructions()).toContain(
@@ -603,6 +605,20 @@ describe("the board loader page", () => {
     expect(html).toContain('var SOURCE = "plinth-board";');
     expect(html).not.toContain("APP_ORIGIN");
     expect(html.match(/<script/g)?.length).toBe(1);
+  });
+
+  it("measures only a fluid board, and turns #board= links into a goto without following them", () => {
+    const html = boardLoaderHtml();
+    expect(html).toContain("var fluid = d.fluid === true;");
+    expect(html).toContain("var report = fluid ? watchHeight() : null;");
+    expect(html).toContain(`var MAX_HEIGHT = ${DESIGN_LIMITS.maxAutoHeight};`);
+    expect(html).toContain('var LINK_PREFIX = "#board=";');
+    expect(html).toContain("event.preventDefault();");
+    expect(html).toContain('post("goto", { board: id });');
+    // The link's own attribute, never the URL its <base> resolves it to.
+    expect(html).toContain('el.getAttribute("href")');
+    // Its listeners go on after document.open, which clears a window's listeners.
+    expect(html.indexOf("document.close();")).toBeLessThan(html.indexOf("followLinks();\n"));
   });
 });
 

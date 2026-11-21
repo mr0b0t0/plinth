@@ -4,14 +4,18 @@ import { describe, expect, it } from "vitest";
 import {
   ARTIFACT_IFRAME_SANDBOX_OPAQUE,
   ARTIFACT_TYPES,
+  autoStartHeight,
   BOARD_IFRAME_SANDBOX,
+  BOARD_LINK_PREFIX,
   BOARD_LOADER_FILE,
   boardDocument,
+  boardLinkId,
   DESIGN_LIMITS,
   DESIGN_MESSAGES,
   DESIGN_PRESETS,
   type DesignBoard,
   designIssueSummary,
+  isArtboardId,
   LIMITS,
   parseDesign,
   rendererFiles,
@@ -174,8 +178,8 @@ describe("parseDesign", () => {
   it("names every problem with its line, in line order", () => {
     const cases: [string, string][] = [
       [
-        marker('name="A" size="a4" x="1"'),
-        'Line 1: artboard attribute "x" is not one of id, name, size, width, height, background, section.',
+        marker('name="A" size="a4" z="1"'),
+        'Line 1: artboard attribute "z" is not one of id, name, size, width, height, background, section, x, y.',
       ],
       [marker("name=A size=a4"), 'Line 1: write artboard attributes as name="value".'],
       [marker('name="A"size="a4"'), 'Line 1: write artboard attributes as name="value".'],
@@ -315,6 +319,9 @@ describe("boardDocument", () => {
     preset: "instagram-post",
     background: "#0b0b0f",
     section: null,
+    autoHeight: false,
+    x: null,
+    y: null,
     line: 1,
     html: "<div>Now live</div>",
   };
@@ -346,6 +353,192 @@ describe("boardDocument", () => {
       baseHref: "/",
     });
     expect(html).toContain("background:#ffffff}");
+  });
+});
+
+describe("fluid boards, placement and notes", () => {
+  /** A sticky note's marker unless `attrs` names another kind. */
+  const note = (attrs = "") =>
+    `<!-- note${attrs.includes("kind=") ? "" : ' kind="sticky"'}${attrs ? ` ${attrs}` : ""} -->`;
+
+  it("keeps a design without the new attributes exactly as before", () => {
+    const d = ok(SAMPLE);
+    expect(d.notes).toEqual([]);
+    for (const b of d.boards) {
+      expect([b.autoHeight, b.x, b.y]).toEqual([false, null, null]);
+    }
+  });
+
+  it('reads height="auto" with a size or a width', () => {
+    const d = ok(
+      [
+        marker('id="a" name="Site" size="desktop" height="auto"'),
+        "<main>a</main>",
+        marker('id="b" name="Free" size="1280x720" height="auto"'),
+        "",
+        marker('id="c" name="Phone page" width="390" height="auto"'),
+        "",
+        marker('id="d" name="Fixed" width="390" height="844"'),
+      ].join("\n"),
+    );
+    expect(d.boards.map((b) => [b.id, b.width, b.height, b.autoHeight, b.preset])).toEqual([
+      ["a", 1440, 900, true, "desktop"],
+      ["b", 1280, 720, true, null],
+      // A width alone starts (and stays at least) 10/16 as tall.
+      ["c", 390, autoStartHeight(390), true, null],
+      ["d", 390, 844, false, null],
+    ]);
+    expect(autoStartHeight(390)).toBe(244);
+    expect(autoStartHeight(16)).toBe(DESIGN_LIMITS.minSide);
+  });
+
+  it("refuses an auto height without a width, or with both size and width", () => {
+    for (const attrs of [
+      'name="A" height="auto"',
+      'name="A" size="desktop" width="1440" height="auto"',
+      'name="A" width="wide" height="auto"',
+      'name="A" width="5000" height="auto"',
+    ]) {
+      expect(issues(marker(attrs))[0]?.message, attrs).toMatch(/^Line 1: /);
+    }
+  });
+
+  it("reads x and y, both or neither", () => {
+    const d = ok(
+      [
+        marker('id="a" name="A" size="iphone" x="0" y="-120"'),
+        marker('id="b" name="B" size="iphone"'),
+      ].join("\n"),
+    );
+    expect(d.boards.map((b) => [b.x, b.y])).toEqual([
+      [0, -120],
+      [null, null],
+    ]);
+    const help =
+      "Line 1: give the artboard both x and y, whole CSS px from -100000 to 100000, or neither.";
+    for (const attrs of ['x="10"', 'y="10"', 'x="1.5" y="0"', 'x="100001" y="0"', 'x="a" y="b"']) {
+      expect(issues(marker(`name="A" size="a4" ${attrs}`))).toEqual([
+        { line: 1, board: "A", message: help },
+      ]);
+    }
+  });
+
+  it("reads notes as plain text that is not part of any board", () => {
+    const d = ok(
+      [
+        '<link rel="stylesheet" href="brand.css">',
+        note('kind="title"'),
+        "Onboarding <flow>",
+        marker('id="a" name="A" size="iphone"'),
+        "<main>A</main>",
+        "",
+        note('x="40" y="900" width="320" color="pink"'),
+        "",
+        "  Check the copy",
+        "with legal  ",
+        "",
+        marker('id="b" name="B" size="iphone"'),
+        "<main>B</main>",
+      ].join("\n"),
+    );
+    // The shared section ends at the first marker of either kind.
+    expect(d.shared).toBe('<link rel="stylesheet" href="brand.css">');
+    expect(d.boards.map((b) => b.html)).toEqual(["<main>A</main>\n", "<main>B</main>"]);
+    expect(d.notes).toEqual([
+      {
+        kind: "title",
+        text: "Onboarding <flow>",
+        width: null,
+        color: "yellow",
+        x: null,
+        y: null,
+        after: 0,
+        line: 2,
+      },
+      {
+        kind: "sticky",
+        text: "  Check the copy\nwith legal",
+        width: 320,
+        color: "pink",
+        x: 40,
+        y: 900,
+        after: 1,
+        line: 7,
+      },
+    ]);
+  });
+
+  it("names a bad note with its line", () => {
+    const cases: [string, string][] = [
+      [note(), "Line 1: write the note's text on the lines after its marker."],
+      [`${note('width="20"')}\nHi`, "Line 1: a note's width is 80 to 4096 px."],
+      [
+        `${note('color="lime"')}\nHi`,
+        "Line 1: a note's color is one of yellow, gray, red, orange, green, teal, blue, purple, pink.",
+      ],
+      [
+        `${note('kind="title" color="red"')}\nHi`,
+        "Line 1: color is for a sticky note; a title takes the canvas's own ink.",
+      ],
+      [
+        `${note('x="5"')}\nHi`,
+        "Line 1: give the note both x and y, whole CSS px from -100000 to 100000, or neither.",
+      ],
+      [`${note()}\n${"n".repeat(1001)}`, "Line 1: a note's text is at most 1000 characters."],
+    ];
+    for (const [head, message] of cases) {
+      const text = `${head}\n${marker('name="Z" size="a4"')}`;
+      expect(issues(text), head).toEqual([{ line: 1, message }]);
+    }
+    // Notes never stand in for boards, and have their own limit.
+    expect(issues(`${note()}\nHi`)).toEqual([{ line: 0, message: DESIGN_MESSAGES.noBoards }]);
+    const many = Array.from({ length: 61 }, () => `${note()}\nHi`).join("\n");
+    expect(issues(`${many}\n${marker('name="Z" size="a4"')}`)[0]?.message).toBe(
+      "A design has at most 60 notes; this one has 61.",
+    );
+  });
+
+  it("keeps a comment that is not a whole note marker in its board, as designs before notes had", () => {
+    // Every line here was valid board HTML before notes existed, and still is.
+    const legacy = [
+      "<!-- notes -->",
+      "<!-- note: tidy -->",
+      "<!-- note -->",
+      "<!-- note the padding is off -->",
+      '<!-- note name="A" -->',
+      '<!-- note kind="big" -->',
+      '<!-- note kind="title" colour="red" -->',
+      "<p>after</p>",
+    ];
+    const d = ok(
+      [marker('name="A" size="a4"'), ...legacy, marker('name="B" size="a4"')].join("\n"),
+    );
+    expect(d.notes).toEqual([]);
+    expect(d.boards.map((b) => b.html)).toEqual([legacy.join("\n"), ""]);
+  });
+
+  it("gives a fluid board's document no height", () => {
+    const d = ok(marker('name="Site" width="1280" height="auto"'));
+    const html = boardDocument({ board: d.boards[0] as DesignBoard, shared: "", baseHref: "/" });
+    expect(html).toContain(
+      "<style>html{width:1280px;overflow:hidden;background:#ffffff}body{margin:0}</style>",
+    );
+  });
+
+  it("reads board links", () => {
+    expect(boardLinkId("#board=checkout")).toBe("checkout");
+    expect(BOARD_LINK_PREFIX).toBe("#board=");
+    for (const bad of [
+      "#board=",
+      "#board=Check",
+      "board=x",
+      "#board=a b",
+      `#board=${"a".repeat(41)}`,
+    ]) {
+      expect(boardLinkId(bad), bad).toBeNull();
+    }
+    expect(isArtboardId("a-1")).toBe(true);
+    expect(isArtboardId(7)).toBe(false);
   });
 });
 

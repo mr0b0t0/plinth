@@ -1378,6 +1378,7 @@ describe("end to end with the real stager", () => {
             await s.add(path, bytes);
           },
           addRef: (p, h) => s.addRef(p, h),
+          addCopy: (p, b, t, f) => s.addCopy(p, b, t, f),
           finish: (o) => s.finish(o),
           abort: () => s.abort(),
         };

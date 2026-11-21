@@ -7,6 +7,7 @@ export * from "./constants.ts";
 export * from "./data.ts";
 export * from "./design.ts";
 export * from "./designSystem.ts";
+export * from "./designSystemFiles.ts";
 export * from "./designSystemSchema.ts";
 export * from "./displayName.ts";
 export * from "./errors.ts";

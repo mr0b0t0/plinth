@@ -21,6 +21,9 @@ import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
 import {
   BUILD_NOTE,
   CATEGORY_NOTE,
+  COPY_FILES_NOTE,
+  CRAFT_NOTE,
+  CRAFT_UPDATE_NOTE,
   categoryShareListNote,
   categoryShareNote,
   DATA_PAGE_NOTE,
@@ -52,9 +55,11 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "the user), content_url, warnings and a stored summary. New artifacts are private unless you pass " +
         "visibility: only the owner and people they add can open them. Optional assets are extra files " +
         "(CSS, JS, images) referenced by relative paths. " +
+        COPY_FILES_NOTE +
         BUILD_NOTE +
         "Scripts may load only from the instance's CDN allowlist; network calls to other hosts " +
         "are blocked. " +
+        CRAFT_NOTE +
         DOC_PUBLISH_NOTE +
         SLIDES_PUBLISH_NOTE +
         DESIGN_SYSTEM_PUBLISH_NOTE +
@@ -85,7 +90,9 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "current version's assets are kept. Versions are immutable; every update is a new version anyone can revert. " +
         "category: owner only (refused for editors); leave it out to keep the current one. " +
         categoryShareNote(ctx.config) +
+        CRAFT_UPDATE_NOTE +
         REUSE_NOTE +
+        COPY_FILES_NOTE +
         BUILD_NOTE +
         TYPE_UPDATE_NOTE +
         WHITEBOARD_PUBLISH_NOTE +
@@ -113,8 +120,9 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         'For type "design", content is its artboard HTML (design.html), untrusted like artifact HTML. ' +
         'For type "sheet", content is its JSON lines; read_sheet returns its cells with computed values. ' +
         'For type "whiteboard", content is its settings (board.json); its blocks and arrows are shared data (list_artifact_data). ' +
-        "An HTML page that names its design system (meta plinth-design-system) gets design_system: " +
-        "{id, title, version, current_version}, or null when you cannot open it. " +
+        "An HTML page or a design that names its design system (meta plinth-design-system) gets " +
+        "design_system: {id, title, version, current_version}, or null when you cannot open it. " +
+        "copied_from lists the files copied from other artifacts (copy_files), by source version. " +
         "category is the owner's grouping, shown only to the owner (null for everyone else). " +
         LIVE_DRAFT_NOTE +
         UNTRUSTED_FILES_NOTE,
@@ -133,7 +141,8 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "the user's own category names with counts, to reuse when publishing. Optional query filters " +
         "by title; optional category filters the user's own artifacts; limit 0 returns only the " +
         "categories, the cheap read before publishing. Optional type filters by artifact type " +
-        "(design_system lists the design systems the user can build with). category is null on artifacts " +
+        "(design_system lists the design systems the user can build with; the user's own default " +
+        "one has default: true). category is null on artifacts " +
         `shared with the user. ${categoryShareListNote(ctx.config)}${UNTRUSTED_NOTE}`,
       inputSchema: listArtifactsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_artifacts,
