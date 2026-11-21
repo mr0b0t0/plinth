@@ -1,6 +1,6 @@
 # Production (hosted instance)
 
-Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifacts at
+Status on 2026-11-14: **deployed** (last redeployed 2026-11-21, `35850ed4`) at <https://plinth.aconite.io>, with artifacts at
 `<id>.plinthusercontent.com`.
 
 ## Configuration
@@ -17,9 +17,9 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
 | Browser Rendering | `BROWSER` binding, for thumbnails and link-preview images (0.4.1); `THUMBNAILS` uses its default (on) |
 | Live rooms (#36) | On since 2026-11-18: the `ROOMS` binding (`ArtifactRoom`, migration tag `rooms-v1`) was added to the config by hand; `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` use their defaults (on) and `LIVE_DRAFT_RETENTION_DAYS` stays at 30. The privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
-| Live views | Not deployed yet. `ALLOW_LIVE_VIEWS` is not set and the config has the `ROOMS` binding, so a release with live views turns them on (the default) unless `ALLOW_LIVE_VIEWS="false"` is set first ([deploy-checklist.md](deploy-checklist.md#live-views)). Once on, every artifact with an open, visible view wakes its Durable Object and reads D1 once a minute (the room's re-check alarm) |
-| Category sharing | `ALLOW_CATEGORY_SHARING` is not set, so its default (on) applies once a release with it is deployed (migration `0013_category_sharing.sql`). The privacy notice's "Shared categories" item is part of that release and needs the maintainer's approval before the deploy |
-| Design export | Not deployed yet. `DESIGN_EXPORT`, `DESIGN_EXPORTS_PER_HOUR`, `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` are not set and the config has the `BROWSER` binding, so a release with design export turns it on with its defaults: 30 exports an hour per person, 20 per design for everyone but its owner and editors, and 120 for the whole instance (at most about 50 browser minutes an hour on top of thumbnails) |
+| Live views | On since 2026-11-21: `ALLOW_LIVE_VIEWS` is not set and the config has the `ROOMS` binding, so the default (on) applies ([deploy-checklist.md](deploy-checklist.md#live-views)). Now that they are on, every artifact with an open, visible view wakes its Durable Object and reads D1 once a minute (the room's re-check alarm) |
+| Category sharing | On since 2026-11-21: `ALLOW_CATEGORY_SHARING` is not set, so its default (on) applies (migration `0013_category_sharing.sql`). The privacy notice's "Shared categories" item shipped with it |
+| Design export | On since 2026-11-21: `DESIGN_EXPORT`, `DESIGN_EXPORTS_PER_HOUR`, `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` are not set and the config has the `BROWSER` binding, so it runs with its defaults: 30 exports an hour per person, 20 per design for everyone but its owner and editors, and 120 for the whole instance (at most about 50 browser minutes an hour on top of thumbnails) |
 | Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
@@ -29,9 +29,9 @@ All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002, 0004 to 0012 and 0020 applied (there is no 0003, and 0013 to 0019 are not yet used; 0012 was applied after 0020, on 2026-11-20) | `scripts/setup.mjs --remote --env production` |
+| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002, 0004 to 0013 and 0020 to 0022 applied (there is no 0003, and 0014 to 0019 are not used; 0012 was applied after 0020, on 2026-11-20; 0013, 0021 and 0022 on 2026-11-21) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `87a8ef95-f96a-4c62-9ca3-18f049738ed2`, commit `76a988c` (v0.6.0): design systems (#59), slides (#60), comments from the page (#58), publishing from CI with tokens limited to one artifact (#61, migration `0012_bound_tokens.sql` applied first, after the v0.6.0 release that the Action and the New token dialog pin) and thumbnails bound to the version they picture (#99); before it `190060a` (version `e4040d5e-eb3b-4d0f-81da-e8d050d620c8`): the artifact type and server extension scaffolding (#54, #55), no migrations; before it `584db84` (version `9a63798c-0566-48d1-8445-f748e51f0396`): artifact stats (#86, migration `0020_artifact_opens.sql` applied first; `VIEW_LOG_RETENTION_DAYS` uses its default, 365), without the account-wide `/stats` page (#87), and the dashboard card fix (#78); before it `7b6e438`: the review-account sign-in (#53, off: `REVIEW_LOGIN_EMAIL` and `REVIEW_LOGIN_PASSWORD_HASH` unset), the OpenAI domain challenge route (#74, off: `OPENAI_APPS_CHALLENGE` unset) and plugin 0.16.0 with the OpenAI and Cursor builds (#73, #75, #77), no migrations; before it `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `7804e581-78cc-4eb4-b04e-7279db68db64`, commit `35850ed4`: everything on main since v0.6.0, including category sharing, live views, design export, invitation opt-outs, the default design system and install-by-copy, design boards, whiteboard parity, HTML slide decks and the doc editing follow-ups (#101 to #121; migrations `0013_category_sharing.sql`, `0021_invitation_opt_outs.sql` and `0022_design_system_reuse.sql` applied first); before it `7543060c` (version `ad25f0ca-d5b9-4529-9f5e-723d89d5ef70`, 2026-11-20, no migrations): dashboard thumbnails in list rows (#101); before it `76a988c` (v0.6.0, version `87a8ef95-f96a-4c62-9ca3-18f049738ed2`): design systems (#59), slides (#60), comments from the page (#58), publishing from CI with tokens limited to one artifact (#61, migration `0012_bound_tokens.sql` applied first, after the v0.6.0 release that the Action and the New token dialog pin) and thumbnails bound to the version they picture (#99); before it `190060a` (version `e4040d5e-eb3b-4d0f-81da-e8d050d620c8`): the artifact type and server extension scaffolding (#54, #55), no migrations; before it `584db84` (version `9a63798c-0566-48d1-8445-f748e51f0396`): artifact stats (#86, migration `0020_artifact_opens.sql` applied first; `VIEW_LOG_RETENTION_DAYS` uses its default, 365), without the account-wide `/stats` page (#87), and the dashboard card fix (#78); before it `7b6e438`: the review-account sign-in (#53, off: `REVIEW_LOGIN_EMAIL` and `REVIEW_LOGIN_PASSWORD_HASH` unset), the OpenAI domain challenge route (#74, off: `OPENAI_APPS_CHALLENGE` unset) and plugin 0.16.0 with the OpenAI and Cursor builds (#73, #75, #77), no migrations; before it `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -122,6 +122,22 @@ After the v0.5.0 deploy (2026-11-16, `1b094e6`):
   and says the page cannot be shown there. claude.ai leaves `https://*.plinthusercontent.com` out
   of a custom connector's `frame-src`; a listing in the Claude directory can ask for the site.
 - **Connect an agent** shows the T3 Code tab with its Claude and Codex sections.
+
+After the 2026-11-21 deploy (`35850ed4`, version `7804e581`; migrations `0013`, `0021` and `0022`
+applied first, the three pending):
+
+- `/healthz` is OK, `/api/v1/config` still reports `plinthusercontent.com` with `origin`
+  isolation, the app's CSP keeps `frame-src https://*.plinthusercontent.com`, `/mcp` answers 401
+  without a token, `/llms.txt` and the OAuth metadata answer 200, `/mcp/server-card` reports
+  `0.6.0`, and `/openapi.json` has `copy_files` and `get_design_system`'s `deck_format`.
+- Before it, a scan of production for stored `design.html` lines starting `<!-- note` (the
+  legacy note comments that #117 and #119 read differently) found no design versions at all.
+- From some networks, `plinth.aconite.io`'s edge addresses (`188.114.96.0/23`) time out while
+  other Cloudflare addresses answer; the checks above were run with `curl --resolve` against
+  another edge address.
+
+After the 2026-11-20 deploy (`7543060c`, version `ad25f0ca`, no migrations): dashboard thumbnails
+in list rows and the card category on its info line (#101).
 
 After the 2026-11-20 deploy (`76a988c`, v0.6.0, version `87a8ef95`; migration `0012` applied
 first, the only one pending):
