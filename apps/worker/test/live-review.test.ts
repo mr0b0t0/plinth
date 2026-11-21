@@ -1,6 +1,6 @@
 // The whole-draft review on the server (docs/spec.md "Editing"): a draft's files are its base
 // version's, so every page Publish stages the source plus that version's files
-// (files_from_version, never the current version's), and "Publish mine" publishes the room's frozen
+// (files_from_version, never the current version's), and "Publish your changes" publishes the room's frozen
 // draft with the files it was made with, never the files of the version it replaces. Also the
 // doc's HTML-document rule on the socket, the files part of the conflict frame and its cap, the
 // stager parity of the live rules, and AppConfig.inline_editing.
@@ -92,7 +92,7 @@ async function files(id: string, n: number) {
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-describe("Publish mine stages the draft's files", () => {
+describe("Publish your changes stages the draft's files", () => {
   it("v3 holds v1's files (the draft's base), never v2's, and the conflict frame lists v2's", async () => {
     const { id, owner, ownerP } = await docWithFiles();
     const h = ownerP.session.headers;
@@ -150,13 +150,15 @@ describe("Publish mine stages the draft's files", () => {
 
 describe("files_from_version on PUT", () => {
   it("carries that version's files under the new source; refused with assets, and for a version that is not there", async () => {
-    const { id, owner } = await docWithFiles();
+    const { id, owner, ownerP } = await docWithFiles();
+    // The app's page Publish: the signed-in owner.
+    const app = ownerP.session.headers;
     const v2 = await call(id, owner.auth, "", {
       method: "PUT",
       body: { content: BASE, base_version: 1, assets: [png("chart.png", PNG_B)] },
     });
     expect(v2.status).toBe(200);
-    const v3 = await call(id, owner.auth, "", {
+    const v3 = await call(id, app, "", {
       method: "PUT",
       body: { content: `${BASE}\nMore.\n`, base_version: 2, files_from_version: 1 },
     });
@@ -164,14 +166,14 @@ describe("files_from_version on PUT", () => {
     expect((await files(id, 3)).map((f) => [f.path, f.sha256])).toEqual(
       (await files(id, 1)).map((f) => [f.path, f.sha256]),
     );
-    const both = await call(id, owner.auth, "", {
+    const both = await call(id, app, "", {
       method: "PUT",
       body: { content: BASE, base_version: 3, files_from_version: 1, assets: [] },
     });
     expect(both.status).toBe(400);
     expect((await json(both)).error.details.reason).toBe("files_from_with_assets");
     for (const n of [4, 99]) {
-      const missing = await call(id, owner.auth, "", {
+      const missing = await call(id, app, "", {
         method: "PUT",
         body: { content: BASE, base_version: 3, files_from_version: n },
       });
@@ -189,6 +191,22 @@ describe("files_from_version on PUT", () => {
     });
     expect(res.status).toBe(403);
     expect(Object.keys(updateArtifactInput.shape)).not.toContain("files_from_version");
+  });
+
+  it("is the app's only: the owner's own agent token is refused with app_only, and nothing is written", async () => {
+    const { id, owner } = await docWithFiles();
+    const v2 = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: BASE, base_version: 1, assets: [png("chart.png", PNG_B)] },
+    });
+    expect(v2.status).toBe(200);
+    const res = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: `${BASE}\nMore.\n`, base_version: 2, files_from_version: 1 },
+    });
+    expect(res.status).toBe(403);
+    expect((await json(res)).error.details.reason).toBe("app_only");
+    expect(await versionRow(id, 3)).toBeNull();
   });
 });
 
@@ -294,10 +312,12 @@ describe("the files part after a late save", () => {
     expect(await editLines(a, 4, 5, "First, by a person, twice.", 1)).toBeNull();
     const put = (body: Record<string, unknown>) =>
       call(id, owner.auth, "", { method: "PUT", body });
-    // v2 is that Publish (its finish has not reached the room yet).
-    expect((await put({ content: snap.text, base_version: 1, files_from_version: 1 })).status).toBe(
-      200,
-    );
+    // v2 is that Publish (its finish has not reached the room yet), as the signed-in person.
+    const publish = await call(id, ownerP.session.headers, "", {
+      method: "PUT",
+      body: { content: snap.text, base_version: 1, files_from_version: 1 },
+    });
+    expect(publish.status).toBe(200);
     // v3, by an agent, replaces chart.png and changes the same line: the draft freezes against it.
     const v3 = { content: BASE.replace("First.", "First, by an agent."), base_version: 2 };
     expect((await put({ ...v3, assets: [png("chart.png", PNG_B), png("old.png")] })).status).toBe(

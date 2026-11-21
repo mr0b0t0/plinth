@@ -1,5 +1,5 @@
 // Formatting for version lists: sizes, relative and full dates, note excerpts, compare links.
-import { APP_ROUTES, route } from "@plinth/shared";
+import { APP_ROUTES, type ArtifactTypeDef, route } from "@plinth/shared";
 
 /** "820 B", "12.4 KB", "3.1 MB" (decimal units, like file managers). */
 export function formatBytes(n: number): string {
@@ -60,6 +60,53 @@ export function versionPath(slug: string, n: number, current?: number): string {
 export function comparePath(slug: string, from: number, to: number): string {
   const q = new URLSearchParams({ from: String(from), to: String(to) });
   return `${route(APP_ROUTES.compare, { slug })}?${q}`;
+}
+
+/** What the history says about restoring version `n`. */
+export interface RestoreWording {
+  /** The menu item and the confirm button. */
+  action: string;
+  title: string;
+  description: string;
+  /** The toast once it is done. */
+  done: string;
+  doneDetail: (version: number) => string;
+  /**
+   * What the history's header says about restoring, before "Tick two versions to compare them";
+   * empty where the menu item ("Restore settings") and its dialog say it.
+   */
+  hint: string;
+}
+
+/**
+ * Restoring version `n` while `current` is the current version. On a type whose versions hold only
+ * settings (registry `versions: "settings"`, a whiteboard), a restore brings back the settings
+ * alone, and says in one line that what people made on the page stays as it is.
+ */
+export function restoreWording(
+  def: Pick<ArtifactTypeDef, "label" | "versions"> | null,
+  n: number,
+  current: number,
+): RestoreWording {
+  if (def?.versions === "settings") {
+    const what = def.label.toLowerCase();
+    return {
+      action: "Restore settings",
+      title: `Restore v${n}'s settings?`,
+      description: `This publishes v${n}'s settings as v${current + 1}. What is on the ${what} stays as it is.`,
+      done: `Restored v${n}'s settings`,
+      doneDetail: (v) => `Its settings are now the current version, v${v}.`,
+      hint: "",
+    };
+  }
+  return {
+    action: `Restore v${n}`,
+    title: `Restore v${n}?`,
+    description: `This publishes v${n}'s content as v${current + 1}. Nothing is lost: v${current} and every other version stay in the history.`,
+    done: `Restored v${n}`,
+    doneDetail: (v) => `Its content is now the current version, v${v}.`,
+    hint: "Restoring publishes an old version’s content as a new version. Nothing is ever overwritten.",
+  };
 }
 
 /** Parse a version number from a query value; null when absent or not a positive integer. */

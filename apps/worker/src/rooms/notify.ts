@@ -2,9 +2,9 @@
 // the response (waitUntil), with one retry: the room's 60 s alarm re-checks D1 and closes what a
 // lost call left open. Only artifacts that can have sockets are notified: with live views off, a
 // doc, a deck (its follow channel) or an HTML artifact whose current or previous version declares
-// `room`, so ordinary artifacts
-// never instantiate an object; with live views on, every artifact, since anyone who opens one may
-// hold a watch socket on it. Failures are logged with the operation only, never content.
+// `room`, so ordinary artifacts never instantiate an object; with live views on, every artifact,
+// since anyone who opens one may hold a watch socket on it. Failures are logged with the operation
+// only, never content.
 //
 // Live views (notifyViewers): a new version, or a change to the page's shared data, reaches the
 // artifact's watch sockets the same way, as a signal made of integers and nothing else.
@@ -64,7 +64,7 @@ async function loadRoomFacts(env: Bindings, artifactId: string) {
 
 /**
  * Whether the artifact's object may hold sockets: watch sockets on every artifact while live views
- * are active, room sockets on a doc or a sheet (a type with `liveEdit`), on a type with `follow`
+ * are active, room sockets on a doc or a sheet (a type with `edit: "live"`), on a type with `follow`
  * (a deck's follow channel, which has no declaration to redeclare), or on a page whose current or
  * previous version declares `room`.
  */

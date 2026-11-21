@@ -20,7 +20,12 @@ async function settle(page: Page) {
 
 async function axe(page: Page) {
   await settle(page);
-  const results = await new AxeBuilder({ page }).exclude("iframe").analyze();
+  // A card's placeholder preview (the dashboard's, also on the portal) is aria-hidden glyph art in
+  // --color-ink-ghost, which tokens.css keeps for decoration below 4.5:1.
+  const results = await new AxeBuilder({ page })
+    .exclude("iframe")
+    .exclude(".pl-dash__paper")
+    .analyze();
   expect(results.violations.map((v) => `${v.id}: ${v.help}`)).toEqual([]);
 }
 
@@ -81,7 +86,7 @@ test("an owner shares a category, the client sees what was ticked, and new filin
   const cp = await clientContext.newPage();
   try {
     await cp.goto(`/p/${share?.id}`);
-    await expect(cp.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
+    await expect(cp.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await axe(cp);
     await confirmOnPortal(cp, cp.request, client);
     await expect(cp.getByRole("heading", { name: "Acme" })).toBeVisible();
@@ -101,18 +106,17 @@ test("an owner shares a category, the client sees what was ticked, and new filin
     const direct = await apiGet(cp.request, `/view/${gamma.slug}`);
     expect(direct.body.status).not.toBe("ok");
 
-    // The owner sees the banner, reviews and shares it; the client now sees two.
+    // The owner sees the review line, reviews and shares it; the client now sees two.
     await page.goto("/dashboard");
-    await expect(
-      page.getByText("1 artifact waits for your review before Acme's people can see it."),
-    ).toBeVisible();
+    await expect(page.getByText(/1 to review in Acme/)).toBeVisible();
     await page.getByRole("button", { name: "Review" }).click();
-    const review = page.getByRole("dialog", { name: "Review for “Acme”" });
+    const review = page.getByRole("dialog", { name: "Review “Acme”" });
     await review
-      .getByRole("group", { name: "Decision for Gamma report" })
-      .getByRole("radio", { name: "Share", exact: true })
-      .check();
-    await review.getByRole("button", { name: "Save" }).click();
+      .getByRole("listitem")
+      .filter({ hasText: "Gamma report" })
+      .getByRole("button", { name: "Share", exact: true })
+      .click();
+    // The last decision closes the review.
     await expect(review).toBeHidden();
     await cp.reload();
     await expect(cp.getByRole("heading", { name: "Acme" })).toBeVisible();
@@ -125,7 +129,7 @@ test("an owner shares a category, the client sees what was ticked, and new filin
 
     await page.goto("/dashboard?category=Acme");
     await page.getByRole("button", { name: "Sharing" }).click();
-    const sharing = page.getByRole("dialog", { name: "Sharing “Acme”" });
+    const sharing = page.getByRole("dialog", { name: "Share “Acme”" });
     await sharing.getByRole("button", { name: `Remove ${client}` }).click();
     await sharing.getByRole("button", { name: "Save" }).click();
     await expect(sharing).toBeHidden();

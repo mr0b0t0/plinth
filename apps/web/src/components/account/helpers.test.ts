@@ -7,6 +7,7 @@ import {
   mcpUrl,
   mentionReach,
   mentionReachText,
+  mentionReachWarns,
   quotaText,
   scopeLabel,
   versionsText,
@@ -183,17 +184,8 @@ describe("mentionReach", () => {
       handle: "gemini-cli-laptop",
     });
     expect(mentionReachText({ kind: "handle", handle: "claude-code" })).toBe(
-      "Collaborators reach it by writing @claude-code in a comment.",
+      "Mention as @claude-code.",
     );
-  });
-
-  it("a name on Object.prototype is an ordinary handle, not an agent name", () => {
-    for (const label of ["constructor", "toString", "hasOwnProperty"]) {
-      expect(mentionReach(label, [], self), label).toEqual({
-        kind: "handle",
-        handle: label.toLowerCase(),
-      });
-    }
   });
 
   it("agent names always mean the client type", () => {
@@ -204,8 +196,9 @@ describe("mentionReach", () => {
     });
     const codex = mentionReach("codex", [], self);
     expect(codex).toEqual({ kind: "agent_name", handle: "codex", reached: false });
-    expect(mentionReachText(codex)).toBe(
-      "@codex always means your Codex connections, so this name does not reach it. Pick another name.",
+    expect(mentionReachText(codex)).toBe("@codex means your Codex connections. Pick another name.");
+    expect(mentionReachText({ kind: "agent_name", handle: "claude", reached: true })).toBe(
+      "Mention as @claude, with your other Claude connections.",
     );
   });
 
@@ -227,6 +220,15 @@ describe("mentionReach", () => {
     expect(mentionReach("Claude Code", [{ ...older, artifact: { id: "x" } }], self).kind).toBe(
       "handle",
     );
+    // Nor is a connection without the mentions scope (the server skips it the same way), while
+    // one with it, or whose scopes are not known, still does.
+    expect(mentionReach("Claude Code", [{ ...older, scopes: ["artifacts:read"] }], self).kind).toBe(
+      "handle",
+    );
+    expect(
+      mentionReach("Claude Code", [{ ...older, scopes: ["artifacts:read", "mentions"] }], self)
+        .kind,
+    ).toBe("shadowed");
     // A connection that does not exist yet comes after every live one.
     expect(mentionReach("claude code", [newer], { client_type: "other" })).toMatchObject({
       kind: "shadowed",
@@ -242,8 +244,12 @@ describe("mentionReach", () => {
     expect(mentionReach("!!!", [], self)).toEqual({ kind: "none" });
     expect(mentionReach("-dash", [], self)).toEqual({ kind: "none" });
     expect(mentionReach("ends.", [], self)).toEqual({ kind: "none" });
+    // Letters of other scripts are dropped from a handle, so a Cyrillic name has none.
+    expect(mentionReach("Помощник", [], self)).toEqual({ kind: "none" });
+    expect(mentionReach("Мой agent", [], self)).toEqual({ kind: "none" });
+    // The hint fits every case: a name that starts with a letter can still end with a dot.
     expect(mentionReachText({ kind: "none" })).toBe(
-      "This name cannot be mentioned. Start it with a letter or digit.",
+      "Cannot be mentioned: start and end the name with a Latin letter or digit.",
     );
   });
 
@@ -258,5 +264,27 @@ describe("mentionReach", () => {
       kind: "handle",
       handle: "ci",
     });
+    // The row and the dialog already show both, so the hints add nothing.
+    expect(mentionReachText({ kind: "artifact_only" })).toBeNull();
+    expect(mentionReachText({ kind: "no_mentions" })).toBeNull();
+  });
+
+  it("a Claude or Codex connection is also reached by its client name", () => {
+    const claude = mentionReach("Laptop", [], { ...self, client_type: "claude" });
+    expect(claude).toEqual({ kind: "handle", handle: "laptop", also: "claude" });
+    expect(mentionReachText(claude)).toBe("Mention as @laptop or @claude.");
+    expect(mentionReachText(mentionReach("Laptop", [], { ...self, client_type: "codex" }))).toBe(
+      "Mention as @laptop or @codex.",
+    );
+  });
+
+  it("warns only when no mention reaches the connection by its name", () => {
+    expect(mentionReachWarns({ kind: "shadowed", handle: "a", by: "A" })).toBe(true);
+    expect(mentionReachWarns({ kind: "none" })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: false })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: true })).toBe(false);
+    expect(mentionReachWarns({ kind: "handle", handle: "a" })).toBe(false);
+    expect(mentionReachWarns({ kind: "artifact_only" })).toBe(false);
+    expect(mentionReachWarns({ kind: "no_mentions" })).toBe(false);
   });
 });

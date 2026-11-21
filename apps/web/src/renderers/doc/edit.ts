@@ -184,7 +184,7 @@ export class LocalDoc implements DocBackend {
 
 /**
  * A place on the page an agent is asked about (`ask`): a structural key, and the first words of
- * the block for the dialog's "About" line (empty for a block with no text).
+ * the block for the dialog's "Pointing at" chip (empty for a block with no text).
  */
 export interface AskAnchor {
   key: string;
@@ -201,7 +201,7 @@ export interface EditorHooks {
   fileVersion?(): number | null;
   /**
    * Ask an agent about a place in the doc (the app's Ask dialog), with what kind of block it is
-   * for the dialog's "About" line.
+   * for the dialog's "Pointing at" chip.
    */
   ask?(anchor: AskAnchor, what: AskWhat): void;
 }
@@ -225,7 +225,7 @@ const WORD_BREAKS = new Set([
 ]);
 
 /**
- * The first words of a block as the person sees them, for the Ask dialog's "About" line: spaces
+ * The first words of a block as the person sees them, for the Ask dialog's "Pointing at" chip: spaces
  * between cells and lines, " · " between a list's items, every run of white space or control
  * characters one space, at most the page anchor's length.
  */
@@ -261,7 +261,7 @@ export function blockWords(nodes: Node[]): string {
   return Array.from(text).slice(0, PAGE_COMMENT_LIMITS.maxText).join("").trimEnd();
 }
 
-/** What a drawn block is, in the Ask dialog's words ("About: the list"), for one with no text. */
+/** What a drawn block is, in the Ask dialog's words ("Pointing at the list"), for one with no text. */
 function whatOf(nodes: Node[]): AskWhat {
   const el = nodes.find((n): n is Element => n.nodeType === 1);
   if (!el) return "block";
@@ -596,8 +596,9 @@ export class DocEditor {
     private readonly win: Window,
     private backend: DocBackend,
     private readonly hooks: EditorHooks,
+    prepare?: (fragment: DocumentFragment) => void,
   ) {
-    this.cache = new BlockCache(win.document);
+    this.cache = new BlockCache(win.document, prepare);
   }
 
   get doc(): Document {

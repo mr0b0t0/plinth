@@ -40,6 +40,31 @@ describe("spreadMs", () => {
   });
 });
 
+describe("readViewWatchFrame", () => {
+  it("reads a welcome as the current version only", () => {
+    expect(readViewWatchFrame(JSON.stringify({ t: "welcome", v: 1, version: 4 }))).toEqual({
+      t: "welcome",
+      v: 1,
+      version: 4,
+    });
+    // Nothing else a welcome might carry reaches the app.
+    expect(
+      readViewWatchFrame(JSON.stringify({ t: "welcome", v: 1, version: 4, data: true })),
+    ).toEqual({ t: "welcome", v: 1, version: 4 });
+    expect(readViewWatchFrame(JSON.stringify({ t: "welcome", v: 2, version: 4 }))).toBeNull();
+    expect(readViewWatchFrame(JSON.stringify({ t: "welcome", v: 1, version: -1 }))).toBeNull();
+  });
+});
+
+describe("reconnect and lifetime spreads", () => {
+  it("spread a reconnect wave and a lifetime wave over named, bounded windows", () => {
+    expect(LIVE_VIEW_LIMITS.reconnectSpreadMs).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
+    // Five or six of the room's 60 s alarms; a small part of the 12-hour lifetime.
+    expect(LIVE_VIEW_LIMITS.lifetimeJitterS).toBe(300);
+    expect(LIVE_VIEW_LIMITS.lifetimeJitterS).toBeLessThan(LIVE_VIEW_LIMITS.socketTtlS / 100);
+  });
+});
+
 describe("livePoolCap", () => {
   it("splits the per-artifact cap between the member and open pools, never over it", () => {
     const [lo, hi] = LIVE_VIEW_BOUNDS.maxSocketsPerArtifact;

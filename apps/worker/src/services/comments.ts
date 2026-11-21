@@ -5,12 +5,6 @@
 // data, and never rendered to HTML on the server (the web app renders them with renderMarkdown).
 // An anchor is an element (a selector) or a page anchor (`kind: "page"`, placed by the page's own
 // code through plinth.comments); both are read back through the schema that admitted them.
-//
-// A thread whose root has kind `page_request` (docs/spec.md "Page requests") is visible only to the
-// owner, editors and the person who filed it (policy.ts canSeeThread). Every path that reads or
-// writes a thread checks it through requireThreadVisible: listing, replying by parent_id, loading
-// one comment (reply_comment, resolve_comment and their REST mirrors). Anyone else gets the same
-// "not found" as for a comment that does not exist.
 import {
   type Anchor,
   anchorSchema,
@@ -18,9 +12,9 @@ import {
   type ClientType,
   type CommentInfo,
   type CommentStatus,
-  type EffectiveRole,
-  mentionAgentType,
+  MENTION_AGENT_NAMES,
   mentionHandle,
+  pageDisplayName,
   parseMentions,
   RATE_LIMITS,
   REQUEST_TARGET_LABELS,
@@ -31,6 +25,7 @@ import type { Db } from "../db/client.ts";
 import {
   type ArtifactRow,
   agentConnections,
+  artifacts,
   type CommentRow,
   comments,
   type MentionTaskRow,
@@ -41,7 +36,7 @@ import { newId } from "../lib/crypto.ts";
 import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import { callerEmails, canSeeThread, takesRequests } from "../policy.ts";
+import { takesRequests } from "../policy.ts";
 import { decideFor, requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 
@@ -94,6 +89,8 @@ export interface LoadedComment {
   userName: string | null;
   userEmail: string | null;
   connLabel: string | null;
+  /** The artifact's owner, so the author's ownership comes from ids, never from the label. */
+  ownerId: string | null;
 }
 
 export async function loadComments(ctx: Ctx, where: SQL | undefined): Promise<LoadedComment[]> {
@@ -103,8 +100,10 @@ export async function loadComments(ctx: Ctx, where: SQL | undefined): Promise<Lo
       userName: users.name,
       userEmail: users.email,
       connLabel: agentConnections.label,
+      ownerId: artifacts.ownerId,
     })
     .from(comments)
+    .leftJoin(artifacts, eq(artifacts.id, comments.artifactId))
     .leftJoin(users, eq(users.id, comments.authorUserId))
     .leftJoin(agentConnections, eq(agentConnections.id, comments.authorConnection))
     .where(where)
@@ -133,9 +132,12 @@ async function tasksFor(ctx: Ctx, commentIds: string[]): Promise<Map<string, Men
   return by;
 }
 
-/** Display label for a comment's author: connection label, else name, else email. */
+/**
+ * Display label for a comment's author: connection label, else name (cleaned on every read,
+ * displayName.ts pageDisplayName, so a name stored before the rules shows cleaned too), else email.
+ */
 export function authorLabel(l: LoadedComment): string {
-  return l.connLabel ?? l.userName ?? l.c.authorEmail ?? l.userEmail ?? "Unknown";
+  return l.connLabel ?? pageDisplayName(l.userName) ?? l.c.authorEmail ?? l.userEmail ?? "Unknown";
 }
 
 /**
@@ -161,7 +163,9 @@ export function readAnchor(raw: string | null): Anchor | null {
 function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean): CommentInfo {
   const { c } = l;
   let label = authorLabel(l);
-  if (!revealEmail && !l.connLabel && !l.userName) label = label.split("@")[0] || "Someone";
+  if (!revealEmail && !l.connLabel && !pageDisplayName(l.userName)) {
+    label = label.split("@")[0] || "Someone";
+  }
   return {
     id: c.id,
     artifact_id: c.artifactId,
@@ -171,6 +175,7 @@ function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean)
       email: revealEmail ? c.authorEmail : null,
       connection_id: c.authorConnection,
       label,
+      is_owner: c.authorUserId !== null && c.authorUserId === l.ownerId,
     },
     body: c.body,
     anchor: readAnchor(c.anchor),
@@ -182,22 +187,7 @@ function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean)
       state: t.state,
       result_version: t.resultVersion,
     })),
-    kind: c.kind,
-    request_data: c.kind === "page_request" ? readRequestData(c.requestData) : null,
   };
-}
-
-/** A page request's stored data read back: a JSON object, or null for anything else. */
-export function readRequestData(raw: string | null): Record<string, unknown> | null {
-  if (!raw) return null;
-  try {
-    const v: unknown = JSON.parse(raw);
-    return typeof v === "object" && v !== null && !Array.isArray(v)
-      ? (v as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 export async function commentInfo(ctx: Ctx, id: string, revealEmail = true): Promise<CommentInfo> {
@@ -213,68 +203,24 @@ export async function getCommentRow(ctx: Ctx, id: string): Promise<CommentRow | 
   return (await ctx.db.select().from(comments).where(eq(comments.id, id)).get()) ?? null;
 }
 
-/** The root of a comment's thread: the comment itself when it is a root. */
-async function threadRoot(ctx: Ctx, c: CommentRow): Promise<CommentRow | null> {
-  if (!c.parentId) return c;
-  const root = await getCommentRow(ctx, c.parentId);
-  return root && root.artifactId === c.artifactId ? root : null;
-}
-
-/**
- * Throw notFound(what) unless the caller may see this thread (policy.ts canSeeThread): a page
- * request is the owner's, editors' and its requester's only. Every comment read or write path
- * calls this.
- */
-function requireThreadVisible(
-  ctx: Ctx,
-  role: EffectiveRole | null,
-  root: CommentRow | null,
-  what: "Comment" | "Parent comment",
-): asserts root is CommentRow {
-  const emails = callerEmails(ctx.principal, ctx.viewerEmail);
-  if (!root || !canSeeThread(role, emails, { kind: root.kind, authorEmail: root.authorEmail })) {
-    throw notFound(what);
-  }
-}
-
 /**
  * Load a comment and require an action on its artifact. A comment on an artifact the caller cannot
- * see, or in a thread the caller may not see, is "not found", like the artifact itself.
+ * see is "not found", like the artifact itself.
  */
 export async function requireComment(
   ctx: Ctx,
   id: string,
   action: "view" | "comment",
-): Promise<{
-  comment: CommentRow;
-  artifact: ArtifactRow;
-  role: EffectiveRole | null;
-  root: CommentRow;
-}> {
+): Promise<{ comment: CommentRow; artifact: ArtifactRow }> {
   const comment = await getCommentRow(ctx, id);
   if (!comment) throw notFound("Comment");
-  const root = await threadRoot(ctx, comment);
-  let allowed: { artifact: ArtifactRow; role: EffectiveRole | null };
-  try {
-    allowed = await requireArtifact(ctx, comment.artifactId, action);
-  } catch (e) {
-    // Someone who may view the artifact but not act on this thread learns nothing about a thread
-    // they may not see: the same "not found" as for a missing comment, not a "forbidden".
-    const seen = await requireArtifact(ctx, comment.artifactId, "view").catch(() => null);
-    if (seen) requireThreadVisible(ctx, seen.role, root, "Comment");
-    throw e;
-  }
-  requireThreadVisible(ctx, allowed.role, root, "Comment");
-  return { comment, artifact: allowed.artifact, role: allowed.role, root };
+  const { artifact } = await requireArtifact(ctx, comment.artifactId, action);
+  return { comment, artifact };
 }
 
 // ---------- operations ----------
 
-/**
- * All comments on an artifact, threaded: each root (oldest first) followed by its replies. Threads
- * the caller may not see (policy.ts canSeeThread: another person's page request) are left out
- * whole, root and replies. For an agent, the role is its user's and the emails are its user's own.
- */
+/** All comments on an artifact, threaded: each root (oldest first) followed by its replies. */
 export async function listComments(ctx: Ctx, ref: string): Promise<CommentInfo[]> {
   const { artifact, role } = await requireArtifact(ctx, ref, "comments_read");
   const rows = await loadComments(ctx, eq(comments.artifactId, artifact.id));
@@ -294,12 +240,8 @@ export async function listComments(ctx: Ctx, ref: string): Promise<CommentInfo[]
       roots.push(r);
     }
   }
-  const emails = callerEmails(ctx.principal, ctx.viewerEmail);
   const out: CommentInfo[] = [];
   for (const root of roots) {
-    if (!canSeeThread(role, emails, { kind: root.c.kind, authorEmail: root.c.authorEmail })) {
-      continue;
-    }
     out.push(toInfo(root, tasks.get(root.c.id) ?? [], revealEmail));
     for (const r of replies.get(root.c.id) ?? []) {
       out.push(toInfo(r, tasks.get(r.c.id) ?? [], revealEmail));
@@ -323,19 +265,17 @@ export async function createComment(
   ref: string,
   input: NewComment,
 ): Promise<CommentInfo> {
-  const { artifact, role } = await requireArtifact(ctx, ref, "comment");
-  return insertComment(ctx, artifact, role, input);
+  const { artifact } = await requireArtifact(ctx, ref, "comment");
+  return insertComment(ctx, artifact, input);
 }
 
 /**
- * Insert a comment on an artifact the caller is already allowed to comment on, with the caller's
- * role there. Used by createComment and by reply_comment. A reply into a thread the caller may not
- * see is "Parent comment not found", before any version check, rate limit or write.
+ * Insert a comment on an artifact the caller is already allowed to comment on. Used by
+ * createComment and by reply_comment.
  */
 export async function insertComment(
   ctx: Ctx,
   artifact: ArtifactRow,
-  role: EffectiveRole | null,
   input: NewComment,
 ): Promise<CommentInfo> {
   const author = authorOf(ctx);
@@ -352,7 +292,6 @@ export async function insertComment(
   if (input.parent_id) {
     const parent = await getCommentRow(ctx, input.parent_id);
     if (!parent || parent.artifactId !== artifact.id) throw notFound("Parent comment");
-    requireThreadVisible(ctx, role, await threadRoot(ctx, parent), "Parent comment");
     // Threads are one level deep: a reply to a reply joins the root's thread.
     parentId = parent.parentId ?? parent.id;
   }
@@ -373,8 +312,6 @@ export async function insertComment(
     status: "open",
     createdAt: nowIso(),
     resolvedAt: null,
-    kind: "comment",
-    requestData: null,
   };
   const tasks = await mentionTasksFor(ctx, artifact, row, input.request_to);
   const insert = ctx.db.insert(comments).values(row);
@@ -397,9 +334,10 @@ export async function insertComment(
  *   turn into a request that looks like it came from the owner.
  * - "@claude" and "@codex" target the owner's connections of that client type.
  * - "@<handle>" targets the artifact owner's non-revoked connection whose label normalizes to that
- *   handle (mentionHandle), leaving out tokens limited to one artifact (they never hold
- *   mentions). Agent names win over a label with the same handle; if several labels share a
- *   handle, the oldest connection is the target. Never another user's connections.
+ *   handle (mentionHandle), leaving out tokens limited to one artifact and connections without
+ *   the `mentions` scope (neither could claim the task). Agent names win over a label with the
+ *   same handle; if several labels share a handle, the oldest connection is the target. Never
+ *   another user's connections.
  * - Anything else stays plain text.
  * - `requestTo` (Ask an agent) targets the owner's connections of that client type, as "@claude"
  *   does, once: a client type the body already names gets no second task. It needs a connection
@@ -441,17 +379,54 @@ async function mentionTasksFor(
     createdAt: comment.createdAt,
   };
   const tasks: MentionTaskRow[] = [];
-  const labelNames = names.filter((n) => !mentionAgentType(n));
-  const owned = labelNames.length ? await ownerMentionConnections(ctx.db, artifact.ownerId) : [];
+  const labelNames = names.filter((n) => !MENTION_AGENT_NAMES[n]);
+  const owned = labelNames.length
+    ? (
+        await ctx.db
+          .select({
+            id: agentConnections.id,
+            label: agentConnections.label,
+            scopes: agentConnections.scopes,
+          })
+          .from(agentConnections)
+          .where(
+            and(
+              eq(agentConnections.userId, artifact.ownerId),
+              isNull(agentConnections.revokedAt),
+              // A token limited to one artifact never holds mentions, so it could never claim one.
+              isNull(agentConnections.artifactId),
+            ),
+          )
+          .orderBy(asc(agentConnections.createdAt), sql`${agentConnections}.rowid`)
+          .all()
+      )
+        // Nor could a connection without the mentions scope: it never takes a handle, so a newer
+        // one with the same handle that can answer gets the task.
+        .filter((c) => parseScopes(c.scopes).has("mentions"))
+    : [];
   const seenConnections = new Set<string>();
   for (const name of names) {
-    const target = matchMentionTarget(name, owned);
-    if (!target) continue;
-    if (target.targetConnection) {
-      if (seenConnections.has(target.targetConnection)) continue;
-      seenConnections.add(target.targetConnection);
+    const clientType = MENTION_AGENT_NAMES[name];
+    if (clientType) {
+      tasks.push({
+        ...base,
+        id: newId(),
+        targetConnection: null,
+        targetClientType: clientType,
+        targetLabel: `@${name}`,
+      });
+      continue;
     }
-    tasks.push({ ...base, id: newId(), ...target, targetLabel: `@${name}` });
+    const conn = owned.find((c) => mentionHandle(c.label) === name);
+    if (!conn || seenConnections.has(conn.id)) continue;
+    seenConnections.add(conn.id);
+    tasks.push({
+      ...base,
+      id: newId(),
+      targetConnection: conn.id,
+      targetClientType: null,
+      targetLabel: `@${name}`,
+    });
   }
   if (
     requestTo &&
@@ -498,91 +473,18 @@ export async function requestTargets(db: Db, ownerId: string): Promise<ClientTyp
   return CLIENT_TYPES.filter((t) => types.has(t));
 }
 
-/** Where a mention name points: an agent type, or one of the owner's connections. */
-export interface MentionTarget {
-  targetConnection: string | null;
-  targetClientType: ClientType | null;
-}
-
-/**
- * The owner's connections a mention may name, oldest first: not revoked, and not limited to one
- * artifact (such a token never holds mentions, so it could never claim one).
- */
-async function ownerMentionConnections(
-  db: Db,
-  ownerId: string,
-): Promise<{ id: string; label: string }[]> {
-  return db
-    .select({ id: agentConnections.id, label: agentConnections.label })
-    .from(agentConnections)
-    .where(
-      and(
-        eq(agentConnections.userId, ownerId),
-        isNull(agentConnections.revokedAt),
-        isNull(agentConnections.artifactId),
-      ),
-    )
-    .orderBy(asc(agentConnections.createdAt), sql`${agentConnections}.rowid`)
-    .all();
-}
-
-/** The mention rules on one name: agent names win, then the oldest connection with that handle. */
-function matchMentionTarget(
-  name: string,
-  owned: readonly { id: string; label: string }[],
-): MentionTarget | null {
-  const clientType = mentionAgentType(name);
-  if (clientType) return { targetConnection: null, targetClientType: clientType };
-  const conn = owned.find((c) => mentionHandle(c.label) === name);
-  return conn ? { targetConnection: conn.id, targetClientType: null } : null;
-}
-
-/**
- * Resolve one mention name for an artifact's owner, by exactly the rules a comment's @mention
- * follows (mentionTasksFor): `claude` and `codex` target the owner's connections of that client
- * type; anything else the owner's oldest connection whose label normalizes to it, never another
- * user's. Null when nothing matches (an unknown or revoked handle). Page requests use it.
- */
-export async function resolveMentionTarget(
-  db: Db,
-  ownerId: string,
-  name: string,
-): Promise<MentionTarget | null> {
-  if (mentionAgentType(name)) return matchMentionTarget(name, []);
-  return matchMentionTarget(name, await ownerMentionConnections(db, ownerId));
-}
-
-/**
- * Resolve or reopen a thread (policy "comment"). Status lives on the thread's root comment.
- * Resolving a page request (dismissing or withdrawing it) also ends its open task as `failed`, in
- * the same batch; reopening never revives a failed task. A comment's mention tasks are left alone.
- */
+/** Resolve or reopen a thread (policy "comment"). Status lives on the thread's root comment. */
 export async function setCommentStatus(
   ctx: Ctx,
   id: string,
   status: CommentStatus,
 ): Promise<CommentInfo> {
-  const { root } = await requireComment(ctx, id, "comment");
-  const now = nowIso();
-  const update = ctx.db
+  const { comment } = await requireComment(ctx, id, "comment");
+  const rootId = comment.parentId ?? comment.id;
+  await ctx.db
     .update(comments)
-    .set({ status, resolvedAt: status === "resolved" ? now : null })
-    .where(eq(comments.id, root.id));
-  if (root.kind === "page_request" && status === "resolved") {
-    await ctx.db.batch([
-      update,
-      ctx.db
-        .update(mentionTasks)
-        .set({ state: "failed", completedAt: now })
-        .where(
-          and(
-            eq(mentionTasks.commentId, root.id),
-            inArray(mentionTasks.state, ["pending", "claimed"]),
-          ),
-        ),
-    ]);
-  } else {
-    await update.run();
-  }
-  return commentInfo(ctx, root.id);
+    .set({ status, resolvedAt: status === "resolved" ? nowIso() : null })
+    .where(eq(comments.id, rootId))
+    .run();
+  return commentInfo(ctx, rootId);
 }

@@ -2,23 +2,36 @@
 // /export/options (the boards). A fake browser replaces Browser Rendering
 // (setDesignExportShooter); a stub BROWSER binding turns the feature on. Checked here: who may
 // export (view rights, strangers 404), the type check, the switch and the binding, input
-// validation, the pixel cap, the hourly limit, what the browser is asked to open (a capture pass
-// at the version's export layout, never an identity), the response headers and file names, a
-// failed render, the app config flag and the env vars.
+// validation, the pixel cap, the hourly limit, what the browser is asked to open (a thumbnail's
+// capture pass bound to the exported version, no identity, no shared data for a version a token
+// limited to one artifact wrote, and every request held to the capture's scope), how the browser
+// reaches the export layout (print media as the page boots, nothing in the URL), the response
+// headers and file names, a failed render, the app config flag and the env vars.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { DESIGN_EXPORT } from "@plinth/shared";
+import {
+  DESIGN_EXPORT,
+  DESIGN_EXPORT_LAYOUT_SCRIPT,
+  designExportKeepOnlyScript,
+  designExportLoadedScript,
+} from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, designExportActive, getConfig, parseConfig } from "../src/config.ts";
-import { verifyEnterToken } from "../src/content/tokens.ts";
+import { verifyContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
+import { peek } from "../src/lib/ratelimit.ts";
 import {
+  base64Size,
   browserExport,
   claimExportSlot,
+  decodeBase64,
+  EXPORT_INSTANCE_KEY,
   EXPORT_RUN,
+  type ExportBytes,
   type ExportJob,
+  ExportTooLarge,
+  exportArtifactKey,
   exportFileName,
-  exportPath,
   exportRateKey,
   redactUrls,
   releaseExportSlot,
@@ -27,9 +40,31 @@ import {
   setDesignExportShooter,
   stepTimeout,
 } from "../src/services/designExport.ts";
-import { APP, agent, browserSession, createUser, json, publish } from "./helpers.ts";
+import { captureRequestAllowed, captureScope } from "../src/services/thumbnails.ts";
+import { APP, agent, browserSession, createToken, createUser, json, publish } from "./helpers.ts";
 
 const ON = { BROWSER: {} as Fetcher };
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return btoa(bin);
+}
+
+/** `n` bytes that do not repeat in any short pattern. */
+function bytesOf(n: number): Uint8Array {
+  const out = new Uint8Array(n);
+  let x = 2463534242;
+  for (let i = 0; i < n; i++) {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    out[i] = x & 0xff;
+  }
+  return out;
+}
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n%%EOF\n");
 
@@ -87,7 +122,26 @@ async function publishDesign(
 
 const exportUrl = (ref: string, q: string) => `/api/v1/artifacts/${ref}/export?${q}`;
 
-beforeEach(() => {
+/** A rendered file's bytes, from one array or its pieces. */
+function joined(file: ExportBytes): Uint8Array {
+  const pieces = file instanceof Uint8Array ? [file] : file;
+  const out = new Uint8Array(pieces.reduce((n, p) => n + p.byteLength, 0));
+  let at = 0;
+  for (const p of pieces) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
+
+/** This hour's count on an export counter. */
+const counted = (key: string) => peek(env.DB, key, 3600);
+
+beforeEach(async () => {
+  // The instance's and the artifacts' hourly counters are shared by every test in this file.
+  await env.DB.prepare("DELETE FROM rate_limits WHERE key = ?1 OR key LIKE ?2")
+    .bind(EXPORT_INSTANCE_KEY, `${exportArtifactKey("")}%`)
+    .run();
   jobs = [];
   setDesignExportShooter(async (_browser, job) => {
     jobs.push(job);
@@ -111,16 +165,12 @@ describe("export options", () => {
         { id: "post", name: "Launch post", width: 1080, height: 1080 },
         { id: "mrec", name: "Ad 300x250", width: 300, height: 250 },
       ],
-      formats: ["png", "pdf"],
-      scales: [1, 2],
       max_pixels: DESIGN_EXPORT.maxPixels,
-      available: true,
     });
-    // Without the binding the boards are still listed, and the export says it is unavailable.
-    const off = await json(
-      await run(`/api/v1/artifacts/${d.id}/export/options`, { headers: a.auth }, {}),
-    );
-    expect(off.available).toBe(false);
+    // Without the binding the boards are still listed (the app offers no export there).
+    const off = await run(`/api/v1/artifacts/${d.id}/export/options`, { headers: a.auth }, {});
+    expect(off.status).toBe(200);
+    expect((await json(off)).boards).toHaveLength(3);
 
     const stranger = await agent();
     const denied = await run(`/api/v1/artifacts/${d.id}/export/options`, {
@@ -173,7 +223,7 @@ describe("export options", () => {
 });
 
 describe("export", () => {
-  it("renders one board as PNG from the version's export layout with a capture pass", async () => {
+  it("renders one board as PNG with a thumbnail's capture pass for the exact version", async () => {
     const a = await agent();
     const d = await publishDesign(a.auth);
     const res = await run(exportUrl(d.id, "format=png&board=home&scale=2"), { headers: a.auth });
@@ -199,20 +249,73 @@ describe("export", () => {
     const url = new URL(job.url);
     expect(url.host).toBe(`${d.id}.content.localhost:8787`);
     expect(url.pathname).toBe("/__plinth/enter");
-    expect(url.searchParams.get("next")).toBe("/__plinth/v/1/?plinth-print=1&plinth-board=home");
+    // The version's own path and nothing else: no query selects the export layout.
+    expect(url.searchParams.getAll("next")).toEqual(["/__plinth/v/1/"]);
     // A capture pass: no identity, the page sees a signed-out viewer, never the person exporting.
-    const token = await verifyEnterToken(
-      getConfig(env as never),
-      url.searchParams.get("t") as string,
-    );
+    // It is bound to the exported version and reads shared data (an unbound token wrote it).
+    const config = getConfig(env as never);
+    const token = await verifyEnterToken(config, url.searchParams.get("t") as string);
     expect(token?.a).toBe(d.id);
     expect(token?.c).toBe(1);
+    expect(token?.v).toBe(1);
     expect(token?.x).toBeUndefined();
+    expect(token?.d).toBeUndefined();
     // The boards' cookie partition gets the same capture pass, never in a URL.
     for (const c of job.cookies) {
       expect(c.url).toBe(`http://${d.id}.content.localhost:8787/`);
       expect(job.url).not.toContain(c.value);
+      const pass = await verifyContentCookie(config, c.value);
+      expect(pass?.c).toBe(1);
+      expect(pass?.v).toBe(1);
+      expect(pass?.x).toBeUndefined();
     }
+    // Every request the page makes is held to the capture's scope for this version.
+    expect(job.scope).toEqual(captureScope(config, d.id, 1, "design"));
+    expect(job.scope.frame).toBe("/__plinth/frames/design/board.html");
+    expect(captureRequestAllowed(job.scope, job.url, true)).toBe(true);
+    expect(
+      captureRequestAllowed(job.scope, `http://${d.id}.content.localhost:8787/__plinth/v/2/`, true),
+    ).toBe(false);
+  });
+
+  it("reads no shared data for a version a token limited to this artifact wrote", async () => {
+    const owner = await agent();
+    const d = await publishDesign(owner.auth);
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: d.id,
+    });
+    const up = await run(
+      `/api/v1/artifacts/${d.id}`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${ci.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: DESIGN.replace("Ship faster", "Ship"), base_version: 1 }),
+      },
+      {},
+    );
+    expect(up.status, await up.clone().text()).toBe(200);
+    const config = getConfig(env as never);
+    for (const version of [1, 2]) {
+      const res = await run(exportUrl(d.id, `format=pdf&version=${version}`), {
+        headers: owner.auth,
+      });
+      expect(res.status, await res.clone().text()).toBe(200);
+    }
+    const passes = await Promise.all(
+      jobs.map(async (job) => {
+        const url = new URL(job.url);
+        return {
+          next: url.searchParams.get("next"),
+          enter: (await verifyEnterToken(config, url.searchParams.get("t") ?? ""))?.d,
+          frame: (await verifyContentCookie(config, job.cookies[0]?.value ?? ""))?.d,
+        };
+      }),
+    );
+    expect(passes).toEqual([
+      { next: "/__plinth/v/1/", enter: undefined, frame: undefined },
+      { next: "/__plinth/v/2/", enter: 1, frame: 1 },
+    ]);
   });
 
   it("renders every board as one PDF, or only the board named", async () => {
@@ -232,11 +335,11 @@ describe("export", () => {
     expect(every.board).toBeNull();
     expect(every.boards).toBe(3);
     expect(every.viewport).toEqual({ width: 1080, height: 1080, deviceScaleFactor: 1 });
-    expect(new URL(every.url).searchParams.get("next")).toBe("/__plinth/v/1/?plinth-print=1");
+    expect(new URL(every.url).searchParams.get("next")).toBe("/__plinth/v/1/");
     expect(single.boards).toBe(1);
-    expect(new URL(single.url).searchParams.get("next")).toBe(
-      "/__plinth/v/1/?plinth-print=1&plinth-board=post",
-    );
+    expect(single.board).toBe("post");
+    // One board is the export's own choice, made in its browser: the page it opens is the same.
+    expect(new URL(single.url).searchParams.get("next")).toBe("/__plinth/v/1/");
   });
 
   it("is for anyone who may view: a signed-in collaborator, a link viewer; strangers get 404", async () => {
@@ -324,21 +427,80 @@ describe("export", () => {
     expect(jobs).toHaveLength(0);
   });
 
-  it("caps a PNG at the pixel limit: a 4096 px board at 1x, not at 2x", async () => {
+  it("caps a PNG at the pixel limit, so even one that does not compress fits the byte cap", async () => {
+    // A PNG is at most about 4 bytes a pixel (RGBA noise), plus a filter byte a row.
+    const worst = (px: number, rows: number) => px * 4 + rows + 65_536;
+    expect(worst(DESIGN_EXPORT.maxPixels, 8192)).toBeLessThan(DESIGN_EXPORT.maxBytes);
     const a = await agent();
-    const d = await publishDesign(a.auth, { content: BIG });
-    const twice = await run(exportUrl(d.id, "format=png&board=poster&scale=2"), {
-      headers: a.auth,
+    const d = await publishDesign(a.auth, {
+      content: ['<!-- artboard id="hd" name="HD" size="desktop-hd" -->', "<div>HD</div>", BIG].join(
+        "\n",
+      ),
     });
+    // 1920x1080 at 2x is 8,294,400 device pixels: 1x only.
+    const twice = await run(exportUrl(d.id, "format=png&board=hd&scale=2"), { headers: a.auth });
     expect(twice.status).toBe(400);
     const body = await json(twice);
-    expect(body.error.message).toMatch(
-      /8192x8192 px, over the 33,554,432 pixel limit: use scale=1/,
-    );
+    expect(body.error.message).toMatch(/3840x2160 px, over the 4,000,000 pixel limit: use scale=1/);
     expect(body.error.details.max_pixels).toBe(DESIGN_EXPORT.maxPixels);
-    const once = await run(exportUrl(d.id, "format=png&board=poster"), { headers: a.auth });
+    const once = await run(exportUrl(d.id, "format=png&board=hd"), { headers: a.auth });
     expect(once.status).toBe(200);
-    expect(jobs[0]?.viewport).toEqual({ width: 4096, height: 4096, deviceScaleFactor: 1 });
+    expect(jobs[0]?.viewport).toEqual({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+    expect(jobs[0]?.maxBytes).toBe(DESIGN_EXPORT.maxBytes);
+    // A 4096 px board is over the limit at 1x too: it downloads as a PDF.
+    const poster = await run(exportUrl(d.id, "format=png&board=poster"), { headers: a.auth });
+    expect(poster.status).toBe(400);
+    expect((await json(poster)).error.message).toMatch(
+      /4096x4096 px, over the 4,000,000 pixel limit: use format=pdf/,
+    );
+    const pdf = await run(exportUrl(d.id, "format=pdf&board=poster"), { headers: a.auth });
+    expect(pdf.status).toBe(200);
+    expect(jobs).toHaveLength(2);
+  });
+
+  it("refuses a file over the byte cap with 413, and says what to change", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const a = await agent();
+      const d = await publishDesign(a.auth);
+      // The browser's file passed the cap while it was read.
+      setDesignExportShooter(async (_b, job) => {
+        jobs.push(job);
+        throw new ExportTooLarge(job.maxBytes);
+      });
+      const all = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth });
+      expect(all.status).toBe(413);
+      const body = await json(all);
+      expect(body.error.code).toBe("payload_too_large");
+      expect(body.error.message).toBe(
+        "This PDF would be over 24 MB, the largest export: download the boards one at a time (board=<id>)",
+      );
+      expect(body.error.details.max_bytes).toBe(DESIGN_EXPORT.maxBytes);
+      const png = await run(exportUrl(d.id, "format=png&board=home&scale=2"), {
+        headers: a.auth,
+      });
+      expect(png.status).toBe(413);
+      expect((await json(png)).error.message).toBe(
+        "This PNG would be over 24 MB, the largest export: use scale=1",
+      );
+      // A shooter that hands back more than the cap is refused as well, never sent.
+      setDesignExportShooter(async (_b, job) => new Uint8Array(job.maxBytes + 1));
+      const big = await run(exportUrl(d.id, "format=pdf&board=post"), { headers: a.auth });
+      expect(big.status).toBe(413);
+      expect((await json(big)).error.message).toBe(
+        "This PDF would be over 24 MB, the largest export",
+      );
+      // Every slot was given back.
+      setDesignExportShooter(async () => PDF_BYTES);
+      const keys: (string | null)[] = [];
+      for (let i = 0; i < DESIGN_EXPORT.maxConcurrent; i++)
+        keys.push(await claimExportSlot(env.DB));
+      expect(keys.every((k) => k !== null)).toBe(true);
+      for (const k of keys) if (k) await releaseExportSlot(env.DB, k);
+      expect((await run(exportUrl(d.id, "format=pdf"), { headers: a.auth })).status).toBe(200);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("limits exports per person per hour (DESIGN_EXPORTS_PER_HOUR), refused ones not counted", async () => {
@@ -387,6 +549,215 @@ describe("export", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("tokens limited to one artifact", () => {
+  it("get 403 token_bound from the export and its options; the owner's own token still exports", async () => {
+    const owner = await agent();
+    const d = await publishDesign(owner.auth);
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: d.id,
+    });
+    const bound = { Authorization: `Bearer ${ci.token}` };
+    for (const path of [
+      exportUrl(d.id, "format=pdf"),
+      exportUrl(d.id, "format=png&board=home"),
+      `/api/v1/artifacts/${d.id}/export/options`,
+    ]) {
+      const res = await run(path, { headers: bound });
+      expect(res.status, path).toBe(403);
+      const body = await json(res);
+      expect(body.error.code, path).toBe("forbidden");
+      expect(body.error.details.reason, path).toBe("token_bound");
+    }
+    // Any other artifact does not exist for it.
+    const other = await publishDesign(owner.auth);
+    expect((await run(exportUrl(other.id, "format=pdf"), { headers: bound })).status).toBe(404);
+    // Nothing rendered and nothing counted.
+    expect(jobs).toHaveLength(0);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(0);
+
+    const mine = await run(exportUrl(d.id, "format=pdf"), { headers: owner.auth });
+    expect(mine.status, await mine.clone().text()).toBe(200);
+    const options = await run(`/api/v1/artifacts/${d.id}/export/options`, {
+      headers: owner.auth,
+    });
+    expect(options.status).toBe(200);
+    expect(jobs).toHaveLength(1);
+  });
+});
+
+describe("the instance's and an artifact's hourly limits", () => {
+  it("DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR bounds every export on the instance, whoever asks", async () => {
+    const vars = { ...ON, DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "2" };
+    const people = [await agent(), await agent(), await agent()];
+    const designs = [];
+    for (const p of people) designs.push(await publishDesign(p.auth));
+    for (const i of [0, 1]) {
+      const ok = await run(
+        exportUrl(designs[i]?.id ?? "", "format=pdf"),
+        { headers: people[i]?.auth },
+        vars,
+      );
+      expect(ok.status, await ok.clone().text()).toBe(200);
+    }
+    const over = await run(
+      exportUrl(designs[2]?.id ?? "", "format=pdf"),
+      { headers: people[2]?.auth },
+      vars,
+    );
+    expect(over.status).toBe(429);
+    const body = await json(over);
+    expect(body.error.code).toBe("rate_limited");
+    expect(body.error.details.reason).toBe("instance_limit");
+    expect(body.error.message).toBe(
+      "This instance's export limit is reached (2 per hour); try again later",
+    );
+    const retry = Number(over.headers.get("Retry-After"));
+    expect(retry).toBe(body.error.details.retry_after);
+    expect(retry).toBeGreaterThan(0);
+    expect(retry).toBeLessThanOrEqual(3600);
+    // Refused before the browser and before any counter was raised.
+    expect(jobs).toHaveLength(2);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(2);
+    expect(await counted(`design-export:u:${people[2]?.user.id}`)).toBe(0);
+  });
+
+  it("DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR bounds one artifact's exports by anyone but its owner and editors", async () => {
+    const vars = { ...ON, DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "2" };
+    const owner = await agent();
+    const d = await publishDesign(owner.auth, { visibility: "unlisted" });
+    // Signed out, from three networks, each well within its own hourly limit.
+    const from = (addr: string) =>
+      run(exportUrl(d.id, "format=pdf"), { headers: { "cf-connecting-ip": addr } }, vars);
+    expect((await from("198.51.100.1")).status).toBe(200);
+    expect((await from("198.51.100.2")).status).toBe(200);
+    const over = await from("198.51.100.3");
+    expect(over.status).toBe(429);
+    const body = await json(over);
+    expect(body.error.code).toBe("rate_limited");
+    expect(body.error.details.reason).toBe("artifact_limit");
+    expect(body.error.message).toBe(
+      "This design's export limit is reached (2 per hour); try again later",
+    );
+    expect(Number(over.headers.get("Retry-After"))).toBe(body.error.details.retry_after);
+    // More refusals spend nothing: not the instance's budget, not the network's.
+    for (let i = 0; i < 5; i++) expect((await from(`198.51.100.${10 + i}`)).status).toBe(429);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(2);
+    expect(await counted(exportArtifactKey(d.id))).toBe(2);
+    expect(await counted("design-export:ip:198.51.100.3")).toBe(0);
+    // The owner still exports, and does not count toward the artifact's limit.
+    const mine = await run(exportUrl(d.id, "format=pdf"), { headers: owner.auth }, vars);
+    expect(mine.status, await mine.clone().text()).toBe(200);
+    expect(await counted(exportArtifactKey(d.id))).toBe(2);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(3);
+    // Another artifact has its own limit.
+    const other = await publishDesign(owner.auth, { visibility: "unlisted" });
+    const theirs = await run(
+      exportUrl(other.id, "format=pdf"),
+      { headers: { "cf-connecting-ip": "198.51.100.40" } },
+      vars,
+    );
+    expect(theirs.status).toBe(200);
+    expect(jobs).toHaveLength(4);
+  });
+
+  it("reserves before rendering and gives nothing back when the render fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const vars = { ...ON, DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "1" };
+      const a = await agent();
+      const d = await publishDesign(a.auth);
+      let counts: number[] = [];
+      setDesignExportShooter(async () => {
+        // The browser starts only once every counter holds this export.
+        counts = [
+          await counted(EXPORT_INSTANCE_KEY),
+          await counted(`design-export:u:${a.user.id}`),
+        ];
+        throw new Error("browser crashed");
+      });
+      const failed = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars);
+      expect(failed.status).toBe(503);
+      expect(counts).toEqual([1, 1]);
+      setDesignExportShooter(async () => PDF_BYTES);
+      const next = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars);
+      expect(next.status).toBe(429);
+      expect((await json(next)).error.details.reason).toBe("instance_limit");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("parse with their defaults and bounds, and ship in wrangler.jsonc at the defaults", () => {
+    const base = {
+      ENVIRONMENT: "production",
+      APP_HOST: "plinth.example.com",
+      CONTENT_HOST: "plinth-content.example.net",
+      PUBLIC_SCHEME: "https",
+      EMAIL_PROVIDER: "sendgrid",
+      SENDGRID_API_KEY: "SG.x",
+      SESSION_SECRET: "s".repeat(40),
+      TOKEN_SIGNING_KEY: "t".repeat(40),
+    };
+    const c = parseConfig(base);
+    expect(c.designExportsPerInstancePerHour).toBe(120);
+    expect(c.designExportsPerArtifactPerHour).toBe(20);
+    const empty = parseConfig({
+      ...base,
+      DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "",
+      DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "",
+    });
+    expect(empty.designExportsPerInstancePerHour).toBe(120);
+    expect(empty.designExportsPerArtifactPerHour).toBe(20);
+    for (const [name, max] of [
+      ["DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR", 100_000],
+      ["DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR", 10_000],
+    ] as const) {
+      const field =
+        name === "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR"
+          ? "designExportsPerInstancePerHour"
+          : "designExportsPerArtifactPerHour";
+      for (const v of ["1", String(max)]) {
+        expect(parseConfig({ ...base, [name]: v })[field], v).toBe(Number(v));
+      }
+      for (const v of ["0", String(max + 1), "-1", "1.5", "lots"]) {
+        expect(() => parseConfig({ ...base, [name]: v }), `${name}=${v}`).toThrow(
+          new RegExp(`${name} must be an integer from 1 to ${max}`),
+        );
+      }
+    }
+    const vars = env as unknown as Record<string, unknown>;
+    expect(vars.DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR).toBe(
+      String(DESIGN_EXPORT.perInstancePerHour),
+    );
+    expect(vars.DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR).toBe(
+      String(DESIGN_EXPORT.perArtifactPerHour),
+    );
+  });
+});
+
+describe("a PDF in pieces", () => {
+  it("is sent piece after piece with its exact length, never joined first", async () => {
+    const a = await agent();
+    const d = await publishDesign(a.auth);
+    const pieces = [bytesOf(1000), bytesOf(2000), bytesOf(5)];
+    setDesignExportShooter(async () => pieces);
+    const res = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(res.headers.get("Content-Length")).toBe("3005");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(joined(pieces));
+  });
+
+  it("is refused with 413 when the pieces together pass the cap", async () => {
+    const a = await agent();
+    const d = await publishDesign(a.auth);
+    setDesignExportShooter(async (_b, job) => [new Uint8Array(job.maxBytes), new Uint8Array(1)]);
+    const res = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth });
+    expect(res.status).toBe(413);
+    expect((await json(res)).error.code).toBe("payload_too_large");
   });
 });
 
@@ -537,17 +908,91 @@ describe("the browser's steps", () => {
     waitUntil?: string;
     closed: number;
     pdf: number;
+    /** The printToPDF options, and each IO.read's size; IO.close calls by handle. */
+    printOptions?: Record<string, unknown>;
+    reads: number[];
+    ioClosed: string[];
+    /** The screenshot's options. */
+    shotOptions?: Record<string, unknown>;
+    /** Every page call in order, by name (media types as media:<type>). */
+    steps: string[];
+    evaluated: string[];
+    waitedFor: string[];
+    requestHandler?: (req: {
+      url(): string;
+      isNavigationRequest(): boolean;
+      isInterceptResolutionHandled(): boolean;
+      continue(): Promise<void>;
+      abort(): Promise<void>;
+    }) => void;
   };
 
-  /** A fake puppeteer browser on a fake clock: launch 3 s, the document 9 s, boards never load. */
-  function fakeBrowser(clock: { t: number }, hangGoto = false) {
-    const calls: Calls = { timeouts: {}, closed: 0, pdf: 0 };
+  /**
+   * A fake puppeteer browser on a fake clock: launch 3 s, the document 9 s, boards never load.
+   * `layout` is whether the page took the export layout; `board` whether the one board is there;
+   * `pdf` and `png` the files the browser makes (a PDF is read from a DevTools stream in pieces).
+   */
+  function fakeBrowser(
+    clock: { t: number },
+    hangGoto = false,
+    page$: { layout?: boolean; board?: boolean; pdf?: Uint8Array; png?: Uint8Array } = {},
+  ) {
+    const calls: Calls = {
+      timeouts: {},
+      closed: 0,
+      pdf: 0,
+      reads: [],
+      ioClosed: [],
+      steps: [],
+      evaluated: [],
+      waitedFor: [],
+    };
+    const pdfFile = page$.pdf ?? PDF_BYTES;
+    let pdfAt = 0;
     let rejectGoto: (e: Error) => void = () => undefined;
     const page = {
-      createCDPSession: async () => ({ send: async () => undefined }),
+      setRequestInterception: async (on: boolean) => {
+        calls.steps.push(`intercept:${on}`);
+      },
+      on: (event: string, handler: Calls["requestHandler"]) => {
+        calls.steps.push(`on:${event}`);
+        if (event === "request") calls.requestHandler = handler;
+      },
+      createCDPSession: async () => ({
+        send: async (method: string, params: Record<string, unknown>) => {
+          if (method === "Network.setCookie") {
+            calls.steps.push("cookie");
+            return {};
+          }
+          if (method === "Page.printToPDF") {
+            calls.steps.push("pdf");
+            calls.pdf += 1;
+            calls.printOptions = params;
+            calls.timeouts.printAt = clock.t;
+            return { stream: "pdf-stream" };
+          }
+          if (method === "IO.read") {
+            expect(params.handle).toBe("pdf-stream");
+            const size = params.size as number;
+            calls.reads.push(size);
+            const piece = pdfFile.subarray(pdfAt, pdfAt + size);
+            pdfAt += piece.byteLength;
+            return { data: toBase64(piece), base64Encoded: true, eof: pdfAt >= pdfFile.byteLength };
+          }
+          if (method === "IO.close") {
+            calls.ioClosed.push(params.handle as string);
+            return {};
+          }
+          throw new Error(`unexpected ${method}`);
+        },
+      }),
       setViewport: async () => undefined,
       emulateMediaFeatures: async () => undefined,
+      emulateMediaType: async (type: string) => {
+        calls.steps.push(`media:${type}`);
+      },
       goto: async (_url: string, o: { waitUntil?: string; timeout?: number }) => {
+        calls.steps.push("goto");
         calls.timeouts.goto = o.timeout ?? -1;
         calls.waitUntil = o.waitUntil;
         if (hangGoto) {
@@ -559,6 +1004,7 @@ describe("the browser's steps", () => {
         return { ok: () => true, status: () => 200, url: () => "" };
       },
       waitForFunction: async (expression: string, o: { timeout?: number }) => {
+        calls.waitedFor.push(expression);
         if (expression.includes("data-ready")) {
           calls.timeouts.ready = o.timeout ?? -1;
           return true;
@@ -567,14 +1013,20 @@ describe("the browser's steps", () => {
         clock.t += o.timeout ?? 0;
         throw new Error("waiting failed: timeout");
       },
-      evaluate: async () => "ok",
-      pdf: async () => {
-        calls.pdf += 1;
-        calls.timeouts.printAt = clock.t;
-        return PDF_BYTES;
+      evaluate: async (expression: string) => {
+        calls.evaluated.push(expression);
+        if (expression === DESIGN_EXPORT_LAYOUT_SCRIPT) return page$.layout ?? true;
+        if (expression.includes("el.remove()")) return page$.board ?? true;
+        return "ok";
       },
-      $: async () => null,
-      screenshot: async () => PNG_BYTES,
+      $: async () => ({ boundingBox: async () => ({ x: 0, y: 0, width: 300, height: 250 }) }),
+      // Puppeteer's screenshot: base64 when asked for it, else decoded.
+      screenshot: async (o: Record<string, unknown>) => {
+        calls.steps.push("screenshot");
+        calls.shotOptions = o;
+        const png = page$.png ?? PNG_BYTES;
+        return o.encoding === "base64" ? toBase64(png) : png;
+      },
     };
     const browser = {
       newPage: async () => page,
@@ -592,13 +1044,16 @@ describe("the browser's steps", () => {
     };
   }
 
+  const ID = "aaaaaaaaaaaaaaaaaaaa";
   const JOB: ExportJob = {
     format: "pdf",
-    url: "http://x.content.localhost:8787/__plinth/enter",
+    url: `http://${ID}.content.localhost:8787/__plinth/enter`,
     cookies: [],
+    scope: captureScope(getConfig(env as never), ID, 1, "design"),
     viewport: { width: 300, height: 250, deviceScaleFactor: 1 },
     boards: 3,
     board: null,
+    maxBytes: DESIGN_EXPORT.maxBytes,
   };
 
   afterEach(() => {
@@ -613,7 +1068,7 @@ describe("the browser's steps", () => {
     setDesignExportLauncher(fake.launch);
     const start = clock.t;
     const bytes = await browserExport(ON.BROWSER, JOB, new AbortController().signal);
-    expect(bytes).toEqual(PDF_BYTES);
+    expect(joined(bytes)).toEqual(PDF_BYTES);
     expect(fake.calls.pdf).toBe(1);
     expect(fake.calls.closed).toBe(1);
     // The document, not network idle, so a slow board cannot fail the load.
@@ -639,6 +1094,165 @@ describe("the browser's steps", () => {
     expect(fake.calls.pdf).toBe(0);
   });
 
+  it("hold every request to the capture's scope and emulate print media before the page opens", async () => {
+    const fake = fakeBrowser({ t: 0 });
+    setDesignExportLauncher(fake.launch);
+    const cookie = { ...(JOB.cookies[0] ?? {}) } as ExportJob["cookies"][number];
+    await browserExport(ON.BROWSER, { ...JOB, cookies: [cookie] }, new AbortController().signal);
+    const at = (step: string) => fake.calls.steps.indexOf(step);
+    expect(at("intercept:true")).toBeGreaterThanOrEqual(0);
+    expect(at("intercept:true")).toBeLessThan(at("cookie"));
+    expect(at("on:popup")).toBeGreaterThanOrEqual(0);
+    expect(at("on:popup")).toBeLessThan(at("goto"));
+    expect(at("media:print")).toBeGreaterThanOrEqual(0);
+    expect(at("media:print")).toBeLessThan(at("goto"));
+    // A PDF prints in print media, every board counted, and nothing removed from the page.
+    expect(fake.calls.steps).not.toContain("media:screen");
+    expect(fake.calls.evaluated).toContain(DESIGN_EXPORT_LAYOUT_SCRIPT);
+    expect(fake.calls.evaluated.some((e) => e.includes("el.remove()"))).toBe(false);
+    expect(fake.calls.waitedFor).toContain(designExportLoadedScript(null, 3));
+    // The guard the page runs under: its own version and the board loader, nothing else.
+    const decide = (url: string, navigation: boolean) => {
+      let verdict = "";
+      fake.calls.requestHandler?.({
+        url: () => url,
+        isNavigationRequest: () => navigation,
+        isInterceptResolutionHandled: () => false,
+        continue: async () => {
+          verdict = "continue";
+        },
+        abort: async () => {
+          verdict = "abort";
+        },
+      });
+      return verdict;
+    };
+    const own = `http://${ID}.content.localhost:8787`;
+    expect(decide(`${own}/__plinth/v/1/`, true)).toBe("continue");
+    expect(decide(`${own}/__plinth/frames/design/board.html`, true)).toBe("continue");
+    expect(decide(`${own}/__plinth/v/2/`, true)).toBe("abort");
+    expect(
+      decide(`${own}/__plinth/enter?next=%2F__plinth%2Fv%2F1%2F%3Fplinth-print%3D1`, true),
+    ).toBe("abort");
+    expect(decide("https://evil.example/x.png", false)).toBe("abort");
+  });
+
+  it("keep only the one board on the page for it, and take a PNG in screen media", async () => {
+    const fake = fakeBrowser({ t: 0 });
+    setDesignExportLauncher(fake.launch);
+    const bytes = await browserExport(
+      ON.BROWSER,
+      { ...JOB, format: "png", board: "mrec", boards: 1 },
+      new AbortController().signal,
+    );
+    expect(bytes).toEqual(PNG_BYTES);
+    expect(fake.calls.evaluated).toContain(designExportKeepOnlyScript("mrec"));
+    expect(fake.calls.waitedFor).toContain(designExportLoadedScript("mrec", 1));
+    const at = (step: string) => fake.calls.steps.indexOf(step);
+    expect(at("media:print")).toBeGreaterThanOrEqual(0);
+    expect(at("media:print")).toBeLessThan(at("goto"));
+    expect(at("media:screen")).toBeGreaterThan(at("goto"));
+    expect(at("media:screen")).toBeLessThan(at("screenshot"));
+  });
+
+  it("refuse a page that did not take the export layout, or lacks the board", async () => {
+    for (const [state, message] of [
+      [{ layout: false }, /export layout/],
+      [{ board: false }, /not on the page/],
+    ] as const) {
+      const fake = fakeBrowser({ t: 0 }, false, state);
+      setDesignExportLauncher(fake.launch);
+      await expect(
+        browserExport(
+          ON.BROWSER,
+          { ...JOB, format: "png", board: "mrec", boards: 1 },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(message);
+      expect(fake.calls.steps).not.toContain("screenshot");
+      expect(fake.calls.closed).toBe(1);
+    }
+  });
+
+  it("read a PDF from the browser's stream in 1 MiB pieces, keep them apart, and close the stream", async () => {
+    const file = bytesOf(2 * EXPORT_RUN.readChunkBytes + 12_345);
+    const fake = fakeBrowser({ t: 0 }, false, { pdf: file });
+    setDesignExportLauncher(fake.launch);
+    const bytes = await browserExport(ON.BROWSER, JOB, new AbortController().signal);
+    expect(joined(bytes)).toEqual(file);
+    // The pieces as read, never joined into a second copy of the file.
+    expect(Array.isArray(bytes) && bytes.map((p) => p.byteLength)).toEqual([
+      EXPORT_RUN.readChunkBytes,
+      EXPORT_RUN.readChunkBytes,
+      12_345,
+    ]);
+    expect(fake.calls.reads).toEqual(Array(3).fill(EXPORT_RUN.readChunkBytes));
+    expect(fake.calls.ioClosed).toEqual(["pdf-stream"]);
+    expect(fake.calls.printOptions).toMatchObject({
+      transferMode: "ReturnAsStream",
+      printBackground: true,
+      preferCSSPageSize: true,
+      marginTop: 0,
+      scale: 1,
+    });
+    expect(fake.calls.closed).toBe(1);
+  });
+
+  it("stop reading a PDF as soon as it passes the byte cap, and close the stream", async () => {
+    const piece = EXPORT_RUN.readChunkBytes;
+    const fake = fakeBrowser({ t: 0 }, false, { pdf: bytesOf(10 * piece) });
+    setDesignExportLauncher(fake.launch);
+    const shot = browserExport(
+      ON.BROWSER,
+      { ...JOB, maxBytes: 2 * piece + 1 },
+      new AbortController().signal,
+    );
+    await expect(shot).rejects.toBeInstanceOf(ExportTooLarge);
+    // Three pieces passed the cap; the other seven were never read.
+    expect(fake.calls.reads).toHaveLength(3);
+    expect(fake.calls.ioClosed).toEqual(["pdf-stream"]);
+    expect(fake.calls.closed).toBe(1);
+  });
+
+  it("check a PNG's size from its base64 before decoding it, and decode it once", async () => {
+    const png = bytesOf(1000);
+    const board = { ...JOB, format: "png" as const, board: "mrec", boards: 1 };
+    const over = fakeBrowser({ t: 0 }, false, { png });
+    setDesignExportLauncher(over.launch);
+    await expect(
+      browserExport(ON.BROWSER, { ...board, maxBytes: 999 }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(ExportTooLarge);
+    expect(over.calls.shotOptions?.encoding).toBe("base64");
+    expect(over.calls.closed).toBe(1);
+    const fits = fakeBrowser({ t: 0 }, false, { png });
+    setDesignExportLauncher(fits.launch);
+    const bytes = await browserExport(
+      ON.BROWSER,
+      { ...board, maxBytes: 1000 },
+      new AbortController().signal,
+    );
+    expect(bytes).toEqual(png);
+  });
+
+  it("size and decode base64, with the runtime's decoder or without it", () => {
+    for (const n of [0, 1, 2, 3, 4, 200_001]) {
+      const b = bytesOf(n);
+      const b64 = toBase64(b);
+      expect(base64Size(b64)).toBe(n);
+      expect(decodeBase64(b64)).toEqual(b);
+    }
+    const own = Object.getOwnPropertyDescriptor(Uint8Array, "fromBase64");
+    try {
+      if (own) Reflect.deleteProperty(Uint8Array, "fromBase64");
+      for (const n of [0, 1, 2, 65_536 * 3 + 7, 200_001]) {
+        const b = bytesOf(n);
+        expect(decodeBase64(toBase64(b))).toEqual(b);
+      }
+    } finally {
+      if (own) Object.defineProperty(Uint8Array, "fromBase64", own);
+    }
+  });
+
   it("cut a step's timeout to what is left, never below 1 ms", () => {
     expect(stepTimeout(10_000, 20_000, 5_000)).toBe(10_000);
     expect(stepTimeout(10_000, 20_000, 14_000)).toBe(6_000);
@@ -654,9 +1268,13 @@ describe("helpers", () => {
     expect(exportFileName("", null, "pdf")).toBe("design.pdf");
   });
 
-  it("open the version's export layout, one board or every board", () => {
-    expect(exportPath(3, null)).toBe("/__plinth/v/3/?plinth-print=1");
-    expect(exportPath(3, "home")).toBe("/__plinth/v/3/?plinth-print=1&plinth-board=home");
+  it("wait for the one board by its id, or for every board by count", () => {
+    expect(designExportLoadedScript("home", 1)).toBe(
+      'document.querySelector(".plinth-design__board[data-board=\\"home\\"][data-loaded]") !== null',
+    );
+    expect(designExportLoadedScript(null, 3)).toBe(
+      'Number(document.documentElement.getAttribute("data-boards-loaded") || "0") >= 3',
+    );
   });
 
   it("strip URLs from error messages", () => {
@@ -717,15 +1335,6 @@ describe("settings", () => {
       (await json(await run("/api/v1/config", {}, { ...ON, DESIGN_EXPORT: "false" })))
         .design_export,
     ).toBe(false);
-  });
-
-  it("POST /__dev/export-url is not served unless DEV_SEED is on in development", async () => {
-    const res = await run("/__dev/export-url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ artifact_id: "aaaaaaaaaaaaaaaaaaaa", version: 1, board: null }),
-    });
-    expect(res.status).toBe(404);
   });
 
   it("the shipped wrangler.jsonc lists them with the documented defaults", () => {

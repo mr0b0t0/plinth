@@ -20,8 +20,6 @@ function c(anchor: CommentInfo["anchor"]): CommentInfo {
     status: "open",
     created_at: new Date(1_700_000_000_000 + n * 1000).toISOString(),
     mentions: [],
-    kind: "comment",
-    request_data: null,
   };
 }
 

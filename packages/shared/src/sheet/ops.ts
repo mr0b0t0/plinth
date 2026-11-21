@@ -9,6 +9,7 @@ import { colIndex, colLetter, parseA1 } from "./address.ts";
 import {
   type Cell,
   isFormula,
+  MAX_FREEZE_COLS,
   parseSheet,
   type Sheet,
   type SheetColumn,
@@ -43,21 +44,14 @@ export type SheetOp =
   | { op: "insert_columns"; before: string; columns: SheetColumnInput[] }
   | { op: "delete_columns"; from: string; count?: number };
 
-export const SHEET_OP_KINDS = [
-  "set",
-  "append_rows",
-  "insert_rows",
-  "delete_rows",
-  "set_column",
-  "insert_columns",
-  "delete_columns",
-] as const;
-
 export class SheetOpError extends Error {
   readonly index: number;
-  constructor(index: number, message: string) {
+  /** A stable name for a refusal callers may act on (details.reason), when it has one. */
+  readonly reason: string | undefined;
+  constructor(index: number, message: string, reason?: string) {
     super(message);
     this.index = index;
+    this.reason = reason;
   }
 }
 
@@ -196,10 +190,22 @@ export function applySheetOps(
           );
         }
         if (op.values.length > 0) rowsFit(at.row - 2 + op.values.length, i);
+        const gap = at.row - 2 - s.rows.length;
+        if (op.values.length > 0 && gap > LIMITS.maxSheetSetGapRows) {
+          throw new SheetOpError(
+            i,
+            `a set at ${op.at} would add ${gap} empty rows after the sheet's last row (${s.rows.length + 1}); a set adds at most ${LIMITS.maxSheetSetGapRows}. Write from row ${s.rows.length + 2} or use append_rows`,
+            "too_far_past_end",
+          );
+        }
         count(
           op.values.reduce((n, r) => n + r.length, 0),
           i,
         );
+        // Rows the set adds past the end (the empty ones before it included) are inserted rows.
+        if (op.values.length > 0) {
+          changed.rows_inserted += Math.max(0, at.row - 2 + op.values.length - s.rows.length);
+        }
         op.values.forEach((vals, k) => {
           const ri = at.row - 2 + k;
           while (s.rows.length <= ri) s.rows.push([]);
@@ -282,6 +288,10 @@ export function applySheetOps(
         shiftAll(s.rows, { kind: "insert_columns", before: c, count: n }, shiftCharge(i));
         s.header.columns.splice(c, 0, ...op.columns.map(columnDef));
         for (const r of s.rows) if (r.length > c) r.splice(c, 0, ...new Array<Cell>(n).fill(null));
+        // Columns inserted among the frozen ones are frozen too, as formula references move (at
+        // most the 5 a sheet freezes).
+        const fr = s.header.freeze;
+        if (fr && c < fr.cols) fr.cols = Math.min(MAX_FREEZE_COLS, fr.cols + n);
         changed.columns_inserted += n;
         break;
       }
@@ -295,7 +305,9 @@ export function applySheetOps(
         s.header.columns.splice(c, n);
         for (const r of s.rows) if (r.length > c) r.splice(c, n);
         shiftAll(s.rows, { kind: "delete_columns", from: c, count: n }, shiftCharge(i));
-        if (s.header.freeze && s.header.freeze.cols > width()) s.header.freeze.cols = width();
+        // Frozen columns deleted leave the frozen pane, so the columns after them keep their place.
+        const fr = s.header.freeze;
+        if (fr && c < fr.cols) fr.cols -= Math.min(n, fr.cols - c);
         changed.columns_deleted += n;
         break;
       }

@@ -72,16 +72,23 @@ describe("categories", () => {
         </ul>,
       );
       const item = container.querySelector("li") as HTMLElement;
-      const badge = item.querySelector(".pl-dash__category") as HTMLElement;
-      expect(badge.textContent).toBe("Category: Acme site");
-      expect(badge.querySelector(".visually-hidden")?.textContent).toBe("Category: ");
-      expect(badge.getAttribute("title")).toBe("Acme site");
-      expect(badge.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
-      expect(item.querySelectorAll(".pl-dash__category")).toHaveLength(1);
-      // The category comes before the type badge.
-      expect(badges(item)).toEqual(
-        name === "row" ? ["Category: Acme site", "Doc"] : ["Doc", "Category: Acme site"],
-      );
+      // A row shows a category badge beside the title; a card shows it as plain text on its sub
+      // line, after the owner, so every card keeps one height.
+      const sel = name === "row" ? ".pl-dash__category" : ".pl-dash__card-category";
+      const category = item.querySelector(sel) as HTMLElement;
+      expect(category.textContent).toBe("Category: Acme site");
+      expect(category.querySelector(".visually-hidden")?.textContent).toBe("Category: ");
+      expect(category.getAttribute("title")).toBe("Acme site");
+      expect(category.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+      expect(item.querySelectorAll(sel)).toHaveLength(1);
+      if (name === "row") {
+        // The category comes before the type badge.
+        expect(badges(item)).toEqual(["Category: Acme site", "Doc"]);
+      } else {
+        expect(badges(item)).toEqual(["Doc"]);
+        const sub = item.querySelector(".pl-dash__card-sub") as HTMLElement;
+        expect(sub.contains(category)).toBe(true);
+      }
     });
 
     it(`shows no category on a shared ${name}`, () => {
@@ -97,7 +104,7 @@ describe("categories", () => {
           />
         </ul>,
       );
-      expect(container.querySelector(".pl-dash__category")).toBeNull();
+      expect(container.querySelector(".pl-dash__category, .pl-dash__card-category")).toBeNull();
       expect(container.textContent).not.toContain("Category");
     });
   }
@@ -114,28 +121,15 @@ describe("categories", () => {
     }
   });
 
-  it("offers Ask an agent on pages and designs to owners, editors and commenters, on every type to commenters, never to viewers", () => {
-    const ask = (type: ArtifactSummary["type"], role: ArtifactSummary["role"]) =>
-      artifactMenu(summary({ type, role }), () => undefined).find(
-        (e) => e.type !== "separator" && e.label === "Ask an agent",
+  it("offers Stats to owners only, linking to the artifact's stats", () => {
+    const labels = (role: ArtifactSummary["role"]) =>
+      artifactMenu(summary({ role }), () => undefined).flatMap((e) =>
+        e.type === "separator" ? [] : [e],
       );
-    for (const type of ["html", "design"] as const) {
-      for (const role of ["owner", "editor", "commenter"] as const) {
-        expect(ask(type, role)).toMatchObject({ href: "/a/plan?ask" });
-      }
-      expect(ask(type, "viewer")).toBeUndefined();
+    expect(labels("owner").find((e) => e.label === "Stats")?.href).toBe("/a/plan/stats");
+    for (const role of ["editor", "commenter", "viewer"] as const) {
+      expect(labels(role).some((e) => e.label === "Stats")).toBe(false);
     }
-    for (const type of ["doc", "sheet", "whiteboard"] as const) {
-      expect(ask(type, "commenter")).toMatchObject({ href: "/a/plan?ask" });
-      expect(ask(type, "owner")).toBeUndefined();
-      expect(ask(type, "editor")).toBeUndefined();
-      expect(ask(type, "viewer")).toBeUndefined();
-    }
-    // The card's Edit still opens the source editor for owners and editors.
-    const edit = artifactMenu(summary({ type: "html", role: "owner" }), () => undefined).find(
-      (e) => e.type !== "separator" && e.label === "Edit",
-    );
-    expect(edit).toMatchObject({ href: "/a/plan/edit" });
   });
 });
 

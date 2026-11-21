@@ -87,6 +87,52 @@ describe("email adapters", () => {
     });
   });
 
+  it("Resend: several messages go in one POST /emails/batch", async () => {
+    const { calls } = stubFetch(200, '{"data":[{"id":"a"},{"id":"b"}]}');
+    const adapter = new ResendEmailAdapter("re_batch_key", "Plinth <noreply@plinth.example>");
+    expect(adapter.batchMax).toBe(100);
+    await adapter.sendBatch([message, { to: "other@example.com", subject: "S", text: "T" }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.resend.com/emails/batch");
+    expect(calls[0]?.headers.get("authorization")).toBe("Bearer re_batch_key");
+    expect(calls[0]?.body).toEqual([
+      {
+        from: "Plinth <noreply@plinth.example>",
+        to: ["reader@example.com"],
+        subject: "Your code",
+        text: "code: 123456",
+        html: "<p>code: 123456</p>",
+      },
+      {
+        from: "Plinth <noreply@plinth.example>",
+        to: ["other@example.com"],
+        subject: "S",
+        text: "T",
+      },
+    ]);
+    await expect(adapter.sendBatch(Array.from({ length: 101 }, () => message))).rejects.toThrow(
+      "too many",
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("a 429 carries the provider's Retry-After in seconds", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        { message: "Too many requests" },
+        { status: 429, headers: { "retry-after": "2" } },
+      ),
+    );
+    const e = await new ResendEmailAdapter("re_k", "a@b.example").send(message).catch((x) => x);
+    expect(e).toBeInstanceOf(EmailSendError);
+    expect((e as EmailSendError).status).toBe(429);
+    expect((e as EmailSendError).retryAfterS).toBe(2);
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 429 }));
+    const e2 = await new ResendEmailAdapter("re_k", "a@b.example").send(message).catch((x) => x);
+    expect((e2 as EmailSendError).retryAfterS).toBeNull();
+  });
+
   it("provider errors carry the status and a redacted reason, never the key", async () => {
     const key = "SG.do-not-leak-this";
     stubFetch(401, `{"errors":[{"message":"bad key ${key}"}]}`);

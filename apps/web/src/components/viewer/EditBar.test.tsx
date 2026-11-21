@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EditBar, type EditBarProps, editStatus } from "./EditBar.tsx";
+import { EditBar, type EditBarProps, editStatus, editStatusShort } from "./EditBar.tsx";
 import { LiveDraftNotice, noticeKind } from "./LiveDraftNotice.tsx";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 
@@ -18,7 +18,6 @@ const props = (over: Partial<EditBarProps> = {}): EditBarProps => ({
   rebasedVersion: null,
   editors: [],
   onPublish: vi.fn(),
-  onDiscard: vi.fn(),
   onDone: vi.fn(),
   onReview: vi.fn(),
   ...over,
@@ -44,18 +43,37 @@ describe("EditBar", () => {
     // Solo has no socket: being "not connected" is normal there.
     expect(editStatus(props({ mode: "solo", connected: false }))).toBe("Editing v4");
     expect(editStatus(props({ mode: "solo", newerVersion: 5 }))).toBe(
-      "v5 was published while you were editing",
+      "v5 was published while you edited",
     );
     // A version (or a range of them) published meanwhile waits for review.
     expect(editStatus(props({ phase: "conflict" }))).toBe(
-      "A newer version was published while you edited. Review it to go on.",
+      "A newer version was published while you edited",
     );
     expect(editStatus(props({ phase: "conflict", conflictVersion: 5 }))).toBe(
-      "v5 was published while you edited. Review it to go on.",
+      "v5 was published while you edited",
     );
     expect(editStatus(props({ phase: "conflict", conflictVersion: 7 }))).toBe(
-      "v5 to v7 were published while you edited. Review them to go on.",
+      "v5 to v7 were published while you edited",
     );
+  });
+
+  it("has short words for phone width only where the long ones would wrap the strip", () => {
+    expect(editStatusShort(props({ phase: "conflict", conflictVersion: 5 }))).toBe("v5 published");
+    expect(editStatusShort(props({ phase: "conflict", conflictVersion: 7 }))).toBe(
+      "v5 to v7 published",
+    );
+    expect(editStatusShort(props({ mode: "solo", newerVersion: 5 }))).toBe("v5 published");
+    expect(editStatusShort(props({ dirty: true, rebasedVersion: 5 }))).toBe("Merged with v5");
+    expect(editStatusShort(props({ connected: false, dirty: true }))).toBe("Not connected");
+    expect(editStatusShort(props({ mode: "solo", dirty: true }))).toBe("Kept in this tab");
+    expect(editStatusShort(props({ dirty: true }))).toBeNull();
+    expect(editStatusShort(props({ savedVersion: 5 }))).toBeNull();
+    expect(editStatusShort(props({ connected: false, connecting: true }))).toBeNull();
+    // Both are in the live region; only the long words are read.
+    render(<EditBar {...props({ dirty: true, phase: "conflict", conflictVersion: 5 })} />);
+    const short = screen.getByText("v5 published");
+    expect(short.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByText("v5 was published while you edited")).toBeTruthy();
   });
 
   it("announces the status politely and offers Publish with its shortcut", async () => {
@@ -69,71 +87,64 @@ describe("EditBar", () => {
     render(<EditBar {...p} />);
     const status = screen.getByText("Draft saved");
     expect(status.getAttribute("aria-live")).toBe("polite");
-    expect(screen.getByText(/bo@example\.org/).textContent).toBe("bo@example.org (editing row 12)");
-    expect(screen.getByText(/cy@example\.org/).textContent).toBe("cy@example.org (editing)");
+    // How many others are here; who and where are its name (and its tooltip), never a list of
+    // emails across the strip.
+    const others = screen.getByRole("img", {
+      name: "Also here: bo@example.org (editing row 12), cy@example.org (editing)",
+    });
+    expect(others.textContent).toBe("2");
+    expect(others.tabIndex).toBe(0);
     const publish = screen.getByRole("button", { name: "Publish" });
     expect(publish.getAttribute("aria-keyshortcuts")).toBe("Meta+S Control+S");
     await userEvent.click(publish);
     expect(p.onPublish).toHaveBeenCalledTimes(1);
+    // One action and no menu of its own: Discard is in the bar's ⋯ menu.
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Publish"]);
+  });
+
+  it("shows Publish only once there is something to publish", () => {
+    const { rerender } = render(<EditBar {...props()} />);
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    rerender(<EditBar {...props({ savedVersion: 5 })} />);
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    rerender(<EditBar {...props({ dirty: true, saving: true })} />);
+    expect(screen.getByRole("button", { name: "Publish" }).getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("has Done only at phone width, where the bar's Edit toggle is in the ⋯ menu", async () => {
+    const { rerender } = render(<EditBar {...props({ dirty: true })} />);
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    const p = props({ dirty: true, compact: true });
+    rerender(<EditBar {...p} />);
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(p.onDone).toHaveBeenCalledTimes(1);
   });
 
-  it("asks before discarding, and only discards on confirm", async () => {
-    const p = props({ dirty: true });
-    const user = userEvent.setup();
-    render(<EditBar {...p} />);
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Discard unpublished changes" }));
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "Discard unpublished changes?",
-    });
-    expect(dialog.textContent).toContain("for everyone editing it");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(p.onDiscard).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Discard unpublished changes" }));
-    await user.click(await screen.findByRole("button", { name: "Discard changes" }));
-    expect(p.onDiscard).toHaveBeenCalledTimes(1);
-  });
-
-  it("publishes with a note from the menu", async () => {
-    const p = props({ dirty: true });
-    const user = userEvent.setup();
-    render(<EditBar {...p} />);
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Publish with a note…" }));
-    await user.type(await screen.findByLabelText("Note"), "Tidy the intro");
-    const dialog = screen.getByRole("dialog", { name: "Publish with a note" });
-    await user.click(dialog.querySelector(".pl-dialog__footer button:last-child") ?? dialog);
-    expect(p.onPublish).toHaveBeenCalledWith("Tidy the intro");
-  });
-
-  it("Enter in the note field publishes with the note", async () => {
-    const p = props({ dirty: true });
-    const user = userEvent.setup();
-    render(<EditBar {...p} />);
-    await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Publish with a note…" }));
-    await user.type(await screen.findByLabelText("Note"), "Fix typos{Enter}");
-    expect(p.onPublish).toHaveBeenCalledWith("Fix typos");
-  });
-
-  it("offers Review changes instead of Publish while a version waits for review", async () => {
-    const p = props({ dirty: true, phase: "conflict" });
-    render(<EditBar {...p} />);
+  it("offers only Review changes, not Publish, while a version waits for review", async () => {
+    const p = props({ dirty: true, phase: "conflict", compact: true });
+    const { rerender } = render(<EditBar {...p} />);
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(p.onReview).toHaveBeenCalled();
+    // While the review is open in the frame, the strip shows its status only: the review's Back
+    // is the one way out, so there is no Done beside it either.
+    rerender(<EditBar {...p} reviewing />);
+    expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    expect(screen.getByRole("region").textContent).toContain("published while you edited");
   });
 
-  it("turns Publish off, with the reason, for a draft that cannot be a version yet", () => {
+  it("turns Publish off for a draft that cannot be a version yet, and says why in its tooltip", async () => {
     const p = props({ dirty: true, publishable: false, unpublishableReason: "Nothing to show." });
     render(<EditBar {...p} />);
-    const publish = screen.getByRole("button", { name: "Publish" }) as HTMLButtonElement;
-    expect(publish.disabled).toBe(true);
-    const reason = screen.getByText("Nothing to show.");
+    const publish = screen.getByRole("button", { name: "Publish" });
+    // Off but focusable, so keyboard users reach the reason; no sentence across the strip.
+    expect(publish.getAttribute("aria-disabled")).toBe("true");
+    const reason = screen.getByRole("tooltip", { hidden: true });
+    expect(reason.textContent).toBe("Nothing to show.");
     expect(publish.getAttribute("aria-describedby")).toBe(reason.id);
+    await userEvent.click(publish);
+    expect(p.onPublish).not.toHaveBeenCalled();
   });
 });
 
@@ -153,12 +164,6 @@ describe("LiveDraftNotice", () => {
     editors: [],
     publishable: true,
     ...over,
-  });
-  const handlers = () => ({
-    onSave: vi.fn(),
-    onContinue: vi.fn(),
-    onDiscard: vi.fn(),
-    onReview: vi.fn(),
   });
   const DRAFT = {
     base_version: 3,
@@ -185,92 +190,54 @@ describe("LiveDraftNotice", () => {
     );
   });
 
-  it("names who left unpublished changes and when, with publish, continue and discard", async () => {
-    const h = handlers();
-    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
-    expect(screen.getByRole("note").textContent).toContain(
-      "Unpublished changes on the page by bo@example.org, 3 h ago",
+  it("names who left unpublished changes and when, in one short line, and offers no action", () => {
+    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} />);
+    expect(screen.getByRole("note").textContent).toBe("Unpublished changes · Bo, 3 h ago");
+    // The whole email is one hover away.
+    expect(screen.getByText("Unpublished changes · Bo, 3 h ago").getAttribute("title")).toBe(
+      "bo@example.org",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
-    await userEvent.click(screen.getByRole("button", { name: "Continue editing" }));
-    expect(h.onSave).toHaveBeenCalled();
-    expect(h.onContinue).toHaveBeenCalled();
+    // The Edit toggle is the one way in; the edit strip holds Publish and Discard.
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("asks before discarding someone's page changes, and only discards on confirm", async () => {
-    const h = handlers();
-    const user = userEvent.setup();
-    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "Discard the unpublished changes?",
-    });
-    expect(dialog.textContent).toContain("The changes by bo@example.org are not kept anywhere.");
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(h.onDiscard).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-    await user.click(await screen.findByRole("button", { name: "Discard changes" }));
-    expect(h.onDiscard).toHaveBeenCalledTimes(1);
-  });
-
-  it("disables publishing and discarding with the reason while the live draft is out of reach", () => {
-    const h = handlers();
-    render(
-      <LiveDraftNotice
-        draft={DRAFT}
-        status={null}
-        unavailable="Live editing is unavailable right now."
-        {...h}
-      />,
-    );
-    const reason = screen.getByText("Live editing is unavailable right now.");
-    for (const name of ["Publish", "Discard"]) {
-      const b = screen.getByRole("button", { name }) as HTMLButtonElement;
-      expect(b.disabled).toBe(true);
-      expect(b.getAttribute("aria-describedby")).toBe(reason.id);
-    }
-    // Continuing to edit stays possible.
-    expect(
-      (screen.getByRole("button", { name: "Continue editing" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
-  });
-
-  it("says who is editing with Join, and a conflict with Review changes", async () => {
-    const h = handlers();
+  it("says who is editing, and that a version waits for review, as text only", () => {
     const { rerender } = render(
       <LiveDraftNotice
         draft={null}
         status={status({ editors: [{ email: "bo@example.org", block: true }] })}
-        {...h}
       />,
     );
-    expect(screen.getByRole("note").textContent).toContain("bo@example.org is editing");
-    await userEvent.click(screen.getByRole("button", { name: "Join" }));
-    expect(h.onContinue).toHaveBeenCalled();
+    expect(screen.getByRole("note").textContent).toBe("Bo is editing");
+    expect(screen.queryByRole("button")).toBeNull();
     rerender(
-      <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} {...h} />,
+      <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} />,
     );
     expect(screen.getByRole("note").textContent).toContain(
-      "v5 changed the same paragraphs as the unpublished changes on the page",
+      "v5 was published over unpublished changes",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
-    expect(h.onReview).toHaveBeenCalled();
-    rerender(
-      <LiveDraftNotice
-        draft={null}
-        status={status({ dirty: true, conflict_version: 5 })}
-        merges={false}
-        {...h}
-      />,
-    );
-    expect(screen.getByRole("note").textContent).toContain(
-      "v5 was published while there were unpublished changes on the page. Review them to go on.",
-    );
+    // Review changes is in the edit strip.
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("gives a code-confirmed editor no editing actions", () => {
-    render(<LiveDraftNotice draft={DRAFT} status={null} signIn {...handlers()} />);
-    expect(screen.getByRole("note").textContent).toContain("Sign in to edit.");
-    expect(screen.queryByRole("button")).toBeNull();
+  it("offers Publish and Discard for the copy this tab kept, which no frame holds", async () => {
+    const onSaveRestore = vi.fn();
+    const onDropRestore = vi.fn();
+    render(
+      <LiveDraftNotice
+        draft={null}
+        status={null}
+        restore={{ text: "# Plan", base: 4, saved_at: "2026-11-18T07:00:00.000Z" }}
+        onSaveRestore={onSaveRestore}
+        onDropRestore={onDropRestore}
+      />,
+    );
+    expect(screen.getByRole("note").textContent).toContain(
+      "Unpublished changes from earlier in this tab, based on v4",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
+    expect(onSaveRestore).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(onDropRestore).toHaveBeenCalledTimes(1);
   });
 });

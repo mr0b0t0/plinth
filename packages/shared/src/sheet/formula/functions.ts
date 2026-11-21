@@ -9,6 +9,7 @@ import {
   err,
   finite,
   isError,
+  isRange,
   MAX_DATE_SERIAL,
   numberFromText,
   round15,
@@ -25,9 +26,6 @@ import {
 type Fn = (args: Arg[], ctx: EvalContext) => Value;
 type LazyFn = (nodes: Node[], ctx: EvalContext) => Value;
 export type FunctionDef = { lazy?: false; fn: Fn } | { lazy: true; fn: LazyFn };
-
-const isRange = (a: Arg): a is RangeArg =>
-  typeof a === "object" && a !== null && (a as RangeArg).kind === "range";
 
 /** One value from an argument: a one-cell range is its cell, a bigger one is #VALUE!. */
 function scalar(a: Arg | undefined): Value {

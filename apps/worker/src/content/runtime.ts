@@ -1,27 +1,27 @@
 // /__plinth/runtime.js: the script a page loads to use its artifact's shared data, live room and
-// comments from the page and dictation (docs/spec.md "Shared data and viewer identity", "Live
-// rooms", "Comments from the page", "Voice: dictation and text to speech"). It holds no secrets and
-// no artifact data, so it is served without a content cookie and is the same for every artifact on
-// an instance. Its only configuration value is the instance's public app origin, which the app
-// channel (runtime/app.ts) embeds for page comments and dictation. It talks only to its own
-// origin's /__plinth/api/v1/ (connect-src 'self') and, by postMessage at that exact origin, to the
-// app that frames it. Assembled from the fragments in runtime/.
+// comments from the page (docs/spec.md "Shared data and viewer identity", "Live rooms", "Comments
+// from the page"). It holds no secrets and no artifact data, so it is served without a content
+// cookie and is the same for every artifact on an instance. Its only configuration value is the
+// instance's public app origin, which the app channel (runtime/app.ts) embeds for page comments.
+// It talks only to its own origin's /__plinth/api/v1/ (connect-src 'self') and, by postMessage, to
+// the app that frames it. Assembled from the fragments in runtime/.
 //
 // window.plinth:
 //   ready      Promise<Session>, never rejects: { available, reason, viewer, canWrite,
 //              capabilities, shared, limits, usage }; reason null | "opaque_isolation" | "disabled"
-//              | "not_declared" | "preview" | "expired" | "network"
+//              | "not_declared" | "preview" | "capture" | "expired" | "network"
 //   available, viewer ({ id, email | null, name | null, role } | null), canWrite, canListPeople:
 //              set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
-//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs });
-//              a Doc's createdBy and updatedBy are { email, name | null, role, via }. While the
-//              app pushes changes (live views, runtime/live.ts) onSnapshot re-reads when told and
-//              polls only every 60 s; intervalMs applies while it does not
+//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs }).
+//              While the app pushes changes (live views, runtime/live.ts) onSnapshot re-reads when
+//              told and polls only every 60 s; intervalMs applies while it does not. A Doc's
+//              createdBy and updatedBy are { email, name | null, role, via }
 //   people     who has access (owners and editors, pages that declare `data viewer people`):
-//              list({ q, limit }) -> [{ id, email, name | null, role, you }], get(id) -> that or
-//              null; others get forbidden or unavailable
+//              list({ q, limit }) -> [{ id, email, name | null, role, you }] (with .total, how
+//              many matched before limit), get(id) -> that or null; others get forbidden or
+//              unavailable
 //   PlinthError: .code unavailable | read_only | forbidden | not_found | conflict |
 //              quota_exceeded | too_large | rate_limited | expired | invalid | network;
 //              .retryAfter, .currentRev, .limit
@@ -37,52 +37,11 @@
 //   comments   comments from the page (runtime/comments.ts); nothing is posted until first use:
 //              ready, compose(anchor?), onThreads(fn), locate(fn), refresh(), open(id), onFocus(fn)
 //
-//   dictation  words the viewer speaks, recognized by the app (never the microphone): ready
-//              Promise<{ available, reason }>, never rejects (reason null | "disabled" |
-//              "opaque_isolation" | "not_declared" | "not_identified" | "unsupported" | "no_host");
-//              start({ lang, interim }) -> Promise, from a click (rejects unavailable |
-//              no_activation | not_granted | dismissed | busy | rate_limited | invalid | network);
-//              stop() -> Promise; onPartial(fn({ text })), onFinal(fn({ text })), onState(fn({
-//              state, reason })) -> off. Nothing is posted until ready is read or start() called.
-//
 //   onVersion  (fn({ from, to, force }) -> void | false | { state }) -> off: before a newer
 //              version replaces the page (runtime/version.ts); false keeps the page until the
 //              viewer chooses Update, { state } hands JSON (16 KiB) to the next version
 //   carried    { from, to, state } in the version that replaced the one before, else null; the
 //              scroll position and place inside the artifact come back by themselves
-//   files      files people add to the page (runtime/files.ts, pages that declare `files`):
-//              ready Promise<{ available, reason, canUpload, accept, limits: { maxFileBytes,
-//              maxFiles, maxBytes, maxBytesPerUploader, partBytes }, usage: { files, bytes,
-//              mineBytes } }>, never rejects (reason null | "opaque_isolation" | "disabled" |
-//              "not_declared" | "preview" | "expired" | "network"); upload(blob, { name,
-//              onProgress(sent, total), signal }) -> File; list({ limit, cursor, mine }) -> { files,
-//              nextCursor }; all({ mine }); get(id) -> File | null; delete(id); url(id, { download
-//              }); download(id); onSnapshot(onFiles, onError, { intervalMs, mine }) -> off. A File
-//              is { id, name, type, size, url, mine, createdAt, uploadedBy? { email, role, via } };
-//              its name is untrusted text. Errors add unsupported_type, type_mismatch and aborted.
-//              Nothing is fetched until ready is read or a method is called.
-//   doc.source { id, label, connector, ref | null, fetchedAt, agent? } on a document an owner's
-//              agent stamped with a data source (agent: the connection's label, only with
-//              `viewer`); absent on every other document
-//   freshness  (doc, { staleAfterMinutes }) -> { fetchedAt, ageMs, text, stale } | null
-//   cite       (el, doc, { field, staleAfterMinutes }) -> the badge: one <sup class="plinth-cite">
-//              in el saying where the figure came from and how old it is, or "not fetched" for a
-//              document without a stamp; text only. cite.scan(root, { collection: docs }) fills
-//              every [data-plinth-cite="collection/docId#field"]; cite.missing(root) lists
-//              elements with a digit in their own text and no badge. No request: it also works on
-//              inline objects ({ source: { label, connector, fetched_at } }) under opaque
-//              isolation. A badge is page code; the viewer bar's sources line is the server's
-//
-//   requests   work for the owner's agent (runtime/requests.ts, pages that declare `requests`):
-//              ready Promise<{ available, reason, canFile, to, limits: { maxBodyChars,
-//              maxDataBytes, perHour, maxOpen } }>, never rejects (reason null |
-//              "opaque_isolation" | "disabled" | "not_declared" | "preview" | "not_identified" |
-//              "expired" | "network"); file({ body, data, to }) -> Request; mine() -> Request[],
-//              the caller's own, newest first; get(id) -> Request | null; onChange(fn, onError, {
-//              intervalMs }) -> stop, polling while the tab is visible and a request is open. A
-//              Request is { id, state, resolved, to, body, data, version, resultVersion, createdAt,
-//              completedAt, answers: [{ body, createdAt }] }, with no author of anything. Nothing is
-//              fetched until ready is read or a method is called.
 //
 // Under opaque isolation the page's origin is "null": ready resolves unavailable without any
 // request, and db calls reject with "unavailable". A 401 means the content pass expired: listeners
@@ -96,14 +55,10 @@ import { APP_CHANNEL_FRAGMENT } from "./runtime/app.ts";
 import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
-import { DICTATION_FRAGMENT } from "./runtime/dictation.ts";
-import { FILES_FRAGMENT } from "./runtime/files.ts";
-import type { RuntimeContext, RuntimeFragment, RuntimeSwitches } from "./runtime/fragment.ts";
+import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
-import { REQUESTS_FRAGMENT } from "./runtime/requests.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
-import { SOURCES_FRAGMENT } from "./runtime/sources.ts";
 import { VERSION_FRAGMENT } from "./runtime/version.ts";
 
 /**
@@ -114,38 +69,21 @@ import { VERSION_FRAGMENT } from "./runtime/version.ts";
 export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
-  PEOPLE_FRAGMENT,
   COMMENTS_FRAGMENT,
-  DICTATION_FRAGMENT,
   LIVE_FRAGMENT,
+  PEOPLE_FRAGMENT,
   VERSION_FRAGMENT,
-  FILES_FRAGMENT,
-  SOURCES_FRAGMENT,
-  REQUESTS_FRAGMENT,
 ];
 
-/** What assembling the runtime reads: the app origin, and the switches of fragments that ship off. */
-export type RuntimeConfig = Pick<Config, "appOrigin"> & RuntimeSwitches;
-
-/** The fragments this instance serves: every listed one whose `included` holds (or has none). */
-function includedFragments(
-  config: RuntimeConfig,
-  fragments: readonly RuntimeFragment[],
-): RuntimeFragment[] {
-  return fragments.filter((f) => f.included?.(config) ?? true);
-}
-
-/**
- * Assemble the script from `fragments` (those this instance serves), with the app channel when one
- * of them uses it.
- */
+/** Assemble the script from `fragments`, with the app channel when one of them uses it. */
 export function assembleRuntime(
-  config: RuntimeConfig,
+  config: Pick<Config, "appOrigin">,
   fragments: readonly RuntimeFragment[] = RUNTIME_FRAGMENTS,
 ): string {
   const ctx: RuntimeContext = { appOriginJson: JSON.stringify(config.appOrigin) };
-  const served = includedFragments(config, fragments);
-  const parts = served.some((f) => f.usesAppChannel) ? [APP_CHANNEL_FRAGMENT, ...served] : served;
+  const parts = fragments.some((f) => f.usesAppChannel)
+    ? [APP_CHANNEL_FRAGMENT, ...fragments]
+    : fragments;
   return CORE_HEAD + parts.map((f) => f.source(ctx)).join("") + CORE_TAIL;
 }
 
@@ -153,16 +91,13 @@ const memo = new Map<string, string>();
 
 /**
  * The runtime this instance serves, the same bytes for every artifact. Memoized per app origin,
- * the only configuration a fragment may embed, and per set of included fragments.
+ * the only configuration a fragment may embed.
  */
-export function runtimeScript(config: RuntimeConfig): string {
-  const key = `${config.appOrigin}\n${includedFragments(config, RUNTIME_FRAGMENTS)
-    .map((f) => f.name)
-    .join(",")}`;
-  let s = memo.get(key);
+export function runtimeScript(config: Pick<Config, "appOrigin">): string {
+  let s = memo.get(config.appOrigin);
   if (s === undefined) {
     s = assembleRuntime(config);
-    memo.set(key, s);
+    memo.set(config.appOrigin, s);
   }
   return s;
 }

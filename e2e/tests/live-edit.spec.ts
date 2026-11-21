@@ -82,6 +82,25 @@ async function startEditing(page: Page) {
   await expect(page.frameLocator(CURRENT_FRAME).locator("main.plinth-doc--editing")).toBeVisible();
 }
 
+/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
+async function stopEditing(page: Page) {
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) {
+    // On a wide screen the toggle is the one way in and out: the strip has no Done.
+    await expect(
+      page
+        .getByRole("region", { name: "Editing on the page" })
+        .getByRole("button", { name: "Done" }),
+    ).toHaveCount(0);
+    await toggle.click();
+  } else {
+    await page
+      .getByRole("region", { name: "Editing on the page" })
+      .getByRole("button", { name: "Done" })
+      .click();
+  }
+}
+
 const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
 
 /** Wait until the frame reports the doc socket open (the bar stops saying "Connecting…"). */
@@ -158,7 +177,7 @@ test("two editors on one doc: a held block, typing that arrives live, Publish ma
   expect(detail.body.content).toContain("First paragraph. Typed live.");
   expect(detail.body.content).toContain("Third paragraph. And theirs.");
 
-  await page.getByRole("button", { name: "Done" }).click();
+  await stopEditing(page);
   await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
   await other.context().close();
 });
@@ -214,33 +233,54 @@ test("an agent's version is merged under the page edits, or frozen for review wh
     await client.close();
   }
   const bar = page.getByRole("region", { name: "Editing on the page" });
-  await expect(bar).toContainText("v3 was published while you edited. Review it to go on.", {
+  await expect(bar).toContainText("v3 was published while you edited", {
     timeout: 10_000,
   });
   // The review opens in the page itself: both docs rendered, and what each changed.
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const review = frameOf(page).getByRole("region", { name: "Review v3 and the page changes" });
+  const review = frameOf(page).getByRole("region", { name: "Review v3 and your changes" });
   await expect(review).toBeVisible();
-  await expect(review.getByRole("heading", { level: 2 })).toHaveText(
-    "v3 was published while you were editing",
-  );
-  const mine = review.getByRole("region", { name: "Your page changes" });
-  await expect(mine).toContainText("Your page changes, since v2");
+  // The strip says what happened, once: the review has no heading repeating it.
+  await expect(review.getByRole("heading", { level: 2 })).toHaveCount(0);
+  // While the review is open, the strip shows its status only: the review's Back is the one way
+  // out, so neither "Review changes" nor Done is offered there.
+  await expect(bar.getByRole("button", { name: "Review changes" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Done" })).toHaveCount(0);
+  await expect(bar).toContainText("v3 was published while you edited");
+  // The update shows in the strip only: no toast repeats it while editing.
+  await expect(page.getByText("Updated to v3")).toHaveCount(0);
+  // The bar names the base the changes were made on, not the version waiting for review, however
+  // late the news of it arrives.
+  await page.waitForTimeout(1_000);
+  await expect(page.locator(".pl-viewer__version")).toContainText(/^\s*v2\b/);
+  const mine = review.getByRole("region", { name: "Your changes" });
+  await expect(mine.getByRole("list", { name: "Changes" })).toContainText("Paragraph changed");
   await expect(mine).toContainText("First paragraph. Mine.");
-  await expect(mine).toContainText("No files changed");
+  // Each side marks the blocks it changed since the base.
+  await expect(mine.locator("[data-review-changed]").first()).toContainText(
+    "First paragraph. Mine.",
+  );
   const theirs = review.getByRole("region", { name: "v3" });
   const toV3 = review.getByRole("radio", { name: "v3" });
   if (await toV3.isVisible()) await toV3.click();
   await expect(theirs).toContainText("First, rewritten by the agent.");
-  await expect(theirs).toContainText("What v3 changed, since v2");
+  // The History describers name a paragraph rewritten past recognition as removed and added.
+  await expect(theirs.getByRole("list", { name: "Changes" })).toContainText(
+    "Paragraph added: First, rewritten by the agent.",
+  );
   // No source is shown: no Markdown field, and no editor.
   await expect(review.locator("textarea, .monaco-editor")).toHaveCount(0);
-  // Discard mine asks first, naming what would be lost; Cancel keeps the page changes.
-  await review.getByRole("button", { name: "Discard mine" }).click();
-  const ask = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
-  await expect(ask).toContainText("They are not kept anywhere. The page will show v3.");
+  // Discard your changes asks first, in the app's own dialog over the dimmed page; Cancel keeps
+  // them and goes back to the review.
+  await review.getByRole("button", { name: "Discard your changes" }).click();
+  await expect(frameOf(page).getByRole("alertdialog")).toHaveCount(0);
+  const ask = page.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+  await expect(ask).toContainText("The page goes back to v3 for everyone editing it.");
+  await expect(page.locator(".pl-dialog-backdrop").first()).toBeVisible();
   await ask.getByRole("button", { name: "Cancel" }).click();
-  await review.getByRole("button", { name: "Publish mine", exact: true }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(review.getByRole("button", { name: "Discard your changes" })).toBeEnabled();
+  await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
   await expect
     .poll(async () => (await apiGet(page.request, `/artifacts/${s.id}`)).body.current_version)
     .toBe(4);
@@ -286,21 +326,21 @@ test("a review open in two browsers: one choice takes effect, and the other revi
     expect(r.isError, r.text).toBe(false);
     for (const p of [page, other]) {
       const bar = p.getByRole("region", { name: "Editing on the page" });
-      await expect(bar).toContainText(`v${base + 1} was published while you edited.`, {
+      await expect(bar).toContainText(`v${base + 1} was published while you edited`, {
         timeout: 10_000,
       });
       await bar.getByRole("button", { name: "Review changes" }).click();
       await expect(
-        frameOf(p).getByRole("region", { name: `Review v${base + 1} and the page changes` }),
+        frameOf(p).getByRole("region", { name: `Review v${base + 1} and your changes` }),
       ).toBeVisible();
     }
   }
   try {
     await clash(1, "one");
     // The owner publishes theirs; the editor's review closes with what happened.
-    await frameOf(page).getByRole("button", { name: "Publish mine", exact: true }).click();
+    await frameOf(page).getByRole("button", { name: "Publish your changes", exact: true }).click();
     await expect(frameOf(other).locator(".plinth-review__announce")).toHaveText(
-      "Another editor published the page changes as v3.",
+      "Another editor published these changes as v3.",
       { timeout: 10_000 },
     );
     await expect(frameOf(other).locator(".plinth-review")).toHaveCount(0);
@@ -310,10 +350,21 @@ test("a review open in two browsers: one choice takes effect, and the other revi
 
     // Both choices at once: exactly one takes effect, and History gains at most one version.
     await clash(3, "two");
-    await frameOf(other).getByRole("button", { name: "Discard mine" }).click();
+    await frameOf(other).getByRole("button", { name: "Discard your changes" }).click();
+    const confirm = other.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+    await expect(confirm).toBeVisible();
+    // Dispatched, not clicked (a click first waits for its target to settle), and the losing
+    // choice's button may be gone already: the other choice won, which is what this checks.
+    const publish = frameOf(page).getByRole("button", {
+      name: "Publish your changes",
+      exact: true,
+    });
+    await expect(publish).toBeEnabled();
+    const press = (button: typeof publish) =>
+      button.dispatchEvent("click", undefined, { timeout: 5_000 }).catch(() => undefined);
     await Promise.all([
-      frameOf(other).getByRole("button", { name: "Discard the page changes" }).click(),
-      frameOf(page).getByRole("button", { name: "Publish mine", exact: true }).click(),
+      press(confirm.getByRole("button", { name: "Discard changes", exact: true })),
+      press(publish),
     ]);
     for (const p of [page, other]) {
       await expect(frameOf(p).locator(".plinth-review")).toHaveCount(0, { timeout: 15_000 });

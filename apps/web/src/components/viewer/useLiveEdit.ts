@@ -18,9 +18,10 @@
 //
 // A version published while the page changes were not combined with it freezes them: the frame
 // shows the whole-draft review (renderers/common/review.ts), and the person's choice comes back as
-// `resolved`. "Publish mine" is POST live/checkpoint with conflict_version (room), or PUT with
-// base_version: n and files_from_version: the draft's base (solo); "Discard mine" is DELETE
-// live/draft with conflict_version (room), or dropping the tab copy (solo). The app answers the
+// `resolved`. "Publish your changes" is POST live/checkpoint with conflict_version (room), or PUT with
+// base_version: n and files_from_version: the draft's base (solo); "Discard your changes", once the
+// app's own confirmation (discardAsk) says so, is DELETE live/draft with conflict_version (room),
+// or dropping the tab copy (solo); a cancelled confirmation answers `failed`. The app answers the
 // frame with `reviewed`, so its buttons say when another editor is choosing.
 //
 // Phases: idle (not editing, no room), watching (not editing, the frame follows the room),
@@ -62,6 +63,7 @@ import {
 import type { WatchPause } from "./useVersionWatch.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
+type Resolved = Extract<FrameMessage, { type: "resolved" }>;
 
 export type LivePhase = "idle" | "watching" | "editing" | "dirty" | "saving" | "conflict" | "solo";
 
@@ -125,6 +127,13 @@ export interface LiveEdit {
   /** The review open in the frame, if any. */
   review: LiveReview | null;
   reviewing: boolean;
+  /**
+   * The review's "Discard your changes" waits for the app's confirmation (the app's own dialog,
+   * over the dimmed page): the version the page goes back to, or null.
+   */
+  discardAsk: number | null;
+  /** The person's answer to discardAsk: true discards, false goes back to the review. */
+  answerDiscard(ok: boolean): void;
   /** Solo: page edits this tab kept from before a reload. */
   restore: PageDraft | null;
   pause: WatchPause;
@@ -154,6 +163,11 @@ const reasonOf = (e: unknown): string | null =>
   e instanceof ApiRequestError
     ? ((e.details as { reason?: string } | undefined)?.reason ?? null)
     : null;
+
+/** A refused Publish with nothing newer to review against: the server's words, or these. */
+const NOT_PUBLISHED = "These changes could not be published. Try again.";
+const refusedText = (e: unknown): string =>
+  e instanceof Error && e.message.trim() !== "" ? e.message : NOT_PUBLISHED;
 
 const currentOf = (e: unknown): number | null => {
   const v = (e instanceof ApiRequestError ? e.details : undefined) as
@@ -189,6 +203,8 @@ export function useLiveEdit({
   const [savedVersion, setSavedVersion] = useState<number | null>(null);
   const [rebasedVersion, setRebasedVersion] = useState<number | null>(null);
   const [review, setReview] = useState<LiveReview | null>(null);
+  /** The review's Discard, waiting for the app's confirmation. */
+  const [discardAsk, setDiscardAsk] = useState<Resolved | null>(null);
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
@@ -205,7 +221,7 @@ export function useLiveEdit({
   const savingRef = useRef(false);
   const reviewRef = useRef<LiveReview | null>(null);
   reviewRef.current = review;
-  /** Solo: the kept copy a review is of (saveRestore), which its "Publish mine" publishes. */
+  /** Solo: the kept copy a review is of (saveRestore), which its "Publish your changes" publishes. */
   const keptReview = useRef<{ nonce: string; text: string } | null>(null);
 
   // ---------- errors ----------
@@ -247,7 +263,7 @@ export function useLiveEdit({
     const s = latest.current.status;
     if (latest.current.mode === "solo") return;
     if (s?.conflict_version == null) {
-      toast("Nothing to review: the page changes were kept on top of the new version.", "neutral");
+      toast("Nothing to review: your changes were kept on top of the new version.", "neutral");
       return;
     }
     const nonce = newNonce();
@@ -268,15 +284,16 @@ export function useLiveEdit({
    * Solo mode: a Publish was refused because version n is current now. The frame reviews its own
    * copy beside n; the app says which files n changed since the base, from the two versions'
    * file lists (it reads only their `assets`). For a copy this tab kept from before a reload
-   * (`kept`), the frame never held it: the review carries it, and the choice publishes it.
+   * (`kept`), the frame never held it: the review carries it, and the choice publishes it. A
+   * refusal (`e`) that leaves nothing newer than the base to review says why instead.
    */
   const soloReview = useCallback(
-    async (base: number, details: unknown, kept?: string) => {
-      const n =
-        typeof (details as { current_version?: unknown } | undefined)?.current_version === "number"
-          ? (details as { current_version: number }).current_version
-          : latest.current.gate.artifact.current_version;
-      if (n <= base) return;
+    async (base: number, e: unknown, kept?: string) => {
+      const n = currentOf(e) ?? latest.current.gate.artifact.current_version;
+      if (n <= base) {
+        toast(refusedText(e));
+        return;
+      }
       try {
         const [b, v] = await Promise.all([
           api<ArtifactDetail>(route(API.version, { ref: id, n: base })),
@@ -302,9 +319,7 @@ export function useLiveEdit({
 
   // ---------- frame messages ----------
 
-  const onResolvedRef = useRef<(m: Extract<FrameMessage, { type: "resolved" }>) => void>(
-    () => undefined,
-  );
+  const onResolvedRef = useRef<(m: Resolved, confirmed?: boolean) => void>(() => undefined);
 
   useEffect(() => {
     if (!available) return;
@@ -429,7 +444,7 @@ export function useLiveEdit({
       } catch (e) {
         fail(e, () => {
           if (onConflict && e instanceof ApiRequestError) onConflict(e);
-          else void soloReviewRef.current(base, e instanceof ApiRequestError ? e.details : null);
+          else void soloReviewRef.current(base, e);
         });
         return null;
       }
@@ -462,7 +477,7 @@ export function useLiveEdit({
       } catch (e) {
         const code = reasonOf(e);
         if (code === "live_unpublishable") {
-          if (reason !== "idle") toast("These page changes can't be published yet.", "neutral");
+          if (reason !== "idle") toast("These changes can't be published yet.", "neutral");
           return false;
         }
         fail(e, code === "live_conflict" ? () => void openReview() : undefined);
@@ -501,13 +516,32 @@ export function useLiveEdit({
   const publishRef = useRef(publish);
   publishRef.current = () => publish();
 
+  const answerDiscard = useCallback(
+    (ok: boolean) => {
+      const m = discardAsk;
+      setDiscardAsk(null);
+      const r = reviewRef.current;
+      if (!m || !r || m.nonce !== r.nonce) return;
+      // Cancel answers "failed": the review's buttons come back on, focus on its Discard.
+      if (ok) onResolvedRef.current(m, true);
+      else answer(r.nonce, "failed");
+    },
+    [discardAsk, answer],
+  );
+
   // ---------- the review's choice ----------
 
-  onResolvedRef.current = (m) => {
+  onResolvedRef.current = (m, confirmed = false) => {
     const r = reviewRef.current;
     if (!r || m.nonce !== r.nonce) return;
     if (m.outcome === "cancelled") {
+      setDiscardAsk(null);
       setReview(null);
+      return;
+    }
+    if (m.outcome === "discard" && !confirmed) {
+      // The frame cannot dim the app around it, so the app asks, as the ⋯ menu's Discard does.
+      setDiscardAsk(m);
       return;
     }
     const done = (result: ReviewResult) => answer(r.nonce, result);
@@ -517,7 +551,8 @@ export function useLiveEdit({
       if (code === "live_resolved") return done("resolved");
       if (code === "live_conflict") return done("conflict");
       done("failed");
-      if (code === "live_moved") toast("The page changes moved on. Review them again.", "warning");
+      if (code === "live_moved")
+        toast("The unpublished changes moved on. Review them again.", "warning");
       else fail(e);
     };
     if (r.mode === "room") {
@@ -576,8 +611,11 @@ export function useLiveEdit({
           if (newer !== null && newer > r.current) {
             // Another version is current now: the review opens again on the whole range.
             done("conflict");
-            void soloReviewRef.current(r.base, e.details, kept);
-          } else done("failed");
+            void soloReviewRef.current(r.base, e, kept);
+          } else {
+            done("failed");
+            toast(refusedText(e));
+          }
         });
         if (ok) {
           done("done");
@@ -645,7 +683,7 @@ export function useLiveEdit({
     }
     try {
       await liveDiscard(id, s.rev);
-      showToast({ title: "Unpublished page changes discarded." });
+      showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }
@@ -676,7 +714,7 @@ export function useLiveEdit({
     // Refused because a newer version is current: the frame reviews this copy, not its own (it
     // holds none, or one of the version it shows).
     await publishSolo(text, base, base, undefined, (e) => {
-      void soloReviewRef.current(base, e.details, text);
+      void soloReviewRef.current(base, e, text);
     });
   }, [restore, publishSolo]);
 
@@ -872,6 +910,8 @@ export function useLiveEdit({
     newerVersion,
     review,
     reviewing: review !== null,
+    discardAsk: discardAsk && review && discardAsk.nonce === review.nonce ? review.current : null,
+    answerDiscard,
     restore,
     pause,
     roomReady,

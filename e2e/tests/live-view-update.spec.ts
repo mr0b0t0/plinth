@@ -1,6 +1,7 @@
 // Live views end to end, applying a new version while keeping the reader's state (docs/spec.md
 // "Live views"): a doc scrolled to a lower heading updates in place (no new enter request) and the
-// heading stays where it was; a page with the runtime hands its state and scroll to the next
+// heading stays where it was, and an image the new version changed under the same name shows the
+// new file; a page with the runtime hands its state and scroll to the next
 // version; a page that declares `hold` waits while the viewer types in it, and Update loads it.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { publishArtifact, uniqueEmail } from "../support/api.ts";
@@ -74,6 +75,45 @@ test("a doc updates in place and keeps the heading the reader was at", async ({ 
   expect(Math.abs(after - before)).toBeLessThanOrEqual(2);
 });
 
+const CHART = (width: number) => ({
+  path: "chart.svg",
+  content: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="40"><rect width="${width}" height="40" fill="#4a7"/></svg>`,
+  content_type: "image/svg+xml",
+});
+
+test("a doc updated in place shows the new version's image under the same name", async ({
+  page,
+}) => {
+  const { token } = await seedToken(uniqueEmail("doc-live-image"));
+  const art = await publishArtifact(page.request, token, {
+    type: "doc",
+    content: "# Report\n\n![Chart](chart.svg)\n\nFirst draft.\n",
+    html: undefined,
+    assets: [CHART(100)],
+  });
+  const entered = enters(page);
+  await page.goto(`/a/${art.slug}`);
+  const current = page.frameLocator(CURRENT_FRAME);
+  await expect(current.locator('html[data-ready="ok"]')).toHaveCount(1);
+  const frame = await shownFrame(page);
+  const width = () =>
+    frame.locator("img").evaluate((img: HTMLImageElement) => (img.complete ? img.naturalWidth : 0));
+  await expect.poll(width).toBe(100);
+
+  await update(
+    token,
+    art.id,
+    { content: "# Report\n\n![Chart](chart.svg)\n\nSecond draft.\n", assets: [CHART(300)] },
+    1,
+  );
+  await expect(page.getByText("Updated to v2")).toBeVisible({ timeout: 10_000 });
+  await expect(frame.getByText("Second draft.")).toHaveCount(1);
+  // In place (the same frame, no new enter request), and the chart is v2's, not the one v1 loaded.
+  expect(await shownFrame(page)).toBe(frame);
+  expect(entered).toHaveLength(1);
+  await expect.poll(width).toBe(300);
+});
+
 const RUNTIME_PAGE = (title: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Notes</title><script src="/__plinth/runtime.js"></script></head><body>
 <h1>${title}</h1><label>Draft <input id="draft"></label><p id="carried">none</p>
@@ -108,6 +148,41 @@ test("a page with the runtime hands its state and scroll to the next version", a
   await expect(next.locator("#draft")).toHaveValue("half a sentence");
   const shown = await shownFrame(page, 'iframe[title$="version 2"]');
   await expect.poll(() => shown.evaluate(() => Math.round(window.scrollY))).toBe(600);
+});
+
+test("a carry record left behind is not read by a reload of the old version's frame", async ({
+  page,
+}) => {
+  const { token } = await seedToken(uniqueEmail("runtime-stale"));
+  const art = await publishArtifact(page.request, token, { html: RUNTIME_PAGE("First") });
+  await page.goto(`/a/${art.slug}`);
+  const current = page.frameLocator(CURRENT_FRAME);
+  await expect(current.locator("h1")).toHaveText("First");
+  const frame = await shownFrame(page);
+  expect(await frame.evaluate(() => window.name)).toBe("plinth-v1");
+  // A record for v2 the app never acted on (the update was held, or the frame stayed), then the
+  // page reloads itself in the same frame: that load is not the update, so it reads nothing.
+  const navigated = page.waitForEvent("framenavigated", (f) => f === frame);
+  await frame.evaluate(() => {
+    const rec = { from: 1, to: 2, at: Date.now(), scroll: { x: 0, y: 0 }, path: "/", hash: null };
+    sessionStorage.setItem(
+      "__plinth_carry",
+      JSON.stringify({ ...rec, state: { draft: "left behind" } }),
+    );
+    setTimeout(() => location.reload(), 0);
+  });
+  await navigated;
+  await expect.poll(() => frame.evaluate(() => document.readyState)).toBe("complete");
+  await expect(current.locator("h1")).toHaveText("First");
+  await expect(current.locator("#carried")).toHaveText("none");
+  const reloaded = await shownFrame(page);
+  expect(await reloaded.evaluate(() => sessionStorage.getItem("__plinth_carry"))).toBeNull();
+
+  // The real update still carries, into the frame named for v2.
+  await current.locator("#draft").fill("typed now");
+  await update(token, art.id, { html: RUNTIME_PAGE("Second") }, 1);
+  const next = page.frameLocator('iframe[title$="version 2"]');
+  await expect(next.locator("#carried")).toHaveText("from v1: typed now", { timeout: 10_000 });
 });
 
 test("a page with the runtime keeps its query as it was, and gets its hash back", async ({
@@ -181,17 +256,21 @@ test("a page that declares hold waits while the viewer types, and Update loads i
   await expect(current.locator("h1")).toHaveText("First");
   await current.locator("#answer").click();
   await current.locator("#answer").pressSequentially("typing");
+  const top = (await page.locator(CURRENT_FRAME).boundingBox())?.y;
 
   await update(token, art.id, { html: HOLD_PAGE("Second") }, 1);
   const notice = page.getByText(/v2 is available/);
   await expect(notice).toBeVisible({ timeout: 10_000 });
+  // The notice is a toast: the frame does not move under the viewer.
+  expect((await page.locator(CURRENT_FRAME).boundingBox())?.y).toBe(top);
   // The page on view stays, with what the viewer typed.
   await expect(page.locator('iframe[title$="version 2"]')).toHaveCount(0);
   await expect(current.locator("#answer")).toHaveValue("typing");
   await expect(page.getByText("Updated to v2")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Update" }).click();
-  await expect(page.getByText("Updated to v2")).toBeVisible();
   await expect(page.frameLocator('iframe[title$="version 2"]').locator("h1")).toHaveText("Second");
   await expect(notice).toHaveCount(0);
+  // The viewer chose it: no "Updated" toast after the notice.
+  await expect(page.getByText("Updated to v2")).toHaveCount(0);
 });

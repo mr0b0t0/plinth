@@ -3,81 +3,10 @@
 import { describe, expect, it } from "vitest";
 import {
   diffSequence,
-  diffTextLines,
   FILE_SUMMARY_LIMITS,
   fileChanges,
   summarizeFileChanges,
-  type TextDiffLine,
-  textLines,
 } from "../src/index.ts";
-
-const kinds = (lines: TextDiffLine[]) =>
-  lines.map((l) => `${l.kind === "added" ? "+" : l.kind === "removed" ? "-" : " "}${l.text}`);
-
-/** Old and new text by applying `edit` to every `every`-th line of an n-line document. */
-function bigDoc(n: number, every: number, edit: (line: string) => string) {
-  const old = Array.from({ length: n }, (_, i) => `<div class="row-${i}">Row ${i}</div>`);
-  const next = old.map((l, i) => (i % every === 0 ? edit(l) : l));
-  return { old: old.join("\n"), next: next.join("\n") };
-}
-
-describe("textLines", () => {
-  it("splits on every newline style and ignores a final newline", () => {
-    expect(textLines("")).toEqual([]);
-    expect(textLines("a")).toEqual(["a"]);
-    expect(textLines("a\n")).toEqual(["a"]);
-    expect(textLines("a\r\nb\rc\n\nd")).toEqual(["a", "b", "c", "", "d"]);
-  });
-});
-
-describe("diffTextLines", () => {
-  it("reports identical documents", () => {
-    const d = diffTextLines("a\nb\n", "a\nb");
-    expect(d.identical).toBe(true);
-    expect(d.added + d.removed).toBe(0);
-    expect(d.lines.every((l) => l.kind === "context")).toBe(true);
-  });
-
-  it("marks added, removed and unchanged lines with both line numbers", () => {
-    const d = diffTextLines("a\nb\nc\nd", "a\nB\nc\nd\ne");
-    expect(kinds(d.lines)).toEqual([" a", "-b", "+B", " c", " d", "+e"]);
-    expect(d.added).toBe(2);
-    expect(d.removed).toBe(1);
-    expect(d.exact).toBe(true);
-    expect(d.lines.map((l) => [l.oldNo, l.newNo])).toEqual([
-      [1, 1],
-      [2, null],
-      [null, 2],
-      [3, 3],
-      [4, 4],
-      [null, 5],
-    ]);
-  });
-
-  it("handles empty sides", () => {
-    expect(kinds(diffTextLines("", "x\ny").lines)).toEqual(["+x", "+y"]);
-    expect(kinds(diffTextLines("x\ny", "").lines)).toEqual(["-x", "-y"]);
-  });
-
-  it("finds a minimal diff in the middle after trimming common ends", () => {
-    const d = diffTextLines("h\n1\n2\n3\nf", "h\n1\nX\n3\nf");
-    expect(kinds(d.lines)).toEqual([" h", " 1", "-2", "+X", " 3", " f"]);
-  });
-
-  it("falls back to one replaced block past the edit cap, still correct", () => {
-    const d = diffTextLines("top\na\nb\nc\nbottom", "top\nx\ny\nz\nbottom", { maxEdits: 1 });
-    expect(d.exact).toBe(false);
-    expect(kinds(d.lines)).toEqual([" top", "-a", "-b", "-c", "+x", "+y", "+z", " bottom"]);
-  });
-
-  it("diffs a 5,000-line document with scattered edits exactly", () => {
-    const { old, next } = bigDoc(5000, 50, (l) => l.replace("Row", "Line"));
-    const d = diffTextLines(old, next);
-    expect(d.exact).toBe(true);
-    expect(d.added).toBe(100);
-    expect(d.removed).toBe(100);
-  });
-});
 
 describe("diffSequence", () => {
   it("returns the regions that differ, merging adjacent removals and additions", () => {
@@ -97,6 +26,14 @@ describe("diffSequence", () => {
     const b = Array.from({ length: 400 }, (_, i) => `b${i}`);
     const d = diffSequence(["x", ...a, "y"], ["x", ...b, "y"], { maxEdits: 10 });
     expect(d).toEqual({ hunks: [{ aStart: 1, aEnd: 401, bStart: 1, bEnd: 401 }], exact: false });
+  });
+
+  it("diffs 5,000 items with scattered edits exactly", () => {
+    const a = Array.from({ length: 5000 }, (_, i) => `Row ${i}`);
+    const b = a.map((x, i) => (i % 50 === 0 ? `Line ${i}` : x));
+    const d = diffSequence(a, b);
+    expect(d.exact).toBe(true);
+    expect(d.hunks).toHaveLength(100);
   });
 });
 

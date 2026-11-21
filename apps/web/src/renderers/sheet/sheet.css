@@ -15,14 +15,16 @@
   --sheet-accent: #0a58ca;
   --sheet-select: rgb(10 88 202 / 0.12);
   --sheet-error: #b42318;
-  --sheet-btn-bg: #ffffff;
-  --sheet-btn-hover: #eef1f4;
   --sheet-note-bg: #fff7e6;
   --sheet-note-fg: #7a4b00;
   /* On-page editing: rows other people hold, as the doc renderer marks blocks. */
   --sheet-live: #8f5a2a;
   --sheet-live-soft: #f0e8e0;
   --sheet-invalid: #b42318;
+  /* The app's primary button (ink) and control height, for the column settings. */
+  --sheet-primary: #1b1a17;
+  --sheet-on-primary: #ffffff;
+  --sheet-control-h: 28px;
   --sheet-font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji";
@@ -45,13 +47,13 @@
     --sheet-accent: #6cb2ff;
     --sheet-select: rgb(108 178 255 / 0.16);
     --sheet-error: #ff8a80;
-    --sheet-btn-bg: #1e2228;
-    --sheet-btn-hover: #2a3038;
     --sheet-note-bg: #3a2a0a;
     --sheet-note-fg: #ffd58a;
     --sheet-live: #d39a62;
     --sheet-live-soft: #27211c;
     --sheet-invalid: #ff8a80;
+    --sheet-primary: #ecebe7;
+    --sheet-on-primary: #15181c;
   }
 }
 
@@ -94,46 +96,73 @@ body {
   color: var(--sheet-muted);
 }
 
-/* ---------- toolbar ---------- */
+/* ---------- title and bar ---------- */
+
+/* The app's bar shows the title on screen; print shows it here. */
+.plinth-sheet__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 .plinth-sheet__bar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  padding: 10px 16px;
+  gap: 12px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--sheet-rule);
+  min-height: 44px;
 }
 
-.plinth-sheet__title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.plinth-sheet__fx {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 12px;
+  align-items: baseline;
   min-width: 0;
 }
 
+/* The grid's font for the value, so a cell reads the same in both places; monospace only for the
+   address and a formula's text. */
+.plinth-sheet__fx-addr {
+  flex: none;
+  min-width: 32px;
+  color: var(--sheet-muted);
+  font-family: var(--sheet-mono);
+  font-size: 13px;
+}
+
+.plinth-sheet__fx-raw--formula {
+  font-family: var(--sheet-mono);
+  font-size: 13px;
+}
+
+.plinth-sheet__fx-raw {
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
 .plinth-sheet__count {
+  flex: none;
   color: var(--sheet-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.plinth-sheet__filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  min-width: 0;
-}
-
-.plinth-sheet__filter-label,
-.plinth-sheet__downloads-label {
-  color: var(--sheet-muted);
+.plinth-sheet__count:empty {
+  display: none;
 }
 
 .plinth-sheet__filter-input {
-  width: 180px;
-  max-width: 50vw;
+  flex: 0 1 200px;
+  min-width: 96px;
   padding: 5px 8px;
   border: 1px solid var(--sheet-rule-strong);
   border-radius: 6px;
@@ -142,27 +171,10 @@ body {
   font: inherit;
 }
 
-.plinth-sheet__downloads {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.plinth-sheet__filter-input::placeholder {
+  color: var(--sheet-muted);
 }
 
-.plinth-sheet__btn {
-  padding: 5px 10px;
-  border: 1px solid var(--sheet-rule-strong);
-  border-radius: 6px;
-  background: var(--sheet-btn-bg);
-  color: var(--sheet-fg);
-  font: inherit;
-  cursor: pointer;
-}
-
-.plinth-sheet__btn:hover {
-  background: var(--sheet-btn-hover);
-}
-
-.plinth-sheet__btn:focus-visible,
 .plinth-sheet__filter-input:focus-visible,
 .plinth-sheet__sort:focus-visible,
 .plinth-sheet__scroll:focus-visible,
@@ -172,38 +184,11 @@ body {
 }
 
 .plinth-sheet__note {
-  flex-basis: 100%;
   margin: 0;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--sheet-note-bg);
-  color: var(--sheet-note-fg);
-}
-
-/* ---------- formula bar ---------- */
-
-.plinth-sheet__fx {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
   padding: 6px 16px;
   border-bottom: 1px solid var(--sheet-rule);
-  font-family: var(--sheet-mono);
-  font-size: 13px;
-  min-height: 32px;
-}
-
-.plinth-sheet__fx-addr {
-  flex: none;
-  min-width: 48px;
-  color: var(--sheet-muted);
-}
-
-.plinth-sheet__fx-raw {
-  min-width: 0;
-  overflow: hidden;
-  white-space: pre;
-  text-overflow: ellipsis;
+  background: var(--sheet-note-bg);
+  color: var(--sheet-note-fg);
 }
 
 /* ---------- grid ---------- */
@@ -257,14 +242,15 @@ body {
   border-bottom: 1px solid var(--sheet-rule-strong);
 }
 
-.plinth-sheet__name {
+/* The button carries the cell's padding, so a header's label lines up with the cells under it. */
+.plinth-sheet__grid .plinth-sheet__name {
   padding: 0;
 }
 
 .plinth-sheet__sort {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
   width: 100%;
   height: 100%;
   padding: 0 8px;
@@ -280,16 +266,47 @@ body {
   justify-content: flex-end;
 }
 
+.plinth-sheet__name--check .plinth-sheet__sort {
+  justify-content: center;
+}
+
 .plinth-sheet__name-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* The sort mark takes no room: it sits at the far side of the label, and only a sorted column
+   makes room for it there. */
 .plinth-sheet__sort-mark {
-  flex: none;
-  width: 10px;
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
   color: var(--sheet-muted);
+  line-height: 1;
+}
+
+.plinth-sheet__name--num .plinth-sheet__sort-mark {
+  right: auto;
+  left: 8px;
+}
+
+[aria-sort="ascending"] .plinth-sheet__sort,
+[aria-sort="descending"] .plinth-sheet__sort {
+  padding-right: 22px;
+}
+
+.plinth-sheet__name--num[aria-sort="ascending"] .plinth-sheet__sort,
+.plinth-sheet__name--num[aria-sort="descending"] .plinth-sheet__sort {
+  padding-right: 8px;
+  padding-left: 22px;
+}
+
+/* A sorted checkbox column makes room on both sides, so its label stays over the boxes. */
+.plinth-sheet__name--check[aria-sort="ascending"] .plinth-sheet__sort,
+.plinth-sheet__name--check[aria-sort="descending"] .plinth-sheet__sort {
+  padding-left: 22px;
 }
 
 [aria-sort="ascending"] .plinth-sheet__sort-mark::before {
@@ -333,6 +350,20 @@ body {
   border-right: 2px solid var(--sheet-rule-strong);
 }
 
+/* Frozen columns wider than half the frame (a phone, mostly) scroll with the rest (grid.ts): the
+   cells drop sticky, the header cells keep only their top. */
+.plinth-sheet--unfrozen .plinth-sheet__grid td.plinth-sheet__frozen {
+  position: static;
+}
+
+.plinth-sheet--unfrozen .plinth-sheet__grid th.plinth-sheet__frozen {
+  z-index: 2;
+}
+
+.plinth-sheet--unfrozen .plinth-sheet__grid .plinth-sheet__frozen--last {
+  border-right: 1px solid var(--sheet-rule);
+}
+
 .plinth-sheet__chunk {
   content-visibility: auto;
   contain-intrinsic-size: auto 6400px;
@@ -373,39 +404,148 @@ body {
   display: none;
 }
 
+/* The Row and Column menus, in the bar beside the filter. */
+.plinth-sheet__tools {
+  display: flex;
+  flex: none;
+}
+
+.plinth-sheet__tools:empty {
+  display: none;
+}
+
 .plinth-sheet__strip {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--sheet-rule);
+  gap: 2px;
 }
 
-.plinth-sheet__strip .plinth-sheet__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.plinth-sheet__strip[hidden] {
+  display: none;
 }
 
-.plinth-sheet__hint {
-  color: var(--sheet-muted);
-  margin-left: auto;
+/* The strip's menus and the panels' buttons (the page has no other buttons: downloads are in the
+   app). */
+.plinth-sheet__btn {
+  display: inline-flex;
+  align-items: center;
+  height: var(--sheet-control-h);
+  padding: 0 10px;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 6px;
+  background: var(--sheet-bg);
+  color: var(--sheet-fg);
+  font: 500 13px / 1 var(--sheet-font);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.plinth-sheet__panel {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px 16px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--sheet-rule);
+.plinth-sheet__btn--primary {
+  border-color: var(--sheet-primary);
+  background: var(--sheet-primary);
+  color: var(--sheet-on-primary);
+}
+
+.plinth-sheet__btn--primary:hover {
+  background: var(--sheet-primary);
+  opacity: 0.9;
+}
+
+.plinth-sheet__btn:hover,
+.plinth-sheet__menu-btn[aria-expanded="true"] {
   background: var(--sheet-head-bg);
 }
 
-.plinth-sheet__panel-field {
+.plinth-sheet__btn:focus-visible,
+.plinth-sheet__menu-item:focus-visible {
+  outline: 2px solid var(--sheet-accent);
+  outline-offset: 1px;
+}
+
+.plinth-sheet__menu {
+  position: relative;
+}
+
+.plinth-sheet__menu-btn {
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 400;
+}
+
+.plinth-sheet__menu-btn::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 2px 3px 8px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(45deg);
+  opacity: 0.6;
+}
+
+.plinth-sheet__menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 8px;
+  background: var(--sheet-bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+.plinth-sheet__menu-list[hidden] {
+  display: none;
+}
+
+.plinth-sheet__menu-item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sheet-fg);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plinth-sheet__menu-item:hover:not(:disabled),
+.plinth-sheet__menu-item:focus {
+  background: var(--sheet-head-bg);
+}
+
+.plinth-sheet__menu-item:disabled {
+  color: var(--sheet-muted);
+  cursor: not-allowed;
+}
+
+/* Column settings: a popover under the column's name (edit.ts places it), labels and controls
+   on one grid, every control the same height. */
+.plinth-sheet__panel {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  width: min(300px, calc(100vw - 16px));
+  padding: 12px;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 8px;
+  background: var(--sheet-bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+  font-size: 13px;
+}
+
+.plinth-sheet__panel-field {
+  display: contents;
   color: var(--sheet-muted);
 }
 
@@ -416,17 +556,64 @@ body {
 .plinth-sheet__panel input,
 .plinth-sheet__panel select,
 .plinth-sheet__panel textarea {
-  padding: 4px 6px;
+  width: 100%;
+  min-width: 0;
+  height: var(--sheet-control-h);
+  margin: 0;
+  padding: 0 8px;
   border: 1px solid var(--sheet-rule-strong);
   border-radius: 6px;
   background: var(--sheet-bg);
   color: var(--sheet-fg);
-  font: inherit;
+  font: 13px / 1.2 var(--sheet-font);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.plinth-sheet__panel select {
+  appearance: none;
+  padding-right: 26px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--sheet-muted) 50%),
+    linear-gradient(135deg, var(--sheet-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+
+.plinth-sheet__panel textarea {
+  height: auto;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.plinth-sheet__panel input:focus-visible,
+.plinth-sheet__panel select:focus-visible,
+.plinth-sheet__panel textarea:focus-visible {
+  outline: 2px solid var(--sheet-accent);
+  outline-offset: -1px;
+  border-color: transparent;
 }
 
 .plinth-sheet__panel-actions {
   display: flex;
-  gap: 6px;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --sheet-control-h: 32px;
+  }
+
+  .plinth-sheet__panel input,
+  .plinth-sheet__panel select,
+  .plinth-sheet__panel textarea {
+    font-size: 16px;
+  }
 }
 
 .plinth-sheet__page--editing .plinth-sheet__cell {
@@ -450,6 +637,7 @@ body {
   background: var(--sheet-bg);
   color: var(--sheet-fg);
   font: inherit;
+  text-align: inherit;
 }
 
 .plinth-sheet__input[aria-invalid="true"] {
@@ -468,23 +656,22 @@ body {
   cursor: not-allowed;
 }
 
+/* A held row: tinted, with an accent on its row number. */
 .plinth-sheet__grid .plinth-sheet__row--held .plinth-sheet__rownum {
-  overflow: visible;
   box-shadow: inset 3px 0 0 var(--sheet-live);
 }
 
-.plinth-sheet__holder {
+/* For screen readers only. */
+.plinth-sheet__sr {
   position: absolute;
-  left: calc(100% + 4px);
-  top: -8px;
-  z-index: 4;
-  padding: 0 6px;
-  border-radius: 3px;
-  background: var(--sheet-live);
-  color: var(--sheet-bg);
-  font: 600 11px / 16px var(--sheet-font);
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
-  pointer-events: none;
+  border: 0;
 }
 
 .plinth-sheet__notice {
@@ -526,18 +713,34 @@ body {
 
 @media (max-width: 480px) {
   .plinth-sheet__bar {
-    padding: 8px 16px;
-  }
-
-  .plinth-sheet__filter {
-    margin-left: 0;
-    flex: 1 1 100%;
+    gap: 8px;
   }
 
   .plinth-sheet__filter-input {
-    flex: 1 1 auto;
-    width: auto;
-    max-width: none;
+    flex-basis: 128px;
+  }
+
+  /* Editing adds the Row and Column menus to the bar: the filter and the menus give the selected
+     cell's value room. */
+  .plinth-sheet__page--editing .plinth-sheet__bar {
+    gap: 6px;
+  }
+
+  .plinth-sheet__page--editing .plinth-sheet__fx {
+    gap: 8px;
+  }
+
+  .plinth-sheet__page--editing .plinth-sheet__filter-input {
+    flex-basis: 84px;
+    min-width: 72px;
+  }
+
+  .plinth-sheet__menu-btn {
+    padding: 0 4px 0 6px;
+  }
+
+  .plinth-sheet__menu-btn::after {
+    margin-left: 5px;
   }
 }
 
@@ -550,17 +753,23 @@ body {
     height: auto;
   }
 
-  .plinth-sheet__bar > :not(.plinth-sheet__title),
-  .plinth-sheet__fx,
+  .plinth-sheet__bar,
   .plinth-sheet__slot,
   .plinth-sheet__notice,
-  .plinth-sheet__holder {
+  .plinth-sheet__panel {
     display: none;
   }
 
-  .plinth-sheet__bar {
-    border: 0;
-    padding: 0 0 8px;
+  .plinth-sheet__title {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0 0 8px;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    font-size: 16px;
+    font-weight: 600;
   }
 
   .plinth-sheet__scroll {

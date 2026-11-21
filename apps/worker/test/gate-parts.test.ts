@@ -1,11 +1,9 @@
 // The viewer gate is assembled from gate parts (api/view.ts GATE_PARTS). The wire shape is the
 // same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
-// `people`, then `page_comments`, then `voice` (dictation, gate-voice in dictation.test.ts), then
-// `watch` (live views, live-view.test.ts), then `hold` (live views, live-view-update.test.ts), then
-// `files`, then `sources` (data sources, data-sources.test.ts), then `requests` (page requests),
-// then `ask` (Ask an agent: for everyone who may mention, so for these owners, whose test token
-// is an `other` connection), then `live_off` (ask-agent.test.ts), each only when its part has
-// something to say.
+// `page_comments`, then `watch` (live views, live-view.test.ts), then `people`, then `hold` (live
+// views, live-view-update.test.ts), then `ask` (Ask an agent: for everyone who may mention, so for
+// these owners, whose test token is an `other` connection), then `live_off` (ask-agent.test.ts),
+// each only when its part has something to say.
 import { describe, expect, it } from "vitest";
 import { GATE_PARTS } from "../src/api/view.ts";
 import { agent, browserSession, call, json, publish } from "./helpers.ts";
@@ -32,8 +30,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, the live part, the people part, page comments, voice, watch, hold, files, sources, page requests, ask, then live_off", () => {
-    expect(GATE_PARTS.length).toBe(12);
+  it("runs the data part, the live part, page comments, watch, the people part, hold, ask, then live_off", () => {
+    expect(GATE_PARTS.length).toBe(8);
   });
 
   it("a page that declares comments and data: `data`, then `page_comments`", async () => {

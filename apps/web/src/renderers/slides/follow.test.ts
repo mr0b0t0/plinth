@@ -1,6 +1,6 @@
 // Following the presenter, in the deck: the slides socket client (backoff, the hidden-tab close,
 // 4401 and 4404 stop it, reconnecting leads again) and the deck's side (following, pausing by hand,
-// "Back to the presenter", Lead viewers sending start, goto and stop, a takeover), with a fake
+// "Back to slide N", Lead viewers sending start, goto and stop, a takeover), with a fake
 // socket.
 import {
   RENDERER_MESSAGE_SOURCE,
@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
 import {
   FOLLOW_BACKOFF_S,
+  FOLLOW_GOTO_GAP_MS,
+  FOLLOW_GOTO_SLOW_GAP_MS,
   FOLLOW_HIDDEN_CLOSE_MS,
   FOLLOW_PING_MS,
   Follow,
@@ -86,11 +88,21 @@ function setup(right: "present" | "watch", count = 5) {
   const root = document.createElement("main");
   document.body.replaceChildren(root);
   const deck = new DeckController(count);
-  const f = new Follow({ win, root, deck, right, connect, random: () => 1 });
+  /** What the deck told the app about the person's lead. */
+  const told: boolean[] = [];
+  const f = new Follow({
+    win,
+    root,
+    deck,
+    right,
+    connect,
+    random: () => 1,
+    onLead: (on) => told.push(on),
+  });
   root.append(f.pill);
   f.start();
   started.push(() => f.stop());
-  return { win, root, deck, f, s: last() };
+  return { win, root, deck, f, told, s: last() };
 }
 
 beforeEach(() => {
@@ -164,7 +176,7 @@ describe("FollowClient", () => {
     s.drop(4401);
     expect(f.client.ended).toBe("unauthorized");
     expect(f.pill.hidden).toBe(false);
-    expect(f.pill.textContent).toContain("Your access changed. Reload to keep following.");
+    expect(f.pill.textContent).toContain("Your access changed. Reload the page.");
     expect(root.hasAttribute("data-follow")).toBe(false);
     vi.advanceTimersByTime(120_000);
     expect(FakeSocket.all.length).toBe(1);
@@ -232,7 +244,9 @@ describe("Follow: watching", () => {
     s.frame({ t: "at", slide: 3, by: "s_lead" });
     expect(deck.current).toBe(3);
     expect(f.pill.hidden).toBe(false);
-    expect(f.pill.textContent).toContain("Following the presenter");
+    expect(f.pill.querySelector(".plinth-slides__follow-text")?.textContent).toBe("Following");
+    // Following is a status, with nothing to press: paging by hand is how to stop.
+    expect(f.pill.querySelector("button")?.hidden).toBe(true);
     expect(root.getAttribute("data-follow")).toBe("on");
     s.frame({ t: "at", slide: 4, by: "s_lead" });
     expect(deck.current).toBe(4);
@@ -243,12 +257,12 @@ describe("Follow: watching", () => {
     s.frame({ t: "at", slide: 5, by: "s_lead" });
     expect(deck.current).toBe(3);
     const back = f.pill.querySelector("button");
-    expect(back?.textContent).toBe("Back to the presenter (slide 5)");
+    expect(back?.textContent).toBe("Back to slide 5");
     back?.click();
     expect(deck.current).toBe(5);
     expect(f.following).toBe(true);
-    // Stop pauses too.
-    f.pill.querySelector("button")?.click();
+    expect(f.pill.querySelector("button")?.hidden).toBe(true);
+    deck.prev();
     expect(f.following).toBe(false);
     // Nobody leads: the pill goes, and the next presenter is followed again.
     s.frame({ t: "stopped" });
@@ -289,9 +303,11 @@ describe("Follow: presenting", () => {
     button.click();
     expect(s.frames()).toEqual([{ t: "start", slide: 2 }]);
     s.frame({ t: "at", slide: 2, by: "s_me" });
+    // Nobody follows yet.
+    expect(button.textContent).toBe("Leading");
     s.frame({ t: "audience", n: 3 });
     expect(button.getAttribute("aria-pressed")).toBe("true");
-    expect(button.textContent).toBe("Leading · 3 following");
+    expect(button.textContent).toBe("3 following");
     expect(root.getAttribute("data-follow")).toBe("leading");
     expect(f.pill.hidden).toBe(true);
     deck.next();
@@ -334,7 +350,7 @@ describe("Follow: presenting", () => {
     expect(s.frames().at(-1)).toEqual({ t: "stop" });
     expect(button.getAttribute("aria-pressed")).toBe("false");
     expect(deck.current).toBe(4);
-    expect(f.pill.textContent).toContain("Following the presenter");
+    expect(f.pill.textContent).toContain("Following");
   });
 
   it("takes the lead again after a reconnect, unless someone else leads by then", () => {
@@ -358,10 +374,204 @@ describe("Follow: presenting", () => {
     expect(deck.current).toBe(2);
   });
 
+  it("a reconnect keeps the lead when the room still lists this presenter's old socket", () => {
+    const { f, s, deck, told } = setup("present");
+    const button = f.leadButton();
+    welcome(s, { id: "s_me", present: true });
+    deck.go(3);
+    f.toggleLead();
+    s.frame({ t: "at", slide: 3, by: "s_me" });
+    // The network drops; the room has not seen the old socket close, so it still leads there.
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    const again = last();
+    welcome(again, { id: "s_new", present: true, at: { slide: 3, by: "s_me" } });
+    expect(again.frames()).toEqual([{ t: "start", slide: 3 }]);
+    expect(f.client.wantLead).toBe(true);
+    expect(f.client.takenOver).toBe(false);
+    expect(told).toEqual([true]);
+    again.frame({ t: "at", slide: 3, by: "s_new" });
+    expect(f.client.leading).toBe(true);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    // A second drop before the room noticed either: both old ids are this presenter's.
+    again.drop();
+    vi.advanceTimersByTime(1000);
+    const third = last();
+    welcome(third, { id: "s_third", present: true, at: { slide: 3, by: "s_new" } });
+    expect(third.frames()).toEqual([{ t: "start", slide: 3 }]);
+    expect(told).toEqual([true]);
+  });
+
+  it("sends goto at most every 100 ms, and always the last slide", () => {
+    const { f, s, deck } = setup("present", 20);
+    welcome(s, { id: "s_me", present: true });
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    // A held arrow key: ten slides in 50 ms.
+    for (let i = 0; i < 10; i++) {
+      deck.next();
+      vi.advanceTimersByTime(5);
+    }
+    expect(s.frames().slice(1)).toEqual([{ t: "goto", slide: 2 }]);
+    vi.advanceTimersByTime(FOLLOW_GOTO_GAP_MS);
+    // The trailing send: the slide on screen, once.
+    expect(s.frames().slice(1)).toEqual([
+      { t: "goto", slide: 2 },
+      { t: "goto", slide: 11 },
+    ]);
+    vi.advanceTimersByTime(FOLLOW_GOTO_GAP_MS * 5);
+    expect(s.frames()).toHaveLength(3);
+    // After a pause, the next page turn goes at once.
+    deck.next();
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 12 });
+  });
+
+  it("after rate_limited it sends the slide on screen again, and slows down", () => {
+    const { f, s, deck } = setup("present", 20);
+    welcome(s, { id: "s_me", present: true });
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    deck.go(5);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 5 });
+    // The room dropped that goto.
+    s.frame({ t: "error", code: "rate_limited" });
+    expect(f.client.leading).toBe(true);
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS - 1);
+    expect(s.frames()).toHaveLength(2);
+    deck.go(6);
+    expect(s.frames()).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 6 });
+    // From now on at most once a second on this socket.
+    deck.go(7);
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS - 1);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 6 });
+    vi.advanceTimersByTime(1);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 7 });
+    // A new socket starts afresh.
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    const again = last();
+    welcome(again, { id: "s_new", present: true });
+    again.frame({ t: "at", slide: 7, by: "s_new" });
+    deck.go(8);
+    deck.go(9);
+    vi.advanceTimersByTime(FOLLOW_GOTO_GAP_MS);
+    expect(again.frames()).toEqual([
+      { t: "start", slide: 7 },
+      { t: "goto", slide: 8 },
+      { t: "goto", slide: 9 },
+    ]);
+  });
+
+  it("after rate_limited it sends a start or a stop the room may have dropped", () => {
+    const { f, s, deck } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    deck.go(2);
+    f.toggleLead();
+    // The start was dropped: no `at` of its own came back.
+    s.frame({ t: "error", code: "rate_limited" });
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS);
+    expect(s.frames()).toEqual([
+      { t: "start", slide: 2 },
+      { t: "start", slide: 2 },
+    ]);
+    s.frame({ t: "at", slide: 2, by: "s_me" });
+    expect(f.client.leading).toBe(true);
+    // The stop was dropped: the room still lists this socket as leading.
+    f.toggleLead();
+    s.frame({ t: "error", code: "rate_limited" });
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS);
+    expect(s.frames().slice(2)).toEqual([{ t: "stop" }, { t: "stop" }]);
+    // Once the room says nobody leads, nothing more is sent.
+    s.frame({ t: "stopped" });
+    s.frame({ t: "error", code: "rate_limited" });
+    vi.advanceTimersByTime(FOLLOW_GOTO_SLOW_GAP_MS);
+    expect(s.frames()).toHaveLength(4);
+  });
+
+  it("tells the app the person's lead: on and off, a takeover, a refusal, never a closed socket", () => {
+    const { f, s, told } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    f.toggleLead();
+    expect(told).toEqual([true, false]);
+    f.toggleLead();
+    s.frame({ t: "at", slide: 1, by: "s_me" });
+    s.frame({ t: "at", slide: 2, by: "s_other" });
+    expect(told).toEqual([true, false, true, false]);
+    f.toggleLead();
+    s.frame({ t: "error", code: "not_leading" });
+    expect(told.at(-1)).toBe(false);
+    f.toggleLead();
+    s.frame({ t: "error", code: "forbidden" });
+    expect(told).toEqual([true, false, true, false, true, false, true, false]);
+    // A sharing change closes the socket for good: the lead is not reported off, so the frame
+    // that replaces this one can lead again.
+    f.toggleLead();
+    s.drop(4401);
+    expect(f.client.wantLead).toBe(false);
+    expect(told.at(-1)).toBe(true);
+  });
+
+  it("a resumed lead (the app's lead) takes the lead even if the room lists the old frame's socket", () => {
+    const { f, s, deck, told } = setup("present");
+    f.leadButton();
+    // The app sent the slide, then lead, before the room's welcome.
+    deck.go(4);
+    f.resumeLead();
+    expect(s.frames()).toEqual([]);
+    expect(told).toEqual([true]);
+    // The old frame's socket has not gone yet: the room still lists it as leading.
+    welcome(s, { id: "s_new", present: true, at: { slide: 4, by: "s_old" } });
+    expect(s.frames()).toEqual([{ t: "start", slide: 4 }]);
+    expect(f.client.wantLead).toBe(true);
+    expect(f.client.takenOver).toBe(false);
+    s.frame({ t: "at", slide: 4, by: "s_new" });
+    expect(f.client.leading).toBe(true);
+    deck.next();
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 5 });
+    // Only that welcome: after a later reconnect someone else leading wins, as before.
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    const again = last();
+    welcome(again, { id: "s_again", present: true, at: { slide: 2, by: "s_other" } });
+    expect(again.frames()).toEqual([]);
+    expect(f.client.wantLead).toBe(false);
+    expect(told.at(-1)).toBe(false);
+  });
+
+  it("a resumed lead starts at once when already welcomed, and a watcher ignores it", () => {
+    const { f, s, deck } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    deck.go(3);
+    f.resumeLead();
+    expect(s.frames()).toEqual([{ t: "start", slide: 3 }]);
+    // Twice is once.
+    f.resumeLead();
+    expect(s.frames()).toEqual([{ t: "start", slide: 3 }]);
+
+    const w = setup("watch");
+    welcome(w.s, { id: "s_w", present: false });
+    w.f.resumeLead();
+    expect(w.s.frames()).toEqual([]);
+    expect(w.told).toEqual([]);
+  });
+
+  it("a resumed lead without the right to present any more is dropped and reported off", () => {
+    const { f, s, told } = setup("present");
+    f.resumeLead();
+    welcome(s, { id: "s_me", present: false });
+    expect(s.frames()).toEqual([]);
+    expect(f.client.wantLead).toBe(false);
+    expect(told).toEqual([true, false]);
+  });
+
   it("labels the toggle by its audience", () => {
     expect(leadLabel(false, 4)).toBe("Lead viewers");
-    expect(leadLabel(true, 0)).toBe("Leading · 0 following");
-    expect(leadLabel(true, 1)).toBe("Leading · 1 following");
+    expect(leadLabel(true, 0)).toBe("Leading");
+    expect(leadLabel(true, 1)).toBe("1 following");
   });
 });
 
@@ -463,6 +673,49 @@ describe("boot with follow", () => {
     expect(document.querySelector(".plinth-slides__lead")).toBeNull();
   });
 
+  it("tells the app when the person leads, and leads again when the app says the old frame did", () => {
+    mount("present");
+    started.push(boot(framedWin(), { measure, connect }));
+    const s = last();
+    const leading = () =>
+      parent.postMessage.mock.calls
+        .map((c) => c[0] as { type: string; on?: boolean })
+        .filter((m) => m.type === "leading")
+        .map((m) => m.on);
+    welcome(s, { id: "s_me", present: true });
+    document
+      .querySelector<HTMLButtonElement>(".plinth-slides__controls .plinth-slides__lead")
+      ?.click();
+    expect(leading()).toEqual([true]);
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "leading", on: true },
+      APP,
+    );
+
+    // The frame that replaces it: the app sends the slide, then lead.
+    mount("present");
+    started.push(boot(framedWin(), { measure, connect }));
+    const next = last();
+    app({ type: "goto", slide: 2 });
+    app({ type: "lead" });
+    welcome(next, { id: "s_next", present: true, at: { slide: 1, by: "s_me" } });
+    expect(next.frames()).toEqual([{ t: "start", slide: 2 }]);
+    next.frame({ t: "at", slide: 2, by: "s_next" });
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".plinth-slides__controls .plinth-slides__lead",
+    );
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("leading");
+
+    // A watcher's frame ignores lead.
+    mount("watch");
+    started.push(boot(framedWin(), { measure, connect }));
+    const w = last();
+    app({ type: "lead" });
+    welcome(w, { id: "s_w" });
+    expect(w.frames()).toEqual([]);
+  });
+
   it("while following, the presenter's slide wins over the app's goto", () => {
     mount("watch");
     started.push(boot(framedWin(), { measure, connect }));
@@ -471,9 +724,11 @@ describe("boot with follow", () => {
     expect(document.documentElement.getAttribute("data-slide")).toBe("3");
     expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("on");
     // Paused by hand, the app's goto applies again.
-    document.querySelector<HTMLButtonElement>(".plinth-slides__follow button")?.click();
-    app({ type: "goto", slide: 2 });
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", cancelable: true }));
     expect(document.documentElement.getAttribute("data-slide")).toBe("2");
+    expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("paused");
+    app({ type: "goto", slide: 1 });
+    expect(document.documentElement.getAttribute("data-slide")).toBe("1");
   });
 
   it("refuses a payload with an unknown follow value", () => {

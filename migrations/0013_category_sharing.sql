@@ -37,7 +37,8 @@ CREATE TABLE category_shares (
   -- The shared key; the owner's own spelling is `name` (owner only, like artifacts.category).
   category_key TEXT NOT NULL,
   name         TEXT NOT NULL,
-  -- What the people it is shared with see (the portal heading); never the category name.
+  -- What the people it is shared with see (the portal heading): the category's name unless the
+  -- owner changes it. A later rename of the category does not change it.
   title        TEXT NOT NULL,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,

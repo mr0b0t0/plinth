@@ -4,8 +4,10 @@
 // Owner rows and direct-grant rows list exactly as before, taken-down rows included.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { listQuery } from "../src/services/artifacts.ts";
+import type { Ctx } from "../src/services/context.ts";
 import { filed, owner, person, send, shareCategory } from "./category-helpers.ts";
-import { call, contentOrigin, enterContent, json, publish } from "./helpers.ts";
+import { call, config, contentOrigin, db, enterContent, json, publish } from "./helpers.ts";
 import { grant, run } from "./room-helpers.ts";
 
 const DATA_PAGE =
@@ -176,5 +178,35 @@ describe("list_artifacts and the category arm", () => {
     const ids = (list.items as { id: string }[]).map((i) => i.id);
     expect(ids).not.toContain(a.id);
     expect(ids).toHaveLength(1);
+  });
+
+  it("reads from indexes: no arm makes SQLite scan the artifacts table", async () => {
+    const o = await owner();
+    const c = await person();
+    await filed(o, "Acme");
+    await shareCategory(o, "Acme", [{ email: c.email, role: "viewer" }]);
+    const plan = async (sharing: boolean, filter: { query?: string } = {}) => {
+      const ctx = {
+        env: env as unknown as Ctx["env"],
+        config: { ...config(), allowCategorySharing: sharing },
+        db: db(),
+      } as unknown as Ctx;
+      const built = listQuery(ctx, c.user.id, c.email, filter).toSQL();
+      const { results } = await env.DB.prepare(`EXPLAIN QUERY PLAN ${built.sql}`)
+        .bind(...built.params)
+        .all<{ detail: string }>();
+      return results.map((r) => r.detail);
+    };
+    for (const sharing of [true, false]) {
+      for (const filter of [{}, { query: "acme" }]) {
+        const details = await plan(sharing, filter);
+        // Neither the outer artifacts nor the category arm's artifacts is a full scan.
+        expect(details.filter((d) => /^SCAN (artifacts|a2)\b/.test(d))).toEqual([]);
+        expect(details.join(" | ")).toMatch(/artifacts_owner|PRIMARY KEY|INDEX/);
+      }
+    }
+    // The category arm reaches the artifacts through the grant's email and the review's share.
+    expect((await plan(true)).join(" | ")).toMatch(/category_grants_email/);
+    expect((await plan(true)).join(" | ")).toMatch(/artifacts_category_review_share/);
   });
 });

@@ -32,6 +32,7 @@ export type StyleOf = (
   | "backgroundColor"
   | "objectFit"
   | "borderBottomColor"
+  | "paddingTop"
 >;
 
 export interface Rect {
@@ -221,7 +222,11 @@ function paraOf(c: SlideCtx, el: Element, runs: Run[], o: Partial<Para> = {}): P
   };
 }
 
-/** A list's items as paragraphs, nested lists one level deeper. */
+/**
+ * A list's items as paragraphs, nested lists one level deeper. The space above each item is the
+ * gap the screen shows: an item's top margin, and for a nested list's first item the list's own.
+ * The top-level list's margin is outside its box, so its first item has none.
+ */
 function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void {
   const bullet = list.localName === "ol" ? "number" : "disc";
   let first = true;
@@ -229,7 +234,10 @@ function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void
     if (li.localName !== "li") continue;
     const runs = lines(c, li).flatMap((line, i) => (i > 0 ? [{ text: " " }, ...line] : line));
     if (runs.length > 0) {
-      const spaceBefore = first ? 0 : round(px(c.g.style(li).marginTop) * PT_PER_PX, 1);
+      let margin = "0";
+      if (!first) margin = c.g.style(li).marginTop;
+      else if (level > 0) margin = c.g.style(list).marginTop;
+      const spaceBefore = round(px(margin) * PT_PER_PX, 1);
       out.push(paraOf(c, li, runs, { level, bullet, spaceBefore }));
     }
     first = false;
@@ -241,10 +249,10 @@ function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void
   }
 }
 
-function textItem(c: SlideCtx, el: Element, paras: Para[], items: Item[]): void {
+function textItem(c: SlideCtx, el: Element, paras: Para[], items: Item[], oneLine = false): void {
   if (paras.length === 0) return;
   const box = boxOf(c, c.g.rect(el));
-  if (box) items.push({ kind: "text", box, paras });
+  if (box) items.push({ kind: "text", box, paras, ...(oneLine ? { oneLine: true as const } : {}) });
 }
 
 /** The rectangle an image is drawn in: its box, or with object-fit contain, the fitted picture. */
@@ -288,6 +296,16 @@ function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   if (rows.length === 0) return;
   const box = boxOf(c, c.g.rect(table));
   if (!box) return;
+  // The file draws a line's text lower in its line than the screen does (PowerPoint puts the
+  // leading of an exact line spacing above the text, CSS splits it above and below), so a table
+  // right under text would sit closer to its last line than on screen: it moves down by half that
+  // line's leading, which gives back the gap the screen shows.
+  const above = items[items.length - 1];
+  const last = above?.kind === "text" && !above.oneLine ? above.paras.at(-1) : undefined;
+  if (last && last.lineHeight > 1) {
+    const shift = round(((last.lineHeight - 1) * last.size) / 2 / 72);
+    box.y = round(Math.min(box.y + shift, c.canvas.height / PX_PER_INCH));
+  }
   const firstRow = table.rows[0];
   const colW = Array.from(firstRow?.cells ?? []).map((cell) =>
     round(c.g.rect(cell).width / c.scale / PX_PER_INCH),
@@ -295,11 +313,17 @@ function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   const st = c.g.style(table);
   const td = table.querySelector("td");
   const th = table.querySelector("th");
+  // The cells' top padding on screen, in inches, so each row's text sits as far below its rule as
+  // on screen. Only the vertical one: Arial is wider than the screen's font, so the side padding
+  // stays narrow in the file, or a header would wrap in its column. At most half an inch.
+  const padded = th ?? td;
+  const padY = padded ? Math.min(0.5, round(px(c.g.style(padded).paddingTop) / PX_PER_INCH)) : 0;
   items.push({
     kind: "table",
     box,
     rows,
     colW,
+    ...(padY > 0 ? { padY } : {}),
     size: round((px(st.fontSize) || 22) * PT_PER_PX, 1),
     color: hexColor(st.color) ?? c.fallbackColor,
     headColor: (th && hexColor(c.g.style(th).color)) ?? hexColor(st.color) ?? c.fallbackColor,
@@ -421,7 +445,8 @@ export function slideModel(view: SlideView, count: number, o: ExportModelOptions
   const c: SlideCtx = { g, origin, scale, canvas, count, fallbackColor };
   const items: Item[] = [];
   blocks(c, view.body, items);
-  // The footer and the slide number, which sit on the canvas outside the body.
+  // The footer and the slide number, which sit on the canvas outside the body, each on one line:
+  // their boxes fit the screen font, and the file's Arial is wider.
   for (const el of Array.from(view.el.children)) {
     if (
       el.classList.contains("plinth-slides__footer") ||
@@ -432,6 +457,7 @@ export function slideModel(view: SlideView, count: number, o: ExportModelOptions
         el,
         lines(c, el).map((runs) => paraOf(c, el, runs)),
         items,
+        true,
       );
     }
   }

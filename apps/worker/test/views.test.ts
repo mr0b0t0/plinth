@@ -1,7 +1,8 @@
-// Open counts (docs/spec.md "Admin stats and view counts"): the gate seals a signed `w` flag into
-// the enter token, the content host's enter exchange records one open per browser per content
-// pass, and the daily cron folds old days into per-artifact totals. Every assertion reads only the
-// test's own artifact's rows.
+// Recording opens (docs/spec.md "Artifact stats"): the gate seals a signed `w` flag and the opener
+// into the enter token, the content host's enter exchange records one artifact_opens row per
+// browser per content pass, with who opened it and the browser's visitor id, and the daily cron
+// folds opens past the retention into per-artifact totals. Every assertion reads only the test's
+// own artifact's rows.
 import {
   createExecutionContext,
   createScheduledController,
@@ -10,17 +11,24 @@ import {
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getConfig, parseConfig } from "../src/config.ts";
-import { issueEnterUrl, signContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
+import { contentCookieName } from "../src/content/serve.ts";
+import {
+  issueEnterUrl,
+  openOpener,
+  signContentCookie,
+  verifyEnterToken,
+} from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import { newId } from "../src/lib/crypto.ts";
 import { nowIso } from "../src/lib/time.ts";
 import { setThumbnailShooter } from "../src/services/thumbnails.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
-import { foldViewDays, isCountableRequest, looksLikeBot, utcDay } from "../src/services/views.ts";
+import { foldOpens, isCountableRequest, looksLikeBot, utcDay } from "../src/services/views.ts";
 import {
   APP,
   agent,
   browserSession,
+  contentOrigin,
   createUser,
   db,
   enterContent,
@@ -85,10 +93,12 @@ async function open(
   return { gate, enter, cookie: cookieOf(enter) };
 }
 
+/** The content cookie's name on an artifact's content host. */
+const cookieName = (id: string) =>
+  contentCookieName(getConfig(env as never), new URL(contentOrigin(id)));
+
 async function viewsOf(artifactId: string): Promise<number> {
-  const r = await env.DB.prepare(
-    "SELECT coalesce(sum(views), 0) AS n FROM artifact_view_days WHERE artifact_id = ?1",
-  )
+  const r = await env.DB.prepare("SELECT count(*) AS n FROM artifact_opens WHERE artifact_id = ?1")
     .bind(artifactId)
     .first<{ n: number }>();
   return r?.n ?? 0;
@@ -156,19 +166,19 @@ async function codeFor(email: string): Promise<string> {
 }
 
 /** Confirm an allowlist email by code; returns the gate the confirm call answers with. */
-async function confirmByCode(ref: string, email: string) {
+async function confirmByCode(ref: string, email: string, vars: Record<string, unknown> = {}) {
   const headers = anonymousBrowser();
-  const ask = await run(`/api/v1/view/${ref}/email`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ email }),
-  });
+  const ask = await run(
+    `/api/v1/view/${ref}/email`,
+    { method: "POST", headers, body: JSON.stringify({ email }) },
+    vars,
+  );
   expect(ask.status).toBe(200);
-  const ok = await run(`/api/v1/view/${ref}/code`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ email, code: await codeFor(email) }),
-  });
+  const ok = await run(
+    `/api/v1/view/${ref}/code`,
+    { method: "POST", headers, body: JSON.stringify({ email, code: await codeFor(email) }) },
+    vars,
+  );
   expect(ok.status).toBe(200);
   return json(ok);
 }
@@ -194,15 +204,14 @@ describe("who counts", () => {
     await bumpEpoch(p.id);
     await open(p.slug, { cookie: first.cookie });
     expect(await viewsOf(p.id)).toBe(3);
-    // Counted under the UTC day of each open (two days only if the test crossed midnight).
-    const rows = await env.DB.prepare(
-      "SELECT day, views FROM artifact_view_days WHERE artifact_id = ?1",
-    )
+    // Stamped with the time of each open (two days only if the test crossed midnight).
+    const rows = await env.DB.prepare("SELECT opened_at FROM artifact_opens WHERE artifact_id = ?1")
       .bind(p.id)
-      .all<{ day: string; views: number }>();
+      .all<{ opened_at: string }>();
     const days = new Set([utcDay(started), utcDay(Date.now())]);
-    for (const r of rows.results) expect(days.has(r.day), r.day).toBe(true);
-    expect(rows.results.reduce((n, r) => n + r.views, 0)).toBe(3);
+    for (const r of rows.results)
+      expect(days.has(r.opened_at.slice(0, 10)), r.opened_at).toBe(true);
+    expect(rows.results).toHaveLength(3);
   });
 
   it("never counts the owner, signed in or through their own allowlist code", async () => {
@@ -442,7 +451,7 @@ describe("captures and previews", () => {
       { id: p.id, accessEpoch: await epochOf(p.id) },
       "/__plinth/v/1/",
       undefined,
-      { capture: true },
+      { capture: true, captureVersion: 1 },
     );
     const captured = await redeem(capture);
     expect(await viewsOf(p.id)).toBe(0);
@@ -632,7 +641,7 @@ describe("the enter response does not depend on counting", () => {
         if (prop === "prepare")
           return (sql: string) => {
             const stmt = target.prepare(sql);
-            if (!sql.includes("INSERT INTO artifact_view_days")) return stmt;
+            if (!sql.includes("INSERT INTO artifact_opens")) return stmt;
             return {
               bind: (_id: string, ...rest: unknown[]) => stmt.bind("z".repeat(20), ...rest),
             };
@@ -651,15 +660,21 @@ describe("the enter response does not depend on counting", () => {
   });
 });
 
-describe("folding old days", () => {
-  const seed = (id: string, ageDays: number, views: number, now = Date.now()) =>
-    env.DB.prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?1, ?2, ?3)")
-      .bind(id, utcDay(now - ageDays * DAY_MS), views)
-      .run();
+describe("folding old opens", () => {
+  /** One open `ageDays` before `now`, at that day's noon UTC (any kind, here an unknown one). */
+  const seed = (id: string, ageDays: number, n = 1, now = Date.now()) =>
+    env.DB.batch(
+      Array.from({ length: n }, () =>
+        env.DB.prepare(
+          "INSERT INTO artifact_opens (artifact_id, opened_at, viewer_kind) VALUES (?1, ?2, 'unknown')",
+        ).bind(id, `${utcDay(now - ageDays * DAY_MS)}T12:00:00.000Z`),
+      ),
+    );
   const daysOf = async (id: string) =>
     (
       await env.DB.prepare(
-        "SELECT day, views FROM artifact_view_days WHERE artifact_id = ?1 ORDER BY day",
+        `SELECT substr(opened_at, 1, 10) AS day, count(*) AS views FROM artifact_opens
+          WHERE artifact_id = ?1 GROUP BY day ORDER BY day`,
       )
         .bind(id)
         .all<{ day: string; views: number }>()
@@ -669,73 +684,55 @@ describe("folding old days", () => {
       .bind(id)
       .first<{ views: number; first_day: string }>();
 
-  it("moves days older than 90 into the artifact's total, once, and keeps recent days", async () => {
+  it("moves opens older than the retention into the artifact's total, once, and keeps the rest", async () => {
     const { p } = await linkPage();
     const now = Date.now();
-    await seed(p.id, 120, 4, now);
-    await seed(p.id, 100, 3, now);
-    await seed(p.id, 10, 2, now);
+    await seed(p.id, 400, 4, now);
+    await seed(p.id, 366, 3, now);
+    await seed(p.id, 365, 2, now); // the cutoff day: kept
     await seed(p.id, 0, 1, now);
-    await foldViewDays(env.DB, now);
-    expect(await totalOf(p.id)).toEqual({ views: 7, first_day: utcDay(now - 120 * DAY_MS) });
-    const recent = [
-      { day: utcDay(now - 10 * DAY_MS), views: 2 },
+    await foldOpens(env.DB, 365, now);
+    expect(await totalOf(p.id)).toEqual({ views: 7, first_day: utcDay(now - 400 * DAY_MS) });
+    const kept = [
+      { day: utcDay(now - 365 * DAY_MS), views: 2 },
       { day: utcDay(now), views: 1 },
     ];
-    expect(await daysOf(p.id)).toEqual(recent);
+    expect(await daysOf(p.id)).toEqual(kept);
     // A second run finds nothing to fold.
-    await foldViewDays(env.DB, now);
-    expect(await totalOf(p.id)).toEqual({ views: 7, first_day: utcDay(now - 120 * DAY_MS) });
-    expect(await daysOf(p.id)).toEqual(recent);
+    await foldOpens(env.DB, 365, now);
+    expect(await totalOf(p.id)).toEqual({ views: 7, first_day: utcDay(now - 400 * DAY_MS) });
+    expect(await daysOf(p.id)).toEqual(kept);
     // A later fold adds to the total and keeps the earliest day.
-    await seed(p.id, 95, 5, now);
-    await foldViewDays(env.DB, now);
-    expect(await totalOf(p.id)).toEqual({ views: 12, first_day: utcDay(now - 120 * DAY_MS) });
-    expect(await daysOf(p.id)).toEqual(recent);
+    await seed(p.id, 370, 5, now);
+    await foldOpens(env.DB, 365, now);
+    expect(await totalOf(p.id)).toEqual({ views: 12, first_day: utcDay(now - 400 * DAY_MS) });
+    expect(await daysOf(p.id)).toEqual(kept);
   });
 
-  it("never folds a day the 90-day admin trend still shows", async () => {
-    const { p } = await linkPage();
-    // The 03 UTC run of today (in the future before 03 UTC; the same UTC day either way).
-    const at3 = new Date();
-    at3.setUTCHours(3, 0, 0, 0);
-    const now = at3.getTime();
-    vi.useFakeTimers({ toFake: ["Date"], now: now + 9 * 3_600_000 });
-    try {
-      // Signed in on the faked clock: a session made on the real clock has
-      // expired by 12 UTC whenever this runs before 11 UTC.
-      const adm = await admin();
-      await seed(p.id, 91, 1, now); // past the cutoff: folds
-      await seed(p.id, 90, 2, now); // the cutoff day: older than the trend, kept as a day
-      await seed(p.id, 89, 3, now); // the oldest day of the 90-day trend
-      const stats = async () => {
-        const res = await run("/api/v1/admin/stats?days=90", { headers: adm.headers }, adm.vars);
-        expect(res.status).toBe(200);
-        return (await json(res)) as { series: { day: string; views: number }[] };
-      };
-      const before = await stats();
-      const ctl = createExecutionContext();
-      await worker.scheduled(
-        createScheduledController({ scheduledTime: now, cron: "0 * * * *" }),
-        env as never,
-        ctl,
-      );
-      await waitOnExecutionContext(ctl);
-      expect(await totalOf(p.id)).toEqual({ views: 1, first_day: utcDay(now - 91 * DAY_MS) });
-      expect(await daysOf(p.id)).toEqual([
-        { day: utcDay(now - 90 * DAY_MS), views: 2 },
-        { day: utcDay(now - 89 * DAY_MS), views: 3 },
-      ]);
-      const after = await stats();
-      expect(after.series[0]?.day).toBe(utcDay(now - 89 * DAY_MS));
-      expect(after.series[0]?.views).toBe(before.series[0]?.views);
-      expect(after.series[0]?.views).toBeGreaterThanOrEqual(3);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("takes who opened with it: identified rows past the retention are gone", async () => {
+    const owner = await agent();
+    const viewer = await createUser();
+    const { body: p } = await publish(owner.auth);
+    const old = `${utcDay(Date.now() - 100 * DAY_MS)}T09:00:00.000Z`;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO artifact_opens (artifact_id, version, opened_at, viewer_kind, user_id, role) VALUES (?1, 1, ?2, 'user', ?3, 'public')",
+      ).bind(p.id, old, viewer.id),
+      env.DB.prepare(
+        "INSERT INTO artifact_opens (artifact_id, version, opened_at, viewer_kind, email, role) VALUES (?1, 1, ?2, 'email', 'gone@example.com', 'viewer')",
+      ).bind(p.id, old),
+    ]);
+    await foldOpens(env.DB, 90, Date.now());
+    const left = await env.DB.prepare(
+      "SELECT count(*) AS n FROM artifact_opens WHERE artifact_id = ?1",
+    )
+      .bind(p.id)
+      .first<{ n: number }>();
+    expect(left?.n).toBe(0);
+    expect((await totalOf(p.id))?.views).toBe(2);
   });
 
-  it("runs from the hourly cron at 03 UTC only, whether or not counting is on", async () => {
+  it("runs from the hourly cron at 03 UTC only, with VIEW_LOG_RETENTION_DAYS, whether or not counting is on", async () => {
     const { p } = await linkPage();
     const at = (hour: number) => {
       const d = new Date();
@@ -743,21 +740,28 @@ describe("folding old days", () => {
       return d.getTime();
     };
     await seed(p.id, 100, 6, at(4));
-    const tick = async (hour: number) => {
+    await seed(p.id, 20, 1, at(4));
+    const tick = async (hour: number, vars: Record<string, string>) => {
       const ctl = createExecutionContext();
       await worker.scheduled(
         createScheduledController({ scheduledTime: at(hour), cron: "0 * * * *" }),
-        { ...env, VIEW_COUNTS: "off" } as never,
+        { ...env, VIEW_COUNTS: "off", ...vars } as never,
         ctl,
       );
       await waitOnExecutionContext(ctl);
     };
-    await tick(4);
+    await tick(4, { VIEW_LOG_RETENTION_DAYS: "90" });
     expect(await totalOf(p.id)).toBeNull();
-    expect(await daysOf(p.id)).toHaveLength(1);
-    await tick(3);
+    // The default (365) keeps both.
+    await tick(3, {});
+    expect(await totalOf(p.id)).toBeNull();
+    // A value the Worker refuses folds nothing, rather than guess a shorter window.
+    await tick(3, { VIEW_LOG_RETENTION_DAYS: "30" });
+    await tick(3, { VIEW_LOG_RETENTION_DAYS: "many" });
+    expect(await totalOf(p.id)).toBeNull();
+    await tick(3, { VIEW_LOG_RETENTION_DAYS: "90" });
     expect(await totalOf(p.id)).toEqual({ views: 6, first_day: utcDay(at(4) - 100 * DAY_MS) });
-    expect(await daysOf(p.id)).toEqual([]);
+    expect(await daysOf(p.id)).toEqual([{ day: utcDay(at(4) - 20 * DAY_MS), views: 1 }]);
   });
 });
 
@@ -766,4 +770,328 @@ it("enterContent passes headers to the exchange and waits for the count", async 
   const r = await enterContent(p.slug, { enterHeaders: FRAME, vars: {} });
   expect(r.location).toBe("/");
   expect(await viewsOf(p.id)).toBe(1);
+});
+
+// ---------- who is recorded ----------
+
+interface OpenRow {
+  version: number | null;
+  viewer_kind: string;
+  user_id: string | null;
+  email: string | null;
+  visitor: string | null;
+  role: string | null;
+  opened_at: string;
+}
+
+async function opensOf(artifactId: string): Promise<OpenRow[]> {
+  const r = await env.DB.prepare(
+    `SELECT version, viewer_kind, user_id, email, visitor, role, opened_at FROM artifact_opens
+      WHERE artifact_id = ?1 ORDER BY id`,
+  )
+    .bind(artifactId)
+    .all<OpenRow>();
+  return r.results;
+}
+
+/** The decoded (signed, not encrypted) body of a token in a URL or cookie. */
+function bodyOf(token: string): Record<string, unknown> {
+  const body = token.split(".")[0] ?? "";
+  const pad = body.replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(atob(pad + "=".repeat((4 - (pad.length % 4)) % 4)));
+}
+const cookieBody = (cookie: string) => bodyOf(cookie.slice(cookie.indexOf("=") + 1));
+
+describe("who is recorded", () => {
+  it("an anonymous link visitor: no person, the browser's visitor id, the version shown", async () => {
+    const { owner, p } = await linkPage();
+    const before = Date.now();
+    const first = await open(p.slug);
+    const [row] = await opensOf(p.id);
+    expect(row).toMatchObject({
+      version: 1,
+      viewer_kind: "anonymous",
+      user_id: null,
+      email: null,
+      role: "link",
+    });
+    expect(row?.visitor).toMatch(/^[A-Za-z0-9]{22}$/);
+    expect(row?.visitor).toBe(cookieBody(first.cookie).i);
+    expect(Date.parse(row?.opened_at ?? "")).toBeGreaterThanOrEqual(before - 1000);
+    // A new version: the next browser's open records it.
+    const res = await run(`/api/v1/artifacts/${p.id}`, {
+      method: "PUT",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<!doctype html><p>two</p>", base_version: 1 }),
+    });
+    expect(res.status).toBe(200);
+    await open(p.slug);
+    expect((await opensOf(p.id)).map((r) => r.version)).toEqual([1, 2]);
+  });
+
+  it("public and password visitors are anonymous, with how they got in", async () => {
+    const { p } = await linkPage("public");
+    await open(p.slug);
+    expect((await opensOf(p.id))[0]).toMatchObject({ viewer_kind: "anonymous", role: "public" });
+
+    const owner = await agent();
+    const { body: pw } = await publish(owner.auth, {
+      visibility: "password",
+      password: "letmein1",
+    });
+    const res = await run(`/api/v1/view/${pw.slug}/password`, {
+      method: "POST",
+      headers: anonymousBrowser(),
+      body: JSON.stringify({ password: "letmein1" }),
+    });
+    const gate = await json(res);
+    expect((await redeem(gate.enter_url)).status).toBe(302);
+    expect((await opensOf(pw.id))[0]).toMatchObject({
+      viewer_kind: "anonymous",
+      role: "password",
+      user_id: null,
+      email: null,
+    });
+  });
+
+  it("anyone signed in is recorded as their account, with or without a grant", async () => {
+    const { p } = await linkPage("public");
+    const reader = await createUser();
+    await open(p.slug, { headers: (await browserSession(reader.id)).headers });
+    const [row] = await opensOf(p.id);
+    expect(row).toMatchObject({
+      viewer_kind: "user",
+      user_id: reader.id,
+      email: null,
+      visitor: null,
+      role: "public",
+    });
+
+    const owner = await agent();
+    const editor = await createUser();
+    const { body: q } = await publish(owner.auth, { visibility: "allowlist", emails: [] });
+    const put = await run(`/api/v1/artifacts/${q.id}/sharing`, {
+      method: "PUT",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ grants: [{ email: editor.email, role: "editor" }] }),
+    });
+    expect(put.status).toBe(200);
+    await open(q.slug, { headers: (await browserSession(editor.id)).headers });
+    expect((await opensOf(q.id))[0]).toMatchObject({
+      viewer_kind: "user",
+      user_id: editor.id,
+      role: "editor",
+    });
+  });
+
+  it("an allowlisted email confirmed by code is signed in by it, and recorded by its account", async () => {
+    const owner = await agent();
+    const listed = uniqueEmail("listed");
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [listed] });
+    const gate = await confirmByCode(p.id, listed);
+    expect((await redeem(gate.enter_url)).status).toBe(302);
+    const account = await env.DB.prepare("SELECT id FROM users WHERE email = ?")
+      .bind(listed)
+      .first<{ id: string }>();
+    expect(account?.id).toBeTruthy();
+    expect((await opensOf(p.id))[0]).toMatchObject({
+      viewer_kind: "user",
+      user_id: account?.id,
+      email: null,
+      visitor: null,
+      role: "viewer",
+    });
+  });
+
+  it("where the address may not sign in (single-user mode), a code confirmed without an account is recorded by email", async () => {
+    const owner = await agent();
+    const listed = uniqueEmail("listed");
+    const vars = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: uniqueEmail("admin") };
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [listed] });
+    const gate = await confirmByCode(p.id, listed, vars);
+    expect((await redeem(gate.enter_url, { vars })).status).toBe(302);
+    expect((await opensOf(p.id))[0]).toMatchObject({
+      viewer_kind: "email",
+      email: listed,
+      user_id: null,
+      visitor: null,
+      role: "viewer",
+    });
+  });
+
+  it("never puts who is opening in the URL: the opener is sealed", async () => {
+    const owner = await agent();
+    const editor = await createUser();
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [] });
+    await run(`/api/v1/artifacts/${p.id}/sharing`, {
+      method: "PUT",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ grants: [{ email: editor.email, role: "editor" }] }),
+    });
+    const gate = await json(
+      await run(`/api/v1/view/${p.slug}`, { headers: (await browserSession(editor.id)).headers }),
+    );
+    const url = decodeURIComponent(gate.enter_url);
+    const payload = bodyOf(new URL(gate.enter_url).searchParams.get("t") ?? "");
+    expect(payload.w).toBe(1);
+    expect(typeof payload.o).toBe("string");
+    for (const needle of [editor.id, editor.email, "editor", "user"]) {
+      expect(url).not.toContain(needle);
+      expect(JSON.stringify(payload)).not.toContain(needle);
+    }
+    // Sealed to its artifact: moved onto another artifact's token it opens to nothing.
+    const config = getConfig(env as never);
+    expect(await openOpener(config, p.id, payload.o)).toEqual({
+      kind: "user",
+      userId: editor.id,
+      role: "editor",
+    });
+    expect(await openOpener(config, "b".repeat(20), payload.o)).toBeNull();
+    // An uncounted gate carries no opener at all.
+    const history = await json(
+      await run(`/api/v1/view/${p.slug}?version=1`, {
+        headers: (await browserSession(editor.id)).headers,
+      }),
+    );
+    expect(bodyOf(new URL(history.enter_url).searchParams.get("t") ?? "").o).toBeUndefined();
+  });
+
+  it("records an open whose token has no opener as unknown", async () => {
+    const { p } = await linkPage();
+    const url = await issueEnterUrl(
+      getConfig(env as never),
+      { id: p.id, accessEpoch: await epochOf(p.id) },
+      "/",
+      undefined,
+      { countView: true },
+    );
+    expect((await redeem(url)).status).toBe(302);
+    expect((await opensOf(p.id))[0]).toMatchObject({
+      viewer_kind: "unknown",
+      role: null,
+      visitor: null,
+      version: 1,
+    });
+  });
+
+  it("the issuer refuses an opener on an uncounted token", async () => {
+    await expect(
+      issueEnterUrl(
+        getConfig(env as never),
+        { id: "a".repeat(20), accessEpoch: 1 },
+        "/",
+        undefined,
+        {
+          opener: { kind: "anonymous", role: "link" },
+        },
+      ),
+    ).rejects.toThrow("Only a counted open carries an opener");
+  });
+});
+
+describe("the anonymous visitor id", () => {
+  it("is carried forward by the content cookie, across reloads and access changes", async () => {
+    const { p } = await linkPage();
+    const first = await open(p.slug);
+    const id = cookieBody(first.cookie).i as string;
+    expect(id).toMatch(/^[A-Za-z0-9]{22}$/);
+    const again = await open(p.slug, { cookie: first.cookie });
+    expect(cookieBody(again.cookie).i).toBe(id);
+    expect(await viewsOf(p.id)).toBe(1);
+    // A new epoch counts again (the pass is gone), as the same visitor.
+    await bumpEpoch(p.id);
+    const later = await open(p.slug, { cookie: again.cookie });
+    expect(cookieBody(later.cookie).i).toBe(id);
+    // Another browser is another visitor.
+    const other = await open(p.slug);
+    expect(cookieBody(other.cookie).i).not.toBe(id);
+    expect((await opensOf(p.id)).map((r) => r.visitor)).toEqual([
+      id,
+      id,
+      cookieBody(other.cookie).i,
+    ]);
+  });
+
+  it("outlives the 12-hour pass while the cookie lasts, up to 30 days", async () => {
+    const { p } = await linkPage();
+    const config = getConfig(env as never);
+    const epoch = await epochOf(p.id);
+    const visitor = "Vv".repeat(11);
+    const cookieAt = async (agoMs: number) => {
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() - agoMs });
+      try {
+        const value = await signContentCookie(
+          config,
+          p.id,
+          epoch,
+          undefined,
+          "view",
+          undefined,
+          true,
+          visitor,
+        );
+        return `${cookieName(p.id)}=${value}`;
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+    // 20 hours old: the pass expired (the open counts again), the visitor id is still read.
+    const day = await open(p.slug, { cookie: await cookieAt(20 * 3_600_000) });
+    expect(cookieBody(day.cookie).i).toBe(visitor);
+    expect(await viewsOf(p.id)).toBe(1);
+    // 31 days old: a new visitor.
+    const month = await open(p.slug, { cookie: await cookieAt(31 * DAY_MS) });
+    expect(cookieBody(month.cookie).i).not.toBe(visitor);
+    expect((await opensOf(p.id)).map((r) => r.visitor)).toEqual([
+      visitor,
+      cookieBody(month.cookie).i,
+    ]);
+  });
+
+  it("is not taken from another artifact's cookie, a capture or a forged value", async () => {
+    const { p } = await linkPage();
+    const { p: q } = await linkPage();
+    const config = getConfig(env as never);
+    const fromQ = await signContentCookie(
+      config,
+      q.id,
+      await epochOf(q.id),
+      undefined,
+      "view",
+      undefined,
+      false,
+      "Q".repeat(22),
+    );
+    const r1 = await open(p.slug, { cookie: `${cookieName(p.id)}=${fromQ}` });
+    expect(cookieBody(r1.cookie).i).not.toBe("Q".repeat(22));
+    const forged = btoa(
+      JSON.stringify({ k: "content", a: p.id, e: 1, exp: Date.now() + 1e6, i: "F".repeat(22) }),
+    );
+    const r2 = await open(p.slug, { cookie: `${cookieName(p.id)}=${forged}.AAAA` });
+    expect(cookieBody(r2.cookie).i).not.toBe("F".repeat(22));
+    await expect(
+      signContentCookie(config, p.id, 1, undefined, "capture", undefined, false, "C".repeat(22)),
+    ).rejects.toThrow("A capture pass never carries a visitor id");
+  });
+
+  it("is stored for anonymous visitors only, though every view cookie carries one", async () => {
+    const { p } = await linkPage("public");
+    const reader = await createUser();
+    const signedIn = await open(p.slug, { headers: (await browserSession(reader.id)).headers });
+    expect(cookieBody(signedIn.cookie).i).toMatch(/^[A-Za-z0-9]{22}$/);
+    expect((await opensOf(p.id))[0]).toMatchObject({ viewer_kind: "user", visitor: null });
+  });
+
+  it("makes the cookie last 30 days while counting is on, and 12 hours (with no id) when off", async () => {
+    const { p } = await linkPage();
+    const on = await open(p.slug);
+    expect(on.enter.headers.get("set-cookie")).toMatch(/; Max-Age=2592000;/);
+    // The pass inside still expires after 12 hours.
+    const exp = cookieBody(on.cookie).exp as number;
+    expect(exp - Date.now()).toBeLessThanOrEqual(12 * 3_600_000);
+    expect(exp - Date.now()).toBeGreaterThan(11 * 3_600_000);
+    const off = await open(p.slug, { vars: { VIEW_COUNTS: "off" } });
+    expect(off.enter.headers.get("set-cookie")).toMatch(/; Max-Age=43200;/);
+    expect(cookieBody(off.cookie).i).toBeUndefined();
+  });
 });

@@ -73,16 +73,12 @@ export interface CanvasInput {
   actual: () => void;
   /** The pointer went down and up without moving on the canvas background. */
   backgroundClick: (target: Element) => void;
-  /** A double click or a double tap on one board's cover. */
-  coverActivate: (target: Element) => void;
   escape: () => boolean;
   /** Whether an element is one of Plinth's controls (no panning from there). */
   isControl: (target: Element) => boolean;
   /** The person moved or zoomed the view (so a resize no longer refits). */
   moved: () => void;
 }
-
-const DOUBLE_TAP_MS = 350;
 
 function wheelPixels(e: WheelEvent, size: Size): { x: number; y: number } {
   const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? size.height : 1;
@@ -95,7 +91,6 @@ export function bindCanvasInput(canvas: HTMLElement, view: Viewport, o: CanvasIn
   let start: { x: number; y: number; target: Element } | null = null;
   let dragged = false;
   let pinch: { d: number } | null = null;
-  let lastTap: { at: number; x: number; y: number } | null = null;
 
   const local = (e: { clientX: number; clientY: number }) => {
     const r = canvas.getBoundingClientRect();
@@ -169,19 +164,6 @@ export function bindCanvasInput(canvas: HTMLElement, view: Viewport, o: CanvasIn
     const s = start;
     start = null;
     if (!s || dragged) return;
-    if (e.pointerType === "touch") {
-      const now = Date.now();
-      if (
-        lastTap &&
-        now - lastTap.at < DOUBLE_TAP_MS &&
-        Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24
-      ) {
-        lastTap = null;
-        o.coverActivate(s.target);
-        return;
-      }
-      lastTap = { at: now, x: e.clientX, y: e.clientY };
-    }
     o.backgroundClick(s.target);
   };
 
@@ -189,11 +171,6 @@ export function bindCanvasInput(canvas: HTMLElement, view: Viewport, o: CanvasIn
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
     if (pointers.size === 0) start = null;
-  };
-
-  const onDblClick = (e: MouseEvent) => {
-    const target = e.target as Element | null;
-    if (target && !o.isControl(target)) o.coverActivate(target);
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -251,7 +228,6 @@ export function bindCanvasInput(canvas: HTMLElement, view: Viewport, o: CanvasIn
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onCancel);
-  canvas.addEventListener("dblclick", onDblClick);
   canvas.addEventListener("keydown", onKey);
   return () => {
     canvas.removeEventListener("wheel", onWheel);
@@ -259,7 +235,6 @@ export function bindCanvasInput(canvas: HTMLElement, view: Viewport, o: CanvasIn
     canvas.removeEventListener("pointermove", onMove);
     canvas.removeEventListener("pointerup", onUp);
     canvas.removeEventListener("pointercancel", onCancel);
-    canvas.removeEventListener("dblclick", onDblClick);
     canvas.removeEventListener("keydown", onKey);
   };
 }

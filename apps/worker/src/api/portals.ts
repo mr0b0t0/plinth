@@ -9,10 +9,14 @@ import {
   requestPortalCode,
   verifyPortalCode,
 } from "../services/portals.ts";
+import { refuseBoundTokens } from "./categoryShares.ts";
 import { setCodeSession } from "./codeSession.ts";
 import { type AppEnv, parseBody, serviceCtx } from "./context.ts";
 
 export const portalsApi = new Hono<AppEnv>();
+
+portalsApi.use(API.portals, refuseBoundTokens);
+portalsApi.use(`${API.portals}/*`, refuseBoundTokens);
 
 portalsApi.get(API.portals, async (c) => {
   return c.json({ items: await listPortals(serviceCtx(c)) });

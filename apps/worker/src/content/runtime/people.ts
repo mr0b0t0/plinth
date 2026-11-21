@@ -27,7 +27,10 @@ export const PEOPLE_FRAGMENT: RuntimeFragment = {
       if (opts.q) q.push("q=" + encodeURIComponent(opts.q));
       if (opts.limit) q.push("limit=" + encodeURIComponent(opts.limit));
       var r = await call("GET", "/people" + (q.length ? "?" + q.join("&") : ""));
-      return (r.people || []).map(toPerson);
+      // An array, with how many matched in all (before limit) as its total.
+      var list = (r.people || []).map(toPerson);
+      list.total = typeof r.total === "number" ? r.total : list.length;
+      return list;
     },
     get: async function (id) {
       await usable();

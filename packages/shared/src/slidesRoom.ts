@@ -10,6 +10,19 @@ import { isSlideNumber } from "./slides.ts";
 /** UTF-8 bytes of one client frame on a slides socket; a longer one closes it with 1009. */
 export const SLIDES_FRAME_BYTES = 128;
 
+/**
+ * Room slots kept for presenters (slides sockets with the `present` right: owners and editors). A
+ * slides socket that watches is refused (4409, full) once the room holds
+ * ROOM_MAX_CONNECTIONS_PER_ARTIFACT less these, so the people a deck is shared with can never
+ * fill its room and lock out the person presenting it. Never more than half the cap.
+ */
+export const SLIDES_PRESENTER_SLOTS = 4;
+
+/** How many room sockets a deck's room may hold when a watching slides socket connects. */
+export function slidesWatchCap(maxConnections: number): number {
+  return maxConnections - Math.min(SLIDES_PRESENTER_SLOTS, Math.floor(maxConnections / 2));
+}
+
 export type SlidesClientFrame =
   /** Become the leading presenter, at this slide. */
   | { t: "start"; slide: number }

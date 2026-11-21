@@ -14,17 +14,21 @@ interface Layer {
   src: string;
   /** The frame's accessible name, kept with it: an outgoing frame still shows its own version. */
   title?: string;
+  /** The frame's name (`window.name`), kept with it the same way. */
+  name?: string;
   loaded: boolean;
 }
 
 /** The layers after `src` becomes the one to show: at most one old frame stays, until it loads. */
-export function addLayer(layers: Layer[], src: string, title?: string): Layer[] {
+export function addLayer(layers: Layer[], src: string, title?: string, name?: string): Layer[] {
   const top = layers.at(-1);
   if (top?.src === src) {
-    return top.title === title ? layers : [...layers.slice(0, -1), { ...top, title }];
+    return top.title === title && top.name === name
+      ? layers
+      : [...layers.slice(0, -1), { ...top, title, name }];
   }
   const shown = layers.filter((l) => l.loaded).at(-1);
-  return [...(shown ? [shown] : []), { src, title, loaded: false }];
+  return [...(shown ? [shown] : []), { src, title, name, loaded: false }];
 }
 
 /** The layers once `src` has loaded: it alone remains (if it is still the one to show). */
@@ -37,6 +41,8 @@ export function markLoaded(layers: Layer[], src: string): Layer[] {
 export interface StageFrameProps {
   src: string;
   title: string;
+  /** The frame's name (`window.name`): the version it shows (viewFrameName). */
+  name?: string;
   isolation?: ContentIsolation;
   /** The frame being shown (the newest one), for the comments bridge. */
   ref?: Ref<HTMLIFrameElement>;
@@ -44,11 +50,11 @@ export interface StageFrameProps {
   loadingLabel: string;
 }
 
-export function StageFrame({ src, title, isolation, ref, loadingLabel }: StageFrameProps) {
-  const [layers, setLayers] = useState<Layer[]>(() => [{ src, title, loaded: false }]);
+export function StageFrame({ src, title, name, isolation, ref, loadingLabel }: StageFrameProps) {
+  const [layers, setLayers] = useState<Layer[]>(() => [{ src, title, name, loaded: false }]);
   // A new src takes effect in the same render, so no commit ever shows the old frame under the
   // new title or hands the ref to it.
-  const added = addLayer(layers, src, title);
+  const added = addLayer(layers, src, title, name);
   if (added !== layers) setLayers(added);
 
   useEffect(() => {
@@ -68,6 +74,7 @@ export function StageFrame({ src, title, isolation, ref, loadingLabel }: StageFr
             ref={current ? ref : undefined}
             src={layer.src}
             title={layer.title ?? title}
+            name={layer.name}
             isolation={isolation}
             inert={!current}
             className={current ? undefined : "pl-viewer-frame--outgoing"}

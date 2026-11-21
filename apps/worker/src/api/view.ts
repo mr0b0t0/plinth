@@ -1,12 +1,11 @@
 // The viewer gate on APP_HOST. Decides whether the caller may open an artifact (policy.ts), asks
 // for a password or an email when needed, and hands out a one-time token for the content host.
 import {
+  type Capabilities,
   capabilityList,
-  type DictationAccess,
-  type DictationOwner,
-  type EffectiveRole,
   hasPageCapabilities,
   isLiveType,
+  pageDisplayName,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
@@ -14,27 +13,21 @@ import {
   type ViewGate,
   type ViewGateAsk,
   type ViewGateData,
-  type ViewGateFiles,
   type ViewGateLive,
   type ViewGateLiveOff,
   type ViewGatePeople,
-  type ViewGateRequests,
-  type ViewGateVoice,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
 } from "@plinth/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
 import {
   contentOrigin,
-  dictationActive,
-  filesActive,
   identityClaimsActive,
   liveEditMode,
   liveViewsActive,
-  pageRequestsActive,
   roomsActive,
   sharedDataActive,
 } from "../config.ts";
@@ -45,25 +38,22 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
+import { type Decision, liveViewAccess, pageDataAccess, peopleListOffered } from "../policy.ts";
 import {
-  type Decision,
-  dictationAccess,
-  liveViewAccess,
-  type Principal,
-  pageDataAccess,
-  pageFileAccess,
-  pageRequestAccess,
-  peopleListOffered,
-} from "../policy.ts";
-import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
+  decideFor,
+  denialError,
+  findArtifact,
+  grantFor,
+  servedVersionWriters,
+  versionCapabilities,
+} from "../services/artifacts.ts";
 import { requestTargets } from "../services/comments.ts";
 import type { Ctx } from "../services/context.ts";
-import { gateSources } from "../services/dataSources.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { parseManifest } from "../services/storage.ts";
-import { namesByEmail } from "../services/users.ts";
+import { nameByEmail } from "../services/users.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
-import { countsAsView } from "../services/views.ts";
+import { countsAsView, openerFor } from "../services/views.ts";
 import { setCodeSession } from "./codeSession.ts";
 import {
   type AppContext,
@@ -100,9 +90,13 @@ export async function computeGate(
   // The content host never serves a taken-down artifact, so nobody gets a token for one (admins
   // review the source through the API instead).
   if (a.takenDownAt) return { status: "taken_down", artifact: stub(a) };
-  const d = await decideFor(ctx, a, "view");
+  // `enter`, not `view`: the URL becomes a content pass, which reads the page's shared data, so a
+  // token limited to one artifact never gets one (it reads the page through the API instead).
+  const d = await decideFor(ctx, a, "enter");
   if (!d.allow) {
     switch (d.reason) {
+      case "token_bound":
+        throw denialError(ctx, d, "enter");
       case "taken_down":
         return { status: "taken_down", artifact: stub(a) };
       case "password_required":
@@ -129,10 +123,13 @@ export async function computeGate(
       : `/__plinth/v/${version}/`;
   if (opts.carried && opts.next && !(await currentServes(ctx, a, next))) next = "/";
   // A page that declares `comments` anchors its own comments and never loads in review mode, so
-  // the bridge is never injected next to it, whatever the app asked for.
-  const review = opts.review === true && !(await pageCommentsDeclared(ctx, a));
-  // Decided here, recorded by the content host when the token is redeemed (services/views.ts).
+  // the bridge is never injected next to it, whatever the app asked for. The version being shown
+  // decides, as it decides page_comments.
+  const review = opts.review === true && !(await pageCommentsDeclared(ctx, a, version));
+  // Decided here, recorded by the content host when the token is redeemed (services/views.ts),
+  // with who is opening sealed beside the flag.
   const countView = countsAsView(ctx, d, { ...opts, review }, next);
+  const opener = countView ? openerFor(ctx.principal, d.role, a.visibility) : undefined;
   if (review) {
     // The flag goes in the query, before any fragment.
     const hashAt = next.indexOf("#");
@@ -147,7 +144,9 @@ export async function computeGate(
   const identity = await identityFor(ctx, a, d);
   // Each part adds its own optional fields, in list order, after the fields every gate has.
   const parts: GateFields = {};
-  for (const part of GATE_PARTS) Object.assign(parts, await part({ ctx, a, d, opts, identity }));
+  for (const part of GATE_PARTS) {
+    Object.assign(parts, await part({ ctx, a, d, opts, identity, version }));
+  }
   return {
     status: "ok",
     artifact: {
@@ -156,9 +155,9 @@ export async function computeGate(
       current_version: a.currentVersion,
       version,
       visibility: a.visibility,
-      owner_name: owner?.name ?? null,
+      owner_name: pageDisplayName(owner?.name),
     },
-    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView }),
+    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView, opener }),
     role: d.role,
     ...parts,
   };
@@ -176,6 +175,8 @@ export interface GatePartInput {
   d: Extract<Decision, { allow: true }>;
   opts: GateOptions;
   identity: ViewerIdentity | undefined;
+  /** The version being shown: opts.version when it is valid, else the current one. */
+  version: number;
 }
 
 /** One gate part: its own optional fields of an ok gate, or nothing. */
@@ -195,32 +196,14 @@ export const GATE_PARTS: readonly GatePart[] = [
     const live = await gateLive(ctx, a, d, opts);
     return live ? { live } : undefined;
   },
+  async ({ ctx, a, version }) =>
+    (await pageCommentsDeclared(ctx, a, version)) ? { page_comments: true } : undefined,
   async ({ ctx, a, identity }) => {
     const people = await gatePeople(ctx, a, identity);
     return people ? { people } : undefined;
   },
-  async ({ ctx, a }) =>
-    (await pageCommentsDeclared(ctx, a)) ? { page_comments: true } : undefined,
-  async ({ ctx, a, d }) => {
-    const voice = await gateVoice(ctx, a, d);
-    return voice ? { voice } : undefined;
-  },
   async ({ ctx, a, d }) => (gateWatch(ctx, a, d) ? { watch: true as const } : undefined),
   async ({ ctx, a }) => ((await holdDeclared(ctx, a)) ? { hold: true as const } : undefined),
-  async ({ ctx, a, identity }) => {
-    const files = await gateFiles(ctx, a, identity);
-    return files ? { files } : undefined;
-  },
-  // Where the figures come from (services/dataSources.ts gateSources): only for an artifact with a
-  // data source, whatever its page declares and in every isolation mode.
-  async ({ ctx, a }) => {
-    const sources = await gateSources(ctx.env.DB, a.id);
-    return sources ? { sources } : undefined;
-  },
-  async ({ ctx, a, identity }) => {
-    const requests = await gateRequests(ctx, a, identity);
-    return requests ? { requests } : undefined;
-  },
   async ({ ctx, a }) => {
     const ask = await gateAsk(ctx, a);
     return ask ? { ask } : undefined;
@@ -265,65 +248,6 @@ function gateLiveOff(
   return { reason: ctx.config.allowLiveEditing ? "isolation" : "disabled" };
 }
 
-// ---------- page requests ----------
-
-/**
- * Tell the viewer the page can file requests in their name, and as which email: only while page
- * requests are active, on an HTML artifact whose current version declares `requests`, for a viewer
- * the gate sealed an identity for. Whether they may file is policy.ts pageRequestAccess, as the
- * content host decides it. The email goes to the app, never to the framed page.
- */
-async function gateRequests(
-  ctx: Ctx,
-  a: ArtifactRow,
-  identity: ViewerIdentity | undefined,
-): Promise<ViewGateRequests | undefined> {
-  if (!identity || !pageRequestsActive(ctx.config) || a.type !== "html") return undefined;
-  const declared = await currentCapsOnce(ctx, a);
-  if (declared?.requests !== true) return undefined;
-  const claim = {
-    ...identity,
-    viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email),
-  };
-  const access = pageRequestAccess(claim, declared, { active: true, type: a.type, pass: "view" });
-  return { can_file: access.file, email: identity.email };
-}
-
-// ---------- files people add to a page ----------
-
-/**
- * What the viewer is told about the files people add to the page: only for an HTML artifact whose
- * current version declares `files`, while ALLOW_FILES is on. Whether this viewer may upload is
- * decided by policy.ts pageFileAccess, as the content host decides it.
- */
-async function gateFiles(
-  ctx: Ctx,
-  a: ArtifactRow,
-  identity: ViewerIdentity | undefined,
-): Promise<ViewGateFiles | undefined> {
-  if (!ctx.config.allowFiles || a.type !== "html") return undefined;
-  let caps = currentCaps.get(a);
-  if (!caps) {
-    caps = readCurrentCaps(ctx, a);
-    currentCaps.set(a, caps);
-  }
-  const declared = await caps;
-  if (declared?.files !== true) return undefined;
-  const available = filesActive(ctx.config);
-  const claim =
-    identity && available
-      ? {
-          ...identity,
-          viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email),
-        }
-      : null;
-  return {
-    available,
-    can_upload: pageFileAccess(claim, declared, available, "view").upload,
-    uploaders_shown: declared.viewer === true,
-  };
-}
-
 // ---------- live views ----------
 
 /**
@@ -340,6 +264,39 @@ function gateWatch(ctx: Ctx, a: ArtifactRow, d: Extract<Decision, { allow: true 
   }).watch;
 }
 
+// ---------- version declarations, read once per gate ----------
+
+const gateCaps = new WeakMap<ArtifactRow, Map<number, Promise<Capabilities | null>>>();
+
+/**
+ * The declaration of version `number`, read once per gate (the row object is the key) and shared
+ * by computeGate and the gate parts. The first read also loads the current version's, which the
+ * data part needs, so a gate makes one D1 query whichever version it shows.
+ */
+function versionCaps(ctx: Ctx, a: ArtifactRow, number: number): Promise<Capabilities | null> {
+  let cache = gateCaps.get(a);
+  if (!cache) {
+    cache = new Map();
+    gateCaps.set(a, cache);
+  }
+  const known = cache.get(number);
+  if (known) return known;
+  const loaded = cache;
+  const wanted = [...new Set([number, a.currentVersion])].filter((n) => !loaded.has(n));
+  const rows = ctx.db
+    .select({ number: versions.number, capabilities: versions.capabilities })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), inArray(versions.number, wanted)))
+    .all();
+  for (const n of wanted) {
+    loaded.set(
+      n,
+      rows.then((rs) => versionCapabilities(rs.find((r) => r.number === n))),
+    );
+  }
+  return loaded.get(number) as Promise<Capabilities | null>;
+}
+
 // ---------- live views: applying a new version ----------
 
 /**
@@ -351,7 +308,7 @@ function gateWatch(ctx: Ctx, a: ArtifactRow, d: Extract<Decision, { allow: true 
  */
 async function holdDeclared(ctx: Ctx, a: ArtifactRow): Promise<boolean> {
   if (!ctx.config.allowLiveViews || a.type !== "html") return false;
-  return (await currentCapsOnce(ctx, a))?.hold === true;
+  return (await versionCaps(ctx, a, a.currentVersion))?.hold === true;
 }
 
 /**
@@ -374,35 +331,16 @@ async function currentServes(ctx: Ctx, a: ArtifactRow, next: string): Promise<bo
 
 // ---------- comments from the page ----------
 
-const currentCaps = new WeakMap<ArtifactRow, ReturnType<typeof readCurrentCaps>>();
-
-async function readCurrentCaps(ctx: Ctx, a: ArtifactRow) {
-  const row = await ctx.db
-    .select({ capabilities: versions.capabilities })
-    .from(versions)
-    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
-    .get();
-  return versionCapabilities(row);
-}
-
 /**
  * Whether the page may open the comment composer with its own anchors (`plinth.comments`): an
- * HTML artifact whose current version declares `comments`. The current version's declaration
- * governs, whichever version is being opened. Read once per gate (the row object is the key).
+ * HTML artifact whose shown version declares `comments`. Shared data and the room follow the
+ * current version's declaration; this decides only what the app shows (no review-mode reload,
+ * the page's pins, no "Pin to an element"), so it follows the page the person is looking at, and
+ * an old version that does not declare it keeps review mode.
  */
-async function pageCommentsDeclared(ctx: Ctx, a: ArtifactRow): Promise<boolean> {
+async function pageCommentsDeclared(ctx: Ctx, a: ArtifactRow, version: number): Promise<boolean> {
   if (a.type !== "html") return false;
-  return (await currentCapsOnce(ctx, a))?.comments === true;
-}
-
-/** The current version's declaration, read once per gate (the row object is the key). */
-function currentCapsOnce(ctx: Ctx, a: ArtifactRow): ReturnType<typeof readCurrentCaps> {
-  let caps = currentCaps.get(a);
-  if (!caps) {
-    caps = readCurrentCaps(ctx, a);
-    currentCaps.set(a, caps);
-  }
-  return caps;
+  return (await versionCaps(ctx, a, version))?.comments === true;
 }
 
 /**
@@ -462,12 +400,7 @@ async function gateData(
   identity: ViewerIdentity | undefined,
 ): Promise<ViewGateData | undefined> {
   // The current version's declaration governs, whichever version is being opened.
-  const row = await ctx.db
-    .select({ capabilities: versions.capabilities })
-    .from(versions)
-    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
-    .get();
-  const caps = versionCapabilities(row);
+  const caps = await versionCaps(ctx, a, a.currentVersion);
   const roomEmail =
     identity &&
     caps?.room === true &&
@@ -513,98 +446,29 @@ async function gatePeople(
   identity: ViewerIdentity | undefined,
 ): Promise<ViewGatePeople | undefined> {
   if (!identity) return undefined;
-  const row = await ctx.db
-    .select({ capabilities: versions.capabilities })
-    .from(versions)
-    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
-    .get();
-  const caps = versionCapabilities(row);
+  // The current version's declaration governs, as for the data part (read once per gate).
+  const caps = await versionCaps(ctx, a, a.currentVersion);
   if (caps?.viewer !== true) return undefined;
   const data = sharedDataActive(ctx.config) && caps.data;
   const room =
     caps.room && hasPageCapabilities(typeDef(a.type)) && roomsActive(ctx.config, ctx.env);
   if (!data && !room) return undefined;
-  const name = (await namesByEmail(ctx.env.DB, [identity.email])).get(identity.email) ?? null;
+  const name = await nameByEmail(ctx.env.DB, identity.email);
   const out: ViewGatePeople = {
     ...(name ? { name } : {}),
     // Exactly when anyone (the page, agents, REST) can read the list: policy.ts peopleListOffered.
-    ...(peopleListOffered(caps, sharedDataActive(ctx.config)) ? { list: true as const } : {}),
+    ...((await peopleOffered(ctx, a, caps)) ? { list: true as const } : {}),
   };
   return out.name || out.list ? out : undefined;
 }
 
 /**
- * Dictation on the page (docs/spec.md "Voice: dictation and text to speech"): only when the current
- * version of an HTML page declares `dictation`, whichever version is being opened, and only while
- * ALLOW_DICTATION is on (off, nothing is read and the app answers `disabled` from its config).
- * Identified means the owner or a grant holder, signed in or confirmed by code: the same people
- * who write shared data or join a room. Anonymous link viewers and admins without a role are not.
+ * policy.ts peopleListOffered for the current version (whose declaration is `caps`), reading the
+ * writers of every served version only on a page that declares `people`.
  */
-async function gateVoice(
-  ctx: Ctx,
-  a: ArtifactRow,
-  d: Extract<Decision, { allow: true }>,
-): Promise<ViewGateVoice | undefined> {
-  const v = await voiceAccess(ctx, a, d);
-  if (!v) return undefined;
-  if (!v.dictation.available || !v.identity) return { dictation: v.dictation };
-  // The app binds this browser's consent to the viewer's id on this page, so the next person on a
-  // shared browser is asked again. The owner's email is not here: the consent dialog fetches it
-  // (GET /view/:ref/dictation) only when it opens.
-  const viewerId = await viewerIdFor(ctx.config.tokenSigningKey, a.id, v.identity.email);
-  return { dictation: v.dictation, viewer_id: viewerId };
-}
-
-/** The page's dictation declaration and this viewer's access to it; undefined when not declared. */
-async function voiceAccess(
-  ctx: Ctx,
-  a: ArtifactRow,
-  d: Extract<Decision, { allow: true }>,
-): Promise<
-  | { dictation: DictationAccess; identity: { email: string; role: EffectiveRole } | null }
-  | undefined
-> {
-  if (!ctx.config.allowDictation || a.type !== "html") return undefined;
-  const row = await ctx.db
-    .select({ capabilities: versions.capabilities })
-    .from(versions)
-    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
-    .get();
-  const caps = versionCapabilities(row);
-  if (caps?.dictation !== true) return undefined;
-  const p = ctx.principal;
-  const identity =
-    d.role !== null && (p.kind === "user" || p.kind === "viewer")
-      ? { email: p.email, role: d.role }
-      : null;
-  const dictation = dictationAccess(identity, caps, {
-    active: dictationActive(ctx.config),
-    isolation: ctx.config.contentIsolation,
-    type: a.type,
-  });
-  return { dictation, identity };
-}
-
-/**
- * The owner's email for the dictation consent dialog, or null. The dialog names who wrote the page
- * by it, which the owner cannot pick freely as they can a display name. Only viewers who may
- * dictate get it (the owner and the people the owner granted access by email), and the app asks
- * only when the dialog opens, never on a plain page load.
- */
-async function dictationOwner(ctx: Ctx, ref: string): Promise<DictationOwner | null> {
-  const a = await findArtifact(ctx, ref);
-  if (!a || a.currentVersion < 1 || a.takenDownAt) return null;
-  const d = await decideFor(ctx, a, "view");
-  if (!d.allow) return null;
-  const v = await voiceAccess(ctx, a, d);
-  if (!v?.dictation.available || !v.identity) return null;
-  if (d.role === "owner") return { owner_email: v.identity.email };
-  const owner = await ctx.db
-    .select({ email: users.email })
-    .from(users)
-    .where(eq(users.id, a.ownerId))
-    .get();
-  return owner ? { owner_email: owner.email } : null;
+async function peopleOffered(ctx: Ctx, a: ArtifactRow, caps: Capabilities): Promise<boolean> {
+  const writers = caps.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
+  return peopleListOffered(caps, sharedDataActive(ctx.config), writers);
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {
@@ -627,23 +491,12 @@ function gateOptions(q: (k: string) => string | undefined): GateOptions {
 async function gateForRequest(c: AppContext, ref: string, opts: GateOptions): Promise<ViewGate> {
   const ctx = serviceCtx(c);
   const gate = await computeGate(ctx, ref, opts);
-  if (gate.status !== "email_required") return gate;
-  const viewer = await otherViewer(c, ctx);
-  if (!viewer) return gate;
-  const alt = await computeGate({ ...ctx, principal: viewer }, ref, opts);
-  return alt.status === "ok" ? alt : gate;
-}
-
-/**
- * The viewer session this browser also holds, for a signed-in person, when it is for another
- * email (confirmed by code in this browser); null otherwise.
- */
-async function otherViewer(c: AppContext, ctx: Ctx): Promise<Principal | null> {
-  if (ctx.principal.kind !== "user") return null;
+  if (gate.status !== "email_required" || ctx.principal.kind !== "user") return gate;
   const cookie = c.get("cookies").get(appCookieName(ctx.config, "viewer"));
   const viewer = cookie ? await resolveViewerSession(ctx.db, cookie) : null;
-  if (viewer?.kind !== "viewer" || viewer.email === ctx.principal.email) return null;
-  return viewer;
+  if (viewer?.kind !== "viewer" || viewer.email === ctx.principal.email) return gate;
+  const alt = await computeGate({ ...ctx, principal: viewer }, ref, opts);
+  return alt.status === "ok" ? alt : gate;
 }
 
 viewApi.get("/view/:ref", async (c) => {
@@ -654,23 +507,6 @@ viewApi.get("/view/:ref", async (c) => {
   );
   c.header("Cache-Control", "no-store");
   return c.json(gate);
-});
-
-/**
- * Dictation: the owner's email for the consent dialog, for the same principal the gate would use.
- * 404 for anyone who may not dictate on the page, the same answer as for a missing artifact.
- */
-viewApi.get("/view/:ref/dictation", async (c) => {
-  const ctx = serviceCtx(c);
-  const ref = c.req.param("ref");
-  let owner = await dictationOwner(ctx, ref);
-  if (!owner) {
-    const viewer = await otherViewer(c, ctx);
-    if (viewer) owner = await dictationOwner({ ...ctx, principal: viewer }, ref);
-  }
-  c.header("Cache-Control", "no-store");
-  if (!owner) throw new ApiError("not_found", "Artifact not found");
-  return c.json(owner);
 });
 
 /**

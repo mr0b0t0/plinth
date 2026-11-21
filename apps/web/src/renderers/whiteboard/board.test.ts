@@ -324,3 +324,71 @@ describe("Board and a peer's save during this viewer's text edit", () => {
     );
   });
 });
+
+describe("Board's toolbar and editing", () => {
+  it("starts editing on a double click the viewport's pointer capture aims at the viewport", () => {
+    const { board, root } = viewer(new Coll());
+    board.model.upsertBlock("a", blk(0, "A1"), 3);
+    board.redraw();
+    const block = root.querySelector(".wb-block");
+    const vp = root.querySelector(".wb-viewport");
+    if (!block || !vp) throw new Error("no board");
+    const had = "elementFromPoint" in document;
+    const at = vi.fn(() => block);
+    Object.defineProperty(document, "elementFromPoint", { value: at, configurable: true });
+    try {
+      vp.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 20, clientY: 20 }));
+    } finally {
+      if (!had) delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+    }
+    expect(at).toHaveBeenCalledWith(20, 20);
+    expect(board.editing).toBe("a");
+    expect(root.querySelector(".wb-block textarea")).not.toBeNull();
+    // The resize handle goes while the text is edited.
+    expect(root.querySelector(".wb-resize")).toBeNull();
+  });
+
+  it("marks the toolbar while something is selected, for the phone layout", () => {
+    const { board, root } = viewer(new Coll());
+    board.model.upsertBlock("a", blk(0, "A1"), 3);
+    board.redraw();
+    const bar = root.querySelector<HTMLElement>(".wb-toolbar");
+    expect(bar?.dataset.selection).toBe("false");
+    root.querySelector(".wb-block")?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(bar?.dataset.selection).toBe("true");
+    board.setReadOnly(true);
+    expect(bar?.dataset.selection).toBe("false");
+  });
+
+  it("shows the selected block's colour on one swatch that opens the colours and closes on a pick", () => {
+    const blocks = new Coll();
+    blocks.docs.set("a", { id: "a", data: { ...blk(0, "A1"), color: "blue" }, rev: 3 });
+    const { board, root } = viewer(blocks);
+    board.model.upsertBlock("a", { ...blk(0, "A1"), color: "blue" }, 3);
+    board.redraw();
+    const colour = root.querySelector<HTMLElement>(".wb-colour");
+    const pick = root.querySelector<HTMLButtonElement>(".wb-pick");
+    if (!colour || !pick) throw new Error("no colour control");
+    expect(colour.hidden).toBe(true);
+    root.querySelector(".wb-block")?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(colour.hidden).toBe(false);
+    expect(pick.getAttribute("aria-label")).toBe("Colour");
+    expect(pick.dataset.color).toBe("blue");
+    expect(pick.getAttribute("aria-expanded")).toBe("false");
+    pick.click();
+    expect(colour.dataset.open).toBe("true");
+    expect(pick.getAttribute("aria-expanded")).toBe("true");
+    // Escape closes it and leaves the selection as it is.
+    root
+      .querySelector('[aria-label="Pink"]')
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(colour.dataset.open).toBe("false");
+    expect(colour.hidden).toBe(false);
+    pick.click();
+    root.querySelector<HTMLButtonElement>('[aria-label="Pink"]')?.click();
+    expect(colour.dataset.open).toBe("false");
+    expect(pick.dataset.color).toBe("pink");
+    expect(document.activeElement).toBe(pick);
+    expect(blocks.sets.at(-1)?.data).toMatchObject({ color: "pink" });
+  });
+});

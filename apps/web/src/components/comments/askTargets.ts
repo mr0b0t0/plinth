@@ -7,7 +7,7 @@ import type { ClientType } from "@plinth/shared";
 export function askTargetName(t: ClientType, owner: boolean): string {
   if (t === "claude") return "Claude";
   if (t === "codex") return "Codex";
-  return owner ? "My other agent (ChatGPT, Cursor, Gemini…)" : "The owner's other agent";
+  return owner ? "My other agent" : "The owner's other agent";
 }
 
 /** The same in running text ("Request sent to Claude"). */

@@ -198,7 +198,6 @@ describe("request_to on a new comment", () => {
       target: "@agent",
       comment_body: "Add a footer",
       comment_author_role: "commenter",
-      source: "comment",
     });
     const claimed = await tool(client, "claim_mention", { task_id: task.id });
     expect(claimed.data.state).toBe("claimed");

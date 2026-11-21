@@ -114,6 +114,66 @@ export interface PageChannelOptions {
   opaque?: boolean;
   /** The app window (injectable for tests). */
   win?: Window;
+  /** The clock (injectable for tests). */
+  now?: () => number;
+}
+
+/** Whether a message from the frame says it is a v1 position report (read before any parsing). */
+function isPositionReport(data: unknown): boolean {
+  try {
+    return (
+      isObject(data) &&
+      data.source === PAGE_COMMENTS_SOURCE &&
+      data.v === PAGE_COMMENTS_VERSION &&
+      data.type === "positions"
+    );
+  } catch {
+    return false;
+  }
+}
+
+const POSITIONS_WINDOW_MS = 1000;
+
+/**
+ * Position reports, at most PAGE_COMMENT_LIMITS.positionsPerSecond a second, rate-checked before
+ * they are parsed. Reports over the rate are coalesced, not dropped: the latest one waits, and is
+ * parsed and delivered when the window has room, because the page sends a position only when it
+ * changed and would never repeat the last one.
+ */
+function positionCoalescer(
+  win: Window,
+  now: () => number,
+  deliver: (raw: unknown) => void,
+): { offer: (raw: unknown) => void; destroy: () => void } {
+  let times: number[] = [];
+  let waiting: { raw: unknown } | null = null;
+  let timer: number | undefined;
+  const offer = (raw: unknown) => {
+    const t = now();
+    times = times.filter((x) => t - x < POSITIONS_WINDOW_MS);
+    if (timer === undefined && times.length < PAGE_COMMENT_LIMITS.positionsPerSecond) {
+      times.push(t);
+      deliver(raw);
+      return;
+    }
+    waiting = { raw };
+    if (timer !== undefined) return;
+    const wait = Math.max(1, (times[0] ?? t) + POSITIONS_WINDOW_MS - t);
+    timer = win.setTimeout(() => {
+      timer = undefined;
+      const next = waiting;
+      waiting = null;
+      if (next) offer(next.raw);
+    }, wait);
+  };
+  return {
+    offer,
+    destroy() {
+      if (timer !== undefined) win.clearTimeout(timer);
+      timer = undefined;
+      waiting = null;
+    },
+  };
 }
 
 /** Connect to the page inside `frame`. */
@@ -127,10 +187,15 @@ export function connectPageChannel(
   const opaque = opts.opaque === true;
   const fromFrame = acceptFrom(frame, contentOrigin, opaque);
   const targetOrigin = targetOriginFor(contentOrigin, opaque);
+  const deliver = (data: unknown) => {
+    const msg = parsePageMessage(data);
+    if (msg) onMessage(msg);
+  };
+  const positions = positionCoalescer(win, opts.now ?? Date.now, deliver);
   const listener = (event: MessageEvent) => {
     if (!fromFrame(event)) return;
-    const msg = parsePageMessage(event.data);
-    if (msg) onMessage(msg);
+    if (isPositionReport(event.data)) positions.offer(event.data);
+    else deliver(event.data);
   };
   win.addEventListener("message", listener);
   return {
@@ -145,6 +210,7 @@ export function connectPageChannel(
     },
     destroy() {
       win.removeEventListener("message", listener);
+      positions.destroy();
     },
   };
 }

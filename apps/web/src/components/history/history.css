@@ -34,6 +34,11 @@
 .hx-author__label {
   overflow-wrap: anywhere;
 }
+/* As quiet as the comments' "Agent" mark (.cm-agent). */
+.hx-author__owner {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
 .hx-date {
   border-radius: var(--radius-xs);
   text-decoration: underline dotted var(--color-border-strong);
@@ -208,9 +213,6 @@
   background: var(--color-warning-soft);
   color: var(--color-ink);
 }
-.hx-loading {
-  padding-block: var(--space-4);
-}
 .hx-compare__body {
   display: flex;
   flex-direction: column;
@@ -223,14 +225,6 @@
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
-}
-.hx-rendered-section__title {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-ui);
-  line-height: var(--line-ui);
 }
 .hx-rendered__switch {
   display: none;
@@ -263,6 +257,16 @@
   .hx-rendered[data-shown="after"] .hx-frame--before,
   .hx-rendered[data-shown="before"] .hx-frame--after {
     display: none;
+  }
+  /* The switch already says which version is shown; the caption stays for screen readers. */
+  .hx-frame__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 .hx-frame {

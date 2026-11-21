@@ -95,17 +95,30 @@ export class BlockCache {
   private prev = new Map<string, Node[][]>();
   private next = new Map<string, Node[][]>();
 
-  constructor(private readonly doc: Document) {}
+  /**
+   * `prepare` sees each block's sanitized nodes before they are used: the doc renderer points
+   * images at the version on screen with it once a version was shown in place (follow.ts).
+   */
+  constructor(
+    private readonly doc: Document,
+    private readonly prepare?: (fragment: DocumentFragment) => void,
+  ) {}
 
   /** The nodes of one block, recorded with its current range. */
   nodes(block: Block): Node[] {
     const reuse = this.prev.get(block.html)?.shift();
-    const nodes = reuse ?? Array.from(sanitizeHtml(block.html, this.doc).childNodes);
+    const nodes = reuse ?? this.fresh(block.html);
     const list = this.next.get(block.html);
     if (list) list.push(nodes);
     else this.next.set(block.html, [nodes]);
     for (const n of nodes) ranges.set(n, { start: block.start, end: block.end });
     return nodes;
+  }
+
+  private fresh(html: string): Node[] {
+    const fragment = sanitizeHtml(html, this.doc);
+    this.prepare?.(fragment);
+    return Array.from(fragment.childNodes);
   }
 
   /** Ends a render: nodes not used in it are dropped. */

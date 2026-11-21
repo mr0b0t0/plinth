@@ -68,6 +68,17 @@ describe("camera", () => {
     expect(fitCamera({ x: 0, y: 0, w: 100, h: 100 }, 0, 600)).toEqual({ x: -48, y: -48, zoom: 1 });
   });
 
+  it("keeps a floor under the fit at phone width, starting at the board's top-left", () => {
+    // 480 wide in 360 px with a 24 px margin would be 0.65: the floor keeps 0.75.
+    const phone = fitCamera({ x: 0, y: -80, w: 480, h: 420 }, 360, 600, 24, 0.75);
+    expect(phone.zoom).toBe(0.75);
+    expect(phone.x).toBeCloseTo(-32, 6);
+    // The height fits at 0.75, so it stays centred.
+    expect(center(phone, 360, 600).y).toBeCloseTo(130, 6);
+    // A board that fits above the floor is fitted as before.
+    expect(fitCamera({ x: 0, y: 0, w: 200, h: 100 }, 360, 600, 24, 0.75).zoom).toBe(1);
+  });
+
   it("keeps the camera per viewer, and ignores what is not a camera", () => {
     const { store, win } = storageWindow();
     expect(loadCamera(win)).toBeNull();

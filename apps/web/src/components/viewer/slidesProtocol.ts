@@ -1,15 +1,17 @@
 // What a deck's frame tells the app (renderer protocol version 1, frame -> app), and the one check
 // that a message came from it. A deck reports only numbers, booleans and view names: where it is
-// (ready, position), which view it shows (view), that the person pressed f (fullscreen), and how a
-// .pptx export went (exported, with the app's own nonce). These messages never carry deck text.
+// (ready, position), which view it shows (view), that the person pressed f (fullscreen), how a
+// .pptx export went (exported, with the app's own nonce), and whether the person leads viewers
+// over the room (leading). These messages never carry deck text.
 //
 // The doc renderer's editing messages are accepted only at the exact content origin. A deck's are
 // also accepted from an opaque frame (origin "null", under CONTENT_ISOLATION=opaque and the path
 // fallback), identified by its window (frameGuard.ts acceptFrom). That is acceptable because only
 // Plinth's renderer runs on a deck's origin (script-src 'self', and a deck's files run no script),
 // and the worst a forged message could do is move the app's slide number, switch its presenter
-// strip, ask for full screen, which the browser grants only with the person's own activation, or
-// show a wrong toast about an export the app itself asked for (the nonce must match).
+// mode, ask for full screen, which the browser grants only with the person's own activation,
+// show a wrong toast about an export the app itself asked for (the nonce must match), or have the
+// app ask the deck's next frame to lead, which the room allows only for owners and editors.
 import {
   isSlideNumber,
   LIMITS,
@@ -37,7 +39,9 @@ export type SlidesFrameMessage =
       images_skipped: number;
       /** The frame's origin is opaque, so it left out every image file. */
       opaque: boolean;
-    };
+    }
+  /** The person leads viewers over the room (true), or stopped or lost the lead (false). */
+  | { type: "leading"; on: boolean };
 
 type Kind = SlidesFrameMessage["type"];
 
@@ -74,6 +78,7 @@ const READERS: {
           opaque: m.opaque,
         }
       : null,
+  leading: (m) => (typeof m.on === "boolean" ? { type: "leading", on: m.on } : null),
 };
 
 export const SLIDES_FRAME_KINDS = Object.keys(READERS) as readonly Kind[];
