@@ -531,11 +531,12 @@
   background: var(--color-wall);
 }
 
-/* Ask an agent: the composer in request mode (Composer.tsx). The agent choice has its own row
-   under the description; then one row: the point button on the left, Send on the right. */
+/* Ask an agent: the composer in request mode (Composer.tsx). One row under the description: the
+   agent choice on the left, the point button and Send on the right. */
 .cm-composer--ask .cm-actions {
   flex-wrap: nowrap;
   align-items: center;
+  gap: var(--space-2);
 }
 .cm-actions__send {
   display: flex;
@@ -574,10 +575,28 @@
   color: var(--color-ink);
   box-shadow: 0 0 0 var(--border-width) var(--color-border-strong);
 }
+/* Dark: the raised surface is barely lighter than the track, so the chosen option takes a lifted
+   fill of its own, as plainly marked as in light. */
+[data-theme="dark"] .cm-ask-to .pl-segmented__input:checked + .pl-segmented__face {
+  background: color-mix(in srgb, var(--color-ink) 16%, var(--color-surface-raised));
+  box-shadow: 0 0 0 var(--border-width) var(--color-border-control);
+}
 .cm-ask-to--select {
   flex-direction: row;
 }
 .cm-ask-to--select .pl-select {
   flex: 0 1 auto;
   min-width: 0;
+}
+
+/* Ask an agent with nothing to show above it (no threads yet): the panel is the request form under
+   its title. No filter, count, refresh or empty state; on a phone the sheet fits the form. */
+.cm-panel[data-request-only] .cm-head {
+  border-bottom: 0;
+}
+.cm-list[hidden] {
+  display: none;
+}
+.cm-panel[data-request-only] .cm-foot {
+  border-top: 0;
 }

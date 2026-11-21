@@ -111,23 +111,52 @@ describe("Ask an agent: not editing", () => {
     const form = within(panel).getByRole("form", { name: "Ask an agent" });
     // One review-mode reload for the pick.
     await waitFor(() => expect(s.views()).toBe(2));
-    expect(within(form).getByRole("button", { name: "Point at something" })).toBeTruthy();
-    // No title of its own and one close button: closing the panel ends the request. No @mention
-    // hint.
+    const point = within(form).getByRole("button", { name: "Point at something" });
+    // With no thread yet, the panel is the request form under its title: no filter, count,
+    // refresh or empty state, and one close button (closing the panel ends the request). The
+    // form has no title of its own and no @mention hint.
+    expect(within(panel).getByRole("heading", { name: "Ask an agent" })).toBeTruthy();
+    expect(within(panel).queryByRole("group", { name: "Show comments" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "Refresh comments" })).toBeNull();
+    expect(within(panel).queryByText("No comments yet.")).toBeNull();
     expect(within(form).queryByRole("heading")).toBeNull();
     expect(within(panel).getAllByRole("button", { name: /^Close|instead$/ })).toHaveLength(1);
     expect(within(panel).queryByText(/mention @claude/)).toBeNull();
-    // The choice is labelled "Ask", on its own row: Send is the only button beside the point icon.
+    // One row under the text: the choice, labelled "Ask", then the point icon and Send.
     const choice = within(form).getByRole("group", { name: "Ask" });
     const claude = within(choice).getByRole("radio", { name: "Claude" }) as HTMLInputElement;
     expect(claude.checked).toBe(true);
     expect(within(choice).queryByRole("button")).toBeNull();
     expect(within(form).getByRole("radio", { name: /My other agent/ })).toBeTruthy();
+    const send = within(form).getByRole("button", { name: "Send" });
+    const row = choice.parentElement as HTMLElement;
+    expect(row.contains(point) && row.contains(send)).toBe(true);
+    await user.type(within(form).getByRole("textbox", { name: "What should change?" }), "Bigger");
+    await user.click(send);
+    await waitFor(() => expect(s.posted).toHaveLength(1));
+    expect(s.posted[0]).toEqual({ body: "Bigger", version_number: 3, request_to: "claude" });
+    // Confirmed as the Ask dialog confirms it, with a toast; the panel opened for the request
+    // closes with it.
+    expect(await screen.findByText("Request sent to Claude")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Comments" })).toBeNull());
+  });
+
+  it("keeps a panel that was already open, back to a plain composer, after the toast", async () => {
+    const s = stub(gateOf());
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    await user.click(screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement);
+    const panel = await screen.findByRole("region", { name: "Comments" });
+    await within(panel).findByRole("textbox");
+    await user.click(screen.getByRole("button", { name: "Ask an agent" }));
+    const form = await within(panel).findByRole("form", { name: "Ask an agent" });
     await user.type(within(form).getByRole("textbox", { name: "What should change?" }), "Bigger");
     await user.click(within(form).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
-    expect(s.posted[0]).toEqual({ body: "Bigger", version_number: 3, request_to: "claude" });
-    // The composer is a plain comment again.
+    expect(await screen.findByText("Request sent to Claude")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Comments" })).toBe(panel);
     await waitFor(() =>
       expect(within(panel).queryByRole("form", { name: "Ask an agent" })).toBeNull(),
     );

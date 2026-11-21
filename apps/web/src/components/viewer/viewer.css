@@ -616,13 +616,45 @@
 }
 
 /* Narrow screens, picking a place to comment on or to point an agent at: the comments panel is a
-   bottom bar (comments.css), so the sheet that holds it keeps no surface of its own over the
-   artifact, which must stay visible to be tapped. */
+   bottom bar (comments.css). The bar sits under the artifact instead of over it, so the artifact
+   ends above the bar: nothing of the page (a design's zoom controls, the last lines) is left
+   half-covered, and the small print under it is hidden until the pick ends. */
 @media (max-width: 47.99rem) {
+  .pl-viewer__room:has(> .pl-viewer__panel > .cm-panel[data-picking]) {
+    flex-direction: column;
+  }
   .pl-viewer__panel:has(> .cm-panel[data-picking]) {
+    position: static;
     height: auto;
     border-top: 0;
+    border-radius: 0;
     background: transparent;
     box-shadow: none;
+  }
+  .pl-viewer__panel > .cm-panel[data-picking] {
+    position: static;
+    box-shadow: none;
+  }
+  .pl-viewer:has(.cm-panel[data-picking]) .pl-viewer__banner {
+    display: none;
+  }
+}
+
+/* Narrow screens, Ask an agent with no thread to show: the sheet is as tall as the request form. */
+@media (max-width: 52rem) {
+  .pl-viewer__panel:has(> .cm-panel[data-request-only]) {
+    height: auto;
+  }
+}
+
+/* Phones: the Ask dialog is a sheet flush with the bottom edge, so nothing shows under it. */
+@media (max-width: 30rem) {
+  .pl-dialog-root:has(.pl-ask) {
+    padding-bottom: 0;
+  }
+  .pl-dialog:has(.pl-ask) {
+    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 }

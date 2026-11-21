@@ -1,10 +1,10 @@
 // New comment: Markdown text, optional pin (an element picked through the bridge, or a spot the
 // page placed itself through plinth.comments), send. In request mode (Ask an agent) the same form
-// asks the owner's agent for a change: "Point at something" (an icon button) picks the element, the
-// text describes the change, and, when the owner has more than one, the person picks which agent
-// gets it ("Ask: Claude | Codex", on its own row above Send). The form has no visible title (its
-// name, "Ask an agent", is for assistive technology: the choice or "Send to Claude" already says
-// what it does) and no close button of its own: closing the panel ends request mode.
+// asks the owner's agent for a change: the text describes the change, then one row holds the agent
+// choice on the left ("Ask Claude | Codex", when the owner has more than one) and, on the right,
+// "Point at something" (an icon button) and Send. Picking shows one short line, "Pick an element",
+// and Cancel (Esc also cancels). The form has no visible title (its name, "Ask an agent", is for
+// assistive technology) and no close button of its own: closing the panel ends request mode.
 import { MapPinIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 import { type ClientType, isPageAnchor, LIMITS, type PageAnchor } from "@plinth/shared";
 import type { RefObject } from "react";
@@ -43,8 +43,8 @@ export interface AskRequestProps {
 }
 
 /**
- * The agent choice of request mode, labelled "Ask" and kept apart from the buttons: two agents are
- * a segmented control, three a select. None when there is only one agent to pick.
+ * The agent choice of request mode, labelled "Ask": two agents are a segmented control, three a
+ * select. None when there is only one agent to pick.
  */
 export function AgentChoice({
   targets,
@@ -169,7 +169,7 @@ export function Composer({
       {picking ? (
         <div className="cm-picking" role="status">
           <MapPinIcon size={ICON_SIZE.md} aria-hidden="true" />
-          <p>Click an element in the artifact (Esc to cancel)</p>
+          <p>{asking ? "Pick an element" : "Click an element in the artifact (Esc to cancel)"}</p>
           <Button size="sm" variant="ghost" onClick={onCancelPick}>
             Cancel
           </Button>
@@ -203,31 +203,40 @@ export function Composer({
           maxLength={LIMITS.maxCommentLength}
         />
       </div>
-      {asking && !picking && <AgentChoice {...request} />}
-      <div className="cm-actions" hidden={picking}>
-        {!anchor && onStartPick && asking ? (
-          <Tooltip content="Point at something">
-            <IconButton
+      {asking ? (
+        <div className="cm-actions" hidden={picking}>
+          <AgentChoice {...request} />
+          <div className="cm-actions__send">
+            {!anchor && onStartPick && (
+              <Tooltip content="Point at something">
+                <IconButton
+                  size="sm"
+                  icon={MapPinIcon}
+                  label="Point at something"
+                  onClick={onStartPick}
+                  disabled={!canPin}
+                />
+              </Tooltip>
+            )}
+            {send}
+          </div>
+        </div>
+      ) : (
+        <div className="cm-actions" hidden={picking}>
+          {!anchor && onStartPick ? (
+            <Button
               size="sm"
+              variant="ghost"
               icon={MapPinIcon}
-              label="Point at something"
               onClick={onStartPick}
               disabled={!canPin}
-            />
-          </Tooltip>
-        ) : !anchor && onStartPick ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={MapPinIcon}
-            onClick={onStartPick}
-            disabled={!canPin}
-          >
-            Pin to an element
-          </Button>
-        ) : null}
-        {asking ? <div className="cm-actions__send">{send}</div> : send}
-      </div>
+            >
+              Pin to an element
+            </Button>
+          ) : null}
+          {send}
+        </div>
+      )}
     </form>
   );
 }

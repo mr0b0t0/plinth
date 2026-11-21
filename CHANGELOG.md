@@ -18,12 +18,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   offered only when the owner has an agent that can take it. While editing a doc or a
   sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
   **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
-  shows Ask an agent with the reason. `POST /api/v1/artifacts/:ref/comments` takes `request_to`
+  shows Ask an agent with the reason. A toast confirms a sent request.
+  `POST /api/v1/artifacts/:ref/comments` takes `request_to`
   (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
   request can go to (`ask`) and why editing is off (`live_off`).
 
 - **Picking an element at phone width.** While a comment or a request picks an element, the
-  comments sheet shrinks to its bottom bar and no longer covers the artifact with an empty panel.
+  comments sheet shrinks to its bottom bar, which sits under the artifact instead of covering it.
 
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens

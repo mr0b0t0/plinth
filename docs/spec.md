@@ -2728,13 +2728,20 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
     opens the source editor for owners and editors).
 - **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
   reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). The composer has no visible title (it is named "Ask an agent" for assistive technology)
-  and has the description ("Describe the change…"), the agent choice, and one row under them: "Point at something" (an icon button with that
-  tooltip: the review-mode pick, an element on an HTML page, a board on a design), then Send. The place
-  picked shows as a "Pointing at “…”" chip whose button drops it. An empty list shows only its
-  title, with no hint. It posts a comment with `request_to` against the version on view.
-  It has no close button of its own: request mode lasts as long as the panel it opened, and once
-  the panel closes, sent or not, the Comments toggle opens a plain composer again.
+  then). With no thread to show, the panel is only the request form under the title "Ask an
+  agent" and its close button: no filter, count, refresh or empty state, and at phone width the
+  sheet is as tall as the form. With threads, they show above it as usual. The composer has no
+  title of its own (it is named "Ask an agent" for assistive technology) and has the description
+  ("Describe the change…") and one row under it: the agent choice on the left, then "Point at
+  something" (an icon button with that tooltip: the review-mode pick, an element on an HTML page,
+  a board on a design) and Send on the right. While picking it shows one line, "Pick an element",
+  and Cancel (Esc also cancels); at phone width that bar sits under the artifact, not over it,
+  so nothing on the page is left half-covered. The place picked shows as a "Pointing at “…”" chip
+  whose button drops it. It posts a comment with `request_to` against the version on view; a
+  notification then says "Request sent to Claude", as from the Ask dialog, and a panel opened for
+  the request closes (one that was already open stays, with a plain composer). It has no close
+  button of its own: request mode lasts as long as the panel it opened, and once the panel
+  closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
   draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
@@ -2750,15 +2757,17 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
   cannot be a version yet, a lost session) nothing is posted, the dialog says why in the strip's
   words and offers "Post without publishing" or Cancel. Otherwise the request is posted against the
-  version being edited. After posting, a notification says "Request sent to Claude". The agent's
+  version being edited. After posting, a notification says "Request sent to Claude". At phone
+  width the dialog is a sheet flush with the bottom edge. The agent's
   answer is a version like any other, handled by the draft's rules.
 - **The agent choice.** The gate's `ask` part (`ask: { targets }`), present for everyone who may
   mention, lists the distinct client types of the owner's connections that can take mentions (not
   revoked, not limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other`
   order. Labels and ids never leave the owner. With one target there is no choice and the button
-  names it ("Send to Claude"). With more, the choice has its own row under the description,
-  labelled "Ask", apart from the buttons: two agents are a segmented control ("Ask: Claude |
-  Codex") whose chosen agent is raised, three a select ("Claude", "Codex" and "The owner's other
+  names it ("Send to Claude"). With more, the choice is labelled "Ask" (in the composer, on the
+  row with the point button and Send; in the Ask dialog, under the description): two agents are a
+  segmented control ("Ask Claude | Codex") whose chosen agent is marked as plainly in dark mode as
+  in light, three a select ("Claude", "Codex" and "The owner's other
   agent"; the owner: "My other agent"). With no target Ask an agent is not
   offered. A connection revoked between the gate and the post gives `no_agent`: the composer reads
   the targets again and says "That agent was disconnected. Pick another, or post as a comment.";
