@@ -460,7 +460,21 @@ const FORBIDDEN_TAGS = new Set([
   "foreignobject",
 ]);
 /** Boxes are every element but these phrases (Claude's 200-box cap). */
-const NOT_BOXES = new Set(["b", "i", "u", "a", "span", "br", "aside", "thead", "tbody"]);
+/** Not boxes: phrases, breaks, notes, and a table's rows and cells (the table is one box). */
+const NOT_BOXES = new Set([
+  "b",
+  "i",
+  "u",
+  "a",
+  "span",
+  "br",
+  "aside",
+  "thead",
+  "tbody",
+  "tr",
+  "td",
+  "th",
+]);
 const GLOBAL_ATTRS = new Set([
   "id",
   "class",
@@ -1382,18 +1396,28 @@ function parseSlide(
       r.i++;
       continue;
     }
-    const t = r.tag(false);
+    // An <svg> is XML from its own open tag on: attribute names keep their case (viewBox), and
+    // every value is quoted.
+    const svgOpen = /^<svg[\s/>]/i.test(s.slice(r.i, r.i + 5));
+    const t = r.tag(svgOpen);
     if (!t) return null;
     const line = r.lineOf(t.start);
     // A line-break opportunity changes nothing a slide shows.
     if (t.name === "wbr") continue;
     if (t.close) {
-      closeImplied(`/${t.name}`);
       // An end tag closes an open element by name; implied ends close on the way.
       let k = stack.length - 1;
       while (k > 0 && (stack[k] as Open).name !== t.name && implied[(stack[k] as Open).name]) k--;
       if (k === 0 || (stack[k] as Open).name !== t.name) {
-        p.err(file, `</${clip(t.name, 20)}> closes nothing that is open`, line);
+        const open = stack.findIndex((o, i) => i > 0 && o.name === t.name);
+        const blocking = stack[k] as Open;
+        p.err(
+          file,
+          open > 0 && k > 0
+            ? `<${blocking.name}> (line ${blocking.el.line}) is not closed before </${clip(t.name, 20)}>`
+            : `</${clip(t.name, 20)}> closes nothing that is open`,
+          line,
+        );
         return null;
       }
       stack.length = k;

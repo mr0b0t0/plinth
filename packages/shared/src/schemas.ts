@@ -73,7 +73,9 @@ export const contentSchema = z
   .min(1)
   .describe(
     'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md); ' +
-      'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md); ' +
+      'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md), ' +
+      "or for an HTML deck its index, a JSON object (stored as deck.json, with deck.css and " +
+      "slides/<id>.html sent as assets); " +
       'for type "design_system", the design system JSON (stored as system.json); ' +
       'for type "design", shared <head> tags then artboards, each starting with a line ' +
       '<!-- artboard name="Home" size="iphone" --> (stored as design.html); ' +

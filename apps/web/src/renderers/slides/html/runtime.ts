@@ -105,9 +105,10 @@ export class HtmlDeckRuntime {
   /** The presenter's current pane, which mirrors the steps. */
   private paneCurrent: HtmlParts | null = null;
   private paneEmbeds: HtmlParts[] = [];
+  private readonly view: Window;
 
   constructor(
-    private readonly win: Window,
+    win: Window,
     readonly deck: HtmlDeck,
     private readonly o: {
       /** No motion anywhere: reduced motion, or a still (a thumbnail capture). */
@@ -125,7 +126,9 @@ export class HtmlDeckRuntime {
       this.views.push(view);
       this.parts.set(view, parts);
     });
-    this.embeds = new EmbedFrames(win, embedLoaderUrl(win.location));
+    this.embeds = new EmbedFrames(win, embedLoaderUrl(win.location ?? doc.location));
+    // Layout reads go to the document's own window (the frame's, in tests a model of it).
+    this.view = doc.defaultView ?? win;
     // Web fonts change what fits: draw again and mark again once they are in.
     void doc.fonts?.ready.then(() => {
       for (const v of this.views) if (this.drawn.has(v.el)) this.layout(v);
@@ -168,7 +171,7 @@ export class HtmlDeckRuntime {
   layout(v: SlideView): void {
     const p = this.parts.get(v);
     if (!p) return;
-    drawConnectors(p.section, this.win);
+    drawConnectors(p.section, this.view);
     this.drawn.add(v.el);
     v.el.toggleAttribute("data-overflow", flowOverflows(p.section));
   }
@@ -180,7 +183,7 @@ export class HtmlDeckRuntime {
   mounted(): void {
     for (const v of this.views) {
       const p = this.parts.get(v);
-      if (p) drawConnectors(p.section, this.win);
+      if (p) drawConnectors(p.section, this.view);
     }
     if (this.o.noEmbeds) this.still();
   }
@@ -237,7 +240,7 @@ export class HtmlDeckRuntime {
     // Embeds and connectors need the copy in the document: presenter view appends it right away.
     queueMicrotask(() => {
       if (!frame.isConnected) return;
-      drawConnectors(parts.section, this.win);
+      drawConnectors(parts.section, this.view);
       if (pane === "current" && !this.o.noEmbeds) this.embeds.set(parts.embeds, true);
     });
     return frame;
