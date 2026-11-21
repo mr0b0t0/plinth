@@ -275,7 +275,8 @@ A personal access token can be limited to one artifact (for CI: [Publishing from
 CI](#publishing-from-ci-decided-2026-11-19)). It always holds `artifacts:read` and may hold
 `artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the person's
 current rights) and publish new versions of it, and nothing else: no new artifacts, no other
-artifact (404 for every action, whatever its scopes), no sharing, title, category, restore, delete,
+artifact (404 for every action, whatever its scopes), no sharing, title, category, restore (nor an
+old version's files under a new source, `files_from_version`), delete,
 comments (reading or writing them), shared data, the people list, stats (its own artifact's, or
 the summary across its person's artifacts, which is always refused) or mentions (403 `token_bound` on its
 own artifact while it may view it; once its person may not, every action answers as viewing does).
@@ -804,7 +805,10 @@ page shows the strip and makes the REST calls, and renders no content.
   `live_rebased`, `live_busy`, `live_resolved`, `live_moved` and `live_unpublishable`. `PUT
   /api/v1/artifacts/:ref` takes `files_from_version` (that version's files instead of the current
   version's; refused with `assets`, 404 for a version that does not exist or is newer than the
-  current one); MCP's `update_artifact` does not list it, so agents keep the carry rule.
+  current one), from the signed-in app only: a token limited to one artifact gets 403
+  `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
+  new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
+  agents keep the carry rule.
 
 ### Categories (decided 2026-11-18)
 

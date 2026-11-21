@@ -219,7 +219,13 @@ const nextId = (p: string) => `plinth-review-${p}-${++ids}`;
 
 export class DraftReview {
   private root: HTMLElement | null = null;
+  /** The review asked for last, which may still be loading. */
   private state: ReviewState | null = null;
+  /**
+   * The review on screen. The choices name it, never `state`: while a newer one loads, the older
+   * panes stay drawn with their choices off, so a choice can only ever name what the person saw.
+   */
+  private drawn: ReviewState | null = null;
   private announcer: HTMLElement | null = null;
   private buttons: HTMLButtonElement[] = [];
   private publishButton: HTMLButtonElement | null = null;
@@ -240,9 +246,14 @@ export class DraftReview {
     return this.pending;
   }
 
-  /** The versions reviewed now: v(base+1) to vN. */
+  /** The versions on screen now: v(base+1) to vN, or null while none is drawn. */
   get range(): { from: number; to: number } | null {
-    return this.state ? { from: this.state.base + 1, to: this.state.n } : null;
+    return this.drawn ? { from: this.drawn.base + 1, to: this.drawn.n } : null;
+  }
+
+  /** The review on screen, once it is the one asked for last (null while a newer one loads). */
+  get shown(): Readonly<ReviewState> | null {
+    return this.drawn !== null && this.drawn === this.state ? this.drawn : null;
   }
 
   private get doc(): Document {
@@ -275,6 +286,9 @@ export class DraftReview {
     const reopened = this.root !== null && this.state !== null && this.state.n !== state.n;
     this.state = state;
     this.pending = null;
+    // Whatever is on screen is not what will be chosen any more: its choices go off until the
+    // new range is drawn.
+    if (this.root) this.setButtons(false, "");
     const [baseRaw, theirsRaw] = await Promise.all([this.read(state.base), this.read(state.n)]);
     if (run !== this.opened || this.state !== state) return;
     const { rules, type } = this.setup;
@@ -465,6 +479,7 @@ export class DraftReview {
     d.body.append(root);
     d.documentElement.classList.add("plinth-reviewing");
     this.root = root;
+    this.drawn = state;
     root.focus();
     toFirstChange();
   }
@@ -563,7 +578,7 @@ export class DraftReview {
   }
 
   private choose(outcome: "publish" | "discard", note?: string): void {
-    if (!this.state || this.pending) return;
+    if (!this.shown || this.pending) return;
     this.pending = outcome;
     // A Discard waits on the app's confirmation, whose backdrop covers the frame: the buttons
     // stay as they are behind it (a second choice waits on the answer all the same).
@@ -572,9 +587,11 @@ export class DraftReview {
   }
 
   private setButtons(on: boolean, reason: string): void {
-    const unpublishable = this.state ? this.setup.rules.unpublishable(this.state.draft) : null;
+    const shown = this.shown;
+    const unpublishable = shown ? this.setup.rules.unpublishable(shown.draft) : null;
+    // Never on while the panes show an older range than the one asked for.
     for (const b of this.buttons)
-      b.disabled = !on || (b === this.publishButton && unpublishable !== null);
+      b.disabled = !on || !shown || (b === this.publishButton && unpublishable !== null);
     if (this.reason) this.reason.textContent = reason;
   }
 
@@ -622,6 +639,7 @@ export class DraftReview {
     this.root?.remove();
     this.root = null;
     this.state = null;
+    this.drawn = null;
     this.pending = null;
     this.doc.documentElement.classList.remove("plinth-reviewing");
     if (message) this.announce(message);

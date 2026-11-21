@@ -744,6 +744,17 @@ export function seesCategorySharing(p: Principal): boolean {
 }
 
 /**
+ * May this principal publish a version carrying another version's files (`files_from_version`)?
+ * Only the app's page Publish does: a signed-in person, who already holds `edit`. Never an agent
+ * or a bearer token, which sends its own files or carries the current ones: with an old version's
+ * files under a new source, a token limited to one artifact could bring back files a restore (which
+ * it may not do) would. Checked after the `edit` policy.
+ */
+export function mayPublishWithFilesOf(p: Principal): p is Extract<Principal, { kind: "user" }> {
+  return p.kind === "user";
+}
+
+/**
  * Create, change or delete a category share, or review artifacts into it: the signed-in owner
  * only, never an agent, a bearer token, the ADMIN_TOKEN or a viewer confirmed by code (as
  * data_clear and the bulk category rename). Services scope every statement to the caller's rows.

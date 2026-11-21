@@ -13,6 +13,7 @@ import {
   captureReadsData,
   decide,
   mayCreateArtifacts,
+  mayPublishWithFilesOf,
   type Principal,
   pageDataAccess,
   scopeFor,
@@ -259,7 +260,7 @@ describe("policy: a token bound to one artifact", () => {
     expect(seesThumbnails(boundAgent(ALL))).toBe(false);
   });
 
-  it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, seesPeople, canActOnMention", () => {
+  it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, seesPeople, canActOnMention, mayPublishWithFilesOf", () => {
     const wide = {
       ...(boundAgent(ALL) as Extract<Principal, { kind: "agent" }>),
       boundArtifactId: null,
@@ -287,6 +288,11 @@ describe("policy: a token bound to one artifact", () => {
     const task = { targetConnection: "c-ci", targetClientType: null };
     expect(canActOnMention(boundAgent(ALL), task, OWNER)).toBe(false);
     expect(canActOnMention({ ...wide, connectionId: "c-ci" }, task, OWNER)).toBe(true);
+    // Another version's files under a new source: the app's page Publish only, never a token.
+    expect(mayPublishWithFilesOf(user)).toBe(true);
+    for (const p of [boundAgent(ALL), wide, viewer, anon]) {
+      expect(mayPublishWithFilesOf(p), p.kind).toBe(false);
+    }
   });
 
   it("a capture of a version a bound token wrote reads no shared data; a person's capture does", () => {

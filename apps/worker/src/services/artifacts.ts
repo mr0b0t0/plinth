@@ -46,6 +46,8 @@ import {
   type Decision,
   decide,
   grantedRole,
+  mayPublishWithFilesOf,
+  type Principal,
   principalEmail,
   principalUserId,
   seesOwnerMetadata,
@@ -655,6 +657,32 @@ export interface UpdateInput {
   checkpoint?: boolean;
 }
 
+/**
+ * `files_from_version` is the app's page Publish only (policy.ts mayPublishWithFilesOf): a token
+ * limited to one artifact gets 403 `token_bound`, any other agent 403 `app_only`, and a viewer
+ * confirmed by code is asked to sign in.
+ */
+function refuseFilesFrom(p: Principal): void {
+  if (mayPublishWithFilesOf(p)) return;
+  if (p.kind === "agent" && boundArtifactOf(p) !== null) {
+    throw new ApiError(
+      "forbidden",
+      "This token may only publish new versions with their own files or the current ones",
+      {
+        reason: "token_bound",
+        next: "Send the files with assets, or leave them out to keep the current version's",
+      },
+    );
+  }
+  if (p.kind === "agent") {
+    throw new ApiError("forbidden", "files_from_version is for publishing from the app", {
+      reason: "app_only",
+      next: "Send the files with assets, leave them out to keep the current version's, or restore the old version",
+    });
+  }
+  throw unauthorized("Sign in to do this");
+}
+
 export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<PublishResult> {
   // Edit rights and a stale base_version are checked before the rate limit and any R2 operation.
   const target = await updateTarget(ctx, input.id, {
@@ -669,6 +697,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   // A page edit's files: exactly one version's, checked after the edit policy like every field.
   let filesFrom: VersionRow | null = null;
   if (input.files_from_version !== undefined) {
+    refuseFilesFrom(ctx.principal);
     if (input.assets !== undefined) {
       throw new ApiError("invalid_input", "files_from_version cannot be sent with assets", {
         reason: "files_from_with_assets",

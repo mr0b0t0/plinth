@@ -715,6 +715,31 @@ describe("useLiveEdit", () => {
     expect(onReload).toHaveBeenCalled();
   });
 
+  it("solo: a kept copy refused with a 409 that names no newer version says so, and keeps the copy", async () => {
+    savePageDraft("art1", 3, "# Kept");
+    let message = "This artifact is being changed. Try again.";
+    stubApi({
+      handle: (c) =>
+        c.method === "PUT"
+          ? json({ error: { code: "conflict", message, details: { reason: "busy" } } }, 409)
+          : undefined,
+    });
+    const later = gate("solo");
+    later.artifact = { ...later.artifact, version: 3, current_version: 3 };
+    const { result } = hook(later);
+    await act(() => result.current.saveRestore());
+    // Nothing to review against: the server's own words, and the copy stays to try again.
+    expect(sentToFrame("review")).toHaveLength(0);
+    expect(toasts.at(-1)).toBe("This artifact is being changed. Try again.");
+    expect(result.current.restore).toMatchObject({ text: "# Kept" });
+    // Without words of its own, a short generic line.
+    message = "";
+    toasts.length = 0;
+    await act(() => result.current.saveRestore());
+    expect(toasts.at(-1)).toBe("These changes could not be published. Try again.");
+    expect(result.current.restore).toMatchObject({ text: "# Kept" });
+  });
+
   it("solo: Discard your changes in the review of a kept copy drops the copy", async () => {
     savePageDraft("art1", 3, "# Kept");
     stubApi({

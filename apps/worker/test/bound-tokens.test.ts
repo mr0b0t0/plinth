@@ -313,6 +313,15 @@ describe("using a token limited to one artifact", () => {
     );
     bound(await req("PUT", `/artifacts/${id}/sharing`, t.auth, { grants: [] }), "sharing");
     bound(await req("POST", `/artifacts/${id}/versions/1/restore`, t.auth, {}), "restore");
+    // Nor a version with an old version's files under a new source: a restore by another name.
+    bound(
+      await req("PUT", `/artifacts/${id}`, t.auth, {
+        html: DATA_PAGE.replace("A report", "The next report"),
+        base_version: 1,
+        files_from_version: 1,
+      }),
+      "files_from_version",
+    );
     bound(await req("DELETE", `/artifacts/${id}`, t.auth), "delete");
     bound(await req("POST", `/artifacts/${id}/comments`, t.auth, { body: "hi" }), "comment");
     // A page anchor (comments from the page) is a comment like any other.
