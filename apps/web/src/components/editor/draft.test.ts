@@ -3,13 +3,17 @@ import {
   clearAllDrafts,
   clearDraft,
   clearPageDraft,
+  clearRescueStores,
   draftKey,
   listDrafts,
   loadDraft,
   loadPageDraft,
+  loadRescue,
   pageDraftKey,
+  rescueKey,
   saveDraft,
   savePageDraft,
+  saveRescue,
 } from "./draft.ts";
 import { initialState } from "./initial.ts";
 
@@ -152,5 +156,22 @@ describe("page edits kept in sessionStorage (solo on-page editing)", () => {
     expect(savePageDraft("a1", 1, "x")).toBe(false);
     expect(loadPageDraft("a1")).toBeNull();
     expect(() => clearPageDraft("a1")).not.toThrow();
+  });
+});
+
+describe("the doc frame's rescue store", () => {
+  it("is kept per person, never dropped on read, and cleared only by clearRescueStores", () => {
+    sessionStorage.clear();
+    saveRescue("u0", "art1", [{ id: "a", text: "Theirs", near: 0 }]);
+    saveRescue("u1", "art1", [{ id: "b", text: "Mine", near: 0 }]);
+    expect(loadRescue("u1", "art1")).toEqual([{ id: "b", text: "Mine", near: 0 }]);
+    // Reading one account's store leaves another's alone.
+    expect(loadRescue("u0", "art1")).toEqual([{ id: "a", text: "Theirs", near: 0 }]);
+    saveRescue("u1", "art1", []);
+    expect(sessionStorage.getItem(rescueKey("u1", "art1"))).toBeNull();
+    // An explicit sign-out in the tab.
+    clearRescueStores();
+    expect(loadRescue("u0", "art1")).toBeNull();
+    expect(sessionStorage.length).toBe(0);
   });
 });

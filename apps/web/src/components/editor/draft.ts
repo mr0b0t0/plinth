@@ -162,22 +162,27 @@ export function clearPageDraft(artifactId: string): void {
 const RESCUE_PREFIX = "plinth-draft:page-rescue:";
 const rescueMemory = new Map<string, unknown>();
 
-/** One per person and artifact: after an account switch in the tab, no one writes another's text. */
+/**
+ * One per person and artifact: after an account switch in the tab, the next person is never
+ * offered (or writes) the last one's text, which waits under its own key.
+ */
 export function rescueKey(userId: string, artifactId: string): string {
   return `${RESCUE_PREFIX}${userId}:${artifactId}`;
 }
 
-/** Drops rescue stores kept for anyone but `userId` (another account used this tab before). */
-function dropOthers(userId: string): void {
-  const mine = `${RESCUE_PREFIX}${userId}:`;
-  for (const k of [...rescueMemory.keys()]) if (!k.startsWith(mine)) rescueMemory.delete(k);
+/**
+ * Drops every account's rescue store in this tab: only on an explicit sign-out here. A store is
+ * never dropped because someone else (or no one yet) is signed in: it is ignored then.
+ */
+export function clearRescueStores(): void {
+  rescueMemory.clear();
   try {
     const s = storage();
     if (!s) return;
     const gone: string[] = [];
     for (let i = 0; i < s.length; i++) {
       const k = s.key(i);
-      if (k?.startsWith(RESCUE_PREFIX) && !k.startsWith(mine)) gone.push(k);
+      if (k?.startsWith(RESCUE_PREFIX)) gone.push(k);
     }
     for (const k of gone) s.removeItem(k);
   } catch {
@@ -201,7 +206,6 @@ export function saveRescue(userId: string, artifactId: string, items: unknown[])
 
 /** The kept rescue items, unchecked (the caller reads them field by field), or null. */
 export function loadRescue(userId: string, artifactId: string): unknown {
-  dropOthers(userId);
   const key = rescueKey(userId, artifactId);
   try {
     const raw = storage()?.getItem(key);

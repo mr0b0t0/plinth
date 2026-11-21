@@ -62,6 +62,7 @@ import {
   matchFrameMessage,
   newNonce,
   postToRenderer,
+  type RescueItem,
   type ReviewResult,
   readFrameMessage,
   readRescueItems,
@@ -107,7 +108,11 @@ export interface UseLiveEditOptions {
   frameKey: string | null;
   /** Fetch a fresh gate (a solo publish, a discard, a lost session). */
   onReload: () => void;
-  /** The signed-in account, whose rescue store this is (null: none signed in). */
+  /**
+   * The signed-in account, whose rescue store this is: null when no one is signed in, undefined
+   * while the session is still loading. The store is read, offered and written only for a known
+   * account.
+   */
   userId?: string | null;
   /** Esc at the top level of edit mode in the frame. */
   onLeave?: () => void;
@@ -223,11 +228,12 @@ export function useLiveEdit({
   onReload,
   onLeave,
   onAsk,
-  userId = null,
+  userId,
 }: UseLiveEditOptions): LiveEdit {
   const { artifact } = gate;
   const id = artifact.id;
-  const who = userId ?? "anon";
+  /** Whose rescue store this is, once known (never while the session loads or no one is in). */
+  const who = typeof userId === "string" ? userId : null;
   const def = typeDef(artifact.type);
   const merges = liveRules(artifact.type)?.merge === "lines";
   // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
@@ -248,9 +254,11 @@ export function useLiveEdit({
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
   /** How many typed texts the frame's rescue store holds (kept in app storage meanwhile). */
-  const [rescued, setRescued] = useState(
-    () => readRescueItems(loadRescue(userId ?? "anon", gate.artifact.id))?.length ?? 0,
-  );
+  const [rescued, setRescued] = useState(0);
+  /** The frame's last rescue items, while there is no known account to keep them under. */
+  const unkept = useRef<RescueItem[] | null>(null);
+  /** What a `rescue` message from the frame does (set once collect exists, below). */
+  const onRescue = useRef<(items: RescueItem[]) => void>(() => undefined);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
@@ -440,8 +448,7 @@ export function useLiveEdit({
         },
         rescue({ items }) {
           // Typed text the room's draft does not hold yet: kept here until the frame says it does.
-          saveRescue(who, id, items);
-          setRescued(items.length);
+          onRescue.current(items);
         },
         // A version shown in place is the live-view update's answer (useViewUpdate.ts).
         shown() {},
@@ -449,7 +456,7 @@ export function useLiveEdit({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, maxBytes, frameKey, id, who]);
+  }, [available, frame, target, maxBytes, frameKey]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
@@ -463,15 +470,34 @@ export function useLiveEdit({
       // The frame's own focus() moves the keyboard only once its window has the focus.
       if (focus) frame.focus();
       postToRenderer(frame, target, editMessage(editing, soloBase, focus));
-      // Typed text a frame before this one could not get into the draft: offered to this one,
-      // which writes what the draft does not hold yet.
-      const kept = editing ? readRescueItems(loadRescue(who, id)) : null;
-      if (kept && kept.length > 0) postToRenderer(frame, target, rescueMessage(kept));
     };
     send();
     frame.addEventListener("load", send);
     return () => frame.removeEventListener("load", send);
-  }, [available, frame, target, editing, soloBase, id, who]);
+  }, [available, frame, target, editing, soloBase]);
+
+  // ---------- the frame's rescue store ----------
+
+  // Once the account is known: what the frame reported meanwhile is kept under it, and what was
+  // kept from an earlier frame is counted and offered to this one (again on each load), which
+  // writes what the draft does not hold yet. Nothing is read, offered or dropped before.
+  useEffect(() => {
+    if (!who) return;
+    if (unkept.current) {
+      saveRescue(who, id, unkept.current);
+      unkept.current = null;
+    }
+    const kept = readRescueItems(loadRescue(who, id)) ?? [];
+    setRescued(kept.length);
+    if (!available || !frame || !editing) return;
+    const offer = () => {
+      const items = readRescueItems(loadRescue(who, id)) ?? [];
+      if (items.length > 0) postToRenderer(frame, target, rescueMessage(items));
+    };
+    offer();
+    frame.addEventListener("load", offer);
+    return () => frame.removeEventListener("load", offer);
+  }, [who, id, available, frame, target, editing]);
 
   /**
    * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
@@ -707,7 +733,8 @@ export function useLiveEdit({
           } else {
             await liveDiscard(id, rev, version);
             // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
-            saveRescue(who, id, []);
+            if (who) saveRescue(who, id, []);
+            unkept.current = null;
             setRescued(0);
             done("done");
           }
@@ -801,7 +828,8 @@ export function useLiveEdit({
     if (m === "solo") {
       clearPageDraft(id);
       setRestore(null);
-      saveRescue(who, id, []);
+      if (who) saveRescue(who, id, []);
+      unkept.current = null;
       setRescued(0);
       latest.current.onReload();
       return;
@@ -815,7 +843,8 @@ export function useLiveEdit({
     try {
       await liveDiscard(id, s.rev);
       // What was kept to rescue goes too; the frame drops its own on the room's reset.
-      saveRescue(who, id, []);
+      if (who) saveRescue(who, id, []);
+      unkept.current = null;
       setRescued(0);
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
@@ -829,6 +858,29 @@ export function useLiveEdit({
     if (!available || gate.live?.mode !== "solo") return;
     setRestore(loadPageDraft(id));
   }, [available, gate.live?.mode, id]);
+
+  onRescue.current = (items) => {
+    setRescued(items.length);
+    if (!who) {
+      unkept.current = items;
+      return;
+    }
+    const before = readRescueItems(loadRescue(who, id)) ?? [];
+    const gone = before.some((b) => !items.some((i) => i.id === b.id));
+    if (latest.current.mode === "solo" && gone) {
+      // Solo: items the frame wrote into its own text are in no copy yet (the tab's copy is taken
+      // every few seconds). That text is kept first, then the store lets them go; if it cannot be
+      // kept, the store keeps them.
+      const base = gate.artifact.version;
+      collect({ keep: true })
+        .then((text) => {
+          if (savePageDraft(id, base, text)) saveRescue(who, id, items);
+        })
+        .catch(() => undefined);
+      return;
+    }
+    saveRescue(who, id, items);
+  };
 
   const soloDirty = mode === "solo" && editing && status?.dirty === true;
   // Typing a block cannot save as typed is not in the frame's text, so it does not make it dirty:

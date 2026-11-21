@@ -46,6 +46,7 @@ import {
   Toaster,
 } from "../ui/index.ts";
 import "./shell.css";
+import { clearRescueStores } from "../editor/draft.ts";
 
 export interface NavItem {
   label: string;
@@ -159,6 +160,8 @@ export function AppShell({
     (async () => {
       try {
         await api(API.logout, { method: "POST" });
+        // Signed out here on purpose: page edits kept to rescue in this tab go with the session.
+        clearRescueStores();
       } finally {
         await refresh().catch(() => undefined);
         navigate(APP_ROUTES.login);

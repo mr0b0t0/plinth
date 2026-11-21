@@ -130,7 +130,7 @@ export function ViewerStage({
   liveData,
   update: updateHandlers,
 }: ViewerStageProps) {
-  const { me, config } = useSession();
+  const { me, config, loading: sessionLoading } = useSession();
   const [theme, setTheme] = useTheme();
   const [shareOpen, setShareOpen] = useState(false);
   // The STAGE_DIALOGS entry open now, by id (Board settings), or null.
@@ -207,7 +207,8 @@ export function ViewerStage({
     onReload: onReload ?? (() => undefined),
     onLeave: () => barRef.current?.focus(),
     onAsk: (anchor, what) => askFromFrame.current(pageAnchorOf(anchor), what),
-    userId: me?.id ?? null,
+    // Unknown while the session loads: the rescue store waits for it.
+    userId: sessionLoading ? undefined : (me?.id ?? null),
   });
   const editing = live.editing;
   // `?edit` (New and Import): start editing, with the focus on the frame's first block or cell.
