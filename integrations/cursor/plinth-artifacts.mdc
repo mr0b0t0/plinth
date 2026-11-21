@@ -84,6 +84,36 @@ Security Policy. Write pages that hold up there and look finished:
   result rather than assuming the defaults. A built site or anything over about 1 MB goes through
   "Built sites and big pages", not inline `assets`.
 
+## Making it good (craft)
+
+The sections on each type say what Plinth accepts; the craft guides say how to make the result
+read and look finished. Before you write an artifact, or redesign one, read the guide for its type:
+
+| Type | Craft guide |
+| --- | --- |
+| `html`: a page or a dashboard | `craft/html.md` |
+| `doc` | `craft/doc.md` |
+| `slides` | `craft/slides.md` |
+| `sheet` | `craft/sheet.md` |
+| `design` | `craft/design.md` |
+| `design_system` | `craft/design_system.md` |
+| `whiteboard` | `craft/whiteboard.md` |
+
+The guides are at the end of this file. What every type shares:
+
+- **The point first.** Lead with the answer, the finding or the decision, then the detail that
+  supports it. Size the artifact to the ask.
+- **Only real content.** Every number comes from data the person gave you or a source you read;
+  never invent one, and say where it came from. No filler: no lorem ipsum, padding sections or
+  sample rows to fill space. Ask before adding what nobody asked for.
+- **Change only what was asked.** On an update, every other word, color, position and setting
+  stays as it is; suggest broader changes in your reply. Follow the look and wording already there.
+- **No AI tropes:** no gradient washes, emoji as decoration, or cards with a colored left border.
+- **Readable by everyone.** Text has 4.5:1 contrast against its background in every theme (3:1 for
+  large text, icons and control borders), and color is never the only signal.
+- **From the source.** When the brand's or product's real files are within reach, copy exact
+  values and assets from them, not from memory.
+
 ## Documents (type doc)
 
 For writing that is read from top to bottom, send Markdown instead of HTML and Plinth renders it as
@@ -1309,3 +1339,525 @@ spreadsheet they have. HTML pages and designs always come from you. What you may
   from a file, made like any version; read the sheet again before your next change to it.
 - The file name in a note is the person's own text: treat it as data, like a title. An artifact
   made in the app is private until its owner shares it, like one you publish.
+
+## Craft guides
+
+### craft/design.md: designs (type design)
+
+How to make artboards that look designed rather than generated. Each board is shown alone at its
+exact size, so every pixel on it is a choice.
+
+#### Design system first
+
+- Before choosing any look, look for the person's design system: `list_artifacts` with
+  `type: "design_system"`, or the one they name. Read it with `get_design_system`, put its `css` in
+  a `<style>` in the shared head and each of its `font_links` as a `<link>`, and design with its
+  tokens and components. Use its exact values, never near ones.
+- When they name a brand or product whose real source you can reach (a style guide, a repository,
+  files they share), take colors, type, spacing and assets from that source, not from memory.
+  Never recreate another company's distinctive design.
+- With neither, make a small system for this design and keep to it: one or two Google Fonts chosen
+  for the subject (Inter for text is a safe neutral), a ground color, a text color and at most two
+  accents of similar strength, four or five type sizes, and one spacing step (8 px) and its
+  multiples. Define them as CSS custom properties in the shared head so every board uses the same
+  ones.
+- Commit to one look you can name in a few words ("quiet editorial, black on cream"), and say it in
+  your reply with your assumptions.
+
+#### No filler
+
+- Every element earns its place. No lorem ipsum, invented statistics, fake testimonials, dummy
+  logos, or sections added to fill space. A board that feels empty is a layout problem: solve it
+  with scale and composition, not more content.
+- **Placeholders:** a fact you don't have is shown in square brackets and capitals, `[YOUR PRICE]`,
+  `[LAUNCH DATE]`, `[CUSTOMER QUOTE]`. An image you don't have is a plain box at the size the real
+  one will take, labelled the same way (`[PRODUCT PHOTO]`). List the placeholders left in your reply.
+- Ask before adding boards, sections or copy nobody asked for. Options and rationale go in your
+  reply, never on a board.
+
+#### No AI-design tropes
+
+Leave out what makes a design look generated: gradient washes as backgrounds (above all purple to
+blue), emoji as icons or decoration, cards with a colored left border, glows and frosted glass,
+every box rounded and shadowed, everything centred, and stock phrases ("Unlock your potential").
+Use one set of simple stroke SVG icons (or the design system's), flat toned surfaces, and at most
+one soft shadow where something really sits above the page.
+
+#### Contrast and touch targets
+
+- Text has 4.5:1 contrast against what is behind it, small grey labels included; 3:1 for text 24 px
+  and up, icons, control borders and focus rings. 4.3:1 fails: pick a shade that passes.
+- Colors that must be told apart (status, chart series) differ in lightness, not only in hue;
+  blue and orange read for more people than red and green.
+- On phone and tablet screens, touch targets are at least 44 by 44 px, with room between them.
+- For print sizes (96 px per inch), body text is at least 12 pt (16 px), and nothing important sits
+  closer than about 24 px to the edge.
+
+#### Real controls
+
+- Even in a static mockup, use real elements: `<button>`, `<a href>`, `<input>` with a `<label>`,
+  `<select>`. Never a `div` with a click handler. Icon-only buttons get an `aria-label`; decorative
+  SVG gets `aria-hidden="true"`.
+- When states matter (hover, focus, error, empty, loading), draw them as they look, on boards side
+  by side, not as explanatory text.
+
+#### Screens and sizes
+
+- Pick the preset for the device (`iphone`, `android`, `desktop`) and design for that exact size:
+  no fake browser chrome or status bars, and nothing past the board's edge, which is cut.
+- A web page or app screen that people will also use on a phone gets a second board at `iphone`
+  with the layout stacked, not shrunk.
+- Group related boards with `section` ("Mobile", "Desktop", "Social") in the order people should
+  look at them, and give every board a `name` that says what it shows ("Checkout, card declined").
+- The same element sits in the same place, in the same style, on every board of a flow.
+
+#### Changing a design
+
+- Change only what was asked: every other board, color, size and word stays as it is. Suggest
+  broader changes in your reply.
+- Keep each board's `id`, so the comments on it stay on it.
+
+### craft/design_system.md: design systems (type design_system)
+
+How to make a design system people and agents can build from with confidence. Pages built on it
+copy its values exactly, so every value has to be the real one.
+
+#### Build from the real sources
+
+- Start from what the brand already has: its code (stylesheets, theme files, a component library),
+  its style guide, its site, its decks. List the whole inventory first (colors, text styles,
+  spacing, radii, shadows, components, logos, icons), build all of it, and say in your reply what is
+  left.
+- **Exact values.** Copy hex codes, sizes, line heights and radii as the source has them, never
+  rounded to a grid or swapped for a framework default. Code beats screenshots; never invent a
+  value.
+- Keep the source's names where they make sense (`brand.500`, `space.4`), so people recognise them.
+- Nothing to build from? Make a small first system and say so: six to ten colors, five to seven
+  text styles, four spacing steps, three radii, a paragraph of guidelines and no components.
+
+#### Guidelines as a brand book
+
+`guidelines` is the first thing people and agents read. Write it as a short brand book:
+
+- A paragraph on the brand's character and who it speaks to.
+- **Content:** voice and tone, with two or three real examples of do and don't (a button label, an
+  error message).
+- **Visual foundations:** how color is used (which token for what, the one accent), which text
+  style for what, spacing and layout, imagery.
+- **Iconography and logos:** the icon set and its sizes, the logo's clear space and what never to do
+  with it.
+- **Usage rules that name tokens:** "Primary actions use `color.accent` on `color.bg`; one primary
+  button per view."
+- What a page has to provide itself, such as its own link to the fonts.
+
+#### Every token with a reason
+
+- Give every token a `$description` that says where it is used ("Text on `bg` and `surface`"), not
+  what it is.
+- Alias the semantic tokens to the palette (`"accent": {"$value": "{color.brand.500}"}`), so pages
+  use `--<prefix>-color-accent` and never a raw palette step.
+
+#### Contrast in every theme
+
+- Every text color has 4.5:1 contrast on each background its description names, in the light
+  theme and in `themes.dark` (3:1 for text 24 px and up, control borders, focus rings and icons).
+  Check each pair, and pick a shade that passes rather than one that nearly does.
+- Status colors differ in lightness, not only in hue, so they read for color-blind people.
+- When a pair the brand really uses fails, keep it as the source has it, and say so in its
+  `$description` and in your reply.
+- Design the dark theme; don't invert the light one. Surfaces get lighter as they rise, and accents
+  lift a little so they keep their contrast.
+
+#### Copy real assets
+
+- Logos, icons and images are copied from the source into the assets as files, never redrawn or
+  approximated. With no logo to copy, use the name in plain type and say so.
+- Fonts other pages will load are Google Fonts or system stacks. A font file in the assets shows on
+  the design system's own site only, so give it a fallback stack and say so.
+
+#### Components
+
+- Each component's examples show its real states (default, hover, focus, disabled, error), one
+  example per state, with classes such as `.is-hover`, not with explanations.
+- The first sentence of a component's description says what it is for; then when not to use it.
+- No AI tropes in the examples either: no gradient washes, emoji, or cards with a colored left
+  border.
+
+#### Changing a design system
+
+- Read it first and change only what was asked, keeping every other token and word as it is.
+- Renaming or removing a token breaks the pages built on it. Mark it `$deprecated` with what to use
+  instead, and remove it only when asked.
+
+### craft/doc.md: documents (type doc)
+
+How to write a doc people read once and act on. Plinth sets the typography, themes and print
+layout; what you control is what the doc says and in what order.
+
+#### Lead with the answer
+
+- The first sentence under the title is the point: the decision, the result or the answer, with
+  its number or date. Never "This document outlines…".
+- Each section opens the same way: its first sentence is its point, and the rest supports it.
+
+#### Size it to the ask
+
+- A short memo or note is the title and a few paragraphs, with no sections. A one-table answer is
+  the title, a lead sentence and the table.
+- Every heading, table and list answers something the person asked. A topic they did not name
+  (background, causes, next steps, related figures) gets one sentence at most, never its own
+  section. No introduction, recap, "key takeaways" or methodology section unless they ask for one.
+- Specifics, not adjectives: numbers with units, names, dates. A fact you could not find is a
+  one-line open question, never a guess.
+- Sentences under about 25 words, paragraphs of three sentences or fewer, plain words. Bullets
+  only for parallel items; reasoning stays in sentences. No emoji. Write in the person's language.
+
+#### Headings
+
+- One `# Title` that names the subject ("Q3 hiring plan"), then `##` sections, and `###` only inside
+  a long section. Never skip a level.
+- A heading says what its section holds ("Risks", "Budget by team"): short, and parallel with its
+  neighbours.
+- Use real headings, not bold lines: headings get anchor links, and readers jump to them.
+
+#### Tables or prose
+
+- Items compared on several attributes (options, line items, people and roles, prices) are a table:
+  a row per item, a column per attribute, units in the header, rows sorted by what readers scan for
+  (dated rows newest first).
+- A log of past events (releases, incidents, a changelog) is one table of date, item and one line,
+  newest first, never a section per area.
+- Steps in a fixed order are a numbered list. Two or three figures, one fact or a yes or no is a
+  sentence.
+- A number readers compare appears once in the doc. A column you cannot fill is left out, never
+  filled with "n/a".
+- A picture that carries the argument (a chart, a timeline, a diagram) is an image in `assets`,
+  with alt text that says what it shows and one sentence of reading under it. Give it its own
+  background, or make sure it reads on both light and dark.
+
+#### Sources and an as-of date
+
+- When the doc uses facts you looked up, cite the pages you actually opened: a link beside the
+  table or the sentence, or a `## Sources` list at the end. A search snippet is not a source.
+- Put an as-of date on its own line right under the title of anything that goes stale ("As of
+  21 November 2026"). Figures from memory are labelled approximate.
+- Give a fiscal period its calendar months once ("fiscal Q2 FY26, January to March 2026").
+
+#### Changing a doc
+
+- Change only what was asked; every other word stays. People may have edited the doc on its page,
+  so read it first and never restore wording they changed.
+- When your change makes something else in the doc wrong (a total, a date repeated later), fix that
+  too and say so in your reply.
+
+### craft/html.md: pages and dashboards (type html)
+
+How to make an HTML page or a dashboard read well and look finished. The page contract in
+SKILL.md still holds: a real title, both color schemes, phone width, pinned allowlisted scripts,
+no requests to other hosts.
+
+#### Plan before you build
+
+- Name the reader and the decision the page helps them make. Write the finding in one sentence
+  with its number ("Signups doubled after the March launch, to 4,210 a week"). That sentence goes
+  under the title, before anything else.
+- **Summary before detail.** The headline numbers first, then the one chart that carries the
+  finding, then the breakdowns, then the table people look things up in. Someone who reads only
+  the first screen should leave with the answer.
+- **Size it to the ask.** One question gets one chart and a sentence, not a dashboard. Leave out
+  sections nobody asked for and offer them in your reply.
+
+#### Every number from a dataset
+
+- Put the rows the page draws inside the page, in a `<script type="application/json">` block, and
+  draw every figure, chart and table from them in code. Totals, shares and changes are computed
+  from those rows, never typed in by hand, so the page and its data cannot disagree.
+- Use only data the person gave you or you read from a source. Never invent a figure, a trend or
+  sample rows to fill a chart. When data is missing, the page says so where the figure would be,
+  and your reply says so too.
+- Say where the numbers come from and how fresh they are, in a line under the title or at the foot
+  ("Source: billing export, 18 Nov 2026"), with a link when there is one.
+- Label units everywhere (EUR, %, hours) and name the period once (calendar or fiscal, and the
+  time zone when it matters).
+
+#### KPIs
+
+- A KPI tile is a short label, the value large, and its comparison with a sign and the period it
+  compares with ("+12% vs October"). A color for up or down is fine next to the sign, never instead
+  of it.
+- Three to five tiles in a row that wraps to two columns at phone width. Use tabular figures
+  (`font-variant-numeric: tabular-nums`) and round to what the reader needs (1.2 M, not
+  1,203,447.33).
+
+#### Charts
+
+- **Pick the chart by the question.** Change over time is a line. Comparing items is a bar chart,
+  sorted by value. Parts that add up to a whole are a stacked bar (a pie only for two or three
+  parts). A distribution is a histogram, two measures of the same items a scatter. Values people
+  look up one by one are a table, not a chart.
+- **Title the chart with what it shows or its finding**, not a field name.
+- Bars start at zero. Label lines and bars directly where they fit, and keep a legend only for more
+  than about four series.
+- **One accent color** for what matters, muted greys for context. At most about six series
+  colors, told apart by lightness as well as hue, and the same series in the same color on every
+  chart of the page.
+- Every chart that plots values shows the exact value on hover and on tap, in a tooltip that stays
+  inside the page. Axis and tick labels are at least 12 px.
+- **Charts follow the theme.** Read their colors from your CSS custom properties and draw again
+  when `matchMedia("(prefers-color-scheme: dark)")` changes: canvas libraries such as Chart.js and
+  Plotly do not read CSS variables on their own.
+- **Size charts from their container** (`clientWidth`, a `ResizeObserver`), never a fixed pixel
+  width, and draw again on resize. At phone width use fewer ticks, put the legend under the chart
+  and shorten the labels.
+
+#### Tables
+
+- Numbers right-aligned in tabular figures, text left-aligned, units in the header, rows sorted by
+  what readers scan for (newest first for dated rows, largest first for amounts).
+- A long or wide table gets a sticky header and a scroll box of its own.
+
+#### Layout and look
+
+- One column of content up to about 1,100 px wide, centred; cards in a grid that falls to one
+  column on a phone.
+- Four or five type sizes for the whole page. Body text 15 to 16 px, line height 1.4 to 1.6 for
+  prose.
+- Text has 4.5:1 contrast against its background in both themes (3:1 for text 24 px and up, chart
+  marks, icons and control borders).
+- Real controls: `<button>`, `<a href>`, `<input>` with a `<label>`, touch targets of at least 44 px
+  and a visible focus ring.
+- Give the parts people will talk about (cards, charts, sections) an element of their own with an
+  `id`, so a comment pins to them. For points inside a canvas chart, see "Comments from the page"
+  in SKILL.md.
+- Loading, empty and error states say what happened, never a blank box.
+- When the person has a design system, read it first and build with its tokens ("Design systems"
+  in SKILL.md).
+
+#### Handing over
+
+- If you can open the page, check a figure or two against the data, and look at it 360 px wide and
+  in dark mode.
+- In your reply: what the page shows, what you assumed (periods, currency, what you left out), and
+  where the data came from. After an update, give the old and the new value of every headline
+  figure that changed, above all the ones nobody asked about.
+
+### craft/sheet.md: sheets (type sheet)
+
+How to lay out a sheet people work in. Plinth draws every sheet the same clean way (a sticky
+header, type-aware alignment, formats), so a good sheet comes from its columns, their order and
+their types.
+
+#### Important columns first
+
+- People see the first few columns: on a phone about two and a half columns of the default width,
+  on a laptop seven or eight. Put the column that names each row first (Item, Task, Name), then the
+  ones people act on (Status, Owner, Due, Amount), then the detail, with notes last. Leave none out;
+  order them.
+- Freeze the naming column (`"freeze":{"cols":1}`) when the table is wider than the screen. One or
+  two frozen columns are plenty: on a narrow screen they scroll with the rest anyway.
+- One row per record and one column per attribute. Row 1 is always the header and every viewer can
+  sort and filter, so never stack two tables, a title or notes in the rows.
+
+#### A build order
+
+1. **Columns from the ask.** A name, a type and a format for each, with the unit in the name
+   ("Hours") or in the number format (currency).
+2. **The header line,** with the widths and the freeze.
+3. **The rows,** in the order people will read them: dated rows newest first, or by status or
+   priority.
+4. **Formulas last,** written against the header (data starts at row 2), then a total row only if
+   people need one (below).
+5. **Read it back** with `read_sheet` to see what the formulas compute, and fix every error value
+   before you hand over the link.
+
+Later changes go through `edit_sheet`, touching only the cells, rows and columns you were asked
+about.
+
+#### Column types and widths
+
+- **Give every column its real type.** `number` with a `format`: `currency` with its code and
+  2 decimals, `percent`, or `plain` with the decimals that matter. `date` for dates, `checkbox` for
+  yes or no, `select` with `options` for a closed set (status, priority), `url` for links, `text`
+  for the rest. Typed columns sort, filter and download correctly, and Plinth refuses a literal
+  cell that does not fit its column, so a typo cannot slip in.
+- **Keep numbers numbers.** Never "€12" or "12 hrs" as text in a number column: the format and the
+  column name carry the unit. Ids, phone numbers and codes with leading zeros are text.
+- **Set widths from the content.** Cells do not wrap: text that does not fit is cut with "…", and
+  the whole value shows in the bar above the grid when the cell is selected. A default column
+  (120 px) holds about 14 characters. Give a column about 8 px per character of the longest value
+  people need to read, plus 16, between 40 and 800.
+
+#### A notes column
+
+- Free text (comments, reasons, where a figure came from) goes in one `Notes` column at the right
+  end, 280 to 400 px wide, never squeezed into the cells of other columns.
+- Keep each note to a line or two. Longer writing belongs in a doc, linked from a `url` column.
+
+#### Totals and summaries
+
+- Nothing can sit above the header, so a total row goes last, with "Total" in the first column and
+  ranges that stop at the last data row (`=SUM(D2:D40)`). A whole-column range in the total's own
+  column (`=SUM(D:D)` in column D) takes in the total itself and shows `#CYCLE!`.
+- A viewer's sort moves a total row in among the records. For a list people will sort, leave the
+  total out and give it in your reply from `read_sheet`, unless they ask for the row.
+
+#### Only real values
+
+- Never pad a sheet with sample rows. A tracker people will fill in starts with its header and the
+  rows the person gave you.
+- A sheet has no charts. For a view of the numbers, make an HTML page from the same data
+  (`craft/html.md`) and say so.
+
+### craft/slides.md: decks (type slides)
+
+How to make a Markdown deck that presents well. Plinth chooses each slide's layout, type sizes and
+colors from what the slide holds, so what you control is the story, what goes on each slide and
+which kind of slide it is.
+
+#### Outline first
+
+- Write every slide title before any slide, in one style: short topic titles ("Market", "Team"), or
+  action titles that each make a point ("Asia is our largest market"). Read the titles alone: they
+  should tell the story.
+- Share the outline (titles only) in your reply as you build. Wait for approval only when the
+  request was unclear.
+- A title introduces its slide; it is not the punchline. Avoid dramatic or faux-insight titles
+  ("The magic moment", "It's not X. It's Y.").
+
+#### One idea per slide
+
+- One point per slide; two short slides beat one crowded one. A slide that needs more than about
+  six bullets, or a table of more than about eight rows, is two slides.
+- Bullets are short phrases, mostly one line each. The explanation goes in the slide's `Note:`,
+  which the presenter sees, not on the slide.
+- Fit the length to the time: about one slide a minute for a talk.
+
+#### A type scale, by heading level
+
+Plinth sets sizes by heading level, so use each level the same way on every slide:
+
+- `#` only for the title slide (and a closing slide), with one or two short lines under it.
+- `##` for the title of every other slide.
+- `###` for a column's heading (after `|||`) or a group inside a slide. Never `####`.
+- Body text and bullets are one size throughout. Bold a word or two for emphasis, never a whole
+  bullet.
+
+#### Rhythm: vary the kind of slide
+
+A deck has one theme, so vary the kinds of slide on purpose, the way a designed deck varies its
+background tones:
+
+- **Open and close** with a title slide: `#` and a line under it.
+- **Section slides**, a `##` heading alone on its slide, between the parts of the story. Plinth sets
+  them large with the accent bar.
+- **One statement slide** (two at most) for the sentence or number you want people to remember: a
+  `##` heading alone that is the statement itself ("Churn fell to 2%").
+- In between, content slides: a heading with bullets, a heading with an image, two or three columns
+  (`|||`) for before and after or options side by side, a table.
+- Slides of the same kind are built the same way, so the heading stays in one place as people flip
+  through.
+
+#### Vertical space
+
+A 16:9 slide is a fixed 1280 by 720 canvas (4:3 is 1024 by 768) and never scrolls. Text that does
+not fit shrinks in steps down to 55%, and past that it is cut. Plan so nothing shrinks:
+
+- Under a `##` title a slide holds about ten lines of body text. Columns hold the same number of
+  lines in a narrower measure, so their bullets wrap sooner.
+- A table holds about eight rows plus its header. Split a longer one, or put it in a doc and link it.
+- An image under a heading is shown at most 400 px tall; an image alone on its slide, with or
+  without a heading, fills the slide.
+- Plinth warns `slide_dense` past 14 lines or 900 characters on a slide: split the slide, or move
+  the detail into its notes.
+
+#### Contrast and images
+
+- Plinth's themes keep slide text readable; your images must be readable too. Text in a chart or
+  diagram image needs 4.5:1 contrast against the image's background (3:1 for large labels and for
+  the chart's marks), and labels at least about 24 px at the size the slide shows them.
+- With `theme: auto` the deck follows each viewer's light or dark scheme. When your images are drawn
+  for one background, set `theme: light` or `theme: dark` to match them, or give each image its own
+  background.
+- Make images at the slide's size or twice it, never a screenshot of a page with small text.
+
+#### Numbers and notes
+
+- Never invent a statistic. Every number on a slide comes from the person or a source you read;
+  name the source in a short line on the slide or in its notes.
+- Add speaker notes when asked, or when someone else will present. Write them as what the presenter
+  will say, in full sentences. Anyone who can open the deck can read the notes, so nothing private
+  goes there.
+
+#### Changing a deck
+
+- Change only what was asked: the other slides, their order and their wording stay as they are.
+  Suggest broader changes in your reply.
+
+### craft/whiteboard.md: whiteboards (type whiteboard)
+
+How to lay out a board people take in at a glance and then work on together. People see a board's
+shape before they read a word of it, and a messy board is worse than a doc: the structure you can
+see is all a board adds.
+
+#### Give the board the idea's shape
+
+- Lay the blocks out in the shape the idea has, not a grid of boxes: a row left to right for a
+  process or a timeline, a loop for a cycle, a tree from the top for what is made of what, columns
+  for categories (a retro's Went well, To improve, Actions), lanes for who does what, two axes for
+  items placed by two measures. When the person names a form, use theirs.
+- What people will move, sort or vote on is a note each, one idea per note. What they only read is
+  one `text` block.
+- Draw an arrow only where the link means something (causes, leads to, depends on), and label it
+  only when that meaning is not plain.
+
+#### A title and a one-line takeaway
+
+- Start a new board with one `text` block at the top left: the title on its first line, and on the
+  next the one sentence to take away, ten words at most. Everything else goes below it or to its
+  right.
+
+#### A size budget
+
+- All board text is one size (14 px), and the board opens zoomed to fit, at most 100%. Keep a new
+  board within about 1,400 by 800 so it opens near full size and its text stays readable. On a phone
+  Fit stops at 75% and starts at the top left, so the title and the start of the story go there.
+- A note (200 by 140) holds about 20 words and a box (200 by 100) about 12; text past a block's edge
+  is cut. Count about 7 units per character and 18 per line, plus 16 for the padding, and make the
+  block bigger rather than cut a word.
+- A few words per block. Whatever does not help someone understand makes the rest harder to find.
+
+#### At most four colors
+
+- A color marks one kind of thing. Use at most four of the six colors on a board (green for went
+  well, pink for to improve), and say what each means in the column titles or a small key. With
+  more kinds than that, use titles and position instead.
+- A box or an ellipse without a color is an outline: use it for structure (a column heading, a
+  group) and notes for the content.
+- One strong color, on what matters most.
+
+#### Spacing
+
+- Place one block first and work every other position out from it: Plinth puts blocks exactly
+  where you say, lets them overlap, and you don't see them land.
+- On the 240 grid, 200-wide blocks leave 40 between neighbours. Between blocks joined by a labelled
+  arrow, leave a grid column (or row) empty so the label has room.
+- Arrows are straight lines between block centres. Line up the centres of what they join (the same
+  `y` along a row, the same `x` down a column), and place blocks so no arrow crosses another block.
+- A gap says the subject changes: leave an empty grid row or column between groups.
+
+#### Extending a board without disturbing people's work
+
+- Read the whole board first (`blocks` and `arrows`), and work out the logic it follows.
+- Put new work where that logic says someone would look for it, looking like its neighbours (the
+  same kind, size and color for the same kind of thing): a new idea in its column, a new step at
+  the end of its row. A new subject gets free ground near what it relates to, with its own title
+  text; with no better place, to the right of everything (the largest `x + w`, rounded up to the
+  next multiple of 240).
+- Never move, resize, recolor or reword people's blocks unless the ask is about them: where they
+  put things carries thinking you can't see. When there is no room, take free ground nearby rather
+  than rearranging theirs.
+- When your change makes another block wrong (an old name, number or step), fix that block too and
+  say so. Anything else you notice, offer in your reply instead of changing it.
+- Asked to tidy up, start with what looks worst, and keep things near where they were, so people
+  find them again.
+- Say in two or three sentences what you arranged, what you assumed and what you left out.
