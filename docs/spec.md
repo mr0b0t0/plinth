@@ -3386,14 +3386,17 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   lost: in place of the block, or, when someone else took the block, as a new block below it; when
   there is no lease to write it with (not connected, or a review waits), it is written once there
   is. A send that is refused (the doc is at its size limit: its bytes, or in a room its 50,000
-  lines, checked before sending; the block is over one frame of the room as sent; the socket did
-  not take it; or the room answers `too_large`) is handled the same way: the text stays in the
-  open block with the reason, counts as unsent and `unsavable`, goes to the rescue store (a room)
-  or the kept copy (solo), and is sent again once it fits or the draft is back. An edit the doc's
-  rules refuse (the frame's own check before sending, or the room's `invalid`) puts the block back
-  as the doc has it, but what was typed is kept first, in the rescue store with Copy and Dismiss,
-  and written as a block of its own after a reload. A refusal that arrives after its block closed
-  (or lost its lease) keeps what that send wrote the same way.
+  lines, checked before sending; in a room, the block is over one frame as sent, JSON-encoded;
+  the socket did not take it; or the room answers `too_large`) is handled the same way: the text
+  stays in the open block with the reason, counts as unsent and `unsavable`, goes to the rescue
+  store (a room) or the kept copy (solo), and is sent again once it fits or the draft is back. An
+  edit the doc's rules refuse (the frame's own check before sending, or the room's `invalid`)
+  puts the block back as the doc has it, but what was typed is kept first, in the rescue store
+  with Copy and Dismiss, and written as a block of its own after a reload. A refusal that arrives
+  after its block closed (`invalid`, `too_large`, or `not_held` after a takeover) keeps what that
+  send wrote the same way, and in a room typing written by itself after its block closed is in
+  the rescue store until the room acknowledges it. A block op over one frame of the room is not
+  sent ("This block is too long to send.").
 - **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
   until the room acknowledges a write of it (without that acknowledgement it is written again,
   a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which

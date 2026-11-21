@@ -15,8 +15,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the room refuses as too large, stays open with what was typed, as a block past the byte limit
   already did. Typing the doc's rules refuse (`<html>` typed in an indented code block at the very
   top) is kept with **Copy** and **Dismiss** before the block goes back. And when the room refuses
-  a block's last change after the block has closed, that change is kept the same way and offered
-  back after a reload.
+  a block's last change after the block has closed, or someone takes the block over before the
+  change arrives, that change is kept the same way and offered back after a reload.
 
 - **HTML decks in Claude's slide format.** A deck can now be `deck.json`, `deck.css` and one
   `slides/<id>.html` per slide, as Claude's Slides writes them, beside Markdown decks, which work as

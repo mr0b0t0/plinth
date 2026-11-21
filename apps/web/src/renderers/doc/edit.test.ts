@@ -2569,10 +2569,27 @@ class FakeRoom {
     this.editor.changed();
     return true;
   }
+  /**
+   * As LiveDocClient: release() only sends the frame, and `mine` goes when the room's `released`
+   * comes back, after the answers to every frame sent before it (released()). Without a test
+   * holding it, that answer comes in a microtask.
+   */
+  private releasing: string[] = [];
+  holdReleased = false;
   release() {
     if (!this.mine) return;
-    this.leases.delete(this.mine.id);
-    this.mine = null;
+    this.releasing.push(this.mine.id);
+    if (!this.holdReleased) queueMicrotask(() => this.released());
+  }
+  /** The room's `released` frames for every release sent so far. */
+  released() {
+    const ids = this.releasing;
+    if (ids.length === 0) return;
+    this.releasing = [];
+    for (const id of ids) {
+      this.leases.delete(id);
+      if (this.mine?.id === id) this.mine = null;
+    }
     this.editor.changed();
   }
   takeover() {
@@ -3035,6 +3052,16 @@ describe("the rescue store", () => {
     expect(editor.unsavable).toBe(false);
   });
 
+  it("solo: a block full of quotes goes in as it is: nothing is sent in a frame to measure", () => {
+    const quotes = '"'.repeat(LIMITS.liveDocFrameBytes / 2);
+    const { local, editor } = setup("one\n\nnext");
+    click(root.querySelector("p") as Element);
+    typeText(rich(editor).editable, quotes);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`${quotes}\n\nnext`);
+    expect(editor.unsavable).toBe(false);
+  });
+
   it("room: a send that is not taken, or too long for a frame, goes to the rescue store and stays open", () => {
     const room = roomSetup("ab\n\nnext");
     click(root.querySelector("p") as Element);
@@ -3186,17 +3213,19 @@ describe("the rescue store", () => {
     expect(noticeButton("Dismiss")).toBeDefined();
   });
 
-  it("room: a refusal that arrives after the block closed keeps what was sent, with Copy", () => {
+  it("room: invalid for a closed block's send, answered before the room's released, keeps it with Copy", () => {
     const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
     click(root.querySelector("p") as Element);
     const r = rich(room.editor);
     room.dropEdits = true;
     typeText(r.editable, "Two typed a lot");
-    // Esc sends the typing and closes the block (its lease released) before the room answers.
+    // Esc sends the typing and releases the lease; the room answers the edit before the release.
     key(r.editable, "Escape");
     expect(room.editor.openEditor).toBeNull();
-    expect(room.mine).toBeNull();
+    expect(room.mine).not.toBeNull();
     room.editor.roomRefused("invalid");
+    room.released();
     expect(kept()).toEqual(["Two typed a lot"]);
     expect(room.editor.pending).toBe(true);
     expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
@@ -3208,15 +3237,48 @@ describe("the rescue store", () => {
     expect(again.lines.join("\n")).toContain("Two typed a lot");
   });
 
-  it("room: a split refused after its block closed keeps both halves, as one kept text", () => {
+  it("room: too_large for a closed block's send, answered before the room's released, keeps it", () => {
     const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
     click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    key(r.editable, "Escape");
+    room.editor.roomRefused("too_large");
+    room.released();
+    expect(kept()).toEqual(["Two typed a lot"]);
+    expect(room.editor.pending).toBe(true);
+  });
+
+  it("room: a send after the pause, then Esc with nothing new, refused before released, is kept", () => {
+    const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    key(r.editable, "Escape");
+    room.editor.roomRefused("invalid");
+    room.released();
+    expect(kept()).toEqual(["Two typed a lot"]);
+  });
+
+  it("room: a split refused before the room's released keeps both halves, as one kept text", () => {
+    const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
+    room.auto = false;
+    click(root.querySelector("p") as Element);
+    room.grant();
     const r = rich(room.editor);
     room.dropEdits = true;
     typeText(r.editable, "Two and more");
     select(r.editable, 3);
     key(r.editable, "Enter");
+    // The block below asks for its lease; the room answers the split, then the release, first.
     room.editor.roomRefused("too_large");
+    room.released();
     expect(kept()).toEqual(["Two\n\nand more"]);
     expect(room.editor.pending).toBe(true);
   });
@@ -3231,5 +3293,60 @@ describe("the rescue store", () => {
     room.editor.roomRefused("invalid");
     expect(kept()).toEqual([]);
     expect(room.editor.pending).toBe(false);
+  });
+
+  it("room: a send the room answers not_held (taken over first) is kept once, never again later", async () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // Someone takes the block over; the room then answers the edit with not_held.
+    room.lose("takeover");
+    room.editor.roomRefused("not_held");
+    expect(kept()).toEqual(["Two typed a lot"]);
+    // A later refusal of something else keeps nothing more.
+    room.editor.roomRefused("invalid");
+    await settle();
+    expect(kept()).toEqual(["Two typed a lot"]);
+  });
+
+  it("room: typing a closed cleared block keeps, which the room then refuses, is kept with Copy", async () => {
+    const room = roomSetup("- a\n\nmid\n\n- b");
+    room.auto = false;
+    click(root.querySelector("p") as Element);
+    room.grant();
+    const r = rich(room.editor);
+    // Emptied: its removal (with the list after it) asks for its lease...
+    typeText(r.editable, "");
+    expect(room.asked).not.toBeNull();
+    // ...and is typed into and closed before it is granted.
+    typeText(r.editable, "new");
+    key(r.editable, "Escape");
+    room.grant();
+    await settle();
+    // The removal is in; what was typed goes in by itself, and the room refuses it.
+    expect(room.asked).not.toBeNull();
+    room.dropEdits = true;
+    room.grant();
+    room.editor.roomRefused("too_large");
+    await settle();
+    expect(kept()).toEqual(["new"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    expect(noticeButton("Copy")).toBeDefined();
+  });
+
+  it("room: a block op over one frame of the room is not sent, and says the block is too long", () => {
+    const q = '"'.repeat(20_000);
+    const room = roomSetup(`a${q}\n\nb${q}`);
+    const edit = vi.spyOn(room, "edit");
+    click(root.querySelector("p") as Element);
+    menu("Move down");
+    // Each block fits in a frame as JSON; the two the move writes again do not.
+    expect(edit).not.toHaveBeenCalled();
+    expect(room.text).toBe(`a${q}\n\nb${q}`);
+    expect(notice()).toContain(TOO_LONG);
   });
 });

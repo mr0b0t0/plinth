@@ -497,8 +497,9 @@ describe("doc renderer room errors", () => {
     roomError(editor, "too_large");
     expect(editor.roomRefused.mock.calls).toEqual([["invalid"], ["too_large"]]);
     expect(editor.notify).not.toHaveBeenCalled();
-    // A lease that went before its frame was answered: the editor said so already.
+    // A lease that went before its frame was answered: the send was not applied either.
     roomError(editor, "not_held");
+    expect(editor.roomRefused).toHaveBeenLastCalledWith("not_held");
     expect(editor.notify).not.toHaveBeenCalled();
     roomError(editor, "rate_limited");
     expect(editor.notify).toHaveBeenCalledWith(
