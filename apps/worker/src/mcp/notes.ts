@@ -12,6 +12,7 @@ import {
 import type { Ctx } from "../services/context.ts";
 import { PROJECT_FILES_UNTRUSTED } from "./notes/projectFiles.ts";
 
+export * from "./notes/craft.ts";
 export * from "./notes/projectFiles.ts";
 
 /** The untrusted note's sentence on Ask an agent (docs/spec.md "Ask an agent"). */

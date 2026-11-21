@@ -21,6 +21,8 @@ import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
 import {
   BUILD_NOTE,
   CATEGORY_NOTE,
+  CRAFT_NOTE,
+  CRAFT_UPDATE_NOTE,
   categoryShareListNote,
   categoryShareNote,
   DATA_PAGE_NOTE,
@@ -55,6 +57,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         BUILD_NOTE +
         "Scripts may load only from the instance's CDN allowlist; network calls to other hosts " +
         "are blocked. " +
+        CRAFT_NOTE +
         DOC_PUBLISH_NOTE +
         SLIDES_PUBLISH_NOTE +
         DESIGN_SYSTEM_PUBLISH_NOTE +
@@ -85,6 +88,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "current version's assets are kept. Versions are immutable; every update is a new version anyone can revert. " +
         "category: owner only (refused for editors); leave it out to keep the current one. " +
         categoryShareNote(ctx.config) +
+        CRAFT_UPDATE_NOTE +
         REUSE_NOTE +
         BUILD_NOTE +
         TYPE_UPDATE_NOTE +
