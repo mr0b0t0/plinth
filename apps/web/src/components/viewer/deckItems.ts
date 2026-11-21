@@ -1,5 +1,5 @@
-// A deck's ⋯ menu item while it is edited on the page, "Deck settings…": the frame opens its
-// settings popover (aspect, theme, page numbers, footer) and writes them with its own struct op
+// A deck's ⋯ menu item while it is edited on the page, "Slide size and footer…": the frame opens
+// its settings popover (aspect, theme, page numbers, footer) and writes them with its own struct op
 // over the draft socket, so nothing here touches the deck's text. The item exists only in edit
 // mode, where the frame is at the exact content origin (inline editing runs only under origin
 // isolation); the message carries no data. Also the words the strip and the Ask dialog use when a
@@ -10,9 +10,10 @@ import { deckSettingsMessage, editTargetOrigin, postToRenderer } from "./rendere
 // Types only: stageItems.tsx imports this file, so a value import back would be a cycle.
 import type { MenuItem } from "./stageItems.tsx";
 
-export const DECK_SETTINGS_LABEL = "Deck settings…";
+/** Named for what it changes: the menu's one item called settings is the artifact's Settings. */
+export const DECK_SETTINGS_LABEL = "Slide size and footer…";
 
-/** "Deck settings…", while the deck is edited on the page. */
+/** "Slide size and footer…", while the deck is edited on the page. */
 export const deckSettings: MenuItem = (c) =>
   c.editing && c.live.mode !== null
     ? [

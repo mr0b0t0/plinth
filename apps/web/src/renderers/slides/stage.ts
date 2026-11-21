@@ -12,6 +12,13 @@ export const GUTTER = 16;
 export const CONTROLS_INSET = GUTTER;
 /** In edit mode the slide's speaker notes panel sits under it: its height and the gap above it. */
 export const EDIT_NOTES_H = 140;
+/** Under this frame width edit mode puts the slide and its notes at the top, as the overview does. */
+export const EDIT_TOP_BELOW = 600;
+/**
+ * The editor's notice sits 12 px from the top and the slide makes room for it: its height plus
+ * this, so with the gutter there are 8 px between the notice and the slide.
+ */
+export const NOTICE_ROOM_GAP = 4;
 /** From this frame width the overview is a grid of thumbnails; below it, one column. */
 export const OVERVIEW_GRID_MIN = 700;
 /** From this frame width the grid has four columns instead of three. */

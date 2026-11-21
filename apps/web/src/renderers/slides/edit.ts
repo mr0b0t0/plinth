@@ -60,6 +60,7 @@ import {
   splitLines,
   verifyBlock,
 } from "@plinth/shared";
+import { personName } from "../../components/viewer/format.ts";
 import {
   type AskWhat,
   MAX_RESCUE_REF,
@@ -85,7 +86,6 @@ import {
 import { sanitizeHtml } from "../doc/sanitize.ts";
 import { el } from "./dom.ts";
 import { blockAt, EDIT_VIEW_WORDS, type EditBlock, type EditSlideView } from "./editView.ts";
-import { iconButton } from "./icons.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
 /** How long a message stays on the page (it stays in the live region). */
@@ -96,8 +96,10 @@ const TOOLS = docMarkdownTools();
 /** The editor's words (exported for tests). */
 export const DECK_WORDS = {
   refused: "That change would change the deck's layout, so it wasn't kept.",
-  held: (who: string, n: number) => `${who} is editing slide ${n}. Try again when they finish.`,
-  heldHere: (who: string) => `${who} is editing this. Try again when they finish.`,
+  held: (who: string, n: number) => `${who} is editing slide ${n}.`,
+  heldHere: (who: string) => `${who} is editing this.`,
+  /** Whoever holds it, when the room's answer names no one. */
+  someone: "Someone",
   notConnected: "Not connected. Try again in a moment.",
   changed: "The deck changed meanwhile. Try again.",
   notKept: "The deck changed while you were offline, so the block you were typing in was closed.",
@@ -107,9 +109,8 @@ export const DECK_WORDS = {
   closedKept: "The draft changed. What you typed is kept and goes back in.",
   waitsKept:
     "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.",
-  stuckKept: "What you typed couldn't be added to the deck yet. It is kept here.",
-  frameOnly:
-    "What you typed couldn't be added to the deck yet. It's kept on this page until you reload. Copy it to be safe.",
+  stuckKept: "Couldn't add your text yet",
+  frameOnly: "Couldn't add your text yet. Copy it before you reload",
   copy: "Copy",
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
@@ -120,12 +121,9 @@ export const DECK_WORDS = {
   delete: "Delete",
   notes: (n: number) => `Notes for slide ${n}`,
   addNotes: "Add speaker notes",
-  removeNotes: "Remove speaker notes",
-  notesMenu: "Speaker notes",
-  noNotes: "No speaker notes",
   empty: (n: number) => `Slide ${n}, empty`,
   dense: "Long slide: its text is shrunk to fit",
-  settings: "Deck settings",
+  settings: "Slide size and footer",
   apply: "Apply",
   cancel: "Cancel",
 } as const;
@@ -253,6 +251,8 @@ export interface DeckEditorHooks {
   refit(): void;
   /** The frame's polite live region. */
   announce(text: string): void;
+  /** The notice above the slide came, went or changed: the deck makes room for it. */
+  layout?(): void;
   /** The rescue store changed: the app merges this into its copy (see DeckRescueReport). */
   rescue?(report: DeckRescueReport): void;
 }
@@ -535,6 +535,8 @@ function hasText(m: RichBlock, env: MdEnv): boolean {
 
 /** Whether a node is an element (frames have their own Element class, so no instanceof). */
 const isEl = (n: Node): n is HTMLElement => n.nodeType === 1;
+/** An empty slide's "Click to add a title". */
+const PLACEHOLDER = ".plinth-slides__placeholder";
 
 /** Whether lines of a block read back, as the deck hands them to Markdown, into `model`. */
 function readsBack(lines: readonly string[], model: RichBlock, env: MdEnv, notes: boolean) {
@@ -767,12 +769,13 @@ export class SlidesEditor {
   /** Parked texts to try again now (a reconnect), one at a time. */
   private toRetry: Want[] = [];
   private keepAlive: ReturnType<typeof setInterval> | null = null;
-  /** The notice for parked text, with Copy. */
-  private keptBar: HTMLElement | null = null;
-  /** The last message, on the page for NOTICE_MS (notify), and the stack it shows in. */
-  private toast: HTMLElement | null = null;
+  /** What the notice says while typing is kept on the page (with Copy), or null. */
+  private keptWords: string | null = null;
+  /** The last message, shown in the notice's place for NOTICE_MS (notify). */
+  private message: string | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
-  private noticeBox: HTMLElement | null = null;
+  /** The one notice above the slide (drawNotice). */
+  private notice: HTMLElement | null = null;
 
   /**
    * Typing in the open place cannot be written as typed, or can again. While it cannot, nothing
@@ -936,6 +939,7 @@ export class SlidesEditor {
       this.addTitle(v);
     });
     head.append(b);
+    v.frame.querySelector(".plinth-slides__canvas")?.setAttribute("data-empty", "");
   }
 
   // ---------- notes ----------
@@ -957,7 +961,8 @@ export class SlidesEditor {
       if (host.contains(o.host)) return;
       panel.setAttribute("aria-label", DECK_WORDS.notes(v.shownN ?? v.n));
       panel.dataset.plinthControl = "";
-      panel.append(o.host, this.removeNotesButton(v));
+      panel.dataset.open = "";
+      panel.append(o.host);
       host.replaceChildren(panel);
       this.refocus(o);
       return;
@@ -974,31 +979,25 @@ export class SlidesEditor {
     this.notesDrawn.set(v, key);
     panel.setAttribute("aria-label", DECK_WORDS.notes(v.shownN ?? v.n));
     panel.dataset.plinthControl = "";
-    if (!range) {
-      // No notes yet: the panel is one quiet "Add speaker notes", as an empty notes field reads.
+    const lines = range ? this.backend.lines.slice(range.start, range.end) : [];
+    const text = range ? notesText(lines) : "";
+    const models = range
+      ? editableNotes(text, notesFormOf(lines[0]), afterBareOpen(this.backend.lines, v.n))
+      : [];
+    if (text === "" && models) {
+      // No notes, or empty ones: the panel is one quiet "Add speaker notes", as an empty notes
+      // field reads. An empty field is no notes: leaving it empty removes them (tidyNotes).
       const add = el(this.doc, "button", "plinth-slides__notepad-add", DECK_WORDS.addNotes);
       add.type = "button";
-      add.addEventListener("click", () => this.addNotes(v));
+      add.addEventListener("click", () => (range ? this.openNotes(v, []) : this.addNotes(v)));
       panel.append(add);
       host.replaceChildren(panel);
       return;
     }
-    panel.append(this.removeNotesButton(v));
-    const lines = this.backend.lines.slice(range.start, range.end);
-    const text = notesText(lines);
-    const models = editableNotes(
-      text,
-      notesFormOf(lines[0]),
-      afterBareOpen(this.backend.lines, v.n),
-    );
     const body = el(this.doc, "div", "plinth-slides__notepad-body");
-    if (text === "") {
-      body.append(el(this.doc, "p", "plinth-slides__notepad-none", DECK_WORDS.noNotes));
-    } else {
-      const frag = sanitizeHtml(renderInlineFree(text), this.doc);
-      pinFiles(frag, this.hooks.fileVersion());
-      body.append(frag);
-    }
+    const frag = sanitizeHtml(renderInlineFree(text), this.doc);
+    pinFiles(frag, this.hooks.fileVersion());
+    body.append(frag);
     if (models) {
       body.tabIndex = 0;
       body.setAttribute("role", "button");
@@ -1024,14 +1023,6 @@ export class SlidesEditor {
     host.replaceChildren(panel);
   }
 
-  /** The panel's one control besides the notes: an icon at its corner, named by its tooltip. */
-  private removeNotesButton(v: EditSlideView): HTMLButtonElement {
-    const remove = iconButton(this.doc, "trash", DECK_WORDS.removeNotes, () => this.removeNotes(v));
-    remove.classList.add("plinth-slides__notepad-remove");
-    remove.addEventListener("mousedown", (e) => e.preventDefault());
-    return remove;
-  }
-
   private addNotes(v: EditSlideView): void {
     if (!this.writable() || !this.closeForStruct()) return;
     const n = v.n;
@@ -1050,9 +1041,28 @@ export class SlidesEditor {
     }
   }
 
-  private removeNotes(v: EditSlideView): void {
-    if (!this.writable() || !this.closeForStruct()) return;
-    if (!this.backend.struct({ op: "remove_notes", n: v.n })) this.notify(DECK_WORDS.notConnected);
+  /** The raw slide whose notes were left empty: removed once nothing of this editor's is on its way. */
+  private emptyNotes: number | null = null;
+  /** That removal is out: its answer says nothing to the person, whatever it is. */
+  private tidying = false;
+
+  /**
+   * Notes left empty are no notes: once their last edit is in and their lease is let go, the empty
+   * notes part goes (`remove_notes`), so the deck keeps no bare marker. Quiet: refused (someone
+   * holds a line next to it, the lines moved), the empty notes simply stay, drawn as none.
+   */
+  private tidyNotes(): void {
+    const n = this.emptyNotes;
+    const b = this.backend;
+    if (n === null || !this.editing) return;
+    if (this.open || this.want || this.closing || b.mine || this.timer !== null) return;
+    if (!b.ready || !b.settled || this.tidying || this.trimming || this.settingsPending) return;
+    if (this.afterStruct || this.deleting) return;
+    this.emptyNotes = null;
+    const raw = deckLayout(b.lines).slides.find((s) => s.n === n);
+    if (!raw?.notes || notesText(b.lines.slice(raw.notes.start, raw.notes.end)) !== "") return;
+    this.tidying = true;
+    if (!b.struct({ op: "remove_notes", n })) this.tidying = false;
   }
 
   /**
@@ -1117,7 +1127,14 @@ export class SlidesEditor {
     const t = e.target as Element | null;
     if (t?.closest?.(".plinth-rich, .plinth-slides__notepad, .plinth-slides__blockbar")) return;
     const b = blockAt(t, v.frame);
-    if (!b) return;
+    if (!b) {
+      // An empty slide is one tap target: anywhere on it starts its title, as its placeholder does.
+      if (v.empty && t?.closest?.(".plinth-slides__canvas") && v.el.querySelector(PLACEHOLDER)) {
+        e.preventDefault();
+        this.addTitle(v);
+      }
+      return;
+    }
     e.preventDefault();
     this.activate(b, v);
   }
@@ -1719,6 +1736,10 @@ export class SlidesEditor {
     const mine = this.backend.mine;
     const snap = this.snapOf(o);
     this.open = null;
+    // Notes left empty are no notes: removed once this close is in (tidyNotes).
+    if (o.kind === "notes" && !o.editors.some((r) => hasText(r.model, o.env))) {
+      this.emptyNotes = o.n;
+    }
     for (const r of o.editors) r.destroy();
     if (snap.rescue && !snap.unsent) this.dropRescue(snap.rescue);
     if (release && mine) {
@@ -1732,6 +1753,12 @@ export class SlidesEditor {
     this.hooks.redraw();
     if (refocus) this.focusables(n)[0]?.focus();
     this.hooks.status();
+    this.tidyLater();
+  }
+
+  /** Removes notes left empty once this turn is over (tidyNotes), never from inside an answer. */
+  private tidyLater(): void {
+    if (this.emptyNotes !== null) this.win.setTimeout(() => this.tidyNotes(), 0);
   }
 
   // ---------- the room's answers ----------
@@ -1780,6 +1807,7 @@ export class SlidesEditor {
     }
     if (!this.retake) this.nextKept();
     if (this.retake) this.tryRetake();
+    this.tidyLater();
   }
 
   /**
@@ -1860,9 +1888,10 @@ export class SlidesEditor {
       this.hooks.status();
       return;
     }
-    if (reason === "held" && by) {
+    if (reason === "held") {
+      const who = holderName(by);
       this.notify(
-        w.open.kind === "notes" ? DECK_WORDS.heldHere(by) : DECK_WORDS.held(by, w.open.n),
+        w.open.kind === "notes" ? DECK_WORDS.heldHere(who) : DECK_WORDS.held(who, w.open.n),
       );
     } else if (reason === "stale") {
       // The lines moved before the room read the lease: the place is looked for again, by what
@@ -2479,19 +2508,8 @@ export class SlidesEditor {
   }
 
   private showKept(): void {
-    if (!this.keptBar) {
-      const bar = el(this.doc, "div", "plinth-slides__kept");
-      bar.setAttribute("role", "status");
-      bar.dataset.plinthControl = "";
-      const text = el(this.doc, "span", "plinth-slides__kept-text", DECK_WORDS.stuckKept);
-      const copy = el(this.doc, "button", "plinth-slides__kept-copy", DECK_WORDS.copy);
-      copy.type = "button";
-      copy.addEventListener("click", () => this.copyKept());
-      bar.append(text, copy);
-      this.keptBar = bar;
-    }
-    const box = this.notices();
-    if (!box.contains(this.keptBar)) box.prepend(this.keptBar);
+    this.keptWords ??= DECK_WORDS.stuckKept;
+    this.drawNotice();
   }
 
   /**
@@ -2501,10 +2519,9 @@ export class SlidesEditor {
   private updateKept(): void {
     const only = [...this.rescues.values()].some((r) => r.kept === false);
     if (this.parked.length + this.toRetry.length > 0 || only) {
-      this.showKept();
-      const text = this.keptBar?.querySelector(".plinth-slides__kept-text");
-      if (text) text.textContent = only ? DECK_WORDS.frameOnly : DECK_WORDS.stuckKept;
-    } else this.keptBar?.remove();
+      this.keptWords = only ? DECK_WORDS.frameOnly : DECK_WORDS.stuckKept;
+    } else this.keptWords = null;
+    this.drawNotice();
   }
 
   /** The kept texts, as Markdown without marks, one block per paragraph. */
@@ -2545,6 +2562,7 @@ export class SlidesEditor {
    * typing kept on the page.
    */
   disconnected(): void {
+    this.tidying = false;
     const w = this.want;
     this.want = null;
     if (w?.resend) this.retake = { near: w.range.start, after: null, want: w };
@@ -2561,6 +2579,12 @@ export class SlidesEditor {
    * page: the room's text never replaces either.
    */
   refused(reason: string): void {
+    if (this.tidying && !this.open) {
+      // Removing notes left empty (nothing else is out meanwhile): they stay, drawn as none.
+      this.tidying = false;
+      return;
+    }
+    this.tidying = false;
     this.trimming = false;
     this.settingsPending = false;
     if (this.stuck) {
@@ -2612,6 +2636,7 @@ export class SlidesEditor {
       this.settingsPending = false;
       this.closeSettings();
     }
+    if (op.op === "remove_notes") this.tidying = false;
     const after = this.afterStruct;
     this.afterStruct = null;
     // The deck was drawn again for this op before this runs (changed comes after).
@@ -2619,6 +2644,11 @@ export class SlidesEditor {
   }
 
   structDenied(reason: LeaseDenial, by?: string): void {
+    if (this.tidying) {
+      // Removing notes left empty: refused, they stay as empty notes, drawn as none.
+      this.tidying = false;
+      return;
+    }
     const n = this.trimming ? 1 : (this.open?.n ?? this.hooks.current());
     this.afterStruct = null;
     if (this.trimming) {
@@ -2627,46 +2657,67 @@ export class SlidesEditor {
     }
     this.settingsPending = false;
     this.syncSettingsButtons();
-    if (reason === "held" && by) this.notify(DECK_WORDS.held(by, n));
+    if (reason === "held") this.notify(DECK_WORDS.held(holderName(by), n));
     else if (reason === "stale") this.notify(DECK_WORDS.changed);
   }
 
   /**
    * Says why something was not done: in the deck's live region, and on the page for a few seconds
-   * in a notice over the slide (the live region already reads it, so the notice is hidden from
-   * assistive technology).
+   * in the notice above the slide (the live region already reads it, so the notice is hidden from
+   * assistive technology while it shows a message).
    */
   notify(text: string): void {
     this.hooks.announce(text);
     if (!text || !this.editing) return;
-    if (!this.toast) {
-      const t = el(this.doc, "div", "plinth-slides__toast");
-      t.setAttribute("aria-hidden", "true");
-      t.dataset.plinthControl = "";
-      this.toast = t;
-    }
-    this.toast.textContent = text;
-    this.notices().append(this.toast);
+    this.message = text;
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => this.hideToast(), NOTICE_MS);
+    this.drawNotice();
   }
 
   private hideToast(): void {
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.toastTimer = null;
-    this.toast?.remove();
+    if (this.message === null) return;
+    this.message = null;
+    this.drawNotice();
   }
 
-  /** Where the kept notice and the messages show: one stack at the top of the deck. */
-  private notices(): HTMLElement {
-    let box = this.noticeBox;
-    if (!box) {
-      box = el(this.doc, "div", "plinth-slides__notices");
-      this.noticeBox = box;
+  /**
+   * The one notice, above the slide and never over it (the deck makes room for it, hooks.layout):
+   * typing kept on the page, with Copy, while there is any (the action stays in reach; a message
+   * meanwhile is read by the live region only), else the editor's last message for a few seconds.
+   */
+  private drawNotice(): void {
+    const text = this.keptWords ?? this.message;
+    const was = this.notice;
+    if (text === null) {
+      if (!was) return;
+      was.remove();
+      this.notice = null;
+      this.hooks.layout?.();
+      return;
     }
+    const kept = this.keptWords !== null;
+    const n = was ?? el(this.doc, "div", "plinth-slides__notice");
+    n.className = `plinth-slides__notice ${kept ? "plinth-slides__kept" : "plinth-slides__toast"}`;
+    n.dataset.plinthControl = "";
+    if (kept) {
+      n.setAttribute("role", "status");
+      n.removeAttribute("aria-hidden");
+      const copy = el(this.doc, "button", "plinth-slides__kept-copy", DECK_WORDS.copy);
+      copy.type = "button";
+      copy.addEventListener("click", () => this.copyKept());
+      n.replaceChildren(el(this.doc, "span", "plinth-slides__kept-text", text), copy);
+    } else {
+      n.removeAttribute("role");
+      n.setAttribute("aria-hidden", "true");
+      n.replaceChildren(el(this.doc, "span", "plinth-slides__kept-text", text));
+    }
+    this.notice = n;
     const root = this.doc.getElementById("__plinth-slides") ?? this.doc.body;
-    if (!root.contains(box)) root.append(box);
-    return box;
+    if (!root.contains(n)) root.append(n);
+    this.hooks.layout?.();
   }
 
   // ---------- blocks not edited in place ----------
@@ -2709,6 +2760,13 @@ export class SlidesEditor {
     }
     v.frame.append(bar);
     this.bar = bar;
+    // Next to the block, covering as little of the slide's other blocks as it can (the deck's
+    // controls step aside while it shows).
+    const avoid = v.parts
+      .flatMap((p) => p.blocks)
+      .filter((o) => o !== b)
+      .flatMap((o) => o.nodes.filter(isEl).map((n) => n.getBoundingClientRect()));
+    placeBar(bar, b, v.frame, avoid);
     (bar.querySelector("button") as HTMLButtonElement | null)?.focus();
     bar.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -2770,7 +2828,7 @@ export class SlidesEditor {
 
   // ---------- deck settings ----------
 
-  /** Opens the deck settings popover (the app's ⋯ "Deck settings…"). */
+  /** Opens the deck settings popover (the app's ⋯ "Slide size and footer…"). */
   openSettings(): void {
     if (!this.editing || !this.canWrite) return;
     this.closeSettings();
@@ -2794,7 +2852,10 @@ export class SlidesEditor {
     });
     this.doc.getElementById("__plinth-slides")?.append(pop);
     this.popover = pop;
-    pop.querySelector<HTMLElement>("input, select, button")?.focus();
+    // The dialog itself takes focus, so no control shows a focus ring before a key is pressed;
+    // Tab goes on to the first setting.
+    pop.tabIndex = -1;
+    pop.focus();
   }
 
   private syncSettingsButtons(): void {
@@ -2836,6 +2897,60 @@ export class SlidesEditor {
   }
 }
 
+/** The gap between a selected block and its bar, in CSS pixels on screen. */
+const BAR_GAP = 6;
+
+/** How much of `r` the box at x, y of size w, h covers. */
+function overlap(x: number, y: number, w: number, h: number, r: DOMRect): number {
+  const dx = Math.min(x + w, r.right) - Math.max(x, r.left);
+  const dy = Math.min(y + h, r.bottom) - Math.max(y, r.top);
+  return dx > 0 && dy > 0 ? dx * dy : 0;
+}
+
+/**
+ * Puts a selected block's bar next to the block, at its right edge (its images' edge, for an
+ * image): just above it, as the doc editor's bar sits on its block's corner, or just below it when
+ * that covers less of what else is on the slide (`avoid`, in screen pixels: its other blocks). It
+ * stays inside the slide's frame.
+ */
+export function placeBar(
+  bar: HTMLElement,
+  b: EditBlock,
+  frame: HTMLElement,
+  avoid: readonly DOMRect[] = [],
+): void {
+  const els = b.nodes.filter(isEl);
+  const imgs = els.flatMap((n) => Array.from(n.querySelectorAll("img")));
+  const rects = (imgs.length > 0 ? imgs : els).map((e) => e.getBoundingClientRect());
+  if (rects.length === 0) return;
+  const top = Math.min(...rects.map((r) => r.top));
+  const bottom = Math.max(...rects.map((r) => r.bottom));
+  const right = Math.max(...rects.map((r) => r.right));
+  const f = frame.getBoundingClientRect();
+  // Within the slide itself, not the notes panel under it.
+  const slide = frame.querySelector(".plinth-slides__canvas")?.getBoundingClientRect() ?? f;
+  const w = bar.offsetWidth;
+  const h = bar.offsetHeight;
+  const x = Math.max(f.left, Math.min(right - w, f.right - w));
+  const covered = (y: number) => avoid.reduce((sum, r) => sum + overlap(x, y, w, h, r), 0);
+  const above = top - h - BAR_GAP;
+  const below = bottom + BAR_GAP;
+  const fitsAbove = above >= slide.top;
+  const y =
+    fitsAbove && (below + h > slide.bottom || covered(above) <= covered(below)) ? above : below;
+  bar.style.top = `${Math.round(y - f.top)}px`;
+  bar.style.left = `${Math.round(x - f.left)}px`;
+}
+
+/**
+ * Who holds a place, as a one-line message names them: a first name from their address ("Ana"),
+ * as the sheet's messages do, or "Someone" when there is none.
+ */
+export function holderName(by: string | undefined): string {
+  const name = by ? personName(by) : "";
+  return name === "" || name.includes("@") ? DECK_WORDS.someone : name;
+}
+
 /** A notes text as the page draws it (Markdown through the doc pipeline). */
 function renderInlineFree(text: string): string {
   return parseBlocks(text)
@@ -2859,7 +2974,13 @@ export function settingsPopover(
   const title = el(doc, "h2", "plinth-slides__settings-title", DECK_WORDS.settings);
   const row = (label: string, control: HTMLElement) => {
     const l = el(doc, "label", "plinth-slides__settings-row");
-    l.append(el(doc, "span", "plinth-slides__settings-label", label), control);
+    let c = control;
+    if (control.localName === "select") {
+      // Drawn as the app's own selects are, with a chevron of its own.
+      c = el(doc, "span", "plinth-slides__select");
+      c.append(control);
+    }
+    l.append(el(doc, "span", "plinth-slides__settings-label", label), c);
     return l;
   };
   const aspect = doc.createElement("select");
@@ -2913,7 +3034,7 @@ export function settingsPopover(
   );
   actions.append(cancel, apply);
   const check = el(doc, "label", "plinth-slides__settings-row plinth-slides__settings-check");
-  check.append(paginate, el(doc, "span", "plinth-slides__settings-label", "Page numbers"));
+  check.append(paginate, el(doc, "span", "plinth-slides__settings-checktext", "Page numbers"));
   pop.append(
     title,
     row("Aspect", aspect),

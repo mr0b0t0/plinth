@@ -18,8 +18,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
 import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import { boot, deckPane } from "./boot.ts";
-import { DECK_WORDS, EDIT_DEBOUNCE_MS, LocalDeck, NOTICE_MS } from "./edit.ts";
-import { EDIT_VIEW_WORDS } from "./editView.ts";
+import {
+  DECK_WORDS,
+  EDIT_DEBOUNCE_MS,
+  holderName,
+  LocalDeck,
+  NOTICE_MS,
+  placeBar,
+} from "./edit.ts";
+import { EDIT_VIEW_WORDS, type EditBlock } from "./editView.ts";
 import type { Geometry } from "./exportModel.ts";
 import type { PptxBuilder } from "./pptxModel.ts";
 
@@ -252,17 +259,18 @@ describe("speaker notes", () => {
   it("edits the notes as one part and keeps the marker on its line", () => {
     const f = start(SKILL);
     const body = active().querySelector(".plinth-slides__notepad-body") as HTMLElement;
-    // The panel is named for its slide; it shows the notes and one icon, no heading.
+    // The panel is named for its slide; it shows the notes and nothing else: no heading, no
+    // button (emptying the field is how notes are removed).
     const panel = active().querySelector(".plinth-slides__notepad") as HTMLElement;
     expect(panel.getAttribute("aria-label")).toBe(DECK_WORDS.notes(1));
     expect(panel.querySelector("h2")).toBeNull();
-    const remove = panel.querySelector(".plinth-slides__notepad-remove") as HTMLButtonElement;
-    expect(remove.getAttribute("aria-label")).toBe(DECK_WORDS.removeNotes);
-    expect(remove.textContent).toBe("");
+    expect(panel.querySelector("button")).toBeNull();
     body.click();
     const ed = active().querySelector(
       '.plinth-slides__notepad-edit [contenteditable="true"]',
     ) as HTMLElement;
+    // Open, the whole card shows it, as an open block on the slide does.
+    expect(active().querySelector(".plinth-slides__notepad")?.hasAttribute("data-open")).toBe(true);
     ed.textContent = "Welcome, everyone.";
     ed.dispatchEvent(new Event("input", { bubbles: true }));
     const text = collect(f);
@@ -270,7 +278,7 @@ describe("speaker notes", () => {
     expect(parseDeck(text).slides[0]?.notes).toBe("Welcome, everyone.");
   });
 
-  it("adds speaker notes to a slide without them, and removes them", () => {
+  it("adds speaker notes to a slide without them; emptied and left, they are no notes", () => {
     const f = start("# A\n\nbody\n\n---\n\n# B\n");
     const add = active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement;
     expect(add.textContent).toBe(DECK_WORDS.addNotes);
@@ -284,10 +292,41 @@ describe("speaker notes", () => {
     ed.dispatchEvent(new Event("input", { bubbles: true }));
     let text = collect(f);
     expect(parseDeck(text).slides[0]?.notes).toBe("Say hello.");
+    ed.textContent = "";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
     ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    (active().querySelector(".plinth-slides__notepad-remove") as HTMLButtonElement).click();
     text = collect(f);
     expect(text).toBe("# A\n\nbody\n\n---\n\n# B\n");
+    // The panel is its one placeholder again.
+    expect(active().querySelector(".plinth-slides__notepad-add")?.textContent).toBe(
+      DECK_WORDS.addNotes,
+    );
+  });
+
+  it("leaves no notes behind when Add speaker notes is left without typing", () => {
+    const f = start("# A\n\nbody\n");
+    (active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement).click();
+    vi.advanceTimersByTime(1);
+    const ed = active().querySelector(
+      '.plinth-slides__notepad-edit [contenteditable="true"]',
+    ) as HTMLElement;
+    ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(collect(f)).toBe("# A\n\nbody\n");
+  });
+
+  it("draws empty notes as none, and opens them in place rather than adding more", () => {
+    const deck = "# A\n\nbody\n\nNote:\n";
+    const f = start(deck);
+    const add = active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement;
+    expect(add.textContent).toBe(DECK_WORDS.addNotes);
+    add.click();
+    const ed = active().querySelector(
+      '.plinth-slides__notepad-edit [contenteditable="true"]',
+    ) as HTMLElement;
+    ed.textContent = "Hi.";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    // The marker keeps its form (alone on its line).
+    expect(collect(f)).toBe("# A\n\nbody\n\nNote:\nHi.\n");
   });
 });
 
@@ -431,9 +470,11 @@ describe("deck settings", () => {
     const f = start("# A\n");
     appMessage(f, msg({ type: "deck_settings" }));
     const pop = document.querySelector(
-      '[role="dialog"][aria-label="Deck settings"]',
+      `[role="dialog"][aria-label="${DECK_WORDS.settings}"]`,
     ) as HTMLElement;
     expect(pop).not.toBeNull();
+    // The dialog takes focus itself: no setting is ringed before a key moves to it.
+    expect(document.activeElement).toBe(pop);
     const [aspect, theme] = Array.from(pop.querySelectorAll("select"));
     (aspect as HTMLSelectElement).value = "4:3";
     (theme as HTMLSelectElement).value = "dark";
@@ -444,6 +485,50 @@ describe("deck settings", () => {
     expect(text).toBe("---\naspect: 4:3\ntheme: dark\nfooter: Q1 plan\n---\n# A\n");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.documentElement.getAttribute("data-aspect")).toBe("4:3");
+  });
+});
+
+describe("the editor's words", () => {
+  it("name whoever holds a place by a first name, never by an address", () => {
+    expect(DECK_WORDS.held(holderName("ana.costa@example.com"), 3)).toBe("Ana is editing slide 3.");
+    expect(holderName("42@example.com")).toBe(DECK_WORDS.someone);
+    expect(holderName(undefined)).toBe(DECK_WORDS.someone);
+  });
+});
+
+describe("a selected block's bar", () => {
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, width, height, right: left + width, bottom: top + height }) as DOMRect;
+
+  function placed(blockTop: number, avoid: DOMRect[] = []) {
+    const frame = document.createElement("div");
+    const p = document.createElement("p");
+    const img = document.createElement("img");
+    p.append(img);
+    frame.append(p);
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(rect(100, 50, 800, 450));
+    vi.spyOn(img, "getBoundingClientRect").mockReturnValue(rect(400, 50 + blockTop, 200, 100));
+    vi.spyOn(p, "getBoundingClientRect").mockReturnValue(rect(150, 50 + blockTop, 700, 100));
+    const bar = document.createElement("div");
+    Object.defineProperty(bar, "offsetWidth", { value: 160 });
+    Object.defineProperty(bar, "offsetHeight", { value: 40 });
+    placeBar(bar, { nodes: [p] } as unknown as EditBlock, frame, avoid);
+    return bar.style;
+  }
+
+  it("sits just above an image, at its right edge", () => {
+    const s = placed(200);
+    expect(s.top).toBe("154px");
+    expect(s.left).toBe("340px");
+  });
+
+  it("goes below it when there is no room above", () => {
+    expect(placed(10).top).toBe("116px");
+  });
+
+  it("goes below it when above would cover more of the slide's other text", () => {
+    // A list right above the image.
+    expect(placed(200, [rect(150, 210, 700, 36)]).top).toBe("306px");
   });
 });
 
@@ -595,12 +680,16 @@ describe("typing a deck at its size limit cannot take, alone", () => {
     );
     expect(posts(f).some((p) => p.type === "save")).toBe(false);
     expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
-    // Said on the page too, for a few seconds, over the slide; the live region reads it.
-    const toast = document.querySelector(".plinth-slides__notices .plinth-slides__toast");
+    // Said on the page too, for a few seconds, in the one notice above the slide; the live region
+    // reads it.
+    const notices = document.querySelectorAll(".plinth-slides__notice");
+    expect(notices).toHaveLength(1);
+    const toast = notices[0];
     expect(toast?.textContent).toBe(DECK_WORDS.fullHere);
     expect(toast?.getAttribute("aria-hidden")).toBe("true");
+    expect(toast?.closest(".plinth-slides__slide")).toBeNull();
     vi.advanceTimersByTime(NOTICE_MS + 1);
-    expect(document.querySelector(".plinth-slides__toast")).toBeNull();
+    expect(document.querySelector(".plinth-slides__notice")).toBeNull();
   });
 
   it.each([false, true])(
@@ -705,37 +794,30 @@ describe("speaker notes the deck at its size limit cannot take, alone", () => {
     return { f, ed };
   };
 
-  it.each(["remove", "add"] as const)(
-    "refuses %s notes while the open notes hold that typing",
-    async (what) => {
-      const { f, ed } = typeTooMuch();
-      if (what === "remove") {
-        (active().querySelector(".plinth-slides__notepad-remove") as HTMLButtonElement).click();
-      } else {
-        // Another slide's Add speaker notes: no struct op goes out from under the open notes.
-        appMessage(f, msg({ type: "goto", slide: 2 }));
-        (active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement).click();
-        vi.advanceTimersByTime(1);
-      }
-      // Nothing changed: the notes are in the deck, still open with the typing, under their lease.
-      expect(collect(f)).toBe(deck);
-      expect(ed.isConnected).toBe(true);
-      expect(ed.textContent).toBe(more);
-      expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
-      await Promise.resolve();
-      expect(lastStatus(f)?.unsavable).toBe(true);
-      // Shortened, it is written in place, and the notes close as usual.
-      ed.textContent = "short";
-      ed.dispatchEvent(new Event("input", { bubbles: true }));
-      const text = collect(f);
-      expect(text).toBe(deck.replace("Note: hi", "Note: short"));
-      expect(parseDeck(text).slides[1]?.notes).toBe("");
-      await Promise.resolve();
-      expect(lastStatus(f)?.unsavable).toBeUndefined();
-      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      expect(document.querySelector(".plinth-slides__notepad-edit")).toBeNull();
-    },
-  );
+  it("refuses to add notes elsewhere while the open notes hold that typing", async () => {
+    const { f, ed } = typeTooMuch();
+    // Another slide's Add speaker notes: no struct op goes out from under the open notes.
+    appMessage(f, msg({ type: "goto", slide: 2 }));
+    (active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement).click();
+    vi.advanceTimersByTime(1);
+    // Nothing changed: the notes are in the deck, still open with the typing, under their lease.
+    expect(collect(f)).toBe(deck);
+    expect(ed.isConnected).toBe(true);
+    expect(ed.textContent).toBe(more);
+    expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
+    await Promise.resolve();
+    expect(lastStatus(f)?.unsavable).toBe(true);
+    // Shortened, it is written in place, and the notes close as usual.
+    ed.textContent = "short";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    const text = collect(f);
+    expect(text).toBe(deck.replace("Note: hi", "Note: short"));
+    expect(parseDeck(text).slides[1]?.notes).toBe("");
+    await Promise.resolve();
+    expect(lastStatus(f)?.unsavable).toBeUndefined();
+    ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".plinth-slides__notepad-edit")).toBeNull();
+  });
 });
 
 describe("a local deck's struct op that removes its held lines", () => {

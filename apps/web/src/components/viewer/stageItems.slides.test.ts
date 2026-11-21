@@ -79,7 +79,7 @@ describe("the Present control", () => {
 });
 
 describe("a deck being edited on the page", () => {
-  it("offers Deck settings… alone, which asks the frame at its exact origin to open them", () => {
+  it("offers Slide size and footer… alone, which asks the frame at its exact origin to open them", () => {
     const post = vi.fn();
     const c = {
       ...context("off"),

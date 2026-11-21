@@ -2822,7 +2822,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
-  draft. It opens from the ⋯ item, or from an `ask` message a renderer posts, which opens it about
+  draft. Focus starts in its description, where typing goes. It opens from the ⋯ item, or from an
+  `ask` message a renderer posts, which opens it about
   a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural name such
   as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
   "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
@@ -3119,10 +3120,12 @@ room, drafts, Publish and whole-draft review as [Editing](#editing), with no Mar
 is still Markdown in `slides.md`, which agents read and write as before. Adding, moving and
 deleting slides, and a slide's columns, stay with agents for now.
 
-- **Edit mode draws every raw slide**, one at a time and scaled to fit above its notes panel: every
+- **Edit mode draws every raw slide**, one at a time and scaled to fit above its notes panel
+  (centred, or at the top under 600 px wide, as the overview is): every
   run of lines between separators, the empty ones at the deck's start and end included, which
   presenting and the view leave out. Any empty slide shows "Click to add a title", which starts a
-  heading there. Each text element (a heading, a
+  heading there, as a tap anywhere on the empty slide does; however small the slide is drawn, the
+  placeholder keeps at least 16 px text in a 44 px target. Each text element (a heading, a
   paragraph, a list, a table, a quote or a code block of the slide's head or a column) is a focus
   stop named by its place and role ("Slide 3, heading 1, editable"), never its text; a click or
   Enter leases the lines of that block and opens it as formatted text, as in
@@ -3158,7 +3161,7 @@ deleting slides, and a slide's columns, stay with agents for now.
   changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
   Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the
   rescue store has it without its formatting, and in a room the holder sends `keep` every 20 s
-  while connected. Adding or removing speaker notes and applying deck settings wait too (with the
+  while connected. Adding speaker notes and applying deck settings wait too (with the
   same words), since a structural change would take the place's lines from under it. If edit mode ends anyway, it is written without its formatting. Typing the room does
   not have yet when the lease ends (in the debounce, not writable as typed, or not sent because the
   deck is at its size limit, the block is too long or the socket is down) is kept: taken over,
@@ -3166,8 +3169,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   them); closed by a review or a reset, in its place again once the review ends; a block taken
   again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
   block at the nearest block end nobody's lease touches, three places at most. A room's refusal
-  never replaces it with the room's text. What no place takes stays on the page ("What you typed
-  couldn't be added to the deck yet. It is kept here.", with **Copy**), counts as unsent changes
+  never replaces it with the room's text. What no place takes stays on the page ("Couldn't add
+  your text yet", with **Copy**; "Couldn't add your text yet. Copy it before you reload" when the
+  app's rescue store could not take it), counts as unsent changes
   (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a
   reconnect; a discard drops it. A block closed, or split by Enter, whose last edit had no answer
   when its lease went, or whose typing since its last edit was never sent, is written again (both
@@ -3218,9 +3222,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   inserted line may hold a carriage return, and a deck's lines are read with CRLF as LF, as
   `parseDeck` does. The HTML-document rule applies as for docs. An edit that breaks any of these
   is refused (`invalid`), and the page puts the block back and says "That change would change the
-  deck's layout, so it wasn't kept." The editor's messages (this one, "Ana is editing slide 3. Try
-  again when they finish.", and the others) go to the deck's live region and show for a few
-  seconds in a notice at the top of the deck, above which only the kept typing's notice sits. A block holding typing it cannot write as typed keeps it as
+  deck's layout, so it wasn't kept." The editor's messages (this one, "Ana is editing slide 3.",
+  which names the holder by a first name taken from their address, or "Someone", and the others)
+  go to the deck's live region and show for a few seconds in the deck's one notice, above the
+  slide: the deck makes room for it, so it never covers the slide. While typing is kept on the
+  page, that notice is the kept typing's, with **Copy**, and messages are only read out. A block
+  holding typing it cannot write as typed keeps it as
   typed, and typing kept from a lease that ended (below) is kept on the page instead.
 - **Emptying a block.** Deleting all of a block's text removes its lines. Where that would run two
   text lines together, or bring a `---` to line 0 (which would turn the next slide's
@@ -3235,11 +3242,15 @@ deleting slides, and a slide's columns, stay with agents for now.
   line of text. The serializer
   keeps the marker word (`Note` or `Notes`) and its form, the first line on the marker line
   (`Note: Welcome everyone.`) or the marker alone (it is alone when the first line starts with
-  white space or opens fenced code). A slide without notes shows only "Add speaker notes" in the
-  panel, as a field's placeholder; notes show a trash icon at the panel's corner, "Remove speaker
-  notes". They are struct ops (`add_notes`, `remove_notes`).
-- **Deck settings** (aspect, theme, page numbers, footer) are a popover the ⋯ menu's "Deck
-  settings…" opens while editing, never a lease on the front matter. Apply sends the struct op
+  white space or opens fenced code). The panel has no control of its own: a slide without notes,
+  or with empty ones, shows only "Add speaker notes", as a field's placeholder, and open notes
+  tint the whole panel, as an open block is tinted. Adding notes is the struct op `add_notes`.
+  Notes left empty are no notes: once the empty field's last edit is in and its lease let go, the
+  editor sends `remove_notes`, which says nothing if refused (the empty notes stay, drawn as none).
+- **Deck settings** (aspect, theme, page numbers, footer) are a popover the ⋯ menu's "Slide size
+  and footer…" opens while editing (named for what it changes, since the menu's Settings is the
+  artifact's), never a lease on the front matter. The popover takes focus itself, so no setting
+  shows a focus ring until a key moves to it. Apply sends the struct op
   `set_deck`, which writes the front matter canonically, with only the keys that differ from the
   defaults (`aspect: 16:9`, `theme: auto`, `paginate: true`, no footer) and the footer as plain
   text of at most 120 characters on one line; it creates the front matter at line 0 when the deck
@@ -3261,7 +3272,9 @@ deleting slides, and a slide's columns, stay with agents for now.
 - **Images are agent-only.** Selecting an image offers "Ask an agent" (described "An agent adds
   or replaces the image.") and "Delete"; a block the formatted editor cannot show faithfully, and
   notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
-  can change it."), as a doc's blocks do. Their `ask` anchors are
+  can change it."), as a doc's blocks do. That bar sits next to the block at its right edge (an
+  image's own edge): just above it, or just below when that covers less of the slide's other
+  blocks; the deck's controls step aside while it shows. Their `ask` anchors are
   structural (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`, numbered as the deck shows its
   slides) with structural words ("Slide 3, image 1"), never the deck's text. Images are drawn from
   the draft's base version's files.

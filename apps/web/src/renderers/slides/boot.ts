@@ -71,8 +71,10 @@ import { fromApp, postToApp, readSlidesAppMessage, type SlidesAppMessage } from 
 import {
   CONTROLS_INSET,
   EDIT_NOTES_H,
+  EDIT_TOP_BELOW,
   fitScale,
   GUTTER,
+  NOTICE_ROOM_GAP,
   overviewColumns,
   overviewScale,
   prefersOverview,
@@ -314,7 +316,14 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   };
   watchImages(views);
 
+  /** The room the editor's notice takes above the slide: its height and a gap, or 0. */
+  const noticeRoom = () => {
+    const n = root.querySelector<HTMLElement>(".plinth-slides__notice");
+    return n ? n.offsetHeight + NOTICE_ROOM_GAP : 0;
+  };
   const scale = () => {
+    root.toggleAttribute("data-top", false);
+    root.style.removeProperty("--notice-h");
     if (mode === "overview") {
       const cols = overviewColumns(win.innerWidth, fixedOverview);
       root.style.setProperty("--cols", String(cols));
@@ -323,17 +332,26 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     } else {
       // The slide is centred with the stage's gutter on every side, full screen too; the controls
       // show one gutter above its bottom edge, wherever the letterbox puts it. While editing, the
-      // notes panel takes its height under the slide.
+      // notes panel takes its height under the slide, and at phone width the two sit at the top.
+      // The editor's notice takes its height above the slide, so it never covers it.
       const notes = editing && mode === "deck" ? EDIT_NOTES_H : 0;
+      const notice = mode === "deck" ? noticeRoom() : 0;
+      const top = editing && mode === "deck" && win.innerWidth < EDIT_TOP_BELOW;
+      root.toggleAttribute("data-top", top);
+      root.style.setProperty("--notice-h", `${notice}px`);
       const s = fitScale(
         win.innerWidth - 2 * GUTTER,
-        win.innerHeight - 2 * GUTTER - notes,
+        win.innerHeight - 2 * GUTTER - notes - notice,
         canvas.width,
         canvas.height,
       );
       setScale(root, canvas, s);
-      // The slide and its notes are centred together: the controls stay over the slide's edge.
-      const below = Math.max(0, (win.innerHeight - canvas.height * s - notes) / 2) + notes;
+      // The slide and its notes are centred together (or at the top): the controls stay over the
+      // slide's edge.
+      const h = canvas.height * s;
+      const below = top
+        ? win.innerHeight - notice - GUTTER - h
+        : Math.max(0, (win.innerHeight - notice - h - notes) / 2) + notes;
       root.style.setProperty("--controls-bottom", `${Math.floor(below) + CONTROLS_INSET}px`);
     }
     presenter?.layout();
@@ -721,6 +739,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       announce: (text: string) => {
         announcer.textContent = text;
       },
+      layout: () => scale(),
     };
     const events = {
       granted: (l: ClientLease) => editor?.granted(l),

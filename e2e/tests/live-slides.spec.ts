@@ -280,9 +280,11 @@ test("deck settings from the ⋯ menu write the front matter", async ({ page }) 
   await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
   await startEditing(page);
   await page.getByRole("button", { name: "Artifact actions" }).click();
-  await page.getByRole("menuitem", { name: "Deck settings…" }).click();
-  const pop = frameOf(page).getByRole("dialog", { name: "Deck settings" });
+  await page.getByRole("menuitem", { name: "Slide size and footer…" }).click();
+  const pop = frameOf(page).getByRole("dialog", { name: "Slide size and footer" });
   await expect(pop).toBeVisible();
+  // The dialog itself has focus: no setting shows a focus ring before a key moves it.
+  await expect(pop).toBeFocused();
   await shoot(page, "settings");
   await pop.getByLabel("Aspect").selectOption("4:3");
   await pop.getByLabel("Footer").fill("Q1 plan");
@@ -306,6 +308,8 @@ test("an image offers Ask an agent and opens the Ask dialog with its anchor", as
   const dialog = page.getByRole("dialog", { name: "Ask an agent" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Slide 2, image 1");
+  // The description is where typing goes: it has focus, not the chip's Stop pointing.
+  await expect(dialog.getByPlaceholder("Describe the change…")).toBeFocused();
   await shoot(page, "ask");
 });
 
@@ -331,19 +335,22 @@ test("two editors on a deck: one edits a title while the other adds notes; a hel
     '.plinth-slides__notepad-edit [contenteditable="true"]',
   );
   await expect(theirNotes).toBeFocused();
+  // Notes left empty are no notes: they type some.
+  await other.keyboard.type("Say hi");
   await page.keyboard.type(" more");
   await expect(openField(page)).toHaveText("alpha, edited more");
   // Adding notes to slide 1, where the owner types, is held.
   await showSlide(other, 1);
   await activeSlide(other).getByRole("button", { name: "Add speaker notes" }).click();
-  await expect(frameOf(other).locator(".plinth-slides__live")).toContainText(
-    `${s.owner} is editing slide 1`,
+  // Named by a first name from the address (deck-owner-…@ reads "Deck"), never the address.
+  await expect(frameOf(other).locator(".plinth-slides__live")).toHaveText(
+    "Deck is editing slide 1.",
   );
   await page.keyboard.press("Escape");
   await publish(page, 2);
   const text = await contentOf(page, s.id);
   expect(text).toContain("alpha, edited more");
-  expect(text).toContain("Note:");
+  expect(text).toContain("Note:\nSay hi");
   await other.context().close();
 });
 
