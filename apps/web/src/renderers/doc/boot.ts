@@ -296,6 +296,8 @@ function live(
           if (!local) editor?.lost(r);
         },
         version: (kind, n, info) => {
+          // The unpublished changes were discarded: so is everything kept to rescue.
+          if (kind === "reset" && info.why === "discarded") editor?.clearRescues();
           if (!local) session.version(kind, n, info);
           status();
         },

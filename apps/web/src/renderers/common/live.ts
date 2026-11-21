@@ -97,6 +97,10 @@ export interface LiveBackend {
   takeover(leaseId: string): boolean;
   /** Say the held lease is in use though no edit is sent (the room's `keep`); room only. */
   keep?(): boolean;
+  /** The seq of the last edit sent (room only), to ask `acked` about later. */
+  readonly lastSeq?: number;
+  /** Whether the room acknowledged this socket's edit `seq` (one of its recent ones). */
+  acked?(seq: number): boolean;
 }
 
 type Socket = Pick<WebSocket, "send" | "close" | "readyState"> & {
@@ -184,6 +188,8 @@ export class LiveDocClient implements LiveBackend {
   private wantLease = false;
   /** A struct frame sent and not answered yet. */
   private structPending = false;
+  /** The seqs of this socket's recent edits the room acknowledged (its own `op`), newest last. */
+  private ackedSeqs: number[] = [];
   /** `keep` frames sent and not answered yet (`kept`, or an error from a room that has none). */
   private keepsAwaiting = 0;
   /** The room answered a `keep` with `invalid` (deployed before it knew it): none is sent again. */
@@ -376,6 +382,14 @@ export class LiveDocClient implements LiveBackend {
   takeover(leaseId: string): boolean {
     this.wantLease = true;
     return this.send({ t: "takeover", lease: leaseId });
+  }
+
+  get lastSeq(): number {
+    return this.seq;
+  }
+
+  acked(seq: number): boolean {
+    return this.ackedSeqs.includes(seq);
   }
 
   keep(): boolean {
@@ -702,6 +716,10 @@ export class LiveDocClient implements LiveBackend {
     if (f.by === this.you?.id && this.mine?.id === f.lease) {
       this.acks.push({ rev: f.rev, text: f.ins });
       if (f.seq !== undefined && f.seq === this.unacked) this.unacked = null;
+    }
+    if (f.by === this.you?.id && f.seq !== undefined) {
+      this.ackedSeqs.push(f.seq);
+      if (this.ackedSeqs.length > 64) this.ackedSeqs.shift();
     }
     this.opts.listener.changed();
     this.opts.listener.status();
