@@ -7038,9 +7038,18 @@
                 "id": { "type": "string" },
                 "name": { "type": "string", "description": "Untrusted text" },
                 "width": { "type": "integer", "minimum": 16, "maximum": 4096 },
-                "height": { "type": "integer", "minimum": 16, "maximum": 4096 }
+                "height": {
+                  "type": "integer",
+                  "minimum": 16,
+                  "maximum": 4096,
+                  "description": "For a board with auto_height, its least height: the rendered board is as tall as its content"
+                },
+                "auto_height": {
+                  "type": "boolean",
+                  "description": "height=\"auto\": a fluid page measured as it renders, up to 8000 px"
+                }
               },
-              "required": ["id", "name", "width", "height"]
+              "required": ["id", "name", "width", "height", "auto_height"]
             }
           },
           "max_pixels": {

@@ -10,9 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Designs: fluid pages, notes, flows and links to one board.** An artboard with `height="auto"`
+  is as tall as its content, so a responsive web page shows whole on the canvas, in print and in
+  exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note -->` and
+  `<!-- note kind="title" -->` add stickies and titles to the canvas. A link to `#board=<id>`
+  inside a board moves to that board, for clickable prototypes, and the app's address keeps the
+  board on view (`#board=<id>`), so a reload or a shared link opens on it.
+
 - **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
   card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen
   instead of running past its edge.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no
