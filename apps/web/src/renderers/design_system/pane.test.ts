@@ -57,6 +57,23 @@ describe("the design system's review pane", () => {
     expect(describeChanges("design_system", live(base()), live(base(), true)).items).toEqual([]);
   });
 
+  it("names the component a component's change is in, and leaves the rest to the shared words", () => {
+    const after = base();
+    after.components[1].status = "deprecated";
+    after.description = "A different system.";
+    const items = describeChanges("design_system", live(base()), live(after)).items;
+    const pane = systemPane(document, () => "light");
+    const name = after.components[1].name as string;
+    const status = items.find((i) => i.what === "Status changed");
+    expect(status && pane.describe?.(status, live(after))).toEqual({
+      label: `${name}: status changed`,
+      before: base().components[1].status,
+      after: "deprecated",
+    });
+    const own = items.find((i) => i.where === "" && i.what === "Description changed");
+    expect(own && pane.describe?.(own, live(after))).toBeNull();
+  });
+
   it("shows what an agent must fix for a side the format refuses", () => {
     const el = document.createElement("div");
     const bad = base();

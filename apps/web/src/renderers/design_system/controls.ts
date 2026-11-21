@@ -193,14 +193,7 @@ function colorControl(ctx: ControlContext, value: unknown): HTMLElement {
     }
     ctx.change(t);
   });
-  const parts: HTMLElement[] = [swatch, text];
-  if (isObject(value)) {
-    const space = ctx.doc.createElement("span");
-    space.className = "ds-control__note";
-    space.textContent = String(value.colorSpace);
-    parts.push(space);
-  }
-  return group(ctx, ...parts);
+  return group(ctx, swatch, text);
 }
 
 // ---------- numbers with units ----------
@@ -347,15 +340,32 @@ function part(
   value: unknown,
   set: (v: unknown) => void,
 ): HTMLElement {
-  const sub: ControlContext = { ...ctx, label: `${ctx.label} ${name}`, change: set };
+  const words = PART_WORDS[name] ?? name;
+  const sub: ControlContext = { ...ctx, label: `${ctx.label} ${words.toLowerCase()}`, change: set };
   const box = ctx.doc.createElement("div");
   box.className = "ds-part";
   const label = ctx.doc.createElement("span");
   label.className = "ds-part__name";
-  label.textContent = name;
+  label.textContent = words;
   box.append(label, valueControl(sub, type, value));
   return box;
 }
+
+/** What a composite's part is called on the page (its key is what the JSON says). */
+const PART_WORDS: Record<string, string> = {
+  color: "Color",
+  offsetX: "X",
+  offsetY: "Y",
+  blur: "Blur",
+  spread: "Spread",
+  fontFamily: "Font",
+  fontSize: "Size",
+  fontWeight: "Weight",
+  lineHeight: "Line height",
+  letterSpacing: "Letter spacing",
+  width: "Width",
+  style: "Style",
+};
 
 const SHADOW_PARTS: [string, DsTokenType][] = [
   ["color", "color"],
@@ -427,7 +437,7 @@ function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown
     p.className = "ds-part";
     const label = ctx.doc.createElement("span");
     label.className = "ds-part__name";
-    label.textContent = "style";
+    label.textContent = PART_WORDS.style ?? "Style";
     p.append(label, s);
     box.append(p);
   }

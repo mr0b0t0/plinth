@@ -1191,11 +1191,15 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     description and usage are formatted text, with the doc's block editor
     ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)); a component's status
     is a select. Each token row has one ⋯ (dark value, description, another token, "Rename: Ask an
-    agent", remove), each group row one ⋯ ("Add a token", "Rename: Ask an agent").
+    agent", remove), each group row one ⋯ ("Add a token", "Rename: Ask an agent"). The parts of a
+    shadow, border or typography token are labelled in words (Color, X, Y, Blur, Spread; Width,
+    Style; Font, Size, Weight, Line height, Letter spacing).
   - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
     components), renaming tokens and groups, types, the fonts, the prefix, the format and the
-    shared CSS. Each has "Ask an agent" on the page: a token's or a group's menu, a component's
-    menu ("Ask an agent to change this component"), and the fonts and settings line under the name.
+    shared CSS. Each has Ask an agent on the page, in the ⋯ it belongs to: a token's or a group's
+    ("Rename: Ask an agent"), a component's ("Ask an agent") and the header's, beside the name
+    ("Change fonts or settings: Ask an agent"). A change in the review that is in a component
+    names it ("Button: description changed").
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
     (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or

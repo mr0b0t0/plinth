@@ -18,6 +18,7 @@ import { fileUrl } from "../common/files.ts";
 import {
   bringIntoPane,
   CHANGED_ATTR,
+  type ItemWords,
   markChangedChildren,
   type ReviewPane,
 } from "../common/review.ts";
@@ -148,6 +149,17 @@ export function systemPane(doc: Document, theme: () => PreviewTheme): ReviewPane
       }
       el.replaceChildren(site);
       return siteGoto(site);
+    },
+    // A component's change names the component ("Button: description changed"), so it never
+    // reads like the system's own description or status.
+    describe(item) {
+      const comp = /^Component “(.+)”$/.exec(item.where);
+      if (!comp) return null;
+      const what = item.what.charAt(0).toLowerCase() + item.what.slice(1);
+      const words: ItemWords = { label: `${comp[1]}: ${what}` };
+      if (item.before !== undefined) words.before = item.before;
+      if (item.after !== undefined) words.after = item.after;
+      return words;
     },
   };
 }

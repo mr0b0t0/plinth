@@ -1179,21 +1179,20 @@ export class DsEditor {
       this.writer(["name"]).write(v);
     });
     h1?.replaceChildren(name);
-    // Fonts and settings are agents' to change.
-    const line = this.doc.createElement("div");
-    line.className = "ds-settings";
-    const what = this.doc.createElement("span");
-    const fonts = ds.fonts.map((f) => f.family).join(", ");
-    what.textContent = `Fonts: ${fonts || "none"} · Prefix: ${ds.prefix}`;
-    const ask = this.doc.createElement("button");
-    ask.type = "button";
-    ask.className = "ds-button ds-button--ghost";
-    ask.textContent = "Ask an agent";
-    ask.setAttribute("aria-label", "Change fonts or settings: Ask an agent");
-    ask.title = "Change fonts or settings";
-    ask.addEventListener("click", () => this.askAbout("system:settings", "Fonts and settings"));
-    line.append(what, ask);
-    header.append(line);
+    // Fonts and settings are agents' to change: the header's one ⋯.
+    header.classList.add("ds-header--editing");
+    header.append(
+      this.menu(`${ds.name}: actions`, () => [
+        {
+          items: [
+            {
+              label: "Change fonts or settings: Ask an agent",
+              run: () => this.askAbout("system:settings", "Fonts and settings"),
+            },
+          ],
+        },
+      ]),
+    );
   }
 
   private syncHeader(header: HTMLElement): void {
@@ -1589,7 +1588,7 @@ export class DsEditor {
         {
           items: [
             {
-              label: "Ask an agent to change this component",
+              label: "Ask an agent",
               run: () => this.askAbout(anchorKey("component", id, index), c.name),
             },
           ],

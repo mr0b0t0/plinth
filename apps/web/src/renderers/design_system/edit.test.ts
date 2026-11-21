@@ -243,13 +243,12 @@ describe("what stays with agents", () => {
     );
     choose(
       root().querySelector("#ds-components-button .ds-component__bar") as Element,
-      "Ask an agent to change this component",
+      "Ask an agent",
     );
-    root()
-      .querySelector<HTMLButtonElement>(
-        '.ds-settings button[aria-label="Change fonts or settings: Ask an agent"]',
-      )
-      ?.click();
+    // The header has one ⋯, and no line of fonts and settings.
+    const header = root().querySelector(".ds-header") as Element;
+    expect(header.querySelectorAll("button:not(.plinth-doc__menu-button)")).toHaveLength(0);
+    choose(header, "Change fonts or settings: Ask an agent");
     expect(posted.filter((m) => m.type === "ask").map((m) => m.anchor)).toEqual([
       { key: "token:color.bg", text: "color.bg" },
       { key: "group:color", text: "color" },

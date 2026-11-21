@@ -493,16 +493,6 @@
   }
 }
 
-.ds-settings {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  margin-top: 12px;
-  color: var(--doc-muted);
-  font-size: 0.85rem;
-}
-
 .ds-field {
   box-sizing: border-box;
   min-width: 0;
@@ -552,8 +542,7 @@
 }
 
 .ds-token__side-name,
-.ds-part__name,
-.ds-control__note {
+.ds-part__name {
   color: var(--doc-muted);
   font-size: 0.78rem;
 }
@@ -603,6 +592,25 @@
   position: absolute;
   top: 6px;
   right: 6px;
+}
+
+/* A menu is as wide as its longest item (up to the menu's own limit), so no item wraps. */
+.ds-menu .plinth-doc__menu {
+  width: max-content;
+}
+
+/* Edit mode: the header's ⋯ (fonts and settings) sits at the end of the name's line. */
+.ds-header--editing {
+  position: relative;
+}
+
+.ds-header--editing h1 {
+  padding-right: 44px;
+}
+
+.ds-header--editing > .ds-menu {
+  top: 4px;
+  right: 0;
 }
 
 .ds-group th {
