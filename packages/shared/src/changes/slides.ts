@@ -1,6 +1,7 @@
 // What changed in a deck (slides.md): slides added, removed and moved; per slide its title, its
 // text, its columns, its images and its speaker notes; and the deck settings.
 import { type DeckSettings, parseDeck, type SlideSource } from "../slides.ts";
+import { isHtmlDeckIndex } from "../slidesHtml.ts";
 import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import { markdownBlocks } from "./markdownText.ts";
@@ -134,8 +135,89 @@ function describeSlide(out: ChangeCollector, a: Slide, b: Slide): void {
   }
 }
 
+interface IndexView {
+  title: string;
+  size: string;
+  order: string[];
+  families: string[];
+}
+
+/** What a person sees of an HTML deck's deck.json: its title, size, slide order and faces. */
+function indexView(text: string): IndexView {
+  let raw: Record<string, unknown> = {};
+  try {
+    const v = JSON.parse(text) as unknown;
+    if (typeof v === "object" && v !== null && !Array.isArray(v))
+      raw = v as Record<string, unknown>;
+  } catch {
+    // A stored index always parsed when it was published; an unreadable one shows as empty.
+  }
+  const faces = typeof raw.faces === "object" && raw.faces !== null ? Object.values(raw.faces) : [];
+  return {
+    title: typeof raw.title === "string" ? raw.title : "",
+    size: raw.size === "4:3" ? "4:3" : "16:9",
+    order: Array.isArray(raw.order)
+      ? raw.order.filter((x): x is string => typeof x === "string")
+      : [],
+    families: faces
+      .map((f) => (typeof f === "object" && f !== null ? (f as { family?: unknown }).family : null))
+      .filter((f): f is string => typeof f === "string"),
+  };
+}
+
+/**
+ * An HTML deck's index changes (docs/spec.md "Comparing versions"): its title, size, faces, and
+ * slides added, removed or moved by id. What changed inside a slide is in its file
+ * (slides/<id>.html), which the file list names.
+ */
+function describeHtmlDeck(out: ChangeCollector, before: string, after: string): void {
+  const htmlA = isHtmlDeckIndex(before);
+  const htmlB = isHtmlDeckIndex(after);
+  if (htmlA !== htmlB) {
+    out.add({
+      kind: "changed",
+      where: "",
+      what: "Deck format changed",
+      before: htmlA ? "HTML slides" : "Markdown",
+      after: htmlB ? "HTML slides" : "Markdown",
+    });
+    return;
+  }
+  const a = indexView(before);
+  const b = indexView(after);
+  const where = "Deck settings";
+  if (a.title !== b.title) {
+    out.add({ kind: "changed", where, what: "Title changed", before: a.title, after: b.title });
+  }
+  if (a.size !== b.size) {
+    out.add({ kind: "changed", where, what: "Size changed", before: a.size, after: b.size });
+  }
+  const fonts = multisetChanges(a.families, b.families);
+  for (const f of fonts.added) out.add({ kind: "added", where, what: `Font ${quoted(f)} added` });
+  for (const f of fonts.removed)
+    out.add({ kind: "removed", where, what: `Font ${quoted(f)} removed` });
+  const inA = new Set(a.order);
+  const inB = new Set(b.order);
+  b.order.forEach((id, i) => {
+    if (!inA.has(id))
+      out.add({ kind: "added", where: `Slide ${i + 1}`, what: `Slide ${quoted(id)} added` });
+  });
+  for (const id of a.order) {
+    if (!inB.has(id)) out.add({ kind: "removed", where: "", what: `Slide ${quoted(id)} removed` });
+  }
+  const keptA = a.order.filter((id) => inB.has(id));
+  const keptB = b.order.filter((id) => inA.has(id));
+  if (keptA.join("\u0000") !== keptB.join("\u0000")) {
+    out.add({ kind: "moved", where: "", what: "Slide order changed" });
+  }
+}
+
 /** Adds the changes from `before` to `after`, two decks, to `out`. */
 export function describeSlides(out: ChangeCollector, before: string, after: string): void {
+  if (isHtmlDeckIndex(before) || isHtmlDeckIndex(after)) {
+    describeHtmlDeck(out, before, after);
+    return;
+  }
   const da = parseDeck(before);
   const db = parseDeck(after);
   describeSettings(out, da.settings, db.settings);

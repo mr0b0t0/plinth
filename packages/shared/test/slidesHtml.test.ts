@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   deckCssProblem,
   deckFileProblem,
+  describeChanges,
   HTML_DECK_CANVAS,
   HTML_DECK_LIMITS,
   type HtmlDeckResult,
@@ -500,6 +501,35 @@ describe("which files a deck version holds", () => {
     expect(deckFileProblem("html", "data.json", "application/json")).toMatch(/ds\//);
     expect(deckFileProblem("html", "ds/brand/fonts/B.woff2", "font/woff2")).toBeNull();
     expect(deckFileProblem("html", "app.js", "text/javascript")).toMatch(/slides\/<id>\.html/);
+  });
+});
+
+describe("comparing two HTML deck versions", () => {
+  it("names the title, size, fonts and slides added, removed or moved", () => {
+    const a = JSON.stringify({
+      title: "Q3",
+      order: ["cover", "plan", "risks"],
+      faces: { i: { family: "Inter" } },
+    });
+    const b = JSON.stringify({
+      title: "Q4",
+      size: "4:3",
+      order: ["plan", "cover", "next"],
+      faces: { l: { family: "Lora" } },
+    });
+    const items = describeChanges("slides", a, b).items.map((i) => `${i.kind}: ${i.what}`);
+    expect(items).toEqual([
+      "changed: Title changed",
+      "changed: Size changed",
+      "added: Font “Lora” added",
+      "removed: Font “Inter” removed",
+      "added: Slide “next” added",
+      "removed: Slide “risks” removed",
+      "moved: Slide order changed",
+    ]);
+    expect(describeChanges("slides", "# Talk", a).items.map((i) => i.what)).toEqual([
+      "Deck format changed",
+    ]);
   });
 });
 
