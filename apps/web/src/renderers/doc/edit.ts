@@ -2886,9 +2886,11 @@ export class DocEditor {
 
   /**
    * An edit was refused (by this frame's check, or by the room because the lines changed first):
-   * the block goes back to the room's text and stays open, and the frame says why.
+   * the block goes back to the room's text and stays open, and the frame says why. When the room
+   * refused it (`fromRoom`), what was typed is kept first, parked in the rescue store with Copy and
+   * Dismiss: it counts as unsent and survives a reload, where it is written as a block of its own.
    */
-  refused(reason: string): void {
+  refused(reason: string, fromRoom = false): void {
     this.cancelTimer();
     const open = this.open;
     const mine = this.backend.mine;
@@ -2907,18 +2909,50 @@ export class DocEditor {
       this.hooks.status();
       return;
     }
+    let parked = false;
     if (open && mine) {
       const lines = this.backend.lines;
       const block = parseBlocks(joinLines(lines)).find(
         (b) => b.core.start >= mine.start && b.core.end <= mine.end,
       );
-      const model = block
-        ? editableBlock(joinLines(lines.slice(block.core.start, block.core.end)), TOOLS, open.env)
-        : null;
+      const own = block ? joinLines(lines.slice(block.core.start, block.core.end)) : "";
+      if (fromRoom) parked = this.parkTyped(open, own, mine.start);
+      const model = block ? editableBlock(own, TOOLS, open.env) : null;
       open.rich.setModel(model ?? para());
     }
-    this.showNotice(reason);
+    if (parked) this.showRescueNotice();
+    else this.showNotice(reason);
     this.hooks.status();
+  }
+
+  /**
+   * The open block's typing, about to be replaced by the room's text (`own`), kept as a parked
+   * rescue item: the app keeps it, the page offers Copy and Dismiss, and nothing writes it until a
+   * reload. Whether there was anything to keep.
+   */
+  private parkTyped(open: Open, own: string, near: number): boolean {
+    const model = open.rich.model;
+    if (isEmptyBlock(model)) return false;
+    const core =
+      verifyBlock(model, TOOLS, open.env) ?? verifyBlock(withoutMarks(model), TOOLS, open.env);
+    if (!core || core === own) return false;
+    const id = `r${Date.now().toString(36)}${++this.rescueN}`;
+    const r: Rescue = {
+      id,
+      text: core,
+      near,
+      sent: null,
+      owner: null,
+      n: ++this.rescueN,
+      free: true,
+      tries: RESCUE_TRIES,
+      parked: true,
+      reported: null,
+      kept: null,
+    };
+    this.rescues.set(id, r);
+    this.report([r], [], []);
+    return true;
   }
 
   /** Send a pending block now. */

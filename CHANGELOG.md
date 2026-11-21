@@ -26,7 +26,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   converted to UTF-8 says so, and a UTF-16 file without a byte order mark is read as such (or
   refused with a clear message) instead of filling every cell with NULs. Typing a doc could not
   take (at its size limit, a block too long, or not sent) stays in its block, unsent, instead of
-  being dropped when the block closes.
+  being dropped when the block closes, and an edit the room refuses keeps what was typed, with
+  Copy, before the block goes back.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode

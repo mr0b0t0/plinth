@@ -280,7 +280,8 @@ function live(
           status();
         },
         error: (code) => {
-          if (code === "invalid") editor?.refused(REFUSED_EDIT);
+          // The room refused an edit: what was typed is kept before the block goes back.
+          if (code === "invalid") editor?.refused(REFUSED_EDIT, true);
           // A lease that went before its last frame was answered (a takeover): the editor says
           // what happened already.
           else if (code === "not_held") return;

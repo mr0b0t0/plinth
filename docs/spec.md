@@ -3029,7 +3029,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   is. A send that is refused (the doc is at its size limit, the block is over one frame of the
   room, or the socket did not take it) is handled the same way: the text stays in the open block
   with the reason, counts as unsent and `unsavable`, goes to the rescue store (a room) or the kept
-  copy (solo), and is sent again once it fits or the draft is back.
+  copy (solo), and is sent again once it fits or the draft is back. An edit the room refuses as
+  invalid puts the block back as the room has it, but what was typed is kept first, in the rescue
+  store with Copy and Dismiss, and written as a block of its own after a reload.
 - **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
   until the room acknowledges a write of it (without that acknowledgement it is written again,
   a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which

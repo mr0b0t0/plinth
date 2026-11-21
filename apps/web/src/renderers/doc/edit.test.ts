@@ -3053,4 +3053,26 @@ describe("the rescue store", () => {
     expect(kept()).toContain(long);
     expect(room.editor.close(true)).toBe(false);
   });
+
+  it("room: an edit the room refuses as invalid keeps what was typed, with Copy, before the block goes back", () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    // The edit goes out but the room never applies it: it answers `invalid`.
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    room.editor.refused(REFUSED_EDIT, true);
+    // The block is the room's again, and the typing is kept, not lost.
+    expect(rich(room.editor).editable.textContent).toBe("Two");
+    expect(kept()).toEqual(["Two typed a lot"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(noticeButton("Dismiss")).toBeDefined();
+    // After a reload it is offered back and written as a block of its own.
+    room.dropEdits = false;
+    const again = reload("Two\n\nnext");
+    expect(again.lines.join("\n")).toContain("Two typed a lot");
+  });
 });
