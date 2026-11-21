@@ -12,7 +12,12 @@ import {
   RENDERER_PROTOCOL_VERSION,
   versionRange,
 } from "@plinth/shared";
-import { type RescueItem, readRescueItems } from "../../components/viewer/rendererProtocol.ts";
+import {
+  isRescueN,
+  type RescueItem,
+  readRescueIds,
+  readRescueItems,
+} from "../../components/viewer/rendererProtocol.ts";
 import type { LiveDocClient } from "./live.ts";
 import type { DraftReview, ReviewOutcome } from "./review.ts";
 
@@ -33,7 +38,7 @@ export type EditAppMessage =
     }
   | { type: "reviewed"; nonce: string; result: ReviewResult }
   /** Typed text the app kept from an earlier frame's rescue store (doc editing). */
-  | { type: "rescue"; items: RescueItem[] };
+  | { type: "rescue"; items: RescueItem[]; stored?: { ids: string[]; n: number } };
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 /** The longest kept copy a `review` may carry, in UTF-16 units; the type's rules check it exactly. */
@@ -95,7 +100,11 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
   }
   if (m.type === "rescue") {
     const items = readRescueItems(m.items);
-    return items ? { type: "rescue", items } : null;
+    if (!items) return null;
+    if (m.stored === undefined && m.n === undefined) return { type: "rescue", items };
+    const ids = readRescueIds(m.stored);
+    if (!ids || !isRescueN(m.n)) return null;
+    return { type: "rescue", items, stored: { ids, n: m.n } };
   }
   if (typeof m.nonce !== "string" || !NONCE_RE.test(m.nonce)) return null;
   if (m.type === "collect") return { type: "collect", nonce: m.nonce };

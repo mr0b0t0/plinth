@@ -3019,7 +3019,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   in as a new block at the nearest free place (else after the last block), three places at most;
   one that still cannot be written stays kept, counts as unsent changes (the page asks before it
   is left, and a hidden tab keeps its socket), and the page says "What you typed couldn't be added
-  to the doc yet. It is kept here." with **Copy**. A room's refusal never resets a block holding
+  to the doc yet. It is kept here." with **Copy**, or, for text the app's store could not take (over
+  20 items or 256 KiB), "… It's kept on this page until you reload. Copy it to be safe." The app's
+  store only merges what the frame reports (items in, ids out), so nothing leaves it unnamed. A room's refusal never resets a block holding
   such typing.
 - **Opening a block for editing again.** A block saved with such a character reference opens for
   editing as any other: the fidelity check tries the same written form.

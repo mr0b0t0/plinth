@@ -47,7 +47,7 @@ import {
   DocEditor,
   LocalDoc,
   REFUSED_EDIT,
-  type RescueItem,
+  type RescueReport,
 } from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
@@ -218,7 +218,7 @@ function live(
     save: () => post({ type: "save" }),
     status,
     // The rescue store: the app keeps a copy in its own storage (never this origin's).
-    rescue: (items: RescueItem[]) => post({ type: "rescue", items }),
+    rescue: (r: RescueReport) => post({ type: "rescue", ...r }),
     leave: () => {
       if (!session.isOpen) post({ type: "leave" });
     },
@@ -323,7 +323,8 @@ function live(
       editor?.render();
       status();
     } else if (m.type === "rescue") {
-      editor?.offerRescue(m.items);
+      if (m.items.length > 0) editor?.offerRescue(m.items);
+      if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
     } else if (m.type === "collect" && local) {
       editor?.flush();
       // Typing that cannot be written as typed is not in the doc: the app publishes nothing, and

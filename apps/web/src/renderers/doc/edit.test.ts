@@ -5,6 +5,8 @@
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
 import { LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
+import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import type { ClientLease, LeaseDenial, LeaseLoss } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
@@ -20,9 +22,10 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  RESCUE_FRAME_ONLY,
   RESCUE_STUCK,
   RESCUE_WAITS,
-  type RescueItem,
+  type RescueReport,
   TAKEN_KEPT,
   TOO_LONG,
   UNSAVABLE,
@@ -2417,19 +2420,49 @@ class FakeRoom {
 }
 
 describe("the rescue store", () => {
-  let rescued: RescueItem[][];
+  // The app's copy, as the app keeps it (merge-only, components/editor/draft.ts), answering
+  // each report with the ids it holds.
+  const USER = "u1";
+  const ART = "art1";
+  let reports: RescueReport[];
+  let answer = true;
+  const stored = () => readRescueItems(loadRescue(USER, ART)) ?? [];
+  const kept = () => stored().map((i) => i.text);
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    reports = [];
+    answer = true;
+  });
+
+  function app(editor: () => DocEditor) {
+    return (r: RescueReport) => {
+      reports.push(r);
+      const ids = mergeRescue(USER, ART, r.upsert, [...r.written, ...r.gone]);
+      if (answer) editor().rescueStored(ids, r.n);
+    };
+  }
 
   function roomSetup(text: string) {
     const room = new FakeRoom(text);
-    rescued = [];
     room.editor = new DocEditor(root, window, room, {
       save,
       status: () => undefined,
       ask,
-      rescue: (items) => rescued.push(items),
+      rescue: app(() => room.editor),
     });
     room.editor.setEditing(true);
     return room;
+  }
+
+  /** A reload: a new frame on `text`, offered what the app kept. */
+  function reload(text: string) {
+    document.body.innerHTML = "";
+    root = document.createElement("main");
+    document.body.append(root);
+    const again = roomSetup(text);
+    again.editor.offerRescue(stored());
+    return again;
   }
 
   /** Lets queued work run (the store writes from a microtask). */
@@ -2446,8 +2479,6 @@ describe("the rescue store", () => {
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
     expect(room.editor.unsavable).toBe(true);
   }
-
-  const kept = () => rescued.at(-1)?.map((i) => i.text) ?? [];
 
   it("keeps the typing the moment it cannot be written, for the app to hold", () => {
     const room = roomSetup("ab\n\nnext");
@@ -2557,15 +2588,14 @@ describe("the rescue store", () => {
     const room = roomSetup("ab\n\nabc\n\nnext");
     stick(room);
     expect(kept()).toEqual(["abc"]);
-    // A reload: the app offers the item to a new frame, whose draft has the other "abc" only.
-    document.body.innerHTML = "";
-    root = document.createElement("main");
-    document.body.append(root);
-    const again = roomSetup("ab\n\nabc\n\nnext");
-    again.editor.offerRescue([{ id: "r1", text: "abc", near: 0 }]);
+    // The frame reports changes only, never its whole store.
+    expect(reports.at(-1)).toMatchObject({ upsert: [{ text: "abc" }], written: [], gone: [] });
+    // A reload: the new frame is offered the item, and its draft has the other "abc" only.
+    const again = reload("ab\n\nabc\n\nnext");
     await settle();
     expect(again.text.match(/^abc$/gm)?.length).toBe(2);
     expect(kept()).toEqual([]);
+    expect(reports.at(-1)?.written).toHaveLength(1);
     expect(again.editor.pending).toBe(false);
   });
 
@@ -2611,7 +2641,7 @@ describe("the rescue store", () => {
     await settle();
     // Written in place, sent, not acknowledged yet: still kept, with where it went.
     expect(room.text).toBe("abc\n\nnext");
-    expect(rescued.at(-1)).toEqual([{ id: expect.any(String), text: "abc", near: 0 }]);
+    expect(stored()).toEqual([{ id: expect.any(String), text: "abc", near: 0 }]);
     expect(room.editor.pending).toBe(true);
     room.ack();
     expect(kept()).toEqual([]);
@@ -2651,13 +2681,8 @@ describe("the rescue store", () => {
     r.editable.dispatchEvent(new Event("input", { bubbles: true }));
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
     // Sent and landed, but the tab reloads before the ack: the app still has the item.
-    const item = rescued.at(-1)?.[0] as RescueItem;
-    expect(item.text).toBe("abc");
-    document.body.innerHTML = "";
-    root = document.createElement("main");
-    document.body.append(root);
-    const again = roomSetup(room.text);
-    again.editor.offerRescue([item]);
+    expect(kept()).toEqual(["abc"]);
+    const again = reload(room.text);
     await settle();
     expect(again.text).toContain("*a*bc more");
     expect(again.text).toContain("abc");
@@ -2679,53 +2704,53 @@ describe("the rescue store", () => {
 
   it("4. solo: kept items go into the solo text, or stay kept with Copy when they cannot", async () => {
     const { local, editor } = setup("ab\n\nnext");
-    const posts: RescueItem[][] = [];
-    (editor as unknown as { hooks: { rescue: (i: RescueItem[]) => void } }).hooks.rescue = (i) =>
-      posts.push(i);
-    editor.offerRescue([{ id: "r1", text: "kept text", near: 0 }]);
+    (editor as unknown as { hooks: { rescue: (r: RescueReport) => void } }).hooks.rescue = app(
+      () => editor,
+    );
+    mergeRescue(USER, ART, [{ id: "r1", text: "kept text", near: 0 }], []);
+    editor.offerRescue(stored());
     await settle();
     expect(local.text).toContain("kept text");
-    expect(posts.at(-1)).toEqual([]);
+    expect(kept()).toEqual([]);
     expect(editor.pending).toBe(false);
     // A doc at its size limit cannot take one: it stays kept, and the page offers Copy.
     const big = "x".repeat(LIMITS.maxDocBytes - 4);
     const full = setup(big);
-    full.editor.offerRescue([{ id: "r2", text: "more text", near: 0 }]);
+    (full.editor as unknown as { hooks: { rescue: (r: RescueReport) => void } }).hooks.rescue = app(
+      () => full.editor,
+    );
+    mergeRescue(USER, ART, [{ id: "r2", text: "more text", near: 0 }], []);
+    full.editor.offerRescue(stored());
     await settle();
     expect(full.local.text).toBe(big);
+    expect(kept()).toEqual(["more text"]);
     expect(full.editor.pending).toBe(true);
     expect(notice()).toContain(RESCUE_STUCK);
   });
 
-  it("posts the newest items up to the app's limits (20 items, 256 KiB), and keeps Copy while any is over", () => {
+  it("says an item the app did not keep is only on this page, and keeps saying so, with Copy", () => {
     const room = roomSetup("ab\n\nnext");
-    room.connected = false;
-    room.editor.offerRescue(
-      Array.from({ length: 21 }, (_, n) => ({ id: `i${n}`, text: `item ${n}`, near: 0 })),
-    );
-    const posted = rescued.at(-1)?.map((i) => i.id) ?? [];
-    expect(posted).toHaveLength(20);
-    expect(posted).not.toContain("i0");
-    expect(posted).toContain("i20");
-    expect(notice()).toContain(RESCUE_STUCK);
+    // The app's store is full: it answers without the new item.
+    answer = false;
+    stick(room);
+    const last = reports.at(-1) as RescueReport;
+    room.editor.rescueStored([], last.n);
+    // The block's own notice ("can't be saved as typed") stays until it goes; then this one.
+    expect(notice()).toContain(UNSAVABLE);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    expect(room.editor.pending).toBe(true);
     // Another notice replaces it; once that one goes, Copy is back.
     room.editor.notify("Not connected. Try again in a moment.");
-    expect(notice()).not.toContain(RESCUE_STUCK);
+    expect(notice()).not.toContain(RESCUE_FRAME_ONLY);
     (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
-    expect(notice()).toContain(RESCUE_STUCK);
-    expect(room.editor.pending).toBe(true);
-    // Text over 256 KiB in all: the newest that fit.
-    document.body.innerHTML = "";
-    root = document.createElement("main");
-    document.body.append(root);
-    const big = roomSetup("ab");
-    big.connected = false;
-    const chunk = "y".repeat(100 * 1024);
-    big.editor.offerRescue([
-      { id: "old", text: `old ${chunk}`, near: 0 },
-      { id: "mid", text: `mid ${chunk}`, near: 0 },
-      { id: "new", text: `new ${chunk}`, near: 0 },
-    ]);
-    expect(rescued.at(-1)?.map((i) => i.id)).toEqual(["mid", "new"]);
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    const copy = [
+      ...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button"),
+    ].find((b) => b.textContent === "Copy");
+    expect(copy).toBeDefined();
+    // Kept by the app after all (a later answer): back to the usual words, or none.
+    room.editor.rescueStored([last.upsert[0]?.id as string], last.n);
+    expect(notice()).not.toContain(RESCUE_FRAME_ONLY);
   });
 });

@@ -2538,10 +2538,12 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   text without its marks, and a line number). The app keeps it in its own origin's
   `sessionStorage` under the signed-in account and the artifact
   (`plinth-draft:page-rescue:<user id>:<artifact id>`, beside the solo kept copy, with a copy in
-  memory when storage is blocked), never in the content origin's storage. It reads, offers and
-  writes the store only once the session says who is signed in; other accounts' stores are
-  ignored (the next person in a tab is never offered the last one's text) and are removed only by
-  an explicit sign-out in the tab. It offers the store back only to the artifact's frame at its
+  memory when storage is blocked), never in the content origin's storage. The frame sends changes
+  only (`upsert`, and the ids `written` or `gone`), and the app's store only merges them: an item
+  leaves it by its id, by a discard or by a sign-out, never because a report left it out. It reads,
+  offers and writes the store only once the session says who is signed in; other accounts' stores
+  are ignored (the next person in a tab is never offered the last one's text) and are removed only
+  by an explicit sign-out in the tab (any sign-out path). It offers the store back only to the artifact's frame at its
   exact origin; it never renders or sends it anywhere else. The frame writes it through its own
   leases like typing and drops an item only on the room's acknowledgement of its write; a write
   whose acknowledgement never came is written again, since matching text proves nothing (a copy

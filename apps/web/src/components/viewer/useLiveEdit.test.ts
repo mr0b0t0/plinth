@@ -93,6 +93,11 @@ function fromFrame(data: Record<string, unknown>, origin = ORIGIN, key: string |
   });
 }
 
+/** A rescue report from the frame that only upserts `items`. */
+function up(items: { id: string; text: string; near: number }[], n = 1) {
+  return { type: "rescue", upsert: items, written: [] as string[], gone: [] as string[], n };
+}
+
 function sentToFrame(type: string) {
   return toFrame.mock.calls.filter((c) => c[0]?.type === type);
 }
@@ -324,7 +329,7 @@ describe("useLiveEdit", () => {
     const t = await inReview((c) =>
       c.method === "DELETE" ? new Response(null, { status: 204 }) : undefined,
     );
-    fromFrame({ type: "rescue", items: [{ id: "r1", text: "Kept", near: 0 }] });
+    fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
     expect(sessionStorage.getItem("plinth-draft:page-rescue:u1:art1")).not.toBeNull();
     fromFrame({ type: "resolved", nonce: t.nonce, outcome: "discard", version: 4, rev: 7 });
     // The app confirms it first, with its own dialog: nothing is deleted until then.
@@ -668,35 +673,24 @@ describe("useLiveEdit", () => {
     r.rerender();
     expect(sentToFrame("rescue").at(-1)?.[0]).toMatchObject({ type: "rescue", items });
     expect(sessionStorage.getItem(other)).not.toBeNull();
-    const leave = () => {
-      const e = new Event("beforeunload", { cancelable: true });
-      window.dispatchEvent(e);
-      return e.defaultPrevented;
-    };
-    fromFrame({ type: "live", ...STATUS, unflushed: false });
-    expect(leave()).toBe(true);
-    // Without the frame's key, malformed, or over the limits, a message changes nothing.
-    fromFrame({ type: "rescue", items: [] }, ORIGIN, null);
-    fromFrame({ type: "rescue", items: [{ id: "bad id!", text: "x", near: 0 }] });
-    const big = "z".repeat(60 * 1024);
-    fromFrame({
-      type: "rescue",
-      items: [0, 1, 2, 3, 4].map((n) => ({ id: `b${n}`, text: big, near: 0 })),
-    });
-    fromFrame({
-      type: "rescue",
-      items: Array.from({ length: 21 }, (_, n) => ({ id: `c${n}`, text: "x", near: 0 })),
-    });
-    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toEqual(items);
-    // The frame wrote them: the store is cleared, and leaving is quiet again.
+    // Without the frame's key, malformed, or over the limits, a report changes nothing.
+    fromFrame({ ...up([]), written: ["r1"] }, ORIGIN, null);
+    fromFrame({ ...up([]), written: ["bad id!"] });
+    fromFrame(up([{ id: "bad id!", text: "x", near: 0 }]));
+    fromFrame({ type: "rescue", upsert: [], written: [], gone: [], n: -1 });
     fromFrame({ type: "rescue", items: [] });
+    fromFrame(up(Array.from({ length: 21 }, (_, n) => ({ id: `c${n}`, text: "x", near: 0 }))));
+    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toEqual(items);
+    // The frame wrote it: named as written, it leaves the store.
+    fromFrame({ ...up([]), written: ["r1"] });
     expect(sessionStorage.getItem(key)).toBeNull();
-    expect(leave()).toBe(false);
     expect(sessionStorage.getItem(other)).not.toBeNull();
   });
 
-  it("keeps what the frame reports while the session loads, under the account once it is known", () => {
+  it("A: what a new frame reports while the session loads is merged with what was kept, never put in its place", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const key = "plinth-draft:page-rescue:u1:art1";
+    sessionStorage.setItem(key, JSON.stringify([{ id: "old1", text: "Old", near: 0 }]));
     let userId: string | null | undefined;
     const r = renderHook(() =>
       useLiveEdit({
@@ -710,28 +704,76 @@ describe("useLiveEdit", () => {
       }),
     );
     act(() => r.result.current.start());
-    fromFrame({ type: "rescue", items: [{ id: "r1", text: "Early", near: 0 }] });
+    fromFrame(up([{ id: "new1", text: "New", near: 0 }]));
     userId = "u1";
     r.rerender();
-    expect(
-      JSON.parse(sessionStorage.getItem("plinth-draft:page-rescue:u1:art1") ?? "null"),
-    ).toEqual([{ id: "r1", text: "Early", near: 0 }]);
+    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toEqual([
+      { id: "old1", text: "Old", near: 0 },
+      { id: "new1", text: "New", near: 0 },
+    ]);
   });
 
-  it("solo: items the frame wrote into its text are kept in the tab's copy before the store lets them go", async () => {
+  it("B: a new item written meanwhile leaves the store as it was, and a fresh frame's empty report changes nothing", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const key = "plinth-draft:page-rescue:u1:art1";
+    const old = [{ id: "old1", text: "Old", near: 0 }];
+    sessionStorage.setItem(key, JSON.stringify(old));
+    const r = hook(gate("room"), vi.fn(), { userId: "u1" });
+    act(() => r.result.current.start());
+    fromFrame(up([]));
+    fromFrame(up([{ id: "new1", text: "New", near: 0 }]));
+    fromFrame({ ...up([]), written: ["new1"] });
+    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toEqual(old);
+    // Only written, gone, a discard or a sign-out take an item out.
+    fromFrame({ ...up([]), gone: ["old1"] });
+    expect(sessionStorage.getItem(key)).toBeNull();
+  });
+
+  it("answers each report with the ids it keeps: what does not fit stays out", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const r = hook(gate("room"), vi.fn(), { userId: "u1" });
+    act(() => r.result.current.start());
+    const chunk = "y".repeat(60 * 1024);
+    fromFrame(
+      up(
+        [0, 1, 2, 3].map((n) => ({ id: `a${n}`, text: chunk, near: 0 })),
+        1,
+      ),
+    );
+    fromFrame(up([{ id: "b0", text: chunk, near: 0 }], 2));
+    const reply = sentToFrame("rescue").at(-1)?.[0];
+    expect(reply).toMatchObject({ type: "rescue", items: [], n: 2 });
+    expect(reply.stored).toHaveLength(4);
+    expect(reply.stored).not.toContain("b0");
+  });
+
+  it("warns before leaving while any account's store for this page is in the tab, with no session", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    sessionStorage.setItem(
+      "plinth-draft:page-rescue:u1:art1",
+      JSON.stringify([{ id: "r1", text: "Kept", near: 0 }]),
+    );
+    // The session never resolved (/me failed): nothing is offered, but leaving still warns.
+    const r = hook(gate("room"), vi.fn(), { userId: undefined });
+    act(() => r.result.current.start());
+    expect(sentToFrame("rescue")).toHaveLength(0);
+    const e = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("solo: items the frame wrote into its text are kept in the tab's copy before they leave the store", async () => {
     stubApi({ handle: () => undefined });
     const key = "plinth-draft:page-rescue:u1:art1";
     const { result } = hook(gate("solo"), vi.fn(), { userId: "u1" });
     act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
-    fromFrame({ type: "rescue", items: [{ id: "r1", text: "Kept", near: 0 }] });
-    // The frame wrote it into its own text and lets it go: the app takes the text first.
-    fromFrame({ type: "rescue", items: [] });
-    expect(sessionStorage.getItem(key)).not.toBeNull();
+    fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
+    // The frame wrote it into its own text: the app takes the text first.
+    fromFrame({ ...up([]), written: ["r1"] });
+    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toHaveLength(1);
     const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
     expect(nonce).toBeTruthy();
-    // A reload right now would still find the item.
-    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toHaveLength(1);
     fromFrame({ type: "draft", nonce, text: "# Plan\n\nKept" });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -755,7 +797,7 @@ describe("useLiveEdit", () => {
     const room = hook(gate("room"), vi.fn(), { userId: "u1" });
     act(() => room.result.current.start());
     fromFrame({ type: "live", ...STATUS });
-    fromFrame({ type: "rescue", items: [{ id: "r1", text: "Kept", near: 0 }] });
+    fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
     expect(sessionStorage.getItem(key)).not.toBeNull();
     await act(() => room.result.current.discard());
     expect(sessionStorage.getItem(key)).toBeNull();
@@ -763,7 +805,7 @@ describe("useLiveEdit", () => {
     const solo = hook(gate("solo"), vi.fn(), { userId: "u1" });
     act(() => solo.result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
-    fromFrame({ type: "rescue", items: [{ id: "r2", text: "Kept", near: 0 }] });
+    fromFrame(up([{ id: "r2", text: "Kept", near: 0 }]));
     expect(sessionStorage.getItem(key)).not.toBeNull();
     await act(() => solo.result.current.discard());
     expect(sessionStorage.getItem(key)).toBeNull();

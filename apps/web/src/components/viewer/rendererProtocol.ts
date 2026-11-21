@@ -401,10 +401,28 @@ export function readRescueItems(v: unknown): RescueItem[] | null {
   return out;
 }
 
+/** At most this many ids in one list of a rescue message. */
+const MAX_RESCUE_IDS = 200;
+
+/** A list of rescue item ids, each checked, or null. */
+export function readRescueIds(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > MAX_RESCUE_IDS) return null;
+  for (const id of v) if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
+  return v as string[];
+}
+
+/** A rescue report's order number. */
+export function isRescueN(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 && n < MAX_INT;
+}
+
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
-  /** The frame's whole rescue store (empty when nothing is left to rescue). */
-  | { type: "rescue"; items: RescueItem[] }
+  /**
+   * A change to the frame's rescue store, which the app merges into its copy: items added or
+   * updated, and ids that leave it (written, or gone on purpose). Never a whole list.
+   */
+  | { type: "rescue"; upsert: RescueItem[]; written: string[]; gone: string[]; n: number }
   | { type: "save" }
   /**
    * Solo: the frame's text for `collect`. `unsavable` when a block holds typing that cannot be
@@ -478,12 +496,24 @@ export interface RescueMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "rescue";
+  /** Items the app kept from an earlier frame, offered to this one: it writes what is missing. */
   items: RescueItem[];
+  /** The ids the app's store holds now, as of the frame's report `n` (the answer to it). */
+  stored?: string[];
+  n?: number;
 }
 
-/** The rescue items the app kept, offered to a frame (after a reload): it writes what is missing. */
-export function rescueMessage(items: RescueItem[]): RescueMessage {
-  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "rescue", items };
+export function rescueMessage(
+  items: RescueItem[],
+  stored?: { ids: string[]; n: number },
+): RescueMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "rescue",
+    items,
+    ...(stored ? { stored: stored.ids, n: stored.n } : {}),
+  };
 }
 
 export function collectMessage(nonce: string): CollectMessage {
@@ -759,8 +789,11 @@ const FRAME_READERS: {
   },
   leave: () => ({ type: "leave" }),
   rescue(m) {
-    const items = readRescueItems(m.items);
-    return items ? { type: "rescue", items } : null;
+    const upsert = readRescueItems(m.upsert);
+    const written = readRescueIds(m.written);
+    const gone = readRescueIds(m.gone);
+    if (!upsert || !written || !gone || !isRescueN(m.n)) return null;
+    return { type: "rescue", upsert, written, gone, n: m.n };
   },
   shown(m, opts) {
     if (!opts.shown || m.nonce !== opts.shown || !isInt(m.n, 1) || !isBool(m.ok)) return null;

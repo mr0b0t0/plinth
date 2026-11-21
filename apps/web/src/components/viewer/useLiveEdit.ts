@@ -45,11 +45,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, liveCheckpoint, liveDiscard, liveInfo } from "../../lib/api.ts";
 import {
   clearPageDraft,
+  clearRescue,
+  countRescue,
   loadPageDraft,
   loadRescue,
+  mergeRescue,
   type PageDraft,
   savePageDraft,
-  saveRescue,
 } from "../editor/draft.ts";
 import { showToast } from "../ui/index.ts";
 import {
@@ -62,7 +64,6 @@ import {
   matchFrameMessage,
   newNonce,
   postToRenderer,
-  type RescueItem,
   type ReviewResult,
   readFrameMessage,
   readRescueItems,
@@ -98,6 +99,8 @@ export const COLLECT_TIMEOUT_MS = 5000;
 export const AUTOSAVE_FALLBACK_MS = 30_000;
 /** A choice or a discard refused because another one or a save holds the room's lock. */
 export const CHOOSING_BUSY = "Someone else is publishing or discarding these changes right now.";
+
+type RescueReportMsg = Extract<FrameMessage, { type: "rescue" }>;
 
 export interface UseLiveEditOptions {
   gate: OkGate;
@@ -253,12 +256,15 @@ export function useLiveEdit({
   const [discardAsk, setDiscardAsk] = useState<Resolved | null>(null);
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
-  /** How many typed texts the frame's rescue store holds (kept in app storage meanwhile). */
-  const [rescued, setRescued] = useState(0);
-  /** The frame's last rescue items, while there is no known account to keep them under. */
-  const unkept = useRef<RescueItem[] | null>(null);
-  /** What a `rescue` message from the frame does (set once collect exists, below). */
-  const onRescue = useRef<(items: RescueItem[]) => void>(() => undefined);
+  /**
+   * How many typed texts are kept to rescue for this artifact in this tab (any account's store,
+   * and what the frame reported before the session was known): leaving the page warns while any.
+   */
+  const [rescued, setRescued] = useState(() => countRescue(gate.artifact.id));
+  /** The frame's rescue reports, in order, while there is no known account to keep them under. */
+  const unkept = useRef<RescueReportMsg[]>([]);
+  /** What a `rescue` report from the frame does (set once collect exists, below). */
+  const onRescue = useRef<(r: RescueReportMsg) => void>(() => undefined);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
@@ -446,9 +452,9 @@ export function useLiveEdit({
         leave() {
           latest.current.onLeave?.();
         },
-        rescue({ items }) {
-          // Typed text the room's draft does not hold yet: kept here until the frame says it does.
-          onRescue.current(items);
+        rescue(r) {
+          // Typed text the room's draft does not hold yet: merged into the store here.
+          onRescue.current(r);
         },
         // A version shown in place is the live-view update's answer (useViewUpdate.ts).
         shown() {},
@@ -483,12 +489,11 @@ export function useLiveEdit({
   // writes what the draft does not hold yet. Nothing is read, offered or dropped before.
   useEffect(() => {
     if (!who) return;
-    if (unkept.current) {
-      saveRescue(who, id, unkept.current);
-      unkept.current = null;
-    }
-    const kept = readRescueItems(loadRescue(who, id)) ?? [];
-    setRescued(kept.length);
+    // Merged in order, as they came: the store only grows by them, minus ids named as written.
+    const waiting = unkept.current;
+    unkept.current = [];
+    for (const r of waiting) onRescue.current(r);
+    setRescued(countRescue(id));
     if (!available || !frame || !editing) return;
     const offer = () => {
       const items = readRescueItems(loadRescue(who, id)) ?? [];
@@ -733,9 +738,9 @@ export function useLiveEdit({
           } else {
             await liveDiscard(id, rev, version);
             // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
-            if (who) saveRescue(who, id, []);
-            unkept.current = null;
-            setRescued(0);
+            if (who) clearRescue(who, id);
+            unkept.current = [];
+            setRescued(countRescue(id));
             done("done");
           }
           setReview(null);
@@ -828,9 +833,9 @@ export function useLiveEdit({
     if (m === "solo") {
       clearPageDraft(id);
       setRestore(null);
-      if (who) saveRescue(who, id, []);
-      unkept.current = null;
-      setRescued(0);
+      if (who) clearRescue(who, id);
+      unkept.current = [];
+      setRescued(countRescue(id));
       latest.current.onReload();
       return;
     }
@@ -843,9 +848,9 @@ export function useLiveEdit({
     try {
       await liveDiscard(id, s.rev);
       // What was kept to rescue goes too; the frame drops its own on the room's reset.
-      if (who) saveRescue(who, id, []);
-      unkept.current = null;
-      setRescued(0);
+      if (who) clearRescue(who, id);
+      unkept.current = [];
+      setRescued(countRescue(id));
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
@@ -859,27 +864,31 @@ export function useLiveEdit({
     setRestore(loadPageDraft(id));
   }, [available, gate.live?.mode, id]);
 
-  onRescue.current = (items) => {
-    setRescued(items.length);
+  onRescue.current = (r) => {
     if (!who) {
-      unkept.current = items;
+      unkept.current.push(r);
+      setRescued(countRescue(id) + unkept.current.reduce((n, x) => n + x.upsert.length, 0));
       return;
     }
-    const before = readRescueItems(loadRescue(who, id)) ?? [];
-    const gone = before.some((b) => !items.some((i) => i.id === b.id));
-    if (latest.current.mode === "solo" && gone) {
+    const answer = (ids: string[]) => {
+      setRescued(countRescue(id));
+      // The ids the store holds: an item the frame sent that is not among them stays only there.
+      postToRenderer(frame, target, rescueMessage([], { ids, n: r.n }));
+    };
+    if (latest.current.mode === "solo" && r.written.length > 0) {
       // Solo: items the frame wrote into its own text are in no copy yet (the tab's copy is taken
-      // every few seconds). That text is kept first, then the store lets them go; if it cannot be
+      // every few seconds). That text is kept first, then they leave the store; if it cannot be
       // kept, the store keeps them.
+      answer(mergeRescue(who, id, r.upsert, r.gone));
       const base = gate.artifact.version;
       collect({ keep: true })
         .then((text) => {
-          if (savePageDraft(id, base, text)) saveRescue(who, id, items);
+          if (savePageDraft(id, base, text)) answer(mergeRescue(who, id, [], r.written));
         })
         .catch(() => undefined);
       return;
     }
-    saveRescue(who, id, items);
+    answer(mergeRescue(who, id, r.upsert, [...r.written, ...r.gone]));
   };
 
   const soloDirty = mode === "solo" && editing && status?.dirty === true;

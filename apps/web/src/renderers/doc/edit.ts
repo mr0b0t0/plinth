@@ -49,11 +49,7 @@ import {
   splitLines,
   verifyBlock,
 } from "@plinth/shared";
-import {
-  type AskWhat,
-  MAX_RESCUE_ITEMS,
-  MAX_RESCUE_TOTAL,
-} from "../../components/viewer/rendererProtocol.ts";
+import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
@@ -135,6 +131,11 @@ export const TAKEN_KEPT =
 export const CLOSED_KEPT = "The draft changed. What you typed is kept, without its formatting.";
 /** Rescued text that could not be written anywhere yet: it stays kept, and can be copied. */
 export const RESCUE_STUCK = "What you typed couldn't be added to the doc yet. It is kept here.";
+/** The same, for text the app did not take into its store (over its limits): only this page has it. */
+export const RESCUE_FRAME_ONLY =
+  "What you typed couldn't be added to the doc yet. It's kept on this page until you reload. Copy it to be safe.";
+/** What both rescue notices start with. */
+const RESCUE_NOTICE = "What you typed couldn't be added to the doc yet.";
 /** The rescued text waits for a review to end before it goes in. */
 export const RESCUE_WAITS =
   "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.";
@@ -151,6 +152,19 @@ export interface RescueItem {
   text: string;
   /** The line it belongs at, as near as the draft allows. */
   near: number;
+}
+
+/**
+ * A change to the rescue store, for the app's copy, which only ever merges: `upsert` adds or
+ * updates items by id, `written` names items the room acknowledged, `gone` items dropped on
+ * purpose (a discard). Nothing else takes an item out. `n` orders the reports, for the app's
+ * answer saying which ids it keeps.
+ */
+export interface RescueReport {
+  upsert: RescueItem[];
+  written: string[];
+  gone: string[];
+  n: number;
 }
 export const NOT_KEPT = "What you typed in the block you closed couldn't be added. Type it again.";
 
@@ -239,8 +253,8 @@ export interface EditorHooks {
    * for the dialog's "Pointing at" chip.
    */
   ask?(anchor: AskAnchor, what: AskWhat): void;
-  /** The rescue store changed: the app keeps these items (all of them; empty when none). */
-  rescue?(items: RescueItem[]): void;
+  /** The rescue store changed: the app merges this into its copy (see RescueReport). */
+  rescue?(report: RescueReport): void;
 }
 
 /** Elements whose text reads as separate words from the text next to them. */
@@ -406,6 +420,9 @@ interface Rescue extends RescueItem {
   tries: number;
   /** Tried RESCUE_TRIES times: it waits for a reconnect or a reload, and can be copied. */
   parked: boolean;
+  /** The report that last sent it to the app, and whether the app's store has it (null: unknown). */
+  reported: number | null;
+  kept: boolean | null;
 }
 
 /**
@@ -661,8 +678,8 @@ export class DocEditor {
   private readonly rescues = new Map<string, Rescue>();
   /** The rescue item of the open block (made when it was `stuck`), until the block closes. */
   private blockRescue: string | null = null;
-  /** Items over the app's limits were left out of its copy: the page says so with Copy. */
-  private overCap = false;
+  /** Rescue reports sent to the app so far. */
+  private reportN = 0;
   private rescueN = 0;
   /** A rescue write was refused because a review waits: none is tried until the review ends. */
   private rescueFrozen: { seen: boolean } | null = null;
@@ -2788,7 +2805,7 @@ export class DocEditor {
     if (!this.backend.keep) return undefined;
     const id = this.blockRescue ?? `r${Date.now().toString(36)}${++this.rescueN}`;
     const was = this.rescues.get(id);
-    this.rescues.set(id, {
+    const r: Rescue = {
       id,
       text,
       near,
@@ -2798,9 +2815,12 @@ export class DocEditor {
       free: was?.free ?? false,
       tries: was?.tries ?? 0,
       parked: false,
-    });
+      reported: was?.reported ?? null,
+      kept: was?.kept ?? null,
+    };
+    this.rescues.set(id, r);
     this.blockRescue = id;
-    this.postRescues();
+    if (was?.text !== text || was.near !== near) this.report([r], [], []);
     return id;
   }
 
@@ -2821,30 +2841,63 @@ export class DocEditor {
       return;
     }
     r.sent = { seq, start, text, lost: false };
-    this.postRescues();
   }
 
-  private dropRescue(id: string): void {
+  /** Item `id` leaves the store: written (the room acknowledged its write) or gone (on purpose). */
+  private dropRescue(id: string, why: "written" | "gone" = "written"): void {
     if (!this.rescues.delete(id)) return;
     if (this.blockRescue === id) this.blockRescue = null;
-    this.postRescues();
-    if (this.notice?.textContent?.startsWith(RESCUE_STUCK) && this.rescues.size === 0) {
-      this.hideNotice();
-    }
+    this.report([], why === "written" ? [id] : [], why === "gone" ? [id] : []);
+    this.updateRescueNotice();
     this.hooks.status();
+  }
+
+  /** Tells the app what changed in the store (it merges; see RescueReport). */
+  private report(upsert: Rescue[], written: string[], gone: string[]): void {
+    const n = ++this.reportN;
+    for (const r of upsert) r.reported = n;
+    this.hooks.rescue?.({
+      upsert: upsert.map(({ id, text, near }) => ({ id, text, near })),
+      written,
+      gone,
+      n,
+    });
+  }
+
+  /**
+   * The app's answer to report `n` and the ones before it: the ids its store holds. An item it
+   * was sent but does not hold (over its limits) is on this page only, which the page says, with
+   * Copy.
+   */
+  rescueStored(ids: readonly string[], n: number): void {
+    const held = new Set(ids);
+    for (const r of this.rescues.values()) {
+      if (held.has(r.id)) r.kept = true;
+      else if (r.reported !== null && r.reported <= n) r.kept = false;
+    }
+    this.updateRescueNotice();
+  }
+
+  /** Shows the rescue notice while something can only be copied, and hides it once nothing can. */
+  private updateRescueNotice(): void {
+    const showing = this.notice?.textContent?.startsWith(RESCUE_NOTICE) ?? false;
+    if (this.needsCopy) {
+      if (!this.notice || showing) this.showRescueNotice();
+    } else if (showing) this.hideNotice();
   }
 
   /** Everything kept is dropped: the unpublished changes were discarded. */
   clearRescues(): void {
     if (this.rescues.size === 0 && !this.want?.rescue) return;
+    const ids = [...this.rescues.keys()];
     this.rescues.clear();
+    if (ids.length > 0) this.report([], [], ids);
+    this.updateRescueNotice();
+    this.hooks.status();
     this.blockRescue = null;
     this.rescueFrozen = null;
     // A kept op on its way writes nothing either.
     if (this.want?.rescue && !this.backend.mine) this.want = null;
-    this.postRescues();
-    if (this.notice?.textContent?.startsWith(RESCUE_STUCK)) this.hideNotice();
-    this.hooks.status();
   }
 
   /** The open block cannot be written as typed: its text, without its marks, is kept. */
@@ -2858,30 +2911,11 @@ export class DocEditor {
   }
 
   /**
-   * Posts the store to the app, newest items first, at most MAX_RESCUE_ITEMS of them and
-   * MAX_RESCUE_TOTAL of text (the limits the app reads with). Items left out stay here and are
-   * still written; while there are any, the page offers Copy.
+   * Something kept can only be copied for now: items the app's store does not hold (only this page
+   * has them), or ones tried too often.
    */
-  private postRescues(): void {
-    const items: RescueItem[] = [];
-    let total = 0;
-    let over = false;
-    for (const r of [...this.rescues.values()].sort((a, b) => b.n - a.n)) {
-      if (items.length >= MAX_RESCUE_ITEMS || total + r.text.length > MAX_RESCUE_TOTAL) {
-        over = true;
-        continue;
-      }
-      total += r.text.length;
-      items.push({ id: r.id, text: r.text, near: r.near });
-    }
-    this.hooks.rescue?.(items.reverse());
-    this.overCap = over;
-    if (over && !this.notice) this.showRescueNotice();
-  }
-
-  /** Something kept can only be copied for now: items over the cap, or ones tried too often. */
   private get needsCopy(): boolean {
-    return this.overCap || [...this.rescues.values()].some((r) => r.parked);
+    return [...this.rescues.values()].some((r) => r.kept === false || r.parked);
   }
 
   /** Items the app kept from before a reload: each one not in the draft already is written. */
@@ -2889,6 +2923,7 @@ export class DocEditor {
     let added = false;
     for (const it of items) {
       if (this.rescues.has(it.id)) continue;
+      // From the app's store, which holds it already.
       this.rescues.set(it.id, {
         ...it,
         sent: null,
@@ -2897,11 +2932,12 @@ export class DocEditor {
         free: true,
         tries: 0,
         parked: false,
+        reported: null,
+        kept: true,
       });
       added = true;
     }
     if (added) {
-      this.postRescues();
       this.hooks.status();
       this.flushRescues();
     }
@@ -3022,7 +3058,11 @@ export class DocEditor {
   }
 
   private showRescueNotice(): void {
-    this.showNotice(RESCUE_STUCK, { label: "Copy", run: () => this.copyRescues() });
+    const only = [...this.rescues.values()].some((r) => r.kept === false);
+    this.showNotice(only ? RESCUE_FRAME_ONLY : RESCUE_STUCK, {
+      label: "Copy",
+      run: () => this.copyRescues(),
+    });
   }
 
   /** Puts every kept text on the clipboard, for the person to paste where they want it. */
@@ -3130,7 +3170,7 @@ export class DocEditor {
     this.notice?.remove();
     this.notice = null;
     // Kept text that can only be copied keeps its notice: it comes back once another one goes.
-    if (this.needsCopy && !was.startsWith(RESCUE_STUCK)) this.showRescueNotice();
+    if (this.needsCopy && !was.startsWith(RESCUE_NOTICE)) this.showRescueNotice();
   }
 
   /** For tests and the status line: the open block's editor. */
