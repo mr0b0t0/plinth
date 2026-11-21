@@ -18,7 +18,8 @@ import type { DraftReview, ReviewOutcome } from "./review.ts";
 export type ReviewResult = "busy" | "resolved" | "conflict" | "failed" | "done";
 
 export type EditAppMessage =
-  | { type: "edit"; on: boolean; base?: number }
+  /** `focus: "first"` (from the app's `?edit`): focus the first block or cell once there is one. */
+  | { type: "edit"; on: boolean; base?: number; focus?: "first" }
   | { type: "collect"; nonce: string }
   | {
       type: "review";
@@ -81,7 +82,13 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
   if (m.source !== RENDERER_MESSAGE_SOURCE || m.v !== RENDERER_PROTOCOL_VERSION) return null;
   if (m.type === "edit" && typeof m.on === "boolean") {
     if (m.base !== undefined && !isVersion(m.base)) return null;
-    return { type: "edit", on: m.on, ...(isVersion(m.base) ? { base: m.base } : {}) };
+    if (m.focus !== undefined && m.focus !== "first") return null;
+    return {
+      type: "edit",
+      on: m.on,
+      ...(isVersion(m.base) ? { base: m.base } : {}),
+      ...(m.on && m.focus === "first" ? { focus: "first" as const } : {}),
+    };
   }
   if (typeof m.nonce !== "string" || !NONCE_RE.test(m.nonce)) return null;
   if (m.type === "collect") return { type: "collect", nonce: m.nonce };

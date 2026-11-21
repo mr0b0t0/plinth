@@ -37,7 +37,6 @@ import {
   myCategoryInput,
   oauthConsentInput,
   PUBLISH_WARNING_CODES,
-  publishArtifactInput,
   RATE_LIMITS,
   REPORT_STATES,
   REVIEW_SKIP_REASONS,
@@ -50,6 +49,7 @@ import {
   reportInput,
   requestLoginInput,
   restoreVersionInput,
+  restPublishArtifactInput,
   restUpdateArtifactInput,
   reviewLoginInput,
   SCOPES,
@@ -161,7 +161,7 @@ const viewStub = { id: str(), slug: str(), title: str() };
 
 function requestSchemas(): Record<string, Json> {
   return {
-    PublishArtifactInput: fromZod(publishArtifactInput),
+    PublishArtifactInput: fromZod(restPublishArtifactInput),
     UpdateArtifactInput: fromZod(restUpdateArtifactInput.omit({ id: true })),
     RenameArtifactInput: fromZod(renameArtifactInput),
     RenameCategoryInput: fromZod(renameCategoryInput),

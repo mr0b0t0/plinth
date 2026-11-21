@@ -57,6 +57,7 @@ import {
   postPrint,
   rendererTargetOrigin,
 } from "./rendererProtocol.ts";
+import { replaceSheet, replaceSheetDialog } from "./sheetReplaceItems.tsx";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
 import type { ViewUpdate } from "./useViewUpdate.ts";
@@ -340,6 +341,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   compactSignInToEdit,
   askAgentMenu,
   editSource,
+  replaceSheet,
   settings,
   stats,
   typeItems,
@@ -361,6 +363,7 @@ export const STAGE_DIALOGS: readonly StageDialog[] = [
   designExportDialog,
   discardEditsDialog,
   askAgentDialog,
+  replaceSheetDialog,
 ];
 
 // ---------- the bar's controls ----------

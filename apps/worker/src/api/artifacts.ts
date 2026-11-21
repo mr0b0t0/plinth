@@ -3,9 +3,9 @@ import {
   API,
   getArtifactInput,
   listArtifactsInput,
-  publishArtifactInput,
   renameArtifactInput,
   restoreVersionInput,
+  restPublishArtifactInput,
   restUpdateArtifactInput,
   setVisibilityInput,
 } from "@plinth/shared";
@@ -45,7 +45,8 @@ artifactsApi.get("/artifacts", async (c) => {
 });
 
 artifactsApi.post("/artifacts", async (c) => {
-  const input = await parseBody(c, publishArtifactInput);
+  // REST takes v1's note on top of publish_artifact's input (the app's New and Import).
+  const input = await parseBody(c, restPublishArtifactInput);
   return c.json(await publishArtifact(serviceCtx(c), input), 201);
 });
 

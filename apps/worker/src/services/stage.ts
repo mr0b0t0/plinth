@@ -71,7 +71,15 @@ import { artifactLimitFor, getUserById } from "./users.ts";
 /** What a staged version will become. */
 export type VersionTarget =
   /** A new artifact: `artifactId` is fresh and has no row yet (commitStaged inserts it). */
-  | { mode: "publish"; artifactId: string; type: ArtifactType; title?: string; category?: string }
+  | {
+      mode: "publish";
+      artifactId: string;
+      type: ArtifactType;
+      title?: string;
+      category?: string;
+      /** v1's note: only the app's New and Import set one (REST, never MCP). */
+      note?: string;
+    }
   | {
       mode: "update";
       artifact: ArtifactRow;
@@ -1268,7 +1276,7 @@ async function commitOnce(
         manifest,
         actor.userId,
         actor.connectionId,
-        target.mode === "update" ? (target.note ?? null) : null,
+        target.note ?? null,
         opts.restoredFrom ?? null,
         now,
         extra.capabilities,

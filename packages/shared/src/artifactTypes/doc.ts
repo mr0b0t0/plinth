@@ -17,4 +17,6 @@ export const doc: TypeModule<"doc"> = {
   renderer: { script: "doc.js", style: "doc.css" },
   editor: { language: "markdown", wordWrap: "on" },
   edit: "live",
+  // "New" on the dashboard: v1 is this heading, and the page opens in edit mode on it.
+  create: { label: "Document", title: "Untitled document", content: "# Untitled document\n" },
 };

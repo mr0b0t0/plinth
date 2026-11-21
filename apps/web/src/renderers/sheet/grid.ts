@@ -15,8 +15,18 @@
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
 // cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
 // with the view carried over), setHolders() tints the rows other people hold (the holder named on
-// the row number for a pointer and a screen reader), the editor's Row and Column menus sit in the bar (`tools`), and the slot
-// between the bar and the cells is kept for what the editor adds there.
+// the row number for a pointer, and in each of the row's cells' accessible description), and the
+// editor's Row and Column menus sit in the bar (`tools`). In edit mode the editor also puts the
+// width handle on each column header's edge (setHeaderTools) and previews a width while it changes
+// (setWidth). The scroll container keeps the sticky header rows and the frozen columns out of the
+// area a cell scrolls into (scroll-padding), so a cell that takes the focus or opens is never left
+// under them.
+//
+// Keyboard and screen readers: the table is a grid (role="grid", aria-rowcount, aria-colcount,
+// row and column indexes, aria-readonly outside edit mode) with one cell in the tab order, the
+// selected one (a roving tabindex; a header cell's stop is its sort button). The arrows, Home and
+// End move among the rows shown, Ctrl+Home and Ctrl+End to the first and the last cell. Alt with
+// an arrow is left to the editor (widths, row moves).
 import {
   a1,
   type Cell,
@@ -34,8 +44,8 @@ import { nextSort, rowMatches, type SortState, sortedOrder } from "./view.ts";
 export const CHUNK_ROWS = 200;
 export const ROW_NUMBER_WIDTH = 48;
 export const DEFAULT_WIDTH = 120;
-const MIN_WIDTH = 40;
-const MAX_WIDTH = 800;
+export const MIN_WIDTH = 40;
+export const MAX_WIDTH = 800;
 
 export interface GridOptions {
   title: string;
@@ -51,6 +61,8 @@ export interface Grid {
   slot: HTMLElement;
   /** In the bar, before the filter: the editor's Row and Column menus go here. */
   tools: HTMLElement;
+  /** The bar's filter field (a rebuild gives the focus back to the new one). */
+  filterInput: HTMLInputElement;
   select(row: number, col: number): void;
   /** The selected cell's A1 row and column. */
   selected(): { row: number; col: number };
@@ -72,6 +84,18 @@ export interface Grid {
   setHolders(rows: ReadonlyMap<number, string>): void;
   /** Cells the grid must not repaint (the one being edited). */
   setLocked(locked: (td: HTMLElement) => boolean): void;
+  /** Edit mode: the grid is not read-only. */
+  setEditable(on: boolean): void;
+  /** The editor's controls in each column header (edit mode), or none. */
+  setHeaderTools(make: ((col: number, column: SheetColumn) => HTMLElement[]) | null): void;
+  /** Show a column `px` wide (clamped) until the next rebuild: a width while it changes. */
+  setWidth(col: number, px: number): void;
+  /** A column's width as shown now. */
+  width(col: number): number;
+  /** The focus to the selected cell (after a rebuild took it away). */
+  focusSelected(): void;
+  /** Scroll a cell sideways into view clear of the row numbers and frozen columns, start first. */
+  reveal(row: number, col: number): void;
   /** Sort, filter, scroll and selection, to carry over to a rebuilt grid. */
   view(): GridView;
   restore(v: GridView): void;
@@ -98,6 +122,12 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
+/** A width in whole pixels, within 40 to 800. */
+export function clampWidth(w: number): number {
+  const n = Number.isFinite(w) ? w : DEFAULT_WIDTH;
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(n)));
+}
+
 /** "ana.costa-x1@example.com" -> "Ana": a first name from an email, for short notes. */
 export function personName(email: string): string {
   const first = email
@@ -111,17 +141,20 @@ export function personName(email: string): string {
 
 /** A column's width in pixels, clamped. */
 export function columnWidth(c: SheetColumn): number {
-  const w = typeof c.width === "number" && Number.isFinite(c.width) ? c.width : DEFAULT_WIDTH;
-  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)));
+  return clampWidth(typeof c.width === "number" ? c.width : DEFAULT_WIDTH);
 }
 
 /** The left offset of each frozen column (the row numbers come first). */
 export function frozenOffsets(columns: readonly SheetColumn[], freeze: number): number[] {
+  return offsetsOf(columns.map(columnWidth), freeze);
+}
+
+function offsetsOf(widths: readonly number[], freeze: number): number[] {
   const out: number[] = [];
   let x = ROW_NUMBER_WIDTH;
-  for (let i = 0; i < Math.min(freeze, columns.length); i++) {
+  for (let i = 0; i < Math.min(freeze, widths.length); i++) {
     out.push(x);
-    x += columnWidth(columns[i] as SheetColumn);
+    x += widths[i] as number;
   }
   return out;
 }
@@ -132,6 +165,27 @@ export function frozenWidthOf(columns: readonly SheetColumn[], freeze: number): 
   for (let i = 0; i < Math.min(freeze, columns.length); i++)
     w += columnWidth(columns[i] as SheetColumn);
   return w;
+}
+
+/**
+ * The frames too narrow to keep the first `freeze` columns in view, as a media query, or null
+ * when nothing is frozen. Frozen columns wider than half the frame would leave a phone almost
+ * nothing to scroll, so there they scroll with the rest (sheet.css, plinth-sheet--unfrozen).
+ */
+export function unfreezeQuery(columns: readonly SheetColumn[], freeze: number): string | null {
+  const n = Math.min(5, freeze, columns.length);
+  if (n <= 0) return null;
+  return `(max-width: ${(ROW_NUMBER_WIDTH + frozenWidthOf(columns, n)) * 2}px)`;
+}
+
+/** Whether the first `freeze` columns scroll with the rest in this frame (unfreezeQuery). */
+export function freezeDropped(
+  view: Window | null | undefined,
+  columns: readonly SheetColumn[],
+  freeze: number,
+): boolean {
+  const query = unfreezeQuery(columns, freeze);
+  return query !== null && view?.matchMedia?.(query).matches === true;
 }
 
 /** The text the formula bar shows for a stored cell: exactly what the sheet holds. */
@@ -186,7 +240,9 @@ export function buildGrid(
 ): Grid {
   const cols = sheet.header.columns;
   const freeze = Math.min(5, sheet.header.freeze?.cols ?? 0, cols.length);
-  const lefts = frozenOffsets(cols, freeze);
+  /** The widths drawn: as stored, or as previewed while one changes (setWidth). */
+  const widths = cols.map(columnWidth);
+  let lefts = offsetsOf(widths, freeze);
   const root = el(doc, "div", "plinth-sheet__page");
 
   // ---------- title and bar ----------
@@ -224,63 +280,106 @@ export function buildGrid(
   scroll.setAttribute("role", "region");
   scroll.setAttribute("aria-label", "Sheet cells");
   const table = el(doc, "table", "plinth-sheet__grid");
+  // A grid of cells the arrow keys move between, read-only until edit mode.
+  table.setAttribute("role", "grid");
+  table.setAttribute("aria-label", opts.title || "Sheet");
+  table.setAttribute("aria-readonly", "true");
+  table.setAttribute("aria-rowcount", String(sheet.rows.length + 1));
+  table.setAttribute("aria-colcount", String(cols.length + 1));
   const colgroup = el(doc, "colgroup");
   const numCol = el(doc, "col", "plinth-sheet__col-num");
   numCol.style.width = `${ROW_NUMBER_WIDTH}px`;
   colgroup.append(numCol);
-  let total = ROW_NUMBER_WIDTH;
-  for (const c of cols) {
+  const colEls: HTMLTableColElement[] = [];
+  for (const w of widths) {
     const col = el(doc, "col");
-    const w = columnWidth(c);
-    total += w;
     col.style.width = `${w}px`;
+    colEls.push(col);
     colgroup.append(col);
   }
-  table.style.width = `${total}px`;
-  table.append(colgroup);
-
-  // Each frozen cell once (a repainted cell is frozen again), and whether the frame is too narrow
-  // for them to stay (set below).
+  // Each frozen cell once, by its column (a repainted cell is frozen again; a width moves the
+  // frozen columns after it), and whether the frame is too narrow for them to stay (set below).
   const frozenCells = new Map<HTMLElement, number>();
   let unfrozen = false;
+  /** Where the row numbers and the frozen columns end, from the scroll container's left. */
+  let frozenEdge = ROW_NUMBER_WIDTH;
+  const sizeTable = () => {
+    table.style.width = `${widths.reduce((t, w) => t + w, ROW_NUMBER_WIDTH)}px`;
+    // A cell scrolled into view (focused, opened) clears the row numbers and the frozen columns
+    // (unless they scroll with the rest, below).
+    frozenEdge = ROW_NUMBER_WIDTH;
+    for (let c = 0; c < (unfrozen ? 0 : freeze); c++) frozenEdge += widths[c] as number;
+    scroll.style.scrollPaddingLeft = `${frozenEdge}px`;
+  };
+  sizeTable();
+  table.append(colgroup);
+  /** Draw the columns at their widths again, after one changed. */
+  const fitColumns = () => {
+    widths.forEach((w, i) => {
+      const ce = colEls[i];
+      if (ce) ce.style.width = `${w}px`;
+    });
+    sizeTable();
+    // The frozen columns to the right of a changed one move with it.
+    lefts = offsetsOf(widths, freeze);
+    placeFrozen();
+  };
+
   const freezeCell = (cell: HTMLElement, c: number) => {
     const left = lefts[c];
     if (left === undefined) return;
     cell.classList.add("plinth-sheet__frozen");
     if (c === freeze - 1) cell.classList.add("plinth-sheet__frozen--last");
     cell.style.left = unfrozen ? "" : `${left}px`;
-    frozenCells.set(cell, left);
+    frozenCells.set(cell, c);
+  };
+  const placeFrozen = () => {
+    for (const [cell, c] of frozenCells) cell.style.left = unfrozen ? "" : `${lefts[c]}px`;
   };
 
   const thead = el(doc, "thead");
   const letters = el(doc, "tr", "plinth-sheet__letters");
+  // The column letters are a visual aid: the header row names the columns.
+  letters.setAttribute("aria-hidden", "true");
   const corner = el(doc, "th", "plinth-sheet__corner plinth-sheet__rownum");
-  corner.setAttribute("aria-hidden", "true");
   letters.append(corner);
   const names = el(doc, "tr", "plinth-sheet__names");
+  names.setAttribute("aria-rowindex", "1");
   const one = el(doc, "th", "plinth-sheet__rownum", "1");
   one.scope = "row";
+  one.setAttribute("aria-colindex", "1");
   names.append(one);
   const headers: HTMLTableCellElement[] = [];
   // Every cell by its address, header included, for the formula bar.
   const byAddress = new Map<string, HTMLElement>();
+  let headerTools: ((col: number, column: SheetColumn) => HTMLElement[]) | null = null;
+  let selected: HTMLElement | null = null;
+  /** A header cell's contents: its sort button, then the editor's controls in edit mode. */
+  const fillHeader = (th: HTMLElement, c: SheetColumn, i: number) => {
+    const wrap = el(doc, "div", "plinth-sheet__name-wrap");
+    const b = el(doc, "button", "plinth-sheet__sort");
+    b.type = "button";
+    b.tabIndex = th === selected ? 0 : -1;
+    b.append(el(doc, "span", "plinth-sheet__name-text", c.name));
+    b.append(el(doc, "span", "plinth-sheet__sort-mark"));
+    b.addEventListener("click", () => grid.sortBy(i));
+    wrap.append(b, ...(headerTools ? headerTools(i, c) : []));
+    th.replaceChildren(wrap);
+    // The column's name is the header's name, whatever controls edit mode adds to the cell.
+    th.setAttribute("aria-label", c.name);
+  };
   cols.forEach((c, i) => {
     const l = el(doc, "th", "plinth-sheet__letter", colLetter(i));
-    l.setAttribute("aria-hidden", "true");
     freezeCell(l, i);
     letters.append(l);
     const th = el(doc, "th", "plinth-sheet__name");
     th.scope = "col";
     th.id = `__plinth-cell-${a1(1, i)}`;
+    th.setAttribute("aria-colindex", String(i + 2));
     byAddress.set(a1(1, i), th);
     th.setAttribute("aria-sort", "none");
     freezeCell(th, i);
-    const b = el(doc, "button", "plinth-sheet__sort");
-    b.type = "button";
-    b.append(el(doc, "span", "plinth-sheet__name-text", c.name));
-    b.append(el(doc, "span", "plinth-sheet__sort-mark"));
-    b.addEventListener("click", () => grid.sortBy(i));
-    th.append(b);
+    fillHeader(th, c, i);
     if (c.type === "number" || c.type === "date") th.classList.add("plinth-sheet__name--num");
     if (c.type === "checkbox") th.classList.add("plinth-sheet__name--check");
     headers.push(th);
@@ -336,7 +435,12 @@ export function buildGrid(
     bodies = [];
     for (let i = 0; i < order.length; i += CHUNK_ROWS) {
       const body = el(doc, "tbody", "plinth-sheet__chunk");
-      for (const k of order.slice(i, i + CHUNK_ROWS)) body.append(rows[k] as HTMLTableRowElement);
+      order.slice(i, i + CHUNK_ROWS).forEach((k, j) => {
+        const tr = rows[k] as HTMLTableRowElement;
+        // Where the row is shown (the header row is 1), which a sort changes.
+        tr.setAttribute("aria-rowindex", String(i + j + 2));
+        body.append(tr);
+      });
       bodies.push(body);
       table.append(body);
     }
@@ -358,11 +462,18 @@ export function buildGrid(
   };
   updateCount();
 
-  let selected: HTMLElement | null = null;
   let selRow = rows.length > 0 ? 2 : 1;
   let selCol = 0;
   let sort: SortState | null = null;
   const holderTags = new Map<number, HTMLElement>();
+  /** What takes the focus for a cell: a header's sort button, or the cell itself. */
+  const stop = (cell: HTMLElement): HTMLElement =>
+    cell.tagName === "TH" ? (cell.querySelector<HTMLElement>(".plinth-sheet__sort") ?? cell) : cell;
+  /** The cells of an A1 row (1 is the header), without its row number. */
+  const cellsOf = (row: number): HTMLElement[] => {
+    const tr = row === 1 ? names : rows[row - 2];
+    return tr ? ([...tr.cells].slice(1) as HTMLElement[]) : [];
+  };
   const resort = () => {
     order = sortedOrder(rows.length, (i) => (values[i] as Value[])[sort?.col ?? 0] ?? null, sort);
     layout();
@@ -372,12 +483,16 @@ export function buildGrid(
     table,
     slot: el(doc, "div", "plinth-sheet__slot"),
     tools,
+    filterInput,
     selected: () => ({ row: selRow, col: selCol }),
     cell: (row, col) => byAddress.get(a1(row, col)) ?? null,
     select(row, col) {
       const cell = byAddress.get(a1(row, col));
       if (!cell) return;
       selected?.classList.remove("plinth-sheet__selected");
+      // One cell is in the tab order: the selected one.
+      if (selected && selected !== cell) stop(selected).tabIndex = -1;
+      stop(cell).tabIndex = 0;
       selected = cell;
       selRow = row;
       selCol = col;
@@ -440,15 +555,7 @@ export function buildGrid(
       const td = byAddress.get(a1(row, col));
       const c = cols[col];
       if (!td || !c || row < 2) {
-        if (td && c && row === 1) {
-          td.replaceChildren();
-          const b = el(doc, "button", "plinth-sheet__sort");
-          b.type = "button";
-          b.append(el(doc, "span", "plinth-sheet__name-text", c.name));
-          b.append(el(doc, "span", "plinth-sheet__sort-mark"));
-          b.addEventListener("click", () => grid.sortBy(col));
-          td.append(b);
-        }
+        if (td && c && row === 1) fillHeader(td, c, col);
         return;
       }
       paint(td, displayValue((values[row - 2] as Value[])[col] ?? null, c), col);
@@ -461,6 +568,7 @@ export function buildGrid(
         holderTags.delete(row);
         const tr = row === 1 ? names : rows[row - 2];
         tr?.classList.remove("plinth-sheet__row--held");
+        for (const c of cellsOf(row)) c.removeAttribute("aria-describedby");
       }
       for (const [row, email] of held) {
         const tr = row === 1 ? names : rows[row - 2];
@@ -470,18 +578,52 @@ export function buildGrid(
         let tag = holderTags.get(row);
         if (!tag) {
           tag = el(doc, "span", "plinth-sheet__holder plinth-sheet__sr");
+          tag.id = `__plinth-held-${row}`;
           holderTags.set(row, tag);
           num.append(tag);
         }
         // The tint is the one cue on screen; the row number names the holder for a pointer and a
         // screen reader (the edit bar lists who is editing).
-        const said = `${personName(email)} is editing`;
-        tag.textContent = said;
-        num.title = said;
+        const name = personName(email);
+        tag.textContent = `${name} is editing`;
+        num.title = `${name} is editing`;
+        // Each cell of the row says so too, in its accessible description.
+        for (const c of cellsOf(row)) c.setAttribute("aria-describedby", tag.id);
       }
     },
     setLocked(fn) {
       locked = fn;
+    },
+    setEditable(on) {
+      table.setAttribute("aria-readonly", on ? "false" : "true");
+    },
+    setHeaderTools(make) {
+      headerTools = make;
+      cols.forEach((c, i) => {
+        const th = headers[i];
+        if (th) fillHeader(th, c, i);
+      });
+    },
+    setWidth(col, px) {
+      if (col < 0 || col >= widths.length) return;
+      widths[col] = clampWidth(px);
+      fitColumns();
+    },
+    width: (col) => widths[col] ?? DEFAULT_WIDTH,
+    focusSelected() {
+      if (selected) stop(selected).focus();
+    },
+    reveal(row, col) {
+      const cell = byAddress.get(a1(row, col));
+      // A frozen column is always in view (unless the frozen columns scroll with the rest).
+      if (!cell || (col < freeze && !unfrozen)) return;
+      const box = scroll.getBoundingClientRect();
+      const r = cell.getBoundingClientRect();
+      const left = r.left - box.left;
+      const right = r.right - box.left;
+      const width = scroll.clientWidth;
+      if (left < frozenEdge) scroll.scrollLeft -= frozenEdge - left;
+      else if (right > width) scroll.scrollLeft += Math.min(right - width, left - frozenEdge);
     },
     view: () => ({
       sort,
@@ -510,6 +652,25 @@ export function buildGrid(
   };
   filterInput.addEventListener("input", () => grid.filter(filterInput.value));
 
+  /** The next row shown above or below an A1 row (1 is the header), in the order shown. */
+  const nextShown = (row: number, step: -1 | 1): number | null => {
+    let at = row === 1 ? -1 : order.indexOf(row - 2);
+    if (row !== 1 && at < 0) return null;
+    for (at += step; at >= 0 && at < order.length; at += step) {
+      const k = order[at] as number;
+      if (!(rows[k] as HTMLTableRowElement).hidden) return k + 2;
+    }
+    return step < 0 && row !== 1 ? 1 : null;
+  };
+  /** The last row shown, or the header. */
+  const lastShown = (): number => {
+    for (let at = order.length - 1; at >= 0; at--) {
+      const k = order[at] as number;
+      if (!(rows[k] as HTMLTableRowElement).hidden) return k + 2;
+    }
+    return 1;
+  };
+
   const addressOf = (cell: Element | null): [number, number] | null => {
     const m = cell?.id ? /^__plinth-cell-([A-Z]{1,3})(\d+)$/.exec(cell.id) : null;
     if (!m) return null;
@@ -519,43 +680,47 @@ export function buildGrid(
   };
   table.addEventListener("focusin", (e) => {
     const at = addressOf((e.target as Element).closest?.("td, th") ?? null);
-    if (at) grid.select(at[0], at[1]);
+    if (!at) return;
+    grid.select(at[0], at[1]);
+    // After the browser's own scroll for the focus, which can leave a wide cell under the frozen
+    // columns.
+    queueMicrotask(() => grid.reveal(at[0], at[1]));
   });
   table.addEventListener("click", (e) => {
     const td = (e.target as Element).closest?.("td");
     if (td && !(e.target as Element).closest("a")) (td as HTMLElement).focus();
   });
-  // Arrow keys move between visible cells (not while a cell's own field has the keys).
+  // The arrows, Home and End move between the cells shown, the header row included: not while a
+  // cell's own field has the keys, and not with Alt, which the editor takes.
   table.addEventListener("keydown", (e) => {
-    const td = (e.target as Element).closest?.("td") as HTMLTableCellElement | null;
-    if (!td || (e.target as Element).closest?.("input, select, textarea")) return;
-    const tr = td.parentElement as HTMLTableRowElement;
-    const index = td.cellIndex;
-    const visible = () =>
-      [...table.querySelectorAll<HTMLTableRowElement>("tbody tr")].filter((r) => !r.hidden);
-    let target: Element | null | undefined = null;
-    if (e.key === "ArrowLeft") target = index > 1 ? tr.cells[index - 1] : null;
-    else if (e.key === "ArrowRight") target = tr.cells[index + 1];
+    const t = e.target as Element;
+    if (e.altKey || t.closest?.("input, select, textarea")) return;
+    const at = addressOf(t.closest?.("td, th.plinth-sheet__name") ?? null);
+    if (!at) return;
+    const [row, col] = at;
+    const ctrl = e.ctrlKey || e.metaKey;
+    const last = cols.length - 1;
+    let to: [number, number] | null = null;
+    if (e.key === "ArrowLeft") to = col > 0 ? [row, col - 1] : null;
+    else if (e.key === "ArrowRight") to = col < last ? [row, col + 1] : null;
     else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-      const list = visible();
-      const at = list.indexOf(tr);
-      target = list[at + (e.key === "ArrowUp" ? -1 : 1)]?.cells[index];
-    } else return;
-    if (target instanceof HTMLElement) {
+      const r = nextShown(row, e.key === "ArrowUp" ? -1 : 1);
+      to = r === null ? null : [r, col];
+    } else if (e.key === "Home") to = ctrl ? [1, 0] : [row, 0];
+    else if (e.key === "End") to = ctrl ? [lastShown(), last] : [row, last];
+    else return;
+    const cell = to ? byAddress.get(a1(to[0], to[1])) : undefined;
+    if (cell) {
       e.preventDefault();
-      target.focus();
+      stop(cell).focus();
     }
   });
-  // The first data cell is where Tab enters the grid.
-  const first = rows[0]?.cells[1];
-  if (first) first.tabIndex = 0;
 
-  // Frozen columns wider than half the frame would leave a phone almost nothing to scroll, so
-  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen). A grid that was replaced
-  // (a live sheet whose shape changed) stops listening the next time the width crosses the line.
-  const frozenWidth = freeze > 0 ? ROW_NUMBER_WIDTH + frozenWidthOf(cols, freeze) : 0;
-  const narrow =
-    frozenWidth > 0 ? doc.defaultView?.matchMedia?.(`(max-width: ${frozenWidth * 2}px)`) : null;
+  // Frozen columns wider than half the frame scroll with the rest (unfreezeQuery). A grid that
+  // was replaced (a live sheet whose shape changed) stops listening the next time the width
+  // crosses the line.
+  const query = unfreezeQuery(cols, freeze);
+  const narrow = query ? doc.defaultView?.matchMedia?.(query) : null;
   if (narrow) {
     let applied = false;
     const apply = () => {
@@ -566,7 +731,8 @@ export function buildGrid(
       applied = true;
       unfrozen = narrow.matches;
       root.classList.toggle("plinth-sheet--unfrozen", unfrozen);
-      for (const [cell, left] of frozenCells) cell.style.left = unfrozen ? "" : `${left}px`;
+      placeFrozen();
+      sizeTable();
     };
     apply();
     narrow.addEventListener?.("change", apply);

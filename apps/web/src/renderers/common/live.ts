@@ -74,6 +74,8 @@ export interface LiveDocListener {
   error(code: LiveDocErrorCode): void;
   /** This socket's struct frame was refused (a sheet's rows or columns). */
   structDenied?(reason: LeaseDenial, by?: string): void;
+  /** This socket's struct frame was applied (just before `changed`), with its op. */
+  structLanded?(op: SheetStructOp): void;
 }
 
 /** What an editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
@@ -630,6 +632,7 @@ export class LiveDocClient implements LiveBackend {
     if (f.by === this.you?.id) {
       this.structPending = false;
       this.ownStructRev = f.rev;
+      this.opts.listener.structLanded?.(f.op);
     }
     this.opts.listener.changed();
     this.opts.listener.status();
@@ -777,6 +780,13 @@ function isStructOp(op: unknown): boolean {
         typeof op.from === "string" &&
         LETTERS_RE.test(op.from) &&
         isInt(op.count, 1, LIMITS.maxSheetColumns)
+      );
+    case "move_rows":
+      return (
+        onlyKeys(op, new Set(["op", "from", "count", "to"])) &&
+        isSheetRow(op.from) &&
+        isRowCount(op.count) &&
+        isSheetRow(op.to)
       );
     default:
       return false;

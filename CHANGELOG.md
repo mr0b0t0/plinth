@@ -332,6 +332,29 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   request can go to (`ask`) and why editing is off (`live_off`).
 - **Picking an element at phone width.** While a comment or a request picks an element, the
   comments sheet shrinks to its bottom bar, which sits under the artifact instead of covering it.
+- **Sheet columns and row order on the page.** In a sheet's edit mode the bar's Row menu also
+  moves the selected row up or down (Alt+Shift+Up and Down do too), and the Column menu freezes the
+  columns up to the selected one or unfreezes them. A moved row keeps every formula pointing at the
+  cells it meant, and a total moved next to its range never adds itself. Drag a header's edge (or
+  press Alt+Left and Alt+Right on it) to change a column's width. The column settings add thousands
+  separators, and a select column's options as a list to rename, reorder, add to (type it and press
+  Enter) and remove from; renaming an option renames it in the cells that hold it, and an option a
+  cell holds cannot be removed. The settings follow their column while someone else inserts or
+  deletes one before it, and close only once the change is sent. At phone width a cell opens in an
+  editor docked at the bottom of the page, under its address and the column's name, saved with
+  Enter or its check button, and the settings are a sheet across the bottom. Focus and the
+  selection have one ring colour, the app's. The grid is a proper grid for keyboards and screen
+  readers: one tab stop, the arrows, Home and End, and cells someone else is editing say so. When
+  someone else's change redraws the grid, the focus stays where you were typing (the column
+  settings, the filter or a cell).
+- **New and Import.** **New** on the dashboard starts a blank document or sheet that opens
+  straight in edit mode, with the focus on its title or first cell (where editing on the page is
+  on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
+  for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
+  file and keeps the link, sharing and comments; it asks again when a newer version was published
+  meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
+  by email code without an account to sign in first. HTML pages and designs still come only from
+  agents. `POST /api/v1/artifacts` takes `note` for the first version.
 - **Edit docs as formatted text.** On a doc's page, a block opens as formatted text, with a
   format bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its
   corner: **Turn into** another kind,

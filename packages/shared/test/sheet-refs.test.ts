@@ -8,6 +8,7 @@ import {
   type SheetOp,
   SheetOpError,
   serializeSheet,
+  sheetOpSchema,
   shiftFormula,
 } from "../src/index.ts";
 
@@ -42,6 +43,72 @@ describe("shiftFormula", () => {
     expect(shiftFormula("=SUM(B:B)", delC(1))).toBe("=SUM(#REF!)");
     expect(shiftFormula("=C2", delC(1))).toBe("=B2");
     expect(shiftFormula("=SUM(2:2)", insC(0))).toBe("=SUM(2:2)");
+  });
+
+  it("moves rows: references into them follow, the others shift past the gap", () => {
+    const mv = (from: number, count: number, to: number) => ({
+      kind: "move_rows" as const,
+      from,
+      count,
+      to,
+    });
+    // Rows 2 and 3 down to 5 and 6: rows 4 to 6 come up by two, row 7 stays.
+    expect(shiftFormula("=A2+A3+A4+A5+A6+A7", mv(2, 2, 5))).toBe("=A5+A6+A2+A3+A4+A7");
+    // Rows 6 and 7 up to 3 and 4: rows 3 to 5 go down by two, row 2 stays.
+    expect(shiftFormula("=A2+A3+A5+A6+A7", mv(6, 2, 3))).toBe("=A2+A5+A7+A3+A4");
+    // The header row, and rows past every row, never move; $ moves like a relative reference.
+    expect(shiftFormula("=A1+A100+$B$6", mv(6, 2, 3))).toBe("=A1+A100+$B$3");
+    // A move within a range only reorders it: the range stays.
+    expect(shiftFormula("=SUM(B2:B8)", mv(3, 1, 6))).toBe("=SUM(B2:B8)");
+    expect(shiftFormula("=SUM(B2:B4)", mv(4, 1, 2))).toBe("=SUM(B2:B4)");
+    // Rows that leave a range shrink it; rows that land inside it grow it.
+    expect(shiftFormula("=SUM(B3:B5)", mv(3, 1, 6))).toBe("=SUM(B3:B4)");
+    expect(shiftFormula("=SUM(B2:B8)", mv(2, 1, 9))).toBe("=SUM(B2:B7)");
+    expect(shiftFormula("=SUM(B5:B7)", mv(2, 1, 6))).toBe("=SUM(B4:B7)");
+    expect(shiftFormula("=SUM(B5:B7)", mv(2, 1, 4))).toBe("=SUM(B5:B7)");
+    // Each end keeps its $, and a range written bottom to top stays that way.
+    expect(shiftFormula("=SUM($B$2:B8)", mv(2, 1, 9))).toBe("=SUM($B$2:B7)");
+    expect(shiftFormula("=SUM(B8:B2)", mv(2, 1, 9))).toBe("=SUM(B7:B2)");
+    // A range inside the moved rows follows them.
+    expect(shiftFormula("=SUM(4:5)", mv(4, 2, 2))).toBe("=SUM(2:3)");
+    // Whole columns are every row: a row move leaves them alone.
+    expect(shiftFormula("=SUM(B:B)", mv(2, 1, 5))).toBe("=SUM(B:B)");
+    // Nothing becomes #REF!, and text in strings stays.
+    expect(shiftFormula('=IF(A3>0,"A3",A3)', mv(3, 1, 2))).toBe('=IF(A2>0,"A3",A2)');
+  });
+
+  it("moves rows across a range's edge: one result for one new order, never a total of itself", () => {
+    const mv = (from: number, count: number, to: number) => ({
+      kind: "move_rows" as const,
+      from,
+      count,
+      to,
+    });
+    // a, b, c, Total (=SUM(B2:B4)): Total up one, or c down one, is a, b, Total, c. Either way
+    // the total adds the rows above it, and never its own row 4.
+    expect(shiftFormula("=SUM(B2:B4)", mv(5, 1, 4))).toBe("=SUM(B2:B3)");
+    expect(shiftFormula("=SUM(B2:B4)", mv(4, 1, 5))).toBe("=SUM(B2:B3)");
+    // The mirror: Total (=SUM(B3:B5)) first, down one, or x up one: x, Total, y, z.
+    expect(shiftFormula("=SUM(B3:B5)", mv(2, 1, 3))).toBe("=SUM(B4:B5)");
+    expect(shiftFormula("=SUM(B3:B5)", mv(3, 1, 2))).toBe("=SUM(B4:B5)");
+    // The same order reached either way gives the same formula, for every range and move.
+    for (let lo = 2; lo <= 7; lo++) {
+      for (let hi = lo; hi <= 7; hi++) {
+        for (let from = 2; from <= 7; from++) {
+          for (let count = 1; from + count - 1 <= 7; count++) {
+            for (let to = 2; to + count - 1 <= 7; to++) {
+              if (to === from) continue;
+              const other =
+                to > from ? mv(from + count, to - from, from) : mv(to, from - to, to + count);
+              const f = `=SUM(B${lo}:B${hi})`;
+              expect(shiftFormula(f, mv(from, count, to)), `${f} ${from}+${count}>${to}`).toBe(
+                shiftFormula(f, other),
+              );
+            }
+          }
+        }
+      }
+    }
   });
 
   it("keeps everything else byte for byte", () => {
@@ -145,6 +212,34 @@ describe("applySheetOps", () => {
     expect(del.sheet.rows.map((r) => r[2])).toEqual(["=B2*2", "=SUM(C2:C2)"]);
     const app = applySheetOps(BASE, [{ op: "append_rows", values: [["c", 3]] }]);
     expect(app.sheet.rows).toHaveLength(4);
+  });
+
+  it("moves rows (the live sheet's op), refusing a move that does not fit", () => {
+    const up = applySheetOps(BASE, [{ op: "move_rows", from: 3, to: 2 }]);
+    expect(up.sheet.rows).toEqual([
+      ["b", 2, "=B2*2"],
+      ["a", 1, "=B3*2"],
+      ["sum", null, "=SUM(C2:C3)"],
+    ]);
+    const two = applySheetOps(BASE, [{ op: "move_rows", from: 2, count: 2, to: 3 }]);
+    expect(two.sheet.rows.map((r) => r[0])).toEqual(["sum", "a", "b"]);
+    expect(two.sheet.rows[0]?.[2]).toBe("=SUM(C3:C4)");
+    for (const op of [
+      { op: "move_rows", from: 1, to: 3 },
+      { op: "move_rows", from: 5, to: 2 },
+      { op: "move_rows", from: 2, count: 3, to: 3 },
+      { op: "move_rows", from: 2, count: 0, to: 3 },
+      { op: "move_rows", from: 2, to: 2 },
+      { op: "move_rows", from: 2, to: 5 },
+      { op: "move_rows", from: 2.5, to: 3 },
+    ] as SheetOp[]) {
+      expect(() => applySheetOps(BASE, [op]), JSON.stringify(op)).toThrow(SheetOpError);
+    }
+    expect(BASE.rows[0]?.[0]).toBe("a");
+    // edit_sheet's own ops are unchanged: an agent moves rows by inserting and deleting.
+    expect(sheetOpSchema.safeParse({ op: "move_rows", from: 3, count: 1, to: 2 }).success).toBe(
+      false,
+    );
   });
 
   it("changes, inserts and deletes columns", () => {

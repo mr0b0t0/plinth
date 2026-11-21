@@ -42,6 +42,7 @@ import {
   type StageContext,
   type StageItem,
 } from "./stageItems.tsx";
+import { useEditStart } from "./useEditStart.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
@@ -208,6 +209,8 @@ export function ViewerStage({
     onAsk: (anchor, what) => askFromFrame.current(pageAnchorOf(anchor), what),
   });
   const editing = live.editing;
+  // `?edit` (New and Import): start editing, with the focus on the frame's first block or cell.
+  useEditStart(live);
   // While a version waits for review, the page still shows the changes made on their base: the
   // bar names that base, whenever the room's news of the newer version arrived.
   const shownVersion =

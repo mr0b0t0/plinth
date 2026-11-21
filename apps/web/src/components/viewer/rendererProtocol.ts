@@ -3,8 +3,11 @@
 // message is { source: "plinth-renderer", v: 1, type, ... }.
 //
 //   app -> frame: print                    the renderer calls its own window.print()
-//   app -> frame: edit { on, base? }       on-page editing on or off (#36); `base` (solo only) is
-//                                          the version shown, whose files the draft is drawn with
+//   app -> frame: edit { on, base?, focus? }
+//                                          on-page editing on or off (#36); `base` (solo only) is
+//                                          the version shown, whose files the draft is drawn with;
+//                                          `focus: "first"` (from ?edit) focuses the first block
+//                                          or cell
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
 //   app -> frame: review { nonce, n?, base?, files?, text? }
 //                                          open the whole-draft review; n, base and files (the
@@ -262,6 +265,11 @@ export interface EditMessage {
   on: boolean;
   /** Solo only: the version the frame shows, whose files the draft is drawn with. */
   base?: number;
+  /**
+   * Turning editing on from `?edit` (New and Import): put the focus on the first block or cell, a
+   * doc's first block opened for typing. Absent: focus stays where it is.
+   */
+  focus?: "first";
 }
 
 /** Open the whole-draft review in the frame. */
@@ -367,13 +375,14 @@ const MAX_EDITORS = 50;
 const MAX_EMAIL = 254;
 const MAX_INT = 2 ** 31;
 
-export function editMessage(on: boolean, base?: number): EditMessage {
+export function editMessage(on: boolean, base?: number, focus?: "first"): EditMessage {
   return {
     source: RENDERER_MESSAGE_SOURCE,
     v: RENDERER_PROTOCOL_VERSION,
     type: "edit",
     on,
     ...(base !== undefined ? { base } : {}),
+    ...(on && focus ? { focus } : {}),
   };
 }
 
