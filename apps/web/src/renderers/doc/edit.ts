@@ -335,6 +335,8 @@ interface Want extends LineRange {
   at?: { x: number; y: number };
   /** Where the caret goes otherwise. */
   caret?: "start" | "end";
+  /** Select the block's text once open (a new doc's title, from `?edit`), not place a caret. */
+  select?: true;
   /**
    * The op writes what was typed in a cleared block closed while it was being removed (keepTyped):
    * the frame reports unsent changes until it is made, and it is asked for again once the draft is
@@ -725,6 +727,41 @@ export class DocEditor {
       this.queued = null;
       q();
     }
+    this.tryFirst();
+  }
+
+  // ---------- `?edit`: the first block, open for typing ----------
+
+  /** The app started editing from `?edit` (New and Import): open the first block once drawn. */
+  private wantFirst = false;
+
+  focusFirst(): void {
+    this.wantFirst = true;
+    this.tryFirst();
+  }
+
+  /**
+   * Once the draft is here: open the doc's first block (a new doc's title) so the person types
+   * into it, with a heading's text selected so the first keystroke replaces "Untitled document".
+   * When that block is someone else's, or this person cannot write now, the block only takes the
+   * focus, and nothing is asked of the room. A first block that cannot be edited in place is
+   * selected, as a click would. An empty doc opens a new paragraph.
+   */
+  private tryFirst(): void {
+    const b = this.backend;
+    if (!this.wantFirst || !this.editing || !b.ready) return;
+    this.wantFirst = false;
+    const first = this.blocks()[0];
+    if (!first) {
+      if (this.canWrite) this.openInsert(0, para());
+      return;
+    }
+    if (!this.canWrite || this.heldBy(first)) {
+      const el = Array.from(this.root.children).find((n) => rangeOf(n)?.start === first.start);
+      (el as HTMLElement | undefined)?.focus();
+      return;
+    }
+    this.open_(first, "end", undefined, this.modelOf(first)?.model.t === "heading");
   }
 
   /**
@@ -824,6 +861,7 @@ export class DocEditor {
       this.root.removeEventListener("focusout", this.onFocusOut);
       this.win.removeEventListener("keydown", this.onSaveKey);
       this.hideNotice();
+      this.wantFirst = false;
     }
     this.render();
     this.hooks.status();
@@ -959,7 +997,12 @@ export class DocEditor {
     this.open_(found.block, "end", at);
   }
 
-  private open_(block: Block, caret: "start" | "end", at?: { x: number; y: number }): void {
+  private open_(
+    block: Block,
+    caret: "start" | "end",
+    at?: { x: number; y: number },
+    select = false,
+  ): void {
     const b = this.backend;
     if (!this.editing || !b.ready) return;
     const text = joinLines(b.lines.slice(block.start, block.end));
@@ -1012,6 +1055,7 @@ export class DocEditor {
       tries: 0,
       caret,
       ...(at ? { at } : {}),
+      ...(select ? { select: true as const } : {}),
     };
     if (!this.request(again)) {
       this.want = null;
@@ -1621,7 +1665,8 @@ export class DocEditor {
     if (!keep) {
       if (w?.at && this.caretFromPoint(w.at)) {
         // The caret is where the person clicked.
-      } else open.rich.focus(w?.caret ?? (w?.insert ? "start" : "end"));
+      } else if (w?.select) open.rich.selectText();
+      else open.rich.focus(w?.caret ?? (w?.insert ? "start" : "end"));
     }
     // What was typed in a cleared block while it was removed is sent now; an empty one has nothing.
     if (keep && !(placed && isEmptyBlock(open.rich.model))) this.schedule(0);

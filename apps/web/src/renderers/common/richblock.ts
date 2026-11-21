@@ -902,6 +902,12 @@ export class RichBlockEditor {
 
   /** Shows the format bar at a selection of text that takes marks, and hides it otherwise. */
   private updateBar(s: { from: RichPoint; to: RichPoint } | null): void {
+    const q = this.quiet;
+    if (q && s && samePoint(s.from, q.from) && samePoint(s.to, q.to)) {
+      if (!this.toolbar.contains(this.doc.activeElement)) this.toolbar.hidden = true;
+      return;
+    }
+    if (s) this.quiet = null;
     const show =
       s !== null &&
       takesMarks(this.shape) &&
@@ -947,6 +953,28 @@ export class RichBlockEditor {
       this.place({ leaf: last, offset: inlineLength(refs[last]?.get() ?? []) });
     }
   }
+
+  /**
+   * Selects all of the block's text (a new doc's title, opened from `?edit`), so the first
+   * keystroke replaces it. The format bar waits until the person changes the selection: the page
+   * made it, not them.
+   */
+  selectText(): void {
+    const leaves = this.drawn.leaves;
+    if (this.shape.t === "image" || leaves.length === 0) {
+      this.focus("end");
+      return;
+    }
+    const last = leaves.length - 1;
+    const refs = leafRefs(this.shape);
+    const from = { leaf: 0, offset: 0 };
+    const to = { leaf: last, offset: inlineLength(refs[last]?.get() ?? []) };
+    this.quiet = { from, to };
+    this.place(from, to);
+  }
+
+  /** A selection selectText() made, which shows no format bar while it stays as it is. */
+  private quiet: { from: RichPoint; to: RichPoint } | null = null;
 
   /** The caret (or the selection's ends), as places in the model. */
   selection(): { from: RichPoint; to: RichPoint } | null {
@@ -1564,3 +1592,7 @@ function shortcut(key: string, shift = false): string {
 }
 
 export { ATOM_CHAR, leafRefs };
+
+function samePoint(a: RichPoint, b: RichPoint): boolean {
+  return a.leaf === b.leaf && a.offset === b.offset;
+}

@@ -43,15 +43,22 @@ test("New document: v1 'Created in the app' opens in edit mode on its title, and
 
   await expect(page).toHaveURL(/\/a\/[^/?]+$/);
   await expect(bar(page)).toBeVisible();
-  const field = frameOf(page).locator("textarea.plinth-doc__field");
-  await expect(field).toHaveValue("# Untitled document", { timeout: 15_000 });
+  // The title opens as formatted text, with no Markdown shown.
+  const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
+  await expect(field).toHaveText("Untitled document", { timeout: 15_000 });
   await expect(field).toBeFocused();
+  await expect(frameOf(page).locator("textarea")).toHaveCount(0);
   // The title's text is selected: typing replaces it and keeps the heading.
   await page.keyboard.type("Trip plan");
-  await expect(field).toHaveValue("# Trip plan");
-  await field.fill("# Trip plan\n\nDay one: the coast.");
-  await field.press("Escape");
+  await expect(field).toHaveText("Trip plan");
+  // Enter at its end opens a paragraph below.
+  await page.keyboard.press("Enter");
+  await expect(field).toHaveText("", { timeout: 10_000 });
+  await page.keyboard.type("Day one: the coast.");
+  await expect(field).toHaveText("Day one: the coast.");
+  await page.keyboard.press("Escape");
   await expect(frameOf(page).locator("h1")).toContainText("Trip plan");
+  await expect(frameOf(page).locator("p", { hasText: "Day one: the coast." })).toBeVisible();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(bar(page)).toContainText("Published as v2", { timeout: 10_000 });
 

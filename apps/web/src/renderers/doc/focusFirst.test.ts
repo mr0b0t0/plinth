@@ -1,12 +1,12 @@
 // `edit { on: true, focus: "first" }` (the app's `?edit`, from New and Import): the doc opens its
-// first block for typing once the draft is here, so a new doc's title takes the keyboard. When
-// someone else holds that block, or this person cannot write, it only takes the focus and nothing
-// is asked of the room. The message reader passes `focus` only as "first", and only to turn on.
+// first block as formatted text once the draft is here, with a heading's text selected, so the
+// first keystroke replaces a new doc's "Untitled document". When someone else holds that block, or
+// this person cannot write, it only takes the focus and nothing is asked of the room. The message reader passes `focus` only as "first", and only to turn on.
 import { RENDERER_MESSAGE_SOURCE, RENDERER_PROTOCOL_VERSION } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEditMessage } from "../common/editSession.ts";
 import type { ClientLease, LiveBackend } from "../common/live.ts";
-import { DocEditor, headingLevel, LocalDoc, selectHeading } from "./edit.ts";
+import { DocEditor, LocalDoc } from "./edit.ts";
 
 let root: HTMLElement;
 
@@ -44,55 +44,58 @@ function roomBackend(lines: string[], over: Partial<LiveBackend> = {}) {
   return b;
 }
 
+/** The selected text, and whether it lies in `el`. */
+function selected(el: Element): string {
+  const sel = document.getSelection();
+  if (!sel || sel.rangeCount === 0) return "";
+  const r = sel.getRangeAt(0);
+  return el.contains(r.startContainer) && el.contains(r.endContainer) ? r.toString() : "";
+}
+
+function solo(text: string) {
+  const events = {
+    granted: (l: ClientLease) => editor.granted(l),
+    changed: () => editor.changed(),
+  };
+  const local = new LocalDoc(text, events);
+  const editor: DocEditor = new DocEditor(root, window, local, hooks);
+  return { local, editor };
+}
+
 describe("focus on the first block", () => {
-  it("opens a new doc's title for typing (solo)", () => {
-    const events = {
-      granted: (l: ClientLease) => editor.granted(l),
-      changed: () => editor.changed(),
-    };
-    const local = new LocalDoc("# Untitled document\n", events);
-    const editor: DocEditor = new DocEditor(root, window, local, hooks);
+  it("opens a new doc's title as formatted text, with its text selected (solo)", () => {
+    const { editor } = solo("# Untitled document\n");
     editor.setEditing(true);
     editor.focusFirst();
-    const field = editor.fieldElement as HTMLTextAreaElement;
-    expect(field.tagName).toBe("TEXTAREA");
-    expect(field.value).toBe("# Untitled document");
-    expect(document.activeElement).toBe(field);
-    // The title's text is selected, so the first keystroke replaces it.
-    expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe("Untitled document");
+    const rich = editor.openEditor;
+    expect(rich).not.toBeNull();
+    const editable = rich?.editable as HTMLElement;
+    expect(editable.closest(".plinth-doc__open")).not.toBeNull();
+    expect(rich?.kind).toBe("heading");
+    expect(document.querySelector("textarea")).toBeNull();
+    expect(editable.contains(document.activeElement)).toBe(true);
+    // The title's text is selected, so the first keystroke replaces it; no Markdown is shown.
+    expect(selected(editable)).toBe("Untitled document");
+    expect(editable.textContent).not.toContain("#");
+    // The page made that selection, so the format bar waits for the person's own.
+    expect(document.querySelector<HTMLElement>(".plinth-rich__toolbar")?.hidden).toBe(true);
   });
 
-  it("selects only a one-line heading's text", () => {
-    const field = document.createElement("textarea");
-    const sel = (v: string) => {
-      field.value = v;
-      field.setSelectionRange(0, 0);
-      selectHeading(field);
-      return field.value.slice(field.selectionStart, field.selectionEnd);
-    };
-    expect(sel("## Plan  ")).toBe("Plan");
-    expect(sel("Body text")).toBe("");
-    expect(sel("# Title\n\nMore")).toBe("");
-    expect(sel("#nospace")).toBe("");
-  });
-
-  it("types a one-line heading in its heading's type", () => {
-    expect(headingLevel("# Untitled document")).toBe(1);
-    expect(headingLevel("### Notes ")).toBe(3);
-    expect(headingLevel("# Title\n\nBody")).toBe(0);
-    expect(headingLevel("Body")).toBe(0);
-    const local = new LocalDoc("# Untitled document\n", {
-      granted: (l: ClientLease) => editor.granted(l),
-      changed: () => editor.changed(),
-    });
-    const editor: DocEditor = new DocEditor(root, window, local, hooks);
+  it("opens a first paragraph with the caret at its end, selecting nothing", () => {
+    const { editor } = solo("Notes for Monday.\n");
     editor.setEditing(true);
     editor.focusFirst();
-    const field = editor.fieldElement as HTMLTextAreaElement;
-    expect(field.dataset.heading).toBe("1");
-    field.value = "Plain text";
-    field.dispatchEvent(new Event("input"));
-    expect(field.dataset.heading).toBeUndefined();
+    const editable = editor.openEditor?.editable as HTMLElement;
+    expect(editable.textContent).toBe("Notes for Monday.");
+    expect(selected(editable)).toBe("");
+  });
+
+  it("opens a new paragraph in an empty doc", () => {
+    const { local, editor } = solo("");
+    editor.setEditing(true);
+    editor.focusFirst();
+    expect(editor.openEditor).not.toBeNull();
+    expect(local.mine).not.toBeNull();
   });
 
   it("waits for the room's draft, then asks for the first block's lines once", () => {
@@ -119,6 +122,34 @@ describe("focus on the first block", () => {
     expect(b.lease).not.toHaveBeenCalled();
     expect(document.activeElement?.tagName).toBe("H1");
     expect(document.querySelector(".plinth-doc__notice")).toBeNull();
+    expect(editor.openEditor).toBeNull();
+    expect(selected(root)).toBe("");
+  });
+
+  it("only focuses the block when this person cannot write, and asks the room nothing", () => {
+    const b = roomBackend(["# Untitled document"], {
+      ready: true,
+      connected: true,
+      you: { id: "s1", email: "ada@example.org", right: "watch" },
+    });
+    const editor = new DocEditor(root, window, b, hooks);
+    editor.setEditing(true);
+    editor.focusFirst();
+    expect(b.lease).not.toHaveBeenCalled();
+    expect(editor.openEditor).toBeNull();
+    expect(document.activeElement?.tagName).toBe("H1");
+    expect(selected(root)).toBe("");
+    // No "Sign in to edit" notice either: the person asked for nothing.
+    expect(document.querySelector(".plinth-doc__notice")).toBeNull();
+  });
+
+  it("only focuses the block while edits wait for a review", () => {
+    const b = roomBackend(["# Plan"], { ready: true, connected: true, conflictVersion: 4 });
+    const editor = new DocEditor(root, window, b, hooks);
+    editor.setEditing(true);
+    editor.focusFirst();
+    expect(b.lease).not.toHaveBeenCalled();
+    expect(document.activeElement?.tagName).toBe("H1");
   });
 
   it("does nothing outside edit mode, and forgets the wish when editing ends", () => {
