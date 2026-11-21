@@ -47,6 +47,21 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   in the same call (`get_design_system` lists the entries to send). The copies become the page's
   own files and record where they came from. Designs name the design system they were built on,
   like pages, and get the same outdated warning. Apply migration `0022_design_system_reuse.sql`.
+- **Whiteboards draw what Claude's do.** Boards take Claude's shapes (rounded, diamond, pill,
+  hexagon, parallelogram, database, queue, document, cloud, person), sections that sit behind
+  everything and carry what lies in them, tables with fills and value shading, text sizes and
+  alignment, any `#rrggbb` colour, outlines and hollow shapes, bold, italic, code and safe links in
+  text, and arrows that run in right angles from chosen sides, follow a planned route and end in an
+  arrowhead or a dot. Existing boards look as they did. On the page, a selected shape offers a
+  Shape list and a selected text a Text size list, and a table cell is edited with a double click;
+  PNG and SVG exports draw all of it. Agents change a block with the new `merge` op of
+  `write_artifact_data` (only the fields that change, at a rev), and a board's data has its own,
+  larger limits (`DATA_BOARD_MAX_DOCS`, `DATA_BOARD_MAX_BYTES`, `DATA_BOARD_MAX_DOC_BYTES`).
+  When two people write in the same block at once, someone deletes a block you are writing in,
+  or a save fails, what you wrote is kept as a new note beside it, with Use mine to put it back;
+  if even the note cannot be saved, the page holds your text with Copy until it can. A board tab
+  opened before this release keeps working on the blocks it can read, and turns read-only and
+  asks for a reload instead of saving over newer ones.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode

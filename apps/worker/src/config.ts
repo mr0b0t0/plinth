@@ -242,6 +242,17 @@ export interface SharedDataLimits {
   writesPerViewerPerHour: number;
   /** DATA_WRITES_PER_ARTIFACT_PER_HOUR: all writers of one artifact. */
   writesPerArtifactPerHour: number;
+  /** A whiteboard's caps, in place of the three above on a board's data. */
+  board: BoardDataLimits;
+}
+
+export interface BoardDataLimits {
+  /** DATA_BOARD_MAX_DOCS: blocks and arrows on one board. */
+  maxDocsPerArtifact: number;
+  /** DATA_BOARD_MAX_BYTES: one board's data. */
+  maxBytesPerArtifact: number;
+  /** DATA_BOARD_MAX_DOC_BYTES: one block or arrow, 1024..1048576. */
+  maxDocBytes: number;
 }
 
 export interface RoomLimits {
@@ -488,6 +499,11 @@ export function parseConfig(env: Record<string, unknown>): Config {
         env.DATA_WRITES_PER_ARTIFACT_PER_HOUR,
         DEFAULTS.data.writesPerArtifactPerHour,
       ),
+      board: {
+        maxDocsPerArtifact: int(env.DATA_BOARD_MAX_DOCS, DEFAULTS.data.board.maxDocsPerArtifact),
+        maxBytesPerArtifact: int(env.DATA_BOARD_MAX_BYTES, DEFAULTS.data.board.maxBytesPerArtifact),
+        maxDocBytes: int(env.DATA_BOARD_MAX_DOC_BYTES, DEFAULTS.data.board.maxDocBytes),
+      },
     },
     showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
     thumbnails: boolDefaultOn(env.THUMBNAILS),
@@ -716,6 +732,27 @@ function validateSharedData(d: SharedDataLimits): void {
   if (d.writesPerArtifactPerHour < 1) {
     throw new ConfigError("DATA_WRITES_PER_ARTIFACT_PER_HOUR must be at least 1");
   }
+  const b = d.board;
+  if (b.maxDocBytes < 1024 || b.maxDocBytes > 1024 * 1024) {
+    throw new ConfigError("DATA_BOARD_MAX_DOC_BYTES must be between 1024 and 1048576");
+  }
+  if (b.maxBytesPerArtifact < b.maxDocBytes) {
+    throw new ConfigError("DATA_BOARD_MAX_BYTES must be at least DATA_BOARD_MAX_DOC_BYTES");
+  }
+  if (b.maxDocsPerArtifact < 1) {
+    throw new ConfigError("DATA_BOARD_MAX_DOCS must be at least 1");
+  }
+}
+
+/**
+ * The document caps for one artifact's shared data: a whiteboard's own (DATA_BOARD_*), or the
+ * instance's DATA_* for every other page. Writes, quotas and the session's limits all read these.
+ */
+export function dataLimitsFor(
+  config: Pick<Config, "data">,
+  type: string,
+): Pick<SharedDataLimits, "maxDocsPerArtifact" | "maxBytesPerArtifact" | "maxDocBytes"> {
+  return type === "whiteboard" ? config.data.board : config.data;
 }
 
 /**

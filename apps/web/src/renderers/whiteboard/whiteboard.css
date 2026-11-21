@@ -21,6 +21,13 @@
   --wb-fill-pink: #f6d0dc;
   --wb-fill-purple: #e2d5f5;
   --wb-fill-gray: #e4e2dc;
+  /* Each colour's deeper tone: text, outlines, arrows and table shading in that colour. */
+  --wb-ink-yellow: #8a6a00;
+  --wb-ink-green: #2f7a3a;
+  --wb-ink-blue: #2b62b0;
+  --wb-ink-pink: #b23a64;
+  --wb-ink-purple: #6b44b0;
+  --wb-ink-gray: #6b675e;
   --wb-shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 4px 12px rgb(0 0 0 / 8%);
   color-scheme: light dark;
 }
@@ -46,6 +53,12 @@
     --wb-fill-pink: #57283a;
     --wb-fill-purple: #3d2f57;
     --wb-fill-gray: #3a3933;
+    --wb-ink-yellow: #e6c35c;
+    --wb-ink-green: #7dc98a;
+    --wb-ink-blue: #8fb2f0;
+    --wb-ink-pink: #f08fb0;
+    --wb-ink-purple: #b9a0f0;
+    --wb-ink-gray: #aaa69c;
     --wb-shadow: 0 1px 2px rgb(0 0 0 / 50%), 0 4px 12px rgb(0 0 0 / 35%);
   }
 }
@@ -134,7 +147,9 @@ body {
 }
 
 .wb-toolbar button,
-.wb-msg button {
+.wb-toolbar select,
+.wb-msg button,
+.wb-held button {
   font: inherit;
   font-size: 14px;
   color: var(--wb-fg);
@@ -145,6 +160,10 @@ body {
   min-height: 32px;
   min-width: 32px;
   cursor: pointer;
+}
+
+.wb-toolbar select {
+  padding: 4px 6px;
 }
 
 .wb-toolbar button:disabled {
@@ -158,6 +177,7 @@ body {
 }
 
 button:focus-visible,
+select:focus-visible,
 .wb-viewport:focus-visible,
 .wb-block:focus-visible {
   outline: 2px solid var(--wb-focus);
@@ -264,6 +284,41 @@ button:focus-visible,
   display: none;
 }
 
+/* What the viewer wrote that could not be saved yet: stays until saved, copied away or dismissed. */
+.wb-held {
+  display: grid;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.wb-held[hidden] {
+  display: none;
+}
+
+.wb-held p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wb-held textarea {
+  font: inherit;
+  font-size: 14px;
+  color: var(--wb-fg);
+  background: var(--wb-surface);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  resize: vertical;
+  min-width: 0;
+}
+
+.wb-held div {
+  display: flex;
+  gap: 8px;
+}
+
 .wb-viewport {
   position: relative;
   flex: 1;
@@ -304,10 +359,20 @@ button:focus-visible,
 }
 
 .wb-arrow {
-  stroke: var(--wb-arrow);
+  stroke: var(--wb-arrow-c, var(--wb-arrow));
   stroke-width: 2;
+  stroke-linejoin: round;
   fill: none;
   pointer-events: none;
+}
+
+.wb-arrow-head {
+  fill: var(--wb-arrow-c, var(--wb-arrow));
+  pointer-events: none;
+}
+
+.selected > .wb-arrow-head {
+  fill: var(--wb-accent);
 }
 
 .wb-arrow.dashed {
@@ -320,14 +385,11 @@ button:focus-visible,
 }
 
 .wb-arrow-hit {
+  fill: none;
   stroke: transparent;
   stroke-width: 14;
   pointer-events: stroke;
   cursor: pointer;
-}
-
-.wb-arrows marker path {
-  fill: var(--wb-arrow);
 }
 
 /* A halo in the board's colour keeps the label clear of its line and arrowhead. */
@@ -342,11 +404,12 @@ button:focus-visible,
 }
 
 .wb-block {
+  --wb-fill: var(--wb-fill-yellow);
   position: absolute;
   display: flex;
   border-radius: 6px;
   color: var(--wb-block-fg);
-  background: var(--wb-fill-yellow);
+  background: var(--wb-fill);
   box-shadow: var(--wb-shadow);
   cursor: move;
   touch-action: none;
@@ -354,22 +417,27 @@ button:focus-visible,
 }
 
 .wb-block[data-color="green"] {
-  background: var(--wb-fill-green);
+  --wb-fill: var(--wb-fill-green);
 }
 .wb-block[data-color="blue"] {
-  background: var(--wb-fill-blue);
+  --wb-fill: var(--wb-fill-blue);
 }
 .wb-block[data-color="pink"] {
-  background: var(--wb-fill-pink);
+  --wb-fill: var(--wb-fill-pink);
 }
 .wb-block[data-color="purple"] {
-  background: var(--wb-fill-purple);
+  --wb-fill: var(--wb-fill-purple);
 }
 .wb-block[data-color="gray"] {
-  background: var(--wb-fill-gray);
+  --wb-fill: var(--wb-fill-gray);
 }
 .wb-block[data-color="yellow"] {
-  background: var(--wb-fill-yellow);
+  --wb-fill: var(--wb-fill-yellow);
+}
+
+/* Words on a custom #rrggbb read in white or near black, whichever shows. */
+.wb-block[data-color="custom"]:not([data-kind="text"], [data-hollow]) {
+  color: var(--wb-on);
 }
 
 .wb-block[data-kind="text"] {
@@ -377,9 +445,32 @@ button:focus-visible,
   box-shadow: none;
 }
 
+/* Text in a colour takes that colour's deeper tone, or the #rrggbb as written. */
+.wb-block[data-kind="text"][data-color="yellow"] {
+  color: var(--wb-ink-yellow);
+}
+.wb-block[data-kind="text"][data-color="green"] {
+  color: var(--wb-ink-green);
+}
+.wb-block[data-kind="text"][data-color="blue"] {
+  color: var(--wb-ink-blue);
+}
+.wb-block[data-kind="text"][data-color="pink"] {
+  color: var(--wb-ink-pink);
+}
+.wb-block[data-kind="text"][data-color="purple"] {
+  color: var(--wb-ink-purple);
+}
+.wb-block[data-kind="text"][data-color="gray"] {
+  color: var(--wb-ink-gray);
+}
+.wb-block[data-kind="text"][data-color="custom"] {
+  color: var(--wb-fill);
+}
+
 .wb-block[data-kind="rect"],
 .wb-block[data-kind="ellipse"] {
-  border: 1.5px solid var(--wb-shape-border);
+  border: 1.5px solid var(--wb-stroke, var(--wb-shape-border));
   box-shadow: none;
   align-items: center;
   justify-content: center;
@@ -388,8 +479,9 @@ button:focus-visible,
 }
 
 .wb-block[data-kind="rect"][data-color=""],
-.wb-block[data-kind="ellipse"][data-color=""] {
-  background: var(--wb-fill-none);
+.wb-block[data-kind="ellipse"][data-color=""],
+.wb-block[data-shape][data-color=""] {
+  --wb-fill: var(--wb-fill-none);
 }
 
 .wb-block[data-kind="ellipse"] {
@@ -452,6 +544,172 @@ html[data-readonly="true"] .wb-block {
 
 .wb-block.selected:has(> .wb-edit:focus) {
   outline: none;
+}
+
+/* A note with an outline. */
+.wb-block[data-kind="note"][data-stroke] {
+  border: 1.5px solid var(--wb-stroke);
+}
+
+/* Every other shape is an outline drawn in an <svg> behind its words. */
+.wb-block[data-shape] {
+  background: transparent;
+  box-shadow: none;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.wb-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.wb-shape path {
+  fill: var(--wb-fill);
+  stroke: var(--wb-stroke, var(--wb-shape-border));
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.wb-block[data-shape] > .wb-text {
+  position: relative;
+}
+
+/* A section: a quiet tinted area behind everything, its title above its top edge. */
+.wb-block[data-kind="container"] {
+  --wb-fill: var(--wb-fill-none);
+  background: color-mix(in srgb, var(--wb-fill) 45%, transparent);
+  border: 1px solid var(--wb-stroke, var(--wb-border));
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.wb-block[data-kind="container"] > .wb-text {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  width: auto;
+  max-width: 100%;
+  padding: 0 2px 6px;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--wb-fg);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wb-block[data-kind="container"] > .wb-edit {
+  top: auto;
+  bottom: 100%;
+  height: 28px;
+  padding: 0 2px 6px;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--wb-fg);
+}
+
+/* A table: columns by weight, equal rows, the header bold on the table's colour. */
+.wb-block[data-kind="table"] {
+  --wb-fill: var(--wb-fill-gray);
+  background: var(--wb-fill-none);
+  border: 1px solid var(--wb-stroke, var(--wb-border));
+  border-radius: 4px;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.wb-block[data-kind="table"] > .wb-text {
+  display: none;
+}
+
+.wb-table {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.wb-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 10px;
+  border-top: 1px solid var(--wb-border);
+  overflow: hidden;
+}
+
+.wb-cell > span {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A shaded number: its colour, stronger the higher it is in its column or row. */
+.wb-cell[data-heat] {
+  background: color-mix(in srgb, var(--wb-heat) var(--wb-heat-pct), transparent);
+}
+
+.wb-cell.wb-head {
+  font-weight: 600;
+  background: var(--wb-fill);
+  border-top: 0;
+}
+
+/* One line, in the middle of its cell, where the words were. */
+.wb-block .wb-cell > .wb-edit {
+  top: 50%;
+  bottom: auto;
+  height: 24px;
+  padding: 3px 10px;
+  transform: translateY(-50%);
+  overflow: hidden;
+}
+
+/* No fill: only the outline. */
+.wb-block[data-hollow]:not([data-kind="text"]) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.wb-block[data-hollow] .wb-shape path {
+  fill: none;
+}
+
+/* Inline marks, drawn from the text's runs. */
+.wb-b {
+  font-weight: 700;
+}
+.wb-i {
+  font-style: italic;
+}
+.wb-bi {
+  font-weight: 700;
+  font-style: italic;
+}
+.wb-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.wb-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 .wb-resize {
@@ -561,6 +819,10 @@ html[data-readonly="true"] .wb-block {
   }
   .wb-people li {
     gap: 0;
+  }
+  /* The shape list stays narrow, so the colour beside it stays in view. */
+  .wb-toolbar select {
+    max-width: 96px;
   }
   .wb-people span {
     position: absolute;

@@ -345,7 +345,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
-| `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
+| `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`merge`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own. A `merge` puts each top-level field of its `data` on the document at that rev (a field set to `null` is removed) and is checked like a `set` |
 | `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples, the `files` `copy_files` can take and the `install` entries that copy them. Read-only; every text field is untrusted |
 | `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
@@ -930,8 +930,10 @@ Decided 2026-11-14 (issue #1). Design:
 - **The page stays static.** Plinth adds one fixed, generic service per artifact: collections of
   JSON documents, shared by every version, served on the artifact's own content origin at
   `/__plinth/api/v1/`, plus a runtime script at `/__plinth/runtime.js` that defines
-  `window.plinth` (`ready`, `viewer`, `canWrite`, `db.collection(name)` with `list`, `all`, `get`,
-  `add`, `set`, `update`, `delete`, `mine`, `setMine`, `deleteMine`, `onSnapshot`). The CSP's
+  `window.plinth` (`ready`, `viewer`, `canWrite`, `db.collection(name, { format }?)` with `list`,
+  `all`, `get`, `add`, `set`, `update`, `delete`, `mine`, `setMine`, `deleteMine`, `onSnapshot`;
+  `format` is sent as `x-plinth-format` on the collection's writes, for a typed renderer naming
+  the format it reads and writes, which a whiteboard requires). The CSP's
   `connect-src 'self'` already allows it: no CSP change, no CORS, no app cookies on the content
   host.
 - **Declaration.** A page opts in with `<meta name="plinth-capabilities" content="data viewer">`
@@ -980,8 +982,12 @@ Decided 2026-11-14 (issue #1). Design:
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
-  `DATA_WRITES_PER_ARTIFACT_PER_HOUR` (2000). Fixed: 50 collections per artifact, nesting depth 16,
-  200 documents per page, 50 ops per agent call.
+  `DATA_WRITES_PER_ARTIFACT_PER_HOUR` (2000). A whiteboard's data takes its own caps in place of
+  the first, second and fourth: `DATA_BOARD_MAX_DOCS` (2000), `DATA_BOARD_MAX_BYTES` (2 MiB) and
+  `DATA_BOARD_MAX_DOC_BYTES` (200 KiB, from 1 KiB to 1 MiB); the page API reads a request body up
+  to the artifact's own document cap plus 1 KiB, and only once the caller's content pass is
+  checked. Fixed: 50 collections per artifact, nesting depth 16, 200 documents per page, 50 ops
+  per agent call.
 - **Lifecycle.** Data is deleted with the artifact and wiped on takedown (a write already in flight
   cannot bring it back), scrubbed of a person on
   `erase-user`, and kept across new versions and restores. Any grant, visibility or password change
@@ -2337,12 +2343,64 @@ its page without a new version each time, and agents add and move blocks with
   with `base_version`, and restore brings old settings back (the history calls it Restore
   settings: the board's blocks and arrows are not in versions and stay as they are).
 - **The board, in shared data.** Two collections, both shared (any permitted writer may move any
-  block): `blocks`, each `{ kind: "note" | "text" | "rect" | "ellipse", x, y, w, h, text,
-  color?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", z? }` (whole numbers; `x` and
-  `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 2,000
+  block): `blocks`, each `{ kind, x, y, w, h, text, color?, z? }` (whole numbers; `x` and `y`
+  within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 4,000
   characters), and `arrows`, each `{ from, to, label?, style?: "solid" | "dashed", head?: "end" |
-  "both" | "none" }` (`from` and `to` two different block ids, a label up to 120 characters). Draw
-  order is `z`, then id. An arrow whose block is gone is not drawn and is never deleted on its own.
+  "both" | "none", heads?, fromSide?, toSide?, bends?, color? }` (`from` and `to` two different
+  block ids, a label up to 120 characters). The element set follows Claude's whiteboard (decided
+  2026-11-21), inside format 1: every field it added is optional, so a board written before reads
+  the same.
+  - `kind`: `note`, `text`, a shape (`rect`, `rounded`, `ellipse`, `diamond`, `pill`, `hexagon`,
+    `parallelogram`, `database`, `queue`, `document`, `cloud`, `person`), `container` (a section)
+    or `table`. Every kind has a box (`w`, `h`), unlike Claude's text and tables, so placing, fitting
+    and hit-testing stay one rule.
+  - `color`: `yellow`, `green`, `blue`, `pink`, `purple`, `gray` (theme-aware) or any `#rrggbb`
+    (drawn as written, with white or near-black words, whichever reads); on a `text` the words'
+    colour. A note, shape or section also takes `stroke` (`ink`, a colour name or `#rrggbb`) and
+    `hollow`; those and `text` take `size` (`small` 14, `body` 16, `large` 28, `title` 48, `huge`
+    96; left out, 14 as before), `textAlign` (`left`, `center`, `right`) and `wrap` (`false`: lines
+    do not wrap). Fields a kind does not take are refused.
+  - Text is plain, with inline marks drawn from it as text: `**bold**`, `*italic*`, `***both***`,
+    `` `code` ``, `[label](https://...)` (kept only when the address parses as http or https,
+    opened in a new tab with no opener or referrer, and only when pressed without a drag), never
+    nested; `- ` and `1. ` lines are list items. Nothing is ever parsed as HTML.
+  - A table (`kind: "table"`, no `text`) has `cols` (`{ id: { at, w? } }`, `w` a share of the
+    table's `w`, at least 10), `rows` (`{ id: { at, <col id>: text } }`, the lowest `at` the header,
+    cells up to 1,000 characters, every cell naming a column), `fills?` (by row then column: a
+    colour or `""`), `heat?` (`{ cols }` or `{ rows }`, not both: numbers shaded by value), and
+    `color`, `size` and `textAlign`; at most 40 columns and 500 rows, ids 1 to 40 of
+    `A-Z a-z 0-9 _ -` but never `at`. Columns share `w` by weight, rows share `h` equally.
+  - An arrow with neither side nor `bends` is the straight line between the blocks' centres, as
+    before. With `fromSide` or `toSide` (`top`, `right`, `bottom`, `left`) it runs in right angles
+    from the middle of those sides (a missing one faces the other block). `bends` is Claude's
+    planned route: `["h" | "v", up to 12 whole numbers]`, the legs taking turns, the first half of
+    the numbers (rounded up) measured from the centre of `from` and the rest from `to`; a plan whose
+    first or last corner falls inside its block is drawn as a right-angle route. `heads` is
+    `[from, to]`, each `none`, `arrow` or `circle`, and wins over `head`; `color` takes what `stroke`
+    takes.
+  - Draw order: sections behind everything, then arrows, then every other block by `z`, then id.
+    A board has no `order` list: `z` per block, changed with a `merge`, gives the same control
+    without one document every add would rewrite. An arrow whose block is gone is not drawn and is
+    never deleted on its own.
+  - Pages loaded before this format read a block through an older reader and write it back whole
+    on every move, which would turn a newer block into an empty note, drop a table's cells or cut
+    a long text. So the board's page names the format it reads and writes on every write
+    (`x-plinth-format: whiteboard.2`, `BOARD_PAGE_FORMAT`, through
+    `db.collection(name, { format })`). A page write to a whiteboard that does not name it may
+    still add blocks and arrows, and may change or delete one only when the older reader read it
+    whole (`legacyBoardLoss`: the older keys, kinds and named colours, text up to 2,000
+    characters); otherwise it is refused before anything changes: `401 unauthorized`,
+    `details.reason: "stale_page"`. So tabs open at a deploy keep working on what they can read,
+    and an Undo of a delete re-creates only what they read whole. A 401 is what the older pages
+    already handle by turning read-only with "Your access changed. Reload the page.", so they
+    stop taking edits that could not be saved; the current page shows "Out of date. Reload." for
+    it (the runtime passes the reason on the error and on `plinth:expired`).
+    The format is raised whenever a newer board holds something an older page's reader drops,
+    and `legacyBoardLoss` is then taught what the previous format read. The page's reader
+    (`cleanBlock`, `cleanArrow`) keeps every value a valid block or arrow may hold, so the current
+    page writes back what it read. A page whose runtime is too old to send the header shows the
+    board read-only with the same line. Agents' and the app's writes are not checked this way: an
+    agent's `set` may replace a block whole.
   The server checks every whiteboard write against these shapes, from the page, agents and the
   app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
   versioned (shared data never is); every write is stamped with who made it.
@@ -2380,14 +2438,37 @@ its page without a new version each time, and agents add and move blocks with
   peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
   the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
   save never takes a drop back to where the block started. Text is written at the rev its edit
-  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
-  "Use mine" button that writes theirs over it. A
+  began from: a peer's text saved during the edit is kept, the viewer's text is written at once
+  as a new note beside the block, and the viewer is told and offered a "Use mine" button that
+  writes theirs over it and takes the note away again (unless it was changed meanwhile). A
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
-  and follows on the shared-data poll. Block text is only ever drawn as text.
+  and follows on the shared-data poll. Block text is only ever drawn as text. People get the
+  other kinds through the same controls: a selected shape shows one Shape list (Box, Rounded,
+  Ellipse, Diamond and the rest) and a selected text one Text size list, saved like a colour; a
+  section's title is edited like any text, and dragging a section carries the blocks lying wholly
+  inside it, nested sections included (each saved where it lands; peers see the section move
+  live and its blocks on the save); a double click on a table cell (or Enter on a table) edits
+  that cell, written into its row at the rev the edit began from. A table's rows merge cell by cell: on a conflict the typed cell
+  goes onto the newer rows unless that same cell changed or its row or column was removed, and then
+  the other writer's version stays, the typed text becomes a new note beside the table and the
+  viewer is offered "Use mine", which writes it back (bringing back a removed row or column).
+  Typed text is never dropped: whatever the viewer wrote that cannot go where it was written (a
+  peer's text or cell kept over it, a save that kept conflicting four times, the block or table
+  deleted while they wrote in it) is written as a new note beside the block, or where it was,
+  before the viewer is told, so a message replaced by the next one or a closed tab loses nothing.
+  A save refused or lost for any other reason (offline, the board full, a second rate limit)
+  keeps its typed text the same way. A note that cannot be written either (a rate limit waits
+  once first) is held on the page: "Couldn't save what you wrote. Copy it to keep it.", with the
+  text, Copy and Dismiss, which no other message replaces and which never times out; the next
+  write of the viewer's that goes through, or the board becoming writable again, writes it as a
+  note. An edit in progress when the board turns read-only is held the same way. Use mine takes a
+  note away only once the block holds the text. Adding sections and tables, and adding a table's
+  rows and columns, is for agents for now.
 - **The toolbar shows only what applies**, in one row on the board's own background. The add
   buttons show to people who may change the board; a selected block's colours, Connect (which
-  starts from that block) and Delete show only while something is selected. On the right: the
+  starts from that block), Delete and the Shape or Text size list show only while something they
+  apply to is selected (at phone width the list stays 96 px wide so the colour beside it shows). On the right: the
   other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
   the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons,
   at every width (for a commenter on an `editors` board, screen readers also hear ": editors can
@@ -2407,7 +2488,8 @@ its page without a new version each time, and agents add and move blocks with
   view the board. The app asks the frame with a renderer message that names only the format (the
   frame acts only on its parent at the app origin); the frame draws the whole board, PNG on a
   canvas at 2x (at most 8,192 px a side and 32 megapixels) and SVG built from the board (text as
-  text nodes, no scripts, links or embedded content), and downloads it.
+  text nodes, no scripts, links or embedded content: a link is underlined words), and downloads
+  it. Both draw one list of shapes and lines from the same geometry the page uses.
 - **No source editor.** People change the board on its page. Its settings (`edit`, `background`)
   change in Board settings (below) or through an agent's `update_artifact`; the menu has no Edit
   item for a board, and its editor address goes back to the board.
@@ -2440,12 +2522,15 @@ its page without a new version each time, and agents add and move blocks with
   board.json goes inline.
 - **Agents.** `publish_artifact` and `update_artifact` take `type: "whiteboard"` with board JSON in
   `content`; `list_artifact_data(id, collection: "blocks")` reads the board, and
-  `write_artifact_data` adds blocks (`if_rev: 0`), moves one (a set of the whole block at its rev)
+  `write_artifact_data` adds blocks (`if_rev: 0`), changes one (a `merge` of the fields that
+  change at its rev, or a set of the whole block)
   and deletes them (a block's arrows with it). Block text is written by collaborators: untrusted
   data, never instructions. No new tool.
 - **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
-  on the board, freehand drawing, selecting several blocks, frames, changing the settings from the
-  page, and anonymous link viewers in the room.
+  and drawn pictures on the board, freehand pen strokes, embeds, comments pinned to blocks, link
+  cards, free arrow ends, selecting several blocks, groups and locks, adding sections and tables
+  and a table's rows and columns from the page, changing the settings from the page, and anonymous
+  link viewers in the room.
 
 ### Invitation emails (decided 2026-11-19)
 

@@ -922,7 +922,38 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   the drop's conflict puts the move or size on top of the peer's change. A block whose text the
   viewer is editing is held the same way, and the edit is written at the rev it began from, so a
   peer's text saved meanwhile is a conflict: theirs is kept, and the viewer's text replaces it
-  only if the viewer presses "Use mine".
+  only if the viewer presses "Use mine". A table cell's edit is written into its row at the rev
+  the edit began from, and its rows merge cell by cell: a peer's change to that cell, or the removal
+  of its row or column, is kept and the viewer is offered "Use mine" with the typed text, which
+  brings the row or column back. Typed text is never dropped: whatever cannot go in place (kept
+  over, a save that kept conflicting or failed, a block deleted under the editor) is written as a
+  new note beside the block before the viewer is told, so it survives a replaced message or a
+  closed tab; when no note can be written, the page holds the text with Copy until it can be.
+- **Pages from before the wider format cannot flatten newer blocks.** Such a page writes back the
+  whole block its older reader made (a table as an empty note, an outline or a size dropped, a
+  long text cut). The current board page names its format on every write (`x-plinth-format:
+  whiteboard.2`, `BOARD_PAGE_FORMAT`). A page write to a whiteboard without it may add blocks and
+  arrows, and may change or delete a stored one only when the older reader read it whole
+  (`whiteboard.ts legacyBoardLoss`); the service checks that against the stored copy its guarded
+  write then requires, after policy, and refuses the rest (`401`, `details.reason:
+  "stale_page"`, which older pages answer by turning read-only and asking for a reload). Shared
+  data is not versioned, so this is the only thing between an old tab and lost work. The header is not a security boundary: any
+  page code on the artifact's origin may send it, and it grants nothing; the shared-data checks
+  (`x-plinth-data`, fetch metadata, exact `Origin` on writes, JSON bodies, the content pass and
+  policy) all run as before, and the header is sent only by same-origin fetches, so it adds no
+  preflight and no CORS. Agents' and the app's writes never pass through this check.
+- **Collaborators' text stays text.** Block text, section titles, table cells and arrow labels
+  reach the DOM only as text nodes. Inline marks are split from the text by a pattern (no HTML
+  parser) and drawn as spans the renderer builds; a link becomes an `<a>` only when its address
+  parses as `http:` or `https:` (`javascript:`, `data:` and the rest stay plain words), with
+  `target="_blank"` and `rel="noopener noreferrer nofollow"`, and it opens only on a press without
+  a drag or from the keyboard (the browser's own navigation, a middle click's too, is cancelled). Colours reach style
+  attributes only as a board colour's fixed token or a `#rrggbb` the schema checked; shape outlines
+  are SVG path data built from numbers. The exports write a link as underlined words, never an
+  `href`.
+- **Merge writes are whole writes.** A `merge` op reads the document, checks its `if_rev`, puts
+  the named fields on it and writes the result at that rev through the same guarded update as a
+  `set`, so it is checked against the board's shapes and can only conflict, never lose a change.
 - **No editor preview.** A whiteboard has no source editor, so the app never renders a board in
   the editor's preview frame, which holds the owner's content pass.
 - **Board settings.** Owners and editors change a board's settings in app UI on the app host (the
@@ -1564,6 +1595,7 @@ version just published appears in the agent's thread.
 | Shared-data documents and bytes per artifact | `DATA_MAX_DOCS_PER_ARTIFACT` (1000), `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB) |
 | Shared-data bytes per owner, all artifacts | `DATA_MAX_BYTES_PER_USER` (16 MiB) |
 | Size per shared-data document | `DATA_MAX_DOC_BYTES` (16 KiB) |
+| A whiteboard's shared data | `DATA_BOARD_MAX_DOCS` (2000), `DATA_BOARD_MAX_BYTES` (2 MiB), `DATA_BOARD_MAX_DOC_BYTES` (200 KiB a document), in place of the three above; still within `DATA_MAX_BYTES_PER_USER` |
 | Live-room sockets per artifact | `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (50); 8 per viewer; 20 connects per viewer per minute (close code 4409) |
 | Live-room messages per socket | `ROOM_MESSAGES_PER_SECOND` (20, burst 40); over it each message gets `rate_limited`, and 50 such in 10 s close the socket (4429) |
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
@@ -1597,18 +1629,21 @@ checks, in this order (`apps/worker/src/content/data-api.ts`):
 4. **Origin**, when sent, must equal the artifact's own content origin; `null` is refused.
 5. **Availability.** Under opaque isolation or with `ALLOW_SHARED_DATA` off the API reports
    unavailable (`/session` 200 `{ available: false, reason }`, everything else 403).
-6. **Body.** POST and PUT need `Content-Type: application/json`, are refused past
-   `DATA_MAX_DOC_BYTES` + 1 KiB whether or not a length is sent, and are parsed with strict
-   schemas: unknown keys, such as author fields, are refused.
-7. **Artifact.** Missing, deleted or taken down: 404.
-8. **Access.** The `__Host-plinth_content` cookie for this artifact at its current access epoch.
+6. **Artifact.** Missing, deleted or taken down: 404.
+7. **Access.** The `__Host-plinth_content` cookie for this artifact at its current access epoch.
    Without one, or with valid ones that disagree on who is viewing, the API answers a JSON 401,
    never the gate redirect.
+8. **Body.** POST and PUT need `Content-Type: application/json`, are refused past the artifact's
+   document cap + 1 KiB (`DATA_MAX_DOC_BYTES`, or `DATA_BOARD_MAX_DOC_BYTES` on a whiteboard)
+   whether or not a length is sent, and are parsed with strict schemas: unknown keys, such as
+   author fields, are refused. Steps 6 and 7 come first, so the body is read only for a caller
+   with a pass for this artifact: nobody else can tell a whiteboard from its larger cap or make
+   the Worker hold a large body.
 9. **Declaration.** The current version must declare `data`.
 10. **Policy**, then rate limits, then quotas, then a guarded write. The decisions are pure
     functions in `policy.ts` (`pageDataAccess`, `canModifyDoc`), repeated in the SQL `WHERE` of
     the write so a race cannot slip past them. The same `WHERE` requires the artifact to exist and
-    not be taken down, so a write already past step 7 when the artifact is deleted or taken down
+    not be taken down, so a write already past step 8 when the artifact is deleted or taken down
     cannot bring wiped data back. A document's `rev` is one past the artifact's change counter, so
     a document deleted and created again never repeats a rev, and `if_rev` only ever matches the
     content its writer read.
@@ -1635,7 +1670,8 @@ Signing out of the app does not end it sooner. The page sees `viewer.email` only
 `viewer`; `viewer.id` is a per-artifact HMAC of the email that cannot be linked across artifacts.
 
 **Limits and lifecycle.** Quotas per artifact and per owner, write rate limits per writer and per
-artifact (table below), documents of at most `DATA_MAX_DOC_BYTES` and nesting depth 16. Data is
+artifact (table below), documents of at most `DATA_MAX_DOC_BYTES` (a whiteboard's
+`DATA_BOARD_MAX_DOC_BYTES`) and nesting depth 16. Data is
 deleted with the artifact, wiped in the same request as a takedown (admins lose it as evidence),
 and scrubbed of a person by `erase-user` (documents they created; their email, role and agent
 connection label on documents they last changed).

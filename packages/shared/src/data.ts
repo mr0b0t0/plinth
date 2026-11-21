@@ -362,6 +362,23 @@ export function dataShapeError(value: unknown, maxDepth = LIMITS.maxDataDepth): 
   return null;
 }
 
+/**
+ * A merge op's result: the stored document with each top-level field of `patch` put in its place,
+ * and a field set to null removed. Shallow: a nested object is replaced whole. Built from entries,
+ * so a key such as "__proto__" stays an ordinary field.
+ */
+export function mergeDocData(
+  stored: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const fields = new Map(Object.entries(stored));
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) fields.delete(k);
+    else fields.set(k, v);
+  }
+  return Object.fromEntries(fields);
+}
+
 /** A plain JSON object nesting at most LIMITS.maxDataDepth levels. No size check. */
 export const dataObjectSchema = z
   .record(z.string(), z.unknown())
@@ -415,7 +432,21 @@ const deleteOpSchema = z.object({
   if_rev: z.number().int().min(1).describe("Deletes only when the current rev is this"),
 });
 
-export const dataOpSchema = z.discriminatedUnion("op", [setOpSchema, deleteOpSchema]);
+const mergeOpSchema = z.object({
+  op: z.literal("merge"),
+  collection: dataCollectionSchema,
+  doc_id: dataDocIdSchema,
+  data: dataObjectSchema.describe(
+    "The fields to change: each replaces that top-level field, and null removes it",
+  ),
+  if_rev: z.number().int().min(1).describe("Changes only when the current rev is this"),
+});
+
+export const dataOpSchema = z.discriminatedUnion("op", [
+  setOpSchema,
+  mergeOpSchema,
+  deleteOpSchema,
+]);
 export type DataOp = z.infer<typeof dataOpSchema>;
 
 export const writeArtifactDataInput = z.object({
@@ -613,7 +644,7 @@ export interface DataDocResult {
 
 /** One write_artifact_data op's outcome; ops succeed or fail on their own. */
 export interface DataOpResult {
-  op: "set" | "delete";
+  op: "set" | "merge" | "delete";
   collection: string;
   doc_id: string | null;
   ok: boolean;

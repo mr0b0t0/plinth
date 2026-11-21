@@ -1251,7 +1251,7 @@ function dataSchemas(): Record<string, Json> {
         description: "One per op, in order; each op succeeds or fails on its own",
         items: obj(
           {
-            op: enumOf(["set", "delete"]),
+            op: enumOf(["set", "merge", "delete"]),
             collection: str(),
             doc_id: nullable("string"),
             ok: { type: "boolean" },
@@ -1497,9 +1497,10 @@ function dataOperations(): Operation[] {
       method: "post",
       path: API.data,
       operationId: "writeArtifactData",
-      summary: "Apply 1 to 50 set and delete ops, each with if_rev",
+      summary: "Apply 1 to 50 set, merge and delete ops, each with if_rev",
       description:
-        "Owner or editor (data_write). Ops apply in order and each succeeds or fails on its own. " +
+        "Owner or editor (data_write). Ops apply in order and each succeeds or fails on its own. A " +
+        "merge changes only the fields it names (null removes one) on the document at if_rev. " +
         "Bearer requests are stamped via agent with the connection label, signed-in requests via " +
         "app. Refused with feature_disabled while shared data is off on the instance.",
       tag: "Shared data",

@@ -1856,8 +1856,8 @@
       },
       "post": {
         "operationId": "writeArtifactData",
-        "summary": "Apply 1 to 50 set and delete ops, each with if_rev",
-        "description": "Owner or editor (data_write). Ops apply in order and each succeeds or fails on its own. Bearer requests are stamped via agent with the connection label, signed-in requests via app. Refused with feature_disabled while shared data is off on the instance.\n\nMirrors the MCP tool `write_artifact_data`.",
+        "summary": "Apply 1 to 50 set, merge and delete ops, each with if_rev",
+        "description": "Owner or editor (data_write). Ops apply in order and each succeeds or fails on its own. A merge changes only the fields it names (null removes one) on the document at if_rev. Bearer requests are stamped via agent with the connection label, signed-in requests via app. Refused with feature_disabled while shared data is off on the instance.\n\nMirrors the MCP tool `write_artifact_data`.",
         "tags": ["Shared data"],
         "parameters": [
           {
@@ -6252,6 +6252,34 @@
                 {
                   "type": "object",
                   "properties": {
+                    "op": { "type": "string", "const": "merge" },
+                    "collection": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,39}$",
+                      "description": "Collection name"
+                    },
+                    "doc_id": {
+                      "type": "string",
+                      "description": "Document id, or ~me for your own personal document"
+                    },
+                    "data": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {},
+                      "description": "The fields to change: each replaces that top-level field, and null removes it"
+                    },
+                    "if_rev": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Changes only when the current rev is this"
+                    }
+                  },
+                  "required": ["op", "collection", "doc_id", "data", "if_rev"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
                     "op": { "type": "string", "const": "delete" },
                     "collection": {
                       "type": "string",
@@ -6496,7 +6524,7 @@
             "items": {
               "type": "object",
               "properties": {
-                "op": { "type": "string", "enum": ["set", "delete"] },
+                "op": { "type": "string", "enum": ["set", "merge", "delete"] },
                 "collection": { "type": "string" },
                 "doc_id": { "type": ["string", "null"] },
                 "ok": { "type": "boolean" },
