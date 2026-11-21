@@ -105,34 +105,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Dictation: app chrome the page cannot cover, shown at every width while listening. */
-.pl-viewer__listening {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: var(--space-1-5);
-}
-.pl-viewer__listening.is-on {
-  padding: 0 0 0 var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-danger-soft);
-}
-.pl-viewer__listening-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  color: var(--color-danger);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-}
-.pl-viewer__listening-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: var(--radius-full);
-  background: var(--color-danger);
-}
-
 /* A quiet line when an older version is on view. */
 .pl-viewer__notice {
   padding: var(--space-1-5) var(--page-pad);
@@ -141,39 +113,16 @@
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
-/* A newer version waits while the viewer uses the page (live views, the hold rule). */
-.pl-viewer__notice--update {
-  color: var(--color-ink);
-}
-/* Update: a button that reads like the "Go to current" link next to it. */
-.pl-viewer__notice-action {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-decoration-line: underline;
-  text-decoration-color: var(--color-border-control);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.2em;
-  cursor: pointer;
-}
-.pl-viewer__notice-action:hover {
-  text-decoration-color: currentColor;
-}
-.pl-viewer__notice-action:disabled {
-  color: var(--color-ink-muted);
-  cursor: progress;
-}
 /* ---------- Editing a doc on its page (#36) ---------- */
 /* The bronze rule marks the live state: an edit strip under the bar, never a second primary. */
 .pl-viewer__edit[aria-pressed="true"] {
   background: var(--color-accent-soft);
   color: var(--color-accent-ink);
 }
-.pl-editbar {
+.pl-editbar,
+.pl-livenotice {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   min-height: var(--control-md);
@@ -183,83 +132,84 @@
   background: var(--color-surface);
   font-size: var(--text-sm);
 }
+.pl-editbar__state,
+.pl-livenotice {
+  color: var(--color-accent-ink);
+  font-weight: var(--weight-medium);
+}
 .pl-editbar__state {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1-5);
   min-width: 0;
-  color: var(--color-accent-ink);
-  font-weight: var(--weight-medium);
 }
-.pl-editbar__status {
-  overflow-wrap: anywhere;
+/* One line at every width: what does not fit ends in an ellipsis. */
+.pl-editbar__status,
+.pl-livenotice__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.pl-editbar__state > svg,
+.pl-livenotice > svg {
+  flex: none;
+}
+/* Publish off (the changes cannot be published yet; its tooltip says why): quiet, not a grey
+   block. */
+.pl-editbar__publish[aria-disabled="true"]:not([data-loading]) {
+  border-color: var(--color-border-strong);
+  background: transparent;
+  color: var(--color-ink-faint);
+}
+/* At phone width the strip stays one line: a short status ("v5 published") stands in for the long
+   words, which are still read. */
+.pl-editbar__short {
+  display: none;
+}
+@media (max-width: 30rem) {
+  .pl-editbar__short {
+    display: inline;
+  }
+  .pl-editbar__long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+/* How many others are editing; who and where are in its tooltip. */
 .pl-editbar__editors {
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1-5);
-  min-width: 0;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
   color: var(--color-ink-muted);
-  overflow-wrap: anywhere;
-}
-.pl-editbar__editor + .pl-editbar__editor::before {
-  content: "· ";
-  color: var(--color-ink-ghost);
+  font-variant-numeric: tabular-nums;
 }
 .pl-editbar__typing {
   color: var(--color-accent-ink);
 }
-.pl-editbar__actions {
+.pl-editbar__actions,
+.pl-livenotice__actions {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1-5);
   margin-left: auto;
 }
+/* Every live notice reads as the edit strip does: a bronze rule, a pencil and bronze words. */
 .pl-livenotice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1-5) var(--space-3);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--page-pad);
-  border-bottom: var(--border-width) solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-ink-muted);
-  font-size: var(--text-sm);
-}
-.pl-livenotice--conflict,
-.pl-livenotice--editing {
-  border-left: 2px solid var(--color-accent);
-  color: var(--color-ink);
-}
-.pl-livenotice__text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.pl-livenotice__hint {
-  color: var(--color-ink-faint);
-}
-.pl-livenotice__actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-left: auto;
+  gap: var(--space-1-5);
 }
 @media (max-width: 52rem) {
   .pl-editbar,
   .pl-livenotice {
     padding-inline: var(--space-4);
   }
-}
-/* The review dialog's diff (ConflictView with editor.css). The dialog body has no definite
-   height, so the flex rules the source editor uses would give Monaco 0px: the diff gets its own. */
-.pl-liveconflict .pl-conflict {
-  flex: none;
-}
-.pl-liveconflict .pl-conflict__diff {
-  flex: none;
-  height: min(60vh, 32rem);
-  min-height: 16rem;
 }
 /* Shared data: what the page sees and saves. Long emails wrap rather than widen the page. */
 .pl-viewer__data {
@@ -552,126 +502,41 @@
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
-.pl-share-files {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.pl-share-files__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2) var(--space-3);
-}
-.pl-share-files__meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.pl-share-files__name {
-  overflow: hidden;
-  font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pl-share-files__detail {
-  color: var(--color-ink-muted);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-.pl-share-views__help {
-  margin: 0;
-  color: var(--color-ink-muted);
-  font-size: var(--text-xs);
-}
-/* Share dialog (owner): data sources, each with its recipe as text. */
-.pl-share-sources__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-block: var(--space-2);
-}
-.pl-share-sources__connector {
-  color: var(--color-ink-muted);
-}
-.pl-share-sources__figure {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0;
-}
-.pl-share-sources__recipe {
-  max-height: 12rem;
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  overflow: auto;
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-sunk);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.pl-share-sources__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-/* The owner's 30-day opens sparkline. */
-.pl-sparkline {
-  display: block;
-  flex: none;
-  width: 6rem;
-  height: 1.5rem;
-}
-.pl-sparkline__bar {
-  fill: var(--color-accent);
-}
-.pl-sparkline__baseline {
-  stroke: var(--color-border-control);
-  stroke-width: 1;
-}
-
 /* Editing a doc on its page (#36): a bronze line along the top of the frame. */
 .pl-viewer--editing .pl-viewer__frame-wrap {
   box-shadow: inset 0 2px 0 var(--color-accent);
 }
 
 /* ---------- Presenting a deck (the slides type) ---------- */
-.pl-viewer__present {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1-5) var(--space-3);
-  margin: 0;
+/* An audience window paired with its presenter shows the deck alone, on its own stage colour. */
+.pl-viewer--audience .pl-viewer__bar,
+.pl-viewer--audience .pl-viewer__banner,
+.pl-viewer--audience .pl-viewer__stage > :not(.pl-viewer__room) {
+  display: none;
 }
-.pl-viewer__present-title {
-  color: var(--color-ink);
-  font-weight: 600;
-}
-.pl-viewer__present-actions {
-  display: inline-flex;
-  gap: var(--space-1-5);
-  margin-left: auto;
-}
-/* The frame the app put full screen fills the screen with the deck's own stage colour. */
+
+/* The frame the app put full screen fills the screen; the deck paints its own stage colour, light
+   or dark, around the slide. */
 .pl-viewer-frame:fullscreen {
   width: 100vw;
   height: 100vh;
   border: 0;
-  background: #000;
+  background: transparent;
 }
 
 /* ---------- portals: /p/:id (docs/spec.md "Category sharing and personal categories") ---------- */
 
 .pl-portal {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-6);
   padding-block: var(--space-6);
+}
+.pl-portal__head {
+  display: grid;
+  gap: var(--space-1);
+}
+.pl-portal__head p {
+  margin: 0;
 }
 .pl-portal__title {
   margin: 0;
@@ -689,52 +554,52 @@
   padding: 0;
   list-style: none;
 }
+/* A card like the dashboard's grid: the whole card opens the artifact (the link's ::after). */
 .pl-portal__item {
+  position: relative;
   display: grid;
-  gap: var(--space-1);
+  gap: 1px;
   min-width: 0;
+  padding-bottom: 9px;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.pl-portal__item:hover,
+.pl-portal__item:focus-within {
+  border-color: var(--color-border-strong);
+}
+/* The preview is the dashboard card's (CardThumb, dashboard.css). */
+.pl-portal__item .pl-dash__thumb {
+  margin-bottom: var(--space-1);
 }
 .pl-portal__link {
-  display: grid;
-  gap: var(--space-1-5);
+  padding-inline: 10px;
+  color: var(--color-ink);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
 }
-.pl-portal__thumb {
-  width: 100%;
-  aspect-ratio: 1200 / 630;
-  object-fit: cover;
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
+.pl-portal__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.pl-portal__link:focus-visible {
+  outline: none;
+}
+.pl-portal__link:focus-visible::after {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: calc(var(--focus-ring-width) * -1);
 }
 .pl-portal__item-title {
   overflow-wrap: anywhere;
 }
 .pl-portal__meta {
+  padding-inline: 10px;
   font-size: var(--text-xs);
-}
-
-/* Board settings (a whiteboard's ⋯ menu): two groups of choices, a notice after a refused save. */
-.pl-board-settings {
-  display: grid;
-  gap: var(--space-4);
-}
-.pl-board-settings__notice {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-warning-soft);
-  color: var(--color-ink);
-  font-size: var(--text-sm);
-}
-.pl-board-settings__error {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--color-danger);
-  font-size: var(--text-sm);
-}
-.pl-board-settings__error p {
-  margin: 0;
 }
 
 /* Ask an agent: the Ask dialog in edit mode (AskDialog.tsx). */
@@ -744,13 +609,52 @@
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
-/* The agent choice in the footer, between Cancel and Send, as in the request composer. */
-.pl-dialog__footer > .pl-ask__to {
-  flex: none;
-  align-self: center;
-}
 .pl-ask__error {
   margin: 0;
   color: var(--color-danger);
   font-size: var(--text-sm);
+}
+
+/* Narrow screens, picking a place to comment on or to point an agent at: the comments panel is a
+   bottom bar (comments.css). The bar sits under the artifact instead of over it, so the artifact
+   ends above the bar: nothing of the page (a design's zoom controls, the last lines) is left
+   half-covered, and the small print under it is hidden until the pick ends. */
+@media (max-width: 47.99rem) {
+  .pl-viewer__room:has(> .pl-viewer__panel > .cm-panel[data-picking]) {
+    flex-direction: column;
+  }
+  .pl-viewer__panel:has(> .cm-panel[data-picking]) {
+    position: static;
+    height: auto;
+    border-top: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .pl-viewer__panel > .cm-panel[data-picking] {
+    position: static;
+    box-shadow: none;
+  }
+  .pl-viewer:has(.cm-panel[data-picking]) .pl-viewer__banner {
+    display: none;
+  }
+}
+
+/* Narrow screens, Ask an agent with no thread to show: the sheet is as tall as the request form. */
+@media (max-width: 52rem) {
+  .pl-viewer__panel:has(> .cm-panel[data-request-only]) {
+    height: auto;
+  }
+}
+
+/* Phones: the Ask dialog is a sheet flush with the bottom edge, so nothing shows under it. */
+@media (max-width: 30rem) {
+  .pl-dialog-root:has(.pl-ask) {
+    padding-bottom: 0;
+  }
+  .pl-dialog:has(.pl-ask) {
+    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
 }

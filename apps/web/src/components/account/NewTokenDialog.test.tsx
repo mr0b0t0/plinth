@@ -65,7 +65,7 @@ describe("NewTokenDialog", () => {
     const field = (await screen.findByLabelText("Token")) as HTMLTextAreaElement;
     expect(field.value).toBe(TOKEN);
     expect(field.readOnly).toBe(true);
-    expect(screen.getByText(/won't see this token again/)).toBeTruthy();
+    expect(screen.getByText(/Shown only once/)).toBeTruthy();
     expect(posted[0]).toEqual({
       label: "Codex laptop",
       client_type: "codex",
@@ -123,11 +123,24 @@ describe("NewTokenDialog", () => {
     const hint = () => document.getElementById(`${name.id}-hint`)?.textContent ?? "";
     expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
     await user.type(name, "Gemini CLI");
-    expect(hint()).toContain("Collaborators reach it by writing @gemini-cli in a comment.");
+    expect(hint()).toBe(
+      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli.",
+    );
+    // Claude and Codex add their client name to the same sentence; the Client field has no hint.
+    const clientSelect = screen.getByLabelText("Client");
+    await user.selectOptions(clientSelect, "claude");
+    expect(hint()).toBe(
+      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli or @claude.",
+    );
+    expect(document.getElementById(`${clientSelect.id}-hint`)).toBeNull();
+    await user.selectOptions(clientSelect, "other");
+    // A name another connection takes: the warning replaces the usual line, in the warning colour.
     await user.clear(name);
     await user.type(name, "nightly ci");
-    expect(hint()).toContain("@nightly-ci reaches “Nightly CI” instead");
+    expect(hint()).toBe("@nightly-ci reaches “Nightly CI” instead. Rename one of them.");
+    expect(document.querySelector(`#${CSS.escape(`${name.id}-hint`)} .pl-acct-warn`)).toBeTruthy();
+    // Without Answer mentions, the unticked box says it; the hint adds nothing.
     await user.click(screen.getByRole("checkbox", { name: /Answer mentions/ }));
-    expect(hint()).toContain("does not have the Answer mentions permission");
+    expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
   });
 });

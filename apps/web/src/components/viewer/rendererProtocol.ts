@@ -21,10 +21,12 @@
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
 //   app -> frame: export { format }        a sheet downloads itself as "csv" or "xlsx"
-//   app -> frame: paired                   a deck is an audience window: it follows its presenter
-//                                          window, never the presenter in the room
+//   app -> frame: export { format }        a whiteboard downloads itself as "png" or "svg"
 //   app -> frame: version { n, nonce }     a doc shows version n in place (live views), keeping the
 //                                          reader's place; exact origin only
+//   app -> frame: paired                   a deck is an audience window: it follows its presenter
+//                                          window, never the presenter in the room
+//   app -> frame: lead                     a deck's earlier frame was leading viewers: lead again
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -63,23 +65,17 @@ import {
   PAGE_COMMENT_LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
+  type SheetExportFormat,
 } from "@plinth/shared";
 
 export interface PrintMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "print";
-  /** A deck prints the handout with speaker notes. The doc renderer ignores it. */
-  notes?: true;
 }
 
-export function printMessage(notes = false): PrintMessage {
-  return {
-    source: RENDERER_MESSAGE_SOURCE,
-    v: RENDERER_PROTOCOL_VERSION,
-    type: "print",
-    ...(notes ? { notes: true as const } : {}),
-  };
+export function printMessage(): PrintMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "print" };
 }
 
 /**
@@ -95,14 +91,10 @@ export function rendererTargetOrigin(
 }
 
 /** Ask the renderer in `frame` to print. False when there is no frame window or target. */
-export function postPrint(
-  frame: HTMLIFrameElement | null,
-  targetOrigin: string | null,
-  notes = false,
-): boolean {
+export function postPrint(frame: HTMLIFrameElement | null, targetOrigin: string | null): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
-  win.postMessage(printMessage(notes), targetOrigin);
+  win.postMessage(printMessage(), targetOrigin);
   return true;
 }
 
@@ -133,7 +125,6 @@ export function viewMessage(mode: DeckView): ViewMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
 }
 
-/** A deck's export request. Sheets send the same kind with their own formats (SheetExportMessage). */
 export interface DeckExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
@@ -169,6 +160,21 @@ export function pairedMessage(): PairedMessage {
 }
 
 /**
+ * The deck's frame this one replaced (a newer version, a sharing change) was leading viewers over
+ * the room, and the person never stopped: lead again. It carries no data; the room still allows
+ * only owners and editors to lead.
+ */
+export interface LeadMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "lead";
+}
+
+export function leadMessage(): LeadMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "lead" };
+}
+
+/**
  * Post a deck message (a slide number, a view name, or an export request with the app's own
  * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
  * opaque frames. False when it cannot.
@@ -176,7 +182,7 @@ export function pairedMessage(): PairedMessage {
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage,
+  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage | LeadMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -186,8 +192,7 @@ export function postToDeck(
 
 // ---------- sheets (the sheet type) ----------
 
-export type SheetExportFormat = "csv" | "xlsx";
-
+/** A sheet's export: the frame builds the file and downloads it, and answers nothing. */
 export interface SheetExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
@@ -200,15 +205,14 @@ export function sheetExportMessage(format: SheetExportFormat): SheetExportMessag
 }
 
 /**
- * The one `export` kind: a deck asks for "pptx" with a nonce, a sheet for "csv" or "xlsx". Each
- * renderer reads only its own formats and ignores the others.
+ * The export kind: a deck's .pptx (with the app's nonce), a sheet's .csv or .xlsx, or a
+ * whiteboard's .png or .svg.
  */
-export type ExportMessage = DeckExportMessage | SheetExportMessage;
+export type ExportMessage = DeckExportMessage | SheetExportMessage | BoardExportMessage;
 
 /**
- * Ask a sheet's frame to download itself. The message names only a format, which the frame's
- * own toolbar offers anyway, so it may go to "*" for opaque frames, like print. False when it
- * cannot be sent.
+ * Ask a sheet's frame to download itself. The message names only a format and carries no data,
+ * so it may go to "*" for opaque frames, like print. False when it cannot be sent.
  */
 export function postExport(
   frame: HTMLIFrameElement | null,
@@ -218,6 +222,37 @@ export function postExport(
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
   win.postMessage(sheetExportMessage(format), targetOrigin);
+  return true;
+}
+
+// ---------- whiteboards (the whiteboard type) ----------
+
+export type BoardExportFormat = "png" | "svg";
+
+/** A whiteboard's export: the frame draws the whole board and downloads it, and answers nothing. */
+export interface BoardExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: BoardExportFormat;
+}
+
+export function boardExportMessage(format: BoardExportFormat): BoardExportMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
+}
+
+/**
+ * Ask a whiteboard's frame to download itself as a PNG or an SVG. Like a sheet's export, the
+ * message names only a format and carries no data. False when it cannot be sent.
+ */
+export function postBoardExport(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  format: BoardExportFormat,
+): boolean {
+  const win = frame?.contentWindow;
+  if (!win || !targetOrigin) return false;
+  win.postMessage(boardExportMessage(format), targetOrigin);
   return true;
 }
 
@@ -432,8 +467,9 @@ export const APP_MESSAGE_KINDS = [
   "goto",
   "view",
   "export",
-  "paired",
   "version",
+  "paired",
+  "lead",
   "review",
   "reviewed",
 ] as const;
@@ -447,8 +483,9 @@ export type AppToFrameMessage =
   | GotoMessage
   | ViewMessage
   | ExportMessage
-  | PairedMessage
   | VersionMessage
+  | PairedMessage
+  | LeadMessage
   | ReviewMessage
   | ReviewedMessage;
 

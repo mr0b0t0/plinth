@@ -168,8 +168,9 @@ export class DocEditor {
     private readonly win: Window,
     private backend: DocBackend,
     private readonly hooks: EditorHooks,
+    prepare?: (fragment: DocumentFragment) => void,
   ) {
-    this.cache = new BlockCache(win.document);
+    this.cache = new BlockCache(win.document, prepare);
   }
 
   get doc(): Document {

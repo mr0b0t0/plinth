@@ -4,7 +4,7 @@
 import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
-import { Button, EmptyState, showToast } from "../components/ui/index.ts";
+import { Button, dismissToast, EmptyState, showToast } from "../components/ui/index.ts";
 import { GateScreen } from "../components/viewer/GateScreen.tsx";
 import { gatePath, parseVersion } from "../components/viewer/gate.ts";
 import { useGate } from "../components/viewer/useGate.ts";
@@ -30,7 +30,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const [commentsOpen, setCommentsOpen] = useState(() => search.has("comments"));
   // Review mode (the comment-anchoring bridge) needs a fresh gate and a frame reload. It turns on
   // when comments first open and then stays on, so closing and reopening the panel does not reload
-  // the artifact.
+  // the artifact. Editing on the page and presenting a deck turn it off.
   const [review, setReview] = useState(commentsOpen);
   // A page inside the artifact (from a direct content link): opened inside the frame.
   const rawPath = search.get("path");
@@ -47,14 +47,28 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // gate poll is only a backstop while it is open.
   const checkRef = useRef<() => void>(() => undefined);
   const [dataTick, setDataTick] = useState(0);
+  // One quiet notice: a version pushed while the last one's notice is still up replaces it, so an
+  // agent publishing several versions in a row never stacks "Updated to" toasts.
+  const updatedToast = useRef<number | null>(null);
+  // While the frame is held (edited on the page, a deck presented) the page's own bar says what
+  // happened, so no toast repeats it. A held version (the hold rule) says so in that same slot, so
+  // the frame never moves under the viewer and the two notices never stack; the bar's "vN of M"
+  // stays after it is dismissed.
+  const heldToast = useRef<number | null>(null);
   // A fresh gate for a newer version waits here until the stage has applied it: in place for a
   // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
   const [pending, setPending] = useState<OkGate | null>(null);
-  const show = (gate: OkGate) => {
+  // While editing on the page the edit strip says what a newer version did ("v5 was published
+  // while you edited", "your changes were kept"), so no toast repeats it.
+  const editingRef = useRef(false);
+  const show = (gate: OkGate, quiet = false) => {
     const moved = gate.artifact.version !== shown?.artifact.version;
     setPending(null);
     setGate(gate);
-    if (!pinned && moved) showToast({ title: `Updated to v${gate.artifact.version}` });
+    if (!pinned && moved && !quiet && pause === null && !editingRef.current) {
+      if (updatedToast.current !== null) dismissToast(updatedToast.current);
+      updatedToast.current = showToast({ title: `Updated to v${gate.artifact.version}` });
+    }
   };
   const onNewer = (gate: OkGate) => {
     // The frame stays (a pinned link, or a paused one): only the bar moves on.
@@ -105,13 +119,14 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     pause,
   );
   checkRef.current = checkNow;
+  const onVersionSeen = useCallback(() => checkRef.current(), []);
   // A page that declares `comments` anchors its own comments: opening the panel never reloads it
   // into review mode (the gate ignores review for it too). If a new version drops the declaration
   // while the panel is open, review mode turns on then, with one reload as on a first open.
   const pageComments = shown?.page_comments === true;
   const updateHandlers: UpdateHandlers = {
     pending,
-    apply: (gate) => latest.current.show(gate),
+    apply: (gate, quiet) => latest.current.show(gate, quiet),
     count: (gate) => {
       setPending(null);
       setGate(gate);
@@ -124,13 +139,35 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       );
       return fresh.status === "ok" ? fresh : null;
     },
+    offer: (version, update) => {
+      const offered = heldToast.current;
+      heldToast.current = null;
+      if (offered !== null) dismissToast(offered);
+      if (updatedToast.current === offered) updatedToast.current = null;
+      if (version === null) return;
+      if (updatedToast.current !== null) dismissToast(updatedToast.current);
+      const id = showToast({
+        title: `v${version} is available`,
+        duration: 0,
+        action: { label: "Update", onClick: update },
+      });
+      heldToast.current = id;
+      updatedToast.current = id;
+    },
   };
   useEffect(() => {
     if (commentsOpen && shown && !pageComments) setReview(true);
   }, [commentsOpen, shown, pageComments]);
   // Editing on the page and review mode (the comment-anchoring frame) exclude each other.
   const onEditModeChange = useCallback((on: boolean) => {
+    editingRef.current = on;
     if (!on) return;
+    setCommentsOpen(false);
+    setReview(false);
+  }, []);
+  // Presenting a deck and review mode exclude each other too: review mode shows every slide
+  // stacked, so Present leaves it (and closes the panel) before it presents.
+  const onLeaveReview = useCallback(() => {
     setCommentsOpen(false);
     setReview(false);
   }, []);
@@ -192,9 +229,11 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       onReload={reload}
       onEditModeChange={onEditModeChange}
       onPauseChange={setPause}
+      onVersionSeen={onVersionSeen}
+      review={review}
+      onLeaveReview={onLeaveReview}
       liveData={{ pushed: live === "open", tick: dataTick }}
       update={updateHandlers}
-      review={review}
     />
   );
 }

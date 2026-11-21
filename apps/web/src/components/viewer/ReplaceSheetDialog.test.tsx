@@ -107,7 +107,7 @@ function context(over: {
 }
 
 describe("the ⋯ item", () => {
-  it("sits right after Edit source, for sheets only, with its dialog in the stage", () => {
+  it("sits in Edit source's place, for sheets only, with its dialog in the stage", () => {
     const at = MENU_ITEMS.indexOf(replaceSheet);
     expect(at).toBeGreaterThan(0);
     expect(MENU_ITEMS[at - 1]?.name).toBe("editSource");

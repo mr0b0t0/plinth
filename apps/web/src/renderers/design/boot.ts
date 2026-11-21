@@ -1,19 +1,19 @@
 // Boots a design: reads the payload the shell embeds (typedShellHtml in @plinth/shared), parses it
 // with the shared parser, lays the artboards out on the canvas and mounts a frame for each board
-// on screen (frames.ts). With ?plinth-board=<id> it shows that one board alone at 100% instead
-// (an unknown id shows the canvas). With ?plinth-print=1 it lays the boards out for the server's
-// PNG and PDF export (services/designExport.ts in the Worker). It runs synchronously at the end of <body>, so the comments
-// bridge (which waits for DOMContentLoaded) sees the finished DOM.
+// on screen (frames.ts). Boards load their files from the version the payload names (base.ts); a
+// payload without a valid version shows the error instead of any board. Opened top-level with print
+// media emulated before it loads, which only the server's PNG and PDF export does
+// (services/designExport.ts in the Worker), it lays every board out for that export instead. It
+// runs synchronously at the end of <body>, so the comments bridge (which waits for
+// DOMContentLoaded) sees the finished DOM.
 //
 // The shell's DOM never receives author markup: the shared section and the fragments exist here
-// only as strings posted to board frames, names and sections only as textContent, and ids are
+// only as strings posted to board frames, names only as textContent, and ids are
 // [a-z0-9-]. It reads only window properties the platform defines, never a global by name.
 // <html> carries data-ready ("ok" or "error"), data-boards, data-boards-loaded and data-zoom for
 // tests and thumbnails.
 import {
   boardDocument,
-  DESIGN_BOARD_PARAM,
-  DESIGN_PRINT_PARAM,
   type DesignBoard,
   parseDesign,
   REVIEW_MODE_PARAM,
@@ -25,8 +25,12 @@ import { bindCanvasInput, type Schedule, Viewport, ZOOM_STEP } from "./canvas.ts
 import { BoardFrames } from "./frames.ts";
 import {
   fitTransform,
+  type Insets,
   LAYOUT,
+  type Layout,
+  type LayoutItem,
   layoutBoards,
+  type Size,
   screenRect,
   type Transform,
   visibleBoards,
@@ -34,16 +38,24 @@ import {
 } from "./layout.ts";
 import { pageName, preparePrint, printCss, printStyle } from "./print.ts";
 import { fromApp, readDesignAppMessage } from "./protocol.ts";
-import { boardLabel, boardList, boardSlot, button, el, sectionHeading, toolbar } from "./ui.ts";
+import { boardLabel, boardSlot, el, toolbar } from "./ui.ts";
 
 const ROOT_ID = "__plinth-design";
 const DATA_ID = "__plinth-content";
 export const FALLBACK = "This design could not be shown.";
-/** Room the toolbar takes at the bottom, kept clear when fitting. */
-const FIT_PADDING = 56;
+/**
+ * Room kept clear round the boards when fitting, besides the toolbar's at the bottom: 48 px, or
+ * less on a small screen (6% of its shorter side, at least 16 px), so a phone's boards get the room.
+ */
+const fitPadding = (size: Size) =>
+  Math.round(Math.min(48, Math.max(16, Math.min(size.width, size.height) * 0.06)));
+/**
+ * The toolbar's height plus its offset from the bottom (design.css), for when it has no layout
+ * size yet: fitted boards end the fit padding above it.
+ */
+const TOOLBAR_SPACE = 66;
 /** Label band height on screen, over each board. */
 const LABEL_PX = 26;
-const HEADING_PX = 26;
 /** Below this on-screen board width, a label shows only the board's name. */
 const NARROW_LABEL_PX = 200;
 
@@ -63,12 +75,31 @@ export function readPayload(doc: Document): TypedPayload | null {
   return value as TypedPayload;
 }
 
-/** Test seams: the frame scheduler, the shell's location, the frame limit and frame elements. */
+/**
+ * Test seams: the frame scheduler, the shell's location, the frame limit, frame elements and media
+ * queries.
+ */
 export interface BootOptions {
   schedule?: Schedule;
   location?: { href: string; search: string };
   maxLive?: number;
   createFrame?: (doc: Document) => HTMLIFrameElement;
+  /** Whether a media query matches now (window.matchMedia). */
+  matchMedia?: (query: string) => boolean;
+}
+
+/**
+ * The server's export layout: the shell is the top-level document and print media is in effect
+ * as it boots. Plinth's export browser sets that up through the DevTools protocol before the page
+ * loads. In the app the shell is a frame, and a person who prints a design has it on screen long
+ * before (Print and save as PDF keep their own path, preparePrint), so neither ever lands here.
+ */
+function exportLayoutWanted(win: Window, opts: BootOptions): boolean {
+  if (win.parent !== win) return false;
+  const matches =
+    opts.matchMedia ??
+    ((q: string) => typeof win.matchMedia === "function" && win.matchMedia(q).matches);
+  return matches("print");
 }
 
 export interface DesignHandle {
@@ -95,7 +126,9 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   const loc = opts.location ?? win.location;
   const search = new URLSearchParams(loc.search);
   const review = search.has(REVIEW_MODE_PARAM);
-  const baseHref = boardBaseUrl(loc);
+  // Never the shell's own directory: at the root that follows the current version.
+  const baseHref = boardBaseUrl(loc, payload.version);
+  if (baseHref === null) return fail(doc, root);
   const documentFor = (board: DesignBoard) =>
     boardDocument({ board, shared: design.shared, baseHref });
   const schedule: Schedule =
@@ -135,20 +168,13 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       },
     });
 
-  const soloId = search.get(DESIGN_BOARD_PARAM);
-  const solo = soloId ? design.boards.find((b) => b.id === soloId) : undefined;
-
-  // The export layout (?plinth-print=1, with ?plinth-board=<id> one board): what the server's
-  // PNG and PDF export renders. Every board mounted at 100% in normal flow, one named page per
-  // size, no chrome, no covers and no page background, and nothing printed from here: the
-  // export's own browser prints or screenshots the page once data-boards-loaded reaches
-  // data-boards. An unknown board id is an error, never a different board.
-  if (search.get(DESIGN_PRINT_PARAM) === "1") {
-    if (soloId !== null && !solo) {
-      frames.destroy();
-      return fail(doc, root);
-    }
-    const boards = solo ? [solo] : design.boards;
+  // The export layout: what the server's PNG and PDF export renders. The export's own browser
+  // opens the shell top-level with print media emulated before the page loads; nothing in a URL
+  // or a message selects it. Every board mounted at 100% in normal flow, one named page per size,
+  // no chrome, no covers and no page background, and nothing printed from here: the export's
+  // browser prints or screenshots the page once the boards it needs have loaded.
+  if (exportLayoutWanted(win, opts)) {
+    const boards = design.boards;
     root.setAttribute("data-mode", "export");
     root.setAttribute("data-print", "");
     html.setAttribute("data-export", "");
@@ -175,35 +201,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     };
   }
 
-  // One board alone at 100% (?plinth-board=<id>): no canvas, no covers.
-  if (solo) {
-    root.setAttribute("data-mode", "solo");
-    const { slot, cover } = boardSlot(doc, solo, pageName(solo));
-    cover.remove();
-    const stage = el(doc, "div", "plinth-design__solo");
-    stage.append(slot);
-    root.replaceChildren(stage);
-    frames.add(solo, slot);
-    frames.show([solo.id]);
-    html.setAttribute("data-boards", "1");
-    html.setAttribute("data-zoom", "100");
-    listen("message", (e) => {
-      if (!fromApp(e, win, appOrigin)) return;
-      if (readDesignAppMessage(e.data)?.type === "print") void printNow([solo], () => {});
-    });
-    html.setAttribute("data-ready", "ok");
-    return {
-      stop: () => {
-        for (const f of cleanups.splice(0)) f();
-      },
-      view: null,
-      frames,
-    };
-  }
-
-  const layout = layoutBoards(design.boards);
   const byId = new Map(design.boards.map((b) => [b.id, b]));
-  const itemById = new Map(layout.items.map((it) => [it.id, it]));
   root.setAttribute("data-mode", "canvas");
   if (review) root.setAttribute("data-review", "");
 
@@ -227,24 +225,27 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   const covers = new Map<string, HTMLElement>();
   const slots = new Map<string, HTMLElement>();
   const labels = new Map<string, HTMLElement>();
-  const headings: { el: HTMLElement; row: number }[] = [];
 
   let auto = true;
   let view: Viewport;
+  let layout: Layout = layoutBoards(design.boards);
+  let itemById = new Map<string, LayoutItem>();
+
+  // The board last zoomed to: its label offers Interact (design.css) until Fit.
+  const setActive = (id: string | null) => {
+    for (const [bid, label] of labels) label.toggleAttribute("data-active", bid === id);
+  };
   const zoomTo = (id: string) => {
     const item = itemById.get(id);
     if (!item) return;
     auto = false;
-    view.set(zoomToBoard(item, view.size(), FIT_PADDING, LAYOUT.label * layout.unit));
+    setActive(id);
+    const size = view.size();
+    view.set(zoomToBoard(item, size, insets(size), LAYOUT.label * layout.unit));
   };
 
   for (const b of design.boards) {
-    const item = itemById.get(b.id);
-    if (!item) continue;
     const { slot, cover } = boardSlot(doc, b, pageName(b));
-    // Custom properties, so the print layout can drop the position without !important.
-    slot.style.setProperty("--pd-x", `${item.x}px`);
-    slot.style.setProperty("--pd-y", `${item.y}px`);
     world.append(slot);
     frames.add(b, slot);
     covers.set(b.id, cover);
@@ -256,51 +257,6 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     overlay.append(label);
     labels.set(b.id, label);
   }
-  for (const [i, row] of layout.rows.entries()) {
-    if (!row.heading || row.section === null) continue;
-    const h = sectionHeading(doc, row.section);
-    overlay.append(h);
-    headings.push({ el: h, row: i });
-  }
-
-  const done = button(doc, "plinth-design__done", "Done interacting", "Done", () =>
-    setInteract(null),
-  );
-  done.hidden = true;
-
-  function setInteract(id: string | null) {
-    if (review) id = null;
-    if (id !== null && !byId.has(id)) return;
-    if (interacting === id) return;
-    if (interacting) {
-      covers.get(interacting)?.removeAttribute("hidden");
-      slots.get(interacting)?.removeAttribute("data-interacting");
-      const f = frames.frameOf(interacting);
-      if (f) f.tabIndex = -1;
-    }
-    interacting = id;
-    frames.pin(id);
-    if (id) {
-      covers.get(id)?.setAttribute("hidden", "");
-      slots.get(id)?.setAttribute("data-interacting", "");
-      const f = frames.frameOf(id);
-      if (f) f.tabIndex = 0;
-      done.hidden = false;
-      announcer.textContent = `Interacting with ${byId.get(id)?.name ?? "the board"}. Press Done or Escape to stop.`;
-    } else {
-      done.hidden = true;
-      announcer.textContent = "";
-    }
-  }
-
-  const fitAll = () => {
-    auto = true;
-    view.set(fitTransform(layout.bounds, view.size(), FIT_PADDING));
-  };
-  const actual = () => {
-    auto = false;
-    view.zoomTo(1);
-  };
 
   const bar = toolbar(doc, {
     zoomOut: () => {
@@ -311,22 +267,84 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       auto = false;
       view.zoomBy(ZOOM_STEP);
     },
-    fit: fitAll,
-    actual,
-    toggleList: () => (list.isOpen() ? list.close() : list.open()),
+    fit: () => fitAll(),
+    actual: () => actual(),
+    done: () => setInteract(null),
   });
-  const list = boardList(doc, design.boards, bar.list, (id) => {
-    zoomTo(id);
-    canvas.focus({ preventScroll: true });
-  });
-  bar.el.append(list.el);
 
-  // Labels and headings keep their screen size: a label sits over its board, at most as wide as
-  // the board (only the name when that is narrow), and a heading over its row's labels only where
-  // it clears the row above.
-  const rowBottom = new Map<number, number>();
-  for (const it of layout.items)
-    rowBottom.set(it.row, Math.max(rowBottom.get(it.row) ?? 0, it.y + it.h));
+  /** The room fitted boards leave: the fit padding on every side, plus the toolbar at the bottom. */
+  function insets(size: Size): Insets {
+    const r = bar.el.getBoundingClientRect();
+    const space = r.height > 0 ? Math.max(size.height - r.top, 0) : TOOLBAR_SPACE;
+    const p = fitPadding(size);
+    return { top: p, right: p, bottom: p + space, left: p };
+  }
+
+  /** Lays the boards out for the room the viewport leaves them. */
+  function relayout(size: Size) {
+    const p = insets(size);
+    layout = layoutBoards(
+      design.boards,
+      (size.width - p.left - p.right) / (size.height - p.top - p.bottom),
+    );
+    itemById = new Map(layout.items.map((it) => [it.id, it]));
+    for (const it of layout.items) {
+      // Custom properties, so the print layout can drop the position without !important.
+      slots.get(it.id)?.style.setProperty("--pd-x", `${it.x}px`);
+      slots.get(it.id)?.style.setProperty("--pd-y", `${it.y}px`);
+    }
+  }
+
+  // While a board is in use, the toolbar holds only Done, and that board's label no Interact.
+  function setInteract(id: string | null) {
+    if (review) id = null;
+    if (id !== null && !byId.has(id)) return;
+    if (interacting === id) return;
+    const prev = interacting;
+    const doneHadFocus = doc.activeElement === bar.done;
+    if (prev) {
+      covers.get(prev)?.removeAttribute("hidden");
+      slots.get(prev)?.removeAttribute("data-interacting");
+      labels.get(prev)?.removeAttribute("data-interacting");
+      const f = frames.frameOf(prev);
+      if (f) f.tabIndex = -1;
+    }
+    interacting = id;
+    frames.pin(id);
+    bar.setInteracting(id !== null);
+    if (id) {
+      const label = labels.get(id);
+      const chipHadFocus = label?.contains(doc.activeElement) ?? false;
+      covers.get(id)?.setAttribute("hidden", "");
+      slots.get(id)?.setAttribute("data-interacting", "");
+      label?.setAttribute("data-interacting", "");
+      const f = frames.frameOf(id);
+      if (f) f.tabIndex = 0;
+      // The Interact button just went away: keep focus on what is in use now.
+      if (chipHadFocus || doneHadFocus) (f ?? bar.done).focus();
+      announcer.textContent = `Interacting with ${byId.get(id)?.name ?? "the board"}. Press Done or Escape to stop.`;
+    } else {
+      announcer.textContent = "";
+      if (doneHadFocus && prev) {
+        labels.get(prev)?.querySelector<HTMLElement>(".plinth-design__label-name")?.focus();
+      }
+    }
+  }
+
+  function fitAll() {
+    auto = true;
+    setActive(null);
+    const size = view.size();
+    relayout(size);
+    view.set(fitTransform(layout.bounds, size, insets(size)));
+  }
+  function actual() {
+    auto = false;
+    view.zoomTo(1);
+  }
+
+  // Labels keep their screen size: a label sits over its board, at most as wide as the board
+  // (only the name when that is narrow).
   const place = (t: Transform) => {
     for (const it of layout.items) {
       const label = labels.get(it.id);
@@ -335,16 +353,6 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       label.style.transform = `translate(${Math.round(r.x)}px, ${Math.round(r.y - LABEL_PX)}px)`;
       label.style.maxWidth = `${Math.max(Math.round(r.w), 72)}px`;
       label.toggleAttribute("data-narrow", r.w < NARROW_LABEL_PX);
-    }
-    for (const h of headings) {
-      const first = layout.items.find((it) => it.row === h.row);
-      if (!first) continue;
-      const r = screenRect(first, t);
-      const y = r.y - LABEL_PX - HEADING_PX;
-      const above = rowBottom.get(h.row - 1);
-      const clear = above === undefined || t.y + above * t.scale <= y;
-      h.el.style.transform = `translate(${Math.round(r.x)}px, ${Math.round(y)}px)`;
-      h.el.hidden = !clear;
     }
   };
 
@@ -356,7 +364,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     html.setAttribute("data-zoom", pct);
   });
 
-  root.replaceChildren(canvas, bar.el, done, announcer);
+  root.replaceChildren(canvas, bar.el, announcer);
   html.setAttribute("data-boards", String(design.boards.length));
   html.setAttribute("data-boards-loaded", "0");
 
@@ -368,24 +376,12 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
         auto = false;
       },
       isControl: (t) =>
-        t.closest(
-          ".plinth-design__toolbar, .plinth-design__label, .plinth-design__done, .plinth-design__frame",
-        ) !== null,
+        t.closest(".plinth-design__toolbar, .plinth-design__label, .plinth-design__frame") !== null,
       backgroundClick: (t) => {
-        if (list.isOpen()) list.close();
         // A click outside the board being interacted with puts its cover back.
         if (interacting && !t.closest(`[data-board="${interacting}"]`)) setInteract(null);
       },
-      coverActivate: (t) => {
-        const cover = t.closest(".plinth-design__cover");
-        const id = cover instanceof HTMLElement ? cover.dataset.board : undefined;
-        if (id) setInteract(id);
-      },
       escape: () => {
-        if (list.isOpen()) {
-          list.close();
-          return true;
-        }
         if (interacting) {
           setInteract(null);
           return true;

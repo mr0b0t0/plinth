@@ -1,9 +1,10 @@
 // What changed in a deck (slides.md): slides added, removed and moved; per slide its title, its
 // text, its columns, its images and its speaker notes; and the deck settings.
 import { type DeckSettings, parseDeck, type SlideSource } from "../slides.ts";
+import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import { markdownBlocks } from "./markdownText.ts";
-import { multisetChanges, pairInOrder } from "./pairs.ts";
+import { inReadingOrder, multisetChanges } from "./pairs.ts";
 import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
@@ -143,33 +144,50 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
   const { hunks, exact } = diffSequence(
     a.map((s) => s.key),
     b.map((s) => s.key),
+    out.diffOptions(),
   );
   if (!exact) out.truncated = true;
 
   // A slide taken out of one changed region and put into another moved: first slides that are
-  // the same, then slides with the same title (which also changed).
-  const hunkOf = new Map<Slide, number>();
-  hunks.forEach((h, k) => {
-    for (const s of a.slice(h.aStart, h.aEnd)) hunkOf.set(s, k);
-    for (const s of b.slice(h.bStart, h.bEnd)) hunkOf.set(s, k);
+  // the same, then slides with the same title (which also changed). A slide whose own region has
+  // its key on the other side changed in place: two "Agenda" slides edited where they are did not
+  // trade places.
+  const regions = hunks.map((h) => ({
+    removed: a.slice(h.aStart, h.aEnd),
+    added: b.slice(h.bStart, h.bEnd),
+  }));
+  const regionOf = new Map<Slide, number>();
+  regions.forEach((r, k) => {
+    for (const s of r.removed) regionOf.set(s, k);
+    for (const s of r.added) regionOf.set(s, k);
   });
-  const removedAll = hunks.flatMap((h) => a.slice(h.aStart, h.aEnd));
-  const addedAll = hunks.flatMap((h) => b.slice(h.bStart, h.bEnd));
+  const removedAll = regions.flatMap((r) => r.removed);
+  const addedAll = regions.flatMap((r) => r.added);
   const moved = new Set<Slide>();
   const moves: [Slide, Slide][] = [];
   const match = (keyOf: (s: Slide) => string) => {
-    const waiting = new Map<string, Slide[]>();
+    const keysOf = (list: readonly Slide[]) =>
+      new Set(list.filter((s) => !moved.has(s)).map(keyOf));
+    const inRegion = regions.map((r) => ({ removed: keysOf(r.removed), added: keysOf(r.added) }));
+    const region = (s: Slide) => inRegion[regionOf.get(s) as number] as (typeof inRegion)[number];
+    // Each key's candidates in order, taken from the front. None is in the region of a slide that
+    // looks for it (that slide would have its key on the other side), so nothing is scanned and a
+    // deck of many same-titled slides stays linear.
+    const waiting = new Map<string, { list: Slide[]; next: number }>();
     for (const s of addedAll) {
       const k = keyOf(s);
-      if (k !== "" && !moved.has(s)) waiting.set(k, [...(waiting.get(k) ?? []), s]);
+      if (k === "" || moved.has(s) || region(s).removed.has(k)) continue;
+      const w = waiting.get(k);
+      if (w) w.list.push(s);
+      else waiting.set(k, { list: [s], next: 0 });
     }
     for (const s of removedAll) {
       const k = keyOf(s);
-      if (k === "" || moved.has(s)) continue;
-      const list = waiting.get(k) ?? [];
-      const at = list.findIndex((t) => hunkOf.get(t) !== hunkOf.get(s));
-      if (at < 0) continue;
-      const [to] = list.splice(at, 1) as [Slide];
+      if (k === "" || moved.has(s) || region(s).added.has(k)) continue;
+      const w = waiting.get(k);
+      const to = w?.list[w.next];
+      if (!w || !to) continue;
+      w.next++;
       moved.add(s).add(to);
       moves.push([s, to]);
     }
@@ -186,30 +204,52 @@ export function describeSlides(out: ChangeCollector, before: string, after: stri
   }
 
   for (const h of hunks) {
-    if (out.full) {
+    if (out.done()) {
       out.truncated = true;
       return;
     }
-    const { pairs, removed, added } = pairInOrder(
-      a.slice(h.aStart, h.aEnd).filter((s) => !moved.has(s)),
-      b.slice(h.bStart, h.bEnd).filter((s) => !moved.has(s)),
-    );
-    for (const s of removed) {
-      out.add({
-        kind: "removed",
-        where: "",
-        what: `${label(s)} removed`,
-        before: s.title === "" ? changeExcerpt(s.text) : undefined,
-      });
-    }
-    for (const [x, y] of pairs) describeSlide(out, x, y);
-    for (const s of added) {
-      out.add({
-        kind: "added",
-        where: "",
-        what: `${label(s)} added`,
-        after: s.title === "" ? changeExcerpt(s.text) : undefined,
-      });
+    const removedSlides = a.slice(h.aStart, h.aEnd).filter((s) => !moved.has(s));
+    const addedSlides = b.slice(h.bStart, h.bEnd).filter((s) => !moved.has(s));
+    const index = new Map<Slide, number>();
+    for (const [k, s] of a.slice(h.aStart, h.aEnd).entries()) index.set(s, h.aStart + k);
+    for (const [k, s] of b.slice(h.bStart, h.bEnd).entries()) index.set(s, h.bStart + k);
+    const at = (s: Slide) => index.get(s) as number;
+    // Aligned by the content words of their title and text, so a slide added next to an edited
+    // one is not taken for it.
+    const paired = alignRegion(removedSlides, addedSlides, {
+      key: (s) => s.key,
+      text: (s) => `${s.title} ${s.text}`,
+      // A slide of only an image keys on its images and notes: such slides may pair.
+      wordless: true,
+      budget: out.alignBudget,
+    });
+    // In the order a person reads the deck, so a slide added before an edited one comes first.
+    for (const { step } of inReadingOrder(paired, at, at, h.bStart)) {
+      const { x, y } = step;
+      // The same slide (a region the diff gave up on holds unchanged ones too) is no change.
+      if (x && y && x.key === y.key) continue;
+      // Every other step lists at least one item: once the list is full, the rest is cut.
+      if (out.full) {
+        out.truncated = true;
+        return;
+      }
+      if (x && y) {
+        describeSlide(out, x, y);
+      } else if (y) {
+        out.add({
+          kind: "added",
+          where: "",
+          what: `${label(y)} added`,
+          after: y.title === "" ? changeExcerpt(y.text) : undefined,
+        });
+      } else if (x) {
+        out.add({
+          kind: "removed",
+          where: "",
+          what: `${label(x)} removed`,
+          before: x.title === "" ? changeExcerpt(x.text) : undefined,
+        });
+      }
     }
   }
 }

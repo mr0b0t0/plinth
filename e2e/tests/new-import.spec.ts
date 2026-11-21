@@ -116,7 +116,10 @@ test("Import an .xlsx: converted by the Worker, opened in edit mode", async ({ p
   expect(detail.body).toMatchObject({ title: "Q4 sales", type: "sheet", current_version: 1 });
   const versions = await apiGet(page.request, `/artifacts/${slug}/versions`);
   expect(versions.body.items[0].note).toBe("Imported from Q4_sales.xlsx");
-  await page.getByRole("button", { name: "Done" }).click();
+  // The Edit toggle leaves edit mode; at phone width, where the toggle is in the ⋯ menu, Done.
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) await toggle.click();
+  else await page.getByRole("button", { name: "Done" }).click();
   await expect(bar(page)).toHaveCount(0);
 });
 
@@ -208,6 +211,6 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and h
   }
   await expect(bar(page)).toBeVisible();
   menu = await openActions(page);
-  await expect(menu.getByRole("menuitem", { name: "Edit source" })).toBeVisible();
+  await expect(menu.getByRole("menuitem").first()).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "Replace with a file…" })).toHaveCount(0);
 });

@@ -75,13 +75,16 @@ export function MyCategoryDialog({
       open
       onClose={onClose}
       title="Move to category"
-      description={`File “${artifact.title}” under a category of your own. Only you see it; ${
-        artifact.owner.name || artifact.owner.email || "the owner"
-      } does not.`}
+      description="Only you see this category."
       footer={
         <>
           {current !== null && (
-            <Button variant="danger" onClick={() => void put(null)} loading={busy === "remove"}>
+            <Button
+              variant="ghost"
+              className="pl-dialog-start"
+              onClick={() => void put(null)}
+              loading={busy === "remove"}
+            >
               Remove category
             </Button>
           )}
@@ -103,6 +106,7 @@ export function MyCategoryDialog({
       <form id={formId} onSubmit={submit} noValidate>
         <Input
           label="Your category"
+          className="pl-category-field"
           value={typed}
           maxLength={LIMITS.maxCategoryLength}
           list={listId}

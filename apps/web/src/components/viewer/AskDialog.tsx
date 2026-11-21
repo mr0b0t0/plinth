@@ -5,7 +5,8 @@
 // version being edited, or, with "Publish my changes first" (off by default), against the version
 // that Publish makes. When that Publish does not succeed, nothing is posted: the dialog says why
 // and offers to post without publishing. It matches the request composer: the same "Pointing at"
-// chip, and the agent choice beside Send (Cancel · Claude | Codex · Send).
+// chip, and the same agent choice ("Ask: Claude | Codex") under the description, so the footer
+// holds only Cancel and Send.
 import {
   API,
   type ClientType,
@@ -164,13 +165,6 @@ export function AskDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <AgentChoice
-            className="pl-ask__to"
-            targets={targets}
-            to={to}
-            onTo={setTo}
-            owner={owner}
-          />
           {unpublished ? (
             <Button
               variant="primary"
@@ -212,6 +206,7 @@ export function AskDialog({
             }
           }}
         />
+        <AgentChoice targets={targets} to={to} onTo={setTo} owner={owner} />
         {dirty && (
           <Checkbox
             label="Publish my changes first"

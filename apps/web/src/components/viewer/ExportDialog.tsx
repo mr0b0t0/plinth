@@ -1,12 +1,14 @@
-// Download a design as PNG or PDF, rendered by the server (docs/spec.md "Designs"): PNG is one
-// artboard at 1x or 2x, PDF every board or one, each on a page of its own size. Offered only where
-// the instance renders exports (AppConfig.design_export). Board names come from the design's
-// source, untrusted text, and reach the page only as React text.
+// A design's server-rendered downloads (docs/spec.md "Designs"): "Download .png" downloads a
+// design's one board straight from the menu, or opens this dialog to pick one when it has more;
+// "Download .pdf" downloads every board straight from the menu. A PNG is at 2x where the board
+// fits the pixel cap, else at 1x. Offered only where the instance renders exports
+// (AppConfig.design_export). Board names come from the design's source, untrusted text, and reach
+// the page only as React text.
 import { DownloadSimpleIcon } from "@phosphor-icons/react";
 import { DESIGN_EXPORT, type DesignExportOptions } from "@plinth/shared";
 import { useEffect, useState } from "react";
 import { ApiRequestError, fetchDesignExport, getDesignExportOptions } from "../../lib/api.ts";
-import { Button, Dialog, SegmentedControl, Select, Stack, useToast } from "../ui/index.ts";
+import { Button, Dialog, dismissToast, Select, Stack, showToast } from "../ui/index.ts";
 
 export interface ExportDialogProps {
   open: boolean;
@@ -17,18 +19,14 @@ export interface ExportDialogProps {
   version: number;
 }
 
-type Format = "png" | "pdf";
-type Scale = "1" | "2";
-/** No board picked: every board for a PDF, the first board for a PNG. */
-const ALL = "";
-
-/** Whether a board fits the PNG pixel cap at this scale. */
-export function fitsPixels(
+/** The PNG scale for a board: 2x where it fits the pixel cap, else 1x, else null (PDF only). */
+export function pngScale(
   b: { width: number; height: number },
-  scale: number,
   max: number = DESIGN_EXPORT.maxPixels,
-): boolean {
-  return b.width * b.height * scale * scale <= max;
+): 1 | 2 | null {
+  const px = b.width * b.height;
+  if (px * 4 <= max) return 2;
+  return px <= max ? 1 : null;
 }
 
 /** Save a file the app fetched, as a download. */
@@ -44,18 +42,89 @@ export function saveBlob(blob: Blob, filename: string, doc: Document = document)
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+/** The words for a refusal over the instance's or the design's hourly export limit. */
+export const TOO_MANY = "Too many downloads. Try again later.";
+
+const TOO_BIG = "Too big for a .png. Download the .pdf.";
+
 function errorText(err: unknown): string {
-  if (err instanceof ApiRequestError) return err.message;
+  if (err instanceof ApiRequestError) {
+    const reason = (err.details as { reason?: unknown } | undefined)?.reason;
+    if (err.code === "rate_limited" && (reason === "instance_limit" || reason === "artifact_limit"))
+      return TOO_MANY;
+    return err.message;
+  }
   return "The export could not be made. Try again.";
 }
 
+/** Designs whose PDF is being made, so a second click waits for the first. */
+const makingPdf = new Set<string>();
+/** Designs whose Download .png is under way, likewise. */
+const makingPng = new Set<string>();
+
+/**
+ * Download .png from the menu: a design with one board downloads it at once, with a toast while
+ * it renders, as Download .pdf does; a design with more opens the board picker (`pick`).
+ */
+export async function downloadDesignPng(
+  artifactRef: string,
+  version: number,
+  pick: () => void,
+): Promise<void> {
+  if (makingPng.has(artifactRef)) return;
+  makingPng.add(artifactRef);
+  let toast: number | null = null;
+  try {
+    const options = await getDesignExportOptions(artifactRef, version);
+    const [board, ...more] = options.boards;
+    if (!board || more.length > 0) {
+      pick();
+      return;
+    }
+    const scale = pngScale(board, options.max_pixels);
+    if (scale === null) {
+      showToast({ title: TOO_BIG, tone: "danger" });
+      return;
+    }
+    toast = showToast({ title: "Making the .png…", duration: 0 });
+    const file = await fetchDesignExport(artifactRef, {
+      format: "png",
+      version: options.version,
+      board: board.id,
+      scale,
+    });
+    saveBlob(file.blob, file.filename);
+  } catch (err) {
+    showToast({ title: errorText(err), tone: "danger" });
+  } finally {
+    if (toast !== null) dismissToast(toast);
+    makingPng.delete(artifactRef);
+  }
+}
+
+/**
+ * Download every board of the version on screen as one PDF. A toast shows while the server
+ * renders it; a clean download needs no other word (the browser shows it), a refusal says why.
+ */
+export async function downloadDesignPdf(artifactRef: string, version: number): Promise<void> {
+  if (makingPdf.has(artifactRef)) return;
+  makingPdf.add(artifactRef);
+  const toast = showToast({ title: "Making the .pdf…", duration: 0 });
+  try {
+    const file = await fetchDesignExport(artifactRef, { format: "pdf", version });
+    saveBlob(file.blob, file.filename);
+  } catch (err) {
+    showToast({ title: errorText(err), tone: "danger" });
+  } finally {
+    dismissToast(toast);
+    makingPdf.delete(artifactRef);
+  }
+}
+
 export function ExportDialog({ open, onClose, artifactRef, version }: ExportDialogProps) {
-  const toast = useToast();
   const [options, setOptions] = useState<DesignExportOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [format, setFormat] = useState<Format>("png");
-  const [board, setBoard] = useState<string>(ALL);
-  const [scale, setScale] = useState<Scale>("2");
+  const [board, setBoard] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,13 +135,7 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
     setError(null);
     const ctrl = new AbortController();
     getDesignExportOptions(artifactRef, version, ctrl.signal)
-      .then((o) => {
-        setOptions(o);
-        // Keep the choice unless this version lacks that board. Never pick a board here: the
-        // dialog outlives a close and the format can change while the boards load, so a PDF's
-        // "All boards" must survive a reload.
-        setBoard((b) => (b === ALL || o.boards.some((x) => x.id === b) ? b : ALL));
-      })
+      .then(setOptions)
       .catch((err: unknown) => {
         if (ctrl.signal.aborted) return;
         setLoadError(errorText(err));
@@ -81,32 +144,22 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
   }, [open, artifactRef, version]);
 
   const boards = options?.boards ?? [];
-  // A PNG is one board: "All boards" is a PDF choice only, so a PNG without a pick takes the first.
-  const chosen = boards.find((b) => b.id === board) ?? (format === "png" ? boards[0] : undefined);
-  const scaleNumber = Number(scale) as 1 | 2;
-  const tooBig =
-    format === "png" &&
-    chosen !== undefined &&
-    !fitsPixels(chosen, scaleNumber, options?.max_pixels ?? DESIGN_EXPORT.maxPixels);
-
-  const boardOptions = [
-    ...(format === "pdf" ? [{ value: ALL, label: "All boards" }] : []),
-    ...boards.map((b) => ({ value: b.id, label: `${b.name} (${b.width} × ${b.height})` })),
-  ];
+  // No pick yet, or a board this version lacks: the first board.
+  const chosen = boards.find((b) => b.id === board) ?? boards[0];
+  const scale = chosen ? pngScale(chosen, options?.max_pixels) : null;
 
   const download = async () => {
-    if (!options) return;
+    if (!options || !chosen || scale === null) return;
     setBusy(true);
     setError(null);
     try {
       const file = await fetchDesignExport(artifactRef, {
-        format,
+        format: "png",
         version: options.version,
-        ...(chosen ? { board: chosen.id } : {}),
-        ...(format === "png" ? { scale: scaleNumber } : {}),
+        board: chosen.id,
+        scale,
       });
       saveBlob(file.blob, file.filename);
-      toast.success(format === "png" ? "PNG downloaded" : "PDF downloaded");
       onClose();
     } catch (err) {
       setError(errorText(err));
@@ -119,8 +172,8 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
     <Dialog
       open={open}
       onClose={() => !busy && onClose()}
-      title="Download PNG or PDF"
-      description={`Rendered by the server from version ${version}. A PNG is one artboard; a PDF puts each board on a page of its own size.`}
+      title="Download .png"
+      size="sm"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
@@ -131,29 +184,14 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
             icon={DownloadSimpleIcon}
             onClick={() => void download()}
             loading={busy}
-            disabled={!options || tooBig || (format === "png" && !chosen)}
+            disabled={!chosen || scale === null}
           >
-            {busy ? "Rendering…" : `Download ${format.toUpperCase()}`}
+            Download
           </Button>
         </>
       }
     >
       <Stack gap={3}>
-        <SegmentedControl<Format>
-          label="Format"
-          showLabel
-          value={format}
-          onChange={(f) => {
-            setFormat(f);
-            setError(null);
-            // A PDF starts at every board, its default; a PNG without a pick takes the first.
-            if (f === "pdf" && f !== format) setBoard(ALL);
-          }}
-          options={[
-            { value: "png", label: "PNG" },
-            { value: "pdf", label: "PDF" },
-          ]}
-        />
         {loadError ? (
           <p className="pl-field__error" role="alert">
             {loadError}
@@ -161,33 +199,25 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
         ) : (
           <Select
             label="Artboard"
-            value={format === "png" ? (chosen?.id ?? "") : board}
+            value={chosen?.id ?? ""}
             onChange={(e) => {
               setBoard(e.currentTarget.value);
               setError(null);
             }}
-            disabled={!options}
-            options={options ? boardOptions : [{ value: "", label: "Loading boards…" }]}
+            disabled={!options || busy}
+            options={
+              options
+                ? boards.map((b) => ({
+                    value: b.id,
+                    label: `${b.name} (${b.width} × ${b.height})`,
+                  }))
+                : [{ value: "", label: "Loading boards…" }]
+            }
           />
         )}
-        {format === "png" && (
-          <SegmentedControl<Scale>
-            label="Size"
-            showLabel
-            value={scale}
-            onChange={(s) => {
-              setScale(s);
-              setError(null);
-            }}
-            options={[
-              { value: "1", label: "1x" },
-              { value: "2", label: "2x" },
-            ]}
-          />
-        )}
-        {tooBig && (
+        {chosen && scale === null && (
           <p className="pl-field__error" role="alert">
-            This board is too big for a 2x PNG. Choose 1x.
+            {TOO_BIG}
           </p>
         )}
         {error && (

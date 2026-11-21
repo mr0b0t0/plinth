@@ -27,7 +27,14 @@ import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
 import { notifyRoom, notifyViewers } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
-import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import {
+  checkAsset,
+  requireTypeDef,
+  resolveSource,
+  typeHooks,
+  typePublishWarnings,
+  typeSourceWarnings,
+} from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
   attemptCutoff,
@@ -874,10 +881,9 @@ export class VersionStager implements Stager {
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
       // reference warnings: the type's own source checks first (sourceWarnings), the ones that
       // read other artifacts after the reference warnings (publishWarnings).
-      const typeWarnings = typeHooks(def).publishWarnings;
-      const extra = typeWarnings
-        ? await typeWarnings(this.ctx, { def, text: sourceText, paths: manifestPaths })
-        : [];
+      // Both are advisory: a hook that throws becomes a not_scanned note, never a failed publish.
+      const typedSource = { def, text: sourceText, paths: manifestPaths };
+      const extra = await typePublishWarnings(this.ctx, typedSource);
       warnings = scanPublish({
         files,
         manifestPaths,
@@ -889,7 +895,7 @@ export class VersionStager implements Stager {
         sent: [...this.sentPaths].map((p) => byRaw.get(p) ?? p),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
-        typed: typeHooks(def).sourceWarnings?.(def, sourceText, manifestPaths),
+        typed: typeSourceWarnings(typedSource),
         extra,
       });
       this.scanText.clear();

@@ -148,7 +148,7 @@ const inBar = (c: StageContext) => c.ask.inSlot && mayEdit(c) && !c.compact;
 
 export const askAgentButton: StageNode = (c) =>
   inBar(c) && (
-    <Tooltip content={c.ask.reason ?? "Ask an agent to change this page"} placement="bottom">
+    <Tooltip content={c.ask.reason ?? "Ask an agent"} placement="bottom">
       <Button
         variant="ghost"
         icon={RobotIcon}

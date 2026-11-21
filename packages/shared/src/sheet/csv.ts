@@ -1,18 +1,25 @@
 // CSV out of a sheet (the renderer's download) and CSV in (an import). Pure, so both are tested
 // once. Export writes values, not formulas: RFC 4180 quoting, UTF-8 with a BOM, CRLF, and the
-// OWASP formula-injection guard: a text value starting with =, +, -, @, tab or carriage return is
-// written with a leading ', so a spreadsheet opening the file never runs it. Numbers are never
-// prefixed.
+// OWASP formula-injection guard. Every text value (column names included) is quoted, so a reader
+// whose list separator is a semicolon or a tab (Excel in pt-PT, de or fr) still reads it as one
+// cell, and the first line never starts with Excel's sep= directive. Text starting with =, +, -,
+// @, tab or carriage return is written with a leading ', and so is each of =, +, - and @ right
+// after a comma, semicolon or tab inside the text, in case a reader splits there anyway. Numbers
+// are never prefixed.
 import type { Sheet } from "./format.ts";
 import type { SheetEvaluation } from "./formula/evaluate.ts";
 import { isError, numberText, serialIso, type Value } from "./formula/values.ts";
 
 const NEEDS_GUARD = /^[=+\-@\t\r]/;
+/** A formula-start character right after a list separator, where a splitting reader starts a cell. */
+const GUARD_AFTER_SEPARATOR = /([,;\t])([=+\-@])/g;
 
-/** One CSV field: guarded when it is text a spreadsheet would run, quoted when it must be. */
+/** One CSV field: text is guarded and always quoted; any other value is quoted when it must be. */
 export function csvField(v: string, text: boolean): string {
-  const s = text && NEEDS_GUARD.test(v) ? `'${v}` : v;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  if (!text) return /[",;\t\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const inner = v.replace(GUARD_AFTER_SEPARATOR, "$1'$2");
+  const s = NEEDS_GUARD.test(inner) ? `'${inner}` : inner;
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 /** A computed value as the CSV writes it, and whether it is text (guarded). */
@@ -58,9 +65,13 @@ export function parseCsv(input: string): string[][] {
  * parseCsv for an import, bounded by `maxRows`: it keeps the first record and at most `maxRows`
  * non-blank records after it (a blank record is one empty field, a line with nothing on it), and
  * past that only counts records without building their fields, so a long file costs no memory
- * beyond the rows a sheet can hold. `rowCount` is every non-blank record after the first.
+ * beyond the rows a sheet can hold. `rowCount` is every non-blank record after the first, and
+ * `delimiter` the one the first line chose.
  */
-export function readCsv(input: string, maxRows: number): { rows: string[][]; rowCount: number } {
+export function readCsv(
+  input: string,
+  maxRows: number,
+): { rows: string[][]; rowCount: number; delimiter: string } {
   const text = input.startsWith("﻿") ? input.slice(1) : input;
   const delim = detectDelimiter(text);
   const rows: string[][] = [];
@@ -147,7 +158,7 @@ export function readCsv(input: string, maxRows: number): { rows: string[][]; row
   }
   add(run, n);
   if (filled) endRecord();
-  return { rows, rowCount };
+  return { rows, rowCount, delimiter: delim };
 }
 
 function detectDelimiter(text: string): string {

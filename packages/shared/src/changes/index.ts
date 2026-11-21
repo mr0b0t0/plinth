@@ -2,44 +2,17 @@
 // person sees it, never as source. The History's Compare page shows one above the two rendered
 // versions; the describers are pure and zod-free, so a renderer or the room can use them too.
 //
-// One describer per artifact type, keyed by the registry's ids, so a new type that does not add
-// its describer here does not type-check. File changes are listed apart, by fileChanges (files.ts).
+// File changes are listed apart, by fileChanges (files.ts).
 import type { ArtifactType } from "../artifactTypes.ts";
-import { describeDesignSystem } from "./designSystem.ts";
-import { describeMarkdown } from "./doc.ts";
-import { describeDesign, describeHtml } from "./html.ts";
-import { describeSheet } from "./sheet.ts";
-import { describeSlides } from "./slides.ts";
+import { CHANGE_DESCRIBERS, type ChangeDescriber } from "./describers.ts";
 import { ChangeCollector, type ChangeList } from "./types.ts";
-import { describeWhiteboard } from "./whiteboard.ts";
 
+export * from "./align.ts";
+export type { ChangeDescriber } from "./describers.ts";
 export * from "./diff.ts";
 export * from "./files.ts";
-export { type HtmlScan, type HtmlTextRun, scanHtml } from "./htmlScan.ts";
-export { type MdBlock, type MdBlockKind, markdownBlocks } from "./markdownText.ts";
-export { changeExcerpt } from "./text.ts";
 export * from "./types.ts";
-
-/**
- * Adds the changes from one source text to another to the collector. False when either text is not
- * one this type can read, so nothing can be said in detail.
- */
-export type ChangeDescriber = (
-  out: ChangeCollector,
-  before: string,
-  after: string,
-) => boolean | undefined;
-
-// biome-ignore format: one type per line, so each type adds its own line
-export const CHANGE_DESCRIBERS: { readonly [K in ArtifactType]: ChangeDescriber } = {
-  html: (out, a, b) => { describeHtml(out, a, b); return true; },
-  doc: (out, a, b) => { describeMarkdown(out, a, b); return true; },
-  slides: (out, a, b) => { describeSlides(out, a, b); return true; },
-  design_system: describeDesignSystem,
-  design: describeDesign,
-  sheet: describeSheet,
-  whiteboard: (out, a, b) => { describeWhiteboard(out, a, b); return true; },
-};
+export { BOARD_OTHER_SETTINGS } from "./whiteboard.ts";
 
 /** Said when a version cannot be read in detail (it fails the type's checks). */
 export const CHANGES_UNREADABLE =
@@ -49,7 +22,8 @@ export const CHANGES_INVISIBLE = "Nothing visible changed, only how the content 
 
 /**
  * What changed from `before` to `after`, two source texts of one artifact `type`, in plain
- * language: at most CHANGE_LIMITS.maxItems items, in the order a person meets them. Never throws.
+ * language: at most CHANGE_LIMITS.maxItems items, in the order a person meets them, worked out
+ * within one deadline of CHANGE_LIMITS.totalMs (past it the list is cut). Never throws.
  */
 export function describeChanges(type: ArtifactType, before: string, after: string): ChangeList {
   const out = new ChangeCollector();
@@ -66,6 +40,7 @@ export function describeChanges(type: ArtifactType, before: string, after: strin
   if (readable === false) {
     return { items: [{ kind: "changed", where: "", what: CHANGES_UNREADABLE }], truncated: false };
   }
+  // The deadline never cuts a list before its first change (`expired`): an empty list found none.
   if (out.items.length === 0) out.add({ kind: "changed", where: "", what: CHANGES_INVISIBLE });
   return out.list();
 }

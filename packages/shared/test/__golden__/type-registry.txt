@@ -140,10 +140,7 @@
         "style": "design.css",
         "frame": "board.html"
       },
-      "editor": {
-        "language": "html",
-        "wordWrap": "on"
-      },
+      "editor": null,
       "edit": "ask",
       "opaqueFrames": true
     }
@@ -168,10 +165,7 @@
         "script": "sheet.js",
         "style": "sheet.css"
       },
-      "editor": {
-        "language": "plaintext",
-        "wordWrap": "off"
-      },
+      "editor": null,
       "edit": "live",
       "create": {
         "label": "Sheet",
@@ -201,14 +195,12 @@
         "style": "whiteboard.css",
         "runtime": true
       },
-      "editor": {
-        "language": "json",
-        "wordWrap": "on"
-      },
+      "editor": null,
       "edit": "board",
       "pageData": "fixed",
       "assets": false,
-      "upload": false
+      "upload": false,
+      "versions": "settings"
     }
   ]
 ]

@@ -26,7 +26,8 @@ export function RenderedCompare({
   const id = useId();
   return (
     <section className="hx-rendered-section" aria-labelledby={id}>
-      <h2 id={id} className="hx-rendered-section__title">
+      {/* The two captions say which version is which; the heading only names the region. */}
+      <h2 id={id} className="visually-hidden">
         Side by side
       </h2>
       {/* Only shown at phone width (history.css), where one frame fits at a time. */}

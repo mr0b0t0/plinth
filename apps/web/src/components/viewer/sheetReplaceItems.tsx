@@ -1,11 +1,12 @@
 // A sheet's ⋯ menu item, "Replace with a file…", and the dialog it opens (ReplaceSheetDialog).
 // Owners and editors only, on the current version: they are the roles that may publish a version,
-// which the API checks again on the save. The item sits next to Edit source and opens the file
-// picker straight away; the dialog only confirms the chosen file. While the sheet has unpublished
-// page changes or someone is editing it on the page, the item is hidden; the dialog checks the same
-// again when Replace is pressed. A draft someone starts after that press meets the room's review of
-// a version published meanwhile, as for an agent's version. A person confirmed by code without an
-// account may not publish a version: the item opens the dialog's sign-in step, with no picker.
+// which the API checks again on the save. The item sits where Edit source would (a sheet has no
+// source editor) and opens the file picker straight away; the dialog only confirms the chosen
+// file. While the sheet has unpublished page changes or someone is editing it on the page, the
+// item is hidden; the dialog checks the same again when Replace is pressed. A draft someone starts
+// after that press meets the room's review of a version published meanwhile, as for an agent's
+// version. A person confirmed by code without an account may not publish a version: the item opens
+// the dialog's sign-in step, with no picker.
 import { FileArrowUpIcon } from "@phosphor-icons/react";
 import { currentSession } from "../../lib/session.ts";
 import { pickSpreadsheetFile } from "../account/newArtifact.ts";

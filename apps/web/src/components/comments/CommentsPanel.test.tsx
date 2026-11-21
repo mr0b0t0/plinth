@@ -27,8 +27,6 @@ function comment(over: Partial<CommentInfo> = {}): CommentInfo {
     status: "open",
     created_at: new Date(Date.now() - 3_600_000 + 1000 * n).toISOString(),
     mentions: [],
-    kind: "comment",
-    request_data: null,
     ...over,
   };
 }

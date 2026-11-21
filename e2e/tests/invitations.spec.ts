@@ -49,13 +49,14 @@ test("adding a person with Notify people emails them a link that opens the page"
   await page.getByRole("textbox", { name: "Email address" }).fill(invitee);
   await page.getByLabel("Role", { exact: true }).selectOption("commenter");
   await page.getByRole("button", { name: "Add person" }).click();
-  await expect(page.getByText(/Invitation emailed/)).toBeVisible();
+  await expect(page.getByLabel(`Role for ${invitee}`)).toBeVisible();
 
   const mail = await latestEmail(page.request, invitee);
   expect(mail.subject).toBe(`${owner} shared "Launch plan" with you`);
   expect(mail.text).toContain("You can view it and comment on it.");
   const links = mail.text.match(/https?:\/\/[^\s<>"]+/g) ?? [];
-  expect(links).toEqual([`${APP_ORIGIN}/a/${art.slug}`]);
+  // The artifact, and the footer's page that turns these emails off (no token, no address).
+  expect(links).toEqual([`${APP_ORIGIN}/a/${art.slug}`, `${APP_ORIGIN}/invitation-emails`]);
   expect(mail.text).not.toMatch(/\b\d{6}\b/);
 
   // Unticked: the next person is added without an email.
@@ -119,6 +120,44 @@ test("sharing a category with Notify people emails its people the portal link", 
   const mail = await latestEmail(page.request, client);
   expect(mail.subject).toBe(`${owner} shared "Client reports" with you`);
   expect(mail.text).toContain(`${portal}`);
-  // The people see the share's name, never the category's.
+  // The people see the share's title; the owner changed it, so the category's name never shows.
   expect(mail.text).not.toContain("Northwind");
+});
+
+test("the footer's page turns invitation emails off for the signed-in address; owners are told", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90_000);
+  const owner = uniqueEmail("optout-owner");
+  const invitee = uniqueEmail("optout-invitee");
+  const { token } = await seedToken(owner, { label: "Work Claude", clientType: "claude" });
+  const art = await publishArtifact(page.request, token, {
+    title: "Board pack",
+    html: html("Board pack"),
+    visibility: "allowlist",
+  });
+
+  const inviteeCtx = await browser.newContext();
+  try {
+    await seedSession(inviteeCtx, invitee);
+    const ip = await inviteeCtx.newPage();
+    await ip.goto("/invitation-emails");
+    await expect(ip.getByRole("heading", { level: 1, name: "Invitation emails" })).toBeVisible();
+    await expect(ip.getByText(`Invitation emails to ${invitee} are on.`)).toBeVisible();
+    await axe(ip);
+    await ip.getByRole("button", { name: "Stop these emails" }).click();
+    await expect(ip.getByText(/are off\./)).toBeVisible();
+    await expect(ip.getByRole("button", { name: "Turn them back on" })).toBeVisible();
+  } finally {
+    await inviteeCtx.close();
+  }
+
+  await seedSession(page.context(), owner);
+  await page.goto(`/a/${art.slug}/settings`);
+  await page.getByRole("textbox", { name: "Email address" }).fill(invitee);
+  await page.getByRole("button", { name: "Add person" }).click();
+  await expect(page.getByLabel(`Role for ${invitee}`)).toBeVisible();
+  await expect(page.getByText("They turned these emails off.", { exact: false })).toBeVisible();
+  await expectNoEmail(page, invitee);
 });

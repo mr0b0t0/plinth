@@ -242,7 +242,9 @@ export class LiveViewConnection {
     if (code === ROOM_CLOSE.unauthorized) {
       this.setStatus("fallback");
       if (reason === "expired") {
-        // The socket's lifetime ended: reconnect, which re-authorizes.
+        // The socket's lifetime ended: reconnect, which re-authorizes. Not a failure: the first
+        // reconnect's full jitter, since the sockets one wave opened expire close together.
+        this.failures = 0;
         this.later("retry", this.backoff(), () => this.connect());
         return;
       }
@@ -250,11 +252,13 @@ export class LiveViewConnection {
       // stops), and reconnects after it. A sharing change closes every view of the artifact at
       // once, so both wait random(0, spread_ms) from the `access` frame that came first; without
       // one (it never arrived), the widest spread.
+      // That wait is this reconnect's jitter, so the reconnect itself takes the first back-off step.
       const wait = this.wait(this.accessSpread ?? LIVE_VIEW_LIMITS.spreadMaxMs);
       this.accessSpread = null;
       if (wait === 0) this.on.onAccessChanged();
       else this.later("access", wait, () => this.on.onAccessChanged());
-      this.later("retry", wait + this.backoff(), () => this.connect());
+      this.failures = 1;
+      this.later("retry", wait + this.step(0), () => this.connect());
       return;
     }
     if (REFUSED.has(code)) {
@@ -272,10 +276,21 @@ export class LiveViewConnection {
     this.later("retry", this.backoff(), () => this.connect());
   }
 
-  /** The next reconnect delay, with jitter; after the list is used up, the refused-retry pace. */
+  /**
+   * The next reconnect delay. The first after a socket closed on its own is random(0,
+   * reconnectSpreadMs), full jitter: a Worker deploy closes every watch socket on the instance at
+   * once, and their views must not all reconnect in the same second. While it keeps failing, the
+   * back-off steps follow, each ±25%; after the list is used up, the refused-retry pace.
+   */
   private backoff(): number {
-    const steps = LIVE_VIEW_LIMITS.backoffS;
     const i = this.failures++;
+    if (i === 0) return Math.floor(this.random() * LIVE_VIEW_LIMITS.reconnectSpreadMs);
+    return this.step(i - 1);
+  }
+
+  /** Back-off step `i` (backoffS, then refusedRetryS), ±25%. */
+  private step(i: number): number {
+    const steps = LIVE_VIEW_LIMITS.backoffS;
     const s = i < steps.length ? (steps[i] ?? 30) : LIVE_VIEW_LIMITS.refusedRetryS;
     return Math.round(s * 1000 * (0.75 + this.random() * 0.5));
   }

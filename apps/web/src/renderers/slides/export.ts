@@ -7,23 +7,27 @@
 // 2. Every slide is laid out and fitted (as for print) and measured (exportModel.ts).
 // 3. Images: under origin isolation the frame reads its own files (connect-src 'self', the
 //    content cookie) and SVG, WebP and AVIF are drawn to PNG at twice their size (a same-origin
-//    image does not taint the canvas). Under opaque isolation and the path fallback this document
+//    image does not taint the canvas), IMAGE_CONCURRENCY at a time. Under opaque isolation and the path fallback this document
 //    has no origin of its own: it cannot read its files (the content host sends no CORS, by rule)
 //    and a canvas would be tainted, so file images are left out and the app says so. Inline
 //    data: images are part of the deck's text and always go in.
 // 4. The file is saved with an <a download> click in the frame (both frame sandboxes allow
-//    downloads). A browser may refuse a download the frame did not start from a click of its own,
-//    so the frame also shows a "ready" notice whose Download button starts it from such a click.
+//    downloads); the app's toast is the only notice.
 import { LIMITS, TYPE_REGISTRY } from "@plinth/shared";
 import { imageSources } from "./exportModel.ts";
 import { type DeckModel, PPTX_READY_EVENT, type PptxBuilder } from "./pptxModel.ts";
 
 /** How long the writer may take to load before the export fails. */
 export const WRITER_TIMEOUT_MS = 30_000;
-/** How long the ready notice stays (its blob URL is released when it goes). */
-export const READY_NOTICE_MS = 30_000;
+/** How long a saved file's blob URL is kept before it is released. */
+export const REVOKE_AFTER_MS = 60_000;
 /** The largest side of an image drawn to PNG, in pixels. */
 const MAX_RASTER = 4096;
+/**
+ * How many images are read or drawn at once. A deck with hundreds of distinct images would
+ * otherwise hold every file and canvas in memory together, which can exhaust a phone's tab.
+ */
+export const IMAGE_CONCURRENCY = 4;
 
 const RASTER_PASS = /^image\/(png|jpeg|gif)$/;
 const DATA_PASS = /^data:image\/(png|jpeg|gif);base64,/i;
@@ -113,7 +117,9 @@ async function rasterize(win: Window, from: Blob | string): Promise<string | nul
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/png");
+    // A canvas the browser could not allocate gives "data:,": the image is left out and counted.
+    const png = canvas.toDataURL("image/png");
+    return png.startsWith("data:image/png") ? png : null;
   } catch {
     return null;
   } finally {
@@ -150,15 +156,29 @@ export async function imageData(win: Window, src: string, opaque: boolean): Prom
   }
 }
 
-/** Every image of the model that can go in, keyed by its src (at most the version's file cap). */
+/**
+ * Every image of the model that can go in, keyed by its src (at most the version's file cap), in
+ * the order of first use. At most `concurrency` images are read or drawn at a time.
+ */
 export async function collectImages(
   win: Window,
   model: DeckModel,
   opaque: boolean,
+  concurrency = IMAGE_CONCURRENCY,
 ): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
   const srcs = imageSources(model).slice(0, LIMITS.maxAssetsCeiling);
-  const got = await Promise.all(srcs.map((src) => imageData(win, src, opaque)));
+  const got: (string | null)[] = new Array(srcs.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < srcs.length) {
+      const i = next++;
+      got[i] = await imageData(win, srcs[i] as string, opaque);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, srcs.length)) }, worker),
+  );
+  const out = new Map<string, string>();
   srcs.forEach((src, i) => {
     const data = got[i];
     if (data) out.set(src, data);
@@ -178,49 +198,9 @@ export function clickDownload(doc: Document, url: string, name: string): void {
   a.remove();
 }
 
-const closers = new WeakMap<Element, () => void>();
-
-/**
- * The "ready" notice: the file name and a Download button that starts the download from a click
- * in the frame, for browsers that refuse the first one. Plinth's own UI, made with textContent.
- * It goes after READY_NOTICE_MS or on Dismiss, and releases the blob URL then.
- */
-export function showReadyNotice(
-  doc: Document,
-  root: HTMLElement,
-  url: string,
-  name: string,
-  ms = READY_NOTICE_MS,
-): () => void {
-  for (const old of Array.from(root.querySelectorAll(".plinth-slides__ready"))) {
-    closers.get(old)?.();
-  }
-  const bar = doc.createElement("div");
-  bar.className = "plinth-slides__ready";
-  bar.dataset.plinthControl = "";
-  bar.setAttribute("role", "status");
-  const text = doc.createElement("span");
-  text.className = "plinth-slides__ready-text";
-  text.textContent = `${name} is ready`;
-  const download = doc.createElement("button");
-  download.type = "button";
-  download.className = "plinth-slides__btn";
-  download.textContent = "Download";
-  download.addEventListener("click", () => clickDownload(doc, url, name));
-  const dismiss = doc.createElement("button");
-  dismiss.type = "button";
-  dismiss.className = "plinth-slides__btn";
-  dismiss.textContent = "Dismiss";
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const close = () => {
-    clearTimeout(timer);
-    bar.remove();
-    URL.revokeObjectURL(url);
-  };
-  dismiss.addEventListener("click", close);
-  closers.set(bar, close);
-  bar.append(text, download, dismiss);
-  root.append(bar);
-  timer = setTimeout(close, ms);
-  return close;
+/** Saves `blob` as `name` from this document, and releases its URL after REVOKE_AFTER_MS. */
+export function saveBlob(win: Window, blob: Blob, name: string, ms = REVOKE_AFTER_MS): void {
+  const url = URL.createObjectURL(blob);
+  clickDownload(win.document, url, name);
+  win.setTimeout(() => URL.revokeObjectURL(url), ms);
 }

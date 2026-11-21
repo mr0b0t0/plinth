@@ -12,6 +12,7 @@ import {
   LIMITS,
   type PortalGate,
   type PortalSummary,
+  pageDisplayName,
   RATE_LIMITS,
   TTL,
 } from "@plinth/shared";
@@ -19,12 +20,14 @@ import { eq, inArray } from "drizzle-orm";
 import { countSignInGuess, maySignIn } from "../auth/login.ts";
 import { type ArtifactRow, artifacts, type UserRow, users } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
+import { oneLine } from "../email/templates.ts";
 import { hmacHex, newId, newSixDigitCode, timingSafeEqual } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
 import { decide, decidePortal, type Principal } from "../policy.ts";
 import { factsOf, grantEmails, toSummary } from "./artifacts.ts";
+import { refuseBoundToken } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 import { getUserById } from "./users.ts";
 import {
@@ -114,6 +117,7 @@ async function portalRows(ctx: Ctx, share: ShareSql): Promise<ArtifactRow[]> {
  * policy.ts decidePortal lets the caller open it with that grant, as GET /portals/:id decides.
  */
 export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
+  refuseBoundToken(ctx.principal);
   if (!ctx.config.allowCategorySharing) return [];
   const { emails } = grantEmails(ctx);
   if (emails.length === 0) return [];
@@ -146,7 +150,8 @@ export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
       {
         id: r.id,
         title: r.title,
-        owner_name: r.owner_name,
+        // The name cleaned on read (displayName.ts pageDisplayName), as everywhere else it shows.
+        owner_name: pageDisplayName(r.owner_name),
         count: Math.min(r.count, LIMITS.maxPortalItems),
       },
     ];
@@ -159,6 +164,7 @@ export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
  * email); `ok` with the items for a grantee, and for the owner as a preview.
  */
 export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
+  refuseBoundToken(ctx.principal);
   const share = await loadShare(ctx, id);
   if (!share) throw notFound("Portal");
   const { own, emails } = grantEmails(ctx);
@@ -192,7 +198,12 @@ export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
     const v = decide(as, "view", factsOf(a), {
       grantRole: direct.get(a.id) ?? null,
       categoryGrant: grant
-        ? { shareId: share.id, shareKey: share.category_key, role: grant.role }
+        ? {
+            shareId: share.id,
+            shareOwnerId: share.owner_id,
+            shareKey: share.category_key,
+            role: grant.role,
+          }
         : null,
       categorySharing: ctx.config.allowCategorySharing,
       passwordPassed: false,
@@ -203,7 +214,12 @@ export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
   }
   return {
     status: "ok",
-    portal: { id: share.id, title: share.title, owner_name: owner.name, role: d.role },
+    portal: {
+      id: share.id,
+      title: share.title,
+      owner_name: pageDisplayName(owner.name),
+      role: d.role,
+    },
     items,
   };
 }
@@ -265,6 +281,7 @@ const ipKey = (ctx: Ctx) => ctx.ip ?? "unknown";
  * allowlist code flow), so the people on a share cannot be probed. Mailed after the response.
  */
 export async function requestPortalCode(ctx: Ctx, id: string, email: string): Promise<void> {
+  refuseBoundToken(ctx.principal);
   const share = await loadShare(ctx, id);
   if (!share) throw notFound("Portal");
   const tooMany = "Too many codes requested. Try again later.";
@@ -321,14 +338,17 @@ async function sendPortalCode(ctx: Ctx, share: ShareSql, email: string): Promise
     .where(eq(users.id, share.owner_id))
     .get();
   // Neither the share's title nor the category name: only who shared it. The owner's name is
-  // their own text, so the sign-in email names it as such.
-  const who = owner?.name ? `${owner.name} shared` : "someone shared";
+  // their own text, so the sign-in email names it as such, cleaned as everywhere it shows
+  // (displayName.ts pageDisplayName) and kept on one line (oneLine): a line break could close the
+  // labelled line and add lines that read as Plinth's.
+  const name = oneLine(pageDisplayName(owner?.name) ?? "");
+  const who = name ? `${name} shared` : "someone shared";
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
     ...viewerCodeEmail(ctx, email, code, {
       asked: `Someone asked to open a collection ${who} on Plinth with this email address.`,
-      signIn: owner?.name
-        ? `Someone asked for it to open a collection shared with this address. The sharer's name, as they wrote it and not checked by Plinth, is "${owner.name}".`
+      signIn: name
+        ? `Someone asked for it to open a collection shared with this address. The sharer's name, as they wrote it and not checked by Plinth, is "${name}".`
         : "Someone asked for it to open a collection shared with this address.",
     }),
   });
@@ -346,6 +366,7 @@ export async function verifyPortalCode(
   email: string,
   code: string,
 ): Promise<ViewerCodeResult> {
+  refuseBoundToken(ctx.principal);
   const share = await loadShare(ctx, id);
   if (!share) throw notFound("Portal");
   const tooMany = "Too many attempts. Try again later.";

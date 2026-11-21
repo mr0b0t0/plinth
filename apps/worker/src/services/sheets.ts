@@ -33,8 +33,8 @@ import {
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { requireArtifact, requireVersion, updateArtifact } from "./artifacts.ts";
+import { rememberCheckedSheet } from "./artifactTypes/sheet.ts";
 import type { Ctx } from "./context.ts";
-import { readLiveDraftMeta } from "./live.ts";
 import { conflictError } from "./stage.ts";
 import { readText } from "./storage.ts";
 
@@ -67,7 +67,7 @@ function wireValue(v: Value): SheetReadValue {
 
 /** Read a sheet's cells as the caller, formulas with their values. */
 export async function readSheet(ctx: Ctx, input: ReadSheetInput): Promise<SheetRead> {
-  const { artifact, role } = await requireArtifact(ctx, input.id, "view");
+  const { artifact } = await requireArtifact(ctx, input.id, "view");
   requireSheet(artifact, "read_sheet");
   let range = input.range ? parseRange(input.range) : null;
   if (input.range && !range) {
@@ -119,7 +119,6 @@ export async function readSheet(ctx: Ctx, input: ReadSheetInput): Promise<SheetR
     rows.push({ row: r, cells });
   }
   const truncated = !empty && end < r2;
-  const owners = role === "owner" || role === "editor";
   return {
     id: artifact.id,
     slug: artifact.slug,
@@ -148,7 +147,6 @@ export async function readSheet(ctx: Ctx, input: ReadSheetInput): Promise<SheetR
           },
         ]
       : [],
-    ...(owners ? { live_draft: await readLiveDraftMeta(ctx.env.DB, artifact.id) } : {}),
     untrusted: true,
   };
 }
@@ -171,6 +169,7 @@ export async function editSheet(ctx: Ctx, input: EditSheetInput): Promise<SheetE
       type: "sheet",
       field: "ops",
       op: e.index,
+      ...(e.reason ? { reason: e.reason } : {}),
       next: "Nothing was published. Fix this op and send every op again.",
     });
   }
@@ -189,6 +188,8 @@ export async function editSheet(ctx: Ctx, input: EditSheetInput): Promise<SheetE
       },
     );
   }
+  // The publish takes this checked sheet as it is, without parsing or serializing it again.
+  rememberCheckedSheet(content, checked.sheet);
   const result = await updateArtifact(ctx, {
     id: artifact.id,
     content,

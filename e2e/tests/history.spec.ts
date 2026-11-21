@@ -187,7 +187,7 @@ test("compare v1 and v3: the list of changes, then both versions rendered, and n
   await expect(page).toHaveTitle(`Compare v1 and v3 of ${TITLE} · Plinth`);
 
   // The list says what a person sees changed, in plain language, with excerpts.
-  const changes = page.getByRole("region", { name: "What changed from v1 to v3" });
+  const changes = page.getByRole("region", { name: "Changes" });
   await expect(changes).toBeVisible();
   const item = (what: string) => changes.getByRole("listitem").filter({ hasText: what });
   await expect(item("Heading “Version one” changed")).toContainText("Version three");
@@ -195,7 +195,8 @@ test("compare v1 and v3: the list of changes, then both versions rendered, and n
   await expect(item("Text changed")).toContainText("Alpha line");
   await expect(item("Text changed")).toContainText("Beta line");
   await expect(item("Text added")).toContainText("Gamma line");
-  await expect(changes.getByRole("region", { name: "Files" })).toContainText("No files changed.");
+  // No file changed, so there are no file rows.
+  await expect(changes.getByRole("listitem").filter({ hasText: /^File “/ })).toHaveCount(0);
   // No source anywhere: no markup, no line table, no Source tab.
   await expect(page.locator("main")).not.toContainText("<h1>");
   await expect(page.locator("main")).not.toContainText("<p>");
@@ -207,7 +208,7 @@ test("compare v1 and v3: the list of changes, then both versions rendered, and n
   // Swap sides.
   await page.getByRole("button", { name: "Swap sides" }).click();
   await expect(page).toHaveURL(/compare\?from=3&to=1$/);
-  await expect(page.getByRole("region", { name: "What changed from v3 to v1" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Changes" })).toBeVisible();
   await page.getByRole("button", { name: "Swap sides" }).click();
   await expect(page).toHaveURL(/compare\?from=1&to=3$/);
 
@@ -255,7 +256,7 @@ test("compare v1 and v3: the list of changes, then both versions rendered, and n
 
   // An older link that asked for the source view lands on the same page.
   await page.goto(`/a/${s.slug}/compare?from=1&to=3&view=source`);
-  await expect(page.getByRole("region", { name: "What changed from v1 to v3" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Changes" })).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(0);
 });
 
@@ -370,23 +371,25 @@ test("a 5,000-line document's changes are listed quickly, and the list is capped
   ]);
   await signInApi(page.request, email);
 
-  // Scattered edits: one item per changed paragraph, each with its two excerpts.
+  // Scattered edits: one item per changed paragraph, each with its two excerpts. "Row 0" to
+  // "Line 0" and "Row 50" to "Line 50" keep no content word (a number under three digits is
+  // none), so each of those two reads as one paragraph removed and another added.
   const t0 = Date.now();
   await page.goto(`/a/${slug}/compare?from=1&to=2`);
-  const scattered = page.getByRole("region", { name: "What changed from v1 to v2" });
+  const scattered = page.getByRole("region", { name: "Changes" });
   await expect(scattered.getByRole("listitem").first()).toBeVisible();
   const scatteredMs = Date.now() - t0;
-  await expect(scattered.getByRole("list").first().getByRole("listitem")).toHaveCount(100);
+  await expect(scattered.getByRole("list").first().getByRole("listitem")).toHaveCount(102);
   await expect(scattered.getByRole("listitem").filter({ hasText: "Line 4950" })).toContainText(
     "Row 4950",
   );
-  await expect(scattered.getByText(/differ in more places/)).toHaveCount(0);
+  await expect(scattered.getByText("More changed than this list shows.")).toHaveCount(0);
 
   // Everything changed: the list stops at 200 items and says it was cut.
   const t1 = Date.now();
   await page.goto(`/a/${slug}/compare?from=1&to=3`);
-  const all = page.getByRole("region", { name: "What changed from v1 to v3" });
-  await expect(all.getByText(/differ in more places than the list shows/)).toBeVisible();
+  const all = page.getByRole("region", { name: "Changes" });
+  await expect(all.getByText("More changed than this list shows.")).toBeVisible();
   const replacedMs = Date.now() - t1;
   await expect(all.getByRole("list").first().getByRole("listitem")).toHaveCount(200);
 

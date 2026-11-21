@@ -1,15 +1,7 @@
 // Mention queue (pull mode). The MCP tools list_mentions, claim_mention and reply_comment and their
 // REST mirrors call these. Comment and artifact text is untrusted: a mention is a collaborator's
-// request, not an instruction with the owner's authority. A page request (docs/spec.md "Page
-// requests") is a task too, on a root comment of kind `page_request`: the page's code composed it,
-// so it never reports an author role, only the requester's (`requester_role`).
-import {
-  type CommentInfo,
-  type EffectiveRole,
-  type MentionState,
-  type MentionTaskInfo,
-  TTL,
-} from "@plinth/shared";
+// request, not an instruction with the owner's authority.
+import { type CommentInfo, type MentionState, type MentionTaskInfo, TTL } from "@plinth/shared";
 import { and, asc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import {
   accessGrants,
@@ -25,13 +17,7 @@ import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
 import { canActOnMention, grantedRole, type Principal } from "../policy.ts";
 import { factsOf, requireVersion } from "./artifacts.ts";
-import {
-  authorLabel,
-  insertComment,
-  readAnchor,
-  readRequestData,
-  requireComment,
-} from "./comments.ts";
+import { authorLabel, insertComment, readAnchor, requireComment } from "./comments.ts";
 import type { Ctx } from "./context.ts";
 
 type AgentPrincipal = Extract<Principal, { kind: "agent" }>;
@@ -79,6 +65,7 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
       connLabel: agentConnections.label,
       grantRole: accessGrants.role,
       shareId: categoryShares.id,
+      shareOwnerId: categoryShares.ownerId,
       shareKey: categoryShares.categoryKey,
       categoryRole: categoryGrants.role,
     })
@@ -117,21 +104,8 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
   // The SQL filter mirrors the policy; the policy module still has the final word.
   return rows
     .filter((r) => canActOnMention(p, r.t, r.ownerId))
-    .map((r): MentionTaskInfo => {
-      const page = r.c.kind === "page_request";
-      const authorRole: EffectiveRole | null =
-        r.c.authorUserId && r.c.authorUserId === r.ownerId
-          ? "owner"
-          : grantedRole(factsOf(r.a), {
-              grantRole: r.grantRole ?? null,
-              categoryGrant:
-                r.shareId && r.shareKey && r.categoryRole
-                  ? { shareId: r.shareId, shareKey: r.shareKey, role: r.categoryRole }
-                  : null,
-              categorySharing: ctx.config.allowCategorySharing,
-              passwordPassed: false,
-            });
-      return {
+    .map(
+      (r): MentionTaskInfo => ({
         id: r.t.id,
         comment_id: r.t.commentId,
         artifact_id: r.t.artifactId,
@@ -144,20 +118,31 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
         comment_author_email: r.c.authorConnection
           ? null
           : (r.c.authorEmail ?? r.userEmail ?? null),
-        // A page request's text was composed by page code: it never carries an author role, even
-        // when the owner had the page open (requester_role says whose session that was).
-        comment_author_role: page ? null : authorRole,
+        comment_author_role:
+          r.c.authorUserId && r.c.authorUserId === r.ownerId
+            ? "owner"
+            : grantedRole(factsOf(r.a), {
+                grantRole: r.grantRole ?? null,
+                categoryGrant:
+                  r.shareId && r.shareOwnerId && r.shareKey && r.categoryRole
+                    ? {
+                        shareId: r.shareId,
+                        shareOwnerId: r.shareOwnerId,
+                        shareKey: r.shareKey,
+                        role: r.categoryRole,
+                      }
+                    : null,
+                categorySharing: ctx.config.allowCategorySharing,
+                passwordPassed: false,
+              }),
         anchor: readAnchor(r.c.anchor),
         version_number: r.c.versionNumber,
         claimed_by: r.t.claimedBy,
         claimed_at: r.t.claimedAt,
         result_version: r.t.resultVersion,
         created_at: r.t.createdAt,
-        source: page ? "page" : "comment",
-        request_data: page ? readRequestData(r.c.requestData) : null,
-        requester_role: page ? authorRole : null,
-      };
-    });
+      }),
+    );
 }
 
 /** Requests addressed to this agent on its user's artifacts. Oldest first. */
@@ -220,24 +205,20 @@ export interface ReplyInput {
   body: string;
   result_version?: number;
   failed?: boolean;
-  done?: boolean;
 }
 
 /**
- * Reply in a comment's thread (policy "comment" on its artifact, and a thread the caller may see).
- * If the calling connection holds a claimed task on that comment, the reply completes it:
- * result_version (an existing version newer than the comment's) marks it done, done=true marks it
- * done without a version (an answer, or a shared-data change), failed=true marks it failed.
- * Without a claimed task the reply is just a comment, and result_version, done or failed is
- * refused. At most one of the three.
+ * Reply in a comment's thread (policy "comment" on its artifact). If the calling connection holds a
+ * claimed task on that comment, the reply completes it: result_version (an existing version newer
+ * than the comment's) marks it done, failed=true marks it failed. Without a claimed task the reply
+ * is just a comment, and result_version or failed is refused.
  */
 export async function replyComment(ctx: Ctx, input: ReplyInput): Promise<CommentInfo> {
-  const { comment, artifact, role } = await requireComment(ctx, input.comment_id, "comment");
+  const { comment, artifact } = await requireComment(ctx, input.comment_id, "comment");
   const resultVersion = input.result_version;
   const failed = input.failed === true;
-  const done = input.done === true;
-  if ([resultVersion !== undefined, failed, done].filter(Boolean).length > 1) {
-    throw new ApiError("invalid_input", "Pass at most one of result_version, done and failed");
+  if (resultVersion !== undefined && failed) {
+    throw new ApiError("invalid_input", "Pass result_version or failed, not both");
   }
 
   const p = ctx.principal;
@@ -256,8 +237,7 @@ export async function replyComment(ctx: Ctx, input: ReplyInput): Promise<Comment
           .all()
       : [];
 
-  const completes = resultVersion !== undefined || failed || done;
-  if (completes && claimed.length === 0) {
+  if ((resultVersion !== undefined || failed) && claimed.length === 0) {
     throw new ApiError(
       "conflict",
       "No mention task on this comment is claimed by this connection; claim it with claim_mention first",
@@ -273,13 +253,13 @@ export async function replyComment(ctx: Ctx, input: ReplyInput): Promise<Comment
     await requireVersion(ctx, artifact, resultVersion);
   }
 
-  const reply = await insertComment(ctx, artifact, role, {
+  const reply = await insertComment(ctx, artifact, {
     body: input.body,
     parent_id: comment.id,
     version_number: resultVersion,
   });
 
-  if (claimed.length > 0 && completes && p.kind === "agent") {
+  if (claimed.length > 0 && (resultVersion !== undefined || failed) && p.kind === "agent") {
     await ctx.db
       .update(mentionTasks)
       .set({

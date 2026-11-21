@@ -122,6 +122,42 @@ describe("several agents on one artifact", () => {
     expect(await targets(owner.token)).toEqual([]);
   });
 
+  it("when two names make one handle, the older connection gets it", async () => {
+    const { owner, artifact, commenterHeaders } = await team();
+    const older = await createToken(owner.user.id, { label: "Review Bot", clientType: "other" });
+    const newer = await createToken(owner.user.id, { label: "review  bot", clientType: "other" });
+    const c = await postComment(commenterHeaders, artifact.slug, { body: "@review-bot look" });
+    const tasks = await tasksOf(c.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      targetLabel: "@review-bot",
+      targetConnection: older.connectionId,
+    });
+    expect(await targets(older.token)).toEqual(["@review-bot"]);
+    expect(await targets(newer.token)).toEqual([]);
+  });
+
+  it("a connection without the mentions scope never takes a handle", async () => {
+    const { owner, artifact, commenterHeaders } = await team();
+    // The older one cannot pick requests up, so the newer one with the same handle gets them.
+    const noMentions = await createToken(owner.user.id, {
+      label: "Docs Bot",
+      clientType: "other",
+      scopes: "artifacts:read artifacts:write",
+    });
+    const c1 = await postComment(commenterHeaders, artifact.slug, { body: "@docs-bot alone" });
+    // Alone, it is never a target: the request would wait for a claim that cannot come.
+    expect(await tasksOf(c1.id)).toEqual([]);
+
+    const answers = await createToken(owner.user.id, { label: "Docs bot", clientType: "other" });
+    const c2 = await postComment(commenterHeaders, artifact.slug, { body: "@docs-bot again" });
+    const tasks = await tasksOf(c2.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ targetConnection: answers.connectionId });
+    expect(tasks[0]?.targetConnection).not.toBe(noMentions.connectionId);
+    expect(await targets(answers.token)).toEqual(["@docs-bot"]);
+  });
+
   it("an agent's reply never hands work to another agent", async () => {
     const { gemini, claudeCode, artifact, commenterHeaders } = await team();
     const c = await postComment(commenterHeaders, artifact.slug, { body: "@gemini check this" });

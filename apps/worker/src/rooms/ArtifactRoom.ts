@@ -5,28 +5,30 @@
 //
 // It uses the WebSocket Hibernation API: an idle room is evicted from memory while its sockets
 // stay open, and wakes for the next message. What a socket is (who, which rights, which rooms and
-// presence) lives in its attachment, so nothing is lost on a wake. Nothing persists: the object
-// writes no storage tables, only its alarm, which re-checks access in D1 while sockets are open.
+// presence) lives in its attachment, so nothing is lost on a wake. Almost nothing persists: the
+// object writes its alarm, which re-checks access in D1 while sockets are open, and for a live
+// doc one small record of the checkpoints being saved (rooms/doc.ts, DOC_STATE_KEY, never text).
 // Message contents are never logged.
 //
 // A doc's or a sheet's room also carries Plinth's own editing channel (kind "doc" for every type
-// with liveEdit, rooms/doc.ts): the live draft, its leases and its D1 flush, and the checkpoint
-// RPCs the app host calls. A deck's
-// room carries Plinth's own follow-the-presenter channel (kind "slides", rooms/slides.ts): slide
-// numbers from owners and editors to the identified viewers who have the deck open.
+// with `edit: "live"`, rooms/doc.ts): the live draft, its leases and its D1 flush, and the checkpoint
+// RPCs the app host calls.
+// A deck's room carries Plinth's own follow-the-presenter channel (kind "slides", rooms/slides.ts):
+// slide numbers from owners and editors to the identified viewers who have the deck open.
 //
 // Live views share the object (kind "watch", docs/spec.md "Live views"): receive-only sockets the
 // app page opens on the app host (api/watch.ts), for anyone who may open the artifact. A watch
 // socket joins no room, is never a peer and carries no identity; it gets only frames the room
 // makes from integers: `welcome`, `version` (published, or the alarm's catch-up), `data`
-// (dataChanged) and `access` (just before a sharing change closes it). Watch sockets are counted
-// apart from room sockets, so viewers never fill a room, and in two pools of their own (`member`,
-// `open`), so an outsider who fills the open pool learns nothing about the people the artifact is
-// shared with. No frame depends on how many sockets are open: `spread_ms` comes from the
-// instance's cap alone.
+// (dataChanged, at most one per spread_ms) and `access` (just before a sharing change closes it).
+// Watch sockets are counted apart from room sockets, so viewers never fill a room, and in two
+// pools of their own (`member`, `open`), so an outsider who fills the open pool learns nothing
+// about the people the artifact is shared with. No frame depends on how many sockets are open:
+// `spread_ms` comes from the instance's cap alone.
 import { DurableObject } from "cloudflare:workers";
 import {
   ARTIFACT_ID_RE,
+  ARTIFACT_TYPES,
   type ArtifactType,
   canEmitTopic,
   type EffectiveRole,
@@ -56,8 +58,8 @@ import {
   roomClientFrameSchema,
   SLIDES_FRAME_BYTES,
   type SlidesServerFrame,
+  slidesWatchCap,
   spreadMs,
-  typeDef,
   VIEW_WATCH_PROTOCOL,
   type ViewWatchFrame,
 } from "@plinth/shared";
@@ -67,6 +69,7 @@ import { versionCapabilities } from "../services/artifacts.ts";
 import { type DocDiscardResult, type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
 import { roomDeclaration } from "./notify.ts";
 import { SlidesChannel } from "./slides.ts";
+import { TrailingThrottle } from "./throttle.ts";
 
 /** The header the gate puts on the internal connect request: a JSON RoomConnect. */
 export const ROOM_CONNECT_HEADER = "x-plinth-room";
@@ -207,10 +210,16 @@ const SLIDES_RIGHTS: ReadonlySet<string> = new Set(["present", "watch"]);
  */
 export const ROOM_NAME_BYTES = 256;
 
-/** A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. */
+/**
+ * A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. A
+ * missing name reads as null, so a Worker isolate still running the release before names (whose
+ * header has no `name`) can connect while a deploy rolls out; a present but invalid one is refused.
+ */
 function validName(n: unknown): boolean {
   return (
-    n === null || (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
+    n === undefined ||
+    n === null ||
+    (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
   );
 }
 
@@ -220,7 +229,7 @@ function validName(n: unknown): boolean {
  */
 export function encodeConnect(c: RoomConnect): string {
   return JSON.stringify(c).replace(
-    /[\u007f-￿]/g,
+    /[\u007f-\uffff]/g,
     (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 }
@@ -245,8 +254,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
       : c.slides === undefined || c.slides === "none";
   const ok =
     typeof c.artifactId === "string" &&
-    typeof c.type === "string" &&
-    typeDef(c.type) !== null &&
+    (ARTIFACT_TYPES as readonly unknown[]).includes(c.type) &&
     typeof c.kind === "string" &&
     (ROOM_KINDS as readonly string[]).includes(c.kind) &&
     slidesOk &&
@@ -272,7 +280,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
     int(l.maxConnections) &&
     int(l.maxMessageBytes) &&
     int(l.messagesPerSecond);
-  return ok ? (c as unknown as RoomConnect) : null;
+  return ok ? ({ ...c, name: c.name ?? null } as unknown as RoomConnect) : null;
 }
 
 const encoder = new TextEncoder();
@@ -297,6 +305,8 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   private readonly watchConnects = new Map<string, number[]>();
   /** The live draft of a doc artifact (kind "doc" sockets and the checkpoint RPCs). */
   private readonly doc: LiveDoc;
+  /** Live views: `data` frames, at most one per spread_ms. In memory, like the buckets. */
+  private readonly dataFrames = new TrailingThrottle(() => this.sendData());
   /** A deck's follow-the-presenter channel (kind "slides" sockets). */
   private readonly slides: SlidesChannel<SocketState>;
 
@@ -306,6 +316,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       env,
       sockets: () => this.sockets("doc"),
       save: (ws, s) => this.save(ws, s as SocketState),
+      storage: ctx.storage,
       send: (ws, frame) => this.sendDoc(ws, frame),
       gone: () => {
         this.doc.reset();
@@ -388,12 +399,18 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   /**
    * The per-artifact, per-viewer and per-minute caps. Records the connect when it is allowed. Only
-   * room sockets (page, doc and slides) count: watch sockets have caps of their own.
+   * room sockets (page, doc and slides) count: watch sockets have caps of their own. A slides
+   * socket that watches stops short of the cap (slidesWatchCap), so the last few slots are always
+   * there for a presenter.
    */
   private isFull(info: RoomConnect): boolean {
     let room = 0;
     for (const kind of ROOM_KINDS) room += this.ctx.getWebSockets(`k:${kind}`).length;
-    if (room >= info.limits.maxConnections) return true;
+    const cap =
+      info.kind === "slides" && info.slides !== "present"
+        ? slidesWatchCap(info.limits.maxConnections)
+        : info.limits.maxConnections;
+    if (room >= cap) return true;
     if (this.ctx.getWebSockets(`v:${info.viewer}`).length >= ROOM_LIMITS.socketsPerViewer) {
       return true;
     }
@@ -435,7 +452,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       server.close(ROOM_CLOSE.invalid, "invalid");
       return new Response(null, { status: 101, webSocket: client, headers });
     }
-    this.sendWatch(server, { t: "welcome", v: 1, version: info.version, data: info.data });
+    this.sendWatch(server, { t: "welcome", v: 1, version: info.version });
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.setAlarm(Date.now() + ROOM_LIMITS.recheckIntervalS * 1000);
     }
@@ -488,11 +505,28 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return behind.length;
   }
 
-  /** The artifact's shared data changed: watch sockets with the data right get a `data` frame. */
+  /**
+   * The artifact's shared data changed: watch sockets with the data right get a `data` frame, at
+   * most one per spread_ms (rooms/throttle.ts). A write in a quiet window sends it at once; the
+   * writes after it join one frame at the window's end, which goes to the sockets open then. So
+   * however fast the page is written, its views re-read at most once per spread_ms each, and the
+   * last write is always followed by a frame. Returns how many sockets hold the data right.
+   */
   async dataChanged(): Promise<number> {
-    const to = this.watchSockets().filter(({ s }) => s.data);
-    for (const { ws, s } of to) this.sendWatch(ws, { t: "data", spread_ms: spreadOf(s) });
+    const to = this.dataSockets();
+    if (!to.length) return 0;
+    this.dataFrames.request(Math.max(...to.map(({ s }) => spreadOf(s))));
     return to.length;
+  }
+
+  private dataSockets(): { ws: WebSocket; s: WatchState }[] {
+    return this.watchSockets().filter(({ s }) => s.data);
+  }
+
+  private sendData(): void {
+    for (const { ws, s } of this.dataSockets()) {
+      this.sendWatch(ws, { t: "data", spread_ms: spreadOf(s) });
+    }
   }
 
   /** How many watch sockets are open (tests and diagnostics; never who). */
@@ -916,16 +950,17 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return this.doc.snapshot(artifactId);
   }
 
-  /** Version n holds the checkpoint; `resolved` when it was "Publish mine" in the review. */
+  /** Version n holds the checkpoint; `resolved` when it was "Publish your changes" in the review. */
   async docFinish(
     artifactId: string,
     n: number,
     text: string,
     lockId: string,
     epoch?: string,
+    rev?: number,
     resolved?: boolean,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, resolved === true);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, rev, resolved === true);
   }
 
   /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */

@@ -29,7 +29,7 @@ import {
 import { agentInitials, useAgents } from "../../lib/agents.ts";
 import { api } from "../../lib/api.ts";
 import { Link, navigate, useLocation } from "../../lib/router.tsx";
-import { useSession } from "../../lib/session.ts";
+import { setSessionMe, useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useThemePreference } from "../../lib/theme.ts";
 import { CONNECT_AGENT_HREF } from "../account/nav.ts";
 import { ProfileNameDialog } from "../account/ProfileNameDialog.tsx";
@@ -168,7 +168,15 @@ export function AppShell({
   const menuItems: MenuEntry[] = [
     ...userMenuItems,
     ...(userMenuItems.length > 0 ? [{ type: "separator" as const }] : []),
-    { label: "Your name…", icon: UserCircleIcon, onSelect: () => setNameOpen(true) },
+    {
+      label: "Your name…",
+      icon: UserCircleIcon,
+      onSelect: () => {
+        // On a phone the menu sits in the slide-over: close it so the dialog is the only layer.
+        setNavOpen(false);
+        setNameOpen(true);
+      },
+    },
     { type: "separator" as const },
     {
       label: `${THEME_NAMES.light} (light)`,
@@ -357,12 +365,13 @@ export function AppShell({
 
               {me && (
                 <div className="pl-sidebar__foot">
-                  {/* Beside the trigger, not in it: the button's name is its visible email. */}
+                  {/* Beside the trigger, not in it: the button's name is its visible label. */}
                   <span className="pl-avatar pl-account__avatar" aria-hidden="true">
                     {initials(me.email, me.name)}
                   </span>
+                  {/* The name once set; the menu's header keeps the email. */}
                   <Menu
-                    label={`Account: ${me.email}`}
+                    label={`Account: ${me.name ?? me.email}`}
                     variant="ghost"
                     align="start"
                     placement="up"
@@ -375,7 +384,9 @@ export function AppShell({
                         <span className="pl-account__email">{me.email}</span>
                       </>
                     }
-                    triggerContent={<span className="pl-account__label">{me.email}</span>}
+                    triggerContent={
+                      <span className="pl-account__label">{me.name ?? me.email}</span>
+                    }
                   />
                 </div>
               )}
@@ -451,9 +462,9 @@ export function AppShell({
         <ProfileNameDialog
           current={me.name}
           onClose={() => setNameOpen(false)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setNameOpen(false);
-            void refresh().catch(() => undefined);
+            setSessionMe(saved);
           }}
         />
       )}

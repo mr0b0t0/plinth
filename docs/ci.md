@@ -15,18 +15,24 @@ shell) use the CLI with the same options.
 
 Use a token limited to the artifact. It can read that artifact and publish new versions of it,
 and nothing else: it cannot create artifacts, open or change any other artifact, share, rename,
-restore or delete, or read comments, shared data and view counts. If it leaks, the most it can do
+restore or delete, or read comments, shared data (not through the viewer gate or a thumbnail
+either) and view counts. If it leaks, the most it can do
 is publish a version, which anyone with edit rights can revert.
 
-1. Open the artifact in Plinth, then **Settings**, then **Publish from CI**.
-2. Choose **Create a token for this artifact**. Copy the token: it is shown once. The dialog also
-   shows the workflow step with the artifact's id filled in.
+1. In Plinth, open **Connections**, then **Advanced: personal access tokens for scripts and CI**,
+   then **New token**.
+2. Name it, tick **Limit to one artifact** and choose the artifact. Copy the token: it is shown
+   once. The dialog also shows the workflow step with the artifact's id filled in.
 
-The owner and editors of an artifact can make such a token. The Connections page lists it as
-"Only <title>" and revokes it like any other token. Deleting the artifact revokes it, and removing
-your access to the artifact stops it.
+The owner and editors of an artifact can make such a token. The Connections page lists it under
+**Advanced**, with a key, the artifact's title and what it may do (Publish new versions, or Read
+only), and revokes it like any other token. Deleting the artifact revokes it, and removing your access to the
+artifact stops it.
 
-**No artifact yet?** Publish the first version once, then make the token for it:
+### No artifact yet?
+
+The New token dialog lists only artifacts you own or edit. Publish the first version once, then
+make the token for it:
 
 - locally: `npx @mr0b0t0/plinth@0.6.0 publish dist` (it signs you in in the browser and prints the
   link), or
@@ -76,8 +82,8 @@ jobs:
         run: echo "Report: $REPORT_URL"
 ```
 
-- `k3x9mq2v7d8p4t6w1n5r` stands for your artifact's id; the **Publish from CI** dialog shows this
-  step with it filled in.
+- `k3x9mq2v7d8p4t6w1n5r` stands for your artifact's id; the New token dialog shows this step with
+  it filled in.
 - `concurrency` keeps two runs from publishing at once. If they still race, the second stops
   with a conflict instead of overwriting the first (below).
 - `actions/checkout` gives scheduled and manual runs a commit subject for the version note.
@@ -130,7 +136,7 @@ is safe.
 | Input | Default | What it does |
 | --- | --- | --- |
 | `token` | required | A Plinth personal access token, from a secret |
-| `path` | required | A build folder with `index.html` (or `content.md`) at its top, or one `.html` or `.md` file |
+| `path` | required | A build folder with the artifact's source at its top (`index.html` for a page, `content.md` for a document, `slides.md` for a deck, `system.json` to update a design system), or one `.html` or `.md` file (a page or a document) |
 | `id` | empty | The artifact to update (id or slug). Empty: the token's artifact if it is limited to one, else a new private artifact |
 | `url` | `https://plinth.aconite.io` | The Plinth instance the token was made on |
 | `title` | empty | Title of a new artifact (ignored on updates) |
@@ -155,7 +161,7 @@ takes two).
 | `version` | The version now current |
 | `url` | The artifact's page (always the latest version) |
 | `version-url` | This version's permanent page |
-| `compare-url` | The rendered comparison with the previous version (empty for version 1) |
+| `compare-url` | The rendered comparison with the previous version (empty for version 1, and for `nothing_to_publish`, when this run changed nothing) |
 | `outcome` | `published`, `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error` |
 | `current-version` | On a conflict, the version someone else published |
 | `verified` | `true` when every file was read back and matched |
@@ -240,6 +246,18 @@ failure:
 ```
 
 `outcome` is `conflict`, `usage` or `error`; `current_version` is set on a conflict.
+
+With `--dry-run` it prints what would be sent, and sends nothing:
+
+```json
+{ "outcome": "dry_run", "dry_run": true, "id": "k3x9mq2v7d8p4t6w1n5r", "slug": "coverage",
+  "type": "html", "base_version": 7, "next_version": 8, "files": 42, "bytes": 1830512,
+  "changed": 3, "reused": 38, "send": "inline" }
+```
+
+`files` and `bytes` count the whole version. For an update, `changed` and `reused` count its asset
+files (the source is always sent), and `send` is `inline` (one request) or `bundle`. A new artifact
+has only `type`, `files`, `bytes` and `send`.
 
 ## Your own instance
 

@@ -5,7 +5,7 @@
 // and CSS, and the PDF has one page per board at its size.
 import { expect, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, uniqueEmail } from "../support/api.ts";
-import { exportLoad, openCapture, pdfPageSizes, seedToken } from "../support/db.ts";
+import { captureLoad, openExport, pdfPageSizes, seedToken } from "../support/db.ts";
 
 const PIXEL_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -38,10 +38,11 @@ test("the export layout loads the boards' files and prints a page per board", as
   const art = (await res.json()) as { id: string; version: number };
   expect(res.status, JSON.stringify(art)).toBe(201);
 
-  const load = await exportLoad(art.id, art.version, null, OPAQUE_APP_ORIGIN);
+  const load = await captureLoad(art.id, art.version, OPAQUE_APP_ORIGIN);
   expect(load.cookies).toHaveLength(1);
   expect(load.cookies[0]?.partitionKey).toBeUndefined();
-  await openCapture(page, load);
+  await openExport(page, load);
+  await expect(page.locator("html")).toHaveAttribute("data-export", "");
   const html = page.locator("html");
   await expect(html).toHaveAttribute("data-ready", "ok", { timeout: 15_000 });
   await expect(html).toHaveAttribute("data-boards-loaded", "2", { timeout: 15_000 });

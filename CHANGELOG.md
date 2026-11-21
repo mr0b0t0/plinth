@@ -10,206 +10,50 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **New and Import.** **New** on the dashboard starts a blank document or sheet that opens
-  straight in edit mode, with the focus on its title or first cell (where editing on the page is
-  on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
-  for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
-  file and keeps the link, sharing and comments; it asks again when a newer version was published
-  meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
-  by email code without an account to sign in first. It replaces the source editor's "Import CSV or
-  .xlsx" button, so there is one way to bring a file into a sheet. HTML pages and designs still come
-  only from agents. `POST /api/v1/artifacts` takes `note` for the first version.
-- **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
-  agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width)
-  opens the comments panel in request mode, where they point at an element or a board, describe
-  the change and, when the owner has more than one, pick the agent: Claude, Codex, or any other
-  connected client such as ChatGPT, Cursor or Gemini. It reaches that agent as a mention, and is
-  offered only when the owner has an agent that can take it. While editing a doc or a
-  sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
-  **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
-  shows Ask an agent with the reason. `POST /api/v1/artifacts/:ref/comments` takes `request_to`
-  (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
-  request can go to (`ask`) and why editing is off (`live_off`).
-
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
   the review inside the page: their changes and the new version (or every version since, named as
   "v6 to v7") side by side, each with its own images, with what each changed, files included, and
-  two choices. **Publish mine** publishes the changes as they are, with the files they were made
-  with, as the next version (the other stays in History); **Discard mine** asks first, naming what
-  will be lost. Both are safe against another editor choosing at the same moment: exactly one takes
-  effect, and every other open review closes saying what happened. No source is shown. Changes
+  two choices. Each side marks the blocks or cells it changed and opens at its first change, and
+  its list names each change once ("Paragraph changed", "Qty, row 3") with only the words or
+  values that changed, as the page shows them. **Publish your changes** publishes them as they are,
+  with the files they were made with, as the next version (the other stays in History); **Discard
+  your changes** asks first, in the app's own confirmation; **Back** leaves the review. It looks like the rest of the app. The
+  strip offers only **Review changes** while a version waits (and only its status while the
+  review is open, without an "Updated to" notification beside it), and the line shown to people
+  who are not editing is one short line of text in the strip's look ("Unpublished changes · Ana,
+  3 h ago"): the Edit toggle is the one way in. Both choices are safe against
+  another editor choosing at the same moment: exactly one takes effect, and every other open
+  review closes saying what happened. No source is shown. Changes
   the tab kept from before a reload are reviewed the same way when a newer version is current.
-- **Publish on the page.** The edit strip says **Publish**, **Publish with a note…** and
-  **Discard unpublished changes**, and its status says "Draft saved", "Publishing…" and "Published
-  as v7". A page Publish keeps the files of the version the changes were made from
-  (`files_from_version` on `PUT /api/v1/artifacts/:ref`). `GET /api/v1/artifacts/:ref/live/draft`
+- **Publish on the page.** A doc that can be edited on its page no longer offers **Edit source**
+  in its menu: the Edit toggle is the one way in and out (on a phone, **Edit on the page** in the
+  ⋯ menu, and **Done** on the strip). The edit strip has one action, **Publish**, once there is
+  something to publish (when the changes can't be published yet, its tooltip says why), and its
+  status says "Draft saved", "Publishing…" and "Published as v7", on one line at any width.
+  **Discard unpublished changes** is in the ⋯ menu. The strip shows how many others are editing,
+  with who and where in a tooltip. A doc's block being edited keeps the page's own type, with no
+  box around it, and a "+" shows only beside the block under the pointer or being edited; on a
+  phone only the "+" above the block being edited and the one at the end show, clear of the text.
+  A page Publish keeps the files of the version the changes were made from
+  (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
+  get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
+  always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
   is removed, and `GET /api/v1/config` says whether editing on the page is on (`inline_editing`).
 - **A doc never starts like a web page by accident.** Typing `<html>` at the start of a block is
   kept as text, so the doc can still be published.
 - Notifications no longer cover a dialog's buttons, and a pointer resting on one no longer keeps
   it on screen for good.
-- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
-  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
-  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
-  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
-  is still a page.
-- **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
-  artifact menu has **Download PNG or PDF…**: a PNG of one artboard at 1x or 2x (transparent where
-  the board is), or a PDF with every board, or one, each on a page of its own size, rendered by
-  the server from the version on screen. Anyone who may view the design can export it, up to 30
-  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed out, per network), and at most two
-  render at once across the instance; `DESIGN_EXPORT=false` turns it off.
-  Scripts and agents use `GET /api/v1/artifacts/<id>/export?format=png&board=<id>` or
-  `?format=pdf`, with `/export/options` listing the boards. Without the binding nothing changes:
-  Print or save as PDF stays.
-- **Where a dashboard's figures come from.** The owner's agent fetches figures with its own
-  connectors, writes them to the page's shared data with a `source` stamp (`write_artifact_data`),
-  and describes each fetch as a data source with `set_data_sources` (label, connector, a read-only
-  recipe and the collection it fills). Plinth never fetches and holds no connector credentials. A
-  source an agent sets or changes waits until the owner reads its recipe and confirms it in the
-  Share dialog (agents cannot confirm); revoking a connection a source was pinned to makes it wait
-  again. Every reader sees each stamped figure's source and age (`doc.source`, and the runtime's
-  `plinth.cite` badges), and one line under the bar, counted by the server from the stamps each
-  document carries, says which figures were fetched by an agent of the owner, from which system
-  and how long ago, and how many were last changed by a person. A page can declare
-  `plinth-data-sourced` collections that only the owner and editors write. Credential-like text is
-  refused in recipes and stamps; links to records (a Linear issue, a Jira board, a Notion page, an
-  Airtable view, a Salesforce or Stripe record) pass. Works with no page declaration and under opaque isolation (figures
-  inline). Migration `0015_data_sources.sql`.
-- **Pages that hand work to the owner's agent.** A page that declares `requests`
-  (`<meta name="plinth-capabilities" content="requests">`, with
-  `<meta name="plinth-requests-to" content="claude">`) lets the people who may comment on it send
-  a request to the owner's agent from the page (`plinth.requests.file`). It lands in the agent's
-  mention queue with `source: "page"`, and the page shows each person their own requests, their
-  state and the agent's answers, never anyone's name or address. Only the owner, editors and the
-  requester see a request in Comments, where the owner and editors dismiss it and the requester
-  withdraws it. `reply_comment` gains `done: true` for an answer without a new version. Off by
-  default: `ALLOW_PAGE_REQUESTS` turns it on (origin isolation only), with
-  `PAGE_REQUESTS_*` limits; turning it on seals the viewer identity claim for identified viewers
-  even where shared data and rooms are off. Migration `0016_page_requests.sql`.
-- **Mentions of names such as `@constructor` work.** A comment that mentioned `@constructor`,
-  `@tostring` or another name JavaScript objects carry by default failed with an internal error.
-  Such a name is now an ordinary handle: it reaches the owner's connection whose label normalizes
-  to it, and a page request sent to it without such a connection is refused as `unknown_agent`.
-- **People you share with get an account.** Confirming the emailed code at an artifact's gate or
-  a shared collection now signs the person in to Plinth with that address, creating their account
-  the first time, as the owner's own code already did. What is shared with them then shows under
-  Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
-  on its page. The gate, the email and the privacy notice say so, and the gate and the shared
-  collection tell someone already signed in that confirming another address switches them to it.
-  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning never to give the
-  code to anyone before it shows the title the sharer wrote, and wrong guesses at it count
-  against the same per-address limit as the sign-in code. On a single-user instance, where only
-  the admin may sign in, the code still starts a viewer session without an account, and viewer
-  sessions started earlier keep working until they expire.
-- **Email people when you share with them.** Adding someone to an artifact's People, or to a
-  shared category, with **Notify people** ticked (the default) emails them that you shared it with
-  them, with the title, their role and the link. Only people the change adds are emailed, at most once a
-  day per artifact, within daily limits per owner (100), per owner and recipient (3) and per
-  recipient (10), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
-  endpoints take `notify` (default `false`): agents email people only when asked, and the result's
-  `invitations` says who was emailed and who was not, and why.
-- **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
-  sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
-  Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
-  spreadsheet fills the rows they cover. A strip inserts and deletes rows and columns and changes a
-  column's name, type and format. The others editing see each change as it is typed, and rows
-  someone holds show their email. Save version (or a pause) makes the next version, as for docs.
-  A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged into the
-  page edits: editing pauses, and the editors review both sheets side by side, with what each
-  changed, and choose **Publish mine** (the page edits become the next version, and the other stays
-  in the history) or **Discard mine** (after a confirmation that lists what will be lost). When two
-  people change rows at once, each change lands on the row it was made on, or is dropped with a
-  note when that row is gone. While one editor publishes or discards, a second choice or a Discard
-  from someone else waits with a note instead of undoing it, for docs too. Numbers are typed in
-  your locale. Follows `ALLOW_LIVE_EDITING`.
-- **Compare says what changed, in words.** History's Compare page no longer shows a source diff.
-  It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
-  paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
-  "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
-  the files added, removed or replaced. The two versions are still rendered side by side below the
-  list, one at a time with a Before and After switch on a phone. Older links with `view=source`
-  open the same page. Agents still read and write source as before.
-- **Board settings for whiteboards.** Owners and editors change a board's background (dots, grid
-  or plain) and who can change it (commenters and editors, or editors only) from **Board settings**
-  in the board's ⋯ menu, in a small dialog with two choices. Each save is a new version; if someone
-  published a newer one meanwhile, the dialog shows its settings instead of overwriting them. It
-  replaces "Edit settings", which opened the board's JSON in the source editor.
-- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
-  controls or presenter view, and the people the deck is shared with who have it open follow their
-  slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to
-  the presenter". Someone who opens the deck mid-talk lands on the presenter's slide. Only slide
-  numbers travel, over the deck's live room; nobody sees who else is watching. It needs live rooms
-  (origin isolation and the `ROOMS` binding) and is on by default; `ALLOW_SLIDES_FOLLOW=false`
-  turns it off. Link viewers without an identity do not follow.
-- **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
-  not reloaded and the heading you were reading stays where it was. A page that loads
-  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
-  sub-page the new version no longer has opens at its root instead), and can hand state to the
-  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
-  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: the
-  bar says "v5 is available · Update" instead. Every other page is replaced at once, as before.
-  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
-- **Files people add to a page.** A page that declares `files` lets the people it is shared with
-  add images, PDFs, video and audio (`plinth.files.upload`), which everyone who can open the page
-  sees; the owner and editors can delete any of them, and the owner can delete them all from the
-  Share dialog, also after a version stops declaring `files`. Files are proven by their first bytes
-  (never SVG, HTML or text), served from the artifact's own origin with `script-src 'none'` and a
-  bare `sandbox`, never from the app and never into thumbnails or link previews. People who may add
-  a file are told that the details saved inside it go with it.
-  Agents list and delete them with `list_artifact_files` and `delete_artifact_file`, without the
-  bytes. Off by default: `ALLOW_FILES` turns it on (origin isolation only), with `FILES_*` limits
-  apart from the owners' storage quota. Migration `0014_artifact_files.sql`.
-- **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
-  people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
-  everyone it lets edit (commenters by default, or editors only) moves, resizes, writes on,
-  colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
-  read-only. When two people (or a person and an agent) change one block at once, each keeps the
-  fields they changed; where both changed the same one, the first save stands and the other person
-  is told (for text, with a button to put theirs back). Pan and zoom with the mouse, a trackpad, touch or the keyboard, and export the board
-  as PNG or SVG. A version holds only the board's settings (`board.json`), and a new board can
-  start with a list of blocks and arrows, written once into its shared data. Agents read the board
-  with `list_artifact_data` and add or move blocks with `write_artifact_data`. Needs shared data
-  and origin isolation; `GET /api/v1/config` lists which types an instance publishes
-  (`artifact_types`).
-- **Your own categories for artifacts shared with you, and sharing a whole category.** On the
-  dashboard, "Move to category…" now files an artifact someone shared with you under a category of
-  your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
-  one of their categories with people (viewer or commenter) under a name they choose: the people
-  get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
-  once. Filing an artifact under a shared category never shares it: it waits for the owner's review
-  (a banner on the dashboard, "Waiting for review" on the row), and the owner's agent is told so
-  (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from
-  the category's people even when a new version was published while the dialog was open, and a
-  taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it
-  off. Migration `0013_category_sharing.sql`.
-- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
-  agent or editor publishes within seconds, without waiting for its 15 s check, and pages that keep
-  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
-  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
-  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
-  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
-  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
-  pushes, half for the people an artifact is shared with and half for everyone else, so a link
-  viewer can never tell from the socket whether the owner or a collaborator has the page open. Update the plugin for the agent's rule never to tell people to reload. A reverse proxy
-  must pass WebSocket upgrades on the app host too.
-- **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
-  posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
-  `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
-  IAB ads, print and slides. Plinth lays the boards out on a canvas you pan and zoom (Fit, 100%, a
-  Boards list), renders each one alone at its exact size in its own frame with an opaque origin, so
-  its scripts, styles and images run without reaching the page or each other, lets you interact
-  with one board, pins comments to boards, and prints or saves the design as PDF one board per
-  page. The editor previews the boards as you type and shows each problem with its line. The Plinth
-  CLI publishes a folder with `design.html` at its top as a design. Thumbnails show each board
-  with its own images and styles. Update the plugin for the agent's design rules.
-- **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
-  PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
-  lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
-  The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
-  On instances with opaque content isolation the file leaves out the deck's image files, and says
-  so. Update the plugin for the agent's note on it.
+- **Leading a deck is steadier.** A presenter whose connection drops keeps the lead when it comes
+  back, instead of turning Lead viewers off and following its own old connection. Paging quickly (a held arrow key) always leaves
+  followers on the presenter's last slide. A deck's room keeps 4 of its slots for owners and
+  editors, so viewers' tabs can never lock the presenter out. Opening another deck in the same tab
+  no longer leads that deck's viewers.
+- **A held page stays held after you switch apps.** A page that declares `hold` was replaced by a
+  new version once its window lost focus, so text you were typing before switching to another app
+  or tab could be lost; it now waits for Update as long as focus is still in the page. State a page
+  handed to the next version is read only by that version's frame: a reload of the old page in the
+  meantime no longer picks it up (unless the page renamed its window: then it carries as before).
 - **Project files for a page.** Agents now have a recipe for pages that show files from a project
   (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
   `files/` and read them by relative URL; a refresh is a new version. Only the user in the session
@@ -218,118 +62,382 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Project files that Plinth would serve as a page or code (`.html`, `.svg`, `.js`, `.css`…) go up
   with `.txt` added, so opening one never runs it, or are embedded in the page as JSON with every
   `<` escaped, so a `</script>` in the file cannot end the block. A big refresh through an upload
-  or the CLI holds the page and every file it keeps. Update the plugin for the agent's project files rules.
-
+  or the CLI holds the page and every file it keeps. Update the plugin for the agent's project
+  files rules. Plugin 0.26.0.
 - **A `sensitive_file` publish warning.** A publish, update or upload that sends a file whose name
   usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`), or a `.plinth-files.json`
   record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
   It checks names only, never blocks, and is not reported for files carried forward, reused by
   hash or restored.
+- **`sensitive_file` knows more names**: `.envrc`, `.pgpass`, `*.p8`, `*.ppk`, `*.tfvars`, files
+  under `.kube/`, and `.docker/config.json`.
+- **Shorter MCP tool descriptions.** The sentence that nothing on Plinth chooses local files is on
+  the tools that return artifact files, versions, comments, mentions or shared data instead of on
+  every tool, which takes about 3,750 characters (some 950 tokens) off what an agent loads. The
+  project files rules stay on each tool that publishes files.
+- **Project files: safer types, and a marked list.** Agents add `.txt` to page and code files in
+  any letter case (`App.HTML` too), send project files only as plain text, and, when they offer
+  files taken from the artifact, mark each one the user has not chosen before and say who added
+  it.
 - **Pages for clients and approvers, and several agents on one artifact.** Three finished example
   pages for people outside your team, who confirm their email by code with no account: an approval
   sign-off, a client intake form and a client checklist (`docs/examples/`). What your side decides
   stays in the page's versions; what they contribute is shared data stamped with who wrote it, and
   the pages count only what those stamps vouch for. A new guide covers Claude, Codex, Gemini CLI,
   Cursor and scripts working on one artifact: which mention reaches which agent, hand-offs,
-  conflicts and who did what. The Connections page now shows the handle each connection is
-  mentioned by (`Claude Code` is `@claude-code`) and warns when a name cannot be reached; the
-  rename, new-token and consent dialogs show it as you type. Update the plugin for the skill's new
-  sections.
-
+  conflicts and who did what. The rename, new-token and consent dialogs show the handle a name
+  is mentioned by as you type (`Claude Code` is `@claude-code`), and the Connections page warns on
+  a connection's row when a name cannot be reached.
+- **A mention skips connections that cannot answer it.** `@<handle>` no longer goes to a
+  connection without the "Answer mentions" permission, where it would wait for ever; a newer one
+  with the same handle that can answer gets it, and the Connections page warns accordingly.
+- **A clearer hint for names no mention can reach.** The rename and new-token dialogs now say
+  "start and end the name with a Latin letter or digit", which also covers names in other scripts
+  and names ending in a dot.
+- **The intake example shows who changed an answer.** Answers the owner or an editor changed say
+  "Changed by" with their email and role on the response's date line, and a question whose id is
+  `constructor` or another built-in name no longer shows a stray answer.
+- **The approval example keeps your own decision current.** "You approved · Withdraw" follows the
+  shared data, so it updates when the owner or an editor changes or deletes your sign-off, without
+  a reload. Who changed a sign-off now joins its decision and date line ("· Changed by" with the
+  email, and the role when there is one), as on the intake page.
 - **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
-  (shared data, rooms, page comments, dictation) no longer gets a publish warning it could not fix.
+  (shared data, rooms, page comments) no longer gets a publish warning it could not fix.
+- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
+  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
+  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
+  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
+  shows in full on hover. On phones the category moves from beside the title to a row's second
+  line, and on a card it takes the place of "You".
+- **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
+  PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
+  lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
+  The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
+  On instances with opaque content isolation the file leaves out the deck's image files, and says
+  so. Plugin 0.23.0.
+- **.pptx: images four at a time.** The download reads and draws at most four of a deck's images
+  at once, so a deck with hundreds of them no longer risks a phone's tab, and an image the browser
+  cannot draw is counted among those left out.
+- **.pptx: space above tables.** A table right under a list or a paragraph keeps the gap the slide
+  shows, instead of sitting against the last line.
+- **.pptx: an interrupted download says what to do.** When a newer version replaces the deck while
+  the file is made, the notice says to download it again if no file was saved.
+- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
+  agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
+  vN" notice at a time, however many versions arrive in a row), and pages that keep
+  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
+  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
+  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
+  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
+  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
+  pushes, half for the people an artifact is shared with and half for everyone else, so a link
+  viewer can never tell from the socket whether the owner or a collaborator has the page open.
+  After a deploy, open pages reconnect spread over 10 seconds, and a busy shared page sends its
+  views at most one "data changed" signal per spread (2 s at the default). A
+  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.24.0: the agent's rule
+  never to tell people to reload.
+- **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
+  posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
+  `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
+  IAB ads, print and slides. Plinth lays the boards out on a canvas you pan and zoom, in rows
+  packed to fill the screen (Fit, 100%, a board's name zooms to it), renders each one alone at its
+  exact size in its own frame with an opaque origin, so its scripts, styles and images run without
+  reaching the page or each other, lets you interact with one board, pins comments to boards, and
+  prints or saves the design as PDF one board per page. People see the design, never its source:
+  agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
+  a folder with `design.html` at its top as a design. Thumbnails show each board
+  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.25.0.
 - **Sheets.** Agents can publish a table people sort, filter, calculate with or download (`type:
   "sheet"`): JSON lines with typed columns (text, number with currency or percent formats, date,
   checkbox, select, link) and Excel formulas (SUM, IF, VLOOKUP, XLOOKUP and 67 more) that Plinth
   computes itself. The page has a frozen header, sort, a filter, a formula bar, print, light and
   dark, and phone width, and anyone who can view it downloads it as CSV or Excel (.xlsx) built in
   the browser. Agents read computed values with `read_sheet` and change cells, rows and columns
-  with `edit_sheet`, one version per call. A CSV or .xlsx file can be published as a sheet
-  (`content_format`, `plinth publish data.csv`, or "Import CSV or .xlsx" in the editor).
-  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Update the plugin for the
-  agent's sheet rules.
+  with `edit_sheet`, one version per call; people never see the JSON lines (no source editor or
+  source diff: Compare shows the versions rendered). A CSV or .xlsx file can be published as a
+  sheet (`content_format` or `plinth publish data.csv`); ids, phone numbers and leading zeros stay
+  text, and a semicolon-separated file reads decimal commas. A downloaded CSV quotes every text
+  value, so Excel in a semicolon locale never splits a cell into a formula.
+  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.26.0.
+- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
+  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
+  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
+  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
+  line under the bar tells every invited viewer. On such a page their agents get the same list in
+  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
+  page. The list and the owner's sharing settings name a person once they have commented, entered
+  something or published a version there, so adding an address never reveals whether it has an
+  account. Names are display text: no `@`, no invisible or blank-only characters, never a role;
+  the owner's own comments and versions carry a quiet "Owner" mark (`is_owner`), so a name chosen
+  to look like the owner's visibly lacks it. Once a token limited to one artifact has
+  published a version of a page, that page lists nobody. Plugin 0.27.0.
+- **Your own categories for artifacts shared with you, and sharing a whole category.** On the
+  dashboard, "Move to category…" now files an artifact someone shared with you under a category of
+  your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
+  one of their categories with people (viewer or commenter) under a title, the category's name
+  unless they change it: the people get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
+  once. Filing an artifact under a shared category never shares it: it waits for the owner's review
+  (one "to review" line on the dashboard), and the owner's agent is told so
+  (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from
+  the category's people even when a new version was published while the dialog was open, and a
+  taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it
+  off. A token limited to one artifact never sees or manages category sharing: it holds no role
+  through a category grant, and the share, portal and personal-category routes answer it 403
+  `token_bound`. On a page that lists who has access, the owner and editors see the category's
+  people too, each once at their highest role. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
+- **People you share with get an account.** Confirming the emailed code at an artifact's gate or
+  a shared collection now signs the person in to Plinth with that address, creating their account
+  the first time, as the owner's own code already did. What is shared with them then shows under
+  Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
+  on its page. The gate and the shared category's page say "Sign in", the email and the privacy
+  notice say that an account is created, and someone already signed in is told instead that
+  confirming another address switches them to it. The privacy notice says their opens are
+  recorded as a signed-in person's.
+  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning to type the code
+  only into Plinth's own sign-in form and never to give it to anyone before it shows the title or name the sharer wrote (on one line, so neither can
+  add lines of its own), and wrong guesses at it count against the same per-address limit as the
+  sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
+  a viewer session without an account, and viewer sessions started earlier keep working until
+  they expire. Plugin 0.29.0.
+- **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
+  people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
+  everyone it lets edit (editors by default, or commenters too when its settings say so) moves, resizes, writes on,
+  colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
+  read-only. When two people (or a person and an agent) change one block at once, each keeps the
+  fields they changed; where both changed the same one, the first save stands and the other person
+  is told (for text, with a button to put theirs back). Pan and zoom with the mouse, a trackpad,
+  touch or the keyboard, and download the board as PNG or SVG from the ⋯ menu. The toolbar shows
+  only what applies, in one row: the add buttons for people who may edit, a block's colours,
+  Connect and Delete while it is selected, and who else is here. A version holds only the board's
+  settings (`board.json`), and a new board can start with a list of blocks and arrows, written
+  once into its shared data; the history's restore on a board is Restore settings. Agents read the board with `list_artifact_data` and add or move
+  blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
+  lists which types an instance publishes (`artifact_types`). Plugin: when and how agents
+  publish and change whiteboards.
+- **Board settings for whiteboards.** Owners and editors change a board's background (dots, grid
+  or plain) and who can change it (editors only, or commenters and editors) without typing
+  anything: from **Settings** in the board's ⋯ menu, which is the settings page's new Board section
+  for the owner and a small dialog over the board for an editor. Each save is a new version; if
+  someone published a newer one meanwhile, nothing is overwritten: the newer settings are shown
+  and the board loads that version. Any other refusal shows its own message. The skill tells
+  agents to read a board's settings again before changing them, since people change them too.
+- **Email people when you share with them.** Adding someone to an artifact's People, or to a
+  shared category, with **Notify people** ticked (the default) emails them that you shared it with
+  them, with the title, their role and the link. Only people the change adds are emailed, at most once a
+  day per artifact, within daily limits per owner (20, `INVITATION_EMAILS_PER_OWNER_PER_DAY`),
+  per owner and recipient (3), per recipient (10) and for the whole instance (1000,
+  `INVITATION_EMAILS_PER_DAY`; `0` turns invitation emails off), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
+  endpoints take `notify` (default `false`): agents email people only when asked, and the result's
+  `invitations` says who was emailed and who was not, and why. A change's emails go to the provider
+  in one batch request (Resend) or one at a time, never all at once, so they stay within its
+  request rate and leave room for sign-in codes; one the provider refuses can be sent again by
+  adding the person again. Each email's footer and `List-Unsubscribe` header link
+  `/invitation-emails`, where the recipient signs in and turns invitation emails to their address
+  off (or back on); owners who share with them are told `opted_out`, and the access still applies.
+  The opt-out and the per-address limits cover the inbox, so `bo+x@gmail.com` and `b.o@gmail.com`
+  count as `bo@gmail.com`, and an `opted_out` answer costs the owner one of their daily
+  invitations, as an email would.
+  Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
+  them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
+  Migration `0021_invitation_opt_outs.sql`.
+- **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
+  sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
+  Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
+  spreadsheet fills the rows they cover. Row and Column menus in the sheet's bar insert and delete
+  rows and columns and change a column's name, type and format. The others editing see each change
+  as it is typed, and rows someone holds are tinted. Save version (or a pause) makes the next
+  version, as for docs. The Edit toggle is the only way to edit a sheet: there is still no source
+  editor. A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged
+  into the page edits: editing pauses, and the editors review both sheets side by side, with the
+  cells each side changed marked, and choose **Publish mine** (the page edits become the next
+  version, and the other stays in the history) or **Discard mine** (pressed twice: it turns into
+  "Discard for everyone"). When two people change rows at once, each change lands on the row it was
+  made on, or is dropped with a note when that row is gone. While one editor publishes or discards,
+  a second choice or a Discard from someone else waits with a note instead of undoing it, for docs
+  too. A save that takes longer than 30 seconds keeps the edits made while it ran, for docs too,
+  and never sends them to review against its own version. While a doc or sheet is edited on its
+  page, a version published meanwhile no longer shows an "Updated to" notice (the strip says it,
+  and the version picker follows), and at phone width the edit strip keeps to one line. Numbers
+  are typed in your locale. Follows `ALLOW_LIVE_EDITING`. The agent's sheet rules say a
+  `live_draft` on a sheet needs no action.
+- **Compare says what changed, in words.** History's Compare page no longer shows a source diff.
+  It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
+  paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
+  "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
+  the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
+  formatting changed". A heading, paragraph, slide or row added before another reads as added,
+  not as the next one renamed or changed: blocks pair by the words they share, never by their
+  place alone, so a paragraph rewritten with none of its words kept reads as removed and added. Items come in the order the page reads, a changed list names only the item that
+  changed, and a sheet total that only recomputed for an added row is left out. A large edit the
+  diff gives up on still lists only the blocks that changed, a block added or removed in it
+  included, and two same-titled slides edited in
+  place are not listed as moved. Every type
+  compares this way, designs included, and a whiteboard lists its settings in the Board settings
+  dialog's words ("Background: Dots → Grid", "Who can change the board: Editors only → Commenters
+  and editors"), with History's "Restore settings" unchanged. The two
+  versions are still rendered side by side below the list, one at a time with a Before and After
+  switch on a phone. Older links with `view=source` open the same page. Agents still read and write
+  source as before.
+- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
+  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
+  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
+  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
+  is still a page.
+- **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
+  not reloaded, the heading you were reading stays where it was, and an image the new version
+  changed under the same name shows the new file. A page that loads
+  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
+  sub-page the new version no longer has opens at its root instead), and can hand state to the
+  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
+  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: a
+  "v5 is available" toast offers Update instead. Every other page is replaced at once, as before.
+  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
+- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
+  controls or presenter view, and the people the deck is shared with who have it open follow their
+  slide, shown as "Following" in the deck's controls; paging by hand pauses it until
+  they choose "Back to slide N". Someone who opens the deck mid-talk lands on the presenter's
+  slide. Only slide numbers travel, over the deck's live room; nobody sees who else is watching.
+  It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;
+  `ALLOW_SLIDES_FOLLOW=false` turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
+  publishes a new version or the owner changes who the deck is shared with.
+- **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
+  artifact menu has **Download .png** (the one artboard at once, or pick one when there are more;
+  2x where it fits, else 1x, transparent where the board is) and **Download .pdf** (every board,
+  each on a page of its own size) in place of Print or save as PDF, rendered by the server from
+  the version on screen with the same safety as thumbnails. Anyone who may view the design can
+  export it, except a token limited to one artifact (`token_bound`, as for thumbnails), up to 30
+  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed out, per network), 20 times an hour
+  per design for everyone but its owner and editors (`DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR`) and
+  120 times an hour for the whole instance (`DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`), which bounds
+  the operator's browser time; at most two render at once across the instance, and
+  `DESIGN_EXPORT=false` turns it off. A PNG is at most 4,000,000 pixels (a board of up to
+  1,000,000 px at 2x, a 1080x1080 or 1920x1080 one at 1x only) and any file at most 24 MB, so one
+  export cannot run the Worker out of memory. Scripts and agents use
+  `GET /api/v1/artifacts/<id>/export?format=png&board=<id>&scale=1|2` or `?format=pdf` (every
+  board, or `&board=<id>`), with `/export/options` listing the boards. Without the binding nothing
+  changes: Print or save as PDF stays.
+- **Thumbnail capture failures are logged without URLs**, so a capture's one-time enter token
+  never reaches the Worker's logs.
+- **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
+  agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width)
+  opens the comments panel in request mode, where they point at an element or a board, describe
+  the change and, when the owner has more than one, pick the agent: Claude, Codex, or any other
+  connected client such as ChatGPT, Cursor or Gemini. It reaches that agent as a mention, and is
+  offered only when the owner has an agent that can take it. While editing a doc or a
+  sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
+  **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
+  shows Ask an agent with the reason. A toast confirms a sent request.
+  `POST /api/v1/artifacts/:ref/comments` takes `request_to`
+  (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
+  request can go to (`ask`) and why editing is off (`live_off`).
+- **Picking an element at phone width.** While a comment or a request picks an element, the
+  comments sheet shrinks to its bottom bar, which sits under the artifact instead of covering it.
+- **New and Import.** **New** on the dashboard starts a blank document or sheet that opens
+  straight in edit mode, with the focus on its title or first cell (where editing on the page is
+  on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
+  for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
+  file and keeps the link, sharing and comments; it asks again when a newer version was published
+  meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
+  by email code without an account to sign in first. HTML pages and designs still come only from
+  agents. `POST /api/v1/artifacts` takes `note` for the first version.
 
-- **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
-  take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
-  recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot
-  hide, and passes the page only words. Artifact frames still never get the microphone. Off unless
-  an operator sets `ALLOW_DICTATION=true`; origin isolation only, and only for people the page is
-  shared with. Text to speech (`speechSynthesis`) works in every page as before, now documented,
-  and a page that calls `getUserMedia` or `SpeechRecognition` itself gets a `blocked_feature`
-  publish warning.
+## 0.6.0 (2026-11-20)
 
+- **Thumbnails picture the version they are of.** The capture of a version is served that
+  version on every path, so a page that loads `/assets/index.js`, frames `/chart.html` or
+  redirects to `/docs/` shows its own files, not the current version's, and an older version's
+  thumbnail never runs a newer version's code. The thumbnail browser also no longer opens another
+  version or a Plinth helper path as a page.
 - **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact
-  (the artifact's Settings, **Publish from CI**): it reads that artifact and publishes new versions
-  of it, nothing else (not even the owner's or other people's email addresses), and deleting the
-  artifact revokes it. `plinth publish` takes a single
+  (**Limit to one artifact** in the New token dialog): it reads that artifact and publishes new versions
+  of it, nothing else (not even the owner's or other people's email addresses, nor an enter URL
+  or a thumbnail, which would show the page's shared data), and deleting the
+  artifact revokes it. Thumbnails of the versions such a token publishes are taken without the
+  page's shared data, and the thumbnail browser now aborts anything a page loads or opens off its
+  own artifact and the CDN allowlist. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
-  a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
-  and cron: `docs/ci.md` (#51).
-
+  a JSON object on failure and for `--dry-run` too, and prints `live_draft` as a note that needs no
+  action. GitLab CI and cron: `docs/ci.md` (#51). **Deploying:** release v0.6.0 first, right
+  after merging (`pnpm release 0.6.0 --push`), then apply migration `0012_bound_tokens.sql` and
+  deploy. The New token dialog, the README and `docs/ci.md` pin `mr0b0t0/plinth/publish@v0.6.0`
+  and `@mr0b0t0/plinth@0.6.0`, which exist only once that release is out. Plugin 0.21.0.
+- **Comments from the page.** A page that declares `comments` can open the comment composer on a
+  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
+  its own markers for the threads and tell Plinth where to put its pins. The person still writes
+  and posts every comment, and the page never sees comment text. Opening comments on such a page no
+  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
+  tasks. Example: `docs/examples/canvas-comments.html`. Plugin 0.20.0. A declaring page connects as
+  soon as it loads, so its pins show even before its code calls `plinth.comments`, and they follow
+  the layout as images load or the page resizes. Whether the page anchors its own comments follows
+  the version being viewed, so an older version without the declaration keeps "Pin to an element".
+- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
+  off its anchor; it now grows in place.
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
   between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
-  clicks or swipes, link to a slide (`#slide=4`), present full screen, open a presenter view with
-  the notes, the next slide and a timer (and an audience window that follows it), and print or save
-  as PDF with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  clicks or swipes, link to a slide (`#slide=4`), see every slide in a thumbnail grid, and from
+  Present in the bar go full screen or open a presenter view with the notes, the next slide and a
+  timer (and an audience window that follows it with nothing but the slide). Print or save as PDF
+  with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
   publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
-
+  Plugin 0.19.0.
 - **Design systems.** Publish tokens, guidelines and components as a design system (`type:
   "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
   spacing and shadow samples and live component previews in light and dark. Agents read one with
   the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
   into the pages they build, and get a `design_system_outdated` warning when a page was built on
   an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
-  type.
-
-- **Comments from the page.** A page that declares `comments` can open the comment composer on a
-  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
-  its own markers for the threads and tell Plinth where to put its pins. The person still writes
-  and posts every comment, and the page never sees comment text. Opening comments on such a page no
-  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
-  tasks. Example: `docs/examples/canvas-comments.html`.
-
-- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
-  off its anchor; it now grows in place.
-
-- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
-  name…"); pages that show who is viewing now show it beside your email, on `plinth.viewer`, on
-  the entries you write and in live rooms. A page that declares `data viewer people` lets its
-  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
-  line under the bar tells every invited viewer. On such a page their agents get the same list in
-  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
-  page. The list and the owner's sharing settings name a person once they have commented, entered
-  something or published a version there, so adding an address never reveals whether it has an
-  account. Names are display text: no `@`, no invisible characters, never a role.
-
+  type. CSS blocks may not hold escapes or `url()`s to other hosts, and a `url()` to a file the
+  design system lacks is a `missing_file` warning. Plugin 0.18.0.
+- **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
+  linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
+  the people who opened it (name and email for people signed in and allowlisted viewers, with the
+  version they last saw), opens per version and an approximate count of anonymous visitors. Agents read the same with the `get_artifact_stats` MCP
+  tool, `GET /api/v1/artifacts/:ref/stats` and `GET /api/v1/stats/artifacts` (owner only). This
+  replaces the open counts in the Share dialog and `GET /api/v1/artifacts/:ref/views`, which is
+  gone. Opens are kept with who made them for `VIEW_LOG_RETENTION_DAYS` (default 365), then only
+  counted; `VIEW_COUNTS=off` still stops recording. Apply migration `0020_artifact_opens.sql`
+  before deploying: it keeps the existing daily counts as opens with no viewer. Plugin 0.17.0.
+- **A Cursor plugin.** `integrations/plugin-cursor` packages the Plinth server and skill in Cursor's
+  plugin layout, for the Cursor Marketplace and cursor.directory.
+- **A build for OpenAI's plugin directory.** `integrations/plugin-openai` is the folder to ZIP for
+  ChatGPT and Codex: the portable manifest with its listing block, the hosted server, the icon and
+  the skill, with no hooks and no Claude Code passages.
+- **The plugin directory build connects to the hosted instance again.** Anthropic's plugin directory
+  refused the 0.15.0 build because its server URL used the Plinth instance option, so the directory
+  build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
+  self-hosted instance as its own server, or install the full plugin from this repository's
+  marketplace, which keeps the option. Plugin 0.16.0.
+- **OpenAI domain verification.** Set `OPENAI_APPS_CHALLENGE` to the token OpenAI's plugin portal
+  shows, and the instance serves it at `/.well-known/openai-apps-challenge`. Unset, the path stays
+  404.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
   From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
-
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
+  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
+- **Review account sign-in.** An operator can give one ordinary account a password, for a
+  directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
+  `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at
+  `/login/review`, linked from the sign-in page, and locks after repeated wrong passwords. Off
+  unless both are set; never an admin account ([security.md](docs/security.md#review-account-sign-in)).
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.
-
 - **Live rooms.** Pages can show who is here and share moments live with `plinth.room`, and
   owners and editors can edit a doc together right on its page, saved as versions on Save or after
   a pause (#36).
-
 - **MCP tool annotations.** Every tool now says whether it only reads, whether it can remove
   data, and whether repeating it is safe, so clients can ask before the right calls and directories
   (Anthropic's connector directory requires them) can list Plinth.
-
 - **Admin stats and view counts.** Instance admins get a Stats page (people, artifacts,
   publishes, storage, shared data, agent connections, open reports and opens, with 7/30/90-day
   trends), and owners see how often other people opened a page in its Share dialog. Opens are
   kept as a daily number per page, never who opened it; `VIEW_COUNTS=off` turns counting off.
   Apply migration `0010_view_counts.sql` before deploying.
-
 - **Artifact categories: agents file artifacts under the project they work in; owners filter,
   move and rename them.** Each artifact can carry one category, usually the repo or client it
   belongs to. Agents set it when they publish (`category` on `publish_artifact` and
@@ -339,7 +447,6 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   see your categories, never the people you share with. Update the plugin (0.12.0) for the agent
   rules. Self-hosters: apply migration `0009_categories` before deploying
   ([deploy checklist](docs/deploy-checklist.md#6-upgrading-and-rolling-back)).
-
 - **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
   in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
   CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not

@@ -45,7 +45,8 @@ test("a doc's owner gets Ask an agent with the reason instead of Edit, and the r
   const form = panel.getByRole("form", { name: "Ask an agent" });
   await form.getByRole("textbox", { name: "What should change?" }).fill("Add a summary");
   await form.getByRole("button", { name: "Send to Claude" }).click();
-  await expect(panel.locator("article").filter({ hasText: "Add a summary" })).toBeVisible();
+  await expect(page.getByText("Request sent to Claude")).toBeVisible();
+  await expect(panel).toBeHidden();
 
   const client = await mcpClient(token, OPAQUE_APP_ORIGIN);
   try {

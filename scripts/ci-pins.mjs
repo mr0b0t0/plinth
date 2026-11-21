@@ -10,8 +10,17 @@ export const CI_PINNED = [
   "README.md",
 ];
 
-const ACTION_PIN = /(mr0b0t0\/plinth\/publish@v)\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
-const CLI_PIN = /(@mr0b0t0\/plinth@)\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g;
+/** A release version, as `pnpm release` takes it: 0.6.0, or a prerelease such as 0.6.0-rc.1. */
+export const VERSION = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`;
+
+/** A whole release version (scripts/release.mjs checks its argument with it). */
+export const VERSION_RE = new RegExp(`^${VERSION}$`);
+
+/** ACTION_REF in packages/shared/src/ci.ts: the Action at one release tag, prereleases included. */
+export const ACTION_REF_RE = new RegExp(`^mr0b0t0/plinth/publish@v${VERSION}$`);
+
+const ACTION_PIN = new RegExp(`(mr0b0t0/plinth/publish@v)${VERSION}`, "g");
+const CLI_PIN = new RegExp(`(@mr0b0t0/plinth@)${VERSION}`, "g");
 
 /** `text` with every CI pin set to `version`. */
 export function withCiPins(text, version) {

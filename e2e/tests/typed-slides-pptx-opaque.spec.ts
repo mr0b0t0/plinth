@@ -75,9 +75,7 @@ test("a deck exports under an opaque origin, leaving its file images out", async
   await page.getByRole("menuitem", { name: "Download .pptx" }).click();
   const download = await downloaded;
   await expect(page.getByText("Downloaded the .pptx")).toBeVisible();
-  await expect(
-    page.getByText("Images were left out: this Plinth instance serves decks with opaque origins."),
-  ).toBeVisible();
+  await expect(page.getByText("Images were left out.")).toBeVisible();
 
   const file = await readPptx(download);
   expect(file.name).toBe("Opaque export.pptx");

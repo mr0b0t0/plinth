@@ -152,6 +152,24 @@ async function credentialExpiry(
   return times.length ? Math.min(...times) : null;
 }
 
+/**
+ * When the room closes a socket opened at `now` (ms since the epoch): a content pass's lifetime,
+ * less random(0, lifetimeJitterS), and never past `credential` (credentialExpiry). Sockets that one
+ * reconnect wave opened together (after a deploy, say) would otherwise all reach their lifetime in
+ * the same alarm and reconnect together again 12 hours later; each wave spreads them out further.
+ * Only the lifetime moves, always earlier: a credential's own expiry is kept exactly.
+ */
+export function watchCloseAt(
+  now: number,
+  credential: number | null,
+  random: () => number = Math.random,
+): number {
+  const { socketTtlS, lifetimeJitterS } = LIVE_VIEW_LIMITS;
+  const jitter = Math.floor(random() * lifetimeJitterS * 1000);
+  const lifetime = now + socketTtlS * 1000 - Math.min(Math.max(jitter, 0), lifetimeJitterS * 1000);
+  return credential === null ? lifetime : Math.min(lifetime, credential);
+}
+
 /** Checks 6 to 9, then the room. */
 export async function serveViewWatch(c: AppContext): Promise<Response> {
   const config = c.get("config");
@@ -188,14 +206,12 @@ async function upgrade(c: AppContext): Promise<Response> {
   });
   if (!access.watch) return refuse(config, 404, "not_found");
 
-  // The socket lives a content pass's lifetime, and never past the credential that opened it.
-  const lifetime = Date.now() + LIVE_VIEW_LIMITS.socketTtlS * 1000;
   const credential = await credentialExpiry(c, ctx, a);
   const connect: WatchConnect = {
     artifactId: a.id,
     kind: "watch",
     epoch: a.accessEpoch,
-    passExp: credential === null ? lifetime : Math.min(lifetime, credential),
+    passExp: watchCloseAt(Date.now(), credential),
     version: a.currentVersion,
     data: access.data,
     client: await clientKey(ctx, a.id),

@@ -8,7 +8,11 @@
 :root {
   --ds-panel: #f6f8fa;
   --ds-check: #e8ebef;
+  --ds-fill: #dfe4ea;
   --ds-accent: #0a58ca;
+  /* Every token sample, in every group and at every width: one size. */
+  --ds-sample-w: 176px;
+  --ds-sample-h: 40px;
   --ds-warn-bg: #fff4e0;
   --ds-warn-fg: #7a4a00;
   --ds-info-bg: #e7f0ff;
@@ -19,6 +23,7 @@
   :root {
     --ds-panel: #181b20;
     --ds-check: #23272e;
+    --ds-fill: #2d333b;
     --ds-accent: #6cb2ff;
     --ds-warn-bg: #3a2a10;
     --ds-warn-fg: #f3c98a;
@@ -60,22 +65,13 @@
   line-height: 1.2;
 }
 
-.ds-eyebrow {
-  margin: 0 0 4px;
-  color: var(--doc-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.ds-header .ds-prose.plinth-doc {
+  margin: 0;
 }
 
 .ds-lede {
-  font-size: 1.1rem;
-}
-
-.ds-muted {
   color: var(--doc-muted);
-  font-size: 0.92rem;
+  font-size: 1.1rem;
 }
 
 .plinth-design_system code {
@@ -120,17 +116,25 @@
   background: var(--ds-panel);
 }
 
+.ds-nav a[aria-current] {
+  background: var(--ds-panel);
+  color: var(--doc-heading);
+  font-weight: 600;
+}
+
 .ds-nav a:focus-visible,
-.ds-copy:focus-visible,
-.ds-seg button:focus-visible,
-.ds-table:focus-visible {
+.ds-token__var:focus-visible {
   outline: 2px solid var(--doc-focus);
   outline-offset: 2px;
 }
 
-.ds-nav__child a {
-  padding-left: 20px;
+.ds-nav__label {
+  display: block;
+  margin-top: 12px;
+  padding: 5px 8px;
   color: var(--doc-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .ds-section {
@@ -153,11 +157,6 @@
   font-size: 1.05rem;
 }
 
-.ds-fonts,
-.ds-component-list {
-  padding-left: 1.4em;
-}
-
 .ds-badge {
   display: inline-block;
   padding: 1px 8px;
@@ -177,20 +176,35 @@
   color: var(--ds-info-fg);
 }
 
-/* Token tables */
-
-.ds-table {
-  max-width: 100%;
-  overflow-x: auto;
-}
+/* Token tables: the samples in one column of the same width in every group, then the token's
+   name, variable and value. At phone width every row stacks the same way: sample, then text. */
 
 .ds-table table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 0.92rem;
 }
 
-.ds-table th,
+.ds-col-sample {
+  width: calc(var(--ds-sample-w) + 24px);
+}
+
+/* "Light" and "Dark", once above a group's sample pairs. */
+.ds-themes {
+  display: flex;
+  gap: 8px;
+  box-sizing: content-box;
+  width: var(--ds-sample-w);
+  padding: 0 12px 4px;
+  color: var(--doc-muted);
+  font-size: 0.78rem;
+}
+
+.ds-themes span {
+  flex: 1 1 0;
+}
+
 .ds-table td {
   padding: 10px 12px;
   border-bottom: 1px solid var(--doc-border);
@@ -198,16 +212,23 @@
   vertical-align: top;
 }
 
-.ds-table th {
-  color: var(--doc-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
+/* The column headings, for screen readers only: the section heading names the group. */
+.ds-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.ds-token__samples {
+.ds-token__pair {
   display: flex;
   gap: 8px;
-  min-width: 132px;
+  width: var(--ds-sample-w);
 }
 
 .ds-token__path {
@@ -215,12 +236,41 @@
   font-weight: 600;
 }
 
-.ds-token__name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
+/* The variable name copies itself: it reads as code, with a hint on hover. "Copied" takes the
+   name's place for a moment, so the row never moves. */
+.ds-token__var {
+  position: relative;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--doc-fg);
+  font: inherit;
+  font-family: var(--doc-mono);
+  font-size: 0.85em;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: copy;
+}
+
+.ds-token__var:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.ds-token__var[data-copied] {
+  color: transparent;
+  text-decoration: none;
+}
+
+.ds-token__var[data-copied]::after {
+  content: "Copied";
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--doc-muted);
+  white-space: nowrap;
 }
 
 .ds-token__desc,
@@ -230,38 +280,48 @@
   color: var(--doc-muted);
 }
 
-.ds-token__values code {
-  display: block;
-  white-space: nowrap;
+/* The variable, then the value (light, then dark), on one line while they fit. */
+.ds-token__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  margin-top: 2px;
 }
 
-.ds-token__dark {
+.ds-token__line .ds-token__var {
+  margin: 0;
+}
+
+.ds-token__values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  min-width: 0;
   color: var(--doc-muted);
 }
 
-.ds-copy {
-  padding: 1px 8px;
-  border: 1px solid var(--doc-border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--doc-fg);
-  font: inherit;
-  font-size: 0.78rem;
-  cursor: pointer;
+.ds-token__values code {
+  overflow-wrap: anywhere;
 }
 
-.ds-copy:hover {
-  background: var(--ds-panel);
-}
-
-/* Samples: each one shows a token's value; light and dark samples sit on their own ground. */
+/* Samples: one size, a neutral 1px border and the same left edge in every group. A light and dark
+   pair sits on each theme's ground; a single sample (the same in both themes) sits on the
+   reader's. */
 
 .ds-sample {
   flex: 1 1 0;
-  min-width: 56px;
-  min-height: 48px;
+  box-sizing: border-box;
+  min-width: 0;
+  height: var(--ds-sample-h);
+  overflow: hidden;
   border: 1px solid var(--doc-border);
   border-radius: 8px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+}
+
+.ds-sample[data-theme="light"] {
   background: #ffffff;
   color: #1f2328;
 }
@@ -277,49 +337,49 @@
     repeating-conic-gradient(var(--ds-check) 0% 25%, transparent 0% 50%) 50% / 12px 12px;
 }
 
-.ds-sample--type {
+.ds-sample--type,
+.ds-sample--space,
+.ds-sample--other {
   display: flex;
   align-items: center;
-  min-width: 220px;
-  padding: 8px 10px;
+  padding: 0 10px;
+}
+
+.ds-sample__text {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.ds-sample--space {
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-}
-
 .ds-sample__bar {
   display: block;
+  flex: none;
   max-width: 100%;
   height: 12px;
   border-radius: 2px;
   background: var(--ds-accent);
 }
 
-.ds-sample--radius {
-  border-width: 2px;
-  border-color: var(--ds-accent);
+/* A radius is a filled tile with that radius (set on the sample itself). */
+.ds-sample.ds-sample--radius {
+  background: var(--ds-fill);
 }
 
+/* The shadow shows outside the sample. */
 .ds-sample--shadow {
-  margin: 6px;
-  border-color: transparent;
+  overflow: visible;
 }
 
 .ds-sample--motion {
   position: relative;
-  overflow: hidden;
 }
 
 .ds-sample__dot {
   position: absolute;
   top: 50%;
-  left: 8px;
+  left: 10px;
   width: 12px;
   height: 12px;
   margin-top: -6px;
@@ -329,84 +389,30 @@
 }
 
 .ds-sample--motion:hover .ds-sample__dot {
-  left: calc(100% - 20px);
+  left: calc(100% - 22px);
 }
 
 .ds-sample--other {
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
   font-family: var(--doc-mono);
   font-size: 0.85rem;
 }
 
-/* Components */
+/* Components: the description, the usage, then each example: its name and its preview. */
 
 .ds-example {
   margin: 16px 0 24px;
-  border: 1px solid var(--doc-border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.ds-example__bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--doc-border);
-  background: var(--ds-panel);
 }
 
 .ds-example__name {
-  margin-right: auto;
-  color: var(--doc-heading);
-  font-weight: 600;
-}
-
-.ds-seg {
-  display: inline-flex;
-  border: 1px solid var(--doc-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.ds-seg[hidden] {
-  display: none;
-}
-
-.ds-seg button {
-  padding: 3px 10px;
-  border: 0;
-  border-right: 1px solid var(--doc-border);
-  background: transparent;
-  color: var(--doc-fg);
-  font: inherit;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.ds-seg button:last-child {
-  border-right: 0;
-}
-
-.ds-seg button[aria-pressed="true"] {
-  background: var(--doc-bg);
+  margin: 0 0 8px;
   color: var(--doc-heading);
   font-weight: 600;
 }
 
 .ds-example__stage {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 1px;
-  background: var(--doc-border);
-}
-
-.ds-example__stage[hidden] {
-  display: none;
+  border: 1px solid var(--doc-border);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .ds-preview__frame {
@@ -415,38 +421,31 @@
   min-width: 0;
   border: 0;
   background: #ffffff;
-  resize: horizontal;
 }
 
 .ds-preview__frame[data-theme="dark"] {
   background: #0d1117;
 }
 
-.ds-example__code {
-  margin: 0;
-  padding: 14px 16px;
-  overflow-x: auto;
-  background: var(--doc-code-bg);
-  font-size: 0.85rem;
-  line-height: 1.5;
-  white-space: pre;
-}
-
-.ds-example__code[hidden] {
-  display: none;
-}
-
 .ds-error {
-  max-width: 72ch;
-  margin: 0 auto;
+  margin: 0;
+  color: var(--doc-muted);
 }
 
-.ds-error h1 {
-  font-size: 1.5rem;
+/* Headings the author wrote sit under the site's own section headings, which carry the only rules
+   and no "#" anchors, so the page has one heading style and every rule spans the column. */
+.ds-prose.plinth-doc h1 {
+  font-size: 1.25rem;
 }
 
-.ds-problems code {
-  font-weight: 600;
+.ds-prose.plinth-doc h2 {
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-size: 1.1rem;
+}
+
+.ds-prose .plinth-doc__anchor {
+  display: none;
 }
 
 @media (max-width: 760px) {
@@ -455,23 +454,83 @@
     gap: 16px;
   }
 
+  /* The navigation is one row that scrolls sideways, components after their label. */
   .ds-nav {
-    position: static;
+    position: relative;
+    top: auto;
     max-height: none;
+    margin: 0 -16px;
+    padding: 0 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .ds-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .ds-nav ul {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    align-items: center;
+    gap: 2px;
+    white-space: nowrap;
   }
 
-  .ds-nav__child {
+  .ds-nav__group,
+  .ds-nav__group ul {
+    display: contents;
+  }
+
+  .ds-nav__label {
+    margin: 0 0 0 6px;
+    padding: 5px 8px 5px 14px;
+    border-left: 1px solid var(--doc-rule);
+    line-height: 1.6;
+  }
+
+  /* The row fades out at its edges, so a cut-off link reads as more to scroll to. */
+  .ds-nav {
+    -webkit-mask-image: linear-gradient(
+      90deg,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 40px),
+      transparent
+    );
+    mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 40px), transparent);
+  }
+
+  .ds-nav > ul::after {
+    content: "";
+    flex: 0 0 24px;
+  }
+
+  /* Every row stacks the same way: the sample, then the name, variable and value. */
+  .ds-table colgroup {
     display: none;
   }
 
-  .ds-example__stage {
-    grid-auto-flow: row;
+  .ds-table :is(table, tbody, tr, td) {
+    display: block;
+  }
+
+  .ds-table tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--doc-border);
+  }
+
+  .ds-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .ds-table td + td {
+    margin-top: 8px;
+  }
+
+  .ds-themes {
+    padding: 0 0 4px;
   }
 }
 
@@ -484,9 +543,7 @@
     color-scheme: light;
   }
 
-  .ds-nav,
-  .ds-copy,
-  .ds-seg {
+  .ds-nav {
     display: none;
   }
 

@@ -145,6 +145,19 @@ describe("values and coercion", () => {
     expect(calc("A2:A4", rows)).toEqual(E("#VALUE!"));
   });
 
+  it("shows an empty cell a formula returns as blank, as Google Sheets does, and as 0 in math", () => {
+    const rows: Cell[][] = [[null, 5]];
+    // Excel shows 0 for these; Plinth keeps the cell blank (DECISIONS.md).
+    expect(calc("A2", rows)).toBe(null);
+    expect(calc('IF(TRUE,A2,"x")', rows)).toBe(null);
+    expect(calc("INDEX(A2:B2,1,1)", rows)).toBe(null);
+    // In arithmetic and text an empty cell is 0 and "", as in both.
+    expect(calc("A2+1", rows)).toBe(1);
+    expect(calc("A2*B2", rows)).toBe(0);
+    expect(calc('A2&"x"', rows)).toBe("x");
+    expect(calc("A2=0", rows)).toBe(true);
+  });
+
   it("reads numeric text in time linear in its length", () => {
     expect(numberFromText("1.")).toBe(1);
     expect(numberFromText(" .5 ")).toBe(0.5);

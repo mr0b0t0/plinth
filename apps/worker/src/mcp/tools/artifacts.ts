@@ -27,7 +27,6 @@ import {
   DESIGN_PUBLISH_NOTE,
   DESIGN_SYSTEM_PUBLISH_NOTE,
   DOC_PUBLISH_NOTE,
-  dictationNote,
   INVITATION_NOTE,
   LIVE_DRAFT_NOTE,
   PROJECT_FILES_NOTE,
@@ -35,8 +34,8 @@ import {
   ROOM_PAGE_NOTE,
   SHEET_PUBLISH_NOTE,
   SLIDES_PUBLISH_NOTE,
-  SOURCES_DETAIL_NOTE,
   TYPE_UPDATE_NOTE,
+  UNTRUSTED_FILES_NOTE,
   UNTRUSTED_NOTE,
   WHITEBOARD_PUBLISH_NOTE,
 } from "../notes.ts";
@@ -67,7 +66,6 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         opaque +
         DATA_PAGE_NOTE +
         ROOM_PAGE_NOTE +
-        dictationNote(ctx.config) +
         PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
@@ -93,7 +91,6 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         WHITEBOARD_PUBLISH_NOTE +
         opaque +
         DATA_PAGE_NOTE +
-        dictationNote(ctx.config) +
         PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
@@ -118,8 +115,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "{id, title, version, current_version}, or null when you cannot open it. " +
         "category is the owner's grouping, shown only to the owner (null for everyone else). " +
         LIVE_DRAFT_NOTE +
-        SOURCES_DETAIL_NOTE +
-        UNTRUSTED_NOTE,
+        UNTRUSTED_FILES_NOTE,
       inputSchema: getArtifactInput,
       annotations: MCP_TOOL_ANNOTATIONS.get_artifact,
     },
@@ -157,7 +153,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
       title: "List versions",
       description:
         "Version history of an artifact: number, author (person or connection label), note and date. " +
-        UNTRUSTED_NOTE,
+        UNTRUSTED_FILES_NOTE,
       inputSchema: listVersionsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_versions,
     },

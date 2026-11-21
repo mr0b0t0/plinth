@@ -7,9 +7,9 @@
 // back as it was. A checkbox toggles with Enter, Space or a double-click; Delete clears a cell;
 // pasting tab-separated text writes the rows it covers. Rows other people hold show their email.
 //
-// Rows and columns: the edit strip inserts and deletes them with a `struct` frame, which the room
-// applies only while nobody else holds a lease, and the column settings change a column's name,
-// type and format through a lease on the header line. Every line this sends is checked first with
+// Rows and columns: the strip's Row and Column menus insert and delete them with a `struct` frame,
+// which the room applies only while nobody else holds a lease, and the column settings change a
+// column's name, type and format through a lease on the header line. Every line this sends is checked first with
 // the same rules the room applies (checkRow, the header rules), so a refused value never leaves the
 // frame and the room's draft is always a valid sheet.
 //
@@ -35,6 +35,7 @@ import {
   type SheetHeader,
   type SheetNumberFormat,
   type SheetStructOp,
+  sameRowRules,
   serializeSheet,
   sheetHeaderLine,
   splitLines,
@@ -47,7 +48,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import type { Grid } from "./grid.ts";
+import { type Grid, personName } from "./grid.ts";
 import { cellFromInput, inputText, type NumberLocale, numberLocale, parseTsv } from "./input.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
@@ -293,6 +294,8 @@ export class SheetEditor {
   private want: Want | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private notice: HTMLElement | null = null;
+  /** Says to a screen reader what the tinted rows already show (who holds a row). */
+  private said: HTMLElement | null = null;
   private strip: HTMLElement | null = null;
   private panel: HTMLElement | null = null;
   private lastStruct: SentStruct | null = null;
@@ -349,10 +352,12 @@ export class SheetEditor {
     const t = grid.table;
     if (on) {
       t.addEventListener("keydown", this.onKey);
+      t.addEventListener("mousedown", this.onPress);
       t.addEventListener("dblclick", this.onDouble);
       t.addEventListener("paste", this.onPaste);
     } else {
       t.removeEventListener("keydown", this.onKey);
+      t.removeEventListener("mousedown", this.onPress);
       t.removeEventListener("dblclick", this.onDouble);
       t.removeEventListener("paste", this.onPaste);
     }
@@ -407,10 +412,14 @@ export class SheetEditor {
       this.mountStrip();
     } else {
       this.win.removeEventListener("keydown", this.onSaveKey);
+      this.closeMenu(false);
       this.strip?.remove();
       this.strip = null;
+      this.stripButtons.clear();
       this.closePanel();
       this.hideNotice();
+      this.said?.remove();
+      this.said = null;
       this.wantFirst = false;
     }
     g?.el.classList.toggle("plinth-sheet__page--editing", on);
@@ -472,6 +481,14 @@ export class SheetEditor {
     }
   };
 
+  /**
+   * A double-click outside an open field selects no words: it opens the cell or, on a row someone
+   * else holds or a cell that cannot be edited, does nothing, and the row's tint is the one cue.
+   */
+  private readonly onPress = (e: MouseEvent) => {
+    if (e.detail > 1 && !this.open?.td.contains(e.target as Node)) e.preventDefault();
+  };
+
   private readonly onDouble = (e: MouseEvent) => {
     if (this.open?.td.contains(e.target as Node)) return;
     const at = this.addressOf(e.target);
@@ -521,23 +538,28 @@ export class SheetEditor {
     return undefined;
   }
 
+  /**
+   * A held row: its tint says it is held (the name on its row number), so only a screen reader
+   * is told, unless the holder went idle and the row can be taken over (a choice, so a notice
+   * with the button).
+   */
   private explainHeld(l: ClientLease, what: string): void {
     const idle = Date.now() - l.at >= LIMITS.liveLeaseIdleS * 1000;
-    this.showNotice(
-      `${l.by} is editing ${what}.`,
-      idle && this.backend.you?.right === "write"
-        ? {
-            label: "Take over",
-            run: () => {
-              this.close(true);
-              const row = l.start + 1;
-              const sel = this.grid?.selected();
-              this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
-              if (this.backend.takeover(l.id)) this.hideNotice();
-            },
-          }
-        : undefined,
-    );
+    const text = `${personName(l.by)} is editing ${what}.`;
+    if (!idle || this.backend.you?.right !== "write") {
+      this.announce(text);
+      return;
+    }
+    this.showNotice(text, {
+      label: "Take over",
+      run: () => {
+        this.close(true);
+        const row = l.start + 1;
+        const sel = this.grid?.selected();
+        this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
+        if (this.backend.takeover(l.id)) this.hideNotice();
+      },
+    });
   }
 
   /** Ask for a cell's row, then open a field in it. */
@@ -775,7 +797,7 @@ export class SheetEditor {
       this.dropKept(w);
       return;
     }
-    if (reason === "held") this.showNotice(`${by ?? "Someone"} is editing this row.`);
+    if (reason === "held") this.announce(`${by ? personName(by) : "Someone"} is editing this row.`);
     else if (reason === "frozen")
       this.showNotice("Editing is paused until the changes are reviewed.");
     else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
@@ -821,13 +843,29 @@ export class SheetEditor {
       };
       return;
     }
+    // What was typed since the room's last ack (the last moments before a freeze) is quoted, so
+    // the person can type it again. One line: the edit bar already says the sheet changed.
+    const unsent = this.unsent(o);
     this.closeField();
-    this.showNotice(
-      reason === "takeover"
-        ? "Someone else took over this row."
-        : "Editing is paused: the sheet changed. Your cell was closed.",
-    );
+    const takeover = reason === "takeover";
+    if (unsent === null) {
+      this.showNotice(takeover ? "Someone else took over this row." : "Paused: the sheet changed.");
+    } else {
+      const said = `${takeover ? "Taken over." : "Paused."} ${notKept(unsent, a1(o.row, o.col))}`;
+      this.showNotice(said, undefined, unsent);
+    }
     this.hooks.status();
+  }
+
+  /** The open field's text when the room does not hold it (typed after its last ack), or null. */
+  private unsent(o: Open): string | null {
+    const value = o.field.value;
+    const held = this.backend.ackedText ?? o.original;
+    const col = this.header()?.columns[o.col];
+    let kept: string;
+    if (o.row === 1) kept = sheetHeaderLine(held)?.columns[o.col]?.name ?? "";
+    else kept = col ? inputText(rowCells(held)?.[o.col] ?? null, col, this.loc) : "";
+    return value === kept ? null : value;
   }
 
   /** The backend's lines or leases changed (the grid was redrawn). */
@@ -851,9 +889,7 @@ export class SheetEditor {
   private dropKept(w: Extract<Want, { kind: "cell" }>): void {
     const text = w.keep ?? "";
     this.closeField();
-    this.showNotice(
-      `${a1(w.row, w.col)} changed while you were away. Your text was not kept: ${text}`,
-    );
+    this.showNotice(`${a1(w.row, w.col)} changed meanwhile. ${notKept(text)}`, undefined, text);
     this.hooks.status();
   }
 
@@ -871,7 +907,9 @@ export class SheetEditor {
     }
     this.lastStruct = null;
     if (reason === "held") {
-      this.showNotice(`${by ?? "Someone"} is editing. Rows and columns change once they finish.`);
+      this.showNotice(
+        `${by ? personName(by) : "Someone"} is editing. Rows and columns change once they finish.`,
+      );
     } else if (reason === "frozen") {
       this.showNotice("Editing is paused until the changes are reviewed.");
     } else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
@@ -1053,47 +1091,140 @@ export class SheetEditor {
 
   // ---------- rows and columns ----------
 
+  /** The Row and Column menus go in the bar, beside the filter (no toolbar of their own). */
   private mountStrip(): void {
     const g = this.grid;
     if (!g) return;
     if (!this.strip) this.strip = this.makeStrip();
-    if (this.strip.parentNode !== g.slot) g.slot.append(this.strip);
-    if (this.panel && this.panel.parentNode !== g.slot) g.slot.append(this.panel);
+    if (this.strip.parentNode !== g.tools) g.tools.append(this.strip);
+    if (this.panel && this.panel.parentNode !== g.el) g.el.append(this.panel);
+    if (this.panel) this.placePanel();
   }
 
   private stripButtons = new Map<string, HTMLButtonElement>();
+  private menuOpen: { button: HTMLButtonElement; list: HTMLElement } | null = null;
 
+  /** Two menus, Row and Column, acting on the selected cell. */
   private makeStrip(): HTMLElement {
     const d = this.doc;
     const strip = d.createElement("div");
     strip.className = "plinth-sheet__strip";
     strip.setAttribute("role", "toolbar");
     strip.setAttribute("aria-label", "Rows and columns");
-    const add = (key: string, label: string, run: () => void) => {
-      const b = d.createElement("button");
-      b.type = "button";
-      b.className = "plinth-sheet__btn";
-      b.textContent = label;
-      b.addEventListener("click", run);
-      this.stripButtons.set(key, b);
-      strip.append(b);
-    };
-    add("rowAbove", "Row above", () => this.rowAction("above"));
-    add("rowBelow", "Row below", () => this.rowAction("below"));
-    add("rowDelete", "Delete row", () => this.rowAction("delete"));
-    add("colLeft", "Column left", () => this.columnAction("left"));
-    add("colRight", "Column right", () => this.columnAction("right"));
-    add("colDelete", "Delete column", () => this.columnAction("delete"));
-    add("colEdit", "Column settings", () => this.openPanel());
-    const hint = d.createElement("span");
-    hint.className = "plinth-sheet__hint";
-    hint.textContent = "Double-click a cell, or select it and type, to edit.";
-    strip.append(hint);
+    strip.append(
+      this.makeMenu("Row", [
+        ["rowAbove", "Insert above", () => this.rowAction("above")],
+        ["rowBelow", "Insert below", () => this.rowAction("below")],
+        ["rowDelete", "Delete row", () => this.rowAction("delete")],
+      ]),
+      this.makeMenu("Column", [
+        ["colLeft", "Insert left", () => this.columnAction("left")],
+        ["colRight", "Insert right", () => this.columnAction("right")],
+        ["colDelete", "Delete column", () => this.columnAction("delete")],
+        ["colEdit", "Column settings…", () => this.openPanel()],
+      ]),
+    );
     return strip;
+  }
+
+  /** A menu button and its list: arrows move, Escape and Tab close, a choice runs and closes. */
+  private makeMenu(label: string, items: [string, string, () => void][]): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement("div");
+    wrap.className = "plinth-sheet__menu";
+    const button = d.createElement("button");
+    button.type = "button";
+    button.className = "plinth-sheet__btn plinth-sheet__menu-btn";
+    button.textContent = label;
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    const list = d.createElement("div");
+    list.className = "plinth-sheet__menu-list";
+    list.id = `plinth-sheet-menu-${label.toLowerCase()}`;
+    list.setAttribute("role", "menu");
+    list.setAttribute("aria-label", label);
+    list.hidden = true;
+    button.setAttribute("aria-controls", list.id);
+    for (const [key, text, run] of items) {
+      const item = d.createElement("button");
+      item.type = "button";
+      item.className = "plinth-sheet__menu-item";
+      item.setAttribute("role", "menuitem");
+      item.tabIndex = -1;
+      item.textContent = text;
+      item.addEventListener("click", () => {
+        this.closeMenu(true);
+        run();
+      });
+      this.stripButtons.set(key, item);
+      list.append(item);
+    }
+    const enabled = () =>
+      [...list.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].filter((b) => !b.disabled);
+    const show = (focus: "first" | "last") => {
+      this.closeMenu(false);
+      this.updateStrip();
+      list.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      this.menuOpen = { button, list };
+      this.doc.addEventListener("pointerdown", this.onOutside, true);
+      const all = enabled();
+      (focus === "first" ? all[0] : all[all.length - 1])?.focus();
+    };
+    button.addEventListener("click", () => {
+      if (this.menuOpen?.list === list) this.closeMenu(true);
+      else show("first");
+    });
+    button.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        show(e.key === "ArrowDown" ? "first" : "last");
+      }
+    });
+    list.addEventListener("keydown", (e) => {
+      const all = enabled();
+      const at = all.indexOf(this.doc.activeElement as HTMLButtonElement);
+      let next: HTMLButtonElement | undefined;
+      if (e.key === "ArrowDown") next = all[(at + 1) % all.length];
+      else if (e.key === "ArrowUp") next = all[(at - 1 + all.length) % all.length];
+      else if (e.key === "Home") next = all[0];
+      else if (e.key === "End") next = all[all.length - 1];
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeMenu(true);
+        return;
+      } else if (e.key === "Tab") {
+        this.closeMenu(false);
+        return;
+      } else return;
+      e.preventDefault();
+      next?.focus();
+    });
+    wrap.append(button, list);
+    return wrap;
+  }
+
+  private readonly onOutside = (e: Event) => {
+    const m = this.menuOpen;
+    if (m && !m.list.parentNode?.contains(e.target as Node)) this.closeMenu(false);
+  };
+
+  private closeMenu(focusButton: boolean): void {
+    const m = this.menuOpen;
+    if (!m) return;
+    this.menuOpen = null;
+    this.doc.removeEventListener("pointerdown", this.onOutside, true);
+    m.list.hidden = true;
+    m.button.setAttribute("aria-expanded", "false");
+    if (focusButton) m.button.focus();
   }
 
   private updateStrip(): void {
     if (!this.strip || !this.grid) return;
+    // Nothing on the strip works while the draft waits for a review.
+    this.strip.hidden = this.backend.conflictVersion !== null;
+    if (this.strip.hidden) this.closeMenu(false);
     const { row } = this.grid.selected();
     const cols = this.header()?.columns.length ?? 0;
     const set = (k: string, disabled: boolean) => {
@@ -1107,6 +1238,11 @@ export class SheetEditor {
     set("colRight", cols >= LIMITS.maxSheetColumns);
   }
 
+  /** The room's state changed (connected, frozen): the strip follows. */
+  sync(): void {
+    this.updateStrip();
+  }
+
   /** Send a struct; `again` aims it at the same rows or column if the room says it is stale. */
   private struct(op: SheetStructOp, again: SentStruct["again"]): void {
     if (!this.canWrite()) return;
@@ -1115,7 +1251,9 @@ export class SheetEditor {
     const b = this.backend;
     for (const l of b.leases.values()) {
       if (l.id !== b.mine?.id) {
-        this.showNotice(`${l.by} is editing. Rows and columns change once they finish.`);
+        this.showNotice(
+          `${personName(l.by)} is editing. Rows and columns change once they finish.`,
+        );
         return;
       }
     }
@@ -1193,9 +1331,26 @@ export class SheetEditor {
   // ---------- column settings ----------
 
   private closePanel(): void {
-    this.panel?.remove();
+    if (!this.panel) return;
+    this.panel.remove();
     this.panel = null;
+    this.win.removeEventListener("resize", this.placePanel);
+    this.doc.removeEventListener("scroll", this.placePanel, true);
   }
+
+  /** The settings popover, under the selected column's name and inside the frame. */
+  private readonly placePanel = () => {
+    const p = this.panel;
+    const g = this.grid;
+    if (!p || !g) return;
+    const head = g.cell(1, Number(p.dataset.col ?? 0));
+    const bar = g.tools.getBoundingClientRect();
+    const r = head?.getBoundingClientRect() ?? bar;
+    const room = this.doc.documentElement.clientWidth;
+    const width = p.offsetWidth;
+    p.style.top = `${Math.round(Math.max(r.bottom, bar.bottom) + 4)}px`;
+    p.style.left = `${Math.round(Math.max(8, Math.min(r.left, room - width - 8)))}px`;
+  };
 
   private openPanel(): void {
     const g = this.grid;
@@ -1207,6 +1362,7 @@ export class SheetEditor {
     const d = this.doc;
     const form = d.createElement("form");
     form.className = "plinth-sheet__panel";
+    form.dataset.col = String(col);
     form.setAttribute("aria-label", `Column ${colLetter(col)} settings`);
     const field = (labelText: string, input: HTMLElement) => {
       const label = d.createElement("label");
@@ -1225,17 +1381,17 @@ export class SheetEditor {
     for (const t of SHEET_COLUMN_TYPES) {
       const o = d.createElement("option");
       o.value = t;
-      o.textContent = t;
+      o.textContent = t === "url" ? "URL" : `${t[0]?.toUpperCase()}${t.slice(1)}`;
       type.append(o);
     }
     type.value = c.type;
     field("Type", type);
     const style = d.createElement("select");
     for (const [v, t] of [
-      ["", "automatic"],
-      ["plain", "plain"],
-      ["percent", "percent"],
-      ["currency", "currency"],
+      ["", "Automatic"],
+      ["plain", "Plain"],
+      ["percent", "Percent"],
+      ["currency", "Currency"],
     ] as const) {
       const o = d.createElement("option");
       o.value = v;
@@ -1271,16 +1427,27 @@ export class SheetEditor {
     sync();
     const apply = d.createElement("button");
     apply.type = "submit";
-    apply.className = "plinth-sheet__btn";
+    apply.className = "plinth-sheet__btn plinth-sheet__btn--primary";
     apply.textContent = "Apply";
     const cancel = d.createElement("button");
     cancel.type = "button";
     cancel.className = "plinth-sheet__btn";
     cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => this.closePanel());
+    const dismiss = () => {
+      this.closePanel();
+      const cell = this.grid?.selected();
+      if (cell) this.grid?.cell(cell.row, cell.col)?.focus();
+    };
+    cancel.addEventListener("click", dismiss);
+    form.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      dismiss();
+    });
     const actions = d.createElement("div");
     actions.className = "plinth-sheet__panel-actions";
-    actions.append(apply, cancel);
+    actions.append(cancel, apply);
     form.append(actions);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -1321,13 +1488,16 @@ export class SheetEditor {
         const line = headerWith(now, at, change);
         if (typeof line !== "string") return line;
         const next = sheetHeaderLine(line) as SheetHeader;
-        const problem = rowsProblem(lines, next);
+        const problem = sameRowRules(now, next) ? null : rowsProblem(lines, next);
         if (problem) return { error: `Some cells do not fit: ${problem}` };
         return [line];
       });
     });
     this.panel = form;
-    g.slot.append(form);
+    g.el.append(form);
+    this.placePanel();
+    this.win.addEventListener("resize", this.placePanel);
+    this.doc.addEventListener("scroll", this.placePanel, true);
     name.focus();
   }
 
@@ -1338,7 +1508,12 @@ export class SheetEditor {
     if (this.editing) this.showNotice(text);
   }
 
-  private showNotice(text: string, action?: { label: string; run: () => void }): void {
+  private showNotice(
+    text: string,
+    action?: { label: string; run: () => void },
+    /** The whole text when the notice quotes only its start. */
+    full?: string,
+  ): void {
     let el = this.notice;
     if (!el) {
       el = this.doc.createElement("div");
@@ -1349,6 +1524,7 @@ export class SheetEditor {
     }
     const msg = this.doc.createElement("span");
     msg.textContent = text;
+    if (full !== undefined) msg.title = full;
     const parts: Node[] = [msg];
     if (action) {
       const btn = this.doc.createElement("button");
@@ -1373,8 +1549,46 @@ export class SheetEditor {
     this.notice = null;
   }
 
+  /** Tells a screen reader only (a polite status): nothing on screen repeats the rows' tint. */
+  private announce(text: string): void {
+    let el = this.said;
+    if (!el) {
+      el = this.doc.createElement("div");
+      el.className = "plinth-sheet__sr";
+      el.setAttribute("role", "status");
+      this.doc.body.append(el);
+      this.said = el;
+    }
+    // The same words again are announced again.
+    el.textContent = "";
+    el.textContent = text;
+  }
+
+  /** For tests: what a screen reader was last told. */
+  get announced(): string {
+    return this.said?.textContent ?? "";
+  }
+
   /** For tests and the status line. */
   get field(): Field | null {
     return this.open?.field ?? null;
   }
+}
+
+/** Characters of dropped text a notice quotes; the whole text is the notice's title. */
+const NOT_KEPT_CHARS = 40;
+
+/**
+ * The text a closed cell dropped, quoted on one line and cut to NOT_KEPT_CHARS (at a space when
+ * one is near the end).
+ */
+export function notKept(text: string, at?: string): string {
+  const chars = [...text.replace(/\s+/g, " ").trim()];
+  let shown = chars.join("");
+  if (chars.length > NOT_KEPT_CHARS) {
+    const cut = chars.slice(0, NOT_KEPT_CHARS - 1).join("");
+    const space = cut.lastIndexOf(" ");
+    shown = `${(space >= NOT_KEPT_CHARS / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
+  }
+  return `Not kept${at ? ` in ${at}` : ""}: "${shown}"`;
 }

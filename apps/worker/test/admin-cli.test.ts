@@ -391,12 +391,13 @@ describe("admin CLI: shared data", () => {
   });
 });
 
-// Open counts (migrations/0010_view_counts.sql) go with the artifact, by cascade.
-describe("admin CLI: view counts", () => {
+// Artifact stats (migrations/0010 and 0020): an artifact's opens go with it, by cascade, and an
+// erased person stays counted on other people's artifacts, as nobody.
+describe("admin CLI: artifact stats", () => {
   async function seedCounts(artifactId: string) {
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?1, '2026-11-18', 4)",
+        "INSERT INTO artifact_opens (artifact_id, opened_at, viewer_kind) VALUES (?1, '2026-11-18T10:00:00.000Z', 'unknown')",
       ).bind(artifactId),
       env.DB.prepare(
         "INSERT INTO artifact_view_totals (artifact_id, views, first_day) VALUES (?1, 9, '2026-07-01')",
@@ -405,7 +406,7 @@ describe("admin CLI: view counts", () => {
   }
   async function countRows(artifactId: string) {
     const r = await env.DB.prepare(
-      `SELECT (SELECT count(*) FROM artifact_view_days WHERE artifact_id = ?1) AS days,
+      `SELECT (SELECT count(*) FROM artifact_opens WHERE artifact_id = ?1) AS days,
               (SELECT count(*) FROM artifact_view_totals WHERE artifact_id = ?1) AS totals`,
     )
       .bind(artifactId)
@@ -413,7 +414,7 @@ describe("admin CLI: view counts", () => {
     return r;
   }
 
-  it("erase-artifact leaves no view rows", async () => {
+  it("erase-artifact leaves no open rows", async () => {
     const owner = await agent();
     const { body: a } = await publish(owner.auth);
     const { body: kept } = await publish(owner.auth);
@@ -425,7 +426,7 @@ describe("admin CLI: view counts", () => {
     expect(await countRows(kept.id)).toEqual({ days: 1, totals: 1 });
   });
 
-  it("erase-user leaves no view rows for any of the person's artifacts", async () => {
+  it("erase-user leaves no open rows for any of the person's artifacts", async () => {
     const owner = await agent();
     const other = await agent();
     const { body: a } = await publish(owner.auth);
@@ -436,5 +437,49 @@ describe("admin CLI: view counts", () => {
     expect(await countRows(a.id)).toEqual({ days: 0, totals: 0 });
     expect(await countRows(b.id)).toEqual({ days: 0, totals: 0 });
     expect(await countRows(theirs.id)).toEqual({ days: 1, totals: 1 });
+  });
+
+  it("erase-user keeps the person's opens of others' artifacts counted, and forgets who they were", async () => {
+    const owner = await agent();
+    const person = await agent();
+    const bystander = await agent();
+    const { body: page } = await publish(owner.auth);
+    const at = "2026-11-18T10:00:00.000Z";
+    const insert = (kind: string, col: string | null, value: string | null) =>
+      env.DB.prepare(
+        `INSERT INTO artifact_opens (artifact_id, version, opened_at, viewer_kind, role${col ? `, ${col}` : ""})
+         VALUES (?1, 1, ?2, ?3, 'viewer'${col ? ", ?4" : ""})`,
+      ).bind(...[page.id, at, kind, ...(col ? [value] : [])]);
+    await env.DB.batch([
+      insert("user", "user_id", person.user.id),
+      insert("email", "email", person.user.email),
+      insert("user", "user_id", bystander.user.id),
+      insert("anonymous", "visitor", "V".repeat(22)),
+    ]);
+    await runStatements(eraseUserSql(person.user.email));
+    const rows = await env.DB.prepare(
+      "SELECT viewer_kind, user_id, email, visitor, role FROM artifact_opens WHERE artifact_id = ?1 ORDER BY id",
+    )
+      .bind(page.id)
+      .all();
+    const gone = { viewer_kind: "unknown", user_id: null, email: null, visitor: null, role: null };
+    expect(rows.results).toEqual([
+      gone,
+      gone,
+      {
+        viewer_kind: "user",
+        user_id: bystander.user.id,
+        email: null,
+        visitor: null,
+        role: "viewer",
+      },
+      {
+        viewer_kind: "anonymous",
+        user_id: null,
+        email: null,
+        visitor: "V".repeat(22),
+        role: "viewer",
+      },
+    ]);
   });
 });

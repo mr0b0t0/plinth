@@ -1,7 +1,8 @@
 // Ask an agent (docs/spec.md "Ask an agent"): a person points at something on an HTML page or a
 // design board, describes the change and picks the owner's agent; the request is an ordinary
 // mention (`request_to`), which that agent lists, claims and answers with a version, and the
-// thread shows it done. Also: a request to an owner whose only agent is neither Claude nor Codex,
+// thread shows it done. A sent request is confirmed with a toast, and the comments panel it opened
+// closes. Also: a request to an owner whose only agent is neither Claude nor Codex,
 // and the Ask dialog in edit mode, which publishes first only when asked. The opaque-isolation
 // case is in ask-agent-opaque.spec.ts.
 import { expect, type Page, test } from "@playwright/test";
@@ -35,7 +36,6 @@ interface MentionItem {
   comment_body: string;
   comment_author_role: string | null;
   anchor: Record<string, unknown> | null;
-  source: string;
 }
 
 /** Ask an agent: the bar's button where it is shown, else the ⋯ item (commenters, phone width). */
@@ -46,6 +46,12 @@ async function openAsk(page: Page) {
     await page.getByRole("button", { name: "Artifact actions" }).click();
     await page.getByRole("menuitem", { name: "Ask an agent" }).click();
   }
+}
+
+/** Open the comments panel from the bar. */
+async function openComments(page: Page) {
+  await page.getByRole("button", { name: "Comments", exact: true }).click();
+  return page.getByRole("region", { name: "Comments" });
 }
 
 /** The request composer in the comments panel, once the frame has reloaded in review mode. */
@@ -90,10 +96,13 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
   const { panel, form } = await requestForm(page);
   // Only the client type is shown, never the connection's label; one agent needs no choice.
   await expect(form.getByRole("button", { name: "Send to Claude" })).toBeVisible();
-  await expect(form.getByRole("group", { name: "Send to" })).toHaveCount(0);
+  await expect(form.getByRole("group", { name: "Ask" })).toHaveCount(0);
+  await expect(form.getByRole("combobox", { name: "Ask" })).toHaveCount(0);
   await expect(panel).not.toContainText("Work Claude");
 
   await form.getByRole("button", { name: "Point at something" }).click();
+  // One short line and Cancel while picking.
+  await expect(panel.getByRole("status").filter({ hasText: "Pick an element" })).toBeVisible();
   const frame = page.frameLocator(CURRENT_FRAME);
   await expect(async () => {
     await frame.locator("h1").click();
@@ -101,7 +110,10 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
   }).toPass({ timeout: 10_000 });
   await form.getByRole("textbox", { name: "What should change?" }).fill("Make the heading red");
   await form.getByRole("button", { name: "Send to Claude" }).click();
+  await expect(page.getByText("Request sent to Claude")).toBeVisible();
+  await expect(panel).toBeHidden();
 
+  await openComments(page);
   const thread = panel.locator("article").filter({ hasText: "Make the heading red" });
   await expect(thread.locator('[data-state="pending"]')).toContainText("@claude");
 
@@ -114,7 +126,6 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
       target: "@claude",
       comment_body: "Make the heading red",
       comment_author_role: "commenter",
-      source: "comment",
     });
     expect(task.anchor).toMatchObject({ selector: expect.any(String), text: "Launch plan" });
     expect((await tool(client, "claim_mention", { task_id: task.id })).isError).toBe(false);
@@ -176,7 +187,8 @@ test("the owner asks about a design board from the bar, and the request names th
     await expect(form.getByText("Pointing at")).toBeVisible();
     await form.getByRole("textbox", { name: "What should change?" }).fill("Bigger headline");
     await form.getByRole("button", { name: "Send to Codex" }).click();
-    await expect(panel.locator("article").filter({ hasText: "Bigger headline" })).toBeVisible();
+    await expect(page.getByText("Request sent to Codex")).toBeVisible();
+    await expect(panel).toBeHidden();
 
     const listed = await tool<{ items: MentionItem[] }>(client, "list_mentions", {});
     const task = listed.data.items.find((t) => t.artifact_id === r.data.id);
@@ -201,6 +213,8 @@ test("an owner whose only agent is another client sends to it, and that connecti
   const { form, panel } = await requestForm(page);
   await form.getByRole("textbox", { name: "What should change?" }).fill("Add a footer");
   await form.getByRole("button", { name: "Send to your other agent" }).click();
+  await expect(page.getByText("Request sent to your other agent")).toBeVisible();
+  await openComments(page);
   const thread = panel.locator("article").filter({ hasText: "Add a footer" });
   await expect(thread.locator('[data-state="pending"]')).toContainText("The owner's other agent");
 

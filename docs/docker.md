@@ -233,15 +233,14 @@ it starts the instance as it is.
 | `PLINTH_MAX_ARTIFACTS_PER_USER`, `PLINTH_MAX_PUBLISHES_PER_HOUR`, `PLINTH_MAX_VERSION_BYTES`, `PLINTH_MAX_ASSETS_PER_VERSION`, `PLINTH_MAX_STORAGE_BYTES_PER_USER`, `PLINTH_CDN_ALLOWLIST`, `PLINTH_ALLOW_PUBLIC_VISIBILITY`, `PLINTH_PUBLIC_MIN_ACCOUNT_AGE_HOURS` | as in self-hosting.md | Limits and the script allowlist. `PLINTH_MAX_VERSION_BYTES` (default 50 MB) and `PLINTH_MAX_ASSETS_PER_VERSION` (default 511) size one version |
 | `PLINTH_ALLOW_ROOMS`, `PLINTH_ALLOW_LIVE_EDITING` | `true` | Live rooms and on-page doc editing. The instance's config always carries the `ROOMS` binding they need; `"false"` turns them off |
 | `PLINTH_ALLOW_LIVE_VIEWS` | `true` | Live views: open pages follow new versions and shared-data changes over a WebSocket on the app host, through the same `ROOMS` binding, and keep the reader's state across versions; `"false"` turns them off and pages poll and reload the frame for each version |
-| `PLINTH_ALLOW_DICTATION` | `false` | Dictation run by the app for pages that declare it; `"true"` turns it on (origin isolation only) |
-| `PLINTH_ALLOW_SLIDES_FOLLOW` | `true` | Following the presenter in a deck, over the same live rooms; `"false"` turns it off |
-| `PLINTH_ALLOW_FILES` | `false` | Files people add to a page that declares `files`; `"true"` turns it on (origin isolation only). The `FILES_*` limits keep their defaults |
-| `PLINTH_ALLOW_PAGE_REQUESTS` | `false` | Pages that declare `requests` hand work to the owner's agent; `"true"` turns it on (origin isolation only). The `PAGE_REQUESTS_*` limits keep their defaults |
-| `PLINTH_ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people (a portal page lists what the owner reviewed into it); `"false"` turns it off |
 | `PLINTH_SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000` ([self-hosting.md](self-hosting.md#settings)) |
+| `PLINTH_ALLOW_SLIDES_FOLLOW` | `true` | Following the presenter in a deck, over the same live rooms; `"false"` turns it off |
+| `PLINTH_ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people (a portal page lists what the owner reviewed into it); `"false"` turns it off |
+| `PLINTH_INVITATION_EMAILS_PER_DAY`, `PLINTH_INVITATION_EMAILS_PER_OWNER_PER_DAY` | `1000`, `20` | Invitation emails per UTC day for the whole instance (one cap shared by every owner) and for one owner. Keep the first well under your email provider's daily quota, which sign-in codes share; `0` turns invitation emails off ([self-hosting.md](self-hosting.md#settings)) |
+| `PLINTH_DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`, `PLINTH_DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` | `120`, `20` | Design PNG and PDF exports per hour for the whole instance, and for one design by everyone but its owner and editors. A container has no Browser Rendering binding, so exports are off and these apply only if you add one to its config ([self-hosting.md](self-hosting.md#settings)) |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |
 
-Each `PLINTH_OPERATOR_*`, limit and `PLINTH_ALLOW_*` variable sets the Worker setting of the same
+Each `PLINTH_OPERATOR_*`, limit, `PLINTH_INVITATION_EMAILS_*` and `PLINTH_ALLOW_*` variable sets the Worker setting of the same
 name without the `PLINTH_` prefix; [self-hosting.md](self-hosting.md#settings) explains them.
 
 The secrets the Worker needs, `SESSION_SECRET` and `TOKEN_SIGNING_KEY` (and `ADMIN_TOKEN` for a

@@ -53,11 +53,7 @@ describe("policy: roomAccess for the slides channel", () => {
       roomOpen: ["*"],
       people: true,
       comments: false,
-      dictation: false,
       hold: false,
-      files: false,
-      requests: false,
-      requestsTo: [],
     };
     expect(roomAccess(claimOf("viewer"), caps, "slides", deck)).toMatchObject({
       seeIdentity: false,

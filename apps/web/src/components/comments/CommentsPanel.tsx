@@ -23,6 +23,7 @@ import {
   SegmentedControl,
   SkeletonText,
   Spinner,
+  showToast,
   Tooltip,
 } from "../ui/index.ts";
 import { askTargetInText } from "./askTargets.ts";
@@ -83,8 +84,11 @@ export interface CommentsPanelProps {
    * (for the names). Absent: this person may not ask, and the panel has no request mode.
    */
   ask?: { targets: ClientType[]; owner: boolean };
-  /** Ask an agent was chosen: the composer switches to request mode. `n` changes every time. */
-  request?: { n: number; anchor: PageAnchor | null } | null;
+  /**
+   * Ask an agent was chosen: the composer switches to request mode. `n` changes every time;
+   * `opened`: the panel was opened for it, so it closes again once the request is sent.
+   */
+  request?: { n: number; anchor: PageAnchor | null; opened?: boolean } | null;
   /** Read the targets again after a request was refused because its agent went away. */
   onTargetsStale?: () => Promise<ClientType[] | null>;
 }
@@ -149,8 +153,6 @@ export function CommentsPanel({
   const [sending, setSending] = useState(false);
   const [composeError, setComposeError] = useState<string | undefined>();
   const [blocked, setBlocked] = useState<Blocked>(null);
-  /** The owner or an editor (the list says so): page requests are dismissed, not withdrawn. */
-  const [moderator, setModerator] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   // Ask an agent: the composer in request mode, the agents it can go to, and the one chosen.
   const [requesting, setRequesting] = useState(false);
@@ -195,7 +197,7 @@ export function CommentsPanel({
     if (items) onItemsRef.current?.(items);
   }, [items]);
   const anchors = useMemo(() => highlightAnchors(threads), [threads]);
-  const anchorsKey = JSON.stringify(anchors);
+  const anchorsKey = useMemo(() => JSON.stringify(anchors), [anchors]);
   const anchorsRef = useRef(anchors);
   anchorsRef.current = anchors;
 
@@ -213,15 +215,11 @@ export function CommentsPanel({
       loadingRef.current = true;
       if (opts.manual) setRefreshing(true);
       try {
-        const res = await api<{
-          items: CommentInfo[];
-          can_comment?: boolean;
-          signed_in?: boolean;
-          can_moderate?: boolean;
-        }>(commentsPath);
+        const res = await api<{ items: CommentInfo[]; can_comment?: boolean; signed_in?: boolean }>(
+          commentsPath,
+        );
         // Say up front when this person cannot comment, instead of after they typed something.
         if (res.can_comment === false) setBlocked(res.signed_in ? "forbidden" : "signin");
-        setModerator(res.can_moderate === true);
         const seen = seenRef.current;
         if (seen) {
           const fresh = res.items.filter((c) => !seen.has(c.id));
@@ -406,6 +404,26 @@ export function CommentsPanel({
   }, []);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+
+  // Another version is shown now (a live update, or the person picked one), or the page started or
+  // stopped anchoring its own comments. A pin placed on the old page may mean nothing on this one,
+  // so it is removed (the draft stays) and a page request it answered ends `closed`. Picking ends
+  // too when the page now anchors its own comments: it has no bridge to pick with. This runs
+  // before a new page request is taken (the effect below), so it never clears a fresh one.
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
+  const shownRef = useRef({ version, pageOwnsAnchors });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per version or declaration
+  useEffect(() => {
+    const prev = shownRef.current;
+    shownRef.current = { version, pageOwnsAnchors };
+    if (prev.version === version && prev.pageOwnsAnchors === pageOwnsAnchors) return;
+    if (pageOwnsAnchors) setPicking(false);
+    if (!anchorRef.current && !pageReqRef.current) return;
+    if (anchorRef.current) announce("The pin was removed: the page changed.");
+    setAnchor(null);
+    settlePage({ status: "closed" });
+  }, [version, pageOwnsAnchors]);
   // Whether this person can comment is never told to the page, not even by timing: a request
   // from someone who cannot comment (the panel says "Sign in to comment") is held like any other,
   // and ends `closed` when the panel closes or a later request replaces it, as for a commenter
@@ -519,15 +537,25 @@ export function CommentsPanel({
       setAnchor(null);
       setRequesting(false);
       settlePage({ status: "posted", id: created.id });
+      if (requesting) {
+        // A request is confirmed the way the Ask dialog confirms it: one toast. A panel opened
+        // for the request closes with it.
+        showToast({
+          title: to
+            ? `Request sent to ${askTargetInText(to, ask?.owner === true)}`
+            : "Posted as a comment",
+          tone: "success",
+        });
+        if (request?.opened) {
+          onClose();
+          return;
+        }
+      }
       if (filter === "resolved") setFilter("open");
       focusThreadRef.current = { id: created.id, focus: true };
       setActiveId(created.id);
       afterWrite(created);
-      announce(
-        to
-          ? `Request sent to ${askTargetInText(to, ask?.owner === true)}.${mentionSummary(created)}`
-          : `Comment posted.${mentionSummary(created)}`,
-      );
+      if (!requesting) announce(`Comment posted.${mentionSummary(created)}`);
     } catch (e) {
       setComposeError(writeError(e));
     } finally {
@@ -570,6 +598,12 @@ export function CommentsPanel({
 
   const next = pathname + (search.toString() ? `?${search.toString()}` : "");
   const loginHref = `${APP_ROUTES.login}?next=${encodeURIComponent(next)}`;
+  // Ask an agent with no thread to show: the panel is just the request form, under its title.
+  const requestOnly =
+    requesting &&
+    !picking &&
+    !loadError &&
+    (items === null || (filter === "open" && visible.length === 0));
   const emptyText: Record<CommentFilter, string> = {
     open: threads.length > 0 ? "No open comments." : "No comments yet.",
     resolved: "No resolved comments.",
@@ -583,6 +617,7 @@ export function CommentsPanel({
         className="cm-panel"
         aria-label="Comments"
         data-picking={picking || undefined}
+        data-request-only={requestOnly || undefined}
         onKeyDown={(e) => {
           if (e.key !== "Escape" || e.defaultPrevented) return;
           e.preventDefault();
@@ -593,41 +628,49 @@ export function CommentsPanel({
         <header className="cm-head">
           <div className="cm-head__row">
             <h2 ref={headingRef} tabIndex={-1} className="cm-head__title">
-              Comments
+              {requestOnly ? "Ask an agent" : "Comments"}
             </h2>
-            {items && (
+            {items && !requestOnly && (
               <span className="cm-count" data-testid="comments-count">
                 {openCount}
                 <span className="visually-hidden"> open</span>
               </span>
             )}
             <span className="cm-head__tools">
-              <Tooltip content="Refresh comments">
-                <IconButton
-                  size="sm"
-                  icon={ArrowClockwiseIcon}
-                  label="Refresh comments"
-                  loading={refreshing}
-                  onClick={() => void load({ manual: true })}
-                />
-              </Tooltip>
+              {!requestOnly && (
+                <Tooltip content="Refresh comments">
+                  <IconButton
+                    size="sm"
+                    icon={ArrowClockwiseIcon}
+                    label="Refresh comments"
+                    loading={refreshing}
+                    onClick={() => void load({ manual: true })}
+                  />
+                </Tooltip>
+              )}
               <Tooltip content="Close comments">
                 <IconButton size="sm" icon={XIcon} label="Close comments" onClick={onClose} />
               </Tooltip>
             </span>
           </div>
-          <SegmentedControl
-            label="Show comments"
-            size="sm"
-            options={FILTERS}
-            value={filter}
-            onChange={setFilter}
-            className="cm-filter"
-          />
+          {!requestOnly && (
+            <SegmentedControl
+              label="Show comments"
+              size="sm"
+              options={FILTERS}
+              value={filter}
+              onChange={setFilter}
+              className="cm-filter"
+            />
+          )}
         </header>
 
-        <div className="cm-list" aria-busy={items === null && !loadError ? true : undefined}>
-          {loadError && items === null ? (
+        <div
+          className="cm-list"
+          hidden={requestOnly}
+          aria-busy={items === null && !loadError ? true : undefined}
+        >
+          {requestOnly ? null : loadError && items === null ? (
             <p className="cm-note cm-note--error" role="alert">
               {loadError}
             </p>
@@ -660,7 +703,6 @@ export function CommentsPanel({
                     version={version}
                     active={t.root.id === activeId}
                     readOnly={blocked !== null}
-                    moderator={moderator}
                     onActivate={activate}
                     onReply={reply}
                     onSetStatus={setStatus}
