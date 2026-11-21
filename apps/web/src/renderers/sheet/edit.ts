@@ -58,7 +58,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import { clampWidth, columnWidth, type Grid, personName } from "./grid.ts";
+import { clampWidth, columnWidth, freezeDropped, type Grid, personName } from "./grid.ts";
 import { cellFromInput, inputText, type NumberLocale, numberLocale, parseTsv } from "./input.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
@@ -1532,13 +1532,16 @@ export class SheetEditor {
     set("rowUp", row <= 2 || row > last);
     set("rowDown", row < 2 || row >= last);
     set("rowDelete", row < 2);
-    // The freeze items show only where they do something.
+    // The freeze items show only where they do something: not in a frame too narrow to keep
+    // those columns in view, where they would scroll with the rest (grid.ts, unfreezeQuery).
     const hide = (k: string, hidden: boolean) => {
       const b = this.stripButtons.get(k);
       if (b) b.hidden = hidden;
     };
-    hide("colFreeze", col + 1 > MAX_FROZEN || frozen === col + 1);
-    hide("colUnfreeze", frozen === 0);
+    const columns = header?.columns ?? [];
+    const dropped = (n: number) => freezeDropped(this.doc.defaultView, columns, n);
+    hide("colFreeze", col + 1 > MAX_FROZEN || frozen === col + 1 || dropped(col + 1));
+    hide("colUnfreeze", frozen === 0 || dropped(frozen));
     set("colDelete", cols <= 1);
     set("colLeft", cols >= LIMITS.maxSheetColumns);
     set("colRight", cols >= LIMITS.maxSheetColumns);

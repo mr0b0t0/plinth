@@ -167,6 +167,27 @@ export function frozenWidthOf(columns: readonly SheetColumn[], freeze: number): 
   return w;
 }
 
+/**
+ * The frames too narrow to keep the first `freeze` columns in view, as a media query, or null
+ * when nothing is frozen. Frozen columns wider than half the frame would leave a phone almost
+ * nothing to scroll, so there they scroll with the rest (sheet.css, plinth-sheet--unfrozen).
+ */
+export function unfreezeQuery(columns: readonly SheetColumn[], freeze: number): string | null {
+  const n = Math.min(5, freeze, columns.length);
+  if (n <= 0) return null;
+  return `(max-width: ${(ROW_NUMBER_WIDTH + frozenWidthOf(columns, n)) * 2}px)`;
+}
+
+/** Whether the first `freeze` columns scroll with the rest in this frame (unfreezeQuery). */
+export function freezeDropped(
+  view: Window | null | undefined,
+  columns: readonly SheetColumn[],
+  freeze: number,
+): boolean {
+  const query = unfreezeQuery(columns, freeze);
+  return query !== null && view?.matchMedia?.(query).matches === true;
+}
+
 /** The text the formula bar shows for a stored cell: exactly what the sheet holds. */
 export function rawText(cell: Cell): string {
   if (cell === null) return "";
@@ -695,12 +716,11 @@ export function buildGrid(
     }
   });
 
-  // Frozen columns wider than half the frame would leave a phone almost nothing to scroll, so
-  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen). A grid that was replaced
-  // (a live sheet whose shape changed) stops listening the next time the width crosses the line.
-  const frozenWidth = freeze > 0 ? ROW_NUMBER_WIDTH + frozenWidthOf(cols, freeze) : 0;
-  const narrow =
-    frozenWidth > 0 ? doc.defaultView?.matchMedia?.(`(max-width: ${frozenWidth * 2}px)`) : null;
+  // Frozen columns wider than half the frame scroll with the rest (unfreezeQuery). A grid that
+  // was replaced (a live sheet whose shape changed) stops listening the next time the width
+  // crosses the line.
+  const query = unfreezeQuery(cols, freeze);
+  const narrow = query ? doc.defaultView?.matchMedia?.(query) : null;
   if (narrow) {
     let applied = false;
     const apply = () => {

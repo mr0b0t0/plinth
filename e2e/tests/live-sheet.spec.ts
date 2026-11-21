@@ -496,6 +496,14 @@ test("a cell opens in a docked editor at phone width, and in the cell otherwise"
   await expect(columns.getByRole("menuitem", { name: "Unfreeze columns" })).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(columns).toBeHidden();
+  // Item and Qty with the row numbers take more than half of a phone, where they would scroll
+  // with the rest: freezing them is offered only where it keeps them in view.
+  await cell(page, "B4").click();
+  await frame.getByRole("button", { name: "Column", exact: true }).click();
+  const freeze = columns.getByRole("menuitem", { name: "Freeze up to this column" });
+  if (phone) await expect(freeze).toBeHidden();
+  else await expect(freeze).toBeVisible();
+  await page.keyboard.press("Escape");
 });
 
 test("an agent's version during a row move or a width change is never merged: the review shows both", async ({

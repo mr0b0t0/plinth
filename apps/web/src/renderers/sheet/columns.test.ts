@@ -954,7 +954,8 @@ describe("freezing", () => {
   });
 
   it("offers no freeze past the fifth column", () => {
-    const cols = Array.from({ length: 7 }, (_, i) => ({ name: `C${i}`, type: "text" }));
+    // Narrow columns, so five of them stay in view in the test's 1024px frame.
+    const cols = Array.from({ length: 7 }, (_, i) => ({ name: `C${i}`, type: "text", width: 60 }));
     solo({}, [JSON.stringify({ plinth: "sheet", v: 1, columns: cols }), '["a"]']);
     cell("E2").focus();
     expect(columnItem("Freeze up to this column").hidden).toBe(false);
@@ -970,6 +971,32 @@ describe("freezing", () => {
     del.focus();
     key(del, "ArrowDown");
     expect(document.activeElement).toBe(settings);
+  });
+
+  it("offers no freeze item a frame too narrow to keep those columns in view", () => {
+    // A 360px frame: the frozen columns scroll with the rest past 180px (48px of row numbers and
+    // 120px a column, so column A stays in view and A to B does not).
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => {
+      const max = Number(/max-width: (\d+)px/.exec(query)?.[1] ?? Number.POSITIVE_INFINITY);
+      return {
+        matches: 360 <= max,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      } as unknown as MediaQueryList;
+    });
+    const frozenAtB = JSON.stringify({ ...JSON.parse(HEADER), freeze: { cols: 2 } });
+    solo({}, [frozenAtB, ...LINES.slice(1)]);
+    expect(document.querySelector(".plinth-sheet--unfrozen")).not.toBeNull();
+    cell("A2").focus();
+    // Column A alone fits; Unfreeze would change nothing on this frame, since A to B scroll here.
+    expect(columnItem("Freeze up to this column").hidden).toBe(false);
+    expect(item("Unfreeze columns").hidden).toBe(true);
+    key(item("Insert left"), "Escape");
+    cell("C2").focus();
+    expect(columnItem("Freeze up to this column").hidden).toBe(true);
+    expect(item("Unfreeze columns").hidden).toBe(true);
+    vi.restoreAllMocks();
   });
 
   it("has no header controls outside edit mode", () => {
