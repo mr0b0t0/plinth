@@ -3183,7 +3183,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   and Ask's "Publish my changes first" wait, the page asks before it is left, and the typing is in
   the rescue store. The tab's kept copy stays the deck as written, which can still be published
   from "Unpublished changes from earlier in this tab" after a reload (the typing would put it past
-  the size limit), and the rescue store writes the typing back once editing starts again. If edit
+  the size limit), and the rescue store writes the typing back once editing starts again; the
+  notice's **Discard**, or Discard in the review of that copy or of the frame's own, drops the
+  typing from the store with the copy, as the ⋯ menu's Discard does. If edit
   mode ends anyway it is kept on the page with **Copy**, still `unsavable`, and editing again opens
   it as a block of its own. Alone, the room's frame limit does not apply to a block: only the
   deck's size limit does. A struct op that removes the lines a solo place holds ends its lease as

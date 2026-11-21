@@ -268,6 +268,15 @@ export function useLiveEdit({
   const unkept = useRef<RescueReportMsg[]>([]);
   /** What a `rescue` report from the frame does (set once collect exists, below). */
   const onRescue = useRef<(r: RescueReportMsg) => void>(() => undefined);
+  /**
+   * A discard (the ⋯ menu's, a review's, the restore notice's): what was kept to rescue goes with
+   * the changes it belongs to, so it is never written back on the next Edit.
+   */
+  const forgetRescue = useCallback(() => {
+    if (who) clearRescue(who, id);
+    unkept.current = [];
+    setRescued(countRescue(id));
+  }, [who, id]);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
@@ -741,9 +750,7 @@ export function useLiveEdit({
           } else {
             await liveDiscard(id, rev, version);
             // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
-            if (who) clearRescue(who, id);
-            unkept.current = [];
-            setRescued(countRescue(id));
+            forgetRescue();
             done("done");
           }
           setReview(null);
@@ -756,10 +763,11 @@ export function useLiveEdit({
       })();
       return;
     }
-    // Solo: the frame's own copy, or dropping it.
+    // Solo: the frame's own copy, or dropping it (with what was kept to rescue, as the menu does).
     if (m.outcome === "discard") {
       clearPageDraft(id);
       setRestore(null);
+      forgetRescue();
       done("done");
       setReview(null);
       latest.current.onReload();
@@ -836,9 +844,7 @@ export function useLiveEdit({
     if (m === "solo") {
       clearPageDraft(id);
       setRestore(null);
-      if (who) clearRescue(who, id);
-      unkept.current = [];
-      setRescued(countRescue(id));
+      forgetRescue();
       latest.current.onReload();
       return;
     }
@@ -851,14 +857,12 @@ export function useLiveEdit({
     try {
       await liveDiscard(id, s.rev);
       // What was kept to rescue goes too; the frame drops its own on the room's reset.
-      if (who) clearRescue(who, id);
-      unkept.current = [];
-      setRescued(countRescue(id));
+      forgetRescue();
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }
-  }, [id, who, fail]);
+  }, [id, fail, forgetRescue]);
 
   // ---------- solo: keep a copy, offer it back after a reload ----------
 
@@ -919,10 +923,13 @@ export function useLiveEdit({
     });
   }, [restore, publishSolo]);
 
+  // The notice's Discard drops the typing kept apart from the copy too (a deck at its size limit
+  // keeps the copy as written and that typing in the rescue store), so Edit never writes it back.
   const dropRestore = useCallback(() => {
     clearPageDraft(id);
     setRestore(null);
-  }, [id]);
+    forgetRescue();
+  }, [id, forgetRescue]);
 
   // ---------- Ask an agent: publish first ----------
 

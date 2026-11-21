@@ -423,6 +423,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   or the speaker notes it was typed in. Editing alone (without live rooms), text a full deck
   cannot take stays in its block, and Publish and Done wait until it is shortened; the copy kept
   for a reload can still be published, and the text comes back when editing starts again.
+  Discarding that copy, or the changes in a review, discards the text too.
 
 ## 0.6.0 (2026-11-20)
 
