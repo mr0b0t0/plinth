@@ -207,6 +207,7 @@ export function ViewerStage({
     onReload: onReload ?? (() => undefined),
     onLeave: () => barRef.current?.focus(),
     onAsk: (anchor, what) => askFromFrame.current(pageAnchorOf(anchor), what),
+    userId: me?.id ?? null,
   });
   const editing = live.editing;
   // `?edit` (New and Import): start editing, with the focus on the frame's first block or cell.

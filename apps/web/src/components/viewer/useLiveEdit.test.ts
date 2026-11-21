@@ -105,7 +105,11 @@ const INFO = {
   auto_checkpoint_min_s: 600,
 };
 
-function hook(g: OkGate, onReload = vi.fn(), extra: { onLeave?: () => void } = {}) {
+function hook(
+  g: OkGate,
+  onReload = vi.fn(),
+  extra: { onLeave?: () => void; userId?: string | null } = {},
+) {
   return renderHook(() =>
     useLiveEdit({
       gate: g,
@@ -320,6 +324,8 @@ describe("useLiveEdit", () => {
     const t = await inReview((c) =>
       c.method === "DELETE" ? new Response(null, { status: 204 }) : undefined,
     );
+    fromFrame({ type: "rescue", items: [{ id: "r1", text: "Kept", near: 0 }] });
+    expect(sessionStorage.getItem("plinth-draft:page-rescue:anon:art1")).not.toBeNull();
     fromFrame({ type: "resolved", nonce: t.nonce, outcome: "discard", version: 4, rev: 7 });
     // The app confirms it first, with its own dialog: nothing is deleted until then.
     expect(t.result.current.discardAsk).toBe(4);
@@ -330,6 +336,8 @@ describe("useLiveEdit", () => {
     expect(t.calls.find((c) => c.method === "DELETE")?.path).toBe(
       "/artifacts/art1/live/draft?rev=7&conflict_version=4",
     );
+    // What was kept to rescue is discarded with it.
+    expect(sessionStorage.getItem("plinth-draft:page-rescue:anon:art1")).toBeNull();
   });
 
   it("a cancelled Discard confirmation deletes nothing and gives the review its buttons back", async () => {
@@ -631,10 +639,17 @@ describe("useLiveEdit", () => {
     expect(again.result.current.restore).toMatchObject({ text: "# Plan\n\nabc", base: 3 });
   });
 
-  it("keeps the frame's rescue items in app storage, warns before leaving, and offers them to a new frame", () => {
+  it("keeps the frame's rescue items in app storage, per person, and offers them to a new frame", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
-    const first = hook(gate("room"));
+    // Another account's store, left in this tab: dropped, never offered.
+    sessionStorage.setItem(
+      "plinth-draft:page-rescue:u0:art1",
+      JSON.stringify([{ id: "x1", text: "Someone else's", near: 0 }]),
+    );
+    const first = hook(gate("room"), vi.fn(), { userId: "u1" });
+    expect(sessionStorage.getItem("plinth-draft:page-rescue:u0:art1")).toBeNull();
     act(() => first.result.current.start());
+    expect(sentToFrame("rescue")).toHaveLength(0);
     fromFrame({ type: "live", ...STATUS, unflushed: false });
     const leave = () => {
       const e = new Event("beforeunload", { cancelable: true });
@@ -642,28 +657,59 @@ describe("useLiveEdit", () => {
       return e.defaultPrevented;
     };
     expect(leave()).toBe(false);
-    const items = [{ id: "r1", text: "Kept *text*", near: 4 }];
+    const items = [{ id: "r1", text: "Kept *text*", near: 4, at: { start: 4, text: "Kept" } }];
     fromFrame({ type: "rescue", items });
     expect(leave()).toBe(true);
     // In the app's own storage, never the content origin's.
-    expect(JSON.parse(sessionStorage.getItem("plinth-draft:page-rescue:art1") ?? "null")).toEqual(
-      items,
-    );
-    // Without the frame's key, or malformed, it changes nothing.
+    const key = "plinth-draft:page-rescue:u1:art1";
+    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toEqual(items);
+    // Without the frame's key, malformed, or over the size cap, it changes nothing.
     fromFrame({ type: "rescue", items: [] }, ORIGIN, null);
     fromFrame({ type: "rescue", items: [{ id: "bad id!", text: "x", near: 0 }] });
-    expect(sessionStorage.getItem("plinth-draft:page-rescue:art1")).not.toBeNull();
+    const big = "z".repeat(60 * 1024);
+    fromFrame({
+      type: "rescue",
+      items: [0, 1, 2, 3, 4].map((n) => ({ id: `b${n}`, text: big, near: 0 })),
+    });
+    expect(JSON.parse(sessionStorage.getItem(key) ?? "null")).toEqual(items);
     first.unmount();
     // A reload: the new frame is offered them with the edit message.
     toFrame.mockClear();
-    const second = hook(gate("room"));
+    const second = hook(gate("room"), vi.fn(), { userId: "u1" });
     act(() => second.result.current.start());
     expect(sentToFrame("rescue").at(-1)?.[0]).toMatchObject({ type: "rescue", items });
     // The frame wrote them: the store is cleared, and leaving is quiet again.
     fromFrame({ type: "live", ...STATUS, unflushed: false });
     fromFrame({ type: "rescue", items: [] });
-    expect(sessionStorage.getItem("plinth-draft:page-rescue:art1")).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
     expect(leave()).toBe(false);
+  });
+
+  it("3. a discard clears the rescue store, room and solo", async () => {
+    stubApi({
+      handle: (c) =>
+        c.path.endsWith("/live")
+          ? json(INFO)
+          : c.method === "DELETE"
+            ? new Response(null, { status: 204 })
+            : undefined,
+    });
+    const key = "plinth-draft:page-rescue:u1:art1";
+    const room = hook(gate("room"), vi.fn(), { userId: "u1" });
+    act(() => room.result.current.start());
+    fromFrame({ type: "live", ...STATUS });
+    fromFrame({ type: "rescue", items: [{ id: "r1", text: "Kept", near: 0 }] });
+    expect(sessionStorage.getItem(key)).not.toBeNull();
+    await act(() => room.result.current.discard());
+    expect(sessionStorage.getItem(key)).toBeNull();
+    room.unmount();
+    const solo = hook(gate("solo"), vi.fn(), { userId: "u1" });
+    act(() => solo.result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    fromFrame({ type: "rescue", items: [{ id: "r2", text: "Kept", near: 0 }] });
+    expect(sessionStorage.getItem(key)).not.toBeNull();
+    await act(() => solo.result.current.discard());
+    expect(sessionStorage.getItem(key)).toBeNull();
   });
 
   it("an idle autosave refused as too soon is tried again when the server says", async () => {

@@ -162,13 +162,32 @@ export function clearPageDraft(artifactId: string): void {
 const RESCUE_PREFIX = "plinth-draft:page-rescue:";
 const rescueMemory = new Map<string, unknown>();
 
-export function rescueKey(artifactId: string): string {
-  return `${RESCUE_PREFIX}${artifactId}`;
+/** One per person and artifact: after an account switch in the tab, no one writes another's text. */
+export function rescueKey(userId: string, artifactId: string): string {
+  return `${RESCUE_PREFIX}${userId}:${artifactId}`;
+}
+
+/** Drops rescue stores kept for anyone but `userId` (another account used this tab before). */
+function dropOthers(userId: string): void {
+  const mine = `${RESCUE_PREFIX}${userId}:`;
+  for (const k of [...rescueMemory.keys()]) if (!k.startsWith(mine)) rescueMemory.delete(k);
+  try {
+    const s = storage();
+    if (!s) return;
+    const gone: string[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k?.startsWith(RESCUE_PREFIX) && !k.startsWith(mine)) gone.push(k);
+    }
+    for (const k of gone) s.removeItem(k);
+  } catch {
+    // storage blocked: nothing kept there
+  }
 }
 
 /** Keeps the frame's rescue items (`[]` clears them). */
-export function saveRescue(artifactId: string, items: unknown[]): void {
-  const key = rescueKey(artifactId);
+export function saveRescue(userId: string, artifactId: string, items: unknown[]): void {
+  const key = rescueKey(userId, artifactId);
   if (items.length === 0) rescueMemory.delete(key);
   else rescueMemory.set(key, items);
   try {
@@ -181,8 +200,9 @@ export function saveRescue(artifactId: string, items: unknown[]): void {
 }
 
 /** The kept rescue items, unchecked (the caller reads them field by field), or null. */
-export function loadRescue(artifactId: string): unknown {
-  const key = rescueKey(artifactId);
+export function loadRescue(userId: string, artifactId: string): unknown {
+  dropOthers(userId);
+  const key = rescueKey(userId, artifactId);
   try {
     const raw = storage()?.getItem(key);
     if (raw) return JSON.parse(raw);

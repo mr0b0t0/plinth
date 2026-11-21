@@ -107,6 +107,8 @@ export interface UseLiveEditOptions {
   frameKey: string | null;
   /** Fetch a fresh gate (a solo publish, a discard, a lost session). */
   onReload: () => void;
+  /** The signed-in account, whose rescue store this is (null: none signed in). */
+  userId?: string | null;
   /** Esc at the top level of edit mode in the frame. */
   onLeave?: () => void;
   /** "Ask an agent" about a place on the page, from the frame (with the kind of block it is). */
@@ -221,9 +223,11 @@ export function useLiveEdit({
   onReload,
   onLeave,
   onAsk,
+  userId = null,
 }: UseLiveEditOptions): LiveEdit {
   const { artifact } = gate;
   const id = artifact.id;
+  const who = userId ?? "anon";
   const def = typeDef(artifact.type);
   const merges = liveRules(artifact.type)?.merge === "lines";
   // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
@@ -245,7 +249,7 @@ export function useLiveEdit({
   const [restore, setRestore] = useState<PageDraft | null>(null);
   /** How many typed texts the frame's rescue store holds (kept in app storage meanwhile). */
   const [rescued, setRescued] = useState(
-    () => readRescueItems(loadRescue(gate.artifact.id))?.length ?? 0,
+    () => readRescueItems(loadRescue(userId ?? "anon", gate.artifact.id))?.length ?? 0,
   );
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
@@ -436,7 +440,7 @@ export function useLiveEdit({
         },
         rescue({ items }) {
           // Typed text the room's draft does not hold yet: kept here until the frame says it does.
-          saveRescue(id, items);
+          saveRescue(who, id, items);
           setRescued(items.length);
         },
         // A version shown in place is the live-view update's answer (useViewUpdate.ts).
@@ -445,7 +449,7 @@ export function useLiveEdit({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, maxBytes, frameKey, id]);
+  }, [available, frame, target, maxBytes, frameKey, id, who]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
@@ -461,13 +465,13 @@ export function useLiveEdit({
       postToRenderer(frame, target, editMessage(editing, soloBase, focus));
       // Typed text a frame before this one could not get into the draft: offered to this one,
       // which writes what the draft does not hold yet.
-      const kept = editing ? readRescueItems(loadRescue(id)) : null;
+      const kept = editing ? readRescueItems(loadRescue(who, id)) : null;
       if (kept && kept.length > 0) postToRenderer(frame, target, rescueMessage(kept));
     };
     send();
     frame.addEventListener("load", send);
     return () => frame.removeEventListener("load", send);
-  }, [available, frame, target, editing, soloBase, id]);
+  }, [available, frame, target, editing, soloBase, id, who]);
 
   /**
    * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
@@ -702,6 +706,9 @@ export function useLiveEdit({
             done("done");
           } else {
             await liveDiscard(id, rev, version);
+            // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
+            saveRescue(who, id, []);
+            setRescued(0);
             done("done");
           }
           setReview(null);
@@ -794,6 +801,8 @@ export function useLiveEdit({
     if (m === "solo") {
       clearPageDraft(id);
       setRestore(null);
+      saveRescue(who, id, []);
+      setRescued(0);
       latest.current.onReload();
       return;
     }
@@ -805,11 +814,14 @@ export function useLiveEdit({
     }
     try {
       await liveDiscard(id, s.rev);
+      // What was kept to rescue goes too; the frame drops its own on the room's reset.
+      saveRescue(who, id, []);
+      setRescued(0);
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }
-  }, [id, fail]);
+  }, [id, who, fail]);
 
   // ---------- solo: keep a copy, offer it back after a reload ----------
 

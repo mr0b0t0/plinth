@@ -375,23 +375,38 @@ export interface RescueItem {
   id: string;
   text: string;
   near: number;
+  /** Where its last write went before its ack was heard (the only place it may have landed). */
+  at?: { start: number; text: string };
 }
 export const MAX_RESCUE_ITEMS = 20;
+/** All of a store's text together (items and their `at`), in UTF-16 units. */
+export const MAX_RESCUE_TOTAL = 256 * 1024;
 const RESCUE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** A list of rescue items, checked field by field (from the frame, or from storage), or null. */
 export function readRescueItems(v: unknown): RescueItem[] | null {
   if (!Array.isArray(v) || v.length > MAX_RESCUE_ITEMS) return null;
   const out: RescueItem[] = [];
+  const isLine = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0 && n < MAX_INT;
+  let total = 0;
   for (const it of v) {
     if (typeof it !== "object" || it === null) return null;
-    const { id, text, near } = it as Record<string, unknown>;
+    const { id, text, near, at } = it as Record<string, unknown>;
     if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
     if (typeof text !== "string" || text.length > LIMITS.liveDocFrameBytes) return null;
-    if (typeof near !== "number" || !Number.isInteger(near) || near < 0 || near >= MAX_INT) {
-      return null;
+    if (!isLine(near)) return null;
+    let where: RescueItem["at"];
+    if (at !== undefined) {
+      if (typeof at !== "object" || at === null) return null;
+      const a = at as Record<string, unknown>;
+      if (!isLine(a.start) || typeof a.text !== "string") return null;
+      if (a.text.length > LIMITS.liveDocFrameBytes) return null;
+      where = { start: a.start, text: a.text };
     }
-    out.push({ id, text, near });
+    total += text.length + (where?.text.length ?? 0);
+    if (total > MAX_RESCUE_TOTAL) return null;
+    out.push({ id, text, near, ...(where ? { at: where } : {}) });
   }
   return out;
 }

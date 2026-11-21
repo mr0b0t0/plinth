@@ -3011,7 +3011,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   there is no lease to write it with (not connected, or a review waits), it is written once there
   is.
 - **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
-  until the room's lines hold it: the frame posts it to the app, which keeps it in its own storage
+  until the room acknowledges a write of it (an item a new frame is offered is skipped only when
+  the place its last write went holds it; a discard clears the store; in solo mode items go into
+  the tab's text): the frame posts it to the app, which keeps it in its own storage
   and offers it to the frame again after a reload. A write of it that a review refuses goes in once
   the review ends; one whose place someone else holds, or that keeps meeting changed lines, goes
   in as a new block at the nearest free place (else after the last block), three places at most;
