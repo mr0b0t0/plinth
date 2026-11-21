@@ -27,7 +27,11 @@ import {
   readSessionCanWrite,
   runtimeOf,
 } from "./runtime.ts";
-import { BoardSync, READ_ONLY_TEXT } from "./sync.ts";
+// OUT_OF_DATE_TEXT is also shown, read-only, when the page runtime is older than this board (it
+// cannot name the board's format on writes, so the server would refuse every change).
+import { BoardSync, OUT_OF_DATE_TEXT, READ_ONLY_TEXT } from "./sync.ts";
+
+export { OUT_OF_DATE_TEXT };
 
 const ROOT_ID = "__plinth-whiteboard";
 const DATA_ID = "__plinth-content";
@@ -72,12 +76,6 @@ const STATUS_TEXT: Record<RoomStatus, string> = {
   closed: "Offline",
   unavailable: "Live cursors off",
 };
-
-/**
- * Shown, read-only, when the page runtime is older than this board (it cannot name the board's
- * format on writes, so the server would refuse every change): a reload brings both up to date.
- */
-export const OUT_OF_DATE_TEXT = "This page is out of date. Reload the page to change the board.";
 
 export function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -166,11 +164,16 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     say: (t, action) => board.say(t, action),
     emit: (topic, d) => board.live?.saved(topic, d.id),
     busy: (id) => board.holds(id),
+    held: (texts) => board.showHeld(texts),
   });
 
-  win.addEventListener("plinth:expired", () => {
+  win.addEventListener("plinth:expired", (e) => {
     board.setReadOnly(true);
-    board.banner("Your access changed. Reload the page.");
+    // A page older than the board's format: a reload brings the current one.
+    const reason = (e as CustomEvent<{ reason?: unknown } | null>).detail?.reason;
+    board.banner(
+      reason === "stale_page" ? OUT_OF_DATE_TEXT : "Your access changed. Reload the page.",
+    );
   });
 
   // The first snapshot of both collections: then the board is ready, fitted on a first visit.

@@ -80,6 +80,7 @@ function viewer(blocks: Coll) {
     emit: () => {},
     busy: (id) => board.holds(id),
     wait: async () => {},
+    held: (texts) => board.showHeld(texts),
   });
   board.setReadOnly(false);
   return { board, say, root };
@@ -321,6 +322,37 @@ describe("Board and a peer's save during this viewer's text edit", () => {
       { kind: "note", x: 124, y: 0, w: 200, h: 140, text: "from A", z: 1 },
     ]);
     expect(a.root.querySelector("textarea")).toBeNull();
+  });
+
+  it("holds what A is typing when the board turns read-only, until A copies or dismisses it", async () => {
+    const { a } = pair();
+    type(a, "from A");
+    a.board.setReadOnly(true);
+    expect(a.root.querySelector("textarea.wb-edit")).toBeNull();
+    const held = a.root.querySelector<HTMLElement>(".wb-held");
+    expect(held?.hidden).toBe(false);
+    expect(held?.querySelector("textarea")?.value).toBe("from A");
+    // Other messages come and go; it stays.
+    a.board.say("Block deleted.");
+    expect(held?.hidden).toBe(false);
+    const dismiss = [...(held?.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent === "Dismiss",
+    );
+    dismiss?.click();
+    expect(held?.hidden).toBe(true);
+  });
+
+  it("writes what it held as a note once the board may be changed again", async () => {
+    const { blocks, a } = pair();
+    type(a, "from A");
+    a.board.setReadOnly(true);
+    a.board.setReadOnly(false);
+    await vi.waitFor(() =>
+      expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text)).toContain("from A"),
+    );
+    await vi.waitFor(() =>
+      expect(a.root.querySelector<HTMLElement>(".wb-held")?.hidden).toBe(true),
+    );
   });
 
   it("keeps what A wrote in a note when the block was deleted before A's save reached it", async () => {

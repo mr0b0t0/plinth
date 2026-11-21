@@ -148,7 +148,8 @@ body {
 
 .wb-toolbar button,
 .wb-toolbar select,
-.wb-msg button {
+.wb-msg button,
+.wb-held button {
   font: inherit;
   font-size: 14px;
   color: var(--wb-fg);
@@ -281,6 +282,41 @@ select:focus-visible,
 .wb-banner:empty,
 .wb-msg:empty {
   display: none;
+}
+
+/* What the viewer wrote that could not be saved yet: stays until saved, copied away or dismissed. */
+.wb-held {
+  display: grid;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.wb-held[hidden] {
+  display: none;
+}
+
+.wb-held p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wb-held textarea {
+  font: inherit;
+  font-size: 14px;
+  color: var(--wb-fg);
+  background: var(--wb-surface);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  resize: vertical;
+  min-width: 0;
+}
+
+.wb-held div {
+  display: flex;
+  gap: 8px;
 }
 
 .wb-viewport {

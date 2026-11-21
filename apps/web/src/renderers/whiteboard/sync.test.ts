@@ -8,11 +8,13 @@ import { BoardModel } from "./model.ts";
 import type { RuntimeCollection, RuntimeDoc } from "./runtime.ts";
 import {
   BoardSync,
+  DELETED_AS_NOTE_TEXT,
   KEPT_AS_NOTE_TEXT,
   KEPT_CHANGING_NOTE_TEXT,
   KEPT_THEIRS_TEXT,
   noteTexts,
   READ_ONLY_TEXT,
+  SAVE_FAILED_NOTE_TEXT,
   USE_MINE_LABEL,
 } from "./sync.ts";
 
@@ -81,6 +83,7 @@ function setup() {
     say: vi.fn(),
     emit: vi.fn(),
     wait: vi.fn(async () => {}),
+    held: vi.fn(),
   };
   const put = (id: string, data: BoardBlock, rev: number) => {
     blocks.docs.set(id, { id, data, rev });
@@ -254,6 +257,89 @@ describe("BoardSync", () => {
         c2: "mine too",
       }),
     );
+  });
+
+  it("holds the text when no note can take it, until a later write lets it become one", async () => {
+    const { sync, blocks, put, deps } = setup();
+    put("a", { ...blk(0), text: "A1" }, 3);
+    blocks.docs.delete("a");
+    // The block was deleted meanwhile, and the board is full: no note fits.
+    blocks.fail = (op) =>
+      op === "add" ? Object.assign(new Error("full"), { code: "quota_exceeded" }) : null;
+    expect(await sync.saveBlock("a", { text: "mine" })).toBe(false);
+    await vi.waitFor(() => expect(deps.held).toHaveBeenLastCalledWith(["mine"]));
+    expect(sync.heldTexts()).toEqual(["mine"]);
+    // Messages come and go; what is held stays.
+    deps.say("Block deleted.");
+    expect(sync.heldTexts()).toEqual(["mine"]);
+    // Room is made: the next write that goes through writes it as a note.
+    blocks.fail = null;
+    put("b", blk(300), 4);
+    expect(await sync.saveBlock("b", { x: 310 })).toBe(true);
+    await vi.waitFor(() => expect(deps.held).toHaveBeenLastCalledWith([]));
+    expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text)).toContain("mine");
+    expect(deps.say).toHaveBeenLastCalledWith("What you wrote is saved in a new note.");
+  });
+
+  it("waits once on a rate limit before writing a note", async () => {
+    const { sync, blocks, deps } = setup();
+    let limited = true;
+    blocks.fail = (op) => {
+      if (op !== "add" || !limited) return null;
+      limited = false;
+      return Object.assign(new Error("slow"), { code: "rate_limited", retryAfter: 3 });
+    };
+    await sync.keepTyped({ x: 0, y: 0, w: 100, h: 80 }, ["mine"], DELETED_AS_NOTE_TEXT);
+    expect(deps.wait).toHaveBeenCalledWith(3000);
+    expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text)).toEqual(["mine"]);
+    expect(deps.held).not.toHaveBeenCalled();
+  });
+
+  it("keeps what the viewer wrote when a save fails for another reason: as a note, or held", async () => {
+    const { sync, blocks, put, deps } = setup();
+    put("a", { ...blk(0), text: "A1" }, 3);
+    blocks.fail = (op) =>
+      op === "set" ? Object.assign(new Error("off"), { code: "network" }) : null;
+    expect(await sync.saveBlock("a", { text: "mine" })).toBe(false);
+    await vi.waitFor(() =>
+      expect(deps.say).toHaveBeenLastCalledWith(SAVE_FAILED_NOTE_TEXT, undefined),
+    );
+    expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text).sort()).toEqual([
+      "A1",
+      "mine",
+    ]);
+    // Offline for the note too: held instead.
+    blocks.fail = () => Object.assign(new Error("off"), { code: "network" });
+    expect(await sync.saveBlock("a", { text: "mine again" })).toBe(false);
+    await vi.waitFor(() => expect(sync.heldTexts()).toEqual(["mine again"]));
+  });
+
+  it("leaves the note when Use mine did not put the text in place", async () => {
+    const { sync, blocks, model, put, deps } = setup();
+    put("a", { ...blk(0), text: "A1" }, 3);
+    blocks.docs.set("a", { id: "a", data: { ...blk(0), text: "theirs" }, rev: 7 });
+    model.upsertBlock("a", { ...blk(0), text: "theirs" }, 7);
+    await sync.saveBlock("a", { text: "mine" }, { text: "A1" }, 3);
+    await vi.waitFor(() =>
+      expect(deps.say).toHaveBeenCalledWith(KEPT_AS_NOTE_TEXT, expect.anything()),
+    );
+    const note = [...blocks.docs.keys()].find((k) => k !== "a") as string;
+    // Before she presses Use mine, someone writes again: her save keeps theirs once more.
+    const set = blocks.set.bind(blocks);
+    let once = true;
+    blocks.set = async (id, data, opts) => {
+      if (id === "a" && once) {
+        once = false;
+        blocks.docs.set("a", { id: "a", data: { ...blk(0), text: "theirs 2" }, rev: 50 });
+      }
+      return set(id, data, opts);
+    };
+    deps.say.mock.calls[0]?.[1]?.run();
+    await vi.waitFor(() => expect(deps.say).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+    expect(blocks.docs.get("a")?.data).toMatchObject({ text: "theirs 2" });
+    // The first note stays (and the second save kept hers in a note of its own).
+    expect(blocks.docs.get(note)?.data).toMatchObject({ text: "mine" });
   });
 
   it("joins what is kept into as few notes as the text limit allows", () => {

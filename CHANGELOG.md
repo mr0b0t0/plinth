@@ -47,10 +47,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   PNG and SVG exports draw all of it. Agents change a block with the new `merge` op of
   `write_artifact_data` (only the fields that change, at a rev), and a board's data has its own,
   larger limits (`DATA_BOARD_MAX_DOCS`, `DATA_BOARD_MAX_BYTES`, `DATA_BOARD_MAX_DOC_BYTES`).
-  When two people write in the same block at once, or someone deletes a block you are writing
-  in, what you wrote is kept as a new note beside it, with Use mine to put it back. A board tab
-  opened before this release turns read-only and asks for a reload instead of saving over newer
-  blocks.
+  When two people write in the same block at once, someone deletes a block you are writing in,
+  or a save fails, what you wrote is kept as a new note beside it, with Use mine to put it back;
+  if even the note cannot be saved, the page holds your text with Copy until it can. A board tab
+  opened before this release keeps working on the blocks it can read, and turns read-only and
+  asks for a reload instead of saving over newer ones.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode

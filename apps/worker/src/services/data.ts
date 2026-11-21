@@ -25,6 +25,7 @@ import {
   type EffectiveRole,
   isPersonalDocId,
   LIMITS,
+  legacyBoardLoss,
   ME_DOC_ID,
   mergeDocData,
   type PageDoc,
@@ -56,6 +57,11 @@ export interface DataWriter {
   via: DataVia;
   /** Agent connection label at write time. */
   label?: string | null;
+  /**
+   * A whiteboard page write that names no current board format (content/data-api.ts): it may
+   * change or delete only a block or arrow its older reader read whole (refuseOlderBoardPage).
+   */
+  olderBoardPage?: boolean;
 }
 
 /** The artifact whose data is used, with its current version's declaration. */
@@ -508,6 +514,26 @@ function prepareDoc(
   return measured;
 }
 
+/**
+ * A page loaded before the current board format reads a block through its older reader and writes
+ * it back whole on every move, or re-creates it from that copy on Undo, which would turn a table
+ * into an empty note, drop an outline or a #rrggbb colour, or cut a long text. So it may change or
+ * delete only what that reader read whole (whiteboard.ts legacyBoardLoss); its own new blocks and
+ * the older kinds keep working. A 401 `stale_page`, which the older pages answer by turning
+ * read-only and asking for a reload; any other refusal would leave them editable and refusing.
+ * Checked against the stored copy the guarded write then requires, so nothing slips in between.
+ */
+function refuseOlderBoardPage(w: DataWriter, collection: string, existing: StoredDoc): void {
+  if (!w.olderBoardPage) return;
+  const lost = legacyBoardLoss(collection, parseData(existing));
+  if (lost === null) return;
+  throw new ApiError(
+    "unauthorized",
+    "This board changed since the page was loaded. Reload the page.",
+    { reason: "stale_page" },
+  );
+}
+
 /** A writer the page rules refuse outright (anonymous) never reaches the rate limits. */
 function requireWriter(writer: DataWriter | null, docId: string): DataWriter {
   if (writer) return writer;
@@ -823,6 +849,7 @@ export async function putDoc(
       continue;
     }
     authorize(w, target, collection, { docId, creatorEmail: existing.created_by_email }, "update");
+    refuseOlderBoardPage(w, collection, existing);
     checkUserBytes(config, userBytes, size - existing.size_bytes);
     const any = anyCreator(w, target, collection, docId, "update");
     const row = await updateGuarded(
@@ -873,6 +900,7 @@ export async function deleteDoc(
     lastRev = existing.rev;
     if (!plain && existing.rev !== ifRev) throw conflict(existing.rev);
     authorize(w, target, collection, { docId, creatorEmail: existing.created_by_email }, "delete");
+    refuseOlderBoardPage(w, collection, existing);
     const any = anyCreator(w, target, collection, docId, "delete");
     const gone = await d1
       .prepare(

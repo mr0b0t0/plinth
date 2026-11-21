@@ -15,10 +15,12 @@ import type { Capabilities } from "./data.ts";
 export const BOARD_FORMAT_VERSION = 1;
 /**
  * What a board's page sends in CONTENT_FORMAT_HEADER on every write (`db.collection(name,
- * { format })`): the reader it was built with. The Worker refuses a page's write to a whiteboard
- * without it (`stale_page`), since a page loaded before a wider format writes back whole blocks
- * read through its older reader and would destroy what it cannot read. Raised whenever a newer
- * board holds something an older page's reader drops; agents' writes are never checked.
+ * { format })`): the reader it was built with. A page's write to a whiteboard without it may
+ * change or delete only a block or arrow that older reader read whole (legacyBoardLoss), else it
+ * is refused (`stale_page`): such a page writes back whole blocks read through its older reader
+ * and would destroy what it cannot read. Raised whenever a newer board holds something an older
+ * page's reader drops, with legacyBoardLoss taught what the previous format read; agents' writes
+ * are never checked.
  */
 export const BOARD_PAGE_FORMAT = "whiteboard.2";
 /** The two collections a board keeps, both shared: any permitted writer may move any block. */
@@ -483,6 +485,34 @@ export function boardDocError(collection: string, data: unknown): string | null 
   return path
     ? `Not a valid ${what}: ${path} must be ${message}`
     : `Not a valid ${what}: ${message}`;
+}
+
+/** What a page loaded before the wider format (BOARD_PAGE_FORMAT "whiteboard.1") could read. */
+const FORMAT_1_BLOCK_KEYS = new Set(["kind", "x", "y", "w", "h", "text", "color", "z"]);
+const FORMAT_1_KINDS = new Set(["note", "text", "rect", "ellipse"]);
+const FORMAT_1_ARROW_KEYS = new Set(["from", "to", "label", "style", "head"]);
+const FORMAT_1_MAX_TEXT = 2000;
+
+/**
+ * What a stored block or arrow holds that a page loaded before the wider format could not read,
+ * or null when that page read all of it. Such a page writes a block back whole from its older
+ * reader (a table as an empty note, an outline, a size or a #rrggbb colour dropped, text cut to
+ * 2,000 characters) and undoes a delete by writing that copy, so the Worker lets a page write
+ * that names no current format change or delete only what this says it read whole. Its new blocks
+ * and the blocks it can read keep working as they did.
+ */
+export function legacyBoardLoss(collection: string, stored: unknown): string | null {
+  if (!isObject(stored)) return null;
+  if (collection === "arrows") {
+    for (const k of Object.keys(stored)) if (!FORMAT_1_ARROW_KEYS.has(k)) return k;
+    return null;
+  }
+  if (collection !== "blocks") return null;
+  for (const k of Object.keys(stored)) if (!FORMAT_1_BLOCK_KEYS.has(k)) return k;
+  if (typeof stored.kind !== "string" || !FORMAT_1_KINDS.has(stored.kind)) return "kind";
+  if (stored.color !== undefined && !oneOf(BOARD_COLORS, stored.color)) return "color";
+  if (typeof stored.text === "string" && length(stored.text) > FORMAT_1_MAX_TEXT) return "text";
+  return null;
 }
 
 function utf8Length(s: string): number {

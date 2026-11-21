@@ -27,7 +27,8 @@
 //              unavailable
 //   PlinthError: .code unavailable | read_only | forbidden | not_found | conflict |
 //              quota_exceeded | too_large | rate_limited | expired | invalid | network;
-//              .retryAfter, .currentRev, .limit
+//              .retryAfter, .currentRev, .limit, .reason (an expired one's: "stale_page" when a
+//              page older than its board's format writes; plinth:expired's detail.reason too)
 //
 //   room       the live room (docs/spec.md "Live rooms"); nothing connects until first use:
 //              ready Promise<{ available, reason, you: { id, viewer, role, email | null, name | null } | null,

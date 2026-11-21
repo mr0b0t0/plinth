@@ -22,8 +22,9 @@
 //      the cap or makes the Worker hold a large body;
 //   9. the declaration (`data`);
 //  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write; on a
-//      whiteboard, a page write must name the current board format in x-plinth-format (a 401
-//      `stale_page` otherwise, which an older page shows as "reload the page").
+//      whiteboard, a page write that does not name the current board format in x-plinth-format
+//      may change or delete only what the older reader read whole (a 401 `stale_page` otherwise,
+//      which an older page shows as "reload the page").
 // Bodies and document contents are never logged. Routes are entries of DATA_API_ROUTES, and the
 // dispatcher runs these checks before any handler, so a route cannot skip them.
 //
@@ -412,24 +413,14 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
 // ---------- the dispatcher ----------
 
 /**
- * A whiteboard's page writes whole blocks back from what its reader made of them, so a page
- * loaded before a wider format would destroy what it cannot read (a table written back as an empty
- * note, a long text cut). The current page names its format on every write (BOARD_PAGE_FORMAT);
- * every other page write to a whiteboard is refused, a create, an update or a delete alike, before
- * anything is read or changed. It is a 401 because the only page code that writes a board is the
- * renderer, and the older renderers stop editing and say "Reload the page" on a 401 (any other
- * refusal leaves them editable, so the next typed text would be refused too). Agents' and the
- * app's writes never come through here.
+ * Whether a write comes from a whiteboard page that does not name the current board format (one
+ * loaded before it). Such a page writes whole blocks back from what its older reader made of them,
+ * so the service lets it change or delete only what that reader read whole (services/data.ts,
+ * whiteboard.ts legacyBoardLoss); the current page names its format on every write.
  */
-function refuseStalePage(request: Request, target: DataTarget): void {
-  if (target.type !== "whiteboard") return;
-  if (request.headers.get(CONTENT_FORMAT_HEADER) === BOARD_PAGE_FORMAT) return;
-  throw new ApiError(
-    "unauthorized",
-    "This board changed since the page was loaded. Reload the page.",
-    {
-      reason: "stale_page",
-    },
+function olderBoardPage(request: Request, target: DataTarget): boolean {
+  return (
+    target.type === "whiteboard" && request.headers.get(CONTENT_FORMAT_HEADER) !== BOARD_PAGE_FORMAT
   );
 }
 
@@ -545,9 +536,14 @@ async function handle(
   if (!access.read) throw new ApiError("feature_disabled", "Shared data is not available here");
   const writer: DataWriter | null =
     access.write && claim
-      ? { email: claim.email, role: claim.role, viewerId: claim.viewerId, via: "page" }
+      ? {
+          email: claim.email,
+          role: claim.role,
+          viewerId: claim.viewerId,
+          via: "page",
+          ...(olderBoardPage(request, target) ? { olderBoardPage: true } : {}),
+        }
       : null;
-  if (writer && method !== "GET") refuseStalePage(request, target);
   const res = await route.handler({
     request,
     env,

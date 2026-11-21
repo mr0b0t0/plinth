@@ -190,13 +190,93 @@ export class Board {
   }
 
   setReadOnly(on: boolean): void {
+    const was = this.readOnly;
     this.readOnly = on;
     this.doc.documentElement.dataset.readonly = String(on);
     if (on) {
+      // An edit in progress cannot be saved now: what was typed is held on the page (and becomes
+      // a note once the board may be changed again), never dropped.
+      const typed = this.typedNow();
+      if (typed) this.sync?.hold(typed.near, typed.text);
       this.finishEditing(false);
       this.setConnecting(false);
-    }
+    } else if (was) void this.sync?.flushHeld();
     this.redraw();
+  }
+
+  /** The text of the edit in progress, where its block is, when it differs from where it began. */
+  private typedNow(): {
+    near: { x: number; y: number; w: number; h: number };
+    text: string;
+  } | null {
+    const id = this.editing;
+    const start = this.editStart;
+    if (!id || !start) return null;
+    const ta = this.view.blocks.get(id)?.querySelector("textarea");
+    if (!ta || ta.value === start.text || ta.value === "") return null;
+    const b = this.model.blocks.get(id)?.data;
+    return { near: b ? { x: b.x, y: b.y, w: b.w, h: b.h } : start.box, text: ta.value };
+  }
+
+  /**
+   * Show what the viewer wrote that could not be saved yet, with Copy and Dismiss; nothing else
+   * replaces it, and it never times out. Empty hides it.
+   */
+  showHeld(texts: readonly string[]): void {
+    const el = this.view.held;
+    if (texts.length === 0) {
+      el.replaceChildren();
+      el.hidden = true;
+      return;
+    }
+    const d = this.doc;
+    const line = d.createElement("p");
+    line.textContent = "Couldn't save what you wrote. Copy it to keep it.";
+    const area = d.createElement("textarea");
+    area.readOnly = true;
+    area.rows = 2;
+    area.value = texts.join("\n\n");
+    area.setAttribute("aria-label", "What you wrote");
+    area.addEventListener("focus", () => area.select());
+    const copy = d.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", () => void this.copyHeld(area, copy, line));
+    const dismiss = d.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", () => this.sync?.dismissHeld());
+    const actions = d.createElement("div");
+    actions.append(copy, dismiss);
+    el.replaceChildren(line, area, actions);
+    el.hidden = false;
+  }
+
+  /** Copy what is held; where the frame may not use the clipboard, select it for the viewer. */
+  private async copyHeld(
+    area: HTMLTextAreaElement,
+    copy: HTMLButtonElement,
+    line: HTMLElement,
+  ): Promise<void> {
+    let done = false;
+    try {
+      await this.win.navigator.clipboard.writeText(area.value);
+      done = true;
+    } catch {
+      area.focus();
+      area.select();
+      try {
+        done = this.doc.execCommand("copy");
+      } catch {
+        done = false;
+      }
+    }
+    if (done) copy.textContent = "Copied";
+    else {
+      area.focus();
+      area.select();
+      line.textContent = "Couldn't save what you wrote. Press Ctrl+C (⌘C on a Mac) to copy it.";
+    }
   }
 
   /**
@@ -520,10 +600,13 @@ export class Board {
           const next = { ...cur.rows, [row]: { ...nowRow, [col]: typed } as TableRow };
           this.save(id, { rows: next }, { rows }, start.rev);
         } else {
+          const cells = [{ row, col, text: typed }];
           void sync?.keepTyped(cur, [typed], KEPT_AS_NOTE_TEXT, () => {
             const b = this.model.blocks.get(id)?.data;
             if (!b || this.readOnly || !sync) return Promise.resolve(false);
-            return sync.saveBlock(id, putCells(b, { rows, cols }, [{ row, col, text: typed }]));
+            return sync
+              .saveBlock(id, putCells(b, { rows, cols }, cells))
+              .then((ok) => ok && sync.inPlace(id, { cells }));
           });
         }
       }
@@ -535,7 +618,9 @@ export class Board {
         // A peer's text reached the model during the edit (a conflict on another save of it).
         void sync?.keepTyped(cur, [typed], KEPT_AS_NOTE_TEXT, () =>
           !this.readOnly && sync && this.model.blocks.has(id)
-            ? sync.saveBlock(id, { text: typed })
+            ? sync
+                .saveBlock(id, { text: typed })
+                .then((ok) => ok && sync.inPlace(id, { text: typed }))
             : Promise.resolve(false),
         );
       } else this.save(id, { text: typed }, { text: start.text }, start.rev);

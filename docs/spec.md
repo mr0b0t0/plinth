@@ -2365,16 +2365,21 @@ its page without a new version each time, and agents add and move blocks with
     on every move, which would turn a newer block into an empty note, drop a table's cells or cut
     a long text. So the board's page names the format it reads and writes on every write
     (`x-plinth-format: whiteboard.2`, `BOARD_PAGE_FORMAT`, through
-    `db.collection(name, { format })`), and the Worker refuses every page write to a whiteboard
-    (create, update and delete alike) that does not, before anything changes: `401 unauthorized`,
-    `details.reason: "stale_page"`. A 401 is what the older pages already handle by turning
-    read-only with "Your access changed. Reload the page.", so they stop taking edits that could
-    not be saved; the reload brings the current page. The format is raised whenever a newer board
-    holds something an older page's reader drops. The page's reader (`cleanBlock`, `cleanArrow`)
-    keeps every value a valid block or arrow may hold, so the current page writes back what it
-    read. A page whose runtime is too old to send the header shows the board read-only with "This
-    page is out of date. Reload the page to change the board." Agents' and the app's writes are
-    not checked this way: an agent's `set` may replace a block whole.
+    `db.collection(name, { format })`). A page write to a whiteboard that does not name it may
+    still add blocks and arrows, and may change or delete one only when the older reader read it
+    whole (`legacyBoardLoss`: the older keys, kinds and named colours, text up to 2,000
+    characters); otherwise it is refused before anything changes: `401 unauthorized`,
+    `details.reason: "stale_page"`. So tabs open at a deploy keep working on what they can read,
+    and an Undo of a delete re-creates only what they read whole. A 401 is what the older pages
+    already handle by turning read-only with "Your access changed. Reload the page.", so they
+    stop taking edits that could not be saved; the current page shows "Out of date. Reload the
+    page to edit." for it (the runtime passes the reason on the error and on `plinth:expired`).
+    The format is raised whenever a newer board holds something an older page's reader drops,
+    and `legacyBoardLoss` is then taught what the previous format read. The page's reader
+    (`cleanBlock`, `cleanArrow`) keeps every value a valid block or arrow may hold, so the current
+    page writes back what it read. A page whose runtime is too old to send the header shows the
+    board read-only with the same line. Agents' and the app's writes are not checked this way: an
+    agent's `set` may replace a block whole.
   The server checks every whiteboard write against these shapes, from the page, agents and the
   app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
   versioned (shared data never is); every write is stamped with who made it.
@@ -2431,8 +2436,14 @@ its page without a new version each time, and agents add and move blocks with
   peer's text or cell kept over it, a save that kept conflicting four times, the block or table
   deleted while they wrote in it) is written as a new note beside the block, or where it was,
   before the viewer is told, so a message replaced by the next one or a closed tab loses nothing.
-  Only a note the server refuses (a full board) leaves the offer alone holding it. Adding sections and tables, and adding a table's rows and
-  columns, is for agents for now.
+  A save refused or lost for any other reason (offline, the board full, a second rate limit)
+  keeps its typed text the same way. A note that cannot be written either (a rate limit waits
+  once first) is held on the page: "Couldn't save what you wrote. Copy it to keep it.", with the
+  text, Copy and Dismiss, which no other message replaces and which never times out; the next
+  write of the viewer's that goes through, or the board becoming writable again, writes it as a
+  note. An edit in progress when the board turns read-only is held the same way. Use mine takes a
+  note away only once the block holds the text. Adding sections and tables, and adding a table's
+  rows and columns, is for agents for now.
 - **The toolbar shows only what applies**, in one row on the board's own background. The add
   buttons show to people who may change the board; a selected block's colours, Connect (which
   starts from that block), Delete and the Shape or Text size list show only while something they

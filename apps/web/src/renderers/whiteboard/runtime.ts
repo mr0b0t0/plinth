@@ -12,6 +12,8 @@ export interface RuntimeDoc {
 export interface RuntimeError extends Error {
   code?: string;
   retryAfter?: number;
+  /** Why an expired one was refused: "stale_page" for a page older than its board's format. */
+  reason?: string;
   currentRev?: number;
 }
 

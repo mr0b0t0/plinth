@@ -96,12 +96,14 @@ function boot(handler: Handler, opts: { origin?: string; win?: Json } = {}) {
   const timers = new Map<number, { at: number; fn: () => unknown }>();
   const docListeners = new Map<string, (() => void)[]>();
   const events: string[] = [];
+  const details: unknown[] = [];
   const calls: { method: string; path: string; body?: Json; headers: Record<string, string> }[] =
     [];
   const win: Json = {
     addEventListener() {},
-    dispatchEvent(e: { type: string }) {
+    dispatchEvent(e: { type: string; detail?: unknown }) {
       events.push(e.type);
+      details.push(e.detail);
       return true;
     },
     ...opts.win,
@@ -114,8 +116,10 @@ function boot(handler: Handler, opts: { origin?: string; win?: Json } = {}) {
   };
   class FakeEvent {
     type: string;
-    constructor(type: string) {
+    detail?: unknown;
+    constructor(type: string, init?: { detail?: unknown }) {
       this.type = type;
+      this.detail = init?.detail;
     }
   }
   const fakeFetch = async (url: string, init: RequestInit) => {
@@ -180,7 +184,7 @@ function boot(handler: Handler, opts: { origin?: string; win?: Json } = {}) {
     await settle();
   };
   const count = (path: string) => calls.filter((c) => c.path === path).length;
-  return { plinth: win.plinth, calls, events, advance, settle, setVisible, count, timers };
+  return { plinth: win.plinth, calls, events, details, advance, settle, setVisible, count, timers };
 }
 
 /** A promise with its resolver, for holding a request open. */
@@ -348,6 +352,20 @@ describe("runtime: errors", () => {
     const c = plinth.db.collection("votes");
     await Promise.allSettled([c.set("a", {}), c.list(), c.delete("a")]);
     expect(events).toEqual(["plinth:expired"]);
+  });
+
+  it("says why a write expired: a page older than its board's format", async () => {
+    const server = fakeServer();
+    const body = { error: { code: "unauthorized", details: { reason: "stale_page" } } };
+    const { plinth, details } = boot((m, p, b) =>
+      p === "/session" ? server.handler(m, p, b) : err(401, body),
+    );
+    await plinth.ready;
+    await expect(plinth.db.collection("blocks").add({})).rejects.toMatchObject({
+      code: "expired",
+      reason: "stale_page",
+    });
+    expect(details).toEqual([{ reason: "stale_page" }]);
   });
 });
 

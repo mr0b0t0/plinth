@@ -824,7 +824,7 @@ describe("the page's data API on a whiteboard", () => {
     expect(JSON.parse(goal2?.data as string)).not.toHaveProperty("color");
   });
 
-  it("refuses every write from a page that does not name the current board format; agents may", async () => {
+  it("lets a page that names no current board format change only what its older reader read whole; agents may", async () => {
     const { owner, cookie, id } = await board('{"v":1}');
     const table = {
       kind: "table",
@@ -851,15 +851,11 @@ describe("the page's data API on a whiteboard", () => {
       await stale(
         await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove, if_rev: rev }, format),
       );
-      // Its plain set, a new block, a delete (and the Undo that re-creates the table as an empty
-      // note once it is gone) are refused alike, before anything changes.
+      // Its plain set and its delete (whose Undo would re-create the table as an empty note) are
+      // refused alike, before anything changes.
       await stale(await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove }, format));
-      await stale(await api(id, "/data/blocks", cookie, "POST", { data: block() }, format));
       await stale(
         await api(id, `/data/blocks/tb?if_rev=${rev}`, cookie, "DELETE", undefined, format),
-      );
-      await stale(
-        await api(id, "/data/arrows", cookie, "POST", { data: { from: "tb", to: "x" } }, format),
       );
     }
     // A text past the old 2,000-character limit, edited by one character: refused too.
@@ -868,10 +864,64 @@ describe("the page's data API on a whiteboard", () => {
     expect(put.status).toBe(201);
     const edited = { ...long, text: `y${"x".repeat(1999)}` };
     await stale(await api(id, "/data/blocks/long", cookie, "PUT", { data: edited }, null));
+    // An arrow with a side the older reader drops, and a box in #rrggbb.
+    const routed = { from: "tb", to: "long", fromSide: "right" };
+    expect((await api(id, "/data/arrows/ar", cookie, "PUT", { data: routed })).status).toBe(201);
+    await stale(
+      await api(id, "/data/arrows/ar", cookie, "PUT", { data: { from: "tb", to: "long" } }, null),
+    );
+    const hex = { ...block(), kind: "rect", color: "#123456" };
+    expect((await api(id, "/data/blocks/hex", cookie, "PUT", { data: hex })).status).toBe(201);
+    await stale(
+      await api(
+        id,
+        "/data/blocks/hex",
+        cookie,
+        "PUT",
+        { data: { ...hex, color: undefined } },
+        null,
+      ),
+    );
     const rows = await docRows(id);
     expect(JSON.parse(rows.find((r) => r.doc_id === "tb")?.data as string)).toEqual(table);
     expect(JSON.parse(rows.find((r) => r.doc_id === "long")?.data as string)).toEqual(long);
-    expect(rows).toHaveLength(2);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "ar")?.data as string)).toEqual(routed);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "hex")?.data as string)).toEqual(hex);
+    // What the older page reads whole keeps working for it, so open tabs keep working after a
+    // deploy: a new note, its move and edit, its delete, and the Undo that re-creates it.
+    const made2 = await api(id, "/data/blocks", cookie, "POST", { data: block() }, null);
+    expect(made2.status).toBe(201);
+    const n = await json(made2);
+    const moved2 = await api(
+      id,
+      `/data/blocks/${n.id}`,
+      cookie,
+      "PUT",
+      {
+        data: { ...block(), x: 99, text: "typed" },
+        if_rev: n.rev,
+      },
+      null,
+    );
+    expect(moved2.status).toBe(200);
+    const gone = await api(
+      id,
+      `/data/blocks/${n.id}?if_rev=${(await json(moved2)).rev}`,
+      cookie,
+      "DELETE",
+      undefined,
+      null,
+    );
+    expect(gone.status).toBe(204);
+    const undone = await api(
+      id,
+      `/data/blocks/${n.id}`,
+      cookie,
+      "PUT",
+      { data: block(), if_rev: 0 },
+      null,
+    );
+    expect(undone.status).toBe(201);
     // Reads need no format.
     expect((await api(id, "/data/blocks/tb", cookie)).status).toBe(200);
     // The current page's move keeps every field and goes through.

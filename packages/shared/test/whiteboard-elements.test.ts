@@ -14,6 +14,7 @@ import {
   hasMarks,
   heatOf,
   isDarkHex,
+  legacyBoardLoss,
   parseBoardContent,
   parseMarks,
   routeHeads,
@@ -367,6 +368,34 @@ describe("the page's reader is lossless", () => {
     const arrow = { from: "a", to: "b", label: "" };
     expect(boardDocError("arrows", arrow)).toBeNull();
     expect(cleanArrow(arrow)).toEqual(arrow);
+  });
+});
+
+describe("what a page from before the wider format read whole", () => {
+  it.each<[string, string, Record<string, unknown>, string | null]>([
+    [
+      "a plain note",
+      "blocks",
+      { kind: "note", x: 0, y: 0, w: 200, h: 140, text: "Hi", color: "pink", z: 2 },
+      null,
+    ],
+    ["a box, an ellipse, a text", "blocks", block({ kind: "ellipse" }), null],
+    ["a table", "blocks", table(), "cols"],
+    ["a diamond", "blocks", block({ kind: "diamond" }), "kind"],
+    ["a #rrggbb colour", "blocks", block({ color: "#123456" }), "color"],
+    ["an outline", "blocks", block({ stroke: "green" }), "stroke"],
+    ["a filled box", "blocks", block({ hollow: false }), "hollow"],
+    ["a long text", "blocks", block({ text: "x".repeat(2001) }), "text"],
+    ["2,000 characters", "blocks", block({ text: "x".repeat(2000) }), null],
+    [
+      "a plain arrow",
+      "arrows",
+      { from: "a", to: "b", label: "", style: "dashed", head: "both" },
+      null,
+    ],
+    ["a routed arrow", "arrows", { from: "a", to: "b", bends: ["h", 10] }, "bends"],
+  ])("%s", (_name, collection, stored, lost) => {
+    expect(legacyBoardLoss(collection, stored)).toBe(lost);
   });
 });
 

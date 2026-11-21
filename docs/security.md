@@ -922,16 +922,18 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   the edit began from, and its rows merge cell by cell: a peer's change to that cell, or the removal
   of its row or column, is kept and the viewer is offered "Use mine" with the typed text, which
   brings the row or column back. Typed text is never dropped: whatever cannot go in place (kept
-  over, a save that kept conflicting, a block deleted under the editor) is written as a new note
-  beside the block before the viewer is told, so it survives a replaced message or a closed tab.
+  over, a save that kept conflicting or failed, a block deleted under the editor) is written as a
+  new note beside the block before the viewer is told, so it survives a replaced message or a
+  closed tab; when no note can be written, the page holds the text with Copy until it can be.
 - **Pages from before the wider format cannot flatten newer blocks.** Such a page writes back the
   whole block its older reader made (a table as an empty note, an outline or a size dropped, a
   long text cut). The current board page names its format on every write (`x-plinth-format:
-  whiteboard.2`, `BOARD_PAGE_FORMAT`), and the dispatcher refuses any page write to a whiteboard
-  without it, a create, an update or a delete, after the policy check gives the caller write
-  access and before the service runs (`401`, `details.reason: "stale_page"`, which older pages
-  answer by turning read-only and asking for a reload); shared data is not versioned, so this is
-  the only thing between an old tab and lost work. The header is not a security boundary: any
+  whiteboard.2`, `BOARD_PAGE_FORMAT`). A page write to a whiteboard without it may add blocks and
+  arrows, and may change or delete a stored one only when the older reader read it whole
+  (`whiteboard.ts legacyBoardLoss`); the service checks that against the stored copy its guarded
+  write then requires, after policy, and refuses the rest (`401`, `details.reason:
+  "stale_page"`, which older pages answer by turning read-only and asking for a reload). Shared
+  data is not versioned, so this is the only thing between an old tab and lost work. The header is not a security boundary: any
   page code on the artifact's origin may send it, and it grants nothing; the shared-data checks
   (`x-plinth-data`, fetch metadata, exact `Origin` on writes, JSON bodies, the content pass and
   policy) all run as before, and the header is sent only by same-origin fetches, so it adds no

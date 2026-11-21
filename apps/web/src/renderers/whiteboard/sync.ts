@@ -44,6 +44,11 @@ export interface SyncDeps {
   busy?(id: string): boolean;
   /** Waits; a test passes its own. */
   wait?(ms: number): Promise<void>;
+  /**
+   * What the viewer wrote that no note could hold yet (the board full, offline, the page
+   * read-only): shown until it is written as a note or the viewer dismisses it. Empty to hide.
+   */
+  held?(texts: readonly string[]): void;
 }
 
 /** A button on a message. */
@@ -68,6 +73,11 @@ export const KEPT_AS_NOTE_TEXT =
 export const DELETED_AS_NOTE_TEXT =
   "Someone deleted this block while you were writing in it. What you wrote is in a new note.";
 export const KEPT_CHANGING_TEXT = "Someone else kept changing this block. Try again.";
+/** A save was refused or did not arrive; what the viewer wrote is a note beside the block. */
+export const SAVE_FAILED_NOTE_TEXT =
+  "Your change could not be saved. What you wrote is in a new note beside it.";
+/** A page older than its board's format (a 401 `stale_page`): the reload brings the current one. */
+export const OUT_OF_DATE_TEXT = "Out of date. Reload the page to edit.";
 /** A save that kept conflicting; what the viewer wrote is a note beside the block. */
 export const KEPT_CHANGING_NOTE_TEXT =
   "Someone else kept changing this block. What you wrote is in a new note beside it.";
@@ -90,7 +100,7 @@ export function errorText(e: RuntimeError | undefined): string {
     case "forbidden":
       return READ_ONLY_TEXT;
     case "expired":
-      return "Your access changed. Reload the page.";
+      return e.reason === "stale_page" ? OUT_OF_DATE_TEXT : "Your access changed. Reload the page.";
     case "invalid":
       return "That change does not fit on a board.";
     default:
@@ -237,6 +247,9 @@ export class BoardSync {
   /** Blocks a peer saved while this viewer was busy with them: read again when it is done. */
   private readonly deferred = new Set<string>();
   private stopped = false;
+  /** What the viewer wrote that no note could hold yet, with where it goes (held, flushHeld). */
+  private kept: { near: Bounds; text: string }[] = [];
+  private flushing = false;
 
   constructor(private readonly d: SyncDeps) {}
 
@@ -332,6 +345,7 @@ export class BoardSync {
         m.blocks.set(id, { data: m.blocks.get(id)?.data ?? data, rev: doc.rev });
         this.d.emit("block.saved", { id });
         this.report(id, was ?? base.data, unsaved, kept);
+        this.wrote();
         return true;
       } catch (e) {
         if (code(e) === "rate_limited" && !backedOff) {
@@ -343,8 +357,13 @@ export class BoardSync {
           continue;
         }
         if (code(e) !== "conflict") {
+          // Refused or offline: the next snapshot would put the old text back, so what the viewer
+          // wrote, here and queued behind it, is kept as a note (held on the page until one fits).
           const failed = this.fail(e);
-          this.report(id, was ?? base.data, unsaved, false);
+          noteUnsaved(unsaved, base.data, patch);
+          noteUnsaved(unsaved, base.data, this.queued.get(id));
+          const pieces = this.pieces(unsaved);
+          if (pieces.length > 0) void this.keepTyped(base.data, pieces, SAVE_FAILED_NOTE_TEXT);
           return failed;
         }
         // Someone else saved it: read theirs, then put this change's fields on top of it.
@@ -393,7 +412,10 @@ export class BoardSync {
     ];
   }
 
-  /** Use mine: write `unsaved` over the block as it is now, bringing back rows or columns. */
+  /**
+   * Use mine: write `unsaved` over the block as it is now, bringing back rows or columns. Resolves
+   * true only when the block now holds all of it.
+   */
   private restorer(id: string, was: BoardBlock, unsaved: Unsaved): () => Promise<boolean> {
     const text = unsaved.text;
     const cells = [...unsaved.cells.values()];
@@ -403,8 +425,16 @@ export class BoardSync {
       return this.saveBlock(id, {
         ...(text !== undefined ? { text } : {}),
         ...(cells.length > 0 ? putCells(cur, was, cells) : {}),
-      });
+      }).then((ok) => ok && this.inPlace(id, { text, cells }));
     };
+  }
+
+  /** Whether block `id` holds `text` and each of `cells` as the viewer wrote them. */
+  inPlace(id: string, typed: { text?: string; cells?: readonly LostCell[] }): boolean {
+    const b = this.d.model.blocks.get(id)?.data;
+    if (!b) return false;
+    if (typed.text !== undefined && b.text !== typed.text) return false;
+    return (typed.cells ?? []).every((c) => cellText(b, c.row, c.col) === c.text);
   }
 
   /** Tell the viewer how a save that went through ended: their text kept as a note, or theirs. */
@@ -419,9 +449,11 @@ export class BoardSync {
   /**
    * Keep text the viewer wrote that could not go where they wrote it: as new notes beside `near`
    * (the block, where it was), written before the viewer is told, so it survives a missed message
-   * or a closed tab. `restore`, when it can still go in place, is offered as Use mine: once that
-   * save goes through, the notes go again, unless someone changed them meanwhile. Only when no note
-   * could be written does the offer alone hold the text.
+   * or a closed tab. `restore`, when it can still go in place, is offered as Use mine; it resolves
+   * true only when the block now holds the text, and only then do the notes go again (unless
+   * someone changed them meanwhile). Text no note could take (the board full, offline, read-only)
+   * is held on the page (`held`) until a later write lets it become a note or the viewer dismisses
+   * it: no message replaces it and it never times out.
    */
   async keepTyped(
     near: Bounds,
@@ -435,8 +467,8 @@ export class BoardSync {
         ? {
             label: USE_MINE_LABEL,
             run: () =>
-              void restore().then((ok) => {
-                if (ok) void this.dropNotes(notes);
+              void restore().then((inPlace) => {
+                if (inPlace) void this.dropNotes(notes);
               }),
           }
         : undefined;
@@ -447,23 +479,83 @@ export class BoardSync {
       return;
     }
     const notes: { id: string; rev: number }[] = [];
-    const clampTo = (v: number) =>
-      Math.min(BOARD_LIMITS.maxCoord, Math.max(-BOARD_LIMITS.maxCoord, Math.round(v)));
     for (const [i, text] of texts.entries()) {
-      const id = await this.addBlock({
-        kind: "note",
-        x: clampTo(near.x + near.w + NOTE_GAP),
-        y: clampTo(near.y + i * (NOTE_SIZE.h + NOTE_GAP)),
-        ...NOTE_SIZE,
-        text,
-        z: this.d.model.nextZ(),
-      });
-      if (!id) break;
+      const id = await this.addBlock(this.noteAt(near, i, text), false);
+      if (!id) {
+        // No note could take it: hold it, and everything after it, on the page.
+        for (const rest of texts.slice(i)) this.hold(near, rest);
+        if (restore && !this.stopped) this.d.say(KEPT_THEIRS_TEXT, use(notes));
+        return;
+      }
       notes.push({ id, rev: this.d.model.blocks.get(id)?.rev ?? 0 });
     }
-    if (notes.length === texts.length) this.d.say(message, use(notes));
-    // The note was refused (addBlock said why): the offer is all that holds the text now.
-    else if (restore && !this.stopped) this.d.say(KEPT_THEIRS_TEXT, use(notes));
+    this.d.say(message, use(notes));
+  }
+
+  /** The `i`th note holding the viewer's text beside `near`. */
+  private noteAt(near: Bounds, i: number, text: string): BoardBlock {
+    const clampTo = (v: number) =>
+      Math.min(BOARD_LIMITS.maxCoord, Math.max(-BOARD_LIMITS.maxCoord, Math.round(v)));
+    return {
+      kind: "note",
+      x: clampTo(near.x + near.w + NOTE_GAP),
+      y: clampTo(near.y + i * (NOTE_SIZE.h + NOTE_GAP)),
+      ...NOTE_SIZE,
+      text,
+      z: this.d.model.nextZ(),
+    };
+  }
+
+  /**
+   * Hold text the viewer wrote that cannot be written now (the page is read-only, say, or no note
+   * fits): shown on the page until a later write lets it become a note beside `near`, or the
+   * viewer dismisses it.
+   */
+  hold(near: Bounds, text: string): void {
+    if (text === "") return;
+    this.kept.push({ near: { x: near.x, y: near.y, w: near.w, h: near.h }, text });
+    this.d.held?.(this.heldTexts());
+  }
+
+  /** What is held, oldest first. */
+  heldTexts(): string[] {
+    return this.kept.map((k) => k.text);
+  }
+
+  /** The viewer copied or let go of what was held. */
+  dismissHeld(): void {
+    this.kept = [];
+    this.d.held?.([]);
+  }
+
+  /** A write went through: what is held may fit in a note now. */
+  private wrote(): void {
+    if (this.kept.length > 0 && !this.flushing) void this.flushHeld();
+  }
+
+  /**
+   * Write what is held as notes, oldest first, stopping at the first that does not fit (it stays
+   * held). Called after any write of the viewer's goes through and when the board becomes
+   * writable again.
+   */
+  async flushHeld(): Promise<void> {
+    if (this.flushing || this.stopped || this.kept.length === 0) return;
+    this.flushing = true;
+    let wrote = 0;
+    try {
+      while (this.kept.length > 0) {
+        const k = this.kept[0] as { near: Bounds; text: string };
+        if (!(await this.addBlock(this.noteAt(k.near, 0, k.text), false))) break;
+        this.kept.shift();
+        wrote++;
+      }
+    } finally {
+      this.flushing = false;
+    }
+    this.d.held?.(this.heldTexts());
+    if (wrote > 0 && this.kept.length === 0) {
+      this.d.say("What you wrote is saved in a new note.");
+    }
   }
 
   /** Take away notes that held the viewer's text, now in place, unless they were changed since. */
@@ -530,17 +622,31 @@ export class BoardSync {
     return { left, kept };
   }
 
-  /** A new block; resolves to its id, or null when the server refused it. */
-  async addBlock(data: BoardBlock): Promise<string | null> {
+  /**
+   * A new block; resolves to its id, or null when the server refused it. A rate limit waits once
+   * and tries again, as a save does. `flush` false leaves what is held alone (a note being written
+   * for it).
+   */
+  async addBlock(data: BoardBlock, flush = true): Promise<string | null> {
     if (this.stopped) return null;
-    try {
-      const doc = await this.d.blocks.add(data);
-      this.d.model.upsertBlock(doc.id, doc.data, doc.rev);
-      this.d.changed();
-      this.d.emit("block.saved", { id: doc.id });
-      return doc.id;
-    } catch (e) {
-      return this.fail(e) || null;
+    for (let backedOff = false; ; backedOff = true) {
+      try {
+        const doc = await this.d.blocks.add(data);
+        this.d.model.upsertBlock(doc.id, doc.data, doc.rev);
+        this.d.changed();
+        this.d.emit("block.saved", { id: doc.id });
+        if (flush) this.wrote();
+        return doc.id;
+      } catch (e) {
+        if (code(e) === "rate_limited" && !backedOff) {
+          this.d.say(errorText(e as RuntimeError));
+          const s = (e as RuntimeError).retryAfter ?? 5;
+          await this.wait(Math.min(MAX_BACKOFF_MS, Math.max(1, s) * 1000));
+          if (this.stopped) return null;
+          continue;
+        }
+        return this.fail(e) || null;
+      }
     }
   }
 
@@ -572,6 +678,7 @@ export class BoardSync {
     this.d.model.remove("arrows", id);
     this.d.changed();
     this.d.emit("arrow.saved", { id });
+    this.wrote();
     return true;
   }
 
@@ -602,6 +709,7 @@ export class BoardSync {
       this.d.emit("arrow.saved", { id: aid });
     }
     this.d.changed();
+    this.wrote();
     const block = b.data;
     return {
       undo: async () => {

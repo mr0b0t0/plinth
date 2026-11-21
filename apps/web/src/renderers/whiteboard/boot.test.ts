@@ -343,6 +343,17 @@ describe("whiteboard boot", () => {
     expect(stub.collection).toHaveBeenCalledWith("blocks", { format: BOARD_PAGE_FORMAT });
   });
 
+  it("asks for a reload when the server says the page is older than the board's format", async () => {
+    stubRuntime(signedIn(true), { blocks: [NOTE], arrows: [] });
+    mount('{"v":1}');
+    boot(window);
+    await flush();
+    await flush();
+    window.dispatchEvent(new CustomEvent("plinth:expired", { detail: { reason: "stale_page" } }));
+    expect(banner()).toBe(OUT_OF_DATE_TEXT);
+    expect(document.documentElement.dataset.readonly).toBe("true");
+  });
+
   it("with a runtime too old to name the format: draws the board, read-only, and asks for a reload", async () => {
     const stub = stubRuntime(signedIn(true), { blocks: [NOTE], arrows: [] }, true);
     mount('{"v":1}');

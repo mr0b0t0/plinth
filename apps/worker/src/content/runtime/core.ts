@@ -22,15 +22,16 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
       if (info.retryAfter !== undefined) this.retryAfter = info.retryAfter;
       if (info.currentRev !== undefined) this.currentRev = info.currentRev;
       if (info.limit !== undefined) this.limit = info.limit;
+      if (info.reason) this.reason = info.reason;
     }
   }
 
   var expiredFired = false;
-  function fireExpired() {
+  function fireExpired(reason) {
     if (expiredFired) return;
     expiredFired = true;
     try {
-      window.dispatchEvent(new CustomEvent("plinth:expired"));
+      window.dispatchEvent(new CustomEvent("plinth:expired", { detail: { reason: reason || null } }));
     } catch (e) {}
   }
 
@@ -39,8 +40,8 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
     var d = err.details || {};
     var msg = err.message;
     if (status === 401) {
-      fireExpired();
-      return new PlinthError("expired", msg || "Your access changed. Reload the page.");
+      fireExpired(d.reason);
+      return new PlinthError("expired", msg || "Your access changed. Reload the page.", { reason: d.reason });
     }
     if (status === 403) {
       if (d.reason === "read_only") return new PlinthError("read_only", msg);

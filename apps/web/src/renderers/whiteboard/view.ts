@@ -121,6 +121,8 @@ export interface ViewEls {
   /** A short standing line in the toolbar ("View only", or why the board is unavailable). */
   banner: HTMLElement;
   msg: HTMLElement;
+  /** What the viewer wrote that could not be saved yet: stays until saved or dismissed. */
+  held: HTMLElement;
   viewport: HTMLElement;
   world: HTMLElement;
   arrows: SVGSVGElement;
@@ -258,6 +260,10 @@ export function buildView(doc: Document, root: HTMLElement, background: BoardBac
   const msg = doc.createElement("p");
   msg.className = "wb-msg";
   msg.setAttribute("role", "alert");
+  const held = doc.createElement("div");
+  held.className = "wb-held";
+  held.setAttribute("role", "alert");
+  held.hidden = true;
   const viewport = doc.createElement("div");
   viewport.className = "wb-viewport";
   viewport.dataset.bg = background;
@@ -276,12 +282,13 @@ export function buildView(doc: Document, root: HTMLElement, background: BoardBac
   viewport.append(world);
   // Named, so the frame's main landmark differs from the app's around it.
   root.setAttribute("aria-label", "Whiteboard");
-  root.replaceChildren(toolbar.el, msg, viewport);
+  root.replaceChildren(toolbar.el, msg, held, viewport);
   return {
     root,
     toolbar,
     banner,
     msg,
+    held,
     viewport,
     world,
     arrows,
