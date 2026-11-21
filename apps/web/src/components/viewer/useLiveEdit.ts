@@ -147,6 +147,12 @@ export interface LiveEdit {
   openReview(): Promise<void>;
   saveRestore(): Promise<void>;
   dropRestore(): void;
+  /**
+   * Ask an agent's "Publish my changes first": publish now, as Publish does, and say what came of
+   * it: the version the request is then posted against, or why nothing was published, in the
+   * strip's words. A conflict opens the review, as Publish does.
+   */
+  publishFirst(): Promise<{ version: number } | { error: string }>;
 }
 
 const toast = (title: string, tone: "neutral" | "danger" | "success" | "warning" = "danger") =>
@@ -325,6 +331,7 @@ export function useLiveEdit({
         maxDocBytes: maxBytes,
         key: frameKey,
         review: reviewRef.current?.nonce ?? null,
+        editing: latest.current.editing,
       });
       if (!m) return;
       matchFrameMessage(m, {
@@ -715,6 +722,97 @@ export function useLiveEdit({
     setRestore(null);
   }, [id]);
 
+  // ---------- Ask an agent: publish first ----------
+
+  const publishFirst = useCallback(async (): Promise<{ version: number } | { error: string }> => {
+    const s = latest.current.status;
+    const m = latest.current.mode;
+    if (savingRef.current) return { error: CHOOSING_BUSY };
+    if (s?.conflict_version != null) {
+      return {
+        error: `v${s.conflict_version} was published while you edited. Review it to go on.`,
+      };
+    }
+    if (s && s.publishable === false)
+      return { error: "These page changes can't be published yet." };
+    const refused = (e: unknown): { error: string } => {
+      if (!(e instanceof ApiRequestError)) {
+        return { error: e instanceof Error ? e.message : "Your changes are kept." };
+      }
+      const code = reasonOf(e);
+      if (e.status === 401) return { error: "Sign in again to publish. Your changes are kept." };
+      if (e.status === 403) return { error: `You can no longer edit this ${noun}.` };
+      if (e.status === 409 && code === "live_busy") return { error: CHOOSING_BUSY };
+      if (e.status === 409 && code === "live_unpublishable") {
+        return { error: "These page changes can't be published yet." };
+      }
+      if (e.status === 409) {
+        const n = currentOf(e);
+        return {
+          error: n
+            ? `v${n} was published while you edited. Review it to go on.`
+            : "A newer version was published while you edited. Review it to go on.",
+        };
+      }
+      if (e.status === 413) return { error: `This ${noun} is too large to publish as a version.` };
+      if (e.status === 429) {
+        return { error: "Hourly version limit reached. Your changes stay as a draft." };
+      }
+      if (e.status === 503) return { error: "Live editing is unavailable. Your changes are kept." };
+      return { error: e.message };
+    };
+    if (m === "room") {
+      if (!s?.connected) return { error: "Not connected, your changes are kept." };
+      savingRef.current = true;
+      setSaving(true);
+      try {
+        const r = await liveCheckpoint(id, {
+          base_version: s.base_version,
+          rev: s.rev,
+          reason: "save",
+        });
+        if (r.saved) {
+          setSavedVersion(r.version.version);
+          return { version: r.version.version };
+        }
+        if (r.reason === "busy") return { error: CHOOSING_BUSY };
+        // Nothing new to publish: the version being edited is the one to ask about.
+        return { version: s.base_version };
+      } catch (e) {
+        // A conflict leaves "Review changes" in the strip, as the room says it froze the draft.
+        return refused(e);
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    }
+    if (m !== "solo") return { error: "Editing on the page is not available." };
+    savingRef.current = true;
+    setSaving(true);
+    const v = latest.current.gate.artifact.version;
+    try {
+      const text = await collect();
+      const r = await api<PublishResult>(route(API.artifact, { ref: id }), {
+        method: "PUT",
+        body: { content: text, base_version: v, files_from_version: v },
+      });
+      clearPageDraft(id);
+      setRestore(null);
+      setSavedVersion(r.version);
+      latest.current.onReload();
+      return { version: r.version };
+    } catch (e) {
+      // Solo has no room to freeze the draft: the review opens, as for a refused Publish.
+      if (e instanceof ApiRequestError && e.status === 409) {
+        void soloReviewRef.current(v, e.details);
+      }
+      return refused(e);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }, [id, noun, collect]);
+
   // ---------- room: autosave after a quiet spell ----------
 
   useEffect(() => {
@@ -823,5 +921,6 @@ export function useLiveEdit({
     openReview,
     saveRestore,
     dropRestore,
+    publishFirst,
   };
 }

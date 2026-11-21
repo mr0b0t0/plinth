@@ -837,8 +837,10 @@ function responseSchemas(): Record<string, Json> {
                 "viewer is using the page (focus inside its frame), a newer version waits behind " +
                 "an Update button instead of replacing it",
             },
+            ask: ref("ViewGateAsk"),
+            live_off: ref("ViewGateLiveOff"),
           },
-          ["data", "live", "page_comments", "watch", "people", "hold"],
+          ["data", "live", "page_comments", "watch", "people", "hold", "ask", "live_off"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -2494,6 +2496,12 @@ function operations(): Operation[] {
       path: API.comments,
       operationId: "createComment",
       summary: "Comment; @mentions of the owner's agents create mention tasks",
+      description:
+        "`request_to` (Ask an agent, a new thread only) sends the comment to the owner's " +
+        "connections of that client type as a mention task, `other` included. It is refused with " +
+        "400 and reason `no_agent` when the owner has no connection of that type that can take " +
+        "mentions (nothing is written), and with reason `reply` on a reply. An agent's comment " +
+        "never creates a task.",
       tag: "Comments",
       auth: "agent",
       scope: "mentions",
@@ -2905,6 +2913,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...sheetSchemas(),
         ...invitationSchemas(),
         ...designExportSchemas(),
+        ...askSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {
@@ -3098,4 +3107,34 @@ function designExportOperations(): Operation[] {
       errors: [400, 401, 403, 404, 413, 429, 503],
     },
   ];
+}
+
+// ---------- Ask an agent (docs/spec.md "Ask an agent") ----------
+
+function askSchemas(): Record<string, Json> {
+  return {
+    ViewGateAsk: {
+      ...obj({
+        targets: {
+          type: "array",
+          items: enumOf(CLIENT_TYPES),
+          description:
+            "The client types of the owner's connections that can take requests (not revoked, " +
+            "not limited to one artifact, with the mentions scope), in claude, codex, other " +
+            "order; never a label. Empty: a request is posted as a plain comment",
+        },
+      }),
+      description:
+        "Ask an agent: present on `ok` for everyone who may mention the owner's agents here " +
+        "(the owner, editors and commenters), never for agents. Send the request as " +
+        "`request_to` on a new comment",
+    },
+    ViewGateLiveOff: {
+      ...obj({ reason: enumOf(["disabled", "isolation"]) }),
+      description:
+        "Editing on the page is off for this owner or editor of a doc or a sheet on the current " +
+        "version: `disabled` (ALLOW_LIVE_EDITING off) or `isolation` (CONTENT_ISOLATION=opaque, " +
+        "or the path fallback). Never together with `live`",
+    },
+  };
 }

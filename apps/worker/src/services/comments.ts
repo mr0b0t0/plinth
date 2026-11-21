@@ -8,6 +8,8 @@
 import {
   type Anchor,
   anchorSchema,
+  CLIENT_TYPES,
+  type ClientType,
   type CommentInfo,
   type CommentStatus,
   MENTION_AGENT_NAMES,
@@ -15,9 +17,11 @@ import {
   pageDisplayName,
   parseMentions,
   RATE_LIMITS,
+  REQUEST_TARGET_LABELS,
 } from "@plinth/shared";
 import { and, asc, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
 import { parseScopes } from "../auth/principal.ts";
+import type { Db } from "../db/client.ts";
 import {
   type ArtifactRow,
   agentConnections,
@@ -29,9 +33,10 @@ import {
   users,
 } from "../db/schema.ts";
 import { newId } from "../lib/crypto.ts";
-import { notFound, unauthorized } from "../lib/errors.ts";
+import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
+import { takesRequests } from "../policy.ts";
 import { decideFor, requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 
@@ -250,6 +255,8 @@ export interface NewComment {
   parent_id?: string;
   version_number?: number;
   anchor?: Anchor;
+  /** Ask an agent: the client type this new thread is a request to (root comments only). */
+  request_to?: ClientType;
 }
 
 /** Create a comment or reply on an artifact (policy "comment"). Mentions may create tasks. */
@@ -272,6 +279,14 @@ export async function insertComment(
   input: NewComment,
 ): Promise<CommentInfo> {
   const author = authorOf(ctx);
+
+  // Ask an agent starts a thread; a reply reaches the agent the thread already names, if any.
+  if (input.request_to && input.parent_id) {
+    throw new ApiError("invalid_input", "request_to starts a new thread; leave it out of a reply", {
+      field: "request_to",
+      reason: "reply",
+    });
+  }
 
   let parentId: string | null = null;
   if (input.parent_id) {
@@ -298,7 +313,7 @@ export async function insertComment(
     createdAt: nowIso(),
     resolvedAt: null,
   };
-  const tasks = await mentionTasksFor(ctx, artifact, row);
+  const tasks = await mentionTasksFor(ctx, artifact, row, input.request_to);
   const insert = ctx.db.insert(comments).values(row);
   if (tasks.length > 0) {
     // One batch: the comment and its tasks are written together or not at all.
@@ -324,17 +339,34 @@ export async function insertComment(
  *   same handle; if several labels share a handle, the oldest connection is the target. Never
  *   another user's connections.
  * - Anything else stays plain text.
+ * - `requestTo` (Ask an agent) targets the owner's connections of that client type, as "@claude"
+ *   does, once: a client type the body already names gets no second task. It needs a connection
+ *   of that type that can take requests (policy.ts takesRequests); without one the whole comment
+ *   is refused (`no_agent`) and nothing is written, so a request is never shown as sent to an
+ *   agent that cannot receive it. A person without the mention right is refused too. An agent's
+ *   `requestTo` creates no task, like its @mentions.
  */
 async function mentionTasksFor(
   ctx: Ctx,
   artifact: ArtifactRow,
   comment: CommentRow,
+  requestTo?: ClientType,
 ): Promise<MentionTaskRow[]> {
   if (ctx.principal.kind === "agent") return [];
   const names = parseMentions(comment.body);
-  if (names.length === 0) return [];
+  if (names.length === 0 && !requestTo) return [];
   const d = await decideFor(ctx, artifact, "mention");
-  if (!d.allow) return [];
+  if (!d.allow) {
+    if (requestTo) throw new ApiError("forbidden", "You cannot ask the owner's agents here");
+    return [];
+  }
+  if (requestTo && !(await requestTargets(ctx.db, artifact.ownerId)).includes(requestTo)) {
+    throw new ApiError(
+      "invalid_input",
+      "The owner has no agent of that kind connected to take requests",
+      { field: "request_to", reason: "no_agent" },
+    );
+  }
 
   const base = {
     commentId: comment.id,
@@ -396,7 +428,49 @@ async function mentionTasksFor(
       targetLabel: `@${name}`,
     });
   }
+  if (
+    requestTo &&
+    !tasks.some((t) => t.targetConnection === null && t.targetClientType === requestTo)
+  ) {
+    tasks.unshift({
+      ...base,
+      id: newId(),
+      targetConnection: null,
+      targetClientType: requestTo,
+      targetLabel: REQUEST_TARGET_LABELS[requestTo],
+    });
+  }
   return tasks;
+}
+
+/**
+ * Who Ask an agent can reach on this owner's artifacts: the client types of the owner's
+ * connections that can take requests (policy.ts takesRequests), in CLIENT_TYPES order. Only the
+ * types leave this function, never a label or an id.
+ */
+export async function requestTargets(db: Db, ownerId: string): Promise<ClientType[]> {
+  const rows = await db
+    .select({
+      clientType: agentConnections.clientType,
+      revokedAt: agentConnections.revokedAt,
+      artifactId: agentConnections.artifactId,
+      scopes: agentConnections.scopes,
+    })
+    .from(agentConnections)
+    .where(
+      and(
+        eq(agentConnections.userId, ownerId),
+        isNull(agentConnections.revokedAt),
+        isNull(agentConnections.artifactId),
+      ),
+    )
+    .all();
+  const types = new Set(
+    rows
+      .filter((r) => takesRequests({ ...r, scopes: parseScopes(r.scopes) }))
+      .map((r) => r.clientType),
+  );
+  return CLIENT_TYPES.filter((t) => types.has(t));
 }
 
 /** Resolve or reopen a thread (policy "comment"). Status lives on the thread's root comment. */

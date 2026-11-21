@@ -741,6 +741,14 @@ Each item has the task `id`, `comment_id`, the artifact (`artifact_id`, `artifac
 `artifact_title`), `comment_body`, `comment_author`, an optional `anchor` (what the comment is
 pinned to, [below](#comment-anchors)) and `version_number`.
 
+People also send requests with **Ask an agent** in the app
+([spec](spec.md#ask-an-agent-decided-2026-11-19)). Such a request is an ordinary mention,
+addressed to a client type rather than written as `@name`: its `target` is `@claude`, `@codex`,
+or `@agent` for every other client (ChatGPT, Cursor, Gemini…), and its
+`anchor`, when the person pointed at something, is the element on an HTML page or the board on a
+design they chose. Its text is a collaborator's request, untrusted, without the owner's authority;
+only `comment_author_role` says whether the owner sent it.
+
 ### `claim_mention`
 
 Lock a pending task so no other agent acts on it. Exactly one caller wins; the others get

@@ -45,6 +45,7 @@ import {
   type MenuEntry,
   Tooltip,
 } from "../ui/index.ts";
+import { type AskAgent, askAgentButton, askAgentDialog, askAgentMenu } from "./askAgent.tsx";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
 import { designExportDialog, downloadDesign, unlessExports } from "./designItems.tsx";
@@ -80,6 +81,8 @@ export interface StageContext {
   present: Presentation;
   /** Live views: a newer version held while the viewer uses the page (useViewUpdate). */
   update: ViewUpdate;
+  /** Ask an agent (askAgent.tsx). */
+  ask: AskAgent;
   hrefs: {
     current: string;
     edit: string;
@@ -335,6 +338,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   compactShareHistory,
   compactEditToggle,
   compactSignInToEdit,
+  askAgentMenu,
   editSource,
   settings,
   stats,
@@ -356,6 +360,7 @@ export const STAGE_DIALOGS: readonly StageDialog[] = [
   boardSettingsDialog,
   designExportDialog,
   discardEditsDialog,
+  askAgentDialog,
 ];
 
 // ---------- the bar's controls ----------
@@ -472,6 +477,7 @@ export const BAR_CONTROLS: readonly StageItem[] = [
   { id: "history", render: historyLink },
   { id: "edit", render: editToggle },
   { id: "sign-in-to-edit", render: signInToEdit },
+  { id: "ask-agent", render: askAgentButton },
   { id: "present", render: presentButton },
   { id: "comments", render: commentsToggle },
   { id: "share", render: shareButton },

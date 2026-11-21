@@ -1408,6 +1408,7 @@
       "post": {
         "operationId": "createComment",
         "summary": "Comment; @mentions of the owner's agents create mention tasks",
+        "description": "`request_to` (Ask an agent, a new thread only) sends the comment to the owner's connections of that client type as a mention task, `other` included. It is refused with 400 and reason `no_agent` when the owner has no connection of that type that can take mentions (nothing is written), and with reason `reply` on a reply. An agent's comment never creates a task.",
         "tags": ["Comments"],
         "parameters": [
           {
@@ -3040,6 +3041,11 @@
                 "required": ["selector"]
               }
             ]
+          },
+          "request_to": {
+            "description": "Ask an agent: a new thread's request to the owner's connections of this client type (claude, codex or other). Not on replies",
+            "type": "string",
+            "enum": ["claude", "codex", "other"]
           }
         },
         "required": ["body"]
@@ -5409,7 +5415,9 @@
               "hold": {
                 "const": true,
                 "description": "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the viewer is using the page (focus inside its frame), a newer version waits behind an Update button instead of replacing it"
-              }
+              },
+              "ask": { "$ref": "#/components/schemas/ViewGateAsk" },
+              "live_off": { "$ref": "#/components/schemas/ViewGateLiveOff" }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -7036,6 +7044,24 @@
           }
         },
         "required": ["id", "version", "boards", "max_pixels"]
+      },
+      "ViewGateAsk": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["claude", "codex", "other"] },
+            "description": "The client types of the owner's connections that can take requests (not revoked, not limited to one artifact, with the mentions scope), in claude, codex, other order; never a label. Empty: a request is posted as a plain comment"
+          }
+        },
+        "required": ["targets"],
+        "description": "Ask an agent: present on `ok` for everyone who may mention the owner's agents here (the owner, editors and commenters), never for agents. Send the request as `request_to` on a new comment"
+      },
+      "ViewGateLiveOff": {
+        "type": "object",
+        "properties": { "reason": { "type": "string", "enum": ["disabled", "isolation"] } },
+        "required": ["reason"],
+        "description": "Editing on the page is off for this owner or editor of a doc or a sheet on the current version: `disabled` (ALLOW_LIVE_EDITING off) or `isolation` (CONTENT_ISOLATION=opaque, or the path fallback). Never together with `live`"
       }
     },
     "responses": {

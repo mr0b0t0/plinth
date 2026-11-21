@@ -11,6 +11,7 @@ import { FileIcon } from "@phosphor-icons/react";
 import {
   API,
   APP_ROUTES,
+  type ClientType,
   type CommentInfo,
   route,
   type ViewGate,
@@ -29,6 +30,7 @@ import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
+import { type AskAnchor, pageAnchorOf, useAskAgent } from "./askAgent.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { newFrameKey, withFrameKey } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
@@ -186,6 +188,8 @@ export function ViewerStage({
   // and the app accepts its editing messages only with that key.
   // One key per frame load: a new enter_url is a new load, a refreshed gate for the same frame is
   // not.
+  // Ask an agent from the frame (an in-frame `ask`): answered once the hook below exists.
+  const askFromFrame = useRef<(anchor: AskAnchor | null) => void>(() => undefined);
   const editable = gate.live !== undefined;
   const frameKey = useMemo(
     () => (editable && gate.enter_url ? newFrameKey() : null),
@@ -201,6 +205,7 @@ export function ViewerStage({
     frameKey,
     onReload: onReload ?? (() => undefined),
     onLeave: () => barRef.current?.focus(),
+    onAsk: (anchor) => askFromFrame.current(pageAnchorOf(anchor)),
   });
   const editing = live.editing;
   // While a version waits for review, the page still shows the changes made on their base: the
@@ -280,6 +285,42 @@ export function ViewerStage({
 
   const editRef = useRef<HTMLButtonElement>(null);
   const headerRef = useRef<HTMLElement>(null);
+  // Ask an agent, not editing: the comments panel in request mode, opened if it was closed (one
+  // reload into review mode, which the pick needs). `n` changes for every request. A request
+  // lasts as long as the panel it opened: once the panel closes, Comments opens a plain composer.
+  // A panel opened for the request (`opened`) closes again once it is sent.
+  const [request, setRequest] = useState<{
+    n: number;
+    anchor: AskAnchor | null;
+    opened: boolean;
+  } | null>(null);
+  const requestCount = useRef(0);
+  useEffect(() => {
+    if (!commentsOpen) setRequest(null);
+  }, [commentsOpen]);
+  const ask = useAskAgent({
+    gate,
+    editing,
+    openDialog: setDialog,
+    openRequest: (anchor) => {
+      requestCount.current += 1;
+      const n = requestCount.current;
+      setRequest((prev) => ({ n, anchor, opened: !commentsOpen || prev?.opened === true }));
+      if (!commentsOpen) onToggleComments();
+    },
+    focusSignIn: () =>
+      headerRef.current?.querySelector<HTMLElement>('a[aria-label="Sign in to edit"]')?.focus(),
+  });
+  askFromFrame.current = ask.open;
+  // The agents a request can go to, read again when one went away meanwhile (`no_agent`).
+  const refreshTargets = async (): Promise<ClientType[] | null> => {
+    try {
+      const g = await api<ViewGate>(route(API.view, { ref: artifact.id || slug }));
+      return g.status === "ok" ? (g.ask?.targets ?? []) : null;
+    } catch {
+      return null;
+    }
+  };
   // While the frame shows the whole-draft review, toasts keep clear of its choices.
   useEffect(() => {
     if (!live.reviewing) return;
@@ -325,6 +366,7 @@ export function ViewerStage({
     editing,
     present,
     update,
+    ask,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -422,6 +464,9 @@ export function ViewerStage({
                   onClose={closeComments}
                   onOpenCountChange={setOpenCount}
                   onItemsChange={setCommentItems}
+                  ask={gate.ask ? { targets: gate.ask.targets, owner: isOwner } : undefined}
+                  request={request}
+                  onTargetsStale={refreshTargets}
                   {...pageComments}
                 />
               </div>

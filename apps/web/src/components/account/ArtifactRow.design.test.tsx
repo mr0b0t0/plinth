@@ -79,6 +79,7 @@ function pageMenu(type: ArtifactSummary["type"]) {
     contentOrigin: "",
     hrefs: { edit: "/e", settings: "/s", stats: "/t", report: "/r", history: "/h" },
     theme: { next: "dark", set: () => {} },
+    ask: { available: false, inSlot: false },
   } as unknown as StageContext;
   return labels(menuEntries(c));
 }

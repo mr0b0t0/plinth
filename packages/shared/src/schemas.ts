@@ -735,6 +735,16 @@ export const createCommentInput = z.object({
   parent_id: z.string().min(1).max(64).optional(),
   version_number: versionNumberSchema.optional(),
   anchor: anchorSchema.optional(),
+  /**
+   * Ask an agent: send the new thread to the owner's connections of this client type as a
+   * mention task. Root comments only; refused (400 invalid_input, reason `no_agent`) when the
+   * owner has no connection of that type that can take mentions.
+   */
+  request_to: clientTypeSchema
+    .optional()
+    .describe(
+      "Ask an agent: a new thread's request to the owner's connections of this client type (claude, codex or other). Not on replies",
+    ),
 });
 export const updateCommentInput = z.object({ status: commentStatusSchema });
 

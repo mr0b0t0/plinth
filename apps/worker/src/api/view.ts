@@ -11,8 +11,10 @@ import {
   TTL,
   typeDef,
   type ViewGate,
+  type ViewGateAsk,
   type ViewGateData,
   type ViewGateLive,
+  type ViewGateLiveOff,
   type ViewGatePeople,
   viewerCodeInput,
   viewerEmailInput,
@@ -45,6 +47,7 @@ import {
   servedVersionWriters,
   versionCapabilities,
 } from "../services/artifacts.ts";
+import { requestTargets } from "../services/comments.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { parseManifest } from "../services/storage.ts";
@@ -201,7 +204,49 @@ export const GATE_PARTS: readonly GatePart[] = [
   },
   async ({ ctx, a, d }) => (gateWatch(ctx, a, d) ? { watch: true as const } : undefined),
   async ({ ctx, a }) => ((await holdDeclared(ctx, a)) ? { hold: true as const } : undefined),
+  async ({ ctx, a }) => {
+    const ask = await gateAsk(ctx, a);
+    return ask ? { ask } : undefined;
+  },
+  async ({ ctx, a, d, opts }) => {
+    const liveOff = gateLiveOff(ctx, a, d, opts);
+    return liveOff ? { live_off: liveOff } : undefined;
+  },
 ];
+
+// ---------- Ask an agent ----------
+
+/**
+ * Who a request from Ask an agent can go to: for everyone who may mention the owner's agents here
+ * (policy "mention": the owner, editors and commenters), never for an agent. Only the client types
+ * of the owner's connections that can take requests, never their labels.
+ */
+async function gateAsk(ctx: Ctx, a: ArtifactRow): Promise<ViewGateAsk | undefined> {
+  if (ctx.principal.kind === "agent") return undefined;
+  const d = await decideFor(ctx, a, "mention");
+  if (!d.allow) return undefined;
+  return { targets: await requestTargets(ctx.db, a.ownerId) };
+}
+
+/**
+ * Editing on the page is off, and why: exactly where `live` would be (an owner or editor of a live
+ * type on the current version, signed in or confirmed by code) when liveEditMode is null. So a
+ * gate never has both, and the Edit slot shows Ask an agent with the reason instead.
+ */
+function gateLiveOff(
+  ctx: Ctx,
+  a: ArtifactRow,
+  d: Extract<Decision, { allow: true }>,
+  opts: GateOptions,
+): ViewGateLiveOff | undefined {
+  if (!isLiveType(typeDef(a.type)) || a.takenDownAt) return undefined;
+  if (d.role !== "owner" && d.role !== "editor") return undefined;
+  if (opts.version !== undefined) return undefined;
+  const p = ctx.principal;
+  if (p.kind !== "user" && p.kind !== "viewer") return undefined;
+  if (liveEditMode(ctx.config, ctx.env)) return undefined;
+  return { reason: ctx.config.allowLiveEditing ? "isolation" : "disabled" };
+}
 
 // ---------- live views ----------
 

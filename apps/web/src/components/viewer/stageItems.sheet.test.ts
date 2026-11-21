@@ -21,6 +21,7 @@ function context(
     actions: { toggleEditing: () => undefined, openShare: () => undefined },
     refs: { edit: { current: null }, bar: { current: null } },
     theme: { next: "dark", set: () => undefined },
+    ask: { available: false, inSlot: false },
   } as unknown as StageContext;
 }
 
