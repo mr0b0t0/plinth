@@ -919,13 +919,22 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   viewer is editing is held the same way, and the edit is written at the rev it began from, so a
   peer's text saved meanwhile is a conflict: theirs is kept, and the viewer's text replaces it
   only if the viewer presses "Use mine". A table cell's edit is written into its row at the rev
-  the edit began from; a peer's change to that cell meanwhile is kept and the viewer is told.
+  the edit began from, and its rows merge cell by cell: a peer's change to that cell, or the removal
+  of its row or column, is kept and the viewer is offered "Use mine" with the typed text, which
+  brings the row or column back. Typed text is never dropped silently.
+- **Pages from before the wider format cannot flatten newer blocks.** Such a page writes back the
+  whole block its older reader made (a table as an empty note, an outline or a size dropped). The
+  Worker refuses a page write that replaces a stored block or arrow when it drops a field the
+  format gained, drops a `#rrggbb` colour, turns a newer kind into a note or cuts text to 2,000
+  characters (`stale_page`, `whiteboard.ts staleBoardWrite`); shared data is not versioned, so
+  this is the only thing between an old tab and lost work. The current page never writes any of
+  them.
 - **Collaborators' text stays text.** Block text, section titles, table cells and arrow labels
   reach the DOM only as text nodes. Inline marks are split from the text by a pattern (no HTML
   parser) and drawn as spans the renderer builds; a link becomes an `<a>` only when its address
   parses as `http:` or `https:` (`javascript:`, `data:` and the rest stay plain words), with
   `target="_blank"` and `rel="noopener noreferrer nofollow"`, and it opens only on a press without
-  a drag or from the keyboard (the browser's own navigation is cancelled). Colours reach style
+  a drag or from the keyboard (the browser's own navigation, a middle click's too, is cancelled). Colours reach style
   attributes only as a board colour's fixed token or a `#rrggbb` the schema checked; shape outlines
   are SVG path data built from numbers. The exports write a link as underlined words, never an
   `href`.
@@ -1602,18 +1611,20 @@ checks, in this order (`apps/worker/src/content/data-api.ts`):
 5. **Availability.** Under opaque isolation or with `ALLOW_SHARED_DATA` off the API reports
    unavailable (`/session` 200 `{ available: false, reason }`, everything else 403).
 6. **Artifact.** Missing, deleted or taken down: 404.
-7. **Body.** POST and PUT need `Content-Type: application/json`, are refused past the artifact's
-   document cap + 1 KiB (`DATA_MAX_DOC_BYTES`, or `DATA_BOARD_MAX_DOC_BYTES` on a whiteboard)
-   whether or not a length is sent, and are parsed with strict schemas: unknown keys, such as
-   author fields, are refused. The artifact is read first only to know that cap.
-8. **Access.** The `__Host-plinth_content` cookie for this artifact at its current access epoch.
+7. **Access.** The `__Host-plinth_content` cookie for this artifact at its current access epoch.
    Without one, or with valid ones that disagree on who is viewing, the API answers a JSON 401,
    never the gate redirect.
+8. **Body.** POST and PUT need `Content-Type: application/json`, are refused past the artifact's
+   document cap + 1 KiB (`DATA_MAX_DOC_BYTES`, or `DATA_BOARD_MAX_DOC_BYTES` on a whiteboard)
+   whether or not a length is sent, and are parsed with strict schemas: unknown keys, such as
+   author fields, are refused. Steps 6 and 7 come first, so the body is read only for a caller
+   with a pass for this artifact: nobody else can tell a whiteboard from its larger cap or make
+   the Worker hold a large body.
 9. **Declaration.** The current version must declare `data`.
 10. **Policy**, then rate limits, then quotas, then a guarded write. The decisions are pure
     functions in `policy.ts` (`pageDataAccess`, `canModifyDoc`), repeated in the SQL `WHERE` of
     the write so a race cannot slip past them. The same `WHERE` requires the artifact to exist and
-    not be taken down, so a write already past step 7 when the artifact is deleted or taken down
+    not be taken down, so a write already past step 8 when the artifact is deleted or taken down
     cannot bring wiped data back. A document's `rev` is one past the artifact's change counter, so
     a document deleted and created again never repeats a rev, and `if_rev` only ever matches the
     content its writer read.

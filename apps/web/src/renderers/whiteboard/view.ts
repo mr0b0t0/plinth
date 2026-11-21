@@ -15,6 +15,7 @@ import {
   type BoardColor,
   type BoardInk,
   type BoardPaint,
+  cellText,
   HEX_COLOR_RE,
   hasMarks,
   heatOf,
@@ -469,9 +470,8 @@ function drawTable(doc: Document, v: ViewEls, el: HTMLElement, b: BoardBlock): v
     for (const col of layout.cols) {
       const cell = doc.createElement("div");
       cell.className = ri === 0 ? "wb-cell wb-head" : "wb-cell";
-      const value = b.rows?.[row.id]?.[col.id];
       const span = doc.createElement("span");
-      span.textContent = typeof value === "string" ? value : "";
+      span.textContent = cellText(b, row.id, col.id);
       cell.append(span);
       if (b.textAlign) cell.style.textAlign = b.textAlign;
       const fill = b.fills?.[row.id]?.[col.id];

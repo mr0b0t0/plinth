@@ -813,6 +813,63 @@ describe("the page's data API on a whiteboard", () => {
     expect(JSON.parse(goal2?.data as string)).not.toHaveProperty("color");
   });
 
+  it("refuses a page loaded before the wider format writing a newer block back as a note; agents may", async () => {
+    const { owner, cookie, id } = await board('{"v":1}');
+    const table = {
+      kind: "table",
+      x: 0,
+      y: 0,
+      w: 240,
+      h: 60,
+      cols: { c1: { at: 1 } },
+      rows: { r1: { at: 1, c1: "Plan" } },
+    };
+    const made = await api(id, "/data/blocks/tb", cookie, "PUT", { data: table, if_rev: 0 });
+    expect(made.status).toBe(201);
+    const rev = (await json(made)).rev as number;
+    // The older page's move: its reader made the table an empty note, written whole at the rev.
+    const oldMove = { kind: "note", x: 40, y: 0, w: 240, h: 60, text: "" };
+    const res = await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove, if_rev: rev });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatchObject({
+      code: "invalid_input",
+      details: { reason: "stale_page" },
+    });
+    // Without if_rev too (its plain set), and nothing changed.
+    expect((await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove })).status).toBe(400);
+    const row = (await docRows(id)).find((r) => r.doc_id === "tb");
+    expect(JSON.parse(row?.data as string)).toEqual(table);
+    // The current page's move keeps every field and goes through.
+    const moved = await api(id, "/data/blocks/tb", cookie, "PUT", {
+      data: { ...table, x: 40 },
+      if_rev: rev,
+    });
+    expect(moved.status).toBe(200);
+    // An agent may still replace a block whole.
+    const client = await mcpClient(owner.token);
+    const r = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        {
+          op: "set",
+          collection: "blocks",
+          doc_id: "tb",
+          data: oldMove,
+          if_rev: (await json(moved)).rev,
+        },
+      ],
+    });
+    await client.close();
+    expect((r.data.results as { ok: boolean }[])[0]?.ok).toBe(true);
+  });
+
+  it("reads no body before the content pass: a caller without one gets 401, never 413", async () => {
+    const { id } = await board('{"v":1}');
+    const huge = { data: { ...block(), text: "x".repeat(300_000) } };
+    const res = await api(id, "/data/blocks", "", "POST", huge);
+    expect(res.status).toBe(401);
+  });
+
   it("holds larger documents than other pages: a table past DATA_MAX_DOC_BYTES fits a board", async () => {
     const { cookie, id } = await board('{"v":1}');
     const cols = { c1: { at: 1 }, c2: { at: 2 } };

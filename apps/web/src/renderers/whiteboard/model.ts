@@ -87,7 +87,10 @@ export class BoardModel {
     });
   }
 
-  /** The blocks lying wholly inside a section, which move with it (sections inside it stay). */
+  /**
+   * The blocks lying wholly inside a section, which move with it: a section nested in it too, so
+   * that section and what it holds move together.
+   */
   inside(id: string): string[] {
     const s = this.blocks.get(id)?.data;
     if (s?.kind !== "container") return [];
@@ -95,7 +98,6 @@ export class BoardModel {
       .filter(
         ([bid, { data: b }]) =>
           bid !== id &&
-          b.kind !== "container" &&
           b.x >= s.x &&
           b.y >= s.y &&
           b.x + b.w <= s.x + s.w &&

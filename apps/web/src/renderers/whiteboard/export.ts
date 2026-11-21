@@ -11,6 +11,7 @@ import {
   type BoardColor,
   type BoardInk,
   type BoardPaint,
+  cellText,
   HEX_COLOR_RE,
   heatOf,
   isDarkHex,
@@ -364,7 +365,7 @@ function tableScene(theme: ExportTheme, b: BoardBlock, measure: Measure, out: Pr
       });
     }
     for (const col of layout.cols) {
-      const cell = b.rows?.[row.id]?.[col.id];
+      const cell = cellText(b, row.id, col.id);
       const fill = b.fills?.[row.id]?.[col.id];
       const shade = heat.get(`${row.id}\u0000${col.id}`);
       const at = { x: b.x + col.x, y: b.y + row.y, w: col.w, h: row.h };

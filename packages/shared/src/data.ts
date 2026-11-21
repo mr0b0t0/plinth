@@ -362,23 +362,24 @@ export function dataShapeError(value: unknown, maxDepth = LIMITS.maxDataDepth): 
   return null;
 }
 
-/** A plain JSON object nesting at most LIMITS.maxDataDepth levels. No size check. */
 /**
  * A merge op's result: the stored document with each top-level field of `patch` put in its place,
- * and a field set to null removed. Shallow: a nested object is replaced whole.
+ * and a field set to null removed. Shallow: a nested object is replaced whole. Built from entries,
+ * so a key such as "__proto__" stays an ordinary field.
  */
 export function mergeDocData(
   stored: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...stored };
+  const fields = new Map(Object.entries(stored));
   for (const [k, v] of Object.entries(patch)) {
-    if (v === null) delete out[k];
-    else out[k] = v;
+    if (v === null) fields.delete(k);
+    else fields.set(k, v);
   }
-  return out;
+  return Object.fromEntries(fields);
 }
 
+/** A plain JSON object nesting at most LIMITS.maxDataDepth levels. No size check. */
 export const dataObjectSchema = z
   .record(z.string(), z.unknown())
   .superRefine((v, ctx) => {

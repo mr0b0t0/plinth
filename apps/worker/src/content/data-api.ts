@@ -14,11 +14,12 @@
 //   4. Origin, when sent, exactly this artifact's content origin ("null" refused);
 //   5. availability (opaque isolation or ALLOW_SHARED_DATA off);
 //   6. the artifact, with its current version's declaration and type;
-//   7. JSON bodies only, size-capped while reading at that type's document cap plus 1 KiB (a
-//      whiteboard's DATA_BOARD_MAX_DOC_BYTES, else DATA_MAX_DOC_BYTES), strict shapes (no author
-//      fields);
-//   8. the content pass (cookie for this artifact at its current epoch); a JSON 401, never the
+//   7. the content pass (cookie for this artifact at its current epoch); a JSON 401, never the
 //      gate redirect;
+//   8. JSON bodies only, size-capped while reading at that type's document cap plus 1 KiB (a
+//      whiteboard's DATA_BOARD_MAX_DOC_BYTES, else DATA_MAX_DOC_BYTES), strict shapes (no author
+//      fields): read only for a caller with a pass, so nobody else learns an artifact's type from
+//      the cap or makes the Worker hold a large body;
 //   9. the declaration (`data`);
 //  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write.
 // Bodies and document contents are never logged. Routes are entries of DATA_API_ROUTES, and the
@@ -479,18 +480,18 @@ async function handle(
   if (!loaded) throw new ApiError("not_found", "Not found");
   const { target } = loaded;
 
-  // 7. Body, up to the artifact's document cap (a whiteboard's is larger) plus 1 KiB.
-  let body: unknown;
-  if (method === "POST" || method === "PUT") {
-    body = await readJsonBody(request, dataLimitsFor(config, target.type).maxDocBytes + 1024);
-  }
-
-  // 8. Access.
+  // 7. Access.
   const pass = await readContentPass(request, config, loaded);
   if (!pass) {
     throw new ApiError("unauthorized", "Your access expired. Reload the page.", {
       reason: "expired",
     });
+  }
+
+  // 8. Body, up to the artifact's document cap (a whiteboard's is larger) plus 1 KiB.
+  let body: unknown;
+  if (method === "POST" || method === "PUT") {
+    body = await readJsonBody(request, dataLimitsFor(config, target.type).maxDocBytes + 1024);
   }
 
   // 9. Declaration. An in-chat preview (an MCP host's frame, any framer) never reads or writes

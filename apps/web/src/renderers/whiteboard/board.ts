@@ -7,9 +7,11 @@ import {
   type BoardBlock,
   type BoardColor,
   type BoardSettings,
+  cellText,
   HEX_COLOR_RE,
   isShapeKind,
   SHAPE_KINDS,
+  type TableCol,
   type TableRow,
   TEXT_SIZES,
 } from "@plinth/shared";
@@ -36,7 +38,7 @@ import {
 import type { Live } from "./live.ts";
 import { BoardModel, type DocIn, type Entry } from "./model.ts";
 import type { RuntimePeer } from "./runtime.ts";
-import { type BoardSync, KEPT_THEIRS_TEXT, USE_MINE_LABEL } from "./sync.ts";
+import { type BoardSync, KEPT_THEIRS_TEXT, putCells, USE_MINE_LABEL } from "./sync.ts";
 import {
   applyCamera,
   buildView,
@@ -119,7 +121,12 @@ export class Board {
   private editStart: {
     text: string;
     rev: number;
-    cell?: { row: string; col: string; rows: Record<string, TableRow> };
+    cell?: {
+      row: string;
+      col: string;
+      rows: Record<string, TableRow>;
+      cols: Record<string, TableCol>;
+    };
   } | null = null;
   /** The link a press began on: opened when the press ends without a drag. */
   private downLink: HTMLAnchorElement | null = null;
@@ -437,7 +444,7 @@ export class Board {
       this.editStart = {
         text: value,
         rev: entry.rev,
-        cell: { row: target[0], col: target[1], rows: b.rows ?? {} },
+        cell: { row: target[0], col: target[1], rows: b.rows ?? {}, cols: b.cols ?? {} },
       };
     } else this.editStart = { text: b.text, rev: entry.rev };
     this.editing = id;
@@ -484,15 +491,30 @@ export class Board {
     const text = ta ? [...ta.value].slice(0, max).join("") : null;
     ta?.remove();
     const cur = this.model.blocks.get(id)?.data;
+    if (start.cell && keep && text !== null && text !== start.text && !cur) {
+      this.say("Someone deleted this table while you were writing in it.");
+    }
     if (start.cell && cur) {
-      // A table: the cell goes into its row, over the rows as the edit began.
-      const { row, col, rows } = start.cell;
-      const now = cur.rows?.[row]?.[col];
-      if (keep && text !== null && text !== start.text && text !== now && cur.rows?.[row]) {
-        if ((typeof now === "string" ? now : "") !== start.text) this.say(KEPT_THEIRS_TEXT);
-        else {
-          const next = { ...cur.rows, [row]: { ...cur.rows[row], [col]: text } as TableRow };
+      // A table: the cell goes into its row, over the rows as the edit began. Typed text is never
+      // dropped: when the cell, its row or its column changed meanwhile, theirs is kept and the
+      // viewer is offered theirs back ("Use mine"), which brings back a row or column that went.
+      const { row, col, rows, cols } = start.cell;
+      const nowRow = cur.rows && Object.hasOwn(cur.rows, row) ? cur.rows[row] : undefined;
+      const colThere = cur.cols !== undefined && Object.hasOwn(cur.cols, col);
+      const now = cellText(cur, row, col);
+      if (keep && text !== null && text !== start.text && !(nowRow && colThere && now === text)) {
+        if (nowRow && colThere && now === start.text) {
+          const next = { ...cur.rows, [row]: { ...nowRow, [col]: text } as TableRow };
           this.save(id, { rows: next }, { rows }, start.rev);
+        } else {
+          const typed = text;
+          this.say(KEPT_THEIRS_TEXT, {
+            label: USE_MINE_LABEL,
+            run: () => {
+              const b = this.model.blocks.get(id)?.data;
+              if (b) this.save(id, putCells(b, { rows, cols }, [{ row, col, text: typed }]));
+            },
+          });
         }
       }
       // Draw the cells again (the edit emptied one).
@@ -635,6 +657,10 @@ export class Board {
       if (!a) return;
       e.preventDefault();
       if (e.detail === 0) this.openLink(a as HTMLAnchorElement);
+    });
+    // A middle click (or any other button) on a link never opens it either.
+    vp.addEventListener("auxclick", (e) => {
+      if ((e.target as Element | null)?.closest?.("a.wb-link")) e.preventDefault();
     });
     vp.addEventListener(
       "wheel",

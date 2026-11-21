@@ -7,8 +7,18 @@
 // the board read-only. A peer's save of a block this viewer is saving, dragging, resizing or
 // editing the text of is read once that is over, so it never replaces what the viewer is in the
 // middle of. A text edit is written at the rev it started from, so a peer's text saved meanwhile
-// is a conflict: their text is kept, and the viewer is offered to put theirs back.
-import { type BoardArrow, type BoardBlock, cleanBlock } from "@plinth/shared";
+// is a conflict: their text is kept, and the viewer is offered to put theirs back. A table's rows
+// merge cell by cell: a typed cell goes onto the newer rows unless that same cell changed, or its
+// row or column went, and then the viewer is offered it back, which brings the row or column back
+// with it. Typed text is never dropped: a duplicate is better than a loss.
+import {
+  type BoardArrow,
+  type BoardBlock,
+  cellText,
+  cleanBlock,
+  type TableCol,
+  type TableRow,
+} from "@plinth/shared";
 import type { BoardModel, Entry } from "./model.ts";
 import type { RuntimeCollection, RuntimeError } from "./runtime.ts";
 
@@ -73,6 +83,85 @@ export function errorText(e: RuntimeError | undefined): string {
 }
 
 const code = (e: unknown) => (e as RuntimeError | undefined)?.code;
+
+/** A table cell the viewer typed that the newer copy could not take. */
+export interface LostCell {
+  row: string;
+  col: string;
+  text: string;
+}
+
+const own = <T>(o: Record<string, T> | undefined, k: string): T | undefined =>
+  o && Object.hasOwn(o, k) ? o[k] : undefined;
+
+/**
+ * A table's rows with the cells the viewer changed (`mine` against `was`, the copy the change was
+ * made over) put on a newer copy (`theirs`), one cell at a time: a cell goes in unless the other
+ * writer changed that same cell, or removed its row or column, and then it is `lost`, never
+ * dropped. Everything else the other writer did stays.
+ */
+export function mergeRows(
+  was: Pick<BoardBlock, "rows">,
+  theirs: Pick<BoardBlock, "rows" | "cols">,
+  mine: Record<string, TableRow>,
+): { rows: Record<string, TableRow>; lost: LostCell[] } {
+  const rows: Record<string, TableRow> = { ...(theirs.rows ?? {}) };
+  const lost: LostCell[] = [];
+  for (const [row, mrow] of Object.entries(mine)) {
+    const wrow = own(was.rows, row);
+    for (const [col, v] of Object.entries(mrow)) {
+      if (col === "at" || typeof v !== "string") continue;
+      const before = cellText(was, row, col);
+      if (wrow && v === before) continue;
+      const trow = own(rows, row);
+      if (!trow || own(theirs.cols, col) === undefined) {
+        lost.push({ row, col, text: v });
+        continue;
+      }
+      const now = cellText(theirs, row, col);
+      if (now === v) continue;
+      if (now !== before) {
+        lost.push({ row, col, text: v });
+        continue;
+      }
+      rows[row] = { ...trow, [col]: v } as TableRow;
+    }
+  }
+  return { rows, lost };
+}
+
+/**
+ * The change that puts typed cells back on a table: each into its row, bringing back from `was` a
+ * row or a column that was removed meanwhile (with the row's other cells that still have a
+ * column). It may duplicate what someone else did; it never loses what the viewer typed.
+ */
+export function putCells(
+  cur: BoardBlock,
+  was: Pick<BoardBlock, "rows" | "cols">,
+  cells: readonly LostCell[],
+): BlockPatch {
+  const cols: Record<string, TableCol> = { ...(cur.cols ?? {}) };
+  const rows: Record<string, TableRow> = { ...(cur.rows ?? {}) };
+  const next = (list: { at: number }[]) => Math.max(0, ...list.map((x) => x.at)) + 1;
+  let colsChanged = false;
+  for (const c of cells) {
+    if (own(cols, c.col)) continue;
+    cols[c.col] = { ...(own(was.cols, c.col) ?? { at: next(Object.values(cols)) }) };
+    colsChanged = true;
+  }
+  for (const c of cells) {
+    let row = own(rows, c.row);
+    if (!row) {
+      const old = own(was.rows, c.row);
+      row = { at: old?.at ?? next(Object.values(rows)) } as TableRow;
+      for (const [k, v] of Object.entries(old ?? {})) {
+        if (k !== "at" && own(cols, k) && typeof v === "string") row[k] = v;
+      }
+    }
+    rows[c.row] = { ...row, [c.col]: c.text } as TableRow;
+  }
+  return colsChanged ? { rows, cols } : { rows };
+}
 
 /** What a delete leaves to undo it with. */
 export interface Undo {
@@ -220,10 +309,23 @@ export class BoardSync {
     let kept = false;
     /** The viewer's newest text, when theirs was kept instead: offered back to them. */
     let lostText: string | undefined;
+    /** Table cells the viewer typed that the newer copy could not take: offered back too. */
+    const lostCells = new Map<string, LostCell>();
     const keys = new Set([...Object.keys(patch), ...Object.keys(queued ?? {})]);
     for (const k of keys as Set<keyof BoardBlock>) {
       const mine = k in patch ? patch[k] : queued?.[k];
       if (same(theirs[k], was[k]) || same(theirs[k], mine)) continue;
+      if (k === "rows" && theirs.kind === "table") {
+        // A table's rows merge cell by cell, so another writer's cells and the viewer's both stay.
+        for (const target of [left, queued]) {
+          if (!target?.rows) continue;
+          const m = mergeRows(was, theirs, target.rows);
+          for (const l of m.lost) lostCells.set(`${l.row}\u0000${l.col}`, l);
+          if (same(m.rows, theirs.rows)) delete target.rows;
+          else target.rows = m.rows;
+        }
+        continue;
+      }
       kept = true;
       if (k === "text") lostText = queued && "text" in queued ? queued.text : patch.text;
       delete left[k];
@@ -233,11 +335,19 @@ export class BoardSync {
     this.known.set(id, { data: theirs, rev });
     this.d.model.blocks.set(id, { data: { ...theirs, ...left, ...queued }, rev });
     this.d.changed();
-    if (kept && lostText !== undefined && lostText !== theirs.text) {
-      const text = lostText;
+    const text = kept && lostText !== undefined && lostText !== theirs.text ? lostText : undefined;
+    const cells = [...lostCells.values()];
+    if (text !== undefined || cells.length > 0) {
       this.d.say(KEPT_THEIRS_TEXT, {
         label: USE_MINE_LABEL,
-        run: () => void this.saveBlock(id, { text }),
+        run: () => {
+          const cur = this.d.model.blocks.get(id)?.data;
+          if (!cur) return;
+          void this.saveBlock(id, {
+            ...(text !== undefined ? { text } : {}),
+            ...(cells.length > 0 ? putCells(cur, was, cells) : {}),
+          });
+        },
       });
     } else if (kept) this.d.say(KEPT_THEIRS_TEXT);
     return left;

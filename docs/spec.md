@@ -983,8 +983,9 @@ Decided 2026-11-14 (issue #1). Design:
   `DATA_WRITES_PER_ARTIFACT_PER_HOUR` (2000). A whiteboard's data takes its own caps in place of
   the first, second and fourth: `DATA_BOARD_MAX_DOCS` (2000), `DATA_BOARD_MAX_BYTES` (2 MiB) and
   `DATA_BOARD_MAX_DOC_BYTES` (200 KiB, from 1 KiB to 1 MiB); the page API reads a request body up
-  to the artifact's own document cap plus 1 KiB. Fixed: 50 collections per artifact, nesting depth
-  16, 200 documents per page, 50 ops per agent call.
+  to the artifact's own document cap plus 1 KiB, and only once the caller's content pass is
+  checked. Fixed: 50 collections per artifact, nesting depth 16, 200 documents per page, 50 ops
+  per agent call.
 - **Lifecycle.** Data is deleted with the artifact and wiped on takedown (a write already in flight
   cannot bring it back), scrubbed of a person on
   `erase-user`, and kept across new versions and restores. Any grant, visibility or password change
@@ -2358,6 +2359,14 @@ its page without a new version each time, and agents add and move blocks with
     A board has no `order` list: `z` per block, changed with a `merge`, gives the same control
     without one document every add would rewrite. An arrow whose block is gone is not drawn and is
     never deleted on its own.
+  - Pages loaded before this format read a block through an older reader and write it back whole
+    on every move, which would turn a newer block into an empty note. So a page's write that
+    replaces a stored block or arrow is refused (`invalid_input`, `details.reason: "stale_page"`)
+    when it drops a field the format gained (a table's cells, an outline, a size, a route), drops a
+    `#rrggbb` colour, turns a block of a newer kind into a note, or cuts its text to the old 2,000
+    characters. The current page never writes any of these; such a page reports the refusal and
+    does not retry, and a reload brings the current page. Agents' writes are not checked this way:
+    an agent's `set` may replace a block whole.
   The server checks every whiteboard write against these shapes, from the page, agents and the
   app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
   versioned (shared data never is); every write is stamped with who made it.
@@ -2403,9 +2412,12 @@ its page without a new version each time, and agents add and move blocks with
   other kinds through the same controls: a selected shape shows one Shape list (Box, Rounded,
   Ellipse, Diamond and the rest) and a selected text one Text size list, saved like a colour; a
   section's title is edited like any text, and dragging a section carries the blocks lying wholly
-  inside it (each saved where it lands; peers see the section move live and its blocks on the
-  save); a double click on a table cell (or Enter on a table) edits that cell, written into its row
-  at the rev the edit began from. Adding sections and tables, and adding a table's rows and
+  inside it, nested sections included (each saved where it lands; peers see the section move
+  live and its blocks on the save); a double click on a table cell (or Enter on a table) edits
+  that cell, written into its row at the rev the edit began from. A table's rows merge cell by cell: on a conflict the typed cell
+  goes onto the newer rows unless that same cell changed or its row or column was removed, and then
+  the other writer's version stays and the viewer is offered "Use mine", which writes the typed text
+  back (bringing back a removed row or column). Typed text is never dropped silently. Adding sections and tables, and adding a table's rows and
   columns, is for agents for now.
 - **The toolbar shows only what applies**, in one row on the board's own background. The add
   buttons show to people who may change the board; a selected block's colours, Connect (which

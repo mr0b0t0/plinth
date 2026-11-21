@@ -291,8 +291,13 @@ export function blockKeys(kind: BlockKind): readonly string[] {
 
 /** A table's column or row id: 1 to 40 of A-Z a-z 0-9 _ -, and never "at" (a row's place). */
 const TABLE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
-const isTableId = (k: string) => TABLE_ID_RE.test(k) && k !== "at";
-const TABLE_ID_TEXT = 'ids of 1 to 40 of A-Z a-z 0-9 _ -, never "at"';
+/** Names an object lookup could reach through the prototype: never an id. */
+const RESERVED_TABLE_IDS = new Set(["at", "__proto__", "constructor", "prototype"]);
+const isTableId = (k: string) => TABLE_ID_RE.test(k) && !RESERVED_TABLE_IDS.has(k);
+const TABLE_ID_TEXT =
+  'ids of 1 to 40 of A-Z a-z 0-9 _ -, never "at", "__proto__", "constructor" or "prototype"';
+/** Whether `o` has `k` as its own key (never one from the prototype). */
+const has = (o: object, k: string) => Object.hasOwn(o, k);
 
 /** Why a table's own fields are wrong: [path, message], or null. */
 function tableProblem(data: Record<string, unknown>): [string, string] | null {
@@ -326,7 +331,7 @@ function tableProblem(data: Record<string, unknown>): [string, string] | null {
     if (!intWithin(r.at, -L.maxCoord, L.maxCoord)) return [`rows.${id}.at`, "a whole number"];
     for (const [k, v] of Object.entries(r)) {
       if (k === "at") continue;
-      if (!(k in cols)) return [`rows.${id}.${k}`, "a column id from cols"];
+      if (!has(cols, k)) return [`rows.${id}.${k}`, "a column id from cols"];
       if (typeof v !== "string") return [`rows.${id}.${k}`, "a string"];
       if (length(v) > L.maxCell) return [`rows.${id}.${k}`, `at most ${L.maxCell} characters`];
     }
@@ -334,10 +339,10 @@ function tableProblem(data: Record<string, unknown>): [string, string] | null {
   if (fills !== undefined) {
     if (!isObject(fills)) return ["fills", "an object by row id, then column id"];
     for (const [rid, byCol] of Object.entries(fills)) {
-      if (!(rid in rows)) return [`fills.${rid}`, "a row id from rows"];
+      if (!has(rows, rid)) return [`fills.${rid}`, "a row id from rows"];
       if (!isObject(byCol)) return [`fills.${rid}`, "an object by column id"];
       for (const [cid, v] of Object.entries(byCol)) {
-        if (!(cid in cols)) return [`fills.${rid}.${cid}`, "a column id from cols"];
+        if (!has(cols, cid)) return [`fills.${rid}.${cid}`, "a column id from cols"];
         if (v !== "" && !isBoardPaint(v)) return [`fills.${rid}.${cid}`, `${PAINT_TEXT}, or ""`];
       }
     }
@@ -354,7 +359,7 @@ function tableProblem(data: Record<string, unknown>): [string, string] | null {
     const map = heat[which];
     if (!isObject(map)) return [`heat.${which}`, "an object of colours by id"];
     for (const [k, v] of Object.entries(map)) {
-      if (!(k in named)) return [`heat.${which}.${k}`, `an id from ${which}`];
+      if (!has(named, k)) return [`heat.${which}.${k}`, `an id from ${which}`];
       if (!isBoardPaint(v)) return [`heat.${which}.${k}`, PAINT_TEXT];
     }
   }
@@ -470,6 +475,58 @@ export function boardDocError(collection: string, data: unknown): string | null 
   return path
     ? `Not a valid ${what}: ${path} must be ${message}`
     : `Not a valid ${what}: ${message}`;
+}
+
+/** The block fields, block kinds and arrow fields a board had before the wider format. */
+const FORMAT_1_BLOCK_KEYS = new Set(["kind", "x", "y", "w", "h", "text", "color", "z"]);
+const FORMAT_1_KINDS = new Set(["note", "text", "rect", "ellipse"]);
+const FORMAT_1_ARROW_KEYS = new Set(["from", "to", "label", "style", "head"]);
+/** The text limit before the wider format: older pages cut a block's text to it when reading. */
+const FORMAT_1_MAX_TEXT = 2000;
+
+/**
+ * Why a page's write that replaces a stored block or arrow looks like it came from a page loaded
+ * before the wider element format, which would destroy what that page cannot read; null when it
+ * does not. Such a page reads a block through its older lenient reader and writes it back whole
+ * on every move: it turns any newer kind into a note, drops every newer field (a table's cells, a
+ * section's colour, an outline, a size, an arrow's route), drops a #rrggbb colour and cuts text to
+ * 2,000 characters. The current page never does any of these, since its reader keeps every valid
+ * field and its controls never remove one, so the Worker refuses exactly these writes from pages;
+ * an agent's `set` may still replace a block whole.
+ */
+export function staleBoardWrite(
+  collection: string,
+  stored: unknown,
+  incoming: unknown,
+): string | null {
+  if (!isObject(stored) || !isObject(incoming)) return null;
+  const legacy = collection === "arrows" ? FORMAT_1_ARROW_KEYS : FORMAT_1_BLOCK_KEYS;
+  if (collection !== "arrows" && collection !== "blocks") return null;
+  for (const k of Object.keys(stored)) {
+    if (!legacy.has(k) && !has(incoming, k)) return `it drops ${k}`;
+  }
+  if (collection === "arrows") return null;
+  const kind = stored.kind;
+  if (typeof kind === "string" && !FORMAT_1_KINDS.has(kind) && incoming.kind === "note") {
+    return `it turns a ${kind} into a note`;
+  }
+  if (
+    typeof stored.color === "string" &&
+    HEX_COLOR_RE.test(stored.color) &&
+    !has(incoming, "color")
+  ) {
+    return "it drops color";
+  }
+  const text = stored.text;
+  if (
+    typeof text === "string" &&
+    typeof incoming.text === "string" &&
+    length(text) > FORMAT_1_MAX_TEXT &&
+    incoming.text === [...text].slice(0, FORMAT_1_MAX_TEXT).join("")
+  ) {
+    return "it cuts text to 2,000 characters";
+  }
+  return null;
 }
 
 function utf8Length(s: string): number {
@@ -675,7 +732,7 @@ function cleanTable(
       if (!isTableId(id) || !isObject(r) || !finite(r.at)) continue;
       const row: TableRow = { at: place(r.at) };
       for (const [k, v] of Object.entries(r)) {
-        if (k !== "at" && k in cols && typeof v === "string") {
+        if (k !== "at" && has(cols, k) && typeof v === "string") {
           row[k] = [...v].slice(0, L.maxCell).join("");
         }
       }
@@ -686,10 +743,10 @@ function cleanTable(
   if (isObject(data.fills)) {
     const fills: Record<string, Record<string, BoardPaint | "">> = {};
     for (const [rid, byCol] of Object.entries(data.fills)) {
-      if (!(rid in rows) || !isObject(byCol)) continue;
+      if (!has(rows, rid) || !isObject(byCol)) continue;
       const kept: Record<string, BoardPaint | ""> = {};
       for (const [cid, v] of Object.entries(byCol)) {
-        if (cid in cols && (v === "" || isBoardPaint(v))) kept[cid] = v;
+        if (has(cols, cid) && (v === "" || isBoardPaint(v))) kept[cid] = v;
       }
       fills[rid] = kept;
     }
@@ -701,7 +758,7 @@ function cleanTable(
       const named = which === "cols" ? cols : rows;
       const map: Record<string, BoardPaint> = {};
       for (const [k, v] of Object.entries(data.heat[which] as Record<string, unknown>)) {
-        if (k in named && isBoardPaint(v)) map[k] = v;
+        if (has(named, k) && isBoardPaint(v)) map[k] = v;
       }
       out.heat = { [which]: map };
     }

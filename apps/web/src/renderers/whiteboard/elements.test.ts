@@ -29,6 +29,10 @@ class Coll implements RuntimeCollection {
   }
   async set(id: string, data: unknown, opts?: { ifRev?: number }) {
     this.sets.push({ id, data, ifRev: opts?.ifRev });
+    const cur = this.docs.get(id);
+    if (opts?.ifRev !== undefined && (cur?.rev ?? 0) !== opts.ifRev) {
+      throw Object.assign(new Error("conflict"), { code: "conflict", currentRev: cur?.rev ?? 0 });
+    }
     const d = { id, data, rev: ++this.rev };
     this.docs.set(id, d);
     return d;
@@ -54,13 +58,14 @@ function setup(blocks: Record<string, BoardBlock>, arrows: Record<string, unknow
     settings: parseBoardSettings('{"v":1}'),
   });
   const coll = new Coll();
+  const say = vi.fn();
   board.sync = new BoardSync({
     blocks: coll,
     arrows: new Coll(),
     model: board.model,
     changed: () => board.redraw(),
     readOnly: () => board.setReadOnly(true),
-    say: vi.fn(),
+    say,
     emit: () => {},
     busy: (id) => board.holds(id),
     wait: async () => {},
@@ -76,7 +81,7 @@ function setup(blocks: Record<string, BoardBlock>, arrows: Record<string, unknow
     if (!found) throw new Error(`no block ${id}`);
     return found;
   };
-  return { board, root, coll, el };
+  return { board, root, coll, el, say };
 }
 
 const shape = (over: Partial<BoardBlock> = {}): BoardBlock => ({
@@ -300,5 +305,125 @@ describe("changing the new elements on the page", () => {
       "Pro",
       "$25",
     ]);
+  });
+});
+
+describe("a table cell typed while someone else changes the table", () => {
+  const baseTable = (): BoardBlock => ({
+    kind: "table",
+    x: 0,
+    y: 0,
+    w: 240,
+    h: 60,
+    text: "",
+    cols: { c1: { at: 1 }, c2: { at: 2 } },
+    rows: { r1: { at: 1, c1: "Plan", c2: "Price" }, r2: { at: 2, c1: "Pro", c2: "$20" } },
+  });
+
+  /** Ana starts typing in r2.c2, the server takes `theirs` meanwhile, and she types "$25". */
+  function typeOver(theirs: BoardBlock | null, inModel = false) {
+    const t = setup({ t: baseTable() });
+    t.board.startEditing("t", ["r2", "c2"]);
+    if (theirs) {
+      t.coll.docs.set("t", { id: "t", data: theirs, rev: 40 });
+      if (inModel) t.board.model.blocks.set("t", { data: theirs, rev: 40 });
+    }
+    const ta = t.el("t").querySelector(".wb-cell textarea") as HTMLTextAreaElement;
+    ta.value = "$25";
+    t.board.finishEditing(true);
+    return t;
+  }
+
+  /** The "Use mine" a message offered, from the sync's say or the board's own line. */
+  function pressUseMine(t: ReturnType<typeof setup>) {
+    const call = t.say.mock.calls.find((c) => c[1]?.label === "Use mine");
+    if (call) return () => call[1].run();
+    const b = [...t.root.querySelectorAll(".wb-msg button")].find(
+      (x) => x.textContent === "Use mine",
+    ) as HTMLButtonElement | undefined;
+    if (!b) throw new Error("no Use mine");
+    return () => b.click();
+  }
+
+  it("(a) a change to another cell meanwhile: both stay, with no message", async () => {
+    const theirs = baseTable();
+    theirs.rows = { ...theirs.rows, r1: { at: 1, c1: "Tier", c2: "Price" } };
+    const t = typeOver(theirs);
+    await vi.waitFor(() => expect(t.board.sync?.saving("t")).toBe(false));
+    expect(t.coll.docs.get("t")?.data).toMatchObject({
+      rows: { r1: { at: 1, c1: "Tier", c2: "Price" }, r2: { at: 2, c1: "Pro", c2: "$25" } },
+    });
+    expect(t.say).not.toHaveBeenCalled();
+  });
+
+  it("(b) the same cell, the peer's text already on screen: theirs stays and Use mine writes hers", async () => {
+    const theirs = baseTable();
+    theirs.rows = { ...theirs.rows, r2: { at: 2, c1: "Pro", c2: "$30" } };
+    const t = typeOver(theirs, true);
+    expect(t.coll.sets).toHaveLength(0);
+    expect(t.root.querySelector(".wb-msg")?.textContent).toMatch(/Their change was kept/);
+    pressUseMine(t)();
+    await vi.waitFor(() => expect(t.coll.sets).toHaveLength(1));
+    expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r2: { c2: "$25" } } });
+  });
+
+  it("the same cell changed on the server: the save keeps theirs and offers hers back", async () => {
+    const theirs = baseTable();
+    theirs.rows = { ...theirs.rows, r2: { at: 2, c1: "Pro", c2: "$30" } };
+    const t = typeOver(theirs);
+    await vi.waitFor(() => expect(t.board.sync?.saving("t")).toBe(false));
+    expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r2: { c2: "$30" } } });
+    pressUseMine(t)();
+    await vi.waitFor(() =>
+      expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r2: { c2: "$25" } } }),
+    );
+  });
+
+  it("its row deleted meanwhile: Use mine brings the row back with her text", async () => {
+    const theirs = baseTable();
+    theirs.rows = { r1: { at: 1, c1: "Plan", c2: "Price" } };
+    const t = typeOver(theirs);
+    await vi.waitFor(() => expect(t.board.sync?.saving("t")).toBe(false));
+    expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r1: { c1: "Plan" } } });
+    expect((t.coll.docs.get("t")?.data as BoardBlock | undefined)?.rows).not.toHaveProperty("r2");
+    pressUseMine(t)();
+    await vi.waitFor(() =>
+      expect(t.coll.docs.get("t")?.data).toMatchObject({
+        rows: { r2: { at: 2, c1: "Pro", c2: "$25" } },
+      }),
+    );
+  });
+
+  it("its column deleted meanwhile: Use mine brings the column back with her text", async () => {
+    const theirs: BoardBlock = {
+      ...baseTable(),
+      cols: { c1: { at: 1 } },
+      rows: { r1: { at: 1, c1: "Plan" }, r2: { at: 2, c1: "Pro" } },
+    };
+    const t = typeOver(theirs);
+    await vi.waitFor(() => expect(t.board.sync?.saving("t")).toBe(false));
+    pressUseMine(t)();
+    await vi.waitFor(() =>
+      expect(t.coll.docs.get("t")?.data).toMatchObject({
+        cols: { c1: { at: 1 }, c2: { at: 2 } },
+        rows: { r2: { c1: "Pro", c2: "$25" } },
+      }),
+    );
+  });
+
+  it("a section dragged carries a section nested in it and what that one holds", async () => {
+    const { coll, el } = setup({
+      outer: shape({ kind: "container", x: 0, y: 0, w: 600, h: 400, text: "Out" }),
+      inner: shape({ kind: "container", x: 40, y: 40, w: 300, h: 200, text: "In" }),
+      n: shape({ x: 60, y: 60, w: 100, h: 80 }),
+    });
+    pointer(el("outer"), "pointerdown", 500, 350);
+    pointer(el("outer"), "pointermove", 520, 360);
+    pointer(el("outer"), "pointerup", 520, 360);
+    await vi.waitFor(() =>
+      expect(coll.sets.map((s) => s.id).sort()).toEqual(["inner", "n", "outer"]),
+    );
+    expect(coll.docs.get("inner")?.data).toMatchObject({ x: 60, y: 50 });
+    expect(coll.docs.get("n")?.data).toMatchObject({ x: 80, y: 70 });
   });
 });

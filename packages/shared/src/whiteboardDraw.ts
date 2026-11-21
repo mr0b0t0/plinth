@@ -507,6 +507,16 @@ export interface TableLayout {
   rows: { id: string; y: number; h: number }[];
 }
 
+/**
+ * A table cell's text by row and column id, "" when there is none. Own keys only, so no id ever
+ * reaches the prototype.
+ */
+export function cellText(b: Pick<BoardBlock, "rows">, row: string, col: string): string {
+  const r = b.rows && Object.hasOwn(b.rows, row) ? b.rows[row] : undefined;
+  const v = r && Object.hasOwn(r, col) ? r[col] : undefined;
+  return typeof v === "string" ? v : "";
+}
+
 /** The width weight a column without `w` gets. */
 export const DEFAULT_COL_WIDTH = 120;
 
@@ -566,8 +576,8 @@ export function heatOf(
   for (const { paint, cells } of lines) {
     const nums = cells
       .map(([rid, cid]) => {
-        const v = b.rows?.[rid]?.[cid];
-        return [rid, cid, typeof v === "string" ? cellNumber(v) : null] as const;
+        const v = cellText(b, rid, cid);
+        return [rid, cid, v ? cellNumber(v) : null] as const;
       })
       .filter((c): c is readonly [string, string, number] => c[2] !== null);
     if (nums.length === 0) continue;

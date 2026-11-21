@@ -9,6 +9,10 @@ describe("merge", () => {
       mergeDocData(stored, { x: 40, color: null, rows: { r2: { at: 2 } }, size: "large" }),
     ).toEqual({ kind: "rect", x: 40, rows: { r2: { at: 2 } }, size: "large" });
     expect(stored.x).toBe(0);
+    // "__proto__" stays an ordinary field and never reaches the prototype.
+    const merged = mergeDocData({}, JSON.parse('{"__proto__": {"polluted": 1}}'));
+    expect(Object.keys(merged)).toEqual(["__proto__"]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it("needs a doc_id and a rev of at least 1", () => {

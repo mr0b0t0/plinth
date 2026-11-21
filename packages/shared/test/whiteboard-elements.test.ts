@@ -21,6 +21,7 @@ import {
   SHAPE_KINDS,
   safeHref,
   shapePath,
+  staleBoardWrite,
   tableLayout,
   textInset,
   trimRoute,
@@ -341,5 +342,56 @@ describe("inline marks", () => {
 
   it("raised the text limit to 4,000 characters", () => {
     expect(BOARD_LIMITS.maxText).toBe(4000);
+  });
+});
+
+describe("writes from a page loaded before the wider format", () => {
+  // What such a page's lenient reader made of a block, written back whole on a move.
+  const old = (b: Record<string, unknown>) => ({
+    kind: ["note", "text", "rect", "ellipse"].includes(b.kind as string) ? b.kind : "note",
+    x: 40,
+    y: b.y,
+    w: b.w,
+    h: b.h,
+    text: typeof b.text === "string" ? [...b.text].slice(0, 2000).join("") : "",
+    ...(["yellow", "green", "blue", "pink", "purple", "gray"].includes(b.color as string)
+      ? { color: b.color }
+      : {}),
+  });
+
+  it.each<[string, Record<string, unknown>, RegExp]>([
+    ["a table", table(), /drops cols/],
+    ["a diamond", block({ kind: "diamond" }), /turns a diamond into a note/],
+    ["sized text", block({ kind: "text", size: "title" }), /drops size/],
+    ["an outlined box", block({ stroke: "green" }), /drops stroke/],
+    ["a box in #rrggbb", block({ color: "#123456" }), /drops color/],
+    ["long text", block({ text: "x".repeat(3000) }), /cuts text/],
+  ])("refuses its move of %s", (_name, stored, why) => {
+    expect(staleBoardWrite("blocks", stored, old(stored))).toMatch(why);
+  });
+
+  it("refuses its rewrite of a routed arrow, and lets the current page's writes through", () => {
+    const arrow = { from: "a", to: "b", fromSide: "right", heads: ["none", "circle"] };
+    expect(staleBoardWrite("arrows", arrow, { from: "a", to: "b" })).toMatch(/drops fromSide/);
+    // The current page keeps every field: a move, a shape picked from the list, a new colour.
+    const d = block({ kind: "diamond", stroke: "green", color: "#123456" });
+    expect(staleBoardWrite("blocks", d, { ...d, x: 99 })).toBeNull();
+    expect(staleBoardWrite("blocks", d, { ...d, kind: "rect" })).toBeNull();
+    expect(staleBoardWrite("blocks", d, { ...d, color: "pink" })).toBeNull();
+    // A board in the old format moves as before.
+    const n = block({ kind: "note", color: "pink" });
+    expect(staleBoardWrite("blocks", n, old(n))).toBeNull();
+  });
+
+  it("refuses ids an object lookup could reach through the prototype", () => {
+    for (const id of ["__proto__", "constructor", "prototype"]) {
+      expect(boardDocError("blocks", table({ cols: { c1: { at: 1 }, [id]: { at: 2 } } }))).toMatch(
+        /must be ids/,
+      );
+    }
+    // A cell naming a column only the prototype has is refused.
+    expect(boardDocError("blocks", table({ rows: { r1: { at: 1, constructor: "x" } } }))).toMatch(
+      /a column id from cols/,
+    );
   });
 });
