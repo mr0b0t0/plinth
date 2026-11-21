@@ -301,7 +301,7 @@ function live(
       editor?.render();
       status();
     } else if (m.type === "rescue") {
-      if (m.items.length > 0) editor?.offerRescue(m.items);
+      if (m.items.length > 0) editor?.offerRescue(m.items, m.copy === true);
       if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
     } else if (m.type === "collect" && local) {
       editor?.flush();

@@ -6,7 +6,7 @@
 import { LIMITS, PAGE_ANCHOR_UNSAFE_RE, PAGE_COMMENT_LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
-import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
+import { MAX_RESCUE_ITEM, readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import type { ClientLease, LeaseDenial, LeaseLoss } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
@@ -22,6 +22,7 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  RESCUE_DISMISS,
   RESCUE_FRAME_ONLY,
   RESCUE_STUCK,
   RESCUE_WAITS,
@@ -2909,5 +2910,93 @@ describe("the rescue store", () => {
     // Kept by the app after all (a later answer): back to the usual words, or none.
     room.editor.rescueStored([last.upsert[0]?.id as string], last.n);
     expect(notice()).not.toContain(RESCUE_FRAME_ONLY);
+  });
+
+  const noticeButton = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button")].find(
+      (b) => b.textContent === label,
+    );
+
+  it("keeps an item longer than the app takes on this page, with Copy, and still sends the report", () => {
+    const room = roomSetup("ab\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    const long = "c".repeat(MAX_RESCUE_ITEM + 10);
+    r.editable.innerHTML = `<em>a<strong>b</strong></em><strong>${long}</strong>`;
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    const last = reports.at(-1) as RescueReport;
+    // The report goes without it, so the app reads it (the item alone would void it).
+    expect(last.upsert).toEqual([]);
+    expect(readRescueItems(last.upsert)).toEqual([]);
+    expect(kept()).toEqual([]);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    expect(noticeButton("Copy")).toBeDefined();
+  });
+
+  it("offers an item the app had no room for again once something leaves its store", () => {
+    // The app's store is full of older items (20 of them).
+    const full = Array.from({ length: 20 }, (_, i) => ({ id: `f${i}`, text: "old", near: 0 }));
+    mergeRescue(USER, ART, full, []);
+    const room = roomSetup("ab\n\nnext");
+    room.editor.rescueStored(
+      full.map((i) => i.id),
+      0,
+    );
+    stick(room);
+    expect(kept()).not.toContain("abc");
+    const refused = reports.length;
+    // One of the older ones is written and leaves the store: the app's next answer says so.
+    const ids = mergeRescue(USER, ART, [], ["f0"]);
+    room.editor.rescueStored(ids, reports.at(-1)?.n as number);
+    expect(reports.length).toBe(refused + 1);
+    expect(reports.at(-1)?.upsert.map((i) => i.text)).toEqual(["abc"]);
+    expect(kept()).toContain("abc");
+  });
+
+  it("Dismiss asks once, then drops what was kept, for good, here and in the app's store", () => {
+    const room = roomSetup("ab\n\nnext");
+    answer = false;
+    stick(room);
+    room.editor.rescueStored([], (reports.at(-1) as RescueReport).n);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    // The rescue notice's own close is "Close", Dismiss is its action next to Copy.
+    expect(document.querySelector(".plinth-doc__notice-close")?.getAttribute("aria-label")).toBe(
+      "Close",
+    );
+    noticeButton("Dismiss")?.click();
+    expect(notice()).toContain(RESCUE_DISMISS);
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(room.editor.hasRescue).toBe(true);
+    noticeButton("Dismiss")?.click();
+    expect(room.editor.hasRescue).toBe(false);
+    expect(reports.at(-1)).toMatchObject({ upsert: [], written: [], gone: [expect.any(String)] });
+    expect(document.querySelector(".plinth-doc__notice")).toBeNull();
+  });
+
+  it("offers Copy and Dismiss to the person who typed it once they cannot write any more", () => {
+    mergeRescue(USER, ART, [{ id: "r1", text: "Mine", near: 0 }], []);
+    const room = roomSetup("ab\n\nnext");
+    Object.defineProperty(room, "you", {
+      value: { id: "me", email: "ada@example.org", right: "read" },
+    });
+    room.editor.offerRescue(stored());
+    // Never written (no write right), so it would never leave: the notice says so, with Dismiss.
+    expect(room.asked).toBeNull();
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    noticeButton("Dismiss")?.click();
+    noticeButton("Dismiss")?.click();
+    expect(kept()).toEqual([]);
+  });
+
+  it("solo: items offered to copy only are never written again", () => {
+    const { local, editor } = setup("one");
+    editor.offerRescue([{ id: "r1", text: "Already in", near: 0 }], true);
+    expect(local.text).toBe("one");
+    expect(notice()).toContain(RESCUE_STUCK);
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(noticeButton("Dismiss")).toBeDefined();
   });
 });

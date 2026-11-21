@@ -4,11 +4,9 @@ import { RobotIcon, UserIcon } from "@phosphor-icons/react";
 import { APP_ROUTES, type Author } from "@plinth/shared";
 import { type ReactNode, useEffect } from "react";
 import type { ApiRequestError } from "../../lib/api.ts";
-import { Link, navigate } from "../../lib/router.tsx";
-import { useSession } from "../../lib/session.ts";
+import { Link } from "../../lib/router.tsx";
 import { AppShell, type AppShellProps } from "../layout/AppShell.tsx";
 import { ButtonLink, EmptyState, ICON_SIZE, Tooltip } from "../ui/index.ts";
-import { signOut } from "./data.ts";
 import { artifactPath, fullTimestamp, relativeTime } from "./format.ts";
 import "./history.css";
 
@@ -27,7 +25,7 @@ export function HistoryShell({
   children: ReactNode;
   width?: "content" | "full";
 } & Pick<AppShellProps, "title" | "trail" | "actions">) {
-  const { refresh } = useSession();
+  // Sign out is the shell's own (useSignOut), which drops what this tab kept to rescue.
   return (
     <AppShell
       width={width}
@@ -35,11 +33,6 @@ export function HistoryShell({
       title={title}
       trail={trail}
       actions={actions}
-      onSignOut={async () => {
-        await signOut();
-        await refresh().catch(() => undefined);
-        navigate(APP_ROUTES.login);
-      }}
     >
       {children}
     </AppShell>

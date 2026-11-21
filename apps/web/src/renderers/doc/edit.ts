@@ -50,7 +50,12 @@ import {
   stripUnsafeText,
   verifyBlock,
 } from "@plinth/shared";
-import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
+import {
+  type AskWhat,
+  MAX_RESCUE_ITEM,
+  MAX_RESCUE_ITEMS,
+  MAX_RESCUE_TOTAL,
+} from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
@@ -142,6 +147,9 @@ export const RESCUE_FRAME_ONLY =
   "What you typed couldn't be added to the doc yet. It's kept on this page until you reload. Copy it to be safe.";
 /** What both rescue notices start with. */
 const RESCUE_NOTICE = "What you typed couldn't be added to the doc yet.";
+/** Dismiss on a rescue notice asks once: kept text dropped on purpose cannot be brought back. */
+export const RESCUE_DISMISS =
+  "What you typed couldn't be added to the doc yet. Dismiss drops it for good: copy it first to keep it.";
 /** The rescued text waits for a review to end before it goes in. */
 export const RESCUE_WAITS =
   "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.";
@@ -3022,16 +3030,38 @@ export class DocEditor {
     this.hooks.status();
   }
 
-  /** Tells the app what changed in the store (it merges; see RescueReport). */
+  /**
+   * Tells the app what changed in the store (it merges; see RescueReport). An item the app would
+   * refuse (longer than one may be, or past a report's limits) would make it drop the whole
+   * report: it stays on this page only, with Copy, and the rest goes.
+   */
   private report(upsert: Rescue[], written: string[], gone: string[]): void {
     const n = ++this.reportN;
-    for (const r of upsert) r.reported = n;
+    const sent: Rescue[] = [];
+    let total = 0;
+    let capped = false;
+    for (const r of upsert) {
+      if (
+        r.text.length > MAX_RESCUE_ITEM ||
+        total + r.text.length > MAX_RESCUE_TOTAL ||
+        sent.length >= MAX_RESCUE_ITEMS
+      ) {
+        r.reported = null;
+        r.kept = false;
+        capped = true;
+        continue;
+      }
+      total += r.text.length;
+      r.reported = n;
+      sent.push(r);
+    }
     this.hooks.rescue?.({
-      upsert: upsert.map(({ id, text, near }) => ({ id, text, near })),
+      upsert: sent.map(({ id, text, near }) => ({ id, text, near })),
       written,
       gone,
       n,
     });
+    if (capped) this.updateRescueNotice();
   }
 
   /**
@@ -3041,18 +3071,33 @@ export class DocEditor {
    */
   rescueStored(ids: readonly string[], n: number): void {
     const held = new Set(ids);
+    // Something left the app's store since its last answer (written or gone): an item it had no
+    // room for is offered to it again.
+    const freed = [...this.heldByApp].some((id) => !held.has(id));
+    this.heldByApp = held;
     for (const r of this.rescues.values()) {
       if (held.has(r.id)) r.kept = true;
       else if (r.reported !== null && r.reported <= n) r.kept = false;
     }
+    const retry = freed
+      ? [...this.rescues.values()].filter(
+          (r) => r.kept === false && r.text.length <= MAX_RESCUE_ITEM,
+        )
+      : [];
+    if (retry.length > 0) this.report(retry, [], []);
     this.updateRescueNotice();
   }
 
+  /** The ids the app's store held at its last answer (rescueStored). */
+  private heldByApp = new Set<string>();
+
   /** Shows the rescue notice while something can only be copied, and hides it once nothing can. */
   private updateRescueNotice(): void {
-    const showing = this.notice?.textContent?.startsWith(RESCUE_NOTICE) ?? false;
+    const shown = this.notice?.textContent ?? "";
+    const showing = shown.startsWith(RESCUE_NOTICE);
     if (this.needsCopy) {
-      if (!this.notice || showing) this.showRescueNotice();
+      // A Dismiss waiting for its confirmation stays as it is.
+      if (!this.notice || (showing && !shown.startsWith(RESCUE_DISMISS))) this.showRescueNotice();
     } else if (showing) this.hideNotice();
   }
 
@@ -3085,11 +3130,17 @@ export class DocEditor {
    * has them), or ones tried too often.
    */
   private get needsCopy(): boolean {
-    return [...this.rescues.values()].some((r) => r.kept === false || r.parked);
+    // Kept text that this person cannot write any more (their right changed) waits too.
+    const blocked = this.backend.ready && this.backend.you?.right !== "write";
+    return [...this.rescues.values()].some((r) => r.kept === false || r.parked || blocked);
   }
 
-  /** Items the app kept from before a reload: each one not in the draft already is written. */
-  offerRescue(items: readonly RescueItem[]): void {
+  /**
+   * Items the app kept from before a reload: each one not in the draft already is written. With
+   * `copy`, they are in this page's text already (solo, where the app could not keep a copy of
+   * it): they are kept to copy or dismiss, never written again.
+   */
+  offerRescue(items: readonly RescueItem[], copy = false): void {
     let added = false;
     for (const it of items) {
       if (this.rescues.has(it.id)) continue;
@@ -3101,16 +3152,16 @@ export class DocEditor {
         n: ++this.rescueN,
         free: true,
         tries: 0,
-        parked: false,
+        parked: copy,
         reported: null,
         kept: true,
       });
       added = true;
     }
-    if (added) {
-      this.hooks.status();
-      this.flushRescues();
-    }
+    if (!added) return;
+    this.hooks.status();
+    if (copy) this.updateRescueNotice();
+    else this.flushRescues();
   }
 
   /**
@@ -3158,7 +3209,11 @@ export class DocEditor {
     const b = this.backend;
     if (this.want || b.mine || this.open || this.clearing) return;
     if (!b.ready || !b.connected || !b.settled || b.conflictVersion !== null) return;
-    if (this.rescueFrozen || b.you?.right !== "write") return;
+    if (this.rescueFrozen) return;
+    if (b.you?.right !== "write") {
+      this.updateRescueNotice();
+      return;
+    }
     const r = [...this.rescues.values()].find(
       (x) => x.sent === null && x.owner === null && !x.parked,
     );
@@ -3227,12 +3282,30 @@ export class DocEditor {
     queueMicrotask(() => this.flushRescues());
   }
 
-  private showRescueNotice(): void {
+  private showRescueNotice(confirming = false): void {
     const only = [...this.rescues.values()].some((r) => r.kept === false);
-    this.showNotice(only ? RESCUE_FRAME_ONLY : RESCUE_STUCK, {
-      label: "Copy",
-      run: () => this.copyRescues(),
-    });
+    this.showNotice(
+      confirming ? RESCUE_DISMISS : only ? RESCUE_FRAME_ONLY : RESCUE_STUCK,
+      { label: "Copy", run: () => this.copyRescues() },
+      {
+        label: "Dismiss",
+        run: () => (confirming ? this.dismissRescues() : this.showRescueNotice(true)),
+      },
+    );
+  }
+
+  /**
+   * Dismiss, confirmed: every kept text leaves the store on purpose (`gone`), here and in the
+   * app's copy. The person who typed it may, whatever their right on the doc now.
+   */
+  private dismissRescues(): void {
+    const ids = [...this.rescues.keys()];
+    this.rescues.clear();
+    this.blockRescue = null;
+    if (ids.length > 0) this.report([], [], ids);
+    if (this.want?.rescue && !this.backend.mine) this.want = null;
+    this.hideNotice();
+    this.hooks.status();
   }
 
   /** Puts every kept text on the clipboard, for the person to paste where they want it. */
@@ -3306,7 +3379,11 @@ export class DocEditor {
     if (this.editing) this.showNotice(text);
   }
 
-  private showNotice(text: string, action?: { label: string; run: () => void }): void {
+  private showNotice(
+    text: string,
+    action?: { label: string; run: () => void },
+    second?: { label: string; run: () => void },
+  ): void {
     let el = this.notice;
     if (!el) {
       el = this.doc.createElement("div");
@@ -3318,18 +3395,20 @@ export class DocEditor {
     const msg = this.doc.createElement("span");
     msg.textContent = text;
     const parts: Node[] = [msg];
-    if (action) {
+    for (const a of [action, second]) {
+      if (!a) continue;
       const btn = this.doc.createElement("button");
       btn.type = "button";
-      btn.textContent = action.label;
-      btn.addEventListener("click", action.run);
+      btn.textContent = a.label;
+      btn.addEventListener("click", a.run);
       parts.push(btn);
     }
     const close = this.doc.createElement("button");
     close.type = "button";
     close.className = "plinth-doc__notice-close";
     close.textContent = "×";
-    close.setAttribute("aria-label", "Dismiss");
+    // "Dismiss" is the rescue notice's own action there: this one only hides the notice.
+    close.setAttribute("aria-label", second?.label === "Dismiss" ? "Close" : "Dismiss");
     close.addEventListener("click", () => this.hideNotice());
     parts.push(close);
     el.replaceChildren(...parts);

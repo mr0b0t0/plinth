@@ -1,7 +1,7 @@
 // Page: /admin/stats. Instance admins see how the instance is used: people, artifacts, publishes,
 // storage, shared data, agent connections, opens and open reports, with daily trends. Aggregates
 // only: nothing here names a page or a person. Everyone else gets "not found", like the API.
-import { type AdminStats as AdminStatsData, API, APP_ROUTES } from "@plinth/shared";
+import { type AdminStats as AdminStatsData, APP_ROUTES } from "@plinth/shared";
 import { useCallback, useEffect, useState } from "react";
 import { StatGrid } from "../components/admin/StatGrid.tsx";
 import { TrendChart } from "../components/admin/TrendChart.tsx";
@@ -9,7 +9,7 @@ import "../components/admin/admin.css";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import { Button, EmptyState, SegmentedControl, SkeletonText } from "../components/ui/index.ts";
 import { formatDate } from "../components/viewer/format.ts";
-import { ApiRequestError, api, getAdminStats } from "../lib/api.ts";
+import { ApiRequestError, getAdminStats } from "../lib/api.ts";
 import { navigate } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 import NotFound from "./NotFound.tsx";
@@ -34,19 +34,11 @@ export default function AdminStats() {
     document.title = "Stats · Plinth";
   }, []);
 
-  const signOut = async () => {
-    try {
-      await api(API.logout, { method: "POST" });
-    } finally {
-      window.location.assign(APP_ROUTES.home);
-    }
-  };
-
   if (loading) return null;
   if (!me?.is_admin) return <NotFound />;
 
   return (
-    <AppShell onSignOut={signOut} title="Stats">
+    <AppShell title="Stats">
       <StatsBody />
     </AppShell>
   );

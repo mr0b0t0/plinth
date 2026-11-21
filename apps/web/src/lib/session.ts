@@ -7,6 +7,8 @@ interface SessionState {
   loading: boolean;
   me: Me | null;
   config: AppConfig | null;
+  /** The last load failed (not a 401): who is signed in is unknown, `me` is not "no one". */
+  failed?: boolean;
 }
 
 let state: SessionState = { loading: true, me: null, config: null };
@@ -26,7 +28,7 @@ export async function refreshSession(): Promise<void> {
   } catch (e) {
     if (!(e instanceof ApiRequestError && e.status === 401)) throw e;
   }
-  set({ loading: false, me, config });
+  set({ loading: false, me, config, failed: false });
 }
 
 /** The account as a save already returned it (PATCH /me), without fetching it again. */
@@ -46,7 +48,7 @@ export function useSession(): SessionState & { refresh: () => Promise<void> } {
   useEffect(() => {
     if (!started) {
       started = true;
-      refreshSession().catch(() => set({ loading: false }));
+      refreshSession().catch(() => set({ loading: false, failed: true }));
     }
   }, []);
   return { ...s, refresh: refreshSession };
