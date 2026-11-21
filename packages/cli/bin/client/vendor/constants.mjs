@@ -170,6 +170,8 @@ export const LIMITS = {
   liveDocFrameBytes: 64 * KB,
   /** A lease whose holder sent no edit for this long may be taken over. */
   liveLeaseIdleS: 60,
+  /** How often a holder with typing it cannot send yet says its lease is in use (`keep`). */
+  liveLeaseKeepS: 20,
   /** Unsaved live drafts across one owner's artifacts. */
   maxLiveDraftsPerOwner: 20,
   /** JSON body of POST/PUT /artifacts and /mcp (inline assets travel as base64). */

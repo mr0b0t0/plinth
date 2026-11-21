@@ -124,6 +124,48 @@ export const CLEAR_REFUSED = "Couldn't remove this block now. Try again.";
 export const UNSAVABLE = "This text can't be saved as typed. Change it to continue.";
 /** Edit mode ended with such a block open: its text was kept without its formatting. */
 export const FORMAT_DROPPED = "Formatting in the block you were typing in couldn't be kept.";
+/** Someone took over such a block: its text goes in below it, without its formatting. */
+export const TAKEN_KEPT =
+  "Someone else took over this block. What you typed is kept below it, without its formatting.";
+/** The draft changed under such a block: its text is kept, without its formatting. */
+export const CLOSED_KEPT = "The draft changed. What you typed is kept, without its formatting.";
+/** Rescued text that could not be written anywhere yet: it stays kept, and can be copied. */
+export const RESCUE_STUCK = "What you typed couldn't be added to the doc yet. It is kept here.";
+/** The same, for text the app did not take into its store (over its limits): only this page has it. */
+export const RESCUE_FRAME_ONLY =
+  "What you typed couldn't be added to the doc yet. It's kept on this page until you reload. Copy it to be safe.";
+/** What both rescue notices start with. */
+const RESCUE_NOTICE = "What you typed couldn't be added to the doc yet.";
+/** The rescued text waits for a review to end before it goes in. */
+export const RESCUE_WAITS =
+  "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.";
+/** How many places a rescued text is tried at before it waits for a reconnect or a reload. */
+const RESCUE_TRIES = 3;
+
+/**
+ * Text typed in a doc block that is not in the draft yet, kept until the room has a write holding
+ * it (the rescue store). The app keeps a copy in its own storage and offers it back after a reload.
+ */
+export interface RescueItem {
+  id: string;
+  /** The block's text as Markdown, without its marks. */
+  text: string;
+  /** The line it belongs at, as near as the draft allows. */
+  near: number;
+}
+
+/**
+ * A change to the rescue store, for the app's copy, which only ever merges: `upsert` adds or
+ * updates items by id, `written` names items the room acknowledged, `gone` items dropped on
+ * purpose (a discard). Nothing else takes an item out. `n` orders the reports, for the app's
+ * answer saying which ids it keeps.
+ */
+export interface RescueReport {
+  upsert: RescueItem[];
+  written: string[];
+  gone: string[];
+  n: number;
+}
 export const NOT_KEPT = "What you typed in the block you closed couldn't be added. Type it again.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
@@ -211,6 +253,8 @@ export interface EditorHooks {
    * for the dialog's "Pointing at" chip.
    */
   ask?(anchor: AskAnchor, what: AskWhat): void;
+  /** The rescue store changed: the app merges this into its copy (see RescueReport). */
+  rescue?(report: RescueReport): void;
 }
 
 /** Elements whose text reads as separate words from the text next to them. */
@@ -350,11 +394,35 @@ interface Want extends LineRange {
    * back after a reconnect.
    */
   kept?: true;
+  /** The rescue store item this op writes (see Rescue). */
+  rescue?: string;
 }
 
 interface Pad {
   before: boolean;
   after: boolean;
+}
+
+interface Rescue extends RescueItem {
+  /**
+   * Its last accepted send, until the room acknowledges it (then the item is dropped): the edit's
+   * seq (null without acks, solo), its first line and text. `lost` when the socket closed before
+   * the ack: once the draft is back, a match at that place means it landed, else it is written
+   * again.
+   */
+  sent: { seq: number | null; start: number; text: string; lost: boolean } | null;
+  /** Who writes it now: the open block (its own sends), a kept op, or nobody (flushRescues). */
+  owner: "block" | "op" | null;
+  /** Newer items have higher numbers (the size cap keeps the newest). */
+  n: number;
+  /** Written as a new block at the nearest free place, not in place of its block. */
+  free: boolean;
+  tries: number;
+  /** Tried RESCUE_TRIES times: it waits for a reconnect or a reload, and can be copied. */
+  parked: boolean;
+  /** The report that last sent it to the app, and whether the app's store has it (null: unknown). */
+  reported: number | null;
+  kept: boolean | null;
 }
 
 /**
@@ -604,6 +672,17 @@ export class DocEditor {
    * in the doc, so it counts as pending, and the block does not close until the text changes.
    */
   private stuck = false;
+  /** While `stuck` in a room: says the lease is in use every LIMITS.liveLeaseKeepS (`keep`). */
+  private keepAlive: ReturnType<typeof setInterval> | null = null;
+  /** Text typed that is not in the draft yet, by id, until the room's lines hold it. */
+  private readonly rescues = new Map<string, Rescue>();
+  /** The rescue item of the open block (made when it was `stuck`), until the block closes. */
+  private blockRescue: string | null = null;
+  /** Rescue reports sent to the app so far. */
+  private reportN = 0;
+  private rescueN = 0;
+  /** A rescue write was refused because a review waits: none is tried until the review ends. */
+  private rescueFrozen: { seen: boolean } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -629,12 +708,60 @@ export class DocEditor {
    * typed in one closed meanwhile is.
    */
   get pending(): boolean {
-    return this.timer !== null || this.clearing !== null || this.want?.kept === true || this.stuck;
+    return (
+      this.timer !== null ||
+      this.clearing !== null ||
+      this.want?.kept === true ||
+      this.stuck ||
+      this.rescues.size > 0
+    );
   }
 
   /** The open block holds text that cannot be written as typed (see `stuck`). */
   get unsavable(): boolean {
     return this.stuck;
+  }
+
+  /**
+   * Typing in the open block cannot be written as typed, or can again. While it cannot, nothing
+   * is sent, so a room would see the lease as idle and let it be taken over after
+   * LIMITS.liveLeaseIdleS: a connected holder says it is in use instead, until the text can be
+   * written, the block closes or the socket goes.
+   */
+  private setStuck(on: boolean): void {
+    if (this.stuck === on) return;
+    this.stuck = on;
+    if (this.keepAlive) clearInterval(this.keepAlive);
+    this.keepAlive = null;
+    if (!on || !this.backend.keep) return;
+    this.keepAlive = setInterval(() => {
+      const b = this.backend;
+      if (!this.stuck || !this.open) {
+        if (this.keepAlive) clearInterval(this.keepAlive);
+        this.keepAlive = null;
+        return;
+      }
+      if (b.connected && b.mine) b.keep?.();
+    }, LIMITS.liveLeaseKeepS * 1000);
+  }
+
+  /**
+   * Solo: the doc's text with what is typed in the open block, without its marks, while it cannot
+   * be written as typed (the app's kept copy), else null.
+   */
+  textWithTyping(): string | null {
+    const open = this.open;
+    const mine = this.backend.mine;
+    if (!this.stuck || !open || !mine) return null;
+    const core = verifyBlock(withoutMarks(open.rich.model), TOOLS, open.env);
+    if (core === null) return null;
+    const text = core === "" ? "" : padded(composeBlock(open.prefix, core, open.suffix), this.pad);
+    const lines = this.backend.lines;
+    return joinLines([
+      ...lines.slice(0, mine.start),
+      ...blockLines(text),
+      ...lines.slice(mine.end),
+    ]);
   }
 
   /** A block op or a cleared block's removal is on its way: other ops and opens wait for it. */
@@ -644,6 +771,14 @@ export class DocEditor {
 
   setBackend(b: DocBackend): void {
     this.backend = b;
+    // A new backend (the room failed, editing goes on alone): what was sent to the room is not in
+    // this one's text, so every kept item is written here.
+    for (const r of this.rescues.values()) {
+      r.sent = null;
+      if (r.owner === "op") r.owner = null;
+    }
+    if (this.want?.rescue) this.want = null;
+    if (this.rescues.size > 0) queueMicrotask(() => this.flushRescues());
   }
 
   private get canWrite(): boolean {
@@ -889,6 +1024,11 @@ export class DocEditor {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       this.flush();
+      // Typing that cannot be written yet is not in the draft: no Publish goes out without it.
+      if (this.stuck) {
+        this.showNotice(UNSAVABLE);
+        return;
+      }
       this.hooks.save();
     }
   };
@@ -1835,12 +1975,33 @@ export class DocEditor {
       return;
     }
     this.backend.release();
+    if (w.rescue && (refusal !== null || !result || "refusal" in checked)) {
+      // Never dropped: tried elsewhere, or later, or kept (rescueFailed).
+      this.rescueFailed(
+        w.rescue,
+        refusal === NOT_SENT ? "offline" : refusal === CHANGED_MEANWHILE ? "moved" : "refused",
+      );
+      return;
+    }
     if (refusal !== null || !result) {
       // Nothing changed, so nothing is opened or selected for it.
       this.showNotice(w.kept ? NOT_KEPT : (refusal ?? CHANGED_MEANWHILE));
       this.render();
       this.hooks.status();
       return;
+    }
+    if (w.rescue && "text" in checked) {
+      const r = this.rescues.get(w.rescue);
+      if (r) r.owner = null;
+      // Already the room's text (nothing was sent), or sent and waiting for its ack.
+      const wrote = checked.text !== text;
+      this.rescueSent(
+        w.rescue,
+        wrote ? (this.backend.lastSeq ?? null) : null,
+        lease.start,
+        checked.text,
+      );
+      if (!wrote) this.dropRescue(w.rescue);
     }
     if (result.focus !== undefined) this.after = { line: result.focus, open: !!result.open };
     this.render();
@@ -1898,6 +2059,13 @@ export class DocEditor {
         this.hooks.status();
         return;
       }
+    }
+    if (w?.rescue) {
+      this.rescueFailed(
+        w.rescue,
+        reason === "frozen" ? "frozen" : reason === "watch" ? "refused" : "moved",
+      );
+      return;
     }
     if (w?.kept) {
       this.showNotice(NOT_KEPT);
@@ -1967,6 +2135,11 @@ export class DocEditor {
    */
   disconnected(): void {
     if (this.backend.connected) return;
+    // Sends the room had not acknowledged may or may not have landed: checked at their own place
+    // once the draft is back (checkRescues).
+    for (const r of this.rescues.values()) {
+      if (r.sent && !(r.sent.seq !== null && this.backend.acked?.(r.sent.seq))) r.sent.lost = true;
+    }
     if (this.clearing) this.lost("reconnect");
     if (!this.asking) return;
     this.asking = false;
@@ -2022,6 +2195,14 @@ export class DocEditor {
       this.hooks.status();
       return;
     }
+    if (this.stuck && open && held && (reason === "takeover" || reason === "closed")) {
+      // Typing that could not be written yet is never dropped with the block.
+      if (this.keepPlain(reason === "takeover")) {
+        this.held = null;
+        this.showNotice(reason === "takeover" ? TAKEN_KEPT : CLOSED_KEPT);
+        return;
+      }
+    }
     if (!open || !held || !this.editing) {
       this.dropOpen();
       this.render();
@@ -2057,7 +2238,7 @@ export class DocEditor {
     const b = this.backend;
     if (
       w &&
-      (w.keep !== undefined || w.kept) &&
+      (w.keep !== undefined || (w.kept && b.conflictVersion === null)) &&
       !b.mine &&
       b.connected &&
       b.settled &&
@@ -2068,6 +2249,10 @@ export class DocEditor {
       this.retake(w);
     }
     this.clearedSent();
+    // The rescue store: what the room's lines hold now goes, a review that ended lets the rest in.
+    this.roomStatus();
+    this.checkRescues();
+    queueMicrotask(() => this.flushRescues());
     // Lines changed around an emptied block not sent yet can make its empty lines join them: it
     // is removed now, as typing would have (edited()), never later inside a close.
     if (this.clearedJoins()) {
@@ -2080,7 +2265,10 @@ export class DocEditor {
   // ---------- the open block ----------
 
   private dropOpen(): void {
-    this.stuck = false;
+    this.setStuck(false);
+    const br = this.blockRescue ? this.rescues.get(this.blockRescue) : undefined;
+    if (br?.owner === "block") br.owner = null;
+    this.blockRescue = null;
     const open = this.open;
     if (!open) return;
     open.menu.close(false);
@@ -2226,20 +2414,26 @@ export class DocEditor {
     const block = this.currentText();
     if (block === null) {
       // Never dropped: the text stays in the block, the block stays open and counts as pending
-      // (close() refuses), and the person changes it. The keystroke is not undone.
-      this.stuck = true;
+      // (close() refuses), and the person changes it. The keystroke is not undone. A room's copy
+      // goes to the rescue store too.
+      this.setStuck(true);
+      this.noteStuck();
       this.showNotice(UNSAVABLE);
       this.hooks.status();
       return false;
     }
     if (this.stuck) {
-      this.stuck = false;
-      if (this.notice?.textContent === UNSAVABLE) this.hideNotice();
+      this.setStuck(false);
+      if (this.notice?.textContent?.startsWith(UNSAVABLE)) this.hideNotice();
       this.hooks.status();
     }
     const text = padded(block, this.pad);
     const lines = this.backend.lines;
-    if (joinLines(lines.slice(mine.start, mine.end)) === text) return true;
+    if (joinLines(lines.slice(mine.start, mine.end)) === text) {
+      // The room holds this text already: the block's rescue copy has nothing left to keep.
+      this.rescueSent(this.blockRescue, null, mine.start, text);
+      return true;
+    }
     // The room's rules, checked here first: a refusal is never silent.
     if (RULES?.checkEdit(lines, mine.start, mine.end - mine.start, blockLines(text))) {
       this.refused(REFUSED_EDIT);
@@ -2251,6 +2445,8 @@ export class DocEditor {
       this.showNotice(refusal);
       return false;
     }
+    // Every accepted send from a block with a rescue copy replaces what that copy waits for.
+    this.rescueSent(this.blockRescue, this.backend.lastSeq ?? null, mine.start, text);
     return true;
   }
 
@@ -2442,7 +2638,7 @@ export class DocEditor {
    * the op needs, and released otherwise. Until the op is made the frame reports unsent changes,
    * and after a reconnect it is asked for again once the draft is back. A refusal says so.
    */
-  private keepTyped(c: Clearing, core: string): void {
+  private keepTyped(c: Clearing, core: string, rescue?: string): void {
     const b = this.backend;
     const block = composeBlock(c.prefix, core, c.suffix);
     const plan = () => {
@@ -2467,7 +2663,19 @@ export class DocEditor {
     this.dropOpen();
     this.held = null;
     const p = plan();
-    const w: Want = { ...p, insert: false, tries: 0, op: { plan, build }, kept: true };
+    const w: Want = {
+      ...p,
+      insert: false,
+      tries: 0,
+      op: { plan, build },
+      kept: true,
+      ...(rescue ? { rescue } : {}),
+    };
+    const owned = rescue ? this.rescues.get(rescue) : undefined;
+    if (owned) {
+      owned.owner = "op";
+      owned.sent = null;
+    }
     const m = b.mine;
     if (m && m.start === p.start && m.end === p.end) {
       if (joinLines(b.lines.slice(m.start, m.end)) === p.text) {
@@ -2478,7 +2686,7 @@ export class DocEditor {
     }
     if (m) b.release();
     this.want = w;
-    if (b.connected && b.settled) this.retake(w);
+    if (b.connected && b.settled && b.conflictVersion === null) this.retake(w);
     this.render();
     this.hooks.status();
   }
@@ -2500,6 +2708,21 @@ export class DocEditor {
     this.cancelTimer();
     const open = this.open;
     const mine = this.backend.mine;
+    // A rescue write the room refused after it was sent: tried again elsewhere, never dropped.
+    const sent = [...this.rescues.values()]
+      .filter((r) => r.sent?.seq != null && !this.backend.acked?.(r.sent.seq))
+      .sort((a, b) => (b.sent?.seq ?? 0) - (a.sent?.seq ?? 0))[0];
+    if (sent && sent.owner !== "block") {
+      this.rescueFailed(sent.id, "moved");
+      return;
+    }
+    if (sent) sent.sent = null;
+    // Typing that cannot be written as typed stays as typed: the room's text does not replace it.
+    if (this.stuck) {
+      this.showNotice(reason);
+      this.hooks.status();
+      return;
+    }
     if (open && mine) {
       const lines = this.backend.lines;
       const block = parseBlocks(joinLines(lines)).find(
@@ -2527,11 +2750,342 @@ export class DocEditor {
    */
   private salvage(): void {
     const open = this.open;
-    if (!open || !this.backend.mine || this.clearing) return;
+    if (!open || this.clearing) return;
     this.flush();
     if (!this.stuck) return;
-    open.rich.setModel(withoutMarks(open.rich.model));
-    if (this.send()) this.showNotice(FORMAT_DROPPED);
+    if (this.backend.mine) {
+      open.rich.setModel(withoutMarks(open.rich.model));
+      if (this.send()) this.showNotice(FORMAT_DROPPED);
+      return;
+    }
+    // No lease (not connected, or it was lost): kept and written once a lease can be had.
+    this.keepPlain(false);
+  }
+
+  /**
+   * The open block's typing, which cannot be written as typed, is written without its marks once a
+   * lease can be had (keepTyped): in place of the block as the doc had it (`after` false), or as a
+   * new block right after it when someone else holds it now. While that waits the frame reports
+   * unsent changes, and it is asked for again once the draft is back (and no review waits).
+   */
+  private keepPlain(after: boolean): boolean {
+    const open = this.open;
+    const held = this.held;
+    if (!open || !held) return false;
+    const core = verifyBlock(withoutMarks(open.rich.model), TOOLS, open.env);
+    if (core === null || core === "") return false;
+    const own = joinLines(this.backend.lines.slice(held.start, held.end));
+    const c: Clearing = {
+      phase: "insert",
+      drop: true,
+      text: "",
+      lease: "",
+      at: 0,
+      from: after ? held.end : held.start,
+      own,
+      pad: this.pad,
+      prefix: open.prefix,
+      suffix: open.suffix,
+      keep: core,
+      point: after ? held.end : null,
+    };
+    const id = this.rescueFor(core, after ? held.end : held.start);
+    this.setStuck(false);
+    this.keepTyped(c, core, id);
+    return true;
+  }
+
+  // ---------- the rescue store ----------
+
+  /**
+   * The rescue item for the open block's typing (`stuck`, or salvaged), made or brought up to
+   * date. Rooms only: a solo tab's typing is in the app's kept copy.
+   */
+  private rescueFor(text: string, near: number): string | undefined {
+    if (!this.backend.keep) return undefined;
+    const id = this.blockRescue ?? `r${Date.now().toString(36)}${++this.rescueN}`;
+    const was = this.rescues.get(id);
+    const r: Rescue = {
+      id,
+      text,
+      near,
+      sent: null,
+      owner: "block",
+      n: ++this.rescueN,
+      free: was?.free ?? false,
+      tries: was?.tries ?? 0,
+      parked: false,
+      reported: was?.reported ?? null,
+      kept: was?.kept ?? null,
+    };
+    this.rescues.set(id, r);
+    this.blockRescue = id;
+    if (was?.text !== text || was.near !== near) this.report([r], [], []);
+    return id;
+  }
+
+  /**
+   * An accepted write for item `id` (a send of its block, or its kept op): it is dropped once the
+   * room acknowledges edit `seq`; without acks (solo, or nothing was sent) at once.
+   */
+  private rescueSent(
+    id: string | null | undefined,
+    seq: number | null,
+    start: number,
+    text: string,
+  ) {
+    const r = id ? this.rescues.get(id) : undefined;
+    if (!r) return;
+    if (seq === null || !this.backend.acked || this.backend.acked(seq)) {
+      this.dropRescue(r.id);
+      return;
+    }
+    r.sent = { seq, start, text, lost: false };
+  }
+
+  /** Item `id` leaves the store: written (the room acknowledged its write) or gone (on purpose). */
+  private dropRescue(id: string, why: "written" | "gone" = "written"): void {
+    if (!this.rescues.delete(id)) return;
+    if (this.blockRescue === id) this.blockRescue = null;
+    this.report([], why === "written" ? [id] : [], why === "gone" ? [id] : []);
+    this.updateRescueNotice();
+    this.hooks.status();
+  }
+
+  /** Tells the app what changed in the store (it merges; see RescueReport). */
+  private report(upsert: Rescue[], written: string[], gone: string[]): void {
+    const n = ++this.reportN;
+    for (const r of upsert) r.reported = n;
+    this.hooks.rescue?.({
+      upsert: upsert.map(({ id, text, near }) => ({ id, text, near })),
+      written,
+      gone,
+      n,
+    });
+  }
+
+  /**
+   * The app's answer to report `n` and the ones before it: the ids its store holds. An item it
+   * was sent but does not hold (over its limits) is on this page only, which the page says, with
+   * Copy.
+   */
+  rescueStored(ids: readonly string[], n: number): void {
+    const held = new Set(ids);
+    for (const r of this.rescues.values()) {
+      if (held.has(r.id)) r.kept = true;
+      else if (r.reported !== null && r.reported <= n) r.kept = false;
+    }
+    this.updateRescueNotice();
+  }
+
+  /** Shows the rescue notice while something can only be copied, and hides it once nothing can. */
+  private updateRescueNotice(): void {
+    const showing = this.notice?.textContent?.startsWith(RESCUE_NOTICE) ?? false;
+    if (this.needsCopy) {
+      if (!this.notice || showing) this.showRescueNotice();
+    } else if (showing) this.hideNotice();
+  }
+
+  /** Everything kept is dropped: the unpublished changes were discarded. */
+  clearRescues(): void {
+    if (this.rescues.size === 0 && !this.want?.rescue) return;
+    const ids = [...this.rescues.keys()];
+    this.rescues.clear();
+    if (ids.length > 0) this.report([], [], ids);
+    this.updateRescueNotice();
+    this.hooks.status();
+    this.blockRescue = null;
+    this.rescueFrozen = null;
+    // A kept op on its way writes nothing either.
+    if (this.want?.rescue && !this.backend.mine) this.want = null;
+  }
+
+  /** The open block cannot be written as typed: its text, without its marks, is kept. */
+  private noteStuck(): void {
+    const open = this.open;
+    const at = this.backend.mine ?? this.held;
+    if (!open || !at || !this.backend.keep) return;
+    const core = verifyBlock(withoutMarks(open.rich.model), TOOLS, open.env);
+    if (!core) return;
+    this.rescueFor(core, at.start);
+  }
+
+  /**
+   * Something kept can only be copied for now: items the app's store does not hold (only this page
+   * has them), or ones tried too often.
+   */
+  private get needsCopy(): boolean {
+    return [...this.rescues.values()].some((r) => r.kept === false || r.parked);
+  }
+
+  /** Items the app kept from before a reload: each one not in the draft already is written. */
+  offerRescue(items: readonly RescueItem[]): void {
+    let added = false;
+    for (const it of items) {
+      if (this.rescues.has(it.id)) continue;
+      // From the app's store, which holds it already.
+      this.rescues.set(it.id, {
+        ...it,
+        sent: null,
+        owner: null,
+        n: ++this.rescueN,
+        free: true,
+        tries: 0,
+        parked: false,
+        reported: null,
+        kept: true,
+      });
+      added = true;
+    }
+    if (added) {
+      this.hooks.status();
+      this.flushRescues();
+    }
+  }
+
+  /**
+   * The room's status changed (a review froze or ended): a rescue write that waited for the review
+   * goes in once it is over.
+   */
+  roomStatus(): void {
+    const f = this.rescueFrozen;
+    if (!f) return;
+    if (this.backend.conflictVersion !== null) f.seen = true;
+    else if (f.seen) {
+      this.rescueFrozen = null;
+      queueMicrotask(() => this.flushRescues());
+    }
+  }
+
+  /** Whether any typed text is still kept outside the draft. */
+  get hasRescue(): boolean {
+    return this.rescues.size > 0;
+  }
+
+  /** Items the room's lines hold now are dropped from the store. */
+  private checkRescues(): void {
+    const b = this.backend;
+    for (const r of [...this.rescues.values()]) {
+      const sent = r.sent;
+      if (!sent) continue;
+      if (!sent.lost) {
+        if (sent.seq !== null && b.acked?.(sent.seq)) this.dropRescue(r.id);
+        continue;
+      }
+      // The socket closed before the ack: it may or may not have landed, and matching text at its
+      // place proves nothing (an insert can sit right before a same block). Written again once
+      // the draft is back: a copy at worst, never a loss.
+      if (!b.connected || !b.settled) continue;
+      r.sent = null;
+    }
+  }
+
+  /**
+   * Writes the next kept item that is not written yet, once nothing else is going on (no block
+   * open or asked for, connected, no review waiting): as a new block at the nearest free place.
+   */
+  private flushRescues(): void {
+    const b = this.backend;
+    if (this.want || b.mine || this.open || this.clearing) return;
+    if (!b.ready || !b.connected || !b.settled || b.conflictVersion !== null) return;
+    if (this.rescueFrozen || b.you?.right !== "write") return;
+    const r = [...this.rescues.values()].find(
+      (x) => x.sent === null && x.owner === null && !x.parked,
+    );
+    if (!r) return;
+    const point = this.freePoint(r.near);
+    const c: Clearing = {
+      phase: "insert",
+      drop: true,
+      text: "",
+      lease: "",
+      at: 0,
+      from: point,
+      own: "",
+      pad: { before: false, after: false },
+      prefix: [],
+      suffix: [],
+      keep: r.text,
+      point,
+    };
+    this.keepTyped(c, r.text, r.id);
+  }
+
+  /**
+   * The insert point nearest `near` between top-level blocks that no one else's lease touches,
+   * else the end of the doc.
+   */
+  private freePoint(near: number): number {
+    const b = this.backend;
+    const lines = b.lines;
+    const blocks = parseBlocks(joinLines(lines));
+    const points = [0, ...blocks.flatMap((x) => [x.start, x.end]), lines.length];
+    const others = [...b.leases.values()].filter((l) => l.id !== b.mine?.id);
+    const free = [...new Set(points)]
+      .filter((p) => p <= lines.length && !others.some((l) => l.start <= p && p <= l.end))
+      .sort((x, y) => Math.abs(x - near) - Math.abs(y - near) || y - x);
+    return free[0] ?? lines.length;
+  }
+
+  /**
+   * A rescue write did not go in. A review waiting: it goes in once the review ends. Held or moved
+   * meanwhile: it is tried at the nearest free place instead, RESCUE_TRIES times at most. Not
+   * connected: again once the draft is back. Otherwise, and after the tries, it stays kept (the
+   * frame still reports unsent changes, and the app keeps its copy), and the page says so with a
+   * way to copy it.
+   */
+  private rescueFailed(id: string, why: "frozen" | "moved" | "offline" | "refused"): void {
+    const r = this.rescues.get(id);
+    if (!r) return;
+    r.sent = null;
+    r.owner = null;
+    if (why === "frozen") {
+      this.rescueFrozen = { seen: this.backend.conflictVersion !== null };
+      this.showNotice(RESCUE_WAITS);
+    } else if (why === "offline") {
+      this.showNotice(NOT_SENT);
+    } else {
+      r.free = true;
+      r.tries += 1;
+      if (why === "refused" || r.tries >= RESCUE_TRIES) {
+        r.parked = true;
+        this.showRescueNotice();
+      }
+    }
+    this.render();
+    this.hooks.status();
+    queueMicrotask(() => this.flushRescues());
+  }
+
+  private showRescueNotice(): void {
+    const only = [...this.rescues.values()].some((r) => r.kept === false);
+    this.showNotice(only ? RESCUE_FRAME_ONLY : RESCUE_STUCK, {
+      label: "Copy",
+      run: () => this.copyRescues(),
+    });
+  }
+
+  /** Puts every kept text on the clipboard, for the person to paste where they want it. */
+  private copyRescues(): void {
+    const text = [...this.rescues.values()].map((r) => r.text).join("\n\n");
+    const fallback = () => {
+      const area = this.doc.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      this.doc.body.append(area);
+      area.select();
+      try {
+        this.doc.execCommand("copy");
+      } catch {
+        // No clipboard here either: the text stays kept, and the notice stays.
+      }
+      area.remove();
+    };
+    const clip = this.win.navigator.clipboard;
+    if (clip?.writeText) void clip.writeText(text).catch(fallback);
+    else fallback();
   }
 
   /**
@@ -2612,8 +3166,11 @@ export class DocEditor {
   }
 
   private hideNotice(): void {
+    const was = this.notice?.textContent ?? "";
     this.notice?.remove();
     this.notice = null;
+    // Kept text that can only be copied keeps its notice: it comes back once another one goes.
+    if (this.needsCopy && !was.startsWith(RESCUE_NOTICE)) this.showRescueNotice();
   }
 
   /** For tests and the status line: the open block's editor. */

@@ -564,6 +564,8 @@ export class LiveDoc {
         return this.release(ws, s, doc, f.lease);
       case "takeover":
         return this.takeover(ws, s, doc, f.lease);
+      case "keep":
+        return this.keep(ws, s, f.lease);
       case "struct":
         return this.struct(ws, s, doc, f.rev, f.op);
     }
@@ -647,6 +649,19 @@ export class LiveDoc {
     // A finished block is written straight away.
     if (this.needsFlush) void this.flushNow();
     else this.status(doc);
+  }
+
+  /**
+   * The holder says its lease is in use though it sends no edit (typing it cannot write yet): the
+   * lease's idle clock starts again, as after an edit, and the socket is answered `kept`.
+   * A holder that sends neither for LIMITS.liveLeaseIdleS can still be taken over.
+   */
+  private keep(ws: WebSocket, s: DocSocket, id: string) {
+    if (s.doc !== "write") return;
+    if (!s.lease || s.lease.id !== id) return this.error(ws, "not_held");
+    s.lease = { ...s.lease, at: Date.now() };
+    this.host.save(ws, s);
+    this.host.send(ws, { t: "kept", lease: id });
   }
 
   private takeover(ws: WebSocket, s: DocSocket, doc: Loaded, id: string) {

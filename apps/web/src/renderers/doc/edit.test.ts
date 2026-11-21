@@ -5,6 +5,8 @@
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
 import { LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
+import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import type { ClientLease, LeaseDenial, LeaseLoss } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
@@ -20,6 +22,11 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  RESCUE_FRAME_ONLY,
+  RESCUE_STUCK,
+  RESCUE_WAITS,
+  type RescueReport,
+  TAKEN_KEPT,
   TOO_LONG,
   UNSAVABLE,
   unpadded,
@@ -2160,6 +2167,97 @@ describe("typing next to a mark", () => {
     expect(editor.pending).toBe(false);
   });
 
+  /** Opens the first paragraph and leaves typing in it that cannot be written as typed. */
+  function stuckIn(editor: DocEditor) {
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    r.editable.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(editor.unsavable).toBe(true);
+    return r;
+  }
+
+  it("Cmd/Ctrl+S publishes nothing while such typing is not in the doc", () => {
+    const { editor } = setup("ab");
+    const r = stuckIn(editor);
+    key(r.editable, "s", { metaKey: true });
+    expect(save).not.toHaveBeenCalled();
+    expect(notice()).toContain(UNSAVABLE);
+    // Once it can be written, the shortcut publishes as usual.
+    r.editable.innerHTML = "<em>a</em>bc";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    key(r.editable, "s", { ctrlKey: true });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the lease in use while such typing waits, so it is not taken over as idle", () => {
+    class Room extends LocalDoc {
+      keep = vi.fn(() => true);
+    }
+    let editor: DocEditor;
+    const room = new Room("ab", {
+      granted: (l: ClientLease) => editor.granted(l),
+      changed: () => editor.changed(),
+    });
+    editor = new DocEditor(root, window, room, { save, status: () => undefined, ask });
+    editor.setEditing(true);
+    stuckIn(editor);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000 * 4);
+    expect(room.keep).toHaveBeenCalledTimes(4);
+    // Written again: the edits keep the lease in use, and the heartbeat stops.
+    const r = rich(editor);
+    r.editable.innerHTML = "<em>a</em>bc";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000 * 3);
+    expect(room.keep).toHaveBeenCalledTimes(4);
+  });
+
+  it("taken over meanwhile: the typing goes in below the block, without its formatting", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    // Someone else takes the block over: the lease is gone.
+    local.mine = null;
+    editor.lost("takeover");
+    expect(local.text).toBe("ab\n\nabc\n\nnext");
+    expect(notice()).toContain(TAKEN_KEPT);
+    expect(editor.pending).toBe(false);
+  });
+
+  it("the draft closed meanwhile: the typing takes the block's place, without its formatting", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    local.mine = null;
+    editor.lost("closed");
+    expect(local.text).toBe("abc\n\nnext");
+    expect(editor.pending).toBe(false);
+  });
+
+  it("edit mode ending while not connected keeps the typing and writes it once the draft is back", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    // The socket drops: the lease is reported lost, and nothing can be sent.
+    Object.defineProperty(local, "connected", { value: false, configurable: true });
+    local.mine = null;
+    editor.lost("reconnect");
+    editor.setEditing(false);
+    expect(local.text).toBe("ab\n\nnext");
+    expect(editor.pending).toBe(true);
+    // Back: it is written in place of the block, without its formatting.
+    Object.defineProperty(local, "connected", { value: true, configurable: true });
+    editor.changed();
+    expect(local.text).toBe("abc\n\nnext");
+    expect(editor.pending).toBe(false);
+  });
+
+  it("solo: the kept copy has such typing, without its formatting", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    expect(local.text).toBe("ab\n\nnext");
+    expect(editor.textWithTyping()).toBe("abc\n\nnext");
+  });
+
   // Every single character typed in or at the edge of a formatted run, over a fixed corpus, is
   // either in the doc or leaves the block open and pending: never neither.
   it("never leaves typing neither sent nor pending", () => {
@@ -2221,5 +2319,438 @@ describe("typing next to a mark", () => {
     }
     expect(tried).toBeGreaterThan(300);
     expect(lost).toEqual([]);
+  });
+});
+
+// ---------- the rescue store (rooms) ----------
+
+/**
+ * A room as the editor sees it, answering lease requests when the test says (or at once while
+ * `auto`): its lines change only with an edit the room took, as the real client's do on an ack.
+ */
+class FakeRoom {
+  lines: string[];
+  readonly ready = true;
+  connected = true;
+  readonly settled = true;
+  mine: ClientLease | null = null;
+  readonly leases = new Map<string, ClientLease>();
+  readonly you = { id: "me", email: "ada@example.org", right: "write" as const };
+  conflictVersion: number | null = null;
+  ackedText: string | null = null;
+  readonly durableText = null;
+  asked: { start: number; end: number } | null = null;
+  auto = true;
+  editor!: DocEditor;
+  keep = vi.fn(() => true);
+  /** Acks this socket's edits at once; off, they wait for ack(). */
+  ackNow = true;
+  private seq = 0;
+  private readonly ackedSeqs = new Set<number>();
+  private n = 0;
+  get lastSeq() {
+    return this.seq;
+  }
+  acked(seq: number) {
+    return this.ackedSeqs.has(seq);
+  }
+  /** The room acknowledges every edit sent so far. */
+  ack() {
+    for (let i = 1; i <= this.seq; i++) this.ackedSeqs.add(i);
+    this.editor.changed();
+  }
+  constructor(text: string) {
+    this.lines = text.split("\n");
+  }
+  get text() {
+    return this.lines.join("\n");
+  }
+  lease(r: { start: number; end: number }) {
+    if (!this.connected || this.conflictVersion !== null) return false;
+    this.asked = { start: r.start, end: r.end };
+    if (this.auto) this.grant();
+    return true;
+  }
+  grant() {
+    const r = this.asked as { start: number; end: number };
+    this.asked = null;
+    this.mine = { id: `l${++this.n}`, ...r, by: "", holder: "me", at: 0 };
+    this.leases.set(this.mine.id, this.mine);
+    this.ackedText = this.lines.slice(r.start, r.end).join("\n");
+    this.editor.granted(this.mine);
+  }
+  deny(reason: LeaseDenial, by?: string) {
+    this.asked = null;
+    this.editor.denied(reason, by);
+  }
+  /** Edits are sent but never reach the room (the socket is about to close). */
+  dropEdits = false;
+  edit(text: string) {
+    const l = this.mine;
+    if (!l || !this.connected) return false;
+    if (this.dropEdits) {
+      this.seq += 1;
+      return true;
+    }
+    const ins = text === "" ? [] : text.split("\n");
+    this.lines = [...this.lines.slice(0, l.start), ...ins, ...this.lines.slice(l.end)];
+    this.mine = { ...l, end: l.start + ins.length };
+    this.leases.set(l.id, this.mine);
+    this.ackedText = text;
+    this.seq += 1;
+    if (this.ackNow) this.ackedSeqs.add(this.seq);
+    this.editor.changed();
+    return true;
+  }
+  release() {
+    if (!this.mine) return;
+    this.leases.delete(this.mine.id);
+    this.mine = null;
+    this.editor.changed();
+  }
+  takeover() {
+    return false;
+  }
+  /** The room takes this socket's lease away (a takeover, a freeze, a dropped socket). */
+  lose(reason: LeaseLoss) {
+    if (this.mine) this.leases.delete(this.mine.id);
+    this.mine = null;
+    this.editor.lost(reason);
+  }
+}
+
+describe("the rescue store", () => {
+  // The app's copy, as the app keeps it (merge-only, components/editor/draft.ts), answering
+  // each report with the ids it holds.
+  const USER = "u1";
+  const ART = "art1";
+  let reports: RescueReport[];
+  let answer = true;
+  const stored = () => readRescueItems(loadRescue(USER, ART)) ?? [];
+  const kept = () => stored().map((i) => i.text);
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    reports = [];
+    answer = true;
+  });
+
+  function app(editor: () => DocEditor) {
+    return (r: RescueReport) => {
+      reports.push(r);
+      const ids = mergeRescue(USER, ART, r.upsert, [...r.written, ...r.gone]);
+      if (answer) editor().rescueStored(ids, r.n);
+    };
+  }
+
+  function roomSetup(text: string) {
+    const room = new FakeRoom(text);
+    room.editor = new DocEditor(root, window, room, {
+      save,
+      status: () => undefined,
+      ask,
+      rescue: app(() => room.editor),
+    });
+    room.editor.setEditing(true);
+    return room;
+  }
+
+  /** A reload: a new frame on `text`, offered what the app kept. */
+  function reload(text: string) {
+    document.body.innerHTML = "";
+    root = document.createElement("main");
+    document.body.append(root);
+    const again = roomSetup(text);
+    again.editor.offerRescue(stored());
+    return again;
+  }
+
+  /** Lets queued work run (the store writes from a microtask). */
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  /** Opens the first paragraph and leaves typing in it that cannot be written as typed. */
+  function stick(room: FakeRoom) {
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    r.editable.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(room.editor.unsavable).toBe(true);
+  }
+
+  it("keeps the typing the moment it cannot be written, for the app to hold", () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+  });
+
+  it("1. a freeze that takes the lease before the room says it froze: written after the review", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.auto = false;
+    // The room revokes the lease ("closed") while the draft does not look frozen yet.
+    room.lose("closed");
+    expect(room.asked).not.toBeNull();
+    // Then the conflict frame, then the answer to the lease request.
+    room.conflictVersion = 4;
+    room.editor.roomStatus();
+    room.deny("frozen");
+    await settle();
+    expect(notice()).toContain(RESCUE_WAITS);
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+    expect(room.asked).toBeNull();
+    // The review ends (the draft is reset to the new version): the text goes in.
+    room.conflictVersion = null;
+    room.lines = ["ab", "", "next", "", "From the agent."];
+    room.editor.roomStatus();
+    room.editor.changed();
+    await settle();
+    expect(room.asked).not.toBeNull();
+    room.grant();
+    await settle();
+    expect(room.text).toContain("abc");
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("2. edit mode ended while offline, and someone took the block meanwhile: written next to it", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.connected = false;
+    room.lose("reconnect");
+    room.editor.setEditing(false);
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+    // Back, with someone else on the block: its place is held, so it goes in at a free place.
+    room.leases.set("o1", {
+      id: "o1",
+      start: 0,
+      end: 1,
+      by: "bo@example.org",
+      holder: "s2",
+      at: 0,
+    });
+    room.connected = true;
+    room.auto = false;
+    room.editor.changed();
+    await settle();
+    expect(room.asked).toEqual({ start: 0, end: 1 });
+    room.deny("held", "bo@example.org");
+    await settle();
+    expect(room.asked?.start).toBe(room.asked?.end);
+    expect(room.asked?.start).toBeGreaterThan(1);
+    room.grant();
+    await settle();
+    expect(room.text).toContain("ab\n\nabc");
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("3. a refusal from the room never resets typing that cannot be written", () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.editor.refused(REFUSED_EDIT);
+    expect(rich(room.editor).editable.textContent).toBe("abc");
+    expect(room.editor.unsavable).toBe(true);
+    expect(kept()).toEqual(["abc"]);
+  });
+
+  it("4. a takeover whose salvage keeps meeting stale answers stays kept, with Copy", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.auto = false;
+    room.lose("takeover");
+    for (let i = 0; i < 40 && room.asked; i++) {
+      room.deny("stale");
+      await settle();
+    }
+    expect(room.asked).toBeNull();
+    expect(room.text).toBe("ab\n\nnext");
+    expect(kept()).toEqual(["abc"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain(RESCUE_STUCK);
+    const copy = [
+      ...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button"),
+    ].find((b) => b.textContent === "Copy");
+    expect(copy).toBeDefined();
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    copy?.click();
+    expect(writeText).toHaveBeenCalledWith("abc");
+  });
+
+  it("1. never takes a same block elsewhere for the kept text: a reload writes it", async () => {
+    // The person's stuck "abc" replaces "ab"; another "abc" block already sits below it.
+    const room = roomSetup("ab\n\nabc\n\nnext");
+    stick(room);
+    expect(kept()).toEqual(["abc"]);
+    // The frame reports changes only, never its whole store.
+    expect(reports.at(-1)).toMatchObject({ upsert: [{ text: "abc" }], written: [], gone: [] });
+    // A reload: the new frame is offered the item, and its draft has the other "abc" only.
+    const again = reload("ab\n\nabc\n\nnext");
+    await settle();
+    expect(again.text.match(/^abc$/gm)?.length).toBe(2);
+    expect(kept()).toEqual([]);
+    expect(reports.at(-1)?.written).toHaveLength(1);
+    expect(again.editor.pending).toBe(false);
+  });
+
+  it("2. an insert whose send never reached the room is written again, even before a same block", async () => {
+    // "ab" is taken over by someone else; the stuck "abc" goes in after it, at a free place just
+    // before another "abc" block. The send is lost with the socket.
+    const room = roomSetup("ab\n\nabc\n\nnext");
+    stick(room);
+    room.ackNow = false;
+    room.dropEdits = true;
+    room.lose("takeover");
+    room.leases.set("o1", {
+      id: "o1",
+      start: 0,
+      end: 1,
+      by: "bo@example.org",
+      holder: "s2",
+      at: 0,
+    });
+    await settle();
+    expect(room.text).toBe("ab\n\nabc\n\nnext");
+    expect(kept()).toEqual(["abc"]);
+    room.connected = false;
+    room.mine = null;
+    room.editor.disconnected();
+    // Back: the place it was sent to holds an "abc" (the other block), which proves nothing.
+    room.connected = true;
+    room.dropEdits = false;
+    room.ackNow = true;
+    room.editor.changed();
+    await settle();
+    expect(room.text.match(/^abc$/gm)?.length).toBe(2);
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("drops the kept copy only on the room's ack, and keeps it while a send is unacknowledged", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.ackNow = false;
+    room.auto = true;
+    room.lose("closed");
+    await settle();
+    // Written in place, sent, not acknowledged yet: still kept, with where it went.
+    expect(room.text).toBe("abc\n\nnext");
+    expect(stored()).toEqual([{ id: expect.any(String), text: "abc", near: 0 }]);
+    expect(room.editor.pending).toBe(true);
+    room.ack();
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("2. a send that never lands does not leave the copy stuck: the next accepted one clears it", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    const r = rich(room.editor);
+    // Writable again, but the socket is down: the send fails, the copy stays.
+    room.connected = false;
+    r.editable.innerHTML = "<em>a</em>bc";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(kept()).toEqual(["abc"]);
+    // Back; the person types on, and that send is accepted and acknowledged.
+    room.connected = true;
+    r.editable.innerHTML = "<em>a</em>bc more";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(room.text).toBe("*a*bc more\n\nnext");
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+    // A reload now has nothing to offer, so nothing is written twice.
+    key(r.editable, "Escape");
+    await settle();
+    expect(room.text).toBe("*a*bc more\n\nnext");
+  });
+
+  it("2. an unacknowledged send is written again after a reload: a copy at worst, never a loss", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    const r = rich(room.editor);
+    room.ackNow = false;
+    r.editable.innerHTML = "<em>a</em>bc more";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // Sent and landed, but the tab reloads before the ack: the app still has the item.
+    expect(kept()).toEqual(["abc"]);
+    const again = reload(room.text);
+    await settle();
+    expect(again.text).toContain("*a*bc more");
+    expect(again.text).toContain("abc");
+    expect(kept()).toEqual([]);
+  });
+
+  it("3. a discard drops everything kept", async () => {
+    const room = roomSetup("ab\n\nnext");
+    stick(room);
+    room.connected = false;
+    room.lose("reconnect");
+    room.editor.setEditing(false);
+    expect(kept()).toEqual(["abc"]);
+    // The room's reset after a discard (boot.ts calls clearRescues on `reset` why "discarded").
+    room.editor.clearRescues();
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("4. solo: kept items go into the solo text, or stay kept with Copy when they cannot", async () => {
+    const { local, editor } = setup("ab\n\nnext");
+    (editor as unknown as { hooks: { rescue: (r: RescueReport) => void } }).hooks.rescue = app(
+      () => editor,
+    );
+    mergeRescue(USER, ART, [{ id: "r1", text: "kept text", near: 0 }], []);
+    editor.offerRescue(stored());
+    await settle();
+    expect(local.text).toContain("kept text");
+    expect(kept()).toEqual([]);
+    expect(editor.pending).toBe(false);
+    // A doc at its size limit cannot take one: it stays kept, and the page offers Copy.
+    const big = "x".repeat(LIMITS.maxDocBytes - 4);
+    const full = setup(big);
+    (full.editor as unknown as { hooks: { rescue: (r: RescueReport) => void } }).hooks.rescue = app(
+      () => full.editor,
+    );
+    mergeRescue(USER, ART, [{ id: "r2", text: "more text", near: 0 }], []);
+    full.editor.offerRescue(stored());
+    await settle();
+    expect(full.local.text).toBe(big);
+    expect(kept()).toEqual(["more text"]);
+    expect(full.editor.pending).toBe(true);
+    expect(notice()).toContain(RESCUE_STUCK);
+  });
+
+  it("says an item the app did not keep is only on this page, and keeps saying so, with Copy", () => {
+    const room = roomSetup("ab\n\nnext");
+    // The app's store is full: it answers without the new item.
+    answer = false;
+    stick(room);
+    const last = reports.at(-1) as RescueReport;
+    room.editor.rescueStored([], last.n);
+    // The block's own notice ("can't be saved as typed") stays until it goes; then this one.
+    expect(notice()).toContain(UNSAVABLE);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    expect(room.editor.pending).toBe(true);
+    // Another notice replaces it; once that one goes, Copy is back.
+    room.editor.notify("Not connected. Try again in a moment.");
+    expect(notice()).not.toContain(RESCUE_FRAME_ONLY);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    const copy = [
+      ...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button"),
+    ].find((b) => b.textContent === "Copy");
+    expect(copy).toBeDefined();
+    // Kept by the app after all (a later answer): back to the usual words, or none.
+    room.editor.rescueStored([last.upsert[0]?.id as string], last.n);
+    expect(notice()).not.toContain(RESCUE_FRAME_ONLY);
   });
 });

@@ -403,6 +403,12 @@ describe("a mark next to punctuation", () => {
     expect(out).toBe("这是*重要，*&#x7684;事情");
     const back = blockFromSource(out as string, DOC.source, ENV);
     expect(back && sameBlock(back, m)).toBe(true);
+    // Saved that way, the block opens for editing again, and takes the next edit.
+    const reopened = editableBlock(out as string, DOC, ENV);
+    expect(reopened && sameBlock(reopened, m)).toBe(true);
+    const next = para(text("这是"), text("重要，", { em: true }), text("的事情。"));
+    expect(verifyBlock(next, DOC, ENV)).toBe("这是*重要，*&#x7684;事情。");
+    expect(editableBlock("**(a)**&#x62;", DOC, ENV)).not.toBeNull();
     // Text that needs no reference is written as before.
     expect(verifyBlock(para(text("a "), text("b", { em: true }), text(" c")), DOC, ENV)).toBe(
       "a *b* c",
@@ -439,7 +445,7 @@ describe("a mark next to punctuation", () => {
     "~~a~~*b*",
   ];
   const CHARS = [..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", " ", "a", "中", "，", "。", "1", "é"];
-  it("takes every single-character insertion in or next to a formatted run", () => {
+  it("takes every single-character insertion in or next to a formatted run, and reopens it", () => {
     const refused: string[] = [];
     let tried = 0;
     for (const md of CORPUS) {
@@ -463,6 +469,10 @@ describe("a mark next to punctuation", () => {
             else {
               const back = blockFromSource(out, DOC.source, ENV);
               if (!back || !sameBlock(back, m)) refused.push(`${md} -> ${out}`);
+              // What was saved opens for editing again (never read-only), as the same model.
+              const reopened = editableBlock(out, DOC, ENV);
+              if (!reopened || !sameBlock(reopened, m))
+                refused.push(`${md} -> ${out} reopens read-only`);
             }
           }
         }

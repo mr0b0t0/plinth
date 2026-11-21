@@ -3,11 +3,17 @@ import {
   clearAllDrafts,
   clearDraft,
   clearPageDraft,
+  clearRescue,
+  clearRescueStores,
+  countRescue,
   draftKey,
   listDrafts,
   loadDraft,
   loadPageDraft,
+  loadRescue,
+  mergeRescue,
   pageDraftKey,
+  rescueKey,
   saveDraft,
   savePageDraft,
 } from "./draft.ts";
@@ -152,5 +158,58 @@ describe("page edits kept in sessionStorage (solo on-page editing)", () => {
     expect(savePageDraft("a1", 1, "x")).toBe(false);
     expect(loadPageDraft("a1")).toBeNull();
     expect(() => clearPageDraft("a1")).not.toThrow();
+  });
+});
+
+describe("the doc frame's rescue store", () => {
+  const item = (id: string, text = `text ${id}`) => ({ id, text, near: 0 });
+
+  it("only merges: reports add or update by id, and only named ids leave", () => {
+    sessionStorage.clear();
+    expect(mergeRescue("u1", "art1", [item("a")], [])).toEqual(["a"]);
+    // An empty report, or one naming other items, takes nothing out.
+    expect(mergeRescue("u1", "art1", [], [])).toEqual(["a"]);
+    expect(mergeRescue("u1", "art1", [item("b")], [])).toEqual(["a", "b"]);
+    expect(mergeRescue("u1", "art1", [item("a", "new words")], [])).toEqual(["a", "b"]);
+    expect(loadRescue("u1", "art1")).toEqual([item("a", "new words"), item("b")]);
+    expect(mergeRescue("u1", "art1", [], ["a"])).toEqual(["b"]);
+    clearRescue("u1", "art1");
+    expect(sessionStorage.getItem(rescueKey("u1", "art1"))).toBeNull();
+  });
+
+  it("keeps what it has and takes the newest upserts that fit, within 20 items and 256 KiB", () => {
+    sessionStorage.clear();
+    mergeRescue("u1", "art1", [item("old")], []);
+    const ids = mergeRescue(
+      "u1",
+      "art1",
+      Array.from({ length: 21 }, (_, n) => item(`n${n}`)),
+      [],
+    );
+    expect(ids).toHaveLength(20);
+    expect(ids).toContain("old");
+    expect(ids).toContain("n20");
+    expect(ids).not.toContain("n0");
+    sessionStorage.clear();
+    const chunk = "y".repeat(100 * 1024);
+    expect(
+      mergeRescue("u1", "art1", [item("x", chunk), item("y", chunk), item("z", chunk)], []),
+    ).toEqual(["z", "y"]);
+  });
+
+  it("is kept per person, counted for any person, and cleared only by clearRescueStores", () => {
+    sessionStorage.clear();
+    mergeRescue("u0", "art1", [item("a")], []);
+    mergeRescue("u1", "art1", [item("b"), item("c")], []);
+    // Reading one account's store leaves another's alone.
+    expect(loadRescue("u1", "art1")).toEqual(expect.arrayContaining([item("b"), item("c")]));
+    expect(loadRescue("u0", "art1")).toEqual([item("a")]);
+    expect(countRescue("art1")).toBe(3);
+    expect(countRescue("art2")).toBe(0);
+    // An explicit sign-out in the tab.
+    clearRescueStores();
+    expect(loadRescue("u0", "art1")).toBeNull();
+    expect(countRescue("art1")).toBe(0);
+    expect(sessionStorage.length).toBe(0);
   });
 });

@@ -193,6 +193,12 @@ export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("release"), lease: leaseId }),
   z.object({ t: z.literal("takeover"), lease: leaseId }),
+  /**
+   * The holder still has typing in the block it cannot send yet (a doc block whose text cannot be
+   * written as typed): the lease counts as in use, as an edit would make it, so it is not taken
+   * over as idle. Sent by a connected tab only, every LIMITS.liveLeaseKeepS.
+   */
+  z.object({ t: z.literal("keep"), lease: leaseId }),
   z.object({ t: z.literal("sync") }),
   /**
    * A sheet's rows or columns (while nobody else holds a lease), or a design system's keys (while
@@ -303,6 +309,8 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     by: email.optional(),
   }),
   z.object({ t: z.literal("released"), lease: leaseId }),
+  /** The answer to a `keep` for a lease the socket holds (an older room answers `invalid`). */
+  z.object({ t: z.literal("kept"), lease: leaseId }),
   z.object({
     t: z.literal("lease_lost"),
     lease: leaseId,
