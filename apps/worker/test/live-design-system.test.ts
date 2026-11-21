@@ -35,6 +35,10 @@ const rooms = () => {
 const peek = async (id: string) =>
   (await rooms().get(rooms().idFromName(id)).docPeek(id))?.text as string | undefined;
 
+/** A system's keys as a Publish from the page stores them: its guidelines last. */
+const guidelinesLast = <T extends { guidelines?: unknown }>({ guidelines, ...rest }: T): T =>
+  ({ ...rest, guidelines }) as T;
+
 function dsSetup(content = ACME) {
   return setup(undefined, { html: undefined, type: "design_system", content });
 }
@@ -245,10 +249,39 @@ describe("design system: publishing from the page", () => {
     });
     expect(await json(res)).toMatchObject({ saved: true, version: { version: 2 } });
     const v2 = await content(id, owner.auth, 2);
-    const want = JSON.parse(ACME);
+    const want = guidelinesLast(JSON.parse(ACME));
     want.tokens.color.brand["500"].$value = "#2f4ac0";
     expect(v2).toBe(JSON.stringify(want, null, 2));
     expect((await versionRow(id, 2))?.note).toBe("Edited on the page");
+    a.ws.close(1000);
+  });
+
+  it("after a Publish the draft is its base: no unpublished changes, no second version, no row", async () => {
+    // No guidelines and no themes: a dark value adds `themes` to the root.
+    const { guidelines: _g, themes: _t, ...plain } = JSON.parse(ACME);
+    const { id, ownerP } = await dsSetup(JSON.stringify(plain, null, 2));
+    const a = await connectDoc(id, ownerP.cookie);
+    const f = await struct(a, { op: "set_dark", token: "color.accent", value: "#ffffff" }, 0);
+    expect(f).toMatchObject({ t: "struct" });
+    const h = ownerP.session.headers;
+    const res = await call(id, h, "/live/checkpoint", {
+      body: { base_version: 1, rev: f.rev, reason: "save" },
+    });
+    expect(await json(res)).toMatchObject({
+      saved: true,
+      version: { version: 2 },
+      live: { dirty: false },
+    });
+    const info = await json(await call(id, h, "/live"));
+    expect(info.draft?.dirty ?? false).toBe(false);
+    const again = await call(id, h, "/live/checkpoint", {
+      body: { base_version: 2, rev: f.rev, reason: "save" },
+    });
+    expect(await json(again)).toMatchObject({ saved: false });
+    const row = await env.DB.prepare("SELECT 1 FROM live_drafts WHERE artifact_id = ?1")
+      .bind(id)
+      .first();
+    expect(row).toBeNull();
     a.ws.close(1000);
   });
 
@@ -287,7 +320,7 @@ describe("design system: publishing from the page", () => {
     expect(await json(res)).toMatchObject({ saved: true, version: { version: 4 } });
     const v4 = await content(id, owner.auth, 4);
     big.tokens.color.bg.$value = "#fafafa";
-    expect(v4).toBe(JSON.stringify(big));
+    expect(v4).toBe(JSON.stringify(guidelinesLast(big)));
     a.ws.close(1000);
   });
 });

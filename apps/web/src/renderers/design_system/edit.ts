@@ -61,8 +61,11 @@ export interface DsEditorHooks {
   leave(): void;
   /** The version whose files the draft is drawn with (its base), or null for the page's own. */
   fileVersion(): number | null;
-  /** Ask an agent about a place on the page; `text` only words the published version has. */
-  ask(anchor: { key: string; text: string }): void;
+  /**
+   * Ask an agent about a place on the page; `text` only words the published version has, and
+   * `key` only a name it has (else `fallback`, the place).
+   */
+  ask(anchor: { key: string; text: string; fallback?: string }): void;
   theme(): PreviewTheme;
   /** The site was drawn from the draft: load its fonts (from the draft's base files). */
   drawn?(ds: DesignSystem): void;
@@ -100,12 +103,17 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 const samePath = (a: DsPath, b: DsPath) => a.length === b.length && a.every((s, i) => s === b[i]);
 
-/** A structural anchor key, or the fallback when the name does not fit one. */
-function anchorKey(kind: string, name: string, index: number): string {
+/**
+ * A structural anchor: its key by name, or by place when the name does not fit one, and the key by
+ * place (`fallback`), which the frame sends instead when the name is not in the published version.
+ */
+function anchorKey(kind: string, name: string, index: number): { key: string; fallback: string } {
   const key = `${kind}:${name}`;
-  return key.length <= PAGE_COMMENT_LIMITS.maxKey && PAGE_ANCHOR_KEY_RE.test(key)
-    ? key
-    : `${kind}:${index}`;
+  const fallback = `${kind}:${index}`;
+  return {
+    key: key.length <= PAGE_COMMENT_LIMITS.maxKey && PAGE_ANCHOR_KEY_RE.test(key) ? key : fallback,
+    fallback,
+  };
 }
 
 // ---------- the parts of the draft the doc's block editor edits ----------
@@ -1121,9 +1129,9 @@ export class DsEditor {
     return this.backend.you?.right === "write" && this.backend.conflictVersion === null;
   }
 
-  /** Ask an agent about a place on the page, with its anchor's words only when published. */
-  private askAbout(key: string, text: string): void {
-    this.hooks.ask({ key, text });
+  /** Ask an agent about a place on the page, with its anchor's name and words only when published. */
+  private askAbout(anchor: string | { key: string; fallback: string }, text: string): void {
+    this.hooks.ask(typeof anchor === "string" ? { key: anchor, text } : { ...anchor, text });
   }
 
   private menu(label: string, groups: () => MenuGroup[]): HTMLElement {

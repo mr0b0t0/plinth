@@ -632,8 +632,13 @@ served with `script-src 'none'`. What it adds:
   checked with the same rules; they are refused while another socket's lease overlaps the lines
   they change, and the other leases move by the op's line map. Component HTML and CSS, the shared
   CSS, fonts, the prefix, types and names stay with agents: no edit or op can reach them. The
-  draft's limit is its compact size (1 MB), and its projection at most 200,000 lines, so the
-  room's memory and the draft row stay bounded. Checking a value edit reads the whole system
+  draft's limit is its compact size (1 MB), and its projection at most 200,000 lines and 8 MB of
+  JSON text, so the room's memory and the draft row stay bounded. Pretty JSON of a small value
+  grows with the square of its nesting, so nothing is written out before it is counted: a file
+  nested deeper than 32 levels (`$extensions` included) is refused at publish and never projected,
+  a projection past its limits is counted without being written (`dsPrettySize`) and not
+  projected, a value edit is counted against the edit's own length before it is written
+  canonically, and a struct frame's value nested past the limit is refused by the frame schema. Checking a value edit reads the whole system
   (linear in at most 1 MB) under the room's per-socket rate limit. The renderer never parses
   author HTML for the controls: values reach inputs through `.value`, and colour conversions are
   arithmetic.
@@ -2650,8 +2655,9 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   and the design system renderer with token, group, component and settings anchors
   (`token:<path>`, `group:<path>`, `component:<id>`, `system:settings`) and its formatted texts'
   block anchors behind the text's part; a label is sent only when the published version has the
-  same words (a token's path, a component's name, a block's first words), so no draft text
-  reaches the app. Other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
+  same words (a token's path, a component's name, a block's first words), and a token, group or
+  component key by name only when the published version has that name (else by its index), so no
+  draft text reaches the app. Other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
   bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose
   origin is `"null"`; the bar's Ask an agent and the comments panel need none.
 - **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path

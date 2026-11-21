@@ -258,6 +258,26 @@ describe("what stays with agents", () => {
     ]);
   });
 
+  it("never names a token only the draft has: it asks about its place, with no words", async () => {
+    editOn();
+    const group = root().querySelector('.ds-group[data-group="color"]') as HTMLElement;
+    choose(group, "Add a token");
+    const form = group.querySelector("form") as HTMLFormElement;
+    (form.querySelector("input") as HTMLInputElement).value = "acme-rebrand-2027";
+    form.requestSubmit();
+    await tick();
+    const added = row("color.acme-rebrand-2027");
+    choose(added, "Rename: Ask an agent");
+    // A published token next to it keeps its name.
+    choose(row("color.bg"), "Rename: Ask an agent");
+    const asks = posted.filter((m) => m.type === "ask");
+    expect(asks.map((m) => m.anchor)).toEqual([
+      { key: expect.stringMatching(/^token:\d+$/), text: "" },
+      { key: "token:color.bg", text: "color.bg" },
+    ]);
+    expect(JSON.stringify(asks)).not.toContain("rebrand");
+  });
+
   it("shows component code only as its rendered preview, and no source anywhere", () => {
     editOn();
     expect(root().querySelectorAll("pre, textarea")).toHaveLength(0);

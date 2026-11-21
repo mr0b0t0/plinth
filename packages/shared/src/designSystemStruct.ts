@@ -10,13 +10,14 @@
 // - add_token { group, name, value, type? }: "<name>": { "$value": … } last in an existing group,
 //   with $type only when the group gives none;
 // - remove_token { path }: the token and its dark value; refused while an alias names it or a
-//   component's (or the shared) CSS holds its variable.
+//   component's (or the shared) CSS holds one of its variables (a typography token's parts too).
 //
 // Every op parses the JSON part, changes it, writes it again canonically (a new key goes last in
 // its object, except that JavaScript keeps integer-like keys first, in order, which the canonical
-// form already does), and checks the whole system with the publish rules. What it touches is the
-// one run of lines that differs, found from both ends of the JSON part: a run that only inserts is
-// a zero-length range at its place. Leases outside that run move by the line map.
+// form already does, and the root's guidelines placeholder stays its last member), and checks the
+// whole system with the publish rules. What it touches is the one run of lines that differs, found
+// from both ends of the JSON part: a run that only inserts is a zero-length range at its place.
+// Leases outside that run move by the line map.
 import { LIMITS } from "./constants.ts";
 import {
   DS_COMPONENT_STATUSES,
@@ -26,11 +27,17 @@ import {
   dsAliasOf,
   dsDeclaredType,
   dsGet,
+  dsJsonDepthWithin,
   dsWith,
   isDsName,
   parseDesignSystemValue,
 } from "./designSystem.ts";
-import { dsLiveSystem, dsProjectionParts } from "./designSystemLive.ts";
+import {
+  dsLiveSystem,
+  dsPrettySize,
+  dsProjectionParts,
+  dsWithPlaceholderLast,
+} from "./designSystemLive.ts";
 import type { LineRange } from "./liveLines.ts";
 
 export type DsStructOp =
@@ -103,6 +110,37 @@ function aliasesIn(v: unknown, out: Set<string>): void {
   else if (isObject(v)) for (const x of Object.values(v)) aliasesIn(x, out);
 }
 
+/** The variables a typography token adds besides its own (designSystem.ts TYPOGRAPHY_PARTS). */
+const TYPOGRAPHY_PART_VARS = [
+  "font-family",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "letter-spacing",
+];
+
+/**
+ * Whether the token `segs` may compile to typography parts: its type (its own or its groups') is
+ * typography, or its light or dark value is a typography object, or an alias it names (followed
+ * as far as an alias chain may run) is one of those.
+ */
+function typographyLike(root: unknown, segs: readonly string[]): boolean {
+  let at: readonly string[] | null = segs;
+  for (let i = 0; at && i <= LIMITS.designSystem.maxAliasChain; i++) {
+    if (dsDeclaredType(root, at) === "typography") return true;
+    const light = dsGet(root, ["tokens", ...at, "$value"]);
+    const dark = dsGet(root, ["themes", "dark", ...at, "$value"]);
+    for (const v of [light, dark]) {
+      if (isObject(v) && (Object.hasOwn(v, "fontFamily") || Object.hasOwn(v, "fontSize"))) {
+        return true;
+      }
+    }
+    const target: string | null = dsAliasOf(light) ?? dsAliasOf(dark);
+    at = target === null ? null : dsTokenSegs(target);
+  }
+  return false;
+}
+
 /** Every $value under a tokens (or dark theme) tree, with its token path. */
 function eachValue(node: unknown, segs: string[], f: (path: string, v: unknown) => void): void {
   if (!isObject(node)) return;
@@ -118,7 +156,8 @@ function eachValue(node: unknown, segs: string[], f: (path: string, v: unknown) 
 /**
  * Who uses the token `path`: the tokens whose light or dark value is an alias of it (in part or
  * whole), and the components (by name, "shared styles" for the root CSS) whose CSS holds its
- * variable. Empty when it may be removed.
+ * variable, or for a typography token one of its parts' (`<variable>-font-size` and the rest).
+ * Empty when it may be removed.
  */
 export function dsTokenUsers(root: unknown, path: string): string[] {
   const segs = dsTokenSegs(path);
@@ -133,8 +172,10 @@ export function dsTokenUsers(root: unknown, path: string): string[] {
   eachValue(root.tokens, [], check);
   eachValue(dsGet(root, ["themes", "dark"]), [], check);
   const name = dsTokenVar(root, segs);
-  // The variable itself, not a longer one it is the start of (--acme-color-brand-500 in -5000).
-  const re = new RegExp(`${name.replace(/[-]/g, "\\-")}(?![A-Za-z0-9_-])`, "i");
+  const parts = typographyLike(root, segs) ? `(?:-(?:${TYPOGRAPHY_PART_VARS.join("|")}))?` : "";
+  // The variable itself (or a part's), not a longer one it is the start of (--acme-color-brand-500
+  // in -5000).
+  const re = new RegExp(`${name.replace(/[-]/g, "\\-")}${parts}(?![A-Za-z0-9_-])`, "i");
   if (typeof root.css === "string" && re.test(root.css)) users.push("shared styles");
   if (Array.isArray(root.components)) {
     for (const c of root.components) {
@@ -261,6 +302,8 @@ export function applyDesignSystemStruct(
   lines: readonly string[],
   op: DsStructOp,
 ): DsStructResult | DsStructProblem {
+  // A value nested past what a system may hold is refused before anything writes it out.
+  if ("value" in op && !dsJsonDepthWithin(op.value)) return "invalid";
   const key = JSON.stringify(op);
   if (memo && memo.lines === lines && memo.key === key) return memo.out;
   const out = applyNow(lines, op);
@@ -271,10 +314,17 @@ export function applyDesignSystemStruct(
 function applyNow(lines: readonly string[], op: DsStructOp): DsStructResult | DsStructProblem {
   const p = dsProjectionParts(lines);
   if (!p) return "invalid";
-  const next = change(p.root, op);
-  if (next === "invalid" || next === "in_use" || !isObject(next)) {
-    return next === "in_use" ? "in_use" : "invalid";
+  const changed = change(p.root, op);
+  if (changed === "invalid" || changed === "in_use" || !isObject(changed)) {
+    return changed === "in_use" ? "in_use" : "invalid";
   }
+  // A new root key (themes, description) goes before the placeholder, which stays last.
+  const next = dsWithPlaceholderLast(changed);
+  const limits = {
+    maxLines: LIMITS.maxLiveProjectionLines,
+    maxChars: LIMITS.maxLiveProjectionChars,
+  };
+  if (!dsPrettySize(next, limits)) return "invalid";
   const json = JSON.stringify(next, null, 2).split("\n");
   const out = [...json, ...lines.slice(p.end + 1)];
   const system = dsLiveSystem(out);

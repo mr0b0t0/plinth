@@ -196,6 +196,39 @@ describe("design system ops", () => {
     expect(parseDesignSystem(designSystemFromLive(joinLines(gone.lines))).ok).toBe(true);
   });
 
+  it("remove_token counts a typography token's part variables as uses, and only a typography's", () => {
+    type Json = Record<string, any>;
+    const withCss = (css: string, extra?: (a: Json) => void) => {
+      const a = JSON.parse(ACME) as Json;
+      a.css = css;
+      extra?.(a);
+      expect(parseDesignSystem(JSON.stringify(a)).ok).toBe(true);
+      return splitLines(designSystemToLive(JSON.stringify(a)));
+    };
+    for (const part of [
+      "font-size",
+      "font-family",
+      "font-weight",
+      "line-height",
+      "letter-spacing",
+    ]) {
+      const ls = withCss(`.x { y: var(--acme-font-body-${part}); }`);
+      expect(dsTokenUsers(dsLiveSystem(ls), "font.body"), part).toEqual(["shared styles"]);
+      expect(applyDesignSystemStruct(ls, { op: "remove_token", path: "font.body" })).toBe("in_use");
+    }
+    // An alias of a typography token has the parts too.
+    const alias = withCss(".x { font-size: var(--acme-font-h1-font-size); }", (a) => {
+      a.tokens.font.h1 = { $value: "{font.body}" };
+    });
+    expect(dsTokenUsers(dsLiveSystem(alias), "font.h1")).toEqual(["shared styles"]);
+    // Not a part of another token's variable, nor a part a token of another type does not have.
+    const other = withCss(
+      ".x { y: var(--acme-font-body-font-sizes) var(--acme-motion-fast-font-size); }",
+    );
+    expect(dsTokenUsers(dsLiveSystem(other), "font.body")).toEqual([]);
+    expect(dsTokenUsers(dsLiveSystem(other), "motion.fast")).toEqual([]);
+  });
+
   it("lists every pure insert as a zero-length range, and maps the lines around it", () => {
     const ls = lines();
     const ops: DsStructOp[] = [

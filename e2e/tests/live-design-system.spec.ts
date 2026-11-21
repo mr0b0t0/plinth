@@ -239,7 +239,9 @@ test("a compact system of about 900 KB, changed in place, is published compact",
     await expect(bar).toContainText("Published as v2", { timeout: 15_000 });
     const got = await tool<{ content: string }>(client, "get_artifact", { id });
     big.tokens.color.bg.$value = "#fafafa";
-    expect(got.data.content).toBe(JSON.stringify(big));
+    // A Publish from the page stores the guidelines last.
+    const { guidelines, ...rest } = big;
+    expect(got.data.content).toBe(JSON.stringify({ ...rest, guidelines }));
   } finally {
     await client.close();
   }

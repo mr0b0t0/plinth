@@ -20,8 +20,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Renames, component code, fonts and settings stay with agents, with Ask an agent on each. A
   version an agent publishes meanwhile is reviewed beside the page's changes, each side with its
   own fonts and images. A Publish from the page stores 2-space JSON, or compact JSON for the
-  largest systems; an agent's own publishes keep their bytes. A system that no longer parses lists
-  what an agent needs to fix.
+  largest systems, with the guidelines last; an agent's own publishes keep their bytes. A system
+  that no longer parses lists what an agent needs to fix. A design system may nest objects and
+  arrays at most 32 levels deep (`$extensions` included); a publish past that is refused.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode

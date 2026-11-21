@@ -164,6 +164,21 @@ function publishedWords(doc: Document, ds: DesignSystem | null): Set<string> {
   return out;
 }
 
+/**
+ * The anchor keys that name something the published version has (a token, a group, a component),
+ * so a key naming what only the draft has (a token added on the page) never reaches the app.
+ */
+function publishedKeys(ds: DesignSystem | null): Set<string> {
+  const out = new Set<string>();
+  if (!ds) return out;
+  for (const t of ds.tokens) {
+    out.add(`token:${t.path}`);
+    out.add(`group:${tokenGroup(t.path)}`);
+  }
+  for (const c of ds.components) out.add(`component:${c.id}`);
+  return out;
+}
+
 /** Wires on-page editing. Returns its message handler and how to stop it. */
 function live(
   win: Window,
@@ -186,6 +201,7 @@ function live(
   /** Solo: the version shown, whose files the draft is drawn with. */
   let soloBase: number | null = null;
   let words: Set<string> | null = null;
+  let keys: Set<string> | null = null;
 
   const poster = appPoster(win, appOrigin, key);
   const post = poster.post;
@@ -243,12 +259,16 @@ function live(
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
     // A place the person wants an agent to change: the app opens its Ask dialog. The anchor is a
-    // structural key, with words only the published version has.
-    ask: (anchor: { key: string; text: string }) => {
+    // structural key, by name only when the published version has that name (else by place),
+    // with words only the published version has.
+    ask: (anchor: { key: string; text: string; fallback?: string }) => {
       words ??= publishedWords(win.document, published);
+      keys ??= publishedKeys(published);
+      const key =
+        anchor.fallback === undefined || keys.has(anchor.key) ? anchor.key : anchor.fallback;
       post({
         type: "ask",
-        anchor: { key: anchor.key, text: words.has(anchor.text) ? anchor.text : "" },
+        anchor: { key, text: words.has(anchor.text) ? anchor.text : "" },
       });
     },
     theme,

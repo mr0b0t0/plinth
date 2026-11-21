@@ -1217,6 +1217,23 @@ export function parseDesignSystem(source: string): DsParseResult {
 }
 
 /**
+ * Whether `value` nests at most `max` objects and arrays (the value itself counts as one), walked
+ * without recursion, so a value too deep to write out with JSON.stringify is answered too.
+ */
+export function dsJsonDepthWithin(value: unknown, max: number = L.maxJsonDepth): boolean {
+  const stack: [unknown, number][] = [[value, 1]];
+  for (let top = stack.pop(); top; top = stack.pop()) {
+    const [v, depth] = top;
+    if (typeof v !== "object" || v === null) continue;
+    if (depth > max) return false;
+    for (const x of Array.isArray(v) ? v : Object.values(v)) {
+      if (typeof x === "object" && x !== null) stack.push([x, depth + 1]);
+    }
+  }
+  return true;
+}
+
+/**
  * Check a design system that is already parsed JSON (parseDesignSystem without the parse): the
  * room checks a page edit on the value it holds, without writing it out as text first.
  */
@@ -1224,6 +1241,15 @@ export function parseDesignSystemValue(root: unknown): DsParseResult {
   const c = new Issues();
   if (!isObject(root)) {
     return { ok: false, errors: [{ path: "", message: "must be a JSON object" }] };
+  }
+  // Before anything walks it: every reader (and the page's draft) writes it out again.
+  if (!dsJsonDepthWithin(root)) {
+    return {
+      ok: false,
+      errors: [
+        { path: "", message: `nests objects and arrays deeper than ${L.maxJsonDepth} levels` },
+      ],
+    };
   }
   for (const k of Object.keys(root)) {
     if (!TOP_KEYS.has(k)) c.err(k, `is not a design system field (${[...TOP_KEYS].join(", ")})`);

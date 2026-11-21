@@ -1070,7 +1070,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   own CSS). Token types: color, dimension, fontFamily, fontWeight, duration, cubicBezier, number,
   shadow, typography and border. Unknown keys are refused, so typos fail loudly. Limits: 1 MB of
   JSON, 2,000 tokens nested at most 8 deep, alias chains of 16, 200 components of 1 to 20 examples
-  (20 KB of HTML each), 200 KB of guidelines, 100 KB of shared CSS. Assets are images and fonts.
+  (20 KB of HTML each), 200 KB of guidelines, 100 KB of shared CSS, and objects and arrays nested at
+  most 32 levels deep anywhere in the file (`$extensions` included). Assets are images and fonts.
 - **Validation.** One parser (`packages/shared/src/designSystem.ts`) serves the Worker, the
   renderer and the editor. A publish, update or bundle that does not parse is refused with
   `invalid_input` and up to 50 problems, each with its path into the JSON. Every string that
@@ -1152,10 +1153,13 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   - **The draft is a line projection** (`packages/shared/src/designSystemLive.ts`). A token's value
     is a JSON line, but the guidelines are one long string (up to 200 KB) that a line lease cannot
     share, so the draft is the JSON without its guidelines, written `JSON.stringify(…, null, 2)`
-    with `"guidelines": null` at their key (or, when there are none, after `themes`, else after
-    `tokens`), then the guidelines' Markdown as lines of their own after the root's closing `}`
-    (the first line that is exactly `}`). The room holds the projection in memory; `live_drafts`
-    stores its storage form (below), so a draft row stays within 1 MB.
+    with `"guidelines": null` as the root's last member (wherever the file has the key), then
+    the guidelines' Markdown as lines of their own after the root's closing `}` (the first line
+    that is exactly `}`): none when the file has no `guidelines` key, one empty line for
+    `"guidelines": ""`. A structural change that adds a root key puts it before the placeholder.
+    The room holds the projection in memory; `live_drafts` stores its storage form (below), so a
+    draft row stays within 1 MB, and the storage form projects back to the same lines, so after a
+    Publish the draft is its base and a reload keeps every lease on its line.
   - **What is edited, and how.** A lease is the lines of one editable value: a token's light or
     dark `$value`, a token's `$description`, the system's `name` and `description`, and a
     component's `description`, `usage` and `status`. An edit replaces that whole value, written
@@ -1173,7 +1177,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     usage or status is added; emptying one removes the key, never stores ""),
     `add_token` (last in an existing group, with `$type` only when the group gives none) and
     `remove_token` (with its dark value; refused while an alias names it or the shared or a
-    component's CSS holds its variable, and the page says what uses it).
+    component's CSS holds its variable, or for a typography token one of its parts' variables
+    such as `--acme-font-body-font-size`, and the page says what uses it).
   - **The controls** keep the form a value is stored in: a colour string or the picker's
     `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
     its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
@@ -1193,11 +1198,13 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     menu ("Ask an agent to change this component"), and the fonts and settings line under the name.
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
-    (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact) is
-    not edited on the page: Edit says "This design system is too large to edit on the page", edit
+    (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
+    whose JSON part would pass 8 MB of text (`LIMITS.maxLiveProjectionChars`, counted before it is
+    written), is not edited on the page: Edit says "This design system is too large to edit on the page", edit
     mode ends, and Ask an agent is offered.
   - **Storage form.** A Publish from the page stores 2-space JSON when it fits 1 MB, and compact
-    JSON when it does not, so it never fails on size where the agent's version fit. An agent's
+    JSON when it does not, with the guidelines as the last key (none when the draft has no line
+    after its JSON part), so it never fails on size where the agent's version fit. An agent's
     publish, update or restore keeps the bytes it sent (there is no canonical form on publish).
     After a Publish from the page, `get_artifact` returns Plinth's formatting; the values are the
     same.
@@ -2902,7 +2909,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
   which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
   `ask` with block anchors, and the design system renderer with `token:<path>`, `group:<path>`,
-  `component:<id>` and `system:settings` (a path too long for an anchor key gives its index), and
+  `component:<id>` and `system:settings` (a path too long for an anchor key, or a token the
+  published version does not have, gives its index), and
   with the block anchors of its formatted texts behind the text's part (`guidelines:block-3`);
   other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a

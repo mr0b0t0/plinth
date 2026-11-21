@@ -5,21 +5,27 @@
 // the describers use it.
 //
 // The projection (designSystemToLive): the JSON without its guidelines, written JSON.stringify(…, null, 2),
-// with "guidelines": null standing at their key (or, when there are none, after themes, else after
-// tokens), then the guidelines Markdown as lines of their own after the root's closing "}". That
-// "}" is the first line that is exactly "}", since pretty JSON indents every other one. Every line
-// of the JSON part is canonical (JSON.stringify of its value), which the rules keep edit by edit,
-// so one JSON value is always the same lines and a lease on them is a lease on that value.
+// with "guidelines": null as the root's last member wherever the file had the key, then the
+// guidelines Markdown as lines of their own after the root's closing "}" (none at all when the file
+// has no guidelines key; one empty line for "guidelines": ""). That "}" is the first line that is
+// exactly "}", since pretty JSON indents every other one, and the placeholder is the line before
+// it. Every line of the JSON part is canonical (JSON.stringify of its value), which the rules keep
+// edit by edit, so one JSON value is always the same lines and a lease on them is a lease on that
+// value. A file too deep or too large to write out that way (LIMITS.maxLiveProjectionLines,
+// maxLiveProjectionChars, designSystem.maxJsonDepth) is not projected: it is not a draft.
 //
-// The storage form (designSystemFromLive): the guidelines go back in place of the placeholder (or the key goes
-// when they are empty), written with 2 spaces when that fits LIMITS.maxDesignSystemBytes, and
-// compact otherwise. An agent's publish keeps its own bytes; only a Publish from the page writes this
-// form, and it never fails on size where the agent's version fit, since compact JSON is the
-// smallest spelling of the same value.
+// The storage form (designSystemFromLive): the guidelines go back as the last key (the key goes when
+// no line follows the JSON part), written with 2 spaces when that fits LIMITS.maxDesignSystemBytes,
+// and compact otherwise. So designSystemToLive(designSystemFromLive(x)) is x for every draft the
+// rules accept, and the draft row (which stores this form) loads back as the same lines. An agent's
+// publish keeps its own bytes; only a Publish from the page writes this form, and it never fails
+// on size where the agent's version fit, since compact JSON is the smallest spelling of the same
+// value.
 import { LIMITS } from "./constants.ts";
 import {
   type DsPath,
   dsEditableKind,
+  dsJsonDepthWithin,
   dsSetOwn,
   dsValueProblem,
   parseDesignSystemValue,
@@ -30,6 +36,8 @@ import { utf8Length } from "./utf8.ts";
 
 const L = LIMITS.designSystem;
 const GUIDELINES = "guidelines";
+/** The placeholder's line: the root's last member, so the line just before the root's "}". */
+const PLACEHOLDER_LINE = '  "guidelines": null';
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -37,6 +45,64 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 /** The line of the projection's root "}" (the end of its JSON part), or -1 when there is none. */
 export function dsProjectionEnd(lines: readonly string[]): number {
   return lines.indexOf("}");
+}
+
+/**
+ * Whether the lines have a projection's shape: "{", then its JSON part ending in the placeholder
+ * and the root's "}" at `end`. A cheap test (the values are not read): a file the room could not
+ * project fails it, since its guidelines are a string or absent.
+ */
+function projectionShaped(lines: readonly string[], end: number): boolean {
+  return end > 1 && lines[0] === "{" && lines[end - 1] === PLACEHOLDER_LINE;
+}
+
+/**
+ * The length of what dsNodeLines writes for `value` (`key` characters of key and ": " before it on
+ * its first line, every line after `indent` spaces, a "," at the end when `comma`), and its lines,
+ * counted without writing it; null as soon as either passes its limit. JSON.stringify(…, null, 2)
+ * of a small value can be huge (each level of nesting indents every line inside it), so the room
+ * counts first.
+ */
+export function dsPrettySize(
+  value: unknown,
+  o: { indent?: number; key?: number; comma?: boolean; maxLines: number; maxChars: number },
+): { lines: number; chars: number } | null {
+  type Item =
+    | { v: unknown; depth: number; key: number; comma: boolean }
+    | { close: true; depth: number; comma: boolean };
+  const indent = o.indent ?? 0;
+  const stack: Item[] = [{ v: value, depth: 0, key: o.key ?? 0, comma: o.comma ?? false }];
+  let lines = 0;
+  // Each line adds its own "\n" before it; the first has none.
+  let chars = -1;
+  for (let it = stack.pop(); it; it = stack.pop()) {
+    const ind = indent + 2 * it.depth;
+    const comma = it.comma ? 1 : 0;
+    lines++;
+    if ("close" in it) {
+      chars += 1 + ind + 1 + comma;
+    } else if (typeof it.v === "object" && it.v !== null) {
+      const items: [number, unknown][] = Array.isArray(it.v)
+        ? it.v.map((x): [number, unknown] => [0, x])
+        : Object.entries(it.v)
+            .filter(([, x]) => x !== undefined && typeof x !== "function")
+            .map(([k, x]): [number, unknown] => [JSON.stringify(k).length + 2, x]);
+      if (items.length === 0) {
+        chars += 1 + ind + it.key + 2 + comma;
+      } else {
+        chars += 1 + ind + it.key + 1;
+        stack.push({ close: true, depth: it.depth, comma: it.comma });
+        for (let i = items.length - 1; i >= 0; i--) {
+          const [key, v] = items[i] as [number, unknown];
+          stack.push({ v, depth: it.depth + 1, key, comma: i < items.length - 1 });
+        }
+      }
+    } else {
+      chars += 1 + ind + it.key + (JSON.stringify(it.v) ?? "null").length + comma;
+    }
+    if (lines > o.maxLines || chars > o.maxChars) return null;
+  }
+  return { lines, chars };
 }
 
 /** The root's keys with `guidelines` at `key` set to `value` (undefined drops it). */
@@ -55,23 +121,21 @@ function withGuidelines(root: Record<string, unknown>, value: unknown): Record<s
   return out;
 }
 
-/** The projection's JSON value with the placeholder, for a system that has no guidelines key. */
-function withPlaceholder(root: Record<string, unknown>): Record<string, unknown> {
-  if (Object.hasOwn(root, GUIDELINES)) return withGuidelines(root, null);
-  const keys = Object.keys(root);
-  const after = keys.includes("themes") ? "themes" : keys.includes("tokens") ? "tokens" : null;
+/**
+ * `root` with `guidelines` moved to (or added as) its last key, set to null: the projection's JSON
+ * value. Also how a structural op keeps the placeholder last when it adds a root key.
+ */
+export function dsWithPlaceholderLast(root: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  if (after === null) dsSetOwn(out, GUIDELINES, null);
-  for (const k of keys) {
-    dsSetOwn(out, k, root[k]);
-    if (k === after) dsSetOwn(out, GUIDELINES, null);
-  }
+  for (const k of Object.keys(root)) if (k !== GUIDELINES) dsSetOwn(out, k, root[k]);
+  dsSetOwn(out, GUIDELINES, null);
   return out;
 }
 
 /**
  * A stored system.json as the draft's lines. A source that is not a JSON object with string (or no)
- * guidelines is returned as it is: it is not a draft the rules accept (valid), so nothing edits it.
+ * guidelines, or that nests or writes out past what a draft may hold, is returned as it is: it is
+ * not a draft the rules accept (valid, and liveDesignSystemTooLarge says so), so nothing edits it.
  */
 export function designSystemToLive(source: string): string {
   let root: unknown;
@@ -83,16 +147,27 @@ export function designSystemToLive(source: string): string {
   if (!isObject(root)) return source;
   const g = Object.hasOwn(root, GUIDELINES) ? root[GUIDELINES] : undefined;
   if (g !== undefined && typeof g !== "string") return source;
-  const json = JSON.stringify(withPlaceholder(root), null, 2);
-  return g ? `${json}\n${g}` : json;
+  const value = dsWithPlaceholderLast(root);
+  // Counted before it is written: nesting multiplies the indentation, and JSON.stringify recurses.
+  if (!dsJsonDepthWithin(value)) return source;
+  const limits = {
+    maxLines: LIMITS.maxLiveProjectionLines,
+    maxChars: LIMITS.maxLiveProjectionChars,
+  };
+  if (!dsPrettySize(value, limits)) return source;
+  const json = JSON.stringify(value, null, 2);
+  return g === undefined ? json : `${json}\n${g}`;
 }
 
-/** The JSON part's value and the guidelines of the draft `lines`, or null for no projection. */
+/**
+ * The JSON part's value and the guidelines of the draft `lines` (null when no line follows the JSON
+ * part: the file has no guidelines key), or null for no projection.
+ */
 export function dsProjectionParts(
   lines: readonly string[],
-): { root: Record<string, unknown>; guidelines: string; end: number } | null {
+): { root: Record<string, unknown>; guidelines: string | null; end: number } | null {
   const end = dsProjectionEnd(lines);
-  if (end < 0) return null;
+  if (!projectionShaped(lines, end)) return null;
   let root: unknown;
   try {
     root = JSON.parse(joinLines(lines.slice(0, end + 1)));
@@ -100,21 +175,24 @@ export function dsProjectionParts(
     return null;
   }
   if (!isObject(root) || !Object.hasOwn(root, GUIDELINES) || root[GUIDELINES] !== null) return null;
-  return { root, guidelines: joinLines(lines.slice(end + 1)), end };
+  const guidelines = end + 1 < lines.length ? joinLines(lines.slice(end + 1)) : null;
+  return { root, guidelines, end };
 }
 
 /**
- * The design system the draft `lines` hold, as a parsed system.json value (its guidelines back in
- * place, or gone when empty), or null when the lines are not a projection.
+ * The design system the draft `lines` hold, as a parsed system.json value (its guidelines back as
+ * its last key, or gone when no line follows the JSON part), or null when the lines are not a
+ * projection.
  */
 export function dsLiveSystem(lines: readonly string[]): Record<string, unknown> | null {
   const p = dsProjectionParts(lines);
-  return p ? withGuidelines(p.root, p.guidelines === "" ? undefined : p.guidelines) : null;
+  return p ? withGuidelines(p.root, p.guidelines ?? undefined) : null;
 }
 
 /**
  * The draft as system.json: 2-space JSON when that fits LIMITS.maxDesignSystemBytes, compact JSON
- * otherwise. A text that is not a projection is returned as it is.
+ * otherwise, with the guidelines last (absent when no line follows the JSON part). A text that is
+ * not a projection is returned as it is.
  */
 export function designSystemFromLive(live: string): string {
   const value = dsLiveSystem(splitLines(live));
@@ -152,8 +230,8 @@ function isMemberLine(body: string): boolean {
  * Publish can store, counted line by line without building it: a JSON-part line counts its bytes
  * without its indent and without the space after a member's `":`, the placeholder's `null` gives
  * way to the guidelines as a JSON string (each line JSON-escaped, plus 2 for the `\n` between two),
- * and with no guidelines the placeholder member goes with one comma. A text that is not a
- * projection counts its own bytes.
+ * and with no line after the JSON part the placeholder member goes with one comma. A text that is
+ * not a projection counts its own bytes.
  */
 export function dsCompactBytes(lines: readonly string[]): number {
   const end = dsProjectionEnd(lines);
@@ -171,8 +249,7 @@ export function dsCompactBytes(lines: readonly string[]): number {
     }
   }
   const g = lines.slice(end + 1);
-  const guidelines = joinLines(g);
-  if (guidelines === "") {
+  if (g.length === 0) {
     // `"guidelines":null` and the comma before or after it.
     return n - 17 - (rootMembers > 1 ? 1 : 0);
   }
@@ -181,13 +258,19 @@ export function dsCompactBytes(lines: readonly string[]): number {
   return n - 4 + escaped;
 }
 
-/** Past what a draft may hold: more than LIMITS.maxLiveProjectionLines lines, or no storage form fits. */
+/**
+ * Past what a draft may hold: more than LIMITS.maxLiveProjectionLines lines, or no storage form
+ * fits, or not a projection at all (a file designSystemToLive could not write out as one, since it
+ * nests or writes out too large, is shown read-only with "too large to edit on the page").
+ */
 export function liveDesignSystemTooLarge(live: string): boolean {
   let lines = 1;
   for (let i = live.indexOf("\n"); i !== -1; i = live.indexOf("\n", i + 1)) {
     if (++lines > LIMITS.maxLiveProjectionLines) return true;
   }
-  return dsCompactBytes(splitLines(live)) > LIMITS.maxDesignSystemBytes;
+  const all = splitLines(live);
+  if (!projectionShaped(all, dsProjectionEnd(all))) return true;
+  return dsCompactBytes(all) > LIMITS.maxDesignSystemBytes;
 }
 
 // ---------- value nodes ----------
@@ -325,6 +408,16 @@ export function dsReadNodeEdit(
   } catch {
     return NOT_A_VALUE;
   }
+  // Counted first: the canonical lines are exactly as long as the edit's, or it is not one, and
+  // writing out a small, deeply nested value could take far more than the frame.
+  const size = dsPrettySize(value, {
+    indent: node.indent,
+    key: head.length - node.indent,
+    comma: node.comma,
+    maxLines: ins.length,
+    maxChars: text.length,
+  });
+  if (!size || size.lines !== ins.length || size.chars !== text.length) return NOT_A_VALUE;
   const canonical = dsNodeLines(node, value);
   if (canonical.length !== ins.length || canonical.some((l, i) => l !== ins[i])) return NOT_A_VALUE;
   return value;
@@ -351,7 +444,7 @@ export function checkDesignSystemEdit(
   ins: readonly string[],
 ): LiveDocErrorCode | null {
   const end = dsProjectionEnd(lines);
-  if (end < 0) return "invalid";
+  if (!projectionShaped(lines, end)) return "invalid";
   if (start > end) {
     const g = [...lines.slice(end + 1, start), ...ins, ...lines.slice(start + del)];
     return utf8Length(joinLines(g)) > L.maxGuidelinesBytes ? "too_large" : null;
@@ -375,9 +468,11 @@ export function validDesignSystemDraft(live: string): boolean {
   const lines = splitLines(live);
   const p = dsProjectionParts(lines);
   if (!p) return false;
+  const keys = Object.keys(p.root);
+  if (keys[keys.length - 1] !== GUIDELINES || !dsJsonDepthWithin(p.root)) return false;
   if (JSON.stringify(p.root, null, 2) !== joinLines(lines.slice(0, p.end + 1))) return false;
-  if (utf8Length(p.guidelines) > L.maxGuidelinesBytes) return false;
-  const system = withGuidelines(p.root, p.guidelines === "" ? undefined : p.guidelines);
+  if (p.guidelines !== null && utf8Length(p.guidelines) > L.maxGuidelinesBytes) return false;
+  const system = withGuidelines(p.root, p.guidelines ?? undefined);
   return parseDesignSystemValue(system).ok;
 }
 

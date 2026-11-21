@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { FILE_SUMMARY_LIMITS } from "./changes/files.ts";
 import { LIMITS } from "./constants.ts";
-import { DS_TOKEN_TYPES } from "./designSystem.ts";
+import { DS_TOKEN_TYPES, dsJsonDepthWithin } from "./designSystem.ts";
 import { sheetColumnInputSchema } from "./schemas.ts";
 
 // The line and lease helpers live in liveLines.ts, the per-type rules in liveTypes.ts (neither
@@ -143,8 +143,14 @@ const dsTokenPath = z
   .max(16 * 65)
   .regex(/^[A-Za-z0-9_-]{1,64}(?:\.[A-Za-z0-9_-]{1,64}){0,15}$/);
 const dsText = z.string().max(LIMITS.liveDocFrameBytes);
-/** A token's value: any JSON (the room checks it with the publish rules; the frame bounds its size). */
-const dsValue = z.unknown().refine((v) => v !== undefined, { message: "required" });
+/**
+ * A token's value: any JSON (the room checks it with the publish rules; the frame bounds its size)
+ * nested no deeper than a design system may be, so nothing has to write out a deeper one.
+ */
+const dsValue = z
+  .unknown()
+  .refine((v) => v !== undefined, { message: "required" })
+  .refine((v) => dsJsonDepthWithin(v), { message: "nests too deep" });
 
 /** A design system's structural change (DsStructOp, designSystemStruct.ts), as a struct frame carries it. */
 export const designSystemStructOpSchema = z.discriminatedUnion("op", [
