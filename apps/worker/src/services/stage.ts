@@ -14,6 +14,8 @@ import {
   LIMITS,
   type PublishResult,
   type PublishWarning,
+  sourceFileOf,
+  sourcePathForText,
   TTL,
   type Visibility,
 } from "@plinth/shared";
@@ -52,6 +54,7 @@ import {
 import type { Ctx } from "./context.ts";
 import { scanPublish } from "./publishCheck.ts";
 import {
+  artifactRoot,
   assetContentType,
   attemptPrefix,
   deletePrefix,
@@ -363,11 +366,15 @@ function pathError(paths: { path: string; reason: string }[]): ApiError {
 }
 
 function noEntryFile(def: ArtifactTypeDef): ApiError {
-  return new ApiError("invalid_input", `No ${def.sourcePath} at the top of the upload`, {
+  const names = def.altSource ? `${def.sourcePath} or ${def.altSource.path}` : def.sourcePath;
+  return new ApiError("invalid_input", `No ${names} at the top of the upload`, {
     reason: "no_entry_file",
-    next: `Run tar from inside the build folder (the one with ${def.sourcePath} at its top)`,
+    next: `Run tar from inside the build folder (the one with ${names} at its top)`,
   });
 }
+
+/** Text an HTML deck's version check keeps from what a request sends, before it reads R2. */
+const MAX_KEPT_TEXT_BYTES = 4 * 1024 * 1024;
 
 /** The title a page or doc names for itself: <title> of HTML, the first "# " line of Markdown. */
 export function titleFromSource(def: ArtifactTypeDef, text: string): string | null {
@@ -390,6 +397,11 @@ export class VersionStager implements Stager {
   private readonly badPaths: { path: string; reason: string }[] = [];
   private readonly scanText = new Map<string, Uint8Array>();
   private scanBytes = 0;
+  /** Bytes the type's version check reads (TypeHooks.keepsText), by raw path. */
+  private readonly keptText = new Map<string, Uint8Array>();
+  private keptTextBytes = 0;
+  /** Where this version's source goes: the type's sourcePath, or its altSource (an HTML deck). */
+  private sourcePath: string;
   private readonly unscanned: string[] = [];
   /**
    * Raw paths whose bytes this request carried (addFile only), for sensitive_file. Never filled by
@@ -427,6 +439,7 @@ export class VersionStager implements Stager {
   ) {
     this.artifactId = target.mode === "publish" ? target.artifactId : target.artifact.id;
     this.def = requireTypeDef(target.mode === "publish" ? target.type : target.artifact.type);
+    this.sourcePath = this.def.sourcePath;
     const expected = target.mode === "publish" ? 1 : target.artifact.currentVersion + 1;
     this.prefix = attemptPrefix(this.artifactId, expected);
     this.rel = relativePrefix(this.artifactId, this.prefix);
@@ -478,7 +491,7 @@ export class VersionStager implements Stager {
     this.topDir = false;
     // No strip can happen now: a held "<dir>/<source>" is an ordinary file. Write it.
     for (const e of this.entries.values()) {
-      if (e.pending && e.path !== this.def.sourcePath) {
+      if (e.pending && !this.isSourcePath(e.path)) {
         const bytes = e.pending;
         e.pending = undefined;
         await this.put(e.path, bytes, e.content_type);
@@ -486,17 +499,25 @@ export class VersionStager implements Stager {
     }
   }
 
+  /** Whether `path` is one of the type's source files (sourcePath, or its altSource). */
+  private isSourcePath(path: string): boolean {
+    return path === this.def.sourcePath || path === this.def.altSource?.path;
+  }
+
   /** The source at the root, or "<top dir>/<source>" while a prefix strip is still possible. */
   private isSourceCandidate(path: string): boolean {
-    const src = this.def.sourcePath;
-    if (path === src) return true;
+    if (this.isSourcePath(path)) return true;
     if (typeof this.topDir !== "string") return false;
-    return path === `${this.topDir}${src}`;
+    return path.startsWith(this.topDir) && this.isSourcePath(path.slice(this.topDir.length));
   }
 
   private checkCount(): void {
     // The source is one of the entries; assets are the rest.
-    const assets = this.entries.size - (this.entries.has(this.def.sourcePath) ? 1 : 0);
+    let sources = 0;
+    for (const p of [this.def.sourcePath, this.def.altSource?.path]) {
+      if (p !== undefined && this.entries.has(p)) sources++;
+    }
+    const assets = this.entries.size - Math.min(1, sources);
     if (assets > this.ctx.config.maxAssetsPerVersion + 1) {
       throw tooManyAssets(this.ctx.config.maxAssetsPerVersion, assets);
     }
@@ -556,8 +577,10 @@ export class VersionStager implements Stager {
     opts: { sourceAllowed?: boolean; contentType?: string; expectedSha256?: string } = {},
   ): Promise<void> {
     this.throwIfFailed();
-    const isSource = !!opts.sourceAllowed && path === this.def.sourcePath;
-    const contentType = isSource ? this.def.contentType : assetContentType(path, opts.contentType);
+    const isSource = !!opts.sourceAllowed && this.isSourcePath(path);
+    const contentType = isSource
+      ? sourceFileOf(this.def, path).contentType
+      : assetContentType(path, opts.contentType);
     if (pathProblem(path) === null && opts.sourceAllowed) await this.noteTopDir(path);
     // A "<dir>/<source>" is checked at finish, once a strip has decided what it is.
     const possibleSource = !!opts.sourceAllowed && this.isSourceCandidate(path);
@@ -565,7 +588,7 @@ export class VersionStager implements Stager {
       isSource || possibleSource ? undefined : () => checkAsset(this.def, path, contentType);
     if (!this.acceptPath(path, check)) return;
     const oversize = bytes.byteLength > this.def.maxSourceBytes;
-    if (possibleSource && oversize && path === this.def.sourcePath) {
+    if (possibleSource && oversize && this.isSourcePath(path)) {
       throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
     }
     // Only a candidate that could still be the source is held in memory until finish. One past the
@@ -594,6 +617,7 @@ export class VersionStager implements Stager {
     this.checkCount();
     this.countBytes(bytes.byteLength);
     this.keepForScan(path, contentType, bytes);
+    this.keepText(path, bytes);
     if (candidate) {
       // Written at finish, once the final source path is known (a prefix strip may move it).
       entry.own = true;
@@ -615,6 +639,33 @@ export class VersionStager implements Stager {
     await this.put(path, bytes, contentType);
   }
 
+  /**
+   * Keep the bytes of a file the type's version check reads (an HTML deck's slides), up to
+   * MAX_KEPT_TEXT_BYTES; the check reads any other from R2. A path under one top directory may
+   * lose it to a prefix strip, so the path without it counts too.
+   */
+  private keepText(path: string, bytes: Uint8Array): void {
+    const keeps = typeHooks(this.def).keepsText;
+    if (!this.scan || !keeps) return;
+    const slash = path.indexOf("/");
+    if (!keeps(path) && !(slash > 0 && keeps(path.slice(slash + 1)))) return;
+    if (this.keptTextBytes + bytes.byteLength > MAX_KEPT_TEXT_BYTES) return;
+    this.keptTextBytes += bytes.byteLength;
+    this.keptText.set(path, bytes);
+  }
+
+  /** A staged file's text for the version check: kept bytes, held bytes, else its R2 object. */
+  private async stagedText(e: Entry): Promise<string | null> {
+    const kept = this.keptText.get(e.rawPath) ?? e.pending;
+    if (kept) return decoder.decode(kept);
+    const key =
+      e.stored_at !== undefined
+        ? `${artifactRoot(this.artifactId)}${e.stored_at}`
+        : `${this.prefix}${e.rawPath}`;
+    const obj = await this.ctx.env.FILES.get(key);
+    return obj ? obj.text() : null;
+  }
+
   /** Put the canonical form of a source candidate in place of the bytes that arrived. */
   private async replacePending(e: Entry, text: string): Promise<void> {
     const bytes = encoder.encode(text);
@@ -633,7 +684,9 @@ export class VersionStager implements Stager {
     if (bytes.byteLength > this.def.maxSourceBytes) {
       throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
     }
-    await this.addFile(this.def.sourcePath, bytes, { sourceAllowed: true });
+    // A type with a second source format stores the text where its format says (an HTML deck's
+    // index is deck.json, a Markdown deck slides.md).
+    await this.addFile(sourcePathForText(this.def, bytes), bytes, { sourceAllowed: true });
   }
 
   addRef(path: string, sha256: string): void {
@@ -785,7 +838,16 @@ export class VersionStager implements Stager {
       if (this.badPaths.length > 0) throw pathError(this.badPaths);
     }
 
-    const source = list.find((e) => e.path === def.sourcePath);
+    const sources = list.filter((e) => this.isSourcePath(e.path));
+    if (sources.length > 1) {
+      throw new ApiError(
+        "invalid_input",
+        `A version holds ${def.sourcePath} or ${def.altSource?.path}, not both`,
+        { type: def.id, reason: "two_sources" },
+      );
+    }
+    const source = sources[0];
+    if (source) this.sourcePath = source.path;
     if (source && !source.pending && source.size_bytes > def.maxSourceBytes) {
       throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, source.size_bytes);
     }
@@ -818,9 +880,29 @@ export class VersionStager implements Stager {
     // type that stores one canonical spelling (a sheet) stores that, here as inline.
     const sourceText = resolveSource({ type: def.id, [def.sourceField]: sentText }, null).text;
     if (sourceText !== sentText) await this.replacePending(source, sourceText);
+    source.content_type = sourceFileOf(def, source.path).contentType;
+
+    // The type's check of the version's files together (an HTML deck's slides), before the source
+    // is written. A restore copies stored files without checking them again.
+    let versionWarnings: PublishWarning[] = [];
+    const checkVersion = typeHooks(def).validateVersion;
+    if (this.scan && checkVersion) {
+      const byPath = new Map(list.map((e) => [e.path, e]));
+      versionWarnings = await checkVersion({
+        def,
+        text: sourceText,
+        sourcePath: source.path,
+        files: list.map((e) => ({ path: e.path, contentType: e.content_type })),
+        read: (path) => {
+          const e = byPath.get(path);
+          if (!e) return Promise.resolve(null);
+          return e === source ? Promise.resolve(sourceText) : this.stagedText(e);
+        },
+      });
+    }
+    this.keptText.clear();
 
     // The source under its own prefix; other source candidates under their final path.
-    source.content_type = def.contentType;
     for (const e of list) {
       if (!e.pending) continue;
       const bytes = e.pending;
@@ -850,7 +932,8 @@ export class VersionStager implements Stager {
       ...(e.stored_at !== undefined ? { stored_at: e.stored_at } : {}),
     }));
     // Source first, then the files in the order they arrived.
-    entries.sort((a, b) => (a.path === def.sourcePath ? -1 : b.path === def.sourcePath ? 1 : 0));
+    const src = this.sourcePath;
+    entries.sort((a, b) => (a.path === src ? -1 : b.path === src ? 1 : 0));
 
     const capabilities =
       this.capabilitiesOverride !== undefined
@@ -872,10 +955,15 @@ export class VersionStager implements Stager {
         )
         .map((e) => e.path);
       const files: FileEntry[] = [];
+      // The files the type's version check read (an HTML deck's slides, whose paths are the deck
+      // root's, not their own folder's) are left to it.
+      const checked = checkVersion ? typeHooks(def).keepsText : undefined;
       for (const [raw, bytes] of this.scanText) {
         const e = this.entries.get(raw);
         if (!e) continue;
-        files.push({ path: byRaw.get(raw) ?? raw, bytes, contentType: e.content_type });
+        const path = byRaw.get(raw) ?? raw;
+        if (checked?.(path) && source.path !== def.sourcePath) continue;
+        files.push({ path, bytes, contentType: e.content_type });
       }
       const manifestPaths = new Set(entries.map((e) => e.path));
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
@@ -895,7 +983,7 @@ export class VersionStager implements Stager {
         sent: [...this.sentPaths].map((p) => byRaw.get(p) ?? p),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
-        typed: typeSourceWarnings(typedSource),
+        typed: [...versionWarnings, ...typeSourceWarnings(typedSource)],
         extra,
       });
       this.scanText.clear();

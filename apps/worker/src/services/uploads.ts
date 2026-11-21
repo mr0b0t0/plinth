@@ -292,7 +292,7 @@ export async function startUpload(
     content_isolation: ctx.config.contentIsolation,
     commands: { curl: curlCommand(token, uploadUrl), ...(npx ? { npx } : {}) },
     next: uploadNext({
-      sourcePath: typeDef(type)?.sourcePath ?? "index.html",
+      sourcePath: sourceNames(type),
       id: targetId,
       baseVersion: update ? (input.base_version as number) : null,
       visibility: update?.artifact.visibility ?? null,
@@ -327,6 +327,13 @@ export { isReleaseAtLeast };
 export function npxCommand(version: string, token: string, uploadUrl: string): string | null {
   if (!cliPublishReleased(version)) return null;
   return `PLINTH_UPLOAD_TOKEN='${token}' npx -y @mr0b0t0/plinth@${version} upload <folder> --to '${uploadUrl}'`;
+}
+
+/** The source file(s) a type's build folder has at its top: "slides.md or deck.json" for a deck. */
+function sourceNames(type: string): string {
+  const def = typeDef(type);
+  if (!def) return "index.html";
+  return def.altSource ? `${def.sourcePath} or ${def.altSource.path}` : def.sourcePath;
 }
 
 export function uploadNext(o: {
@@ -530,6 +537,7 @@ export async function redeemBundle(
       maxEntries: w.config.maxAssetsPerVersion + 1,
       maxMetaBytes: LIMITS.maxTarMetaBytes,
       sourcePath: def.sourcePath,
+      ...(def.altSource ? { altSourcePath: def.altSource.path } : {}),
       reserve: (size) => staging.reserve(size),
     });
     for await (const entry of reader) {
