@@ -97,6 +97,24 @@ export interface BootOptions {
   createFrame?: (doc: Document) => HTMLIFrameElement;
   /** Whether a media query matches now (window.matchMedia). */
   matchMedia?: (query: string) => boolean;
+  /** Whether the person is acting on the page now (navigator.userActivation.isActive). */
+  userActivation?: () => boolean;
+  /** Milliseconds now (Date.now). */
+  now?: () => number;
+}
+
+/** The least time between two prototype-flow moves, whatever the boards post. */
+export const FLOW_GAP_MS = 500;
+
+/**
+ * Whether the person is acting on the page now. A click in a board frame activates the shell too
+ * (activation reaches every ancestor), while a board's own script posting a `goto` has none. A
+ * browser without the API is held to FLOW_GAP_MS alone.
+ */
+function userActive(win: Window): boolean {
+  const ua = (win.navigator as (Navigator & { userActivation?: { isActive: boolean } }) | undefined)
+    ?.userActivation;
+  return ua ? ua.isActive : true;
 }
 
 /**
@@ -299,6 +317,8 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     labels.set(b.id, label);
   }
 
+  /** The notes' scale: the design's sizes as written, a fluid board at its least height. */
+  const noteUnit = layoutUnit(design.boards.reduce((m, b) => Math.max(m, b.height), 0));
   // Notes sit in the world, under the boards' labels, and move and zoom with the boards.
   const noteEls = design.notes.map((n, i) => {
     const e = noteEl(doc, n, `note-${i + 1}`);
@@ -307,8 +327,8 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   });
   /**
    * Each note's box, measured once it is in the document (its text sets its size). Notes grow
-   * with the design as the gaps between boards do (`unit`), so a title still reads as one over
-   * rows of tall boards.
+   * with the design's sizes (`unit`), so a title still reads as one over rows of tall boards; a
+   * fluid board counts at its least height, so a long page does not blow its notes up.
    */
   const noteBoxes = (unit: number): NoteBox[] => {
     world.style.setProperty("--pd-unit", String(unit));
@@ -357,11 +377,10 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   /** Lays the boards out for the room the viewport leaves them. */
   function relayout(size: Size) {
     const p = insets(size);
-    const boards = currentBoards();
     layout = layoutBoards(
-      boards,
+      currentBoards(),
       (size.width - p.left - p.right) / (size.height - p.top - p.bottom),
-      noteBoxes(layoutUnit(boards.reduce((m, b) => Math.max(m, b.height), 0))),
+      noteBoxes(noteUnit),
     );
     itemById = new Map(layout.items.map((it) => [it.id, it]));
     for (const it of layout.items) {
@@ -461,7 +480,23 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     schedule(() => {
       relayoutQueued = false;
       if (root.hasAttribute("data-print")) return;
-      if (auto) fitAll();
+      if (interacting) {
+        // The board in use stays where it is on screen, under the person's pointer.
+        const id = interacting;
+        const before = itemById.get(id);
+        relayout(view.size());
+        const after = itemById.get(id);
+        const t = view.t;
+        view.set(
+          before && after
+            ? {
+                ...t,
+                x: t.x - (after.x - before.x) * t.scale,
+                y: t.y - (after.y - before.y) * t.scale,
+              }
+            : t,
+        );
+      } else if (auto) fitAll();
       else {
         relayout(view.size());
         if (followed) zoomTo(followed);
@@ -471,8 +506,17 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   };
 
   // A link in the board in use names another: the canvas goes there and puts it in use.
+  // Only a person's click moves it, at most once every FLOW_GAP_MS: two boards cannot bounce the
+  // canvas between them, nor flood the app's address with board changes.
+  const activated = opts.userActivation ?? (() => userActive(win));
+  const now = opts.now ?? Date.now;
+  let lastFlow = Number.NEGATIVE_INFINITY;
   flow = (from, to) => {
     if (review || interacting !== from || !byId.has(to)) return;
+    if (!activated()) return;
+    const at = now();
+    if (at - lastFlow < FLOW_GAP_MS) return;
+    lastFlow = at;
     const hadFocus = doc.activeElement === frames.frameOf(from);
     zoomTo(to);
     setInteract(to);
@@ -518,7 +562,13 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     if (!fromApp(e, win, appOrigin)) return;
     const m = readDesignAppMessage(e.data);
     if (m?.type === "print") printAll();
-    else if (m?.type === "goto" && byId.has(m.board)) {
+    else if (m?.type === "goto") {
+      // A board this version does not have (a stale link): say what is shown, so the app's
+      // address drops it.
+      if (!byId.has(m.board)) {
+        postToApp(win, appOrigin, { type: "board", board: active });
+        return;
+      }
       if (interacting && interacting !== m.board) setInteract(null);
       zoomTo(m.board);
     }

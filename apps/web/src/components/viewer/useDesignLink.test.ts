@@ -4,7 +4,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONFIG } from "./test-utils.ts";
-import { readBoardFragment, useDesignLink, writeBoardFragment } from "./useDesignLink.ts";
+import {
+  readBoardFragment,
+  useDesignLink,
+  WRITE_GAP_MS,
+  writeBoardFragment,
+} from "./useDesignLink.ts";
 
 const ORIGIN = "http://art123.content.localhost:8787";
 
@@ -27,12 +32,17 @@ const fromFrame = (source: Window, data: Record<string, unknown>, origin = ORIGI
   });
 
 beforeEach(() => {
+  vi.useFakeTimers();
   window.history.replaceState(null, "", "/a/kit#board=checkout");
 });
 afterEach(() => {
+  vi.useRealTimers();
   window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
 });
+
+/** Past the gap between two writes. */
+const later = () => act(() => vi.advanceTimersByTime(WRITE_GAP_MS));
 
 describe("useDesignLink", () => {
   it("reads and writes the fragment", () => {
@@ -72,6 +82,7 @@ describe("useDesignLink", () => {
       ORIGIN,
     );
     // Fit: no board, no fragment.
+    later();
     fromFrame(two.contentWindow, { type: "board", board: null });
     expect(window.location.hash).toBe("");
     expect(window.location.pathname).toBe("/a/kit");
@@ -79,6 +90,39 @@ describe("useDesignLink", () => {
     rerender({ frame: three.frame });
     fromFrame(three.contentWindow, { type: "ready", board: null });
     expect(three.contentWindow.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("spaces its writes, the last board winning, so a fast frame cannot flood history", () => {
+    const f = fakeFrame();
+    const replace = vi.spyOn(window.history, "replaceState");
+    renderHook(() =>
+      useDesignLink({ available: true, frame: f.frame, contentOrigin: ORIGIN, config: CONFIG }),
+    );
+    for (let i = 0; i < 200; i++) {
+      fromFrame(f.contentWindow, { type: "board", board: i % 2 ? "a" : "b" });
+    }
+    fromFrame(f.contentWindow, { type: "board", board: "last" });
+    // The first one at once, then one more for everything that came within the gap.
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(window.location.hash).toBe("#board=b");
+    later();
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(window.location.hash).toBe("#board=last");
+  });
+
+  it("drops a #board= the new frame does not have once the frame says what it shows", () => {
+    const f = fakeFrame();
+    renderHook(() =>
+      useDesignLink({ available: true, frame: f.frame, contentOrigin: ORIGIN, config: CONFIG }),
+    );
+    fromFrame(f.contentWindow, { type: "ready", board: null });
+    expect(f.contentWindow.postMessage).toHaveBeenCalledWith(
+      { source: "plinth-renderer", v: 1, type: "goto", board: "checkout" },
+      ORIGIN,
+    );
+    // The design's renderer answers a goto it cannot follow with the board it shows.
+    fromFrame(f.contentWindow, { type: "board", board: null });
+    expect(window.location.hash).toBe("");
   });
 
   it("does nothing for an artifact that is not a design", () => {

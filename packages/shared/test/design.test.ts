@@ -357,7 +357,9 @@ describe("boardDocument", () => {
 });
 
 describe("fluid boards, placement and notes", () => {
-  const note = (attrs = "") => `<!-- note${attrs ? ` ${attrs}` : ""} -->`;
+  /** A sticky note's marker unless `attrs` names another kind. */
+  const note = (attrs = "") =>
+    `<!-- note${attrs.includes("kind=") ? "" : ' kind="sticky"'}${attrs ? ` ${attrs}` : ""} -->`;
 
   it("keeps a design without the new attributes exactly as before", () => {
     const d = ok(SAMPLE);
@@ -468,7 +470,6 @@ describe("fluid boards, placement and notes", () => {
 
   it("names a bad note with its line", () => {
     const cases: [string, string][] = [
-      [note('kind="big"'), 'Line 1: a note\'s kind is "title" or "sticky".'],
       [note(), "Line 1: write the note's text on the lines after its marker."],
       [`${note('width="20"')}\nHi`, "Line 1: a note's width is 80 to 4096 px."],
       [
@@ -482,10 +483,6 @@ describe("fluid boards, placement and notes", () => {
       [
         `${note('x="5"')}\nHi`,
         "Line 1: give the note both x and y, whole CSS px from -100000 to 100000, or neither.",
-      ],
-      [
-        `${note('name="A"')}\nHi`,
-        'Line 1: note attribute "name" is not one of kind, x, y, width, color.',
       ],
       [`${note()}\n${"n".repeat(1001)}`, "Line 1: a note's text is at most 1000 characters."],
     ];
@@ -501,12 +498,23 @@ describe("fluid boards, placement and notes", () => {
     );
   });
 
-  it('never reads "notes" or "note:" as a marker', () => {
+  it("keeps a comment that is not a whole note marker in its board, as designs before notes had", () => {
+    // Every line here was valid board HTML before notes existed, and still is.
+    const legacy = [
+      "<!-- notes -->",
+      "<!-- note: tidy -->",
+      "<!-- note -->",
+      "<!-- note the padding is off -->",
+      '<!-- note name="A" -->',
+      '<!-- note kind="big" -->',
+      '<!-- note kind="title" colour="red" -->',
+      "<p>after</p>",
+    ];
     const d = ok(
-      [marker('name="A" size="a4"'), "<!-- notes -->", "<!-- note: tidy -->"].join("\n"),
+      [marker('name="A" size="a4"'), ...legacy, marker('name="B" size="a4"')].join("\n"),
     );
     expect(d.notes).toEqual([]);
-    expect(d.boards[0]?.html).toBe("<!-- notes -->\n<!-- note: tidy -->");
+    expect(d.boards.map((b) => b.html)).toEqual([legacy.join("\n"), ""]);
   });
 
   it("gives a fluid board's document no height", () => {

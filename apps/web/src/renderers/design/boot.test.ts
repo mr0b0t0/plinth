@@ -16,7 +16,7 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boot, type DesignHandle, FALLBACK } from "./boot.ts";
+import { boot, type DesignHandle, FALLBACK, FLOW_GAP_MS } from "./boot.ts";
 import { readBoardMessage } from "./frames.ts";
 import { PRINT_STYLE_ID, printCss, resetPrint } from "./print.ts";
 
@@ -103,7 +103,12 @@ function topLevel(search = "", path = "/"): Framed {
 
 function start(
   f: Framed,
-  opts: { maxLive?: number; matchMedia?: (q: string) => boolean } = {},
+  opts: {
+    maxLive?: number;
+    matchMedia?: (q: string) => boolean;
+    userActivation?: () => boolean;
+    now?: () => number;
+  } = {},
 ): DesignHandle {
   return boot(f.win, {
     schedule: (fn) => fn(),
@@ -679,7 +684,7 @@ describe("fluid boards, placement, notes, flows and deep links", () => {
     '<main><a href="#board=pricing">Pricing</a></main>',
     '<!-- artboard id="pricing" name="Pricing" width="1440" height="auto" -->',
     "<main>Plans</main>",
-    '<!-- note x="0" y="-400" color="blue" -->',
+    '<!-- note kind="sticky" x="0" y="-400" color="blue" -->',
     "Ask legal\nabout the copy",
     '<!-- artboard id="ad" name="Ad" size="ad-medium-rectangle" x="2000" y="0" -->',
     "<p>Ad</p>",
@@ -767,6 +772,73 @@ describe("fluid boards, placement, notes, flows and deep links", () => {
     expect(labelOf("pricing").hasAttribute("data-interacting")).toBe(true);
   });
 
+  it("follows a flow only on a person's click, and at most once per gap", () => {
+    mount(FLUID);
+    const f = framed();
+    let active = false;
+    let clock = 1_000;
+    handle = start(f, { userActivation: () => active, now: () => clock });
+    for (const id of ["site", "pricing"]) fromWindow(f, winOf(f, id), boardMsg("ready"));
+    interactWith("site");
+    // A board's own script, with no click behind it, cannot move the canvas.
+    fromWindow(f, winOf(f, "site"), gotoMsg("pricing"));
+    expect(cover("site").hidden).toBe(true);
+    active = true;
+    fromWindow(f, winOf(f, "site"), gotoMsg("pricing"));
+    expect(cover("pricing").hidden).toBe(true);
+    // Two boards bouncing within one click's activation: the second move waits for the gap.
+    fromWindow(f, winOf(f, "pricing"), gotoMsg("site"));
+    expect(cover("pricing").hidden).toBe(true);
+    clock += FLOW_GAP_MS;
+    fromWindow(f, winOf(f, "pricing"), gotoMsg("site"));
+    expect(cover("site").hidden).toBe(true);
+    // The app heard one board change per move.
+    expect(
+      toApp(f)
+        .map(({ m }) => m)
+        .filter((m) => m.type === "board"),
+    ).toEqual([appMsg("board", { board: "pricing" }), appMsg("board", { board: "site" })]);
+  });
+
+  it("keeps the board in use still on screen when a fluid board grows, rather than refitting", () => {
+    mount(FLUID);
+    const f = framed();
+    handle = start(f);
+    for (const id of ["site", "pricing"]) fromWindow(f, winOf(f, id), boardMsg("ready"));
+    interactWith("pricing");
+    const view = handle.view;
+    if (!view) throw new Error("no view");
+    const onScreen = () => {
+      const x = Number.parseFloat(slotOf("pricing").style.getPropertyValue("--pd-x"));
+      const y = Number.parseFloat(slotOf("pricing").style.getPropertyValue("--pd-y"));
+      return [x * view.t.scale + view.t.x, y * view.t.scale + view.t.y, view.t.scale];
+    };
+    const before = onScreen();
+    const zoom = html().getAttribute("data-zoom");
+    const place = () => slotOf("pricing").style.cssText;
+    const was = place();
+    fromWindow(f, winOf(f, "site"), sizeMsg(6000));
+    expect(slotOf("site").style.height).toBe("6000px");
+    // The rows were laid out again: the board in use moved on the canvas, the view with it.
+    expect(place()).not.toBe(was);
+    const after = onScreen();
+    expect(after[0]).toBeCloseTo(before[0] ?? 0);
+    expect(after[1]).toBeCloseTo(before[1] ?? 0);
+    expect(html().getAttribute("data-zoom")).toBe(zoom);
+  });
+
+  it("sizes notes by the design's boards as written, not by how tall a fluid page grew", () => {
+    mount(FLUID);
+    const f = framed();
+    handle = start(f);
+    const world = () => document.querySelector(".plinth-design__world") as HTMLElement;
+    const unit = world().style.getPropertyValue("--pd-unit");
+    fromWindow(f, winOf(f, "site"), boardMsg("ready"));
+    fromWindow(f, winOf(f, "site"), sizeMsg(8000));
+    expect(world().style.getPropertyValue("--pd-unit")).toBe(unit);
+    expect(Number(unit)).toBe(1.5);
+  });
+
   it("tells the app which board it shows, and goes to the one the app asks for", () => {
     mount(FLUID);
     const f = framed();
@@ -789,9 +861,12 @@ describe("fluid boards, placement, notes, flows and deep links", () => {
         source: f.parent as unknown as Window,
       }),
     );
-    fromApp(f, appMsg("goto", { board: "nowhere" }));
     fromApp(f, appMsg("goto", { board: "<b>" }));
     expect(toApp(f)).toEqual([]);
+    // A board this version does not have: the canvas says what it shows, so the app drops it.
+    fromApp(f, appMsg("goto", { board: "nowhere" }));
+    expect(toApp(f)).toEqual([{ m: appMsg("board", { board: null }), target: APP }]);
+    f.parent.postMessage.mockClear();
     fromApp(f, appMsg("goto", { board: "site" }));
     expect(labelOf("site").hasAttribute("data-active")).toBe(true);
     expect(toApp(f)).toEqual([{ m: appMsg("board", { board: "site" }), target: APP }]);
