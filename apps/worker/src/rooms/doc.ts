@@ -25,14 +25,17 @@
 // is not, and a draft of every other type is frozen for review whenever the version changed its
 // content. Draft text is never logged.
 //
-// Every type with `edit: "live"` has a draft here (docs and sheets): the type's rules
-// (liveTypes.ts) check each edit and each merge, so a sheet's draft is always valid canonical JSON
-// lines and no draft starts like an HTML document. A sheet's rows and columns move with `struct`,
-// applied here and on every socket by the same pure function, only while nobody else holds a
-// lease. A sheet's draft is never merged: a version published under it freezes it, and the editors
-// review the whole draft beside it and publish theirs (with its base's files) or discard it. Both
-// choices, and every save and discard, run under one checkpoint lock, so a frozen draft resolves
-// exactly once.
+// Every type with `edit: "live"` has a draft here (docs, sheets and design systems): the type's
+// rules (liveTypes.ts) check each edit and each merge, so a sheet's draft is always valid canonical
+// JSON lines, a design system's is always its canonical line projection (designSystemLive.ts, held
+// here in memory; D1 keeps its storage form), and no draft starts like an HTML document. A sheet's
+// rows and columns move with `struct`, applied here and on every socket by the same pure function,
+// only while nobody else holds a lease; a design system's keys (dark values, optional texts,
+// tokens) while no lease overlaps the lines the op changes, the other leases moving with theirs. A
+// sheet's or a design system's draft is never merged: a version published under it freezes it, and
+// the editors review the whole draft beside it and publish theirs (with its base's files) or
+// discard it. Both choices, and every save and discard, run under one checkpoint lock, so a frozen
+// draft resolves exactly once.
 import {
   type ArtifactTypeDef,
   applyLineEdit,
@@ -49,11 +52,12 @@ import {
   type LiveDocClientFrame,
   type LiveDocErrorCode,
   type LiveDocServerFrame,
+  type LiveStructOp,
   type LiveTypeRules,
   liveRules,
+  mapRange,
   merge3,
   rangesOverlap,
-  type SheetStructOp,
   shiftRange,
   splitLines,
   summarizeFileChanges,
@@ -669,13 +673,15 @@ export class LiveDoc {
   }
 
   /**
-   * A structural change (a sheet's rows or columns): a writer's, at the current rev, of a kind the
-   * artifact's type takes, while no other socket's lease overlaps what the op touches ("all" for a
-   * sheet: no other lease at all, so no lease has to move). The sender's own lease ends first; the
-   * op is applied with the type's pure function and broadcast as it came, and every socket applies
-   * it to the same lines. The result must be a draft the type can hold.
+   * A structural change (a sheet's rows or columns, a design system's keys): a writer's, at the
+   * current rev, of a kind the artifact's type takes, while no other socket's lease overlaps what
+   * the op touches ("all" for a sheet: no other lease at all, so no lease has to move; a design
+   * system's one run of changed lines, so the other leases move by the op's line map). The
+   * sender's own lease ends first; the op is applied with the type's pure function and broadcast
+   * as it came, and every socket applies it to the same lines. The result must be a draft the type
+   * can hold.
    */
-  private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: SheetStructOp) {
+  private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: LiveStructOp) {
     if (s.doc !== "write") return this.host.send(ws, { t: "struct_denied", reason: "watch" });
     const rules = doc.rules.struct;
     if (!rules?.kinds.includes(op.op)) return this.error(ws, "invalid");
@@ -705,12 +711,32 @@ export class LiveDoc {
       this.host.save(ws, s);
       this.broadcast({ t: "released", lease: id });
     }
+    // The other leases lie outside what the op touched: they move with their lines.
+    const map = applied.map;
+    if (map) {
+      for (const o of this.host.sockets()) {
+        const l = o.ws === ws ? null : o.s.lease;
+        if (!l) continue;
+        const moved = mapRange(l, map, next.length);
+        if (!moved) {
+          o.s.lease = null;
+          this.host.save(o.ws, o.s);
+          this.host.send(o.ws, { t: "lease_lost", lease: l.id, reason: "closed" });
+          this.broadcast({ t: "released", lease: l.id }, o.ws);
+        } else if (moved.start !== l.start || moved.end !== l.end) {
+          o.s.lease = { ...l, ...moved };
+          this.host.save(o.ws, o.s);
+        }
+      }
+    }
     doc.lines = next;
     doc.rev += 1;
     doc.lastBy = s.id;
     doc.lastEmail = s.email;
     doc.lastEditAt = nowIso();
-    this.broadcast({ t: "struct", gen: doc.gen, rev: doc.rev, op, by: s.id });
+    // As it came: the frame schema checked it (a design system's value is any JSON there).
+    const sent = op as Extract<LiveDocServerFrame, { t: "struct" }>["op"];
+    this.broadcast({ t: "struct", gen: doc.gen, rev: doc.rev, op: sent, by: s.id });
     this.scheduleFlush();
   }
 

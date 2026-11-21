@@ -198,7 +198,7 @@ describe("doc socket schemas", () => {
       { t: "lease", rev: 1, start: 5, end: 2 },
       { t: "lease", rev: -1, start: 0, end: 0 },
       { t: "lease", rev: 1.5, start: 0, end: 0 },
-      { t: "lease", rev: 1, start: 0, end: LIMITS.maxLiveDocLines + 1 },
+      { t: "lease", rev: 1, start: 0, end: LIMITS.maxLiveProjectionLines + 1 },
       { t: "edit", lease: "bad id!", seq: 1, text: "x" },
       { t: "edit", lease: "L1", seq: 1, text: 7 },
       { t: "edit", lease: "L1", seq: 1, text: "x".repeat(LIMITS.liveDocFrameBytes + 1) },

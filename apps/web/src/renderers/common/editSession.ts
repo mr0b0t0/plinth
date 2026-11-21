@@ -34,7 +34,11 @@ export type EditAppMessage =
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 /** The longest kept copy a `review` may carry, in UTF-16 units; the type's rules check it exactly. */
-const MAX_REVIEW_TEXT = Math.max(LIMITS.maxDocBytes, LIMITS.maxSheetBytes);
+const MAX_REVIEW_TEXT = Math.max(
+  LIMITS.maxDocBytes,
+  LIMITS.maxSheetBytes,
+  LIMITS.maxDesignSystemBytes,
+);
 const RESULTS = new Set(["busy", "resolved", "conflict", "failed", "done"]);
 const FILE_KINDS = new Set(["added", "removed", "replaced", "same"]);
 const isVersion = (v: unknown): v is number =>
@@ -196,7 +200,9 @@ export class ReviewSession {
     }
     const text = this.kept ?? this.host.soloText();
     if (outcome === "publish" && text !== null) {
-      this.host.post({ type: "resolved", nonce, outcome, text, ...(note ? { note } : {}) });
+      // What a version stores: the type's source form of the draft (a design system's JSON).
+      const source = this.host.rules.fromLive(text);
+      this.host.post({ type: "resolved", nonce, outcome, text: source, ...(note ? { note } : {}) });
     } else if (outcome === "discard") {
       this.host.post({ type: "resolved", nonce, outcome });
     }
@@ -224,9 +230,11 @@ export class ReviewSession {
     }
     // A kept copy is checked as the room checks a whole draft: one the type cannot hold is not
     // reviewed (the app keeps it, and can still drop it).
+    // The copy is the type's source form (what the frame handed over): reviewed in its live form.
+    const copy = m.text === undefined ? undefined : this.host.rules.toLive(m.text);
     const kept =
-      m.text !== undefined && !this.host.rules.tooLarge(m.text) && this.host.rules.valid(m.text)
-        ? m.text
+      copy !== undefined && !this.host.rules.tooLarge(copy) && this.host.rules.valid(copy)
+        ? copy
         : null;
     const text = m.text !== undefined ? kept : this.host.soloText();
     if (text === null || m.n === undefined || m.base === undefined) {

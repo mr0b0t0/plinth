@@ -432,6 +432,258 @@
   color: var(--doc-muted);
 }
 
+.ds-error p {
+  margin: 0 0 8px;
+  color: var(--doc-fg);
+}
+
+.ds-error__list {
+  margin: 0 0 16px;
+  padding-left: 1.25em;
+}
+
+.ds-error__list code {
+  font-family: var(--doc-mono);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Editing on the page (edit.ts). Only present in edit mode. ---------- */
+
+.ds-button {
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--doc-fg);
+  color: var(--doc-bg);
+  font: 600 0.85rem / 1.4 var(--doc-font);
+  cursor: pointer;
+}
+
+.ds-button--ghost {
+  border: 1px solid var(--doc-border);
+  background: transparent;
+  color: var(--doc-fg);
+  font-weight: 500;
+}
+
+.ds-button:focus-visible,
+.ds-field:focus-visible,
+.ds-name:focus-visible {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 1px;
+}
+
+/* The name, edited where it is: the heading's own size, a hairline until it has the focus. */
+.ds-name {
+  width: 100%;
+  margin: 0;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+@media (hover: hover) {
+  .ds-name:hover {
+    border-color: var(--doc-border);
+  }
+}
+
+.ds-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 12px;
+  color: var(--doc-muted);
+  font-size: 0.85rem;
+}
+
+.ds-field {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--doc-border);
+  border-radius: 6px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+  font: 0.85rem / 1.4 var(--doc-font);
+}
+
+.ds-field--text {
+  width: 13rem;
+  font-family: var(--doc-mono);
+}
+
+.ds-field--number {
+  width: 5.5rem;
+}
+
+.ds-field--select {
+  padding-right: 0.25rem;
+}
+
+/* The colour picker is the swatch itself. */
+.ds-field--color.ds-swatch {
+  width: 2rem;
+  height: 2rem;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.ds-token__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 6px;
+}
+
+.ds-token__side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ds-token__side-name,
+.ds-part__name,
+.ds-control__note {
+  color: var(--doc-muted);
+  font-size: 0.78rem;
+}
+
+.ds-token__side-name {
+  min-width: 2.5rem;
+}
+
+.ds-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ds-control--parts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.ds-part {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ds-part__name {
+  min-width: 6.5rem;
+}
+
+.ds-token__desc-field {
+  width: min(100%, 28rem);
+  margin-top: 6px;
+  font-family: var(--doc-font);
+}
+
+/* One ⋯ per row, at its end. */
+.ds-token--editing .ds-token__info {
+  position: relative;
+  padding-right: 44px;
+}
+
+.ds-menu {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+.ds-group th {
+  position: relative;
+  padding: 14px 44px 6px 12px;
+  border-bottom: 1px solid var(--doc-border);
+  color: var(--doc-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.ds-group__name {
+  font-family: var(--doc-mono);
+}
+
+.ds-group .ds-menu {
+  top: 8px;
+}
+
+.ds-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 8px;
+  color: var(--doc-fg);
+  font-weight: 400;
+}
+
+.ds-component__bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 2rem;
+  margin: -8px 0 16px;
+  padding-right: 44px;
+}
+
+.ds-component__bar .ds-menu {
+  top: 0;
+  right: 0;
+}
+
+/* An empty formatted text in edit mode still has a place to write in. */
+.ds-prose.plinth-doc--editing:empty::before {
+  content: "Write something";
+  color: var(--doc-muted);
+}
+
+.ds-notice {
+  z-index: 4;
+}
+
+/* Each side of the review is the site without its navigation. */
+.ds-site--pane .ds-layout {
+  display: block;
+}
+
+.ds-site--pane .ds-nav {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  /* 16px keeps mobile browsers from zooming when a field is focused. */
+  .ds-field {
+    font-size: 16px;
+  }
+
+  .ds-button,
+  .ds-field,
+  .ds-field--color.ds-swatch {
+    min-height: 44px;
+  }
+
+  .ds-field--color.ds-swatch {
+    width: 44px;
+  }
+}
+
 /* Headings the author wrote sit under the site's own section headings, which carry the only rules
    and no "#" anchors, so the page has one heading style and every rule spans the column. */
 .ds-prose.plinth-doc h1 {
@@ -527,6 +779,41 @@
 
   .ds-table td + td {
     margin-top: 8px;
+  }
+
+  /* Edit mode: a group's row is a full-width label with its ⋯ at the end, and fields fit. */
+  .ds-table tr.ds-group {
+    padding: 14px 0 6px;
+  }
+
+  .ds-group th {
+    display: block;
+    padding: 0 44px 0 0;
+    border: 0;
+  }
+
+  .ds-group .ds-menu {
+    top: -4px;
+    right: 0;
+  }
+
+  .ds-token--editing .ds-token__info {
+    padding-right: 40px;
+  }
+
+  .ds-field--text,
+  .ds-token__desc-field {
+    width: 100%;
+  }
+
+  .ds-token__side {
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .ds-token__side .ds-control {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
   }
 
   .ds-themes {

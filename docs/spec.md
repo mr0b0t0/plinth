@@ -43,8 +43,8 @@ account.
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts (docs and sheets are edited on the page; HTML in the source
-  editor).
+- On-page editing of HTML artifacts (docs, sheets and design systems are edited on the page; HTML
+  in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -612,17 +612,17 @@ the count survives.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
 - The source editor stays for the types that have one until each type's editing on the page
-  covers what it does. Where a doc can be edited on its page, the page is its one way in and the
-  viewer offers no source editor item; where it cannot (opaque isolation, the path fallback,
-  `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
+  covers what it does. Where a doc or a design system can be edited on its page, the page is its
+  one way in and the viewer offers no source editor item; where it cannot (opaque isolation, the
+  path fallback, `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
   whiteboards have no source editor.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
-the draft's files decided 2026-11-19). Owners and editors edit a doc or a sheet right on its
-rendered page, and the other editors with the page open see the changes as they are typed. The
-registry says which types are edited this way (`edit: "live"`: docs and sheets); HTML pages,
-decks and design systems are edited in the source editor only and designs by agents only (`edit:
-"ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
+the draft's files decided 2026-11-19; design systems decided 2026-11-21). Owners and editors
+edit a doc, a sheet or a design system right on its rendered page, and the other editors with the
+page open see the changes as they are typed. The registry says which types are edited this way
+(`edit: "live"`: docs, sheets and design systems); HTML pages and decks are edited in the source
+editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
 the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
@@ -646,7 +646,10 @@ page shows the strip and makes the REST calls, and renders no content.
   then puts the block back as the room has it, keeps it open and says why. The rules hold every
   check the type's publish hook makes on the source alone, so a draft can always be published: a
   doc never starts like a whole HTML document (`<html` or `<!doctype html` first, which the stager
-  refuses), and a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19). To keep
+  refuses), a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19), and a
+  design system's draft (a line projection of its JSON) keeps the rules of
+  [Design systems](#design-systems-decided-2026-11-19): one whole value per edit, written
+  canonically and checked with the publish rules on the whole system. To keep
   that rule out of people's way, the doc editor writes a `<` at the start of any top-level block
   it writes as `\<`, which renders as `<`, so any block a person wrote can become the first one.
   When a Delete or a Move would leave a block an agent wrote first while it starts like an HTML
@@ -663,8 +666,9 @@ page shows the strip and makes the REST calls, and renders no content.
   is based on. Every page Publish stages exactly that: the text, and every file of the draft's base
   version carried by reference (`files_from_version`), never the current version's files. For an
   ordinary Publish the base is the current version, so nothing changes. In edit mode a doc draws
-  its images from the base version's files (`/__plinth/v/<base>/`), so the page never shows a file
-  the draft would not publish.
+  its images from the base version's files (`/__plinth/v/<base>/`), and a design system its fonts
+  and its examples' images and CSS files, so the page never shows a file the draft would not
+  publish.
 - **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), leaving edit mode (the Edit
   toggle, or Done at phone width), or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
   while it is editing; no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version,
@@ -673,7 +677,7 @@ page shows the strip and makes the REST calls, and renders no content.
   `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
   nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
   made while a save runs are kept on top of the new version. A draft that cannot be a version yet
-  (a type's `unpublishable` rule; no doc or sheet has one) is never checkpointed (409
+  (a type's `unpublishable` rule; no doc, sheet or design system has one) is never checkpointed (409
   `live_unpublishable`), and Publish is off, with the reason in its tooltip.
 - **Versions from elsewhere.** When an agent, the source editor, the CLI, REST or a restore
   publishes a version vN while a draft exists:
@@ -681,11 +685,13 @@ page shows the strip and makes the REST calls, and renders no content.
   - a **doc's** draft is merged onto vN line by line when the two changed different lines and the
     result fits the doc's rules (the editors see "v5 was published; your changes were kept"), as
     #49 decided; otherwise it is frozen for review;
-  - a **sheet's** draft is never merged. A version's content is its source and its files together.
-    When vN's content equals the draft's base (it changed only the title, or restored the same
-    content), the base moves under the draft's lines as they are, which also unfreezes a draft
-    frozen against an older version; when it equals the draft, the draft ends; anything else
-    freezes it.
+  - a **sheet's** or a **design system's** draft is never merged. A version's content is its
+    source and its files together (a design system's source compared as its projection, so a
+    version that only spells the same JSON another way, with other white space or compact, is no
+    change). When vN's content equals the draft's base (it changed only the title, or restored the
+    same content), the base moves under the draft's lines as they are, which also unfreezes a
+    draft frozen against an older version; when it equals the draft, the draft ends; anything
+    else freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
   autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
@@ -757,8 +763,8 @@ page shows the strip and makes the REST calls, and renders no content.
   changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
   held, the app sends that copy with the review, and Publish your changes and Discard your changes
   act on it); under opaque
-  isolation and the path fallback there is no editing on the page: docs are edited in the source
-  editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
+  isolation and the path fallback there is no editing on the page: docs and design systems are
+  edited in the source editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
   off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
 - **On the page.** An Edit toggle in the artifact bar, the one way in (no source editor item
   beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
@@ -809,10 +815,10 @@ page shows the strip and makes the REST calls, and renders no content.
   `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
   new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
   agents keep the carry rule.
-- **Ask an agent where editing is off.** Owners and editors of a doc or a sheet on an instance
-  where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque isolation and the path
-  fallback) see Ask an agent in the Edit slot, with the reason; HTML pages and designs always do,
-  and decks and design systems do until they are edited on the page. While editing, Ask an agent
+- **Ask an agent where editing is off.** Owners and editors of a doc, a sheet or a design system
+  on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque isolation
+  and the path fallback) see Ask an agent in the Edit slot, with the reason; HTML pages and designs
+  always do, and decks do until they are edited on the page. While editing, Ask an agent
   opens a dialog that leaves edit mode and the draft as they are. See
   [Ask an agent](#ask-an-agent-decided-2026-11-19).
 
@@ -984,7 +990,8 @@ Decided 2026-11-14 (issue #1). Design:
 Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
 open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
 durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
-late joiner reads it. Plinth's own on-page editing of docs and sheets is the room's first use.
+late joiner reads it. Plinth's own on-page editing of docs, sheets and design systems is the
+room's first use.
 
 - **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
   `content="data viewer room"`), and may list topics commenters may emit too with
@@ -1014,7 +1021,8 @@ late joiner reads it. Plinth's own on-page editing of docs and sheets is the roo
   `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
-  `/__plinth/room/v1/doc` (on-page editing of docs and sheets) and `/__plinth/room/v1/slides`
+  `/__plinth/room/v1/doc` (on-page editing of docs, sheets and design systems) and
+  `/__plinth/room/v1/slides`
   (following the presenter in a deck) the same way. The handshake is checked in order: method,
   exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active, the artifact, the
   content pass with its identity claim at the current epoch, the kind the path
@@ -1098,8 +1106,12 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   section headings stay the only ones. The site's own chrome uses Plinth's neutral
   styles; the design system's tokens and CSS apply only to samples and previews. Navigation is by
   hash (`#tokens/color`, `#components/button`) from a sidebar that marks the section in view: on a phone, one
-  row that scrolls sideways and fades at its edges. JSON that does not parse shows one line, "This design system
-  could not be shown."
+  row that scrolls sideways and fades at its edges. Each example shows only its rendered preview,
+  never its HTML or CSS. A system the format refuses (one stored before a stricter parser, say)
+  shows "This design system has problems an agent needs to fix:" and up to 10 of its problems,
+  each its path and words as text, with "Ask an agent" (an `ask` anchored at `system:problems`)
+  for the owner and editors where they edit with the room; a page whose payload cannot be read
+  shows one line, "This design system could not be shown."
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1127,18 +1139,84 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   before `<body>` in one forward pass, as a browser would read the tag: comments are skipped (an
   unclosed comment or tag runs to the end, so nothing after it counts), and a page that never
   mentions `plinth-design-system` is not scanned at all.
-- **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
-  JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
-  keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
-  link (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
+- **In the app.** Owners and editors edit a design system on its page (below). Where editing on
+  the page is off (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path fallback), the source
+  editor holds the JSON with Monaco's JSON language and the format's JSON Schema, lists the
+  parser's problems (one short line each, with its path) above the editor, keeps the preview at
+  the last draft that parsed (blank while none has), and keeps Save off until there are none. The
+  dashboard shows a "Design system" badge. To point an agent at one, the person gives it the link
+  (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
+- **Editing on the page** (decided 2026-11-21; [Editing](#editing) gives the model every live type
+  shares: leases, drafts, Publish, the whole-draft review). Owners and editors change values in
+  place on the site itself, live with each other, and no JSON is ever shown:
+  - **The draft is a line projection** (`packages/shared/src/designSystemLive.ts`). A token's value
+    is a JSON line, but the guidelines are one long string (up to 200 KB) that a line lease cannot
+    share, so the draft is the JSON without its guidelines, written `JSON.stringify(…, null, 2)`
+    with `"guidelines": null` at their key (or, when there are none, after `themes`, else after
+    `tokens`), then the guidelines' Markdown as lines of their own after the root's closing `}`
+    (the first line that is exactly `}`). The room holds the projection in memory; `live_drafts`
+    stores its storage form (below), so a draft row stays within 1 MB.
+  - **What is edited, and how.** A lease is the lines of one editable value: a token's light or
+    dark `$value`, a token's `$description`, the system's `name` and `description`, and a
+    component's `description`, `usage` and `status`. An edit replaces that whole value, written
+    as the whole JSON part writes it (`JSON.stringify(value, null, 2)` at its indent, with its key
+    and its comma), so the JSON part stays canonical edit by edit, and the room checks the new
+    value with the publish rules on the whole system: the value grammar of the token's type (which
+    may come from its groups), an alias's target (it exists, has the same type, makes no cycle),
+    every text's length, and the statuses (`stable`, `beta`, `deprecated`). A change of form the
+    grammar takes is allowed (a number weight becoming a keyword, an object colour a string, an
+    alias in place of a composite). The guidelines' lines take any Markdown within 200 KB. No
+    edit spans both parts or touches the root's braces. Keys come and go only through structural
+    changes, each checked the same way and refused while another person's lease overlaps the lines
+    it changes (other leases move with their lines): `set_dark`/`clear_dark` (a dark value, with
+    its groups, and the groups it leaves empty), `set_text`/`clear_text` (an absent description,
+    usage or status is added; emptying one removes the key, never stores ""),
+    `add_token` (last in an existing group, with `$type` only when the group gives none) and
+    `remove_token` (with its dark value; refused while an alias names it or the shared or a
+    component's CSS holds its variable, and the page says what uses it).
+  - **The controls** keep the form a value is stored in: a colour string or the picker's
+    `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
+    its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
+    to 5 decimals) and its `hex` kept in step, and a string typed in its place asks first;
+    dimensions and durations a number and a unit (an object dimension `px` or `rem`); a weight a
+    number or a keyword, whichever was used last; a font family a comma list or an array as
+    stored; a cubic Bézier four numbers; a shadow, a border or a typography token one field per
+    part; another token through "Use another token" (and back with "Use a value", the target's
+    own stored value). The name is a field; the description, the guidelines and each component's
+    description and usage are formatted text, with the doc's block editor
+    ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)); a component's status
+    is a select. Each token row has one ⋯ (dark value, description, another token, "Rename: Ask an
+    agent", remove), each group row one ⋯ ("Add a token", "Rename: Ask an agent").
+  - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
+    components), renaming tokens and groups, types, the fonts, the prefix, the format and the
+    shared CSS. Each has "Ask an agent" on the page: a token's or a group's menu, a component's
+    menu ("Ask an agent to change this component"), and the fonts and settings line under the name.
+  - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
+    most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
+    (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact) is
+    not edited on the page: Edit says "This design system is too large to edit on the page", edit
+    mode ends, and Ask an agent is offered.
+  - **Storage form.** A Publish from the page stores 2-space JSON when it fits 1 MB, and compact
+    JSON when it does not, so it never fails on size where the agent's version fit. An agent's
+    publish, update or restore keeps the bytes it sent (there is no canonical form on publish).
+    After a Publish from the page, `get_artifact` returns Plinth's formatting; the values are the
+    same.
+  - **Versions published meanwhile** are never merged ([Editing](#editing)): compared by
+    projection, a version that changes nothing the draft holds needs no review, and anything else
+    freezes the draft. The review draws each side's site read-only, each against its own version's
+    files (its fonts' `@font-face` from `/__plinth/v/<n>/`, and its examples' frames with that
+    version as their base), marks the tokens, components, header and guidelines blocks that
+    changed, and lists the changes ("color.brand.500 changed: #3355ff → #2f4ac0"). Two sides that
+    use the same font family with different files share whichever rule loaded last, outside the
+    examples' frames.
 - **Uploads and the CLI.** `start_upload` with `type: "design_system"` (or the `id` of a design
   system) takes a folder with `system.json` and its images and fonts at its top. The Plinth CLI
   publishes such a folder as a design system (`plinth publish <dir>`), updates one with the JSON in
   `content` (`--id`), sends one with `plinth upload`, and checks `system.json` against the fixed
   1 MB limit before sending. A folder with `index.html` at its top is a page, whatever else it holds.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
-  origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
-  no themes other than `dark`, and no copying of font or image files between artifacts.
+  origins and a content pass for two artifacts), no script in previews, no themes other than
+  `dark`, and no copying of font or image files between artifacts.
 
 ### Slides (decided 2026-11-19)
 
@@ -1604,8 +1682,8 @@ document through the gate and the shared-data API, with all of their checks.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   One such notice shows at a time: a newer version's replaces the last, so versions published in
-  a row never stack. While someone edits on the page, or the frame is held (a doc or sheet edited
-  on its page, a deck presented), no notice shows: the version picker takes the new number, and
+  a row never stack. While someone edits on the page, or the frame is held (a doc, sheet or design
+  system edited on its page, a deck presented), no notice shows: the version picker takes the new number, and
   the edit strip says what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
@@ -2789,8 +2867,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   by code included. Never viewers, never agents. It is offered only when the owner has an agent
   that can take the request (the gate's `ask.targets` is not empty).
 - **Where.** The registry says how people change each type (`edit`): `"ask"` (HTML pages and
-  designs, and decks and design systems until they are edited on the page), `"live"` (docs and
-  sheets) or `"board"` (whiteboards).
+  designs, and decks until they are edited on the page), `"live"` (docs, sheets and design
+  systems) or `"board"` (whiteboards).
   - For an `"ask"` type, and for a live type whose editing on the page is off here, owners and
     editors get Ask an agent in the bar's Edit slot; its description gives the reason when editing
     is off ("Editing on the page is turned off on this Plinth instance." or "Editing on the page
@@ -2823,7 +2901,10 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
   kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
   which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
-  `ask` with block anchors; other types don't yet. While the app is in edit mode, an `ask`
+  `ask` with block anchors, and the design system renderer with `token:<path>`, `group:<path>`,
+  `component:<id>` and `system:settings` (a path too long for an anchor key gives its index), and
+  with the block anchors of its formatted texts behind the text's part (`guidelines:block-3`);
+  other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
   refuse, under the rules for a page's own compose ([comments from the
@@ -3472,7 +3553,8 @@ Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Fre
 a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
 request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
 are free, and a hibernating room accrues no duration. A room stores almost nothing: its alarm and,
-for a doc or sheet edited on its page, one small record of the saves in progress (never their text).
+for a doc, sheet or design system edited on its page, one small record of the saves in progress
+(never their text).
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |

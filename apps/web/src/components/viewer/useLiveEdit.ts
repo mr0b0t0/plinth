@@ -1,7 +1,7 @@
-// On-page editing of a doc or a sheet (#36), app side: the state machine behind the Edit toggle,
-// the edit bar and the unpublished-changes notice. The frame does the editing (the doc or sheet
-// renderer); this hook talks to it with the renderer protocol (rendererProtocol.ts) and to the
-// server with the session cookie. It accepts the frame's editing messages only with the key of
+// On-page editing of a doc, a sheet or a design system (#36), app side: the state machine behind
+// the Edit toggle, the edit bar and the unpublished-changes notice. The frame does the editing (the
+// type's renderer); this hook talks to it with the renderer protocol (rendererProtocol.ts) and to
+// the server with the session cookie. It accepts the frame's editing messages only with the key of
 // the frame it holds (`frameKey`, which ViewerStage put in the frame's address).
 //
 // Modes (gate.live.mode, decided by the server):
@@ -396,6 +396,19 @@ export function useLiveEdit({
           }
           // The frame turned editing on: a `focus: "first"` it was sent has been acted on.
           if (next.editing) focusFirst.current = false;
+          // Too large to edit on its page (a design system past its projection's line cap): edit
+          // mode ends, and an agent can make the change.
+          if (next.unavailable === "too_large" && latest.current.editing) {
+            setEditing(false);
+            showToast({
+              title: `This ${noun} is too large to edit on the page`,
+              description: "Ask an agent to make the change.",
+              tone: "neutral",
+              ...(latest.current.onAsk
+                ? { action: { label: "Ask an agent", onClick: () => latest.current.onAsk?.(null) } }
+                : {}),
+            });
+          }
           setStatus(next);
         },
         save() {
@@ -422,7 +435,7 @@ export function useLiveEdit({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, maxBytes, frameKey]);
+  }, [available, frame, target, maxBytes, frameKey, noun]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);

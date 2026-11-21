@@ -11,6 +11,10 @@
 // 3. sanitizeComponent.ts strips scripts, handlers, frames, forms, links and outside URLs.
 // 4. CSS cannot hold `<` (the format refuses it), so no block can end its <style> early, and the
 //    srcdoc is set through the DOM property, never written into attribute text.
+//
+// A draft (edit mode, and each side of the review) is drawn with its own version's files: the
+// frame then gets <base href="/__plinth/v/<n>/">, so the example's images and the CSS's fonts and
+// url() load from that version (base-uri 'self' allows it; author markup never keeps a <base>).
 import {
   type DesignSystem,
   type DsComponent,
@@ -37,6 +41,7 @@ export function previewSrcdoc(
   example: DsExample,
   theme: PreviewTheme,
   doc: Document,
+  version: number | null = null,
 ): string {
   const v = (name: string, fallback: string) => `var(--${ds.prefix}-${name}, ${fallback})`;
   const links = designSystemFontLinks(ds)
@@ -50,6 +55,7 @@ export function previewSrcdoc(
     `<!doctype html><html lang="en" data-theme="${theme}"><head><meta charset="utf-8">` +
     `<meta name="color-scheme" content="${theme}">` +
     `<meta name="referrer" content="no-referrer">` +
+    (version !== null ? `<base href="/__plinth/v/${version}/">` : "") +
     links +
     `<style>${designSystemFontFaces(ds)}\n${designSystemCss(ds)}\n${base}</style>` +
     `<style>${ds.css ?? ""}\n${component.css ?? ""}</style>` +
@@ -64,6 +70,7 @@ export function mountPreview(
   component: DsComponent,
   example: DsExample,
   theme: PreviewTheme,
+  version: number | null = null,
 ): HTMLIFrameElement {
   const frame = doc.createElement("iframe");
   frame.setAttribute("sandbox", PREVIEW_SANDBOX);
@@ -73,7 +80,7 @@ export function mountPreview(
   frame.className = "ds-preview__frame";
   frame.dataset.theme = theme;
   frame.style.height = `${example.height}px`;
-  frame.srcdoc = previewSrcdoc(ds, component, example, theme, doc);
+  frame.srcdoc = previewSrcdoc(ds, component, example, theme, doc, version);
   frame.addEventListener("load", () => {
     // Same origin only under origin isolation; an opaque frame keeps its height and scrolls.
     try {

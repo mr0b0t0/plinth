@@ -154,6 +154,12 @@ export const LIMITS = {
   // On-page doc editing (#36, packages/shared/src/liveDoc.ts). A live draft keeps maxDocBytes.
   /** Lines in a live doc draft. */
   maxLiveDocLines: 50_000,
+  /**
+   * Lines in a design system's live draft (its line projection, designSystemLive.ts), which is
+   * pretty JSON and so runs longer than the file it projects: a system past it is not edited on
+   * its page (agents change it).
+   */
+  maxLiveProjectionLines: 200_000,
   /** One doc-socket frame, either way (a page room uses ROOM_MAX_MESSAGE_BYTES). */
   liveDocFrameBytes: 64 * KB,
   /** A lease whose holder sent no edit for this long may be taken over. */

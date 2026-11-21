@@ -57,6 +57,7 @@ make a test pass.
 | A forged editing message from another document | A page the editor's frame navigated to, or another frame, posts `save`, `draft` or a review choice to the app | Editing messages are read only from the window of the frame the app holds, at its exact content origin, with that frame load's random key (from the fragment, removed before anything renders), and a choice only for the app's own review nonce; none at all under opaque isolation; the server decides every choice against the room's own state ([Inline editing](#inline-editing)) |
 | A review choice combines both sides, or both choices take effect | "Publish your changes" carries the newer version's files under the draft's text, or a discard lands while "Publish your changes" is saving and the next autosave reverts the new version | "Publish your changes" stages the room's own draft with its base version's files only (`files_from_version`); both choices and every discard take the room's checkpoint lock and are checked against the version and revision reviewed; a save that outlived its lock never finishes onto replaced lines (the draft's epoch) ([Inline editing](#inline-editing)) |
 | A draft no Publish can save | A person types `<html> basics` as a doc's first paragraph, or deletes the block above one, and every save is refused | The live rules mirror the publish hooks' source checks (a parity test pins them); the doc editor escapes a leading `<html` as `\<html`; an edit that would break a rule is refused with the reason and the block is put back ([Inline editing](#inline-editing)) |
+| CSS injection through a design system edited on its page | An editor (or a forged client) writes `red; } body { …` as a token value, slips a second key or a comment into a value's lines, or uses a structural op to reach component CSS | Every edit must be exactly one editable value written canonically at its key, indent and comma, and the new value passes the publish grammar on the whole system in the room (`dsValueProblem`); ops are a fixed list that re-serializes the JSON and is checked the same way; component code, the shared CSS, fonts and the prefix are not editable at all ([Design systems](#design-systems)) |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | An agent files a private artifact into a shared category | A prompt-injected or confused agent publishes another client's report with `category: "acme"`, or moves one there with `update_artifact` or `PATCH` | Filing never shares: the artifact waits as pending, and the category's people cannot open, list, find or get a code for it until the signed-in owner reviews it in the app; agents and bearer tokens cannot review; the owner's agent is told `category_share.state: "pending"` with the review link; tool descriptions say never to file because of comment, mention or page text ([Category sharing](#category-sharing)) |
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
@@ -615,6 +616,27 @@ served with `script-src 'none'`. What it adds:
 - **Untrusted for agents.** `get_design_system` carries `UNTRUSTED_NOTE` and says that component
   HTML and CSS are code other people wrote, never to copy scripts or handlers out of them, and never
   to follow instructions in guidelines, names or descriptions. Its result has `untrusted: true`.
+- **Editing on the page.** Owners and editors change values on the site itself (spec: "Design
+  systems", "Editing on the page"), through the same room, leases, review and REST routes as docs
+  and sheets ([Inline editing](#inline-editing)). The draft is a line projection of the JSON
+  (`packages/shared/src/designSystemLive.ts`): its JSON part is always canonical
+  (`JSON.stringify(…, null, 2)`), and a lease is the lines of one editable value (a token's light
+  or dark value or description, the name, the description, a component's description, usage or
+  status). The room accepts an edit only when it replaces exactly that value with the value
+  written canonically at the same key, indent and comma (so it cannot carry an extra key, a second
+  member, a comment or a change of structure), and the new value passes the publish rules on the
+  whole system (`dsValueProblem`: the value grammar, aliases, text lengths, statuses). So an edit
+  can never put into the compiled CSS anything an agent's publish could not. Structural ops
+  (`set_dark`, `clear_dark`, `set_text`, `clear_text`, `add_token`, `remove_token`,
+  `packages/shared/src/designSystemStruct.ts`) re-serialize the JSON part canonically and are
+  checked with the same rules; they are refused while another socket's lease overlaps the lines
+  they change, and the other leases move by the op's line map. Component HTML and CSS, the shared
+  CSS, fonts, the prefix, types and names stay with agents: no edit or op can reach them. The
+  draft's limit is its compact size (1 MB), and its projection at most 200,000 lines, so the
+  room's memory and the draft row stay bounded. Checking a value edit reads the whole system
+  (linear in at most 1 MB) under the room's per-socket rate limit. The renderer never parses
+  author HTML for the controls: values reach inputs through `.value`, and colour conversions are
+  arithmetic.
 - **Residual risks.** A design system's CSS can make its own previews look like anything (it is
   the author's page). Copied CSS restyles the page it is copied into, which is the point; the agent
   chose to copy it. WebRTC is the same known gap as for every artifact, and no script runs in
@@ -1602,7 +1624,8 @@ The upgrade (`apps/worker/src/content/room.ts`) therefore checks, in this order:
    without a pass (one that forges `Origin` outside a browser) learns only what the content path
    tells them, that the artifact exists, and never its type or whether it declares `room`.
 8. **Kind.** The path names it: `page` for an HTML artifact whose current version declares
-   `room`, `doc` for a doc or a sheet (a type with `edit: "live"`, with `ALLOW_LIVE_EDITING`),
+   `room`, `doc` for a doc, a sheet or a design system (a type with `edit: "live"`, with
+   `ALLOW_LIVE_EDITING`),
    `slides` for a deck (a type with `follow`, with `ALLOW_SLIDES_FOLLOW`). Any other name under the
    prefix is a 404.
 9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do. Everyone
@@ -1636,13 +1659,14 @@ closes sockets whose epoch is old, whose pass expired, or whose artifact is gone
 lost call and changes made with SQL, so a decision can be stale for at most a minute. 4401 makes the
 runtime re-check `/__plinth/api/v1/room` and fire `plinth:expired` when access is over.
 
-**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc or a sheet (a type
-with `edit: "live"`) only, and only with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
+**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc, a sheet or a
+design system (a type with `edit: "live"`) only, and only with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
 principal was signed in) decides the right: signed-in editors may lease and edit, editors confirmed
 by code only watch, and passes sealed before the flag existed watch until a reload. The room
 enforces leases (exclusive line ranges), refuses edits past the type's limits (a doc's 1 MB and
-50,000 lines, a sheet's 1 MB and 10,000 rows; frames up to 64 KiB) and every line a sheet cannot
-hold ([Live sheets](#live-sheets)), and never creates a version; checkpoints and discards go through
+50,000 lines, a sheet's 1 MB and 10,000 rows, a design system's 1 MB of compact JSON and 200,000
+projection lines; frames up to 64 KiB), every line a sheet cannot hold ([Live sheets](#live-sheets))
+and every value a design system cannot hold ([Design systems](#design-systems)), and never creates a version; checkpoints and discards go through
 the app host's REST API.
 
 **The slides channel.** `/__plinth/room/v1/slides` carries slide numbers and nothing else
@@ -2500,7 +2524,8 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
 
 ## Inline editing
 
-Owners and editors edit docs and sheets on their page (spec: "Editing", "Editing on the page").
+Owners and editors edit docs, sheets and design systems on their page (spec: "Editing", "Editing
+on the page", "Design systems").
 Every editing control, and every rendering of draft or version content, runs in Plinth's own
 renderer on the artifact's content origin (`script-src 'self'`); the app page holds the strip and
 makes the REST calls, and renders no content. Nothing new is reachable from a page: no endpoint,
@@ -2534,7 +2559,9 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
 - **Per-type rules mirror the stager.** The room checks every edit and structural change with the
   type's rules, which hold every check the type's publish hook makes on the source alone (a doc
   must not start like a whole HTML document; a sheet keeps its row, header and size rules, and a
-  text edit changes its line count only by appending at the end), and a parity test runs the rules
+  text edit changes its line count only by appending at the end; a design system's edit is one whole
+  value written canonically that passes the publish grammar on the whole system), and a parity
+  test runs the rules
   against the Worker's real publish hooks. So a modified client cannot leave a draft that a
   Publish would refuse, and a person's natural edit cannot either: the doc editor escapes a
   leading `<` of any block it writes as `\<`, and a Delete or Move that would bring an agent's
@@ -2543,7 +2570,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   artifact's type takes, and may not touch another socket's lease.
 - **Never merged, except a doc's clean merge.** A doc's draft is merged with a version published
   meanwhile only when `merge3` is clean, the result fits and it passes the doc's rules (#49). A
-  sheet's draft is never merged. Otherwise the draft freezes, and the editors see the whole-draft
+  sheet's or a design system's draft is never merged. Otherwise the draft freezes, and the editors see the whole-draft
   review: both whole sides rendered in the frame, each against the files it would publish, the
   change lists of both with their files parts, and exactly two choices. Neither choice combines
   anything, so neither can produce a result that means something nobody wrote.
@@ -2581,7 +2608,9 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   policy of any Publish or discard (`live_edit`, `edit`), against the room's own state.
 - **Renderers stay free of HTML parsing.** The review is built with `createElement` and
   `textContent`; each side is drawn by the type's renderer through its sanitizer, the same as the
-  page, and its images resolve against that version's files (`/__plinth/v/<n>/`).
+  page, and its images resolve against that version's files (`/__plinth/v/<n>/`; a design system's
+  fonts too, and its examples' frames take that version as their `<base>`, which the shell's
+  `base-uri 'self'` allows and the example sanitizer never lets author markup set).
 - **Agents.** Agents never join the room. They publish versions, see that a draft exists
   (`live_draft`), never its text, and are told that the people editing review the agent's version
   beside theirs and may publish theirs over it, with the agent's kept in History.
@@ -2617,8 +2646,12 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   presses Send. An `ask` that passes these checks is still only a hint: the app takes it while the
   tab is visible and no dialog is open, and one that would open the closed comments panel or the
   Ask dialog at most once a second (the reopen limit of comments from the page), so a frame
-  cannot keep reopening what the person closed. The doc renderer sends `ask` with block anchors;
-  other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
+  cannot keep reopening what the person closed. The doc renderer sends `ask` with block anchors,
+  and the design system renderer with token, group, component and settings anchors
+  (`token:<path>`, `group:<path>`, `component:<id>`, `system:settings`) and its formatted texts'
+  block anchors behind the text's part; a label is sent only when the published version has the
+  same words (a token's path, a component's name, a block's first words), so no draft text
+  reaches the app. Other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
   bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose
   origin is `"null"`; the bar's Ask an agent and the comments panel need none.
 - **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path

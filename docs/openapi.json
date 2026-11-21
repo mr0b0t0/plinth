@@ -4016,6 +4016,10 @@
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
           },
+          "live_draft": {
+            "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
+            "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
+          },
           "capabilities": {
             "type": "array",
             "items": {
