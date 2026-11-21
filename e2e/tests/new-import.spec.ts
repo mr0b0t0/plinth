@@ -88,7 +88,8 @@ test("New sheet opens in edit mode on A2, and typing fills it", async ({ page })
   await expect(cell(page, "A1")).toHaveText(/Column 1/, { timeout: 15_000 });
   await expect(cell(page, "A2")).toBeFocused();
   await page.keyboard.press("A");
-  const input = frameOf(page).locator("#__plinth-cell-A2 .plinth-sheet__input");
+  // The open cell's field: in the cell, or docked at the bottom of the page at phone width.
+  const input = frameOf(page).locator(".plinth-sheet__input");
   await expect(input).toHaveValue("A");
   await input.fill("Apples");
   await input.press("Enter");
