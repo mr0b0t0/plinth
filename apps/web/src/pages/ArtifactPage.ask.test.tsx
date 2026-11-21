@@ -112,7 +112,9 @@ describe("Ask an agent: not editing", () => {
     // One review-mode reload for the pick.
     await waitFor(() => expect(s.views()).toBe(2));
     expect(within(form).getByRole("button", { name: "Point at something" })).toBeTruthy();
-    // One heading and one close button: closing the panel ends the request. No @mention hint.
+    // No title of its own and one close button: closing the panel ends the request. No @mention
+    // hint.
+    expect(within(form).queryByRole("heading")).toBeNull();
     expect(within(panel).getAllByRole("button", { name: /^Close|instead$/ })).toHaveLength(1);
     expect(within(panel).queryByText(/mention @claude/)).toBeNull();
     // The choice is labelled "Ask", on its own row: Send is the only button beside the point icon.

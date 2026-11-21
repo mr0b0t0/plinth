@@ -533,13 +533,6 @@
 
 /* Ask an agent: the composer in request mode (Composer.tsx). The agent choice has its own row
    under the description; then one row: the point button on the left, Send on the right. */
-.cm-ask__title {
-  margin: 0;
-  padding-left: var(--space-0-5);
-  color: var(--color-ink);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
 .cm-composer--ask .cm-actions {
   flex-wrap: nowrap;
   align-items: center;

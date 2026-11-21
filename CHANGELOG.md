@@ -22,6 +22,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
   request can go to (`ask`) and why editing is off (`live_off`).
 
+- **Picking an element at phone width.** While a comment or a request picks an element, the
+  comments sheet shrinks to its bottom bar and no longer covers the artifact with an empty panel.
+
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
   the review inside the page: their changes and the new version (or every version since, named as

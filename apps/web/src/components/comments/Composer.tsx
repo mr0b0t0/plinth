@@ -2,11 +2,12 @@
 // page placed itself through plinth.comments), send. In request mode (Ask an agent) the same form
 // asks the owner's agent for a change: "Point at something" (an icon button) picks the element, the
 // text describes the change, and, when the owner has more than one, the person picks which agent
-// gets it ("Ask: Claude | Codex", on its own row above Send). Closing the panel ends request mode:
-// the form has no close button of its own.
+// gets it ("Ask: Claude | Codex", on its own row above Send). The form has no visible title (its
+// name, "Ask an agent", is for assistive technology: the choice or "Send to Claude" already says
+// what it does) and no close button of its own: closing the panel ends request mode.
 import { MapPinIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 import { type ClientType, isPageAnchor, LIMITS, type PageAnchor } from "@plinth/shared";
-import { type RefObject, useId } from "react";
+import type { RefObject } from "react";
 import { Button, ICON_SIZE, IconButton, SegmentedControl, Select, Tooltip } from "../ui/index.ts";
 import { askTargetInText, askTargetName } from "./askTargets.ts";
 import type { PickedAnchor } from "./bridge.ts";
@@ -144,7 +145,6 @@ export function Composer({
   request,
 }: ComposerProps) {
   const asking = request !== undefined;
-  const titleId = useId();
   const send = (
     <Button
       type="submit"
@@ -160,17 +160,12 @@ export function Composer({
   return (
     <form
       className={`cm-composer${asking ? " cm-composer--ask" : ""}`}
-      {...(asking ? { "aria-labelledby": titleId } : { "aria-label": "New comment" })}
+      aria-label={asking ? "Ask an agent" : "New comment"}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();
       }}
     >
-      {asking && (
-        <h3 id={titleId} className="cm-ask__title">
-          Ask an agent
-        </h3>
-      )}
       {picking ? (
         <div className="cm-picking" role="status">
           <MapPinIcon size={ICON_SIZE.md} aria-hidden="true" />

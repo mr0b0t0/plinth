@@ -2728,8 +2728,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
     opens the source editor for owners and editors).
 - **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
   reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). The composer is titled "Ask an agent" and has the description ("Describe the change…"),
-  the agent choice, and one row under them: "Point at something" (an icon button with that
+  then). The composer has no visible title (it is named "Ask an agent" for assistive technology)
+  and has the description ("Describe the change…"), the agent choice, and one row under them: "Point at something" (an icon button with that
   tooltip: the review-mode pick, an element on an HTML page, a board on a design), then Send. The place
   picked shows as a "Pointing at “…”" chip whose button drops it. An empty list shows only its
   title, with no hint. It posts a comment with `request_to` against the version on view.
