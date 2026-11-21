@@ -3131,7 +3131,11 @@ deleting slides, and a slide's columns, stay with agents for now.
   a new paragraph below it; Enter inside one sends the text before and after the caret as two
   blocks in one edit, so the text after the caret is in the draft at once. The block closes then
   and there (its lease is let go and its editor is gone, so no key typed before the room answers
-  can reach it), and the second block opens on its own lines once the room has let the lease go.
+  can reach it), and the second block opens on its own lines once the room has let the lease go
+  after taking the edit. A closed or split block whose last edit the room refused (the deck was
+  full, the typing came too fast) is never taken as written: what it sent is written again in its
+  place, both halves together, and the place closes again; refused a second time, or when the deck
+  cannot take it, it stays on the page with Copy and is tried again after a reconnect.
   The slide fits again as text changes. Presenting, full screen and
   following the presenter wait until editing ends (Present is not offered while editing; Done
   publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.

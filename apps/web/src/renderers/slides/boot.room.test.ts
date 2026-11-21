@@ -1090,6 +1090,101 @@ describe("a split, and a block taken again after a reconnect", () => {
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
     expect(edits(second)).toEqual([{ t: "edit", lease: "l2", seq: 2, text: "- one" }]);
   });
+
+  it("never opens the text after the caret on the old block when the room refused the split", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openPara(s);
+    enterAt(editable(), 2);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "ab\n\ncd" }]);
+    // The room did not take the edit (too fast, or full), then let the lease go.
+    s.frame({ t: "error", code: "rate_limited" });
+    s.frame({ t: "released", lease: "l1" });
+    // Written again in its place, both halves at once, and the place closes: nothing opens on
+    // "abcd" as if it were the tail.
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    expect(s.sent.slice(-2)).toEqual([
+      { t: "edit", lease: "l2", seq: 2, text: "ab\n\ncd" },
+      { t: "release", lease: "l2" },
+    ]);
+    // Refused again: kept on the page with Copy, and nothing more is asked for or sent.
+    s.frame({ t: "error", code: "rate_limited" });
+    s.frame({ t: "released", lease: "l2" });
+    const sent = s.sent.length;
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(s.sent).toHaveLength(sent);
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    const bar = document.querySelector(".plinth-slides__kept");
+    expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+    expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+  });
+
+  it("keeps a split to copy when a co-editor filled the deck before the room read it", () => {
+    // A second slide fills the deck to just under its size limit.
+    const filler = "x".repeat(LIMITS.maxSlidesBytes - DECK.length - "\n---\n".length - 8);
+    const deck = `${DECK}\n---\n${filler}`;
+    start(deck);
+    const s = sock("doc");
+    welcomeDoc(s, deck, false);
+    openPara(s);
+    enterAt(editable(), 2);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "ab\n\ncd" }]);
+    // Someone else's op lands first and takes the room left, so the room refuses the split.
+    s.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l9",
+      start: 4,
+      del: 0,
+      ins: "1234567",
+      by: "s2",
+    });
+    s.frame({ t: "error", code: "too_large" });
+    s.frame({ t: "released", lease: "l1" });
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    const asked = s.sent.at(-1);
+    if (asked?.t === "lease") {
+      expect(asked).toEqual({ t: "lease", rev: 4, start: 2, end: 3 });
+      s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    }
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    // "abcd" is never edited as the tail: the split is not sent again into a full deck, and is
+    // kept on the page with Copy.
+    expect(edits(s)).toHaveLength(1);
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    expect(document.querySelector(".plinth-slides__kept")?.textContent).toContain(
+      DECK_WORDS.stuckKept,
+    );
+  });
+
+  it("writes a closed block's edit again when the room let its lease go without taking it", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openPara(s);
+    const ed = editable();
+    ed.textContent = "abcd typed";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    // Escape: what waits is sent, and the lease let go, before the room answers either.
+    ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(s.sent.slice(-2)).toEqual([
+      { t: "edit", lease: "l1", seq: 1, text: "abcd typed" },
+      { t: "release", lease: "l1" },
+    ]);
+    s.frame({ t: "error", code: "rate_limited" });
+    s.frame({ t: "released", lease: "l1" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    expect(s.sent.slice(-2)).toEqual([
+      { t: "edit", lease: "l2", seq: 2, text: "abcd typed" },
+      { t: "release", lease: "l2" },
+    ]);
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+  });
 });
 
 describe("typing kept across a reload (the rescue store)", () => {

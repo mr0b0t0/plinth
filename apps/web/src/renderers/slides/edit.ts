@@ -326,6 +326,8 @@ interface Snap {
   start: number;
   around: Open["around"];
   rescue?: string;
+  /** It was opened to write typing kept from a lease that ended (Open's `kept`). */
+  kept?: true;
 }
 
 /**
@@ -1533,6 +1535,7 @@ export class SlidesEditor {
       start: mine?.start ?? o.start,
       around: mine ? this.aroundOf(mine) : o.around,
       ...(o.rescue ? { rescue: o.rescue } : {}),
+      ...(o.kept ? { kept: true as const } : {}),
     };
   }
 
@@ -1668,14 +1671,76 @@ export class SlidesEditor {
         delete c.snap.rescue;
       }
     } else if (c) {
-      // The room let it go, which it answers after the edit sent before the release: what the
-      // place sent is in the draft.
+      // The room let it go, which it answers after the edit sent before the release.
       this.closing = null;
-      if (c.snap.rescue) this.dropRescue(c.snap.rescue);
-      this.openTail(c);
+      if (c.snap.unsent) {
+        // With no answer to that edit first, the room did not take it (too large, too fast): what
+        // the place sent is not in the draft, and its lease held the old lines. Neither taken as
+        // written nor opened on those lines (a split's tail would edit the old block).
+        this.unanswered(c.snap);
+      } else {
+        // What the place sent is in the draft.
+        if (c.snap.rescue) this.dropRescue(c.snap.rescue);
+        this.openTail(c);
+      }
     }
     if (!this.retake) this.nextKept();
     if (this.retake) this.tryRetake();
+  }
+
+  /**
+   * A closed place (or one split by Enter) whose lease the room let go without taking its last
+   * edit, which it refused (the deck was full, the typing came too fast; the notice said so). The
+   * typing is kept in the store and written again in its place, both halves of a split at once,
+   * and the place closes again, since the person had left it; refused a second time, or when the
+   * deck cannot take it now, it is kept on the page with Copy and tried again after a reconnect.
+   */
+  private unanswered(s: Snap): void {
+    const models = s.typed === null ? s.models.map(withoutMarks) : s.models;
+    const { kind, n, ctx, env, pad, form } = s;
+    const rescue = this.keepRescue(s.rescue, models, s, s.start);
+    const open = { kind, n, ctx, env, pad, form, models };
+    const extra = { closeAfter: true as const, ...(rescue ? { rescue } : {}) };
+    if (s.kept) {
+      // Already typing written again: kept to copy rather than sent over and over.
+      this.park({
+        range: { start: s.start, end: s.start },
+        mark: markOf(this.backend.lines, { start: s.start, end: s.start }),
+        tries: 0,
+        focus: "end",
+        open,
+        resend: true,
+        ...extra,
+      });
+      this.hooks.redraw();
+      return;
+    }
+    if (!models.some((m) => hasText(m, env))) {
+      // An emptying the room did not take: the block is still there, nothing typed is lost.
+      if (rescue) this.dropRescue(rescue, "gone");
+      return;
+    }
+    // What the room holds of the block: its last acknowledged text (the text at the grant when
+    // none was), or else what was sent.
+    const held = this.backend.ackedText ?? s.sent ?? "";
+    const mark = (text: string): Mark =>
+      text === "" ? { text, ...s.around } : { text, above: null, below: null };
+    const alts = [held, ...(s.sent !== null && s.sent !== held ? [s.sent] : [])].map(mark);
+    if (this.retake?.want.resend) this.fromStore.push(this.retake.want);
+    this.retake = {
+      near: s.start,
+      after: null,
+      want: {
+        range: { start: s.start, end: s.start + blockLines(held).length },
+        mark: mark(held),
+        alts,
+        tries: 0,
+        focus: "end",
+        open,
+        resend: true,
+        ...extra,
+      },
+    };
   }
 
   /** The room's status changed (a review froze or ended): kept typing that waited goes in. */
