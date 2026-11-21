@@ -41,7 +41,7 @@ import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
 import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
-import { type DocBackend, DocEditor, LocalDoc, REFUSED_EDIT, type RescueReport } from "./edit.ts";
+import { type DocBackend, DocEditor, LocalDoc, type RescueReport } from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
@@ -95,13 +95,26 @@ export function readAppMessage(data: unknown): AppMessage | null {
 }
 
 const ERRORS: Record<string, string> = {
-  invalid: REFUSED_EDIT,
-  too_large: "That is more than a doc can hold. The change was not applied.",
   draft_limit:
     "These edits are live but not kept: the owner has too many docs with unpublished page edits. Publish a version.",
   rate_limited: "Typing too fast for the room. Your text is kept and sent again.",
   unavailable: "Live editing is unavailable right now. Your text is kept on this page.",
 };
+
+/**
+ * What the editor does with an error the room sent this socket. A refused edit (`invalid`: the doc's
+ * rules; `too_large`: its size; `not_held`: its lease went first, a takeover) never just shows a
+ * notice: the editor keeps what was typed, in the open block or parked to copy
+ * (DocEditor.roomRefused). For `not_held` the editor said what happened when the lease went.
+ */
+export function roomError(
+  editor: Pick<DocEditor, "roomRefused" | "notify"> | null,
+  code: string,
+): void {
+  if (code === "invalid" || code === "too_large" || code === "not_held") {
+    editor?.roomRefused(code);
+  } else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
+}
 
 /** Where a change item points in a rendered doc: the heading it names, if any. */
 function docGoto(root: HTMLElement): (item: ChangeItem) => boolean {
@@ -279,14 +292,7 @@ function live(
           if (!local) session.version(kind, n, info);
           status();
         },
-        error: (code) => {
-          // The room refused an edit: what was typed is kept before the block goes back.
-          if (code === "invalid") editor?.refused(REFUSED_EDIT, true);
-          // A lease that went before its last frame was answered (a takeover): the editor says
-          // what happened already.
-          else if (code === "not_held") return;
-          else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
-        },
+        error: (code) => roomError(editor, code),
       },
     });
     editor = new DocEditor(root, win, client, hooks, prepare);

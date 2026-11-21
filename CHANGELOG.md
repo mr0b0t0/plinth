@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Doc editing keeps typing the doc refuses.** Three more cases where typed text could be lost on
+  a doc's page now keep it. A block that would take a live doc past its 50,000-line limit, or that
+  the room refuses as too large, stays open with what was typed, as a block past the byte limit
+  already did. Typing the doc's rules refuse (`<html>` typed in an indented code block at the very
+  top) is kept with **Copy** and **Dismiss** before the block goes back. And when the room refuses
+  a block's last change after the block has closed, or someone takes the block over before the
+  change arrives, that change is kept the same way and offered back after a reload.
+
 - **HTML decks in Claude's slide format.** A deck can now be `deck.json`, `deck.css` and one
   `slides/<id>.html` per slide, as Claude's Slides writes them, beside Markdown decks, which work as
   before. Plinth checks each slide against Claude's element list and limits at publish. Each slide
