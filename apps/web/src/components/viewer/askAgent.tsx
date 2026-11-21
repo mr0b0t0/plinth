@@ -24,6 +24,7 @@ import {
   type ViewGate,
 } from "@plinth/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReopenGate, reopenGate } from "../comments/reopenGate.ts";
 import { Button, Tooltip } from "../ui/index.ts";
 import { AskDialog } from "./AskDialog.tsx";
 // Types only: stageItems.tsx imports this file, so a value import back would be a cycle.
@@ -62,6 +63,12 @@ export interface AskAgent {
   targets: ClientType[];
   /** Open Ask an agent: the Ask dialog in edit mode, the comments panel in request mode otherwise. */
   open(anchor?: AskAnchor | null): void;
+  /**
+   * An `ask` the renderer posted: `open`, as a hint the app may refuse, under the rules for a
+   * page's own compose (usePageComments.ts): only while the tab is visible and no dialog is open,
+   * and one that would open the closed panel or the Ask dialog at most once a second.
+   */
+  fromFrame(anchor: AskAnchor | null): void;
   /** The anchor the Ask dialog opened with (edit mode), or null for the whole page. */
   dialogAnchor: AskAnchor | null;
 }
@@ -78,12 +85,18 @@ function dropParam(name: string): boolean {
 export function useAskAgent({
   gate,
   editing,
+  blocked,
+  panelOpen,
   openDialog,
   openRequest,
   focusSignIn,
 }: {
   gate: OkGate;
   editing: boolean;
+  /** A dialog is open over the stage (Share, or a stage dialog such as Ask itself). */
+  blocked: boolean;
+  /** The comments panel is open. */
+  panelOpen: boolean;
   openDialog: (id: string) => void;
   /** Open the comments panel in request mode, with an anchor when one was given. */
   openRequest: (anchor: AskAnchor | null) => void;
@@ -96,8 +109,8 @@ export function useAskAgent({
   const reason = gate.live_off ? LIVE_OFF_TEXT[gate.live_off.reason] : null;
   const [dialogAnchor, setDialogAnchor] = useState<AskAnchor | null>(null);
 
-  const latest = useRef({ editing, openDialog, openRequest, available });
-  latest.current = { editing, openDialog, openRequest, available };
+  const latest = useRef({ editing, openDialog, openRequest, available, blocked, panelOpen });
+  latest.current = { editing, openDialog, openRequest, available, blocked, panelOpen };
   const open = useCallback((anchor: AskAnchor | null = null) => {
     const l = latest.current;
     if (!l.available) return;
@@ -108,6 +121,22 @@ export function useAskAgent({
       l.openRequest(anchor);
     }
   }, []);
+  const reopen = useRef<ReopenGate | null>(null);
+  const fromFrame = useCallback(
+    (anchor: AskAnchor | null) => {
+      const l = latest.current;
+      if (!l.available || l.blocked || document.visibilityState !== "visible") return;
+      // In edit mode it opens the Ask dialog, which is closed whenever nothing blocks; otherwise
+      // the comments panel, unless it is open already.
+      const closed = l.editing || !l.panelOpen;
+      const t = Date.now();
+      reopen.current ??= reopenGate();
+      if (reopen.current.refused(t, closed)) return;
+      reopen.current.take(t, closed);
+      open(anchor);
+    },
+    [open],
+  );
 
   // `?edit` is read once, when the page opens, and dropped from the address so a reload or a
   // shared copy of it opens the page as usual.
@@ -135,6 +164,7 @@ export function useAskAgent({
     reason,
     targets: gate.ask?.targets ?? [],
     open,
+    fromFrame,
     dialogAnchor,
   };
 }

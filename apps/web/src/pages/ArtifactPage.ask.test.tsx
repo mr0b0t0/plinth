@@ -496,6 +496,29 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     expect(s.posted[0]).toMatchObject({ version_number: 3 });
   });
 
+  it("with Publish my changes first, a lost session posts nothing, says so and reloads the gate", async () => {
+    const { s, user } = await editing((c) =>
+      c.path === "/artifacts/art123/live/checkpoint"
+        ? json({ error: { code: "unauthorized", message: "Sign in" } }, 401)
+        : undefined,
+    );
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Ask an agent" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    await user.click(within(dialog).getByRole("checkbox", { name: /Publish my changes first/ }));
+    await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Next");
+    const views = s.views();
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
+    expect(
+      await within(dialog).findByText(/Sign in again to publish. Your changes are kept./),
+    ).toBeTruthy();
+    // As the strip's Publish does: the gate is read again, so the page can ask to sign in.
+    await waitFor(() => expect(s.views()).toBe(views + 1));
+    expect(s.posted).toHaveLength(0);
+    // Reported in the dialog ("Nothing was sent. …"), not as a toast as well.
+    expect(screen.queryByText("Sign in again to publish. Your changes are kept.")).toBeNull();
+  });
+
   it("hides Publish my changes first when there are no unpublished changes", async () => {
     const { user } = await editing(undefined, false);
     await user.click(screen.getByRole("button", { name: "Artifact actions" }));
@@ -517,6 +540,10 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
       anchor: { kind: "page", key: "slide-3:image-1", text: "Slide 3, image 1" },
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Past the reopen limit, so only the key decides below.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1000));
+    });
 
     // Another document's key, no key at all, or a key that is no structural name: nothing opens.
     post({ type: "ask", anchor: { key: "slide-3", text: "x" } }, "A".repeat(43));
@@ -529,6 +556,30 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("an in-frame ask is refused while a dialog is open, and reopens a closed one at most once a second", async () => {
+    const { user, post } = await editing();
+    post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });
+    let dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    // The dialog is open: another ask changes nothing in it.
+    post({ type: "ask", anchor: { key: "slide-4", text: "Slide 4" } });
+    expect(within(dialog).getByText("Slide 3, image 1")).toBeTruthy();
+    expect(within(dialog).queryByText("Slide 4")).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Closed by the person: the frame cannot open it again at once.
+    post({ type: "ask", anchor: { key: "slide-4", text: "Slide 4" } });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1000));
+    });
+    post({ type: "ask", anchor: { key: "slide-4", text: "Slide 4" } });
+    dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    expect(within(dialog).getByText("Slide 4")).toBeTruthy();
+  });
+
   it("Stop pointing makes the request about the whole page", async () => {
     const { s, user, post } = await editing();
     post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });
@@ -539,5 +590,128 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
     expect(s.posted[0]).not.toHaveProperty("anchor");
+  });
+});
+
+describe("Ask an agent in edit mode, solo: Publish my changes first", () => {
+  // happy-dom does not load frames: a window that answers the app's collect with the draft.
+  const DRAFT = "# Plan\n\nEdited\n";
+  const sent: Record<string, unknown>[] = [];
+  let restore: PropertyDescriptor | undefined;
+  let frameEl: HTMLIFrameElement | null = null;
+  const win = {
+    postMessage: vi.fn((m: Record<string, unknown>) => {
+      sent.push(m);
+      if (m.type !== "collect" || !frameEl) return;
+      const key = keyOf(frameEl);
+      setTimeout(() => postFrom({ type: "draft", nonce: m.nonce, text: DRAFT, key }), 0);
+    }),
+  };
+  function postFrom(data: Record<string, unknown>) {
+    const e = new MessageEvent("message", {
+      origin: "http://art123.content.localhost:8787",
+      data: { source: "plinth-renderer", v: 1, ...data },
+    });
+    Object.defineProperty(e, "source", { value: win });
+    act(() => {
+      window.dispatchEvent(e);
+    });
+  }
+  beforeEach(() => {
+    sent.length = 0;
+    win.postMessage.mockClear();
+    restore = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow");
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+      configurable: true,
+      get: () => win,
+    });
+  });
+  afterEach(() => {
+    frameEl = null;
+    if (restore) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", restore);
+  });
+
+  const soloGate = (n = 1) =>
+    gateOf({ artifact: DOC, role: "editor", live: { mode: "solo", draft: null } }, n);
+  const versionOf = (n: number) => ({
+    ...DOC,
+    version: n,
+    content_type: "text/markdown",
+    assets: [{ path: "index.md", size: 10, content_type: "text/markdown", sha256: `h${n}` }],
+  });
+
+  async function soloEditing(put: (c: Call) => Response) {
+    const s = stub(
+      (n) => soloGate(n),
+      (c) => {
+        if (c.path === "/artifacts/art123" && c.method === "PUT") return put(c);
+        const v = /^\/artifacts\/art123\/versions\/(\d+)$/.exec(c.path);
+        if (v && c.method === "GET") return json(versionOf(Number(v[1])));
+        return undefined;
+      },
+    );
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    frameEl = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    postFrom({
+      type: "live",
+      key: keyOf(frameEl),
+      connected: true,
+      failed: false,
+      editing: true,
+      holding: false,
+      dirty: true,
+      unflushed: false,
+      rev: 1,
+      base_version: 3,
+      conflict_version: null,
+      last_by_you: true,
+      last_edit_at: null,
+      editors: [],
+      publishable: true,
+    });
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Ask an agent" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    await user.click(within(dialog).getByRole("checkbox", { name: /Publish my changes first/ }));
+    await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Next");
+    return { s, user, dialog };
+  }
+
+  it("publishes the frame's text with the shown version's files, then posts against the new version", async () => {
+    const { s, user, dialog } = await soloEditing(() =>
+      json({ id: "art123", slug: "garden-plan", version: 4, url: "", warnings: [] }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(s.posted).toHaveLength(1));
+    const put = s.calls.find((c) => c.method === "PUT");
+    expect(put?.body).toEqual({ content: DRAFT, base_version: 3, files_from_version: 3 });
+    expect(s.posted[0]).toMatchObject({ version_number: 4, request_to: "claude" });
+  });
+
+  it("a newer version opens the review of the draft beside it, and nothing is posted", async () => {
+    const { s, user, dialog } = await soloEditing(() =>
+      json(
+        {
+          error: {
+            code: "conflict",
+            message: "The artifact changed",
+            details: { current_version: 4 },
+          },
+        },
+        409,
+      ),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
+    expect(
+      await within(dialog).findByText(/v4 was published while you edited. Review it to go on./),
+    ).toBeTruthy();
+    // The review the strip's Publish opens: the draft's base beside v4, read from the refusal.
+    await waitFor(() => expect(sent.some((m) => m.type === "review")).toBe(true));
+    expect(sent.find((m) => m.type === "review")).toMatchObject({ n: 4, base: 3 });
+    expect(s.calls.some((c) => c.path === "/artifacts/art123/versions/4")).toBe(true);
+    expect(s.posted).toHaveLength(0);
   });
 });

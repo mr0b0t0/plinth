@@ -304,6 +304,8 @@ export function ViewerStage({
   const ask = useAskAgent({
     gate,
     editing,
+    blocked: shareOpen || dialog !== null,
+    panelOpen: commentsOpen,
     openDialog: setDialog,
     openRequest: (anchor) => {
       requestCount.current += 1;
@@ -314,7 +316,7 @@ export function ViewerStage({
     focusSignIn: () =>
       headerRef.current?.querySelector<HTMLElement>('a[aria-label="Sign in to edit"]')?.focus(),
   });
-  askFromFrame.current = ask.open;
+  askFromFrame.current = ask.fromFrame;
   // The agents a request can go to, read again when one went away meanwhile (`no_agent`).
   const refreshTargets = async (): Promise<ClientType[] | null> => {
     try {

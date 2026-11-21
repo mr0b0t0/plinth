@@ -239,13 +239,28 @@ function gateLiveOff(
   d: Extract<Decision, { allow: true }>,
   opts: GateOptions,
 ): ViewGateLiveOff | undefined {
-  if (!isLiveType(typeDef(a.type)) || a.takenDownAt) return undefined;
-  if (d.role !== "owner" && d.role !== "editor") return undefined;
-  if (opts.version !== undefined) return undefined;
-  const p = ctx.principal;
-  if (p.kind !== "user" && p.kind !== "viewer") return undefined;
+  if (!liveSeat(ctx, a, d, opts)) return undefined;
   if (liveEditMode(ctx.config, ctx.env)) return undefined;
   return { reason: ctx.config.allowLiveEditing ? "isolation" : "disabled" };
+}
+
+/**
+ * Who would edit this artifact on its page, whether or not editing on the page is on here: an
+ * owner or editor of a live type that is not taken down, on the current version, signed in
+ * ("user") or confirmed by code ("viewer"); null for anyone else. `live` and `live_off` both start
+ * from it, so one is present exactly where the other would be.
+ */
+function liveSeat(
+  ctx: Ctx,
+  a: ArtifactRow,
+  d: Extract<Decision, { allow: true }>,
+  opts: GateOptions,
+): "user" | "viewer" | null {
+  if (!isLiveType(typeDef(a.type)) || a.takenDownAt) return null;
+  if (d.role !== "owner" && d.role !== "editor") return null;
+  if (opts.version !== undefined) return null;
+  const p = ctx.principal;
+  return p.kind === "user" || p.kind === "viewer" ? p.kind : null;
 }
 
 // ---------- live views ----------
@@ -374,16 +389,13 @@ async function gateLive(
   d: Extract<Decision, { allow: true }>,
   opts: GateOptions,
 ): Promise<ViewGateLive | undefined> {
-  if (!isLiveType(typeDef(a.type)) || a.takenDownAt) return undefined;
-  if (d.role !== "owner" && d.role !== "editor") return undefined;
-  if (opts.version !== undefined) return undefined;
-  const p = ctx.principal;
-  if (p.kind !== "user" && p.kind !== "viewer") return undefined;
+  const seat = liveSeat(ctx, a, d, opts);
+  if (!seat) return undefined;
   const mode = liveEditMode(ctx.config, ctx.env);
   if (!mode) return undefined;
   return {
     mode,
-    ...(p.kind === "viewer" ? { sign_in: true as const } : {}),
+    ...(seat === "viewer" ? { sign_in: true as const } : {}),
     draft: await readLiveDraftInfo(ctx.env.DB, a.id),
   };
 }

@@ -856,6 +856,8 @@ body {
 
 .plinth-sheet__ghost--move {
   opacity: 0;
+  /* Not tappable while it cannot be seen (a phone has no hover to show it). */
+  pointer-events: none;
 }
 
 .plinth-sheet__ghost:disabled {
@@ -864,11 +866,13 @@ body {
 
 .plinth-sheet__option:focus-within .plinth-sheet__ghost--move {
   opacity: 1;
+  pointer-events: auto;
 }
 
 @media (hover: hover) {
   .plinth-sheet__option:hover .plinth-sheet__ghost--move {
     opacity: 1;
+    pointer-events: auto;
   }
 }
 
