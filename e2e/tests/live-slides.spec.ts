@@ -154,6 +154,13 @@ test("edit a slide title and its notes in place, publish v2; Compare lists it; r
   await page.keyboard.type(" and Q1 plan");
   await expect(field).toHaveText("Q4 review and Q1 plan");
   await expect(strip(page)).toContainText(/Draft saved|Saving draft/);
+  if (test.info().project.name === "mobile") {
+    // At phone width the deck's controls show under the notes panel, never over the slide edited.
+    const controls = frameOf(page).locator(".plinth-slides__controls");
+    const pill = await controls.boundingBox();
+    const notesBox = await activeSlide(page).locator(".plinth-slides__notepad-host").boundingBox();
+    expect(pill && notesBox && pill.y >= notesBox.y + notesBox.height).toBe(true);
+  }
   await page.keyboard.press("Escape");
   await expect(activeSlide(page).locator("h1")).toHaveText("Q4 review and Q1 plan");
 
@@ -280,8 +287,8 @@ test("deck settings from the ⋯ menu write the front matter", async ({ page }) 
   await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
   await startEditing(page);
   await page.getByRole("button", { name: "Artifact actions" }).click();
-  await page.getByRole("menuitem", { name: "Slide size and footer…" }).click();
-  const pop = frameOf(page).getByRole("dialog", { name: "Slide size and footer" });
+  await page.getByRole("menuitem", { name: "Slide setup" }).click();
+  const pop = frameOf(page).getByRole("dialog", { name: "Slide setup" });
   await expect(pop).toBeVisible();
   // The dialog itself has focus: no setting shows a focus ring before a key moves it.
   await expect(pop).toBeFocused();
@@ -392,6 +399,27 @@ test("an agent's version during the page edits is never merged: the review shows
   const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
   await expect(review).toBeVisible();
   await expect(review.locator(".plinth-slides__frame").first()).toBeVisible();
+  // Each side opens with its changed slide whole in view and no slide cut at the top of the pane
+  // (when it scrolls, the slide before the change is out of view).
+  for (const body of await review.locator(".plinth-review__body:visible").all()) {
+    await expect
+      .poll(() =>
+        body.evaluate((b) => {
+          const box = b.getBoundingClientRect();
+          const top = box.top + b.clientTop;
+          const frames = Array.from(b.querySelectorAll(".plinth-slides__frame"));
+          const cut = frames.some((f) => {
+            const r = f.getBoundingClientRect();
+            return r.top < top - 1 && r.bottom > top + 1;
+          });
+          const changed = b.querySelector(".plinth-slides__frame[data-review-changed]");
+          const r = changed?.getBoundingClientRect();
+          const whole = !!r && r.top >= top - 1 && r.bottom <= box.bottom + 1;
+          return `${cut ? "cut" : "uncut"}, change ${whole ? "whole" : "not whole"}`;
+        }),
+      )
+      .toBe("uncut, change whole");
+  }
   await shoot(page, "review");
   await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
   await expect(strip(page)).toContainText("Published as v3", { timeout: 10_000 });

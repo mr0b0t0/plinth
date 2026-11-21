@@ -29,6 +29,7 @@ import {
 import { EDIT_VIEW_WORDS, type EditBlock } from "./editView.ts";
 import type { Geometry } from "./exportModel.ts";
 import type { PptxBuilder } from "./pptxModel.ts";
+import { EDIT_NOTES_H, GUTTER } from "./stage.ts";
 
 const APP = "https://plinth.example.com";
 
@@ -420,6 +421,36 @@ describe("presenting alone", () => {
   });
 });
 
+describe("edit mode's layout", () => {
+  it("never resizes the slide for the notice, and at phone width puts the controls under the notes", () => {
+    mount(SKILL);
+    const f = framed();
+    Object.assign(f.win, { innerWidth: 360, innerHeight: 640 });
+    stop = boot(f.win, { measure: () => false });
+    appMessage(f, msg({ type: "edit", on: true, base: 1 }));
+    const root = document.getElementById("__plinth-slides") as HTMLElement;
+    expect(root.hasAttribute("data-top")).toBe(true);
+    const s = (360 - 2 * GUTTER) / 1280;
+    expect(root.style.getPropertyValue("--under-notes")).toBe(
+      `${Math.ceil(GUTTER + 720 * s + EDIT_NOTES_H)}px`,
+    );
+    const scaled = root.style.getPropertyValue("--s");
+    // A notice floats over the stage: the slide keeps its size when one shows.
+    const notice = document.createElement("div");
+    notice.className = "plinth-slides__notice";
+    notice.textContent = "Someone is editing this.";
+    root.append(notice);
+    f.target.dispatchEvent(new Event("resize"));
+    expect(root.style.getPropertyValue("--s")).toBe(scaled);
+    expect(root.style.getPropertyValue("--notice-h")).toBe("");
+    // Wide, the slide is centred again and nothing is placed under the notes.
+    Object.assign(f.win, { innerWidth: 1280, innerHeight: 900 });
+    f.target.dispatchEvent(new Event("resize"));
+    expect(root.hasAttribute("data-top")).toBe(false);
+    expect(root.style.getPropertyValue("--under-notes")).toBe("");
+  });
+});
+
 describe("what is left to an agent", () => {
   it("offers Ask an agent and Delete on an image, with a structural anchor", () => {
     const f = start(SKILL);
@@ -427,12 +458,17 @@ describe("what is left to an agent", () => {
     const img = active().querySelector("img") as HTMLImageElement;
     // Drawn from the draft's base version's files.
     expect(img.getAttribute("src")).toBe("/__plinth/v/1/chart.png");
-    (img.closest("[data-plinth-edit]") as HTMLElement).click();
+    const block = img.closest("[data-plinth-edit]") as HTMLElement;
+    // Its tint and selection are drawn on the image, not the paragraph as wide as the slide.
+    expect(block.hasAttribute("data-plinth-image")).toBe(true);
+    block.click();
+    expect(block.hasAttribute("data-selected")).toBe(true);
     const bar = active().querySelector(".plinth-slides__blockbar") as HTMLElement;
     const [ask, del] = Array.from(bar.querySelectorAll("button"));
     expect(ask?.textContent).toBe(DECK_WORDS.ask);
     expect(ask?.getAttribute("aria-description")).toBe(DECK_WORDS.imageNote);
     ask?.click();
+    expect(block.hasAttribute("data-selected")).toBe(false);
     const sent = posts(f)
       .filter((p) => p.type === "ask")
       .at(-1);
@@ -450,6 +486,7 @@ describe("what is left to an agent", () => {
     const f = start("# A\n\n    indented code\n");
     const pre = active().querySelector("pre") as HTMLElement;
     expect(pre.getAttribute("data-plinth-edit")).toBe("other");
+    expect(pre.hasAttribute("data-plinth-image")).toBe(false);
     pre.click();
     const ask = active().querySelector(".plinth-slides__blockbar button") as HTMLButtonElement;
     expect(ask.textContent).toBe(DECK_WORDS.ask);
@@ -680,7 +717,7 @@ describe("typing a deck at its size limit cannot take, alone", () => {
     );
     expect(posts(f).some((p) => p.type === "save")).toBe(false);
     expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
-    // Said on the page too, for a few seconds, in the one notice above the slide; the live region
+    // Said on the page too, for a few seconds, in the one notice over the stage; the live region
     // reads it.
     const notices = document.querySelectorAll(".plinth-slides__notice");
     expect(notices).toHaveLength(1);

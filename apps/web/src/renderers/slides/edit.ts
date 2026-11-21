@@ -123,7 +123,7 @@ export const DECK_WORDS = {
   addNotes: "Add speaker notes",
   empty: (n: number) => `Slide ${n}, empty`,
   dense: "Long slide: its text is shrunk to fit",
-  settings: "Slide size and footer",
+  settings: "Slide setup",
   apply: "Apply",
   cancel: "Cancel",
 } as const;
@@ -251,8 +251,6 @@ export interface DeckEditorHooks {
   refit(): void;
   /** The frame's polite live region. */
   announce(text: string): void;
-  /** The notice above the slide came, went or changed: the deck makes room for it. */
-  layout?(): void;
   /** The rescue store changed: the app merges this into its copy (see DeckRescueReport). */
   rescue?(report: DeckRescueReport): void;
 }
@@ -671,6 +669,8 @@ export class SlidesEditor {
   private layout: DeckLayout | null = null;
   /** The bar of a selected block that is not edited in place (Ask an agent, Delete). */
   private bar: HTMLElement | null = null;
+  /** The selected block's elements while its bar shows (data-selected). */
+  private barNodes: Element[] = [];
   private popover: HTMLElement | null = null;
   /** A settings op sent, waiting for its answer. */
   private settingsPending = false;
@@ -774,7 +774,7 @@ export class SlidesEditor {
   /** The last message, shown in the notice's place for NOTICE_MS (notify). */
   private message: string | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The one notice above the slide (drawNotice). */
+  /** The one notice, floating over the stage (drawNotice). */
   private notice: HTMLElement | null = null;
 
   /**
@@ -908,6 +908,8 @@ export class SlidesEditor {
         for (const n of b.nodes) {
           if (!isEl(n)) continue;
           n.setAttribute(ATTR_EDIT, model ? "text" : "other");
+          // Its tint and bar fit the image, not the paragraph around it (slides.css).
+          n.toggleAttribute("data-plinth-image", !model && image);
           n.tabIndex = 0;
           n.setAttribute("role", "button");
           n.dataset.plinthControl = "";
@@ -2663,7 +2665,7 @@ export class SlidesEditor {
 
   /**
    * Says why something was not done: in the deck's live region, and on the page for a few seconds
-   * in the notice above the slide (the live region already reads it, so the notice is hidden from
+   * in the notice floating over the stage (the live region already reads it, so the notice is hidden from
    * assistive technology while it shows a message).
    */
   notify(text: string): void {
@@ -2684,9 +2686,10 @@ export class SlidesEditor {
   }
 
   /**
-   * The one notice, above the slide and never over it (the deck makes room for it, hooks.layout):
-   * typing kept on the page, with Copy, while there is any (the action stays in reach; a message
-   * meanwhile is read by the live region only), else the editor's last message for a few seconds.
+   * The one notice, a toast floating over the stage that never resizes the slide (at phone width
+   * it sits in the empty stage under the notes): typing kept on the page, with Copy, while there is
+   * any (the action stays in reach; a message meanwhile is read by the live region only), else the
+   * editor's last message for a few seconds.
    */
   private drawNotice(): void {
     const text = this.keptWords ?? this.message;
@@ -2695,7 +2698,6 @@ export class SlidesEditor {
       if (!was) return;
       was.remove();
       this.notice = null;
-      this.hooks.layout?.();
       return;
     }
     const kept = this.keptWords !== null;
@@ -2717,7 +2719,6 @@ export class SlidesEditor {
     this.notice = n;
     const root = this.doc.getElementById("__plinth-slides") ?? this.doc.body;
     if (!root.contains(n)) root.append(n);
-    this.hooks.layout?.();
   }
 
   // ---------- blocks not edited in place ----------
@@ -2760,6 +2761,9 @@ export class SlidesEditor {
     }
     v.frame.append(bar);
     this.bar = bar;
+    // The block stays marked while its bar shows (an image's tint is on the image itself).
+    this.barNodes = b.nodes.filter(isEl);
+    for (const n of this.barNodes) n.setAttribute("data-selected", "");
     // Next to the block, covering as little of the slide's other blocks as it can (the deck's
     // controls step aside while it shows).
     const avoid = v.parts
@@ -2780,6 +2784,8 @@ export class SlidesEditor {
   private hideBar(): void {
     this.bar?.remove();
     this.bar = null;
+    for (const n of this.barNodes) n.removeAttribute("data-selected");
+    this.barNodes = [];
   }
 
   private imageIndex(b: EditBlock, v: EditSlideView): number {
@@ -2828,7 +2834,7 @@ export class SlidesEditor {
 
   // ---------- deck settings ----------
 
-  /** Opens the deck settings popover (the app's ⋯ "Slide size and footer…"). */
+  /** Opens the deck settings popover (the app's ⋯ "Slide setup"). */
   openSettings(): void {
     if (!this.editing || !this.canWrite) return;
     this.closeSettings();

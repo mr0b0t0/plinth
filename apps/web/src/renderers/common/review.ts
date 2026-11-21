@@ -64,6 +64,11 @@ export interface ItemWords {
 
 /** The attribute a pane sets on each block or cell that changed since the base. */
 export const CHANGED_ATTR = "data-review-changed";
+/**
+ * On a pane's drawing whose children are whole items (a deck's slides): a change is brought into
+ * view at the top of the pane, never centred with the item before it cut in half.
+ */
+export const REVIEW_START_ATTR = "data-review-start";
 
 export type ReviewOutcome = "publish" | "discard" | "cancelled";
 
@@ -652,18 +657,46 @@ export class DraftReview {
 }
 
 /**
+ * Scroll `pane` so the item `target` starts it, the item before it just out of view, so no item is
+ * cut at the top (a deck's slides). A change near the end gets room below the last item, so it can
+ * still start the pane.
+ */
+export function startPaneAt(pane: HTMLElement, target: Element): void {
+  const list = target.parentElement;
+  const prev = target.previousElementSibling;
+  const want = prev
+    ? pane.scrollTop +
+      prev.getBoundingClientRect().bottom -
+      pane.getBoundingClientRect().top -
+      pane.clientTop
+    : 0;
+  const short = want - (pane.scrollHeight - pane.clientHeight);
+  const view = pane.ownerDocument.defaultView;
+  if (list && short > 0 && view) {
+    const pad = Number.parseFloat(view.getComputedStyle(list).paddingBottom) || 0;
+    list.style.paddingBottom = `${Math.ceil(pad + short)}px`;
+  }
+  pane.scrollTop = want;
+}
+
+/**
  * Scroll `pane` so `target` is in view when it is not already wholly in view: centred from top to
  * bottom (clear of a sheet's sticky header rows), and from side to side with its left edge just
  * past whatever sticks at the left of its row (a sheet's row numbers and frozen columns), so its
- * column shows whole, with its name, and no unlabelled sliver of another is left beside them. True
- * when it scrolled.
+ * column shows whole, with its name, and no unlabelled sliver of another is left beside them. In
+ * a pane of whole items (REVIEW_START_ATTR, a deck's slides) the target starts the pane instead
+ * (startPaneAt). True when it scrolled.
  */
 function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
   const p = pane.getBoundingClientRect();
   const t = target.getBoundingClientRect();
   let moved = false;
   if (t.top < p.top || t.bottom > p.bottom) {
-    pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    if (target.parentElement?.closest(`[${REVIEW_START_ATTR}]`)) {
+      startPaneAt(pane, target);
+    } else {
+      pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    }
     moved = true;
   }
   if (sticks(target)) return moved;

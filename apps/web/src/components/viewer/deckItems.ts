@@ -1,4 +1,4 @@
-// A deck's ⋯ menu item while it is edited on the page, "Slide size and footer…": the frame opens
+// A deck's ⋯ menu item while it is edited on the page, "Slide setup": the frame opens
 // its settings popover (aspect, theme, page numbers, footer) and writes them with its own struct op
 // over the draft socket, so nothing here touches the deck's text. The item exists only in edit
 // mode, where the frame is at the exact content origin (inline editing runs only under origin
@@ -10,10 +10,13 @@ import { deckSettingsMessage, editTargetOrigin, postToRenderer } from "./rendere
 // Types only: stageItems.tsx imports this file, so a value import back would be a cycle.
 import type { MenuItem } from "./stageItems.tsx";
 
-/** Named for what it changes: the menu's one item called settings is the artifact's Settings. */
-export const DECK_SETTINGS_LABEL = "Slide size and footer…";
+/**
+ * One short name for the whole popover (slide size, theme, page numbers, footer), the same words as
+ * its title, and not "settings": the menu's Settings is the artifact's.
+ */
+export const DECK_SETTINGS_LABEL = "Slide setup";
 
-/** "Slide size and footer…", while the deck is edited on the page. */
+/** "Slide setup", while the deck is edited on the page. */
 export const deckSettings: MenuItem = (c) =>
   c.editing && c.live.mode !== null
     ? [

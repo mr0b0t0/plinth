@@ -45,7 +45,14 @@ import {
 import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, type LeaseLoss, LiveDocClient } from "../common/live.ts";
-import { bringIntoPane, CHANGED_ATTR, DraftReview, type ReviewPane } from "../common/review.ts";
+import {
+  bringIntoPane,
+  CHANGED_ATTR,
+  DraftReview,
+  REVIEW_START_ATTR,
+  type ReviewPane,
+  startPaneAt,
+} from "../common/review.ts";
 import { reconcile } from "../doc/blocks.ts";
 import { buildDeck, type SlideView } from "./deck.ts";
 import { el } from "./dom.ts";
@@ -74,7 +81,6 @@ import {
   EDIT_TOP_BELOW,
   fitScale,
   GUTTER,
-  NOTICE_ROOM_GAP,
   overviewColumns,
   overviewScale,
   prefersOverview,
@@ -154,6 +160,8 @@ export function deckPane(doc: Document): ReviewPane {
       wrap.setAttribute("data-fixed", "");
       const views = buildDeck(doc, parsed);
       const list = el(doc, "div", "plinth-slides__deck");
+      // A change opens at the top of the pane, the slide before it out of view.
+      list.setAttribute(REVIEW_START_ATTR, "");
       const was = base === null ? null : slideSources(parseDeck(base));
       const now = slideSources(parsed);
       views.forEach((v, i) => {
@@ -175,11 +183,20 @@ export function deckPane(doc: Document): ReviewPane {
       scaleTo(host.clientWidth);
       host.replaceChildren(wrap);
       // The pane is laid out after this returns (and again at another width): the slides fit the
-      // pane as it is, so none is cut at its edges at phone width.
+      // pane as it is, so none is cut at its edges at phone width. A pane scrolled to a slide keeps
+      // that slide at its top when the slides are drawn at another size.
       const Observer = doc.defaultView?.ResizeObserver;
       if (Observer) {
         new Observer(() => {
-          if (host.clientWidth > 0) scaleTo(host.clientWidth);
+          if (host.clientWidth <= 0) return;
+          const was = wrap.style.getPropertyValue("--s");
+          const top = host.getBoundingClientRect().top + host.clientTop;
+          const shown =
+            host.scrollTop > 0
+              ? Array.from(list.children).find((f) => f.getBoundingClientRect().bottom > top + 1)
+              : undefined;
+          scaleTo(host.clientWidth);
+          if (shown && wrap.style.getPropertyValue("--s") !== was) startPaneAt(host, shown);
         }).observe(host);
       }
       for (const v of views) fitSlide(v.el, v.body);
@@ -316,14 +333,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   };
   watchImages(views);
 
-  /** The room the editor's notice takes above the slide: its height and a gap, or 0. */
-  const noticeRoom = () => {
-    const n = root.querySelector<HTMLElement>(".plinth-slides__notice");
-    return n ? n.offsetHeight + NOTICE_ROOM_GAP : 0;
-  };
   const scale = () => {
     root.toggleAttribute("data-top", false);
-    root.style.removeProperty("--notice-h");
+    root.style.removeProperty("--under-notes");
     if (mode === "overview") {
       const cols = overviewColumns(win.innerWidth, fixedOverview);
       root.style.setProperty("--cols", String(cols));
@@ -332,26 +344,26 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     } else {
       // The slide is centred with the stage's gutter on every side, full screen too; the controls
       // show one gutter above its bottom edge, wherever the letterbox puts it. While editing, the
-      // notes panel takes its height under the slide, and at phone width the two sit at the top.
-      // The editor's notice takes its height above the slide, so it never covers it.
+      // notes panel takes its height under the slide, and at phone width the two sit at the top,
+      // with the controls and the editor's notice in the empty stage under the notes, off the
+      // slide being edited. The notice floats over the stage: it never resizes the slide.
       const notes = editing && mode === "deck" ? EDIT_NOTES_H : 0;
-      const notice = mode === "deck" ? noticeRoom() : 0;
       const top = editing && mode === "deck" && win.innerWidth < EDIT_TOP_BELOW;
       root.toggleAttribute("data-top", top);
-      root.style.setProperty("--notice-h", `${notice}px`);
       const s = fitScale(
         win.innerWidth - 2 * GUTTER,
-        win.innerHeight - 2 * GUTTER - notes - notice,
+        win.innerHeight - 2 * GUTTER - notes,
         canvas.width,
         canvas.height,
       );
       setScale(root, canvas, s);
-      // The slide and its notes are centred together (or at the top): the controls stay over the
-      // slide's edge.
       const h = canvas.height * s;
+      if (top) root.style.setProperty("--under-notes", `${Math.ceil(GUTTER + h + notes)}px`);
+      // The slide and its notes are centred together (or at the top): the controls stay over the
+      // slide's edge, except at the top, where --under-notes places them.
       const below = top
-        ? win.innerHeight - notice - GUTTER - h
-        : Math.max(0, (win.innerHeight - notice - h - notes) / 2) + notes;
+        ? win.innerHeight - GUTTER - h
+        : Math.max(0, (win.innerHeight - h - notes) / 2) + notes;
       root.style.setProperty("--controls-bottom", `${Math.floor(below) + CONTROLS_INSET}px`);
     }
     presenter?.layout();
@@ -739,7 +751,6 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       announce: (text: string) => {
         announcer.textContent = text;
       },
-      layout: () => scale(),
     };
     const events = {
       granted: (l: ClientLease) => editor?.granted(l),

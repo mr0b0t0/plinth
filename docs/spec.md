@@ -3121,7 +3121,9 @@ is still Markdown in `slides.md`, which agents read and write as before. Adding,
 deleting slides, and a slide's columns, stay with agents for now.
 
 - **Edit mode draws every raw slide**, one at a time and scaled to fit above its notes panel
-  (centred, or at the top under 600 px wide, as the overview is): every
+  (centred, or at the top under 600 px wide, as the overview is, with the deck's controls in the
+  empty stage under the notes panel, never over the slide being edited, and no tooltips on
+  touch): every
   run of lines between separators, the empty ones at the deck's start and end included, which
   presenting and the view leave out. Any empty slide shows "Click to add a title", which starts a
   heading there, as a tap anywhere on the empty slide does; however small the slide is drawn, the
@@ -3224,8 +3226,10 @@ deleting slides, and a slide's columns, stay with agents for now.
   is refused (`invalid`), and the page puts the block back and says "That change would change the
   deck's layout, so it wasn't kept." The editor's messages (this one, "Ana is editing slide 3.",
   which names the holder by a first name taken from their address, or "Someone", and the others)
-  go to the deck's live region and show for a few seconds in the deck's one notice, above the
-  slide: the deck makes room for it, so it never covers the slide. While typing is kept on the
+  go to the deck's live region and show for a few seconds in the deck's one notice, a toast that
+  floats over the stage and never moves or resizes the slide: over the top of the slide's own
+  margin, letting taps through, or at phone width in the empty stage under the notes panel and the
+  deck's controls. While typing is kept on the
   page, that notice is the kept typing's, with **Copy**, and messages are only read out. A block
   holding typing it cannot write as typed keeps it as
   typed, and typing kept from a lease that ended (below) is kept on the page instead.
@@ -3247,9 +3251,10 @@ deleting slides, and a slide's columns, stay with agents for now.
   tint the whole panel, as an open block is tinted. Adding notes is the struct op `add_notes`.
   Notes left empty are no notes: once the empty field's last edit is in and its lease let go, the
   editor sends `remove_notes`, which says nothing if refused (the empty notes stay, drawn as none).
-- **Deck settings** (aspect, theme, page numbers, footer) are a popover the ⋯ menu's "Slide size
-  and footer…" opens while editing (named for what it changes, since the menu's Settings is the
-  artifact's), never a lease on the front matter. The popover takes focus itself, so no setting
+- **Deck settings** (aspect, theme, page numbers, footer) are a popover the ⋯ menu's "Slide
+  setup" opens while editing (the popover's title is the same words; not "settings", since the
+  menu's Settings is the artifact's), never a lease on the front matter. The popover takes focus
+  itself, so no setting
   shows a focus ring until a key moves to it. Apply sends the struct op
   `set_deck`, which writes the front matter canonically, with only the keys that differ from the
   defaults (`aspect: 16:9`, `theme: auto`, `paginate: true`, no footer) and the footer as plain
@@ -3274,14 +3279,17 @@ deleting slides, and a slide's columns, stay with agents for now.
   notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
   can change it."), as a doc's blocks do. That bar sits next to the block at its right edge (an
   image's own edge): just above it, or just below when that covers less of the slide's other
-  blocks; the deck's controls step aside while it shows. Their `ask` anchors are
+  blocks; the deck's controls step aside while it shows. An image's tint, focus ring and selection
+  are drawn on the image itself, not on the slide-wide paragraph around it. Their `ask` anchors are
   structural (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`, numbered as the deck shows its
   slides) with structural words ("Slide 3, image 1"), never the deck's text. Images are drawn from
   the draft's base version's files.
 - **A version published meanwhile** is never merged into a deck draft: the draft freezes, unless
   that version changed nothing the draft holds or is the draft, and the whole-draft review shows
   both decks as slides, side by side (one at a time at phone width), each with its own version's
-  images, the slides that changed marked, and the two change lists. "Publish your changes"
+  images, the slides that changed marked, and the two change lists. A side that scrolls to its
+  first change puts that slide at the top of the pane, the slide before it out of view, so no slide
+  is cut at the top. "Publish your changes"
   publishes the draft deck as it is with its base's files; an empty draft deck cannot be (its
   Publish is off, with the reason).
 - **Security.** The structure rule and the struct ops' postconditions run in the room on every

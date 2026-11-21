@@ -114,8 +114,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Room for the editor's notice above the slide (--notice-h, boot.ts scale). */
-  padding-top: var(--notice-h, 0px);
 }
 
 .plinth-slides[data-mode="deck"] .plinth-slides__frame:not([data-active]) {
@@ -1029,6 +1027,28 @@ body {
   box-shadow: -10px 0 0 -6px var(--slides-live);
 }
 
+/* An image block (a paragraph as wide as the slide around a smaller image): its tint, focus ring,
+   held rule and selection fit the image itself, so its bar sits on the image. */
+.plinth-slides[data-editing] [data-plinth-image]:is(:hover, :focus-visible, [data-held]) {
+  background: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.plinth-slides[data-editing] [data-plinth-image]:is(:hover, [data-selected]) img {
+  border-radius: 4px;
+  box-shadow: 0 0 0 8px var(--slides-live-soft);
+}
+
+.plinth-slides[data-editing] [data-plinth-image]:focus-visible img {
+  outline: 3px solid var(--slides-live);
+  outline-offset: 6px;
+}
+
+.plinth-slides[data-editing] [data-plinth-image][data-held] img {
+  box-shadow: -10px 0 0 -6px var(--slides-live);
+}
+
 .plinth-slides__open {
   border-radius: 4px;
   background: var(--slides-live-soft);
@@ -1224,11 +1244,12 @@ body {
   pointer-events: none;
 }
 
-/* The one notice, above the slide (the deck makes room for it, boot.ts scale): the editor's last
-   message for a few seconds (edit.ts notify), else typing kept on the page, with Copy. */
+/* The one notice, a toast floating over the top of the stage (the slide never moves or resizes for
+   it): the editor's last message for a few seconds (edit.ts notify), which lets taps through to the
+   slide under it, else typing kept on the page, with Copy. */
 .plinth-slides__notice {
   position: absolute;
-  top: 12px;
+  top: 28px; /* the gutter, then 12 px into the slide's own top margin */
   left: 50%;
   z-index: 7;
   display: flex;
@@ -1245,6 +1266,10 @@ body {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
   font: 14px / 1.4 var(--slides-font);
   transform: translateX(-50%);
+}
+
+.plinth-slides__toast {
+  pointer-events: none;
 }
 
 .plinth-slides__kept {
@@ -1274,10 +1299,29 @@ body {
   }
 }
 
-/* Editing at phone width: the slide and its notes sit at the top, as the overview does. */
+/* Editing at phone width: the slide and its notes sit at the top, as the overview does, and the
+   controls (36 px tall), then the notice, sit in the empty stage under the notes (--under-notes,
+   boot.ts scale), so neither covers the slide being edited. */
 .plinth-slides[data-editing][data-top] .plinth-slides__deck {
   align-items: flex-start;
-  padding-top: calc(var(--notice-h, 0px) + 16px);
+  padding-top: 16px;
+}
+
+.plinth-slides[data-editing][data-top] .plinth-slides__controls {
+  top: calc(var(--under-notes) + 8px);
+  bottom: auto;
+}
+
+.plinth-slides[data-editing][data-top] .plinth-slides__notice {
+  top: calc(var(--under-notes) + 52px);
+}
+
+/* On touch a tapped control keeps its hover, so its tooltip would stay up over the notes: the
+   buttons keep their names for assistive technology. */
+@media (hover: none) {
+  .plinth-slides[data-editing] .plinth-slides__btn[data-tip]::after {
+    display: none;
+  }
 }
 
 .plinth-slides__settings {
