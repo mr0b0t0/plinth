@@ -3402,7 +3402,7 @@ files are copied between artifacts.
   restores. The publish result has `copied_from` (one record per source version: `artifact`,
   `version`, `copied_at`, `files` with `path` and `from`), and `get_artifact` returns the same
   records with the source's `title` and `current_version` when the caller may view it now (null
-  otherwise).
+  otherwise, and for every source after the first 16, which are not looked up).
 - **Why it is safe.** Nothing loads across artifacts when a page is served: the copy is the
   target's own file, served from the target's origin under the target's CSP, exactly as if the
   caller had downloaded the file and sent it with `assets`, which the caller could always do since

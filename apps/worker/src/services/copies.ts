@@ -295,6 +295,9 @@ export function copyRecords(plan: CopyPlan | null): CopyRecord[] | undefined {
   );
 }
 
+/** Sources get_artifact names with their title, at most, however many a version was copied from. */
+const MAX_SOURCE_LOOKUPS = 16;
+
 /**
  * get_artifact's copied_from: the version's copied files by source, with the source's title and
  * current version only when the caller may view it now (policy.ts, as the caller).
@@ -312,7 +315,8 @@ export async function copiedFromOf(
   const seen = new Map<string, { title: string; current: number } | null>();
   const out: CopiedFrom[] = [];
   for (const r of groupCopies(copied)) {
-    if (!seen.has(r.artifact)) {
+    // At most MAX_SOURCE_LOOKUPS sources are looked up per read; later ones show as unknown.
+    if (!seen.has(r.artifact) && seen.size < MAX_SOURCE_LOOKUPS) {
       const row = ARTIFACT_ID_RE.test(r.artifact) ? await findArtifact(ctx, r.artifact) : null;
       const ok = row ? (await decideFor(ctx, row, "view")).allow : false;
       seen.set(r.artifact, row && ok ? { title: row.title, current: row.currentVersion } : null);
