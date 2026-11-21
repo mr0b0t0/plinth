@@ -37,7 +37,7 @@
 // sentence on a design's design_system and copied_from.
 // get_design_system's install_for and folder inputs and its install sentence changed them again.
 // get_design_system's deck_format input, and update_artifact's HTML deck sentence (only what changed
-// is sent; the rest the deck needs is kept), changed them again.
+// is sent; every other file but a slide the new order drops is kept), changed them again.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -96,7 +96,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "4f4c70196ea258333636e40333a07c3808b22d887e0726e5cc31daa1b5f69dda",
+      tools: "5ab850345496d1a30fcc4017ebfc0cdcb23626a8151210150a50c9ce40a1378b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -106,7 +106,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "214e40653760fa27a55d76586c94654ea49f8f413c26bf20f4e44459f310cb55",
+      tools: "14e9b3dfe7872d8df838619928b9f168b1a3fb8392fc31ab4524b18dafd952bf",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -118,7 +118,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "e79f0ee798fc47508ace6de9846cc9f5119309ea300e4bc1f7f7e0422dd45fef",
+      tools: "9b6de8058613a4a81fbdc65204325dd82dec9bd73e7399e6b0f5d98f14ab7998",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -128,7 +128,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "6f25da5417c09df27c8fc182a1c9da0b4667bd260bd97d2c4be95880a6deee24",
+      tools: "1c2c5b844be6dfd1ec4c3d56e83777ec911f5f305a534a08a9ea3baed90eeeec",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "d8268c9a89b929368d3fff8f674899075da782af5e68a15e47b8f9fbd34ffb20",

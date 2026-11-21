@@ -1499,11 +1499,11 @@ differs from Claude only where noted.
   - `get_artifact` returns `source_path: "deck.json"`, the index in `content` and the text of
     `deck.css` and every slide in `files`, all untrusted.
   - An update sends the index in `content` and, in `assets`, only what changed, as on Claude:
-    every file the new deck needs that the list leaves out (the slides `order` names, or every
-    slide file without an `order`; `deck.css`; the images, fonts and CSS files they name) is
-    carried from the current version as if sent as `{path, sha256}`. A slide the new `order`
-    drops and a file nothing names are left out (on Claude a slide file stays until deleted; a
-    Plinth asset list has no delete, so leaving it out of `order` is the delete). Omitting
+    every file of the current version the list leaves out is carried as if sent as
+    `{path, sha256}` (slides, `deck.css`, images, fonts, a design system's files), as Claude keeps a
+    file until it is deleted. Only a slide the new `order` no longer names is left out: a Plinth
+    asset list has no delete, so leaving a slide out of `order` is its delete (with no `order`,
+    every slide file stays). Omitting
     `assets` keeps every file, as for every type. The version is checked again (carried and
     reused files read from storage).
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),

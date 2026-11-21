@@ -61,7 +61,6 @@ import {
   type CopiedFromEntry,
   deletePrefix,
   type FileEntry,
-  fileKey,
   type ManifestEntry,
   parseManifest,
   relativePrefix,
@@ -810,10 +809,9 @@ export class VersionStager implements Stager {
   }
 
   /**
-   * An update that sent assets: carry the current version's files the new source needs but the
-   * list left out (TypeHooks.impliedFiles: an HTML deck's other slides). Called once the sent files
-   * and copies are staged, before finish. Their bytes, once read here, are kept for the version
-   * check, so each is read from R2 at most once.
+   * An update that sent assets: carry the current version's files the list left out that the type
+   * keeps (TypeHooks.impliedFiles: an HTML deck's other slides and files). Called once the sent
+   * files and copies are staged, before finish. No R2 operation: each is a reference.
    */
   async carryImplied(sourceText: string): Promise<void> {
     const hook = typeHooks(this.def).impliedFiles;
@@ -830,17 +828,6 @@ export class VersionStager implements Stager {
       sourcePath: sourcePathForText(this.def, sourceText),
       sent,
       current: new Map([...stored].map(([p, e]) => [p, { size: e.size_bytes }])),
-      read: async (path) => {
-        const e = this.entries.get(path);
-        if (e) return this.stagedText(e);
-        const m = stored.get(path);
-        if (!m) return null;
-        const obj = await this.ctx.env.FILES.get(fileKey(this.artifactId, current, m));
-        if (!obj) return null;
-        const bytes = new Uint8Array(await obj.arrayBuffer());
-        this.keepText(path, bytes);
-        return decoder.decode(bytes);
-      },
     });
     for (const p of paths) {
       const m = stored.get(p);

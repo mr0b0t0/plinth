@@ -876,10 +876,10 @@ default for quick decks.
   slides).
 - **Changing an HTML deck.** `get_artifact` returns `source_path: "deck.json"`, the index in
   `content` and every slide and `deck.css` in `files`. Call `update_artifact` with `content` (the
-  index) and `assets` holding only what you changed, as on Claude: the files the new deck needs
-  that you leave out (the slides its `order` names, `deck.css`, and the images and fonts they
-  name) are kept from the current version. To add a slide, send its file and the index with its id
-  in `order`; to remove one, send the index without it. Omitting `assets` keeps every file. People
+  index) and `assets` holding only what you changed, as on Claude: every file you leave out is
+  kept from the current version (slides, `deck.css`, images, fonts, a design system's files),
+  except a slide the new `order` no longer names. To add a slide, send its file and the index with
+  its id in `order`; to remove one, send the index without it. Omitting `assets` keeps every file. People
   see the deck, never its source, and ask an agent for changes.
 - Fix `slide_markup`, `missing_file` and `slides_setting` warnings before you hand over the link.
 

@@ -646,6 +646,41 @@ describe("review regressions", () => {
     }
   });
 
+  it("refuses an svg nested past 64 levels with a slide error, never a stack overflow", () => {
+    const deep = (n: number) =>
+      section(
+        `<svg viewBox="0 0 1 1">${"<g>".repeat(n)}<rect width="1" height="1"/>${"</g>".repeat(n)}</svg>`,
+      );
+    okDeck(deck({ a: deep(60) }));
+    for (const n of [65, 3000]) {
+      const r = deck({ a: deep(n) });
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.errors[0]).toMatchObject({ file: "slides/a.html" });
+        expect(r.errors[0]?.message).toMatch(/<svg> nests elements more than 64 deep/);
+      }
+    }
+  });
+
+  it("lets an @property syntax name its type in angle brackets, and nothing else take a <", () => {
+    expect(
+      deckCssProblem("@property --n { syntax: '<integer>'; inherits: false; initial-value: 0 }"),
+    ).toBeNull();
+    expect(
+      deckCssProblem('@property --c { syntax: "<color> | <length>+"; inherits: true }'),
+    ).toBeNull();
+    expect(deckCssProblem('@property --x { syntax: "</style>"; inherits: false }')).toMatch(/</);
+    expect(deckCssProblem('.a { syntax: "<integer>" }')).toMatch(/may not contain </);
+    expect(deckCssProblem('.a { content: "<b>" }')).toMatch(/may not contain </);
+  });
+
+  it("names the text box by its line when a converted tag holds too many marks", () => {
+    refused(
+      one(section(`<pre>${"<b>a</b>".repeat(101)}</pre>`)),
+      /the text box on line 1 holds 101 inline marks/,
+    );
+  });
+
   it("maps a Claude deck's project/ paths to the version's own (images, faces, deck.css)", () => {
     const r = deck(
       { a: section('<img src="project/ds/brand/assets/logo.png" alt="">') },

@@ -94,9 +94,9 @@ export interface TypeHooks {
    */
   keepsText?(path: string): boolean;
   /**
-   * On an update that sends assets: paths of the current version the new version needs although
-   * the list leaves them out, which are carried as if sent as {path, sha256} (an HTML deck's other
-   * slides, deck.css and the files they name). Absent: the list sent is the version's files.
+   * On an update that sends assets: paths of the current version the list leaves out that are
+   * carried as if sent as {path, sha256} (an HTML deck keeps every file but a slide its new order
+   * drops). Absent: the list sent is the version's files.
    */
   impliedFiles?(u: ImpliedFilesInput): Promise<string[]>;
   /**
@@ -177,8 +177,6 @@ export interface ImpliedFilesInput {
   sent: ReadonlyMap<string, { size: number }>;
   /** The current version's files, by path. */
   current: ReadonlyMap<string, { size: number }>;
-  /** A file's text: the bytes sent for it, else the current version's, or null. */
-  read(path: string): Promise<string | null>;
 }
 
 /** What a type's prepare hook gets: the source as sent, and what the version will become. */

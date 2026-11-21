@@ -595,14 +595,17 @@ CSP, as a Markdown deck. Three things keep it inert:
   `href`.
 - **Each slide is in its own shadow root.** `deck.css` (with a leading `:root` or `:host` read as
   the slide's own `html`, and `@media` read at the slide's size) styles only that slide, never the
-  renderer's controls, presenter view or another slide. A selector that would reach the shadow
-  host or past the tree from inside (`:host(…)`, `:host-context(…)`, `::slotted(…)`, `::part(…)`)
-  is dropped. The host, its canvas, the shadow root's `html` and each embed frame carry their
-  critical styles inline with `!important`, which no rule in the shadow root outranks: the host
-  stays absolutely placed at its canvas size with `overflow: hidden` and `contain: strict`, the
-  canvas has `contain: strict` and `overflow: hidden`, the shadow `html` has `contain: strict`, and
-  an embed frame keeps `pointer-events: none`. So nothing a slide draws paints outside its canvas,
-  including a `position: fixed` box. The only deck text that leaves a shadow root is an
+  renderer's controls, presenter view or another slide. Any other mention of `:host`,
+  `:host-context`, `::slotted` or `::part`, anywhere in a selector (inside `:is()`, `:where()`,
+  `:not()` or `:has()` too) or in a rule's nested rules, drops that selector or rule, so no deck
+  rule selects the host. This matters because for `!important` declarations the shadow tree's
+  context wins over the page's: a `:host { … !important }` rule would beat the host's own inline
+  `!important`. Inline `!important` does hold inside the shadow tree, so the shadow `html` keeps
+  `contain: strict` and an embed frame keeps `pointer-events: none` whatever `deck.css` says. The
+  host's inline `!important` styles (absolutely placed at its canvas size, `overflow: hidden`,
+  `contain: strict`) are a second line. What keeps a slide's paint inside its canvas, a
+  `position: fixed` box included, is the canvas around the host: it is in the page's tree, where no
+  deck rule reaches, and carries `contain: strict` and `overflow: hidden` inline. The only deck text that leaves a shadow root is an
   `@property` rule, which is rebuilt from its checked descriptors (name, `syntax`, `inherits`,
   `initial-value`) rather than copied. The shell's DOM holds nothing secret: it holds the deck
   itself, which the viewer can read anyway.

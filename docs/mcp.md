@@ -325,10 +325,9 @@ second `<aside>`, notes over 4,000 characters) is a `slide_markup` warning, and 
 
 `get_artifact` returns the slide files too, in `files`. To change one slide, call
 `update_artifact` with `content` (the index) and `assets` holding only what changed, as on Claude.
-Every file the new deck needs that the list leaves out is kept from the current version, as if
-sent as `{path, sha256}`: the slides `order` names (every slide file when there is no `order`),
-`deck.css`, and the images, fonts and CSS files those name. A slide the new `order` drops, or a
-file nothing names, is removed. Leaving out `assets` keeps every file. An update that switches an
+Every file of the current version the list leaves out is kept, as if sent as `{path, sha256}`
+(slides, `deck.css`, images, fonts and a design system's files under `ds/`), except a slide the
+new `order` no longer names, which is removed (with no `order`, every slide file stays). Leaving out `assets` keeps every file. An update that switches an
 HTML deck to Markdown with `assets` left out keeps only its images.
 
 ```json

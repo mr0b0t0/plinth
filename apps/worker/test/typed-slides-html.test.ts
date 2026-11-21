@@ -245,10 +245,16 @@ describe("an HTML deck over REST", () => {
     ).toBe(PLAN);
   });
 
-  it("carries the slides, deck.css and named files an update's asset list leaves out", async () => {
+  it("keeps every file an update's asset list leaves out, but a slide its new order drops", async () => {
     const a = await agent();
     const { body: p } = await publishHtmlDeck(a.auth, {
-      assets: [...files(), { path: "images/unused.png", content: PNG, encoding: "base64" }],
+      assets: [
+        ...files(),
+        { path: "images/unused.png", content: PNG, encoding: "base64" },
+        // A design system installed for the deck: its tokens and CSS, named by no slide.
+        { path: "ds/brand/tokens.json", content: "{}" },
+        { path: "ds/brand/colors.css", content: ":root { --brand: #123456 }" },
+      ],
     });
     const plan2 = PLAN.replace("<h2>Plan</h2>", "<h2>Plan, v2</h2>");
     // Only the changed slide, as Claude sends it: the rest of the deck stays.
@@ -258,32 +264,32 @@ describe("an HTML deck over REST", () => {
       assets: [{ path: "slides/plan.html", content: plan2 }],
     });
     expect(up.status, JSON.stringify(await up.clone().json())).toBe(200);
-    expect((await manifestOf(p.id, 2)).map((m) => m.path).sort()).toEqual([
+    const kept = [
       "deck.css",
       "deck.json",
+      "ds/brand/colors.css",
+      "ds/brand/tokens.json",
       "images/hero.png",
+      "images/unused.png",
       "slides/cover.html",
-      "slides/plan.html",
-    ]);
+    ];
+    expect((await manifestOf(p.id, 2)).map((m) => m.path).sort()).toEqual(
+      [...kept, "slides/plan.html"].sort(),
+    );
     const d = await detail(a.auth, p.id);
     expect(d.files).toEqual([
       { path: "deck.css", content: CSS },
       { path: "slides/cover.html", content: COVER },
       { path: "slides/plan.html", content: plan2 },
     ]);
-    // A slide the new order drops, sent nowhere, leaves the deck; so does a file nothing names.
+    // A slide the new order drops, sent nowhere, leaves the deck; every other file stays.
     const drop = await put(a.auth, p.id, {
       content: JSON.stringify({ title: "Launch deck", order: ["cover"] }),
       base_version: 2,
       assets: [{ path: "slides/cover.html", sha256: await sha(COVER) }],
     });
     expect(drop.status).toBe(200);
-    expect((await manifestOf(p.id, 3)).map((m) => m.path).sort()).toEqual([
-      "deck.css",
-      "deck.json",
-      "images/hero.png",
-      "slides/cover.html",
-    ]);
+    expect((await manifestOf(p.id, 3)).map((m) => m.path).sort()).toEqual(kept);
     // A new slide arrives with the index that places it; the others carry.
     const add = await put(a.auth, p.id, {
       content: JSON.stringify({ title: "Launch deck", order: ["cover", "end"] }),
@@ -338,6 +344,19 @@ describe("an HTML deck over REST", () => {
       source_path: "slides.md",
       content: legacy,
     });
+  });
+
+  it("refuses a deeply nested svg with a slide error, not a 500", async () => {
+    const a = await agent();
+    const svg = `<svg viewBox="0 0 1 1">${"<g>".repeat(3000)}${"</g>".repeat(3000)}</svg>`;
+    const r = refusal(
+      await publishHtmlDeck(a.auth, {
+        assets: files({ "slides/plan.html": `<section id="plan">${svg}</section>` }),
+      }),
+    );
+    expect(r.message).toMatch(
+      /^slides\/plan\.html \(line 1\) an <svg> nests elements more than 64 deep/,
+    );
   });
 
   it("refuses a deck text file past its byte cap from its size, before reading it", async () => {

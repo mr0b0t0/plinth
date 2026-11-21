@@ -14,7 +14,6 @@
 //
 // Neither format declares capabilities or has a room, so nothing happens after a commit.
 import {
-  deckCssFiles,
   deckFileProblem,
   deckImagePaths,
   HTML_DECK_CSS,
@@ -117,9 +116,6 @@ function checkDeckSizes(v: VersionCheck): void {
   }
 }
 
-/** At most this many R2 reads at once while working out what an update carries. */
-const PARALLEL_READS = 6;
-
 export const slidesHooks: TypeHooks = {
   title: (text, sourcePath) =>
     isHtmlSource(text, sourcePath) ? htmlDeckTitle(text) : markdownTitle(text),
@@ -163,55 +159,26 @@ export const slidesHooks: TypeHooks = {
   sourceWarnings: (def, text, manifestPaths, sourcePath) =>
     isHtmlSource(text, sourcePath) ? [] : deckWarnings(def.sourcePath, text, manifestPaths),
   keepsText: isDeckTextFile,
-  /**
-   * An HTML deck's update that sends assets carries, from the current version, every file the new
-   * deck needs that the list leaves out, as if sent as {path, sha256}: the slides its order names
-   * (every slide file when it has no order), deck.css, and the images, fonts and CSS files those
-   * name. So an agent sends only what changed, as on Claude; a slide the new order drops, or a file
-   * nothing names, is left out. A Markdown deck: nothing (its assets are the list sent).
-   */
   carries: (sourcePath, path, contentType) =>
     deckFileProblem(sourcePath === HTML_DECK_INDEX ? "html" : "markdown", path, contentType) ===
     null,
+  /**
+   * An HTML deck's update that sends assets carries every file of the current version the list
+   * leaves out, as if sent as {path, sha256} (Claude keeps a file until it is deleted), except a
+   * slide the new order no longer names: leaving it out of order is how a slide is removed. So an
+   * agent sends only what changed, and a design system's tokens.json, its CSS and an image no slide
+   * uses yet stay. A Markdown deck: nothing (its assets are the list sent).
+   */
   async impliedFiles(u) {
     if (u.sourcePath !== HTML_DECK_INDEX) return [];
+    // Only a slide the new order leaves out goes; without an order every slide file shows.
     const order = indexOrder(u.text);
-    const has = (p: string) => u.sent.has(p) || u.current.has(p);
-    const want = new Set<string>();
-    if (has(HTML_DECK_CSS)) want.add(HTML_DECK_CSS);
-    const slidePaths =
-      order === null
-        ? [...new Set([...u.sent.keys(), ...u.current.keys()])].filter(
-            (p) => slideIdOfPath(p) !== null,
-          )
-        : order.map((id) => `slides/${id}.html`).filter(has);
-    for (const p of slidePaths) want.add(p);
-    // The texts, to find what they name; a file past its cap is not read (the check refuses it).
-    const texts = new Map<string, string>();
-    const toRead = [...want].filter((p) => {
-      const size = u.sent.get(p)?.size ?? u.current.get(p)?.size ?? 0;
-      return (
-        size <=
-        (p === HTML_DECK_CSS ? HTML_DECK_LIMITS.maxCssBytes : HTML_DECK_LIMITS.maxSlideBytes)
-      );
+    const listed = order === null ? null : new Set(order);
+    return [...u.current.keys()].filter((p) => {
+      if (u.sent.has(p)) return false;
+      const id = slideIdOfPath(p);
+      return id === null || listed === null || listed.has(id);
     });
-    let next = 0;
-    const worker = async () => {
-      while (next < toRead.length) {
-        const p = toRead[next++] as string;
-        const t = await u.read(p);
-        if (t !== null) texts.set(p, t);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(PARALLEL_READS, toRead.length) }, worker));
-    const slides = new Map([...texts].filter(([p]) => p !== HTML_DECK_CSS));
-    const r = parseHtmlDeck({ index: u.text, css: texts.get(HTML_DECK_CSS) ?? null, slides });
-    if (r.ok) {
-      for (const f of r.deck.faces) if (f.src) want.add(f.src);
-      for (const ref of deckCssFiles(r.deck.css)) want.add(ref);
-      for (const s of r.deck.slides) for (const p of [...s.images, ...s.cssRefs]) want.add(p);
-    }
-    return [...want].filter((p) => !u.sent.has(p) && u.current.has(p));
   },
   async validateVersion(v) {
     const html = v.sourcePath === HTML_DECK_INDEX;

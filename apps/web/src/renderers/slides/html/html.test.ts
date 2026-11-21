@@ -205,6 +205,30 @@ describe("deck.css cannot reach past its slide", () => {
     expect(css).not.toContain("blue");
   });
 
+  it("drops :host anywhere: inside :is(), :where(), :not(), :has() and in nested rules", () => {
+    for (const sel of [
+      ":is(:host) .x",
+      ".a:where(:host-context(*))",
+      "p:not(:host)",
+      "div:has(::slotted(p))",
+    ]) {
+      expect(scopeSelector(sel), sel).toBeNull();
+    }
+    const { css } = scopeDeckCss(
+      [
+        ".a { color: red; :is(&, :host) { contain: none !important } }",
+        ".b { @media (min-width: 1px) { :host { position: fixed !important } } }",
+        ".c { color: green; .d & { color: blue } }",
+        "@supports (display: grid) { .e { :where(:host) { z-index: 9 } } .f { color: teal } }",
+      ].join("\n"),
+      CANVAS,
+    );
+    expect(css).not.toMatch(/:host|contain: none|position: fixed|z-index/);
+    // Nesting without the host is kept as written.
+    expect(css).toContain(".c { color: green; .d & { color: blue } }");
+    expect(css).toContain(".f { color: teal }");
+  });
+
   it("keeps the host, the canvas, the shadow html and an embed frame's critical styles inline and !important", () => {
     const deck = parsed(
       {

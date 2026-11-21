@@ -16,11 +16,17 @@
 // and a forward scan reads it; a string still ends at a line break here, as a browser ends it.
 // `@font-face` and `@page` are dropped: faces come from deck.json, and pages from the renderer.
 //
-// Nothing here can reach past the slide: a selector that names the shadow host or its tree from
-// inside (`:host(…)`, `:host-context(…)`, `::slotted(…)`, `::part(…)`) is dropped, and the host,
-// the shadow `html` and every embed frame carry their critical styles inline with !important
-// (build.ts, embeds.ts), which no rule in a shadow root outranks. The only text that leaves the
-// shadow root is an `@property` rule, rebuilt from its checked descriptors (propertyRule).
+// Nothing here can reach past the slide: a leading `:root` or `:host` becomes the slide's `html`,
+// and any other mention of `:host`, `:host-context`, `::slotted` or `::part`, anywhere in a
+// selector (inside `:is()`, `:where()`, `:not()`, `:has()`) or in a rule's nested rules, drops the
+// selector or the rule, so no rule in the shadow root selects the host. That matters: for
+// !important declarations the shadow tree's context wins over the page's, so a `:host` rule with
+// !important would beat the host's own inline !important. The shadow `html` and every embed frame
+// carry their critical styles inline with !important (build.ts, embeds.ts), which beats every
+// rule in their own tree; and the canvas around the host, in the page's tree where no deck rule
+// reaches, has contain: strict and overflow: hidden inline, which is what keeps a slide's paint
+// inside its canvas. The only text that leaves the shadow root is an `@property` rule, rebuilt
+// from its checked descriptors (propertyRule).
 // A url() that names a Claude deck's `project/` path is read as the version's own (deckPath).
 
 interface Block {
@@ -271,6 +277,9 @@ function scopeInto(
     const at = /^@([a-z-]+)\s*/i.exec(b.prelude);
     if (!at) {
       if (b.prelude === "") continue;
+      // A body that nests rules (CSS nesting: `.a { :is(&, :host) { … } }`) whose selectors could
+      // name the host or past the tree is dropped whole: its nested selectors are not scoped here.
+      if (b.body.includes("{") && HOST_RE.test(b.body)) continue;
       const sels = splitSelectors(b.prelude)
         .map(scopeSelector)
         .filter((x): x is string => x !== null && x !== "");

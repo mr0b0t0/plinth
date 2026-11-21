@@ -73,9 +73,11 @@ export function svgSource(svg: NonNullable<DeckElement["svg"]>, still: boolean):
 }
 
 /**
- * Sets each declaration inline with !important. Author CSS lives in the slide's shadow root, and no
- * rule there (not even `:host { … !important }`) outranks an inline !important declaration, so the
- * boxes Plinth builds around and at the top of a slide keep these whatever deck.css says.
+ * Sets each declaration inline with !important. Inside the slide's shadow tree (its `html`, an
+ * embed's frame) no author rule outranks that. The host is in the page's tree, where a shadow
+ * `:host { … !important }` rule would win over it (the inner context wins for !important), so
+ * css.ts drops every selector that could name the host; the host's pins are a second line, and
+ * containment holds through the canvas, which no deck rule can select.
  */
 export function pin(e: HTMLElement, decls: Record<string, string>): void {
   for (const [k, v] of Object.entries(decls)) e.style.setProperty(k, v, "important");

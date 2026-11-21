@@ -894,6 +894,10 @@ class Reader {
 export function deckCssProblem(css: string, localOnly = false): string | null {
   const strings = cssStringProblem(css);
   if (strings) return strings;
+  // An @property's syntax string names types in angle brackets ("<integer>"): the one place a "<"
+  // may stand, in a quoted string of type names and combinators, which cannot spell "</style".
+  // The renderer rebuilds @property from the same characters (css.ts propertyRule).
+  css = css.replace(PROPERTY_SYNTAX_RE, '$1""');
   if (/@import/i.test(css)) return "may not use @import: fonts go in deck.json faces";
   if (/-moz-binding|behavior\s*:/i.test(css)) return "may not use -moz-binding or behavior";
   const base = cssBlockProblem(css);
@@ -908,6 +912,10 @@ export function deckCssProblem(css: string, localOnly = false): string | null {
   }
   return null;
 }
+
+/** An @property rule's `syntax` descriptor whose quoted value is type names and combinators only. */
+const PROPERTY_SYNTAX_RE =
+  /(@property\s+--[A-Za-z0-9_-]{1,64}\s*\{[^{}]*?\bsyntax\s*:\s*)(["'])[A-Za-z0-9<>|+# *-]{1,64}\2/gi;
 
 /**
  * Why a quoted string of deck CSS is refused, or null: a browser ends a string at a line break (and
@@ -1306,7 +1314,18 @@ function readSvg(c: SlideCtx, open: RawTag, line: number): DeckElement | null {
         }
         continue;
       }
-      if (!t.selfClosing) stack.push(el);
+      if (!t.selfClosing) {
+        // The drawing is serialized recursively: its nesting has the slide's cap too.
+        if (stack.length >= L.maxDepth) {
+          c.p.err(
+            c.file,
+            `an <svg> nests elements more than ${L.maxDepth} deep: flatten its groups`,
+            r.lineOf(t.start),
+          );
+          return null;
+        }
+        stack.push(el);
+      }
     }
   }
   const bytes = utf8Bytes(r.s.slice(open.start, r.i));
@@ -1773,7 +1792,7 @@ function parseSlide(
       if (marks > L.maxInlineMarks) {
         p.err(
           file,
-          `<${el.tag}> on line ${el.line} holds ${marks} inline marks (b, i, u, a, span); a text box may hold at most ${L.maxInlineMarks}: split it`,
+          `the text box on line ${el.line} holds ${marks} inline marks (b, i, u, a, span); a text box may hold at most ${L.maxInlineMarks}: split it`,
           el.line,
         );
         return false;
