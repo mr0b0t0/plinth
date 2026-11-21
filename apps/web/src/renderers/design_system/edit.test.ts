@@ -354,3 +354,42 @@ describe("files and size", () => {
     expect(document.querySelector(".ds-notice")?.textContent).toMatch(/too large to edit/);
   });
 });
+
+describe("typing the page cannot write as typed (solo)", () => {
+  /** Opens `sel`'s first `tag`, types what cannot be written as typed (overlapping marks). */
+  function stick(sel: string, tag = "p") {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    root()
+      .querySelector<HTMLElement>(`${sel} ${tag}`)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const el = root().querySelector<HTMLElement>(`${sel} [contenteditable='true']`);
+    if (!el) throw new Error("no open block");
+    el.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(400);
+    vi.useRealTimers();
+  }
+  const collect = () => {
+    const nonce = `n${++drafts}`.padEnd(20, "n");
+    send({ type: "collect", nonce });
+    return posted.find((m) => m.type === "draft" && m.nonce === nonce) as Json;
+  };
+
+  it("the app's kept copy has such typing in the guidelines, and it is never published as is", () => {
+    editOn();
+    stick('#ds-overview [data-text="guidelines"]');
+    const d = collect();
+    expect(d.unsavable).toBe(true);
+    expect(JSON.parse(d.text).guidelines).toBe("# Using Acme UI\n\nabc");
+  });
+
+  it("and in a component's description, in the value's place", () => {
+    editOn();
+    stick('[data-text="component:button:description"]');
+    const d = collect();
+    expect(d.unsavable).toBe(true);
+    expect(JSON.parse(d.text).components[0].description).toBe("abc");
+    // The rest of the system is as it was.
+    expect(JSON.parse(d.text).guidelines).toBe(FIXTURE.guidelines);
+  });
+});

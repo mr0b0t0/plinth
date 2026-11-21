@@ -8,6 +8,7 @@ import {
   designSystemToLive,
   dsNodeAtPath,
   dsNodeLines,
+  LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
   splitLines,
@@ -15,8 +16,10 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HIDDEN_CLOSE_MS } from "../common/live.ts";
 import { EDIT_DEBOUNCE_MS } from "../doc/edit.ts";
 import { boot } from "./boot.ts";
+import { rescueCode } from "./edit.ts";
 import { FIXTURE } from "./testFixture.ts";
 
 const APP = "https://plinth.example.com";
@@ -34,10 +37,13 @@ class FakeSocket {
   constructor() {
     FakeSocket.all.push(this);
   }
+  closed = false;
   send(raw: string) {
     if (raw !== "ping") this.sent.push(JSON.parse(raw));
   }
-  close() {}
+  close() {
+    this.closed = true;
+  }
   frame(f: Json) {
     this.onmessage?.({ data: JSON.stringify(f) } as MessageEvent);
   }
@@ -279,5 +285,309 @@ describe("edit mode asked for before the room's draft arrives", () => {
     await tick();
     expect(lastLive()).toMatchObject({ editing: false });
     expect(lastLive()).not.toHaveProperty("unavailable");
+  });
+});
+
+// The doc editor's rules for typing the page cannot write yet (#97), in the design system's
+// formatted texts: the lease is kept in use, the typing is kept to rescue (with the app keeping a
+// copy) until the room acknowledges a write of it, a hidden tab keeps its socket, a discard clears
+// what is kept, and no Publish goes out without it.
+describe("typing the page cannot write yet", () => {
+  // Timers are fake; microtasks (the status line, the rescue writes) run as they do.
+  const fake = () =>
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+  const END = splitLines(LIVE).indexOf("}");
+  const lease = (ws: FakeSocket, id: string, start: number, end: number) =>
+    ws.frame({ t: "leased", lease: id, start, end, holder: "s1", by: "ada@example.org" });
+  /** The room applies this socket's last edit (on lease `id`, at `start`..`end`) and acks it. */
+  let rev = 0;
+  const ack = (ws: FakeSocket, id: string, start: number, end: number) => {
+    const e = lastOf(ws, "edit") as Json;
+    rev += 1;
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev,
+      lease: id,
+      start,
+      del: end - start,
+      ins: e.text,
+      by: "s1",
+      seq: e.seq,
+    });
+  };
+  beforeEach(() => {
+    rev = 0;
+  });
+  const rescues = () => posted.filter((m) => m.type === "rescue");
+  /** Types into the open block what cannot be written as typed (overlapping marks). */
+  const stick = (sel: string) => {
+    const el = root().querySelector<HTMLElement>(`${sel} [contenteditable='true']`);
+    if (!el) throw new Error("no open block");
+    el.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    return el;
+  };
+  /** The guidelines' paragraph, open and held (lease L1), holding such typing. */
+  const stuckGuidelines = (ws: FakeSocket) => {
+    root()
+      .querySelector<HTMLElement>("[data-text='guidelines'] p")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    lease(ws, "L1", END + 3, END + 4);
+    return stick("[data-text='guidelines']");
+  };
+
+  it("keeps a guidelines block's lease in use while such typing waits", async () => {
+    fake();
+    const ws = connected();
+    stuckGuidelines(ws);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000 * 3);
+    expect(ws.sent.filter((f) => f.t === "keep")).toEqual([
+      { t: "keep", lease: "L1" },
+      { t: "keep", lease: "L1" },
+      { t: "keep", lease: "L1" },
+    ]);
+    // A `keep` the room no longer knows (its lease went first) says nothing.
+    ws.frame({ t: "error", code: "not_held" });
+    expect(document.querySelector(".ds-notice")).toBeNull();
+    await flush();
+    expect(lastLive()).toMatchObject({ unsavable: true, unflushed: true });
+  });
+
+  it("keeps a description's line in use while such typing waits", () => {
+    fake();
+    const ws = connected();
+    const node = dsNodeAtPath(splitLines(LIVE), ["components", 0, "description"]);
+    if (!node) throw new Error("no node");
+    root()
+      .querySelector<HTMLElement>("[data-text='component:button:description'] p")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(lastOf(ws, "lease")).toEqual({ t: "lease", rev: 0, start: node.start, end: node.end });
+    lease(ws, "L1", node.start, node.end);
+    stick("[data-text='component:button:description']");
+    expect(ws.sent.filter((f) => f.t === "edit")).toHaveLength(0);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000 * 2);
+    expect(ws.sent.filter((f) => f.t === "keep")).toEqual([
+      { t: "keep", lease: "L1" },
+      { t: "keep", lease: "L1" },
+    ]);
+  });
+
+  it("keeps such typing to rescue, with the app, until the room acknowledges its write", async () => {
+    fake();
+    const ws = connected();
+    stuckGuidelines(ws);
+    await flush();
+    const first = rescues()[0];
+    expect(first).toMatchObject({ upsert: [{ text: "abc", near: 2 }], written: [], gone: [] });
+    const id = first?.upsert[0].id as string;
+    expect(id).toMatch(/^g_/);
+    // Someone takes the block over: the typing goes in below it, without its formatting.
+    ws.frame({ t: "lease_lost", lease: "L1", reason: "takeover" });
+    ws.frame({
+      t: "leased",
+      lease: "B1",
+      start: END + 3,
+      end: END + 4,
+      holder: "s2",
+      by: "ben@example.org",
+    });
+    await flush();
+    expect(lastOf(ws, "lease")).toEqual({ t: "lease", rev: 0, start: END + 4, end: END + 4 });
+    lease(ws, "L2", END + 4, END + 4);
+    await flush();
+    expect(lastOf(ws, "edit")).toMatchObject({ lease: "L2" });
+    expect((lastOf(ws, "edit") as Json).text).toContain("abc");
+    // Not before the room's acknowledgement does it leave the app's store.
+    expect(rescues().flatMap((r) => r.written)).toEqual([]);
+    ack(ws, "L2", END + 4, END + 4);
+    await flush();
+    expect(rescues().flatMap((r) => r.written)).toEqual([id]);
+  });
+
+  it("writes what the app kept from before a reload into its own text", async () => {
+    fake();
+    const ws = connected();
+    const usage = dsNodeAtPath(splitLines(LIVE), ["components", 0, "usage"]);
+    if (!usage) throw new Error("no node");
+    const cid = `${rescueCode("component:button:usage")}_r1`;
+    send({ type: "rescue", items: [{ id: cid, text: "Kept words", near: 1 }] });
+    await flush();
+    expect(lastOf(ws, "lease")).toEqual({
+      t: "lease",
+      rev: 0,
+      start: usage.start,
+      end: usage.end,
+    });
+    expect(lastLive()).toMatchObject({ unflushed: true });
+    lease(ws, "L1", usage.start, usage.end);
+    await flush();
+    const sent = lastOf(ws, "edit") as Json;
+    expect(JSON.parse(`{${sent.text.trim().replace(/,$/, "")}}`).usage).toBe(
+      "- Do: one per view\n\nKept words",
+    );
+    expect(rescues().flatMap((r) => r.written)).toEqual([]);
+    ack(ws, "L1", usage.start, usage.end);
+    await flush();
+    expect(rescues().flatMap((r) => r.written)).toEqual([cid]);
+  });
+
+  it("an item whose text is gone goes into the guidelines, under the id the app has", async () => {
+    fake();
+    const ws = connected();
+    send({ type: "rescue", items: [{ id: "cgone_r9", text: "Orphan words", near: 0 }] });
+    await flush();
+    const asked = lastOf(ws, "lease") as Json;
+    expect(asked.start).toBeGreaterThan(END);
+    lease(ws, "L1", asked.start, asked.end);
+    await flush();
+    expect((lastOf(ws, "edit") as Json).text).toContain("Orphan words");
+    ack(ws, "L1", asked.start, asked.end);
+    await flush();
+    expect(rescues().flatMap((r) => r.written)).toEqual(["cgone_r9"]);
+  });
+
+  it("keeps a hidden tab's socket while such typing waits", () => {
+    fake();
+    let state: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => state);
+    const ws = connected();
+    stuckGuidelines(ws);
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(HIDDEN_CLOSE_MS + 10);
+    expect(ws.closed).toBe(false);
+  });
+
+  it("a discard clears what is kept to rescue, in the app's store too", async () => {
+    fake();
+    const ws = connected();
+    stuckGuidelines(ws);
+    await flush();
+    const id = rescues()[0]?.upsert[0].id;
+    ws.frame({ t: "lease_lost", lease: "L1", reason: "closed" });
+    ws.frame({ t: "reset", version: 4, gen: "g2", rev: 0, why: "discarded" });
+    ws.frame({ t: "text", gen: "g2", part: 0, of: 1, chunk: LIVE });
+    await flush();
+    expect(rescues().flatMap((r) => r.gone)).toEqual([id]);
+  });
+
+  it("Cmd/Ctrl+S asks for one Publish, and none while a text holds such typing", async () => {
+    fake();
+    const ws = connected();
+    const saves = () => posted.filter((m) => m.type === "save").length;
+    const press = () =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));
+    // Every text's editor hears the shortcut: one Publish is asked for.
+    root()
+      .querySelector<HTMLElement>(".ds-name")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true }));
+    await flush();
+    expect(saves()).toBe(1);
+    stuckGuidelines(ws);
+    press();
+    await flush();
+    expect(saves()).toBe(1);
+  });
+
+  it("a description the room could not create yet stays unsent, and is created once it can be", async () => {
+    fake();
+    const ws = connected();
+    root()
+      .querySelector<HTMLElement>(
+        "[data-text='component:badge:description'] .plinth-doc__placeholder",
+      )
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const el = root().querySelector<HTMLElement>(
+      "[data-text='component:badge:description'] [contenteditable='true']",
+    );
+    if (!el) throw new Error("no open block");
+    el.textContent = "Marks something new";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(ws.sent.filter((f) => f.t === "struct")).toHaveLength(1);
+    // Ben holds lines the op would change.
+    ws.frame({ t: "struct_denied", reason: "held", by: "ben@example.org" });
+    await flush();
+    expect(lastLive()).toMatchObject({ unflushed: true });
+    // His lease ends: it is created now.
+    ws.frame({
+      t: "leased",
+      lease: "B1",
+      start: 3,
+      end: 4,
+      holder: "s2",
+      by: "ben@example.org",
+    });
+    ws.frame({ t: "released", lease: "B1" });
+    await flush();
+    const structs = ws.sent.filter((f) => f.t === "struct");
+    expect(structs).toHaveLength(2);
+    expect(structs[1]).toMatchObject({ op: { op: "set_text", value: "Marks something new" } });
+  });
+
+  it("edit mode ending keeps a text's write that waits for its lease", async () => {
+    fake();
+    const ws = connected();
+    stuckGuidelines(ws);
+    // A token's value takes the socket's lease meanwhile; the block stays open with its typing.
+    const field = row("color.bg").querySelector<HTMLInputElement>('input[type="text"]');
+    if (!field) throw new Error("no field");
+    field.value = "#fafafa";
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    const node = dsNodeAtPath(splitLines(LIVE), ["tokens", "color", "bg", "$value"]);
+    if (!node) throw new Error("no node");
+    lease(ws, "L2", node.start, node.end);
+    send({ type: "edit", on: false });
+    await flush();
+    // The typing, without its formatting, is written in the guidelines once the lease comes.
+    const asked = lastOf(ws, "lease") as Json;
+    expect(asked.start).toBeGreaterThan(END);
+    lease(ws, "L3", asked.start, asked.end);
+    await flush();
+    expect(lastOf(ws, "edit")).toMatchObject({ lease: "L3" });
+    expect((lastOf(ws, "edit") as Json).text).toContain("abc");
+  });
+});
+
+describe("a text's edit the room refuses", () => {
+  it("is the room's text again, as a doc block's is, and is not sent again", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
+    const ws = connected();
+    const node = dsNodeAtPath(splitLines(LIVE), ["components", 0, "description"]);
+    if (!node) throw new Error("no node");
+    const sel = "[data-text='component:button:description']";
+    root()
+      .querySelector<HTMLElement>(`${sel} p`)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    ws.frame({
+      t: "leased",
+      lease: "L1",
+      start: node.start,
+      end: node.end,
+      holder: "s1",
+      by: "ada@example.org",
+    });
+    const el = root().querySelector<HTMLElement>(`${sel} [contenteditable='true']`);
+    if (!el) throw new Error("no open block");
+    el.textContent = "Starts an action.";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(ws.sent.filter((f) => f.t === "edit")).toHaveLength(1);
+    ws.frame({ t: "error", code: "invalid" });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(root().querySelector(sel)?.textContent).toContain("Triggers an action.");
+    // Someone else's change: nothing is sent again.
+    ws.frame({ t: "released", lease: "L1" });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(ws.sent.filter((f) => f.t === "edit" || f.t === "struct")).toHaveLength(1);
   });
 });

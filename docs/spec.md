@@ -639,8 +639,9 @@ page shows the strip and makes the REST calls, and renders no content.
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
   client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
-  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block
-  holding typing it cannot write yet), starts that minute again.
+  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block,
+  or a design system's formatted text, holding typing it cannot write yet), starts that minute
+  again.
 - **Per-type rules.** The room checks every edit with the type's rules
   (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
   a refused edit means someone else changed the lines first or the edit was forged; the renderer
@@ -1196,7 +1197,17 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     composite's parts are a label and field grid (labels above the fields on a phone), named
     "Light" and "Dark" only when it has both. The name is a field in the heading's place; the
     description, the guidelines and each component's description and usage are formatted text,
-    with the doc's block editor ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)).
+    with the doc's block editor ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)),
+    and typing in them keeps the doc's rules for text the page cannot write yet: the block stays
+    open and every way to publish waits, the holder sends `keep`, the solo kept copy has the text
+    without its formatting, and the rescue store keeps it until the room acknowledges a write of
+    it. Each item's id starts with its text's code (`g_` the guidelines, `d_` the description, `c`
+    and a hash of the key for a component's description or usage), so the app's one store per
+    artifact gives each back to its own text; one whose text is gone (its component removed)
+    goes into the guidelines as a block of its own. A description, usage or status's words the
+    room does not have yet (a creation refused because someone holds lines it changes) count as
+    unsent changes and go once the place is free; an edit of its line the room refuses shows the
+    room's text again, as a doc block's does.
     A component's status stays the pill beside its name and is set from its heading's ⋯
     ("Status", then Stable, Beta or Deprecated). Each token row has one ⋯ (dark value,
     description, another token, "Rename: Ask an agent", "Remove"), each group row one ⋯ ("Add a

@@ -20,6 +20,7 @@
 // One socket holds one lease at a time: whichever part of the page asks for it holds it, and the
 // part that held it before sends what it has pending and lets go first.
 import {
+  applyDesignSystemStruct,
   type DesignSystem,
   type DsComponent,
   type DsIssue,
@@ -32,6 +33,7 @@ import {
   dsGet,
   dsIndexNodes,
   dsLiveSystem,
+  dsNodeAtPath,
   dsNodeLines,
   dsProjectionEnd,
   dsTokenSegs,
@@ -48,7 +50,7 @@ import {
   splitLines,
 } from "@plinth/shared";
 import type { ClientLease, LeaseDenial, LeaseLoss, LiveBackend } from "../common/live.ts";
-import { DocEditor, type EditorHooks } from "../doc/edit.ts";
+import { DocEditor, type EditorHooks, type RescueItem, type RescueReport } from "../doc/edit.ts";
 import { BlockMenu, type MenuGroup, type MenuItem } from "../doc/menu.ts";
 import { samplePicker, starterValue, valueControl } from "./controls.ts";
 import type { SystemBackend } from "./local.ts";
@@ -70,6 +72,11 @@ export interface DsEditorHooks {
   theme(): PreviewTheme;
   /** The site was drawn from the draft: load its fonts (from the draft's base files). */
   drawn?(ds: DesignSystem): void;
+  /**
+   * The formatted texts' rescue stores changed (doc/edit.ts RescueReport): the app merges this
+   * into its copy. Ids carry the text they belong to (rescueCode), and `n` orders these reports.
+   */
+  rescue?(report: RescueReport): void;
 }
 
 /** What the person is told when a change was not made. */
@@ -190,6 +197,22 @@ class GuidelinesDoc implements LiveBackend, LeaseOwner {
   get durableText() {
     return this.host.owns(this) ? this.b.durableText : null;
   }
+  /**
+   * The room's `keep` for the lease this part holds, and its edits' seqs and acks: the doc
+   * editor's heartbeat and rescue store run on them. Absent alone (solo keeps a copy instead).
+   */
+  get keep(): (() => boolean) | undefined {
+    const b = this.b;
+    if (!b.keep) return undefined;
+    return () => this.host.owns(this) && b.mine !== null && (b.keep?.() ?? false);
+  }
+  get lastSeq(): number | undefined {
+    return this.b.lastSeq;
+  }
+  get acked(): ((seq: number) => boolean) | undefined {
+    const b = this.b;
+    return b.acked ? (seq: number) => b.acked?.(seq) ?? false : undefined;
+  }
 
   lease(range: LineRange): boolean {
     const off = this.off;
@@ -243,6 +266,19 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
   ackedText: string | null = null;
   readonly durableText = null;
   private n = 0;
+  /**
+   * The doc editor's edits of the text, numbered (its `lastSeq`), and the last one the room has:
+   * an edit counts as acknowledged (`acked`) once the room acknowledged the write that carried it,
+   * so the doc editor's rescue store keeps typing until the room holds it, never only `local`.
+   */
+  private seq = 0;
+  private inRoom = 0;
+  /** The room edit (its socket seq) carrying local edit `k`, until the room acknowledges it. */
+  private sentAs: { k: number; seq: number } | null = null;
+  /** The local edit a set_text on its way carries. */
+  private creatingK = 0;
+  /** Text the room refused: not sent again until it changes. */
+  private refusedText: string | null = null;
 
   constructor(
     private readonly host: DsEditor,
@@ -254,6 +290,11 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
 
   private get b(): SystemBackend {
     return this.host.backend;
+  }
+
+  /** The value's JSON path now, or null. */
+  currentPath(): DsPath | null {
+    return this.path();
   }
 
   /** The value as the room has it ("" when absent). */
@@ -309,6 +350,38 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
     return p ? this.host.nodeAt(p) : null;
   }
 
+  /** The room's `keep` while this part holds the value's line (absent alone, as for a doc). */
+  get keep(): (() => boolean) | undefined {
+    const b = this.b;
+    if (!b.keep) return undefined;
+    return () => this.held && this.host.owns(this) && b.mine !== null && (b.keep?.() ?? false);
+  }
+  get lastSeq(): number {
+    return this.seq;
+  }
+  get acked(): ((k: number) => boolean) | undefined {
+    const b = this.b;
+    if (!b.acked) return undefined;
+    return (k: number) => {
+      const s = this.sentAs;
+      if (s && b.acked?.(s.seq)) {
+        this.inRoom = Math.max(this.inRoom, s.k);
+        this.sentAs = null;
+      }
+      return k <= this.inRoom;
+    };
+  }
+
+  /**
+   * Text typed here that the room does not have yet (on its way, or not sent because the line was
+   * held or the creation refused): it counts as unsent changes, and goes once it can (retry).
+   */
+  get unsent(): boolean {
+    const local = this.local;
+    if (local === null || local === this.roomValue) return false;
+    return !(local === "" && !this.node());
+  }
+
   private grant(range: LineRange): void {
     this.vmine = { id: `t${++this.n}`, ...range, by: "", holder: "local", at: Date.now() };
     this.ackedText = joinLines(this.lines.slice(range.start, range.end));
@@ -353,6 +426,8 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
       return false;
     }
     this.local = next;
+    this.seq += 1;
+    this.refusedText = null;
     this.vmine = { ...m, end: m.start + ins.length, at: Date.now() };
     this.ackedText = text;
     this.push();
@@ -372,16 +447,67 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
     if (!node) {
       if (local === "") return;
       this.creating = local;
-      this.host.struct(this, { op: "set_text", path: this.textPath, value: local });
+      this.creatingK = this.seq;
+      if (!this.host.struct(this, { op: "set_text", path: this.textPath, value: local })) {
+        this.creating = null;
+      }
       return;
     }
-    if (local === this.roomValue) return;
+    if (local === this.roomValue) {
+      this.inRoom = this.seq;
+      return;
+    }
     if (this.held && this.host.owns(this) && this.b.mine) {
       this.host.sent(this);
-      this.b.edit(dsNodeLines(node, local).join("\n"));
+      if (this.b.edit(dsNodeLines(node, local).join("\n"))) {
+        const seq = this.b.lastSeq;
+        if (seq === undefined) this.inRoom = this.seq;
+        else this.sentAs = { k: this.seq, seq };
+      }
       return;
     }
     this.ask(node);
+  }
+
+  /**
+   * Send what the room does not have yet, once nothing else on the page holds the socket's lease
+   * and nobody else holds the value's line (the draft changed, or a lease ended).
+   */
+  retry(): void {
+    if (!this.unsent || this.asking || this.creating !== null || !this.b.connected) return;
+    if (this.local === this.refusedText) return;
+    if (!this.host.owns(this) && !this.host.idle) return;
+    const node = this.node();
+    const mine = this.b.mine?.id;
+    if (
+      node &&
+      [...this.b.leases.values()].some(
+        (l) => l.id !== mine && l.start < node.end && node.start < l.end,
+      )
+    ) {
+      return;
+    }
+    this.push();
+  }
+
+  /**
+   * The room refused this part's last write. A creation it denied (someone holds lines it
+   * changes) is tried again once the place is free, and one it refused stays unsent until its
+   * words change: either way its words stay. An edit of the value's line was refused because the
+   * line changed first: the text is the room's again, as a doc block's is (the doc editor's
+   * rescue store keeps typing it holds).
+   */
+  roomRefused(why: "denied" | "struct" | "edit"): void {
+    if (why !== "edit") {
+      this.creating = null;
+      if (why === "struct") this.refusedText = this.local;
+      return;
+    }
+    // The refused edits are never acknowledged: typing the rescue store keeps for them is written
+    // again (the doc editor's refused()).
+    this.sentAs = null;
+    this.refusedText = null;
+    this.local = null;
   }
 
   release(): void {
@@ -405,12 +531,16 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
   /** The room has the text this frame wrote: once let go, it reads it from the room again. */
   settle(): void {
     if (!this.letGo || this.local === null || this.creating !== null) return;
-    if (this.local === this.roomValue || (this.local === "" && !this.node())) this.local = null;
+    if (this.local === this.roomValue || (this.local === "" && !this.node())) {
+      this.local = null;
+      this.inRoom = this.seq;
+    }
   }
 
   landed(op: DsStructOp): void {
     if (op.op !== "set_text" || op.path !== this.textPath || this.creating === null) return;
     this.creating = null;
+    this.inRoom = Math.max(this.inRoom, this.creatingK);
     if (this.letGo && this.local === this.roomValue) {
       this.local = null;
       return;
@@ -426,6 +556,8 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
     this.want = null;
     if (w && !this.vmine) this.grant(w);
     this.push();
+    // Asked for to send what was left unsent after the block closed: let go once it is sent.
+    if (this.letGo && !this.vmine) this.release();
   }
   denied(r: LeaseDenial, by?: string): void {
     this.asking = false;
@@ -549,6 +681,22 @@ function problemWords(p: DsIssue): string {
   return `${where || "This"} ${p.message}.`;
 }
 
+/**
+ * The short code a formatted text's rescue items carry in their ids (`<code>_<id>`), so the app's
+ * one store per artifact holds every text's items and each comes back to its own text: "g" for the
+ * guidelines, "d" for the description, and a hash of the key for a component's texts.
+ */
+export function rescueCode(key: string): string {
+  if (key === "guidelines") return "g";
+  if (key === "description") return "d";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `c${h.toString(36)}`;
+}
+
 // ---------- the editor ----------
 
 interface TextPart {
@@ -571,6 +719,16 @@ export class DsEditor {
   private expect: { owner: LeaseOwner; range: LineRange | null } | null = null;
   /** The part whose edit or op was sent last: a refusal from the room is about it. */
   private last: LeaseOwner | null = null;
+  /** Whether that was a struct op (else an edit). */
+  private lastStruct = false;
+  /** Rescue reports sent to the app (`n`), with the text and the text's own report each was. */
+  private rescueN = 0;
+  private rescueReports: { n: number; key: string; local: number }[] = [];
+  /** Items offered back whose text is not drawn yet (the system does not parse): offered later. */
+  private unplaced: RescueItem[] = [];
+  /** Items offered back for a text that is gone, kept by the guidelines: their ids as the app has them. */
+  private readonly aliases = new Map<string, string>();
+  private saveQueued = false;
   private readonly texts = new Map<string, TextPart>();
   private readonly writers = new Map<string, ValueWriter>();
   private readonly drawn = new Map<string, string>();
@@ -658,6 +816,11 @@ export class DsEditor {
   }
   sent(o: LeaseOwner): void {
     this.last = o;
+    this.lastStruct = false;
+  }
+  /** No part holds the socket's lease or waits for one. */
+  get idle(): boolean {
+    return this.owner === null && this.expect === null;
   }
 
   /**
@@ -687,6 +850,7 @@ export class DsEditor {
   error(code: string): void {
     const last = this.last;
     this.last = null;
+    if (last instanceof TextValueDoc) last.roomRefused(this.lastStruct ? "struct" : "edit");
     if (last instanceof GuidelinesDoc || last instanceof TextValueDoc) {
       last.editor?.refused(code === "too_large" ? WORDS.tooLarge : WORDS.invalid);
       return;
@@ -696,7 +860,10 @@ export class DsEditor {
   }
 
   structDenied(r: LeaseDenial, by?: string): void {
+    const last = this.last;
     this.last = null;
+    // A text's creation that was refused stays unsent, and goes once the place is free.
+    if (last instanceof TextValueDoc) last.roomRefused("denied");
     this.say(r === "held" ? (by ? WORDS.held(by) : WORDS.heldPlain) : denialWords(r));
   }
 
@@ -711,7 +878,10 @@ export class DsEditor {
     if (this.owner && this.owner !== from) this.owner.yield();
     // The room ends this socket's lease before it applies the op: no answer is owed to anyone.
     this.expect = null;
-    if (from) this.last = from;
+    if (from) {
+      this.last = from;
+      this.lastStruct = true;
+    }
     if (!this.backend.struct(op)) {
       const local = this.backend as { refusal?: string | null };
       this.say(
@@ -790,10 +960,15 @@ export class DsEditor {
       // whatever else holds the socket's lease sends what it has and the lease is let go.
       for (const t of this.texts.values()) t.editor.setEditing(false);
       const o = this.owner;
-      this.owner = null;
-      this.expect = null;
-      o?.yield();
-      if (this.backend.mine) this.backend.release();
+      // A text that asked for a lease just now to write what it keeps (its typing, without its
+      // formatting) holds on to that request: its write goes in once the lease comes.
+      const keeping = [...this.texts.values()].some((t) => t.doc === o && t.editor.pending);
+      if (!keeping) {
+        this.owner = null;
+        this.expect = null;
+        o?.yield();
+        if (this.backend.mine) this.backend.release();
+      }
       this.hideNotice();
     }
     this.editing = on;
@@ -803,9 +978,15 @@ export class DsEditor {
     this.statusSoon();
   }
 
-  /** Something in the frame holds text not written yet. */
+  /**
+   * Something in the frame holds text not written yet: typing to send, typing that cannot be
+   * written as typed, kept to rescue, or a text's words the room does not have yet.
+   */
   get pending(): boolean {
-    return [...this.texts.values()].some((t) => t.editor.pending);
+    if (this.unplaced.length > 0) return true;
+    return [...this.texts.values()].some(
+      (t) => t.editor.pending || (t.doc instanceof TextValueDoc && t.doc.unsent),
+    );
   }
   get unsavable(): boolean {
     return [...this.texts.values()].some((t) => t.editor.unsavable);
@@ -814,6 +995,143 @@ export class DsEditor {
   /** Send whatever is waiting (collect, review, Publish). */
   flush(): void {
     for (const t of this.texts.values()) t.editor.flush();
+  }
+
+  /**
+   * Publish (Cmd/Ctrl+S on the page, from any of its texts): once per keystroke, and never while a
+   * text holds typing that cannot be written as typed, which is not in the draft.
+   */
+  save(): void {
+    if (this.saveQueued) return;
+    this.saveQueued = true;
+    queueMicrotask(() => {
+      this.saveQueued = false;
+      // The text that holds it says so itself (UNSAVABLE).
+      if (this.unsavable) return;
+      this.hooks.save();
+    });
+  }
+
+  /**
+   * Solo: the draft with what is typed in each text that cannot be written as typed, without its
+   * formatting (the app's kept copy), else null.
+   */
+  textWithTyping(): string | null {
+    let lines: string[] | null = null;
+    for (const t of this.texts.values()) {
+      if (!t.editor.unsavable) continue;
+      const typed = t.editor.textWithTyping();
+      if (typed === null) continue;
+      const now: string[] = lines ?? [...this.backend.lines];
+      if (t.doc instanceof GuidelinesDoc) {
+        const off = dsProjectionEnd(now) + 1;
+        if (off <= 0) continue;
+        lines = [...now.slice(0, off), ...(typed === "" ? [] : splitLines(typed))];
+        continue;
+      }
+      const doc = t.doc;
+      const path = doc.currentPath();
+      const node = path ? dsNodeAtPath(now, path) : null;
+      if (node) {
+        lines = [...now.slice(0, node.start), ...dsNodeLines(node, typed), ...now.slice(node.end)];
+      } else if (typed !== "") {
+        const r = applyDesignSystemStruct(now, {
+          op: "set_text",
+          path: doc.textPath,
+          value: typed,
+        });
+        if (typeof r !== "string") lines = r.lines;
+      }
+    }
+    return lines ? joinLines(lines) : null;
+  }
+
+  // ---------- the rescue store (rooms) ----------
+
+  /** A text's rescue report, for the app: its ids carry the text's code. */
+  private reportRescue(key: string, r: RescueReport): void {
+    const code = rescueCode(key);
+    const id = (x: string) => this.aliases.get(`${key}\n${x}`) ?? `${code}_${x}`;
+    const n = ++this.rescueN;
+    this.rescueReports.push({ n, key, local: r.n });
+    this.hooks.rescue?.({
+      upsert: r.upsert.map((it) => ({ ...it, id: id(it.id) })),
+      written: r.written.map(id),
+      gone: r.gone.map(id),
+      n,
+    });
+    for (const x of [...r.written, ...r.gone]) this.aliases.delete(`${key}\n${x}`);
+  }
+
+  /** The app's answer to report `n` and the ones before it: the ids its store holds. */
+  rescueStored(ids: readonly string[], n: number): void {
+    const upTo = new Map<string, number>();
+    for (const r of this.rescueReports) {
+      if (r.n <= n) upTo.set(r.key, Math.max(upTo.get(r.key) ?? 0, r.local));
+    }
+    this.rescueReports = this.rescueReports.filter((r) => r.n > n);
+    const held = new Set(ids);
+    for (const [key, local] of upTo) {
+      const t = this.texts.get(key);
+      if (!t) continue;
+      const code = `${rescueCode(key)}_`;
+      const mine: string[] = [];
+      for (const id of held) if (id.startsWith(code)) mine.push(id.slice(code.length));
+      for (const [k, full] of this.aliases) {
+        if (k.startsWith(`${key}\n`) && held.has(full)) mine.push(k.slice(key.length + 1));
+      }
+      t.editor.rescueStored(mine, local);
+    }
+  }
+
+  /**
+   * Items the app kept from before a reload: each goes back to its own text, which writes what the
+   * draft does not hold yet. One whose text is gone (a component removed meanwhile) goes into the
+   * guidelines as a block of its own, never dropped.
+   */
+  offerRescue(items: readonly RescueItem[]): void {
+    if (!this.parsed) {
+      for (const it of items)
+        if (!this.unplaced.some((u) => u.id === it.id)) this.unplaced.push(it);
+      return;
+    }
+    const keys = ["guidelines", "description"];
+    const list = this.system?.components;
+    for (const c of Array.isArray(list) ? list : []) {
+      if (!isObject(c) || typeof c.id !== "string") continue;
+      keys.push(`component:${c.id}:description`, `component:${c.id}:usage`);
+    }
+    const byCode = new Map(keys.map((k) => [rescueCode(k), k]));
+    const out = new Map<string, RescueItem[]>();
+    for (const it of items) {
+      const at = it.id.indexOf("_");
+      let key = at > 0 ? byCode.get(it.id.slice(0, at)) : undefined;
+      let id = at > 0 ? it.id.slice(at + 1) : "";
+      if (!key || !id || !this.textEl(key)) {
+        key = "guidelines";
+        id = it.id.replace(/_/g, "-").slice(-40);
+        this.aliases.set(`${key}\n${id}`, it.id);
+      }
+      const k = key;
+      out.set(k, [...(out.get(k) ?? []), { ...it, id }]);
+    }
+    for (const [key, list] of out) {
+      if (!this.textEl(key)) continue;
+      this.texts.get(key)?.editor.offerRescue(list);
+    }
+    this.statusSoon();
+  }
+
+  /** The unpublished changes were discarded: so is everything kept to rescue, in every text. */
+  clearRescues(): void {
+    this.unplaced = [];
+    for (const t of this.texts.values()) t.editor.clearRescues();
+    this.aliases.clear();
+  }
+
+  /** The room's status changed (a review froze or ended): each text's rescue writes follow it. */
+  roomStatus(): void {
+    for (const t of this.texts.values()) t.editor.roomStatus();
   }
 
   /** `?edit`: the first thing to change, the name field, gets the focus. */
@@ -846,6 +1164,15 @@ export class DsEditor {
       t.editor.changed();
     }
     this.update();
+    if (this.unplaced.length > 0 && this.parsed) {
+      const items = this.unplaced;
+      this.unplaced = [];
+      this.offerRescue(items);
+    }
+    // A text's words the room does not have yet go once the place is free.
+    queueMicrotask(() => {
+      for (const t of this.texts.values()) if (t.doc instanceof TextValueDoc) t.doc.retry();
+    });
   }
 
   redrawSoon(): void {
@@ -893,8 +1220,9 @@ export class DsEditor {
     const el = this.doc.createElement("div");
     const prefix = key === "guidelines" ? "guidelines" : key;
     const hooks: EditorHooks = {
-      save: () => this.hooks.save(),
+      save: () => this.save(),
       status: () => this.statusSoon(),
+      rescue: (r) => this.reportRescue(key, r),
       leave: () => this.hooks.leave(),
       fileVersion: () => this.hooks.fileVersion(),
       ask: (anchor) =>
@@ -1095,7 +1423,7 @@ export class DsEditor {
       (this.doc.activeElement as HTMLElement | null)?.blur?.();
       e.preventDefault();
       this.flush();
-      this.hooks.save();
+      this.save();
       return;
     }
     if (e.key === "Escape") {

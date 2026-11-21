@@ -416,7 +416,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   own fonts and images. A Publish from the page stores 2-space JSON, or compact JSON for the
   largest systems, with the guidelines last; an agent's own publishes keep their bytes. A system
   that no longer parses lists what an agent needs to fix. A design system may nest objects and
-  arrays at most 32 levels deep (`$extensions` included); a publish past that is refused.
+  arrays at most 32 levels deep (`$extensions` included); a publish past that is refused. Typing
+  in its formatted texts keeps the doc's rules: text the page cannot save as typed stays in its
+  block, keeps Publish off and is kept until the draft has it, across a takeover or a reload.
 
 ## 0.6.0 (2026-11-20)
 
