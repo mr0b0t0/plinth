@@ -45,6 +45,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, liveCheckpoint, liveDiscard, liveInfo } from "../../lib/api.ts";
 import { clearPageDraft, loadPageDraft, type PageDraft, savePageDraft } from "../editor/draft.ts";
 import { showToast } from "../ui/index.ts";
+import { unpublishableReason } from "./deckItems.ts";
 import {
   type AskWhat,
   collectMessage,
@@ -216,7 +217,9 @@ export function useLiveEdit({
   const def = typeDef(artifact.type);
   const merges = liveRules(artifact.type)?.merge === "lines";
   // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
-  const noun = (def?.badge ?? "doc").toLowerCase();
+  const noun = def?.noun ?? (def?.badge ?? "doc").toLowerCase();
+  // Why Publish is off for a draft that cannot be a version yet (an empty deck), in its words.
+  const unpublishable = unpublishableReason(artifact.type) ?? UNPUBLISHABLE;
   const maxBytes =
     artifact.type === "doc" ? config?.limits.max_doc_bytes : (def?.maxSourceBytes ?? undefined);
   const target = editTargetOrigin(config, contentOrigin);
@@ -549,8 +552,8 @@ export function useLiveEdit({
       } catch (e) {
         const code = reasonOf(e);
         if (code === "live_unpublishable") {
-          if (!quiet) toast(UNPUBLISHABLE, "neutral");
-          return { error: UNPUBLISHABLE };
+          if (!quiet) toast(unpublishable, "neutral");
+          return { error: unpublishable };
         }
         return refuse(e, code === "live_conflict" ? () => void openReview() : undefined, tell);
       } finally {
@@ -558,7 +561,7 @@ export function useLiveEdit({
         setSaving(false);
       }
     },
-    [id, refuse, openReview],
+    [id, refuse, openReview, unpublishable],
   );
 
   /**
@@ -808,11 +811,11 @@ export function useLiveEdit({
     if (m === "room" || m === "solo") {
       if (savingRef.current) return { error: CHOOSING_BUSY };
       if (s?.conflict_version != null) return { error: conflictText(s.conflict_version) };
-      if (s?.publishable === false) return { error: UNPUBLISHABLE };
+      if (s?.publishable === false) return { error: unpublishable };
       if (m === "room" && !s?.connected) return { error: NOT_CONNECTED };
     }
     return publishNow(undefined, "report");
-  }, [publishNow]);
+  }, [publishNow, unpublishable]);
 
   // ---------- room: autosave after a quiet spell ----------
 

@@ -7,7 +7,23 @@ export class DeckController {
   private n = 1;
   private readonly listeners = new Set<(n: number) => void>();
 
-  constructor(readonly count: number) {}
+  constructor(private total: number) {}
+
+  get count(): number {
+    return this.total;
+  }
+
+  /**
+   * A deck drawn again with another number of slides (on-page editing): the slide shown is kept
+   * when it is still there, else the last one, and listeners run when it changes.
+   */
+  setCount(count: number, current = this.n): void {
+    this.total = Math.max(1, Math.trunc(count));
+    const next = Math.min(Math.max(1, Math.trunc(current) || 1), this.total);
+    if (next === this.n) return;
+    this.n = next;
+    for (const l of this.listeners) l(next);
+  }
 
   get current(): number {
     return this.n;
@@ -48,6 +64,11 @@ export interface InputHandlers {
   fixedOverview: boolean;
   /** Columns of the overview grid, so the up and down arrows move a row. */
   columns(): number;
+  /**
+   * On-page editing: taps and swipes on the slide do not page (they place the caret and select
+   * text), and presenter view and full screen wait until editing ends.
+   */
+  editing?(): boolean;
 }
 
 const NEXT_KEYS = new Set(["ArrowRight", "ArrowDown", "PageDown", " ", "Enter", "n", "N"]);
@@ -144,12 +165,13 @@ export function bindInput(
       return;
     }
     if (e.key === "s" || e.key === "S") {
-      if (!h.fixedOverview) h.setMode(mode === "presenter" ? "deck" : "presenter");
+      if (!h.fixedOverview && !h.editing?.())
+        h.setMode(mode === "presenter" ? "deck" : "presenter");
       e.preventDefault();
       return;
     }
     if (e.key === "f" || e.key === "F") {
-      h.fullscreen();
+      if (!h.editing?.()) h.fullscreen();
       e.preventDefault();
       return;
     }
@@ -201,7 +223,7 @@ export function bindInput(
   const onUp = (e: PointerEvent) => {
     const start = down;
     down = null;
-    if (!start || h.mode() !== "deck") return;
+    if (!start || h.mode() !== "deck" || h.editing?.()) return;
     if (e.button !== undefined && e.button > 0) return;
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;

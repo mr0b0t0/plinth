@@ -88,10 +88,10 @@ const unavailable = () =>
     reason: "live_unavailable",
   });
 
-/** What can be edited on its page, for the refusal: "a doc or a sheet". */
+/** What can be edited on its page, for the refusal: "a doc or a deck or a sheet". */
 const LIVE_KINDS = Object.values(TYPE_REGISTRY)
   .filter((d) => isLiveType(d))
-  .map((d) => `a ${(d.badge ?? d.label).toLowerCase()}`)
+  .map((d) => `a ${d.noun ?? (d.badge ?? d.label).toLowerCase()}`)
   .join(" or ");
 
 /** Policy (live_edit), then a type edited on its page. */

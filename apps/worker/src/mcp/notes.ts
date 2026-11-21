@@ -172,7 +172,7 @@ export const DESIGN_SYSTEM_UNTRUSTED_NOTE =
 function liveTypeList(merge?: "lines" | "review"): string {
   const nouns = ARTIFACT_TYPES.map((t) => TYPE_REGISTRY[t])
     .filter((d) => isLiveType(d) && (merge === undefined || liveRules(d.id)?.merge === merge))
-    .map((d) => (d.badge ?? d.label).toLowerCase());
+    .map((d) => d.noun ?? (d.badge ?? d.label).toLowerCase());
   const last = nouns.pop() ?? "";
   return `a ${nouns.length ? `${nouns.join(", ")} or ${last}` : last}`;
 }

@@ -957,3 +957,337 @@ body {
     line-height: 1.5;
   }
 }
+
+/* ---------- on-page editing (edit.ts, editView.ts) ----------
+   Edit mode shows one slide at a time, scaled to fit above its speaker notes panel. Each text
+   element is a focus stop that opens in place; the open block is drawn by richblock.ts, whose
+   floating bars are counter-scaled so they read at their own size on a scaled slide. Colours are
+   the deck's own, with the editing accent (bronze, as the app's live state) for what is open or
+   held. */
+
+:root {
+  --slides-live: #8f5a2a;
+  --slides-live-soft: rgb(143 90 42 / 0.1);
+  --doc-bg: var(--slides-bg);
+  --doc-fg: var(--slides-fg);
+  --doc-border: var(--slides-rule);
+  --doc-live: var(--slides-live);
+  --doc-font: var(--slides-font);
+}
+
+:root[data-theme="dark"] {
+  --slides-live: #d39a62;
+  --slides-live-soft: rgb(211 154 98 / 0.14);
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --slides-live: #d39a62;
+    --slides-live-soft: rgb(211 154 98 / 0.14);
+  }
+}
+
+.plinth-slides[data-editing][data-mode] .plinth-slides__frame {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plinth-slides[data-editing][data-mode="deck"] .plinth-slides__frame:not([data-active]) {
+  display: none;
+}
+
+/* Following and leading wait while editing: the deck counts raw slides then. */
+.plinth-slides[data-editing] .plinth-slides__controls .plinth-slides__lead,
+.plinth-slides[data-editing] .plinth-slides__controls .plinth-slides__follow {
+  display: none;
+}
+
+.plinth-slides[data-editing] [data-plinth-edit] {
+  border-radius: 4px;
+  cursor: text;
+}
+
+.plinth-slides[data-editing] [data-plinth-edit="other"] {
+  cursor: pointer;
+}
+
+.plinth-slides[data-editing] [data-plinth-edit]:hover {
+  background: var(--slides-live-soft);
+  box-shadow: 0 0 0 8px var(--slides-live-soft);
+}
+
+.plinth-slides[data-editing] [data-plinth-edit]:focus-visible {
+  outline: 3px solid var(--slides-live);
+  outline-offset: 6px;
+}
+
+/* A block someone else holds: a bronze rule at its left. */
+.plinth-slides[data-editing] [data-held] {
+  box-shadow: -10px 0 0 -6px var(--slides-live);
+}
+
+.plinth-slides__open {
+  border-radius: 4px;
+  background: var(--slides-live-soft);
+  box-shadow: 0 0 0 8px var(--slides-live-soft);
+}
+
+.plinth-slides__open .plinth-rich__content {
+  outline: none;
+}
+
+.plinth-slides__slide .plinth-rich__toolbar,
+.plinth-slides__slide .plinth-rich__link,
+.plinth-slides__slide .plinth-rich__corner {
+  transform: scale(calc(1 / var(--s)));
+  transform-origin: 0 0;
+}
+
+.plinth-slides__placeholder {
+  align-self: flex-start;
+  margin: 0;
+  padding: 8px 12px;
+  border: 2px dashed var(--slides-rule);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--slides-muted);
+  font: 600 44px / 1.2 var(--slides-font);
+  cursor: text;
+}
+
+.plinth-slides__placeholder:hover,
+.plinth-slides__placeholder:focus-visible {
+  border-color: var(--slides-live);
+  color: var(--slides-fg);
+  outline: none;
+}
+
+.plinth-slides__hidden {
+  margin: 0;
+  font-size: 13px;
+  color: var(--slides-muted);
+}
+
+.plinth-slides__notepad-host {
+  display: none;
+}
+
+.plinth-slides[data-editing][data-mode="deck"] .plinth-slides__notepad-host {
+  display: block;
+  width: calc(var(--w) * var(--s));
+  height: 132px; /* EDIT_NOTES_H in stage.ts, less the frame's 8px gap */
+}
+
+.plinth-slides__notepad {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 8px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.plinth-slides__notepad-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plinth-slides__notepad-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--slides-muted);
+}
+
+.plinth-slides__notepad-body,
+.plinth-slides__notepad-edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 4px;
+}
+
+.plinth-slides__notepad-body > :first-child,
+.plinth-slides__notepad-edit .plinth-rich__content > :first-child {
+  margin-top: 0;
+}
+
+.plinth-slides__frame .plinth-slides__notepad .plinth-slides__notepad-body p,
+.plinth-slides__frame .plinth-slides__notepad .plinth-slides__notepad-edit p {
+  margin: 0 0 6px;
+}
+
+.plinth-slides__notepad-body {
+  cursor: text;
+}
+
+.plinth-slides__notepad-body:hover {
+  background: var(--slides-live-soft);
+}
+
+.plinth-slides__notepad-body:focus-visible {
+  outline: 2px solid var(--slides-live);
+  outline-offset: 2px;
+}
+
+.plinth-slides__notepad-none {
+  color: var(--slides-muted);
+}
+
+.plinth-slides__notepad-add,
+.plinth-slides__notepad-remove,
+.plinth-slides__ask,
+.plinth-slides__settings button {
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 8px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font: 500 13px / 1.2 var(--slides-font);
+  cursor: pointer;
+}
+
+.plinth-slides__notepad-add {
+  align-self: flex-start;
+}
+
+.plinth-slides__notepad-remove {
+  border-color: transparent;
+  color: var(--slides-muted);
+}
+
+.plinth-slides__notepad-add:hover,
+.plinth-slides__notepad-remove:hover,
+.plinth-slides__ask:hover,
+.plinth-slides__settings button:hover {
+  background: var(--slides-code-bg);
+}
+
+.plinth-slides__notepad-add:focus-visible,
+.plinth-slides__notepad-remove:focus-visible,
+.plinth-slides__ask:focus-visible,
+.plinth-slides__settings :focus-visible {
+  outline: 2px solid var(--slides-live);
+  outline-offset: 2px;
+}
+
+/* A block that is not edited in place, selected: what can be done with it, over the slide. */
+.plinth-slides__blockbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 10px;
+  background: var(--slides-bg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+}
+
+.plinth-slides__settings {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 12px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  font: 14px / 1.4 var(--slides-font);
+}
+
+.plinth-slides__settings-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.plinth-slides__settings-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.plinth-slides__settings-check {
+  grid-template-columns: auto 1fr;
+}
+
+.plinth-slides__settings-label {
+  color: var(--slides-muted);
+}
+
+.plinth-slides__settings select,
+.plinth-slides__settings input[type="text"] {
+  min-height: 32px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 6px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font: inherit;
+}
+
+.plinth-slides__settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.plinth-slides__settings .plinth-slides__settings-apply {
+  border-color: var(--slides-fg);
+  background: var(--slides-fg);
+  color: var(--slides-bg);
+}
+
+.plinth-slides__settings .plinth-slides__settings-apply:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Phone width: the slide fills the width, its notes and the settings below it. */
+@media (max-width: 480px) {
+  .plinth-slides__settings {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+  .plinth-slides__notepad-add,
+  .plinth-slides__notepad-remove,
+  .plinth-slides__ask,
+  .plinth-slides__settings button {
+    min-height: 44px;
+  }
+}
+
+/* The review's deck panes: the slides stacked, as the overview shows them. */
+.plinth-review__deck {
+  position: static;
+  inset: auto;
+  overflow: visible;
+}
+
+.plinth-slides.plinth-review__deck[data-mode]
+  .plinth-slides__frame[data-review-changed]
+  .plinth-slides__canvas {
+  outline: 3px solid var(--review-live, var(--slides-live));
+  outline-offset: 2px;
+}

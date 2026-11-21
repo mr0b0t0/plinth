@@ -10,6 +10,8 @@
 export const GUTTER = 16;
 /** How far the controls' bottom edge sits above the slide's in deck view: the gutter again. */
 export const CONTROLS_INSET = GUTTER;
+/** In edit mode the slide's speaker notes panel sits under it: its height and the gap above it. */
+export const EDIT_NOTES_H = 140;
 /** From this frame width the overview is a grid of thumbnails; below it, one column. */
 export const OVERVIEW_GRID_MIN = 700;
 /** From this frame width the grid has four columns instead of three. */

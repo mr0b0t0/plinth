@@ -78,6 +78,11 @@ export interface ReviewSetup {
   choose(outcome: ReviewOutcome, note?: string): void;
   /** For tests: reads a version's source. */
   fetchText?: (n: number) => Promise<string | null>;
+  /**
+   * Why "Publish your changes" is off for a draft the type cannot publish yet, in its words (an
+   * empty deck's). Absent: REVIEW_WORDS.unpublishable.
+   */
+  unpublishableWords?: string;
 }
 
 export interface ReviewState {
@@ -457,7 +462,7 @@ export class DraftReview {
     reason.setAttribute("role", "status");
     if (unpublishable) {
       publish.disabled = true;
-      reason.textContent = REVIEW_WORDS.unpublishable;
+      reason.textContent = this.setup.unpublishableWords ?? REVIEW_WORDS.unpublishable;
       reason.id = nextId("reason");
       publish.setAttribute("aria-describedby", reason.id);
     }

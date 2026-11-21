@@ -5,6 +5,7 @@ import {
   APP_MESSAGE_KINDS,
   boardExportMessage,
   collectMessage,
+  deckSettingsMessage,
   editMessage,
   exportMessage,
   FRAME_MESSAGE_KINDS,
@@ -47,6 +48,7 @@ describe("renderer protocol kinds", () => {
       "lead",
       "review",
       "reviewed",
+      "deck_settings",
     ]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual([
       "live",
@@ -70,6 +72,7 @@ describe("renderer protocol kinds", () => {
         leadMessage(),
         reviewMessage("n".repeat(16)),
         reviewedMessage("n".repeat(16), "busy"),
+        deckSettingsMessage(),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -86,6 +89,7 @@ describe("renderer protocol kinds", () => {
       leadMessage(),
       reviewMessage("x".repeat(16)),
       reviewedMessage("x".repeat(16), "done"),
+      deckSettingsMessage(),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });

@@ -27,6 +27,9 @@
 //   app -> frame: paired                   a deck is an audience window: it follows its presenter
 //                                          window, never the presenter in the room
 //   app -> frame: lead                     a deck's earlier frame was leading viewers: lead again
+//   app -> frame: deck_settings            a deck being edited on the page opens its settings
+//                                          popover (aspect, theme, page numbers, footer); exact
+//                                          origin only
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -172,6 +175,20 @@ export interface LeadMessage {
 
 export function leadMessage(): LeadMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "lead" };
+}
+
+/**
+ * A deck being edited on the page opens its deck settings popover (the ⋯ menu's "Deck
+ * settings…"): the frame writes them with its own struct op. It carries no data.
+ */
+export interface DeckSettingsMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "deck_settings";
+}
+
+export function deckSettingsMessage(): DeckSettingsMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "deck_settings" };
 }
 
 /**
@@ -494,6 +511,7 @@ export const APP_MESSAGE_KINDS = [
   "lead",
   "review",
   "reviewed",
+  "deck_settings",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -509,7 +527,8 @@ export type AppToFrameMessage =
   | PairedMessage
   | LeadMessage
   | ReviewMessage
-  | ReviewedMessage;
+  | ReviewedMessage
+  | DeckSettingsMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -518,7 +537,13 @@ export type AppToFrameMessage =
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: EditMessage | CollectMessage | VersionMessage | ReviewMessage | ReviewedMessage,
+  message:
+    | EditMessage
+    | CollectMessage
+    | VersionMessage
+    | ReviewMessage
+    | ReviewedMessage
+    | DeckSettingsMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;

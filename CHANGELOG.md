@@ -10,6 +10,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Edit a deck on its page.** Owners and editors now edit a deck's slide text, speaker notes and
+  settings right on its page, as formatted text with no Markdown shown, live with each other like
+  docs and sheets. Edit mode shows every slide, empty ones included ("Click to add a title"), with
+  the slide's notes in a panel under it ("Add speaker notes", "Remove speaker notes"); **Deck
+  settings…** in the ⋯ menu sets the aspect, theme, page numbers and footer. Whatever is typed
+  stays text: a `---`, `Note:` or `Date: 3 March` never splits a slide, eats its notes or becomes a
+  setting, and the room refuses any edit that would change the deck's structure. Images, and
+  blocks the editor cannot show as they are, offer **Ask an agent**. A deck whose every slide was
+  emptied cannot be published until it has text again, and a version published while people edit
+  a deck is reviewed beside their changes, never merged. **New** on the dashboard offers a blank
+  slide deck.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no

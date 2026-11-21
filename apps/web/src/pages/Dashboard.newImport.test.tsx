@@ -121,7 +121,7 @@ function xlsxFile(name: string, parts: Record<string, string>): File {
 }
 
 describe("the New menu", () => {
-  it("offers a document, a sheet and Import, and nothing else", async () => {
+  it("offers a document, a deck, a sheet and Import, and nothing else", async () => {
     backend(ROOM);
     const Dashboard = await loadPage();
     const user = userEvent.setup();
@@ -132,7 +132,7 @@ describe("the New menu", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((i) => i.firstChild && i.textContent),
-    ).toEqual(["Document", "Sheet", "Import a spreadsheet…"]);
+    ).toEqual(["Document", "Slide deck", "Sheet", "Import a spreadsheet…"]);
     // Connect an agent has its own ways in (the sidebar, the empty state), not this menu.
     expect(within(menu).queryByRole("menuitem", { name: "Connect an agent" })).toBeNull();
   });

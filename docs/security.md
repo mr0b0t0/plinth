@@ -90,6 +90,8 @@ make a test pass.
 | Design exports drain Browser Rendering | Someone with a link, or a script with a token, asks for exports in a loop or in parallel to run up the operator's browser hours or take every browser the account may run | Only people who may view the artifact, and no token limited to one artifact; `DESIGN_EXPORTS_PER_HOUR` per person (per client network signed out, an IPv6 /64 as one), `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` per design for everyone but its owner and editors and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` for the whole instance, all reserved before the browser starts and never given back, refused requests spending none; at most two exports at once instance-wide, held until the browser has closed; 25 s per render, then the browser is closed; `DESIGN_EXPORT=false` turns it off |
 | A browser or paste puts markup into an edited doc block | An extension or a paste leaves `<img onerror>` or a styled `<span>` in the `contenteditable` block | The editor reads the block back by allowlist (bold, italic, code, strikethrough, breaks, text, and links and kept parts it drew, known by reference); anything else is text, paste is `text/plain`, and every block renders through the sanitizer ([Docs as formatted text](#docs-as-formatted-text)) |
 | A person's edit makes the doc unpublishable or changes other blocks | Typing `<html>` as a paragraph, or deleting the block above an agent's `<html>` block | The serializer escapes a block's leading `<`, a Delete or Move re-sends the agent's block escaped, the room checks the doc's rules, and only the leased block's lines are replaced; blocks the model would change are read-only |
+| Deck structure smuggled through slide text | A forged edit adds a `---`, an unclosed fence that swallows the next separator, a notes replacement without its marker, or `aspect: 4:3` under a bare opening `---` | The room's slides structure rule on every edit (one part, the same structural kinds, the same fence state, the same front matter end, `deckKeeps` on the result); structure only through struct ops with a postcondition; the serializer escapes structure per part ([Decks on the page](#decks-on-the-page)) |
+| A deck op overwrites a slide someone is typing in | An editor's `add_notes` lands on the slide another editor holds | Each op lists every range it removes or rewrites and every point it inserts at, and is `held` while another lease overlaps one; other leases move by the op's line map ([Decks on the page](#decks-on-the-page)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1573,8 +1575,8 @@ and agents have no bulk delete; only the owner clears everything, in the app.
 
 A page that declares `room` (spec: "Live rooms") gets presence and broadcast through one WebSocket
 to `/__plinth/room/v1/page` on its own content origin, served by the artifact's Durable Object
-(`ArtifactRoom`, one per artifact). Plinth's doc and sheet renderers use `/__plinth/room/v1/doc` the
-same way, and its slides renderer `/__plinth/room/v1/slides`. The room runs Plinth's fixed code;
+(`ArtifactRoom`, one per artifact). Plinth's doc, slides and sheet renderers use
+`/__plinth/room/v1/doc` the same way, and its slides renderer `/__plinth/room/v1/slides`. The room runs Plinth's fixed code;
 there is still no per-artifact server code.
 
 **The threat: cross-site WebSocket hijacking.** A WebSocket handshake is not subject to CORS: any
@@ -1602,7 +1604,8 @@ The upgrade (`apps/worker/src/content/room.ts`) therefore checks, in this order:
    without a pass (one that forges `Origin` outside a browser) learns only what the content path
    tells them, that the artifact exists, and never its type or whether it declares `room`.
 8. **Kind.** The path names it: `page` for an HTML artifact whose current version declares
-   `room`, `doc` for a doc or a sheet (a type with `edit: "live"`, with `ALLOW_LIVE_EDITING`),
+   `room`, `doc` for a doc, a deck or a sheet (a type with `edit: "live"`, with
+   `ALLOW_LIVE_EDITING`),
    `slides` for a deck (a type with `follow`, with `ALLOW_SLIDES_FOLLOW`). Any other name under the
    prefix is a 404.
 9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do. Everyone
@@ -1636,13 +1639,14 @@ closes sockets whose epoch is old, whose pass expired, or whose artifact is gone
 lost call and changes made with SQL, so a decision can be stale for at most a minute. 4401 makes the
 runtime re-check `/__plinth/api/v1/room` and fire `plinth:expired` when access is over.
 
-**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc or a sheet (a type
+**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc, a deck or a sheet (a type
 with `edit: "live"`) only, and only with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
 principal was signed in) decides the right: signed-in editors may lease and edit, editors confirmed
 by code only watch, and passes sealed before the flag existed watch until a reload. The room
 enforces leases (exclusive line ranges), refuses edits past the type's limits (a doc's 1 MB and
-50,000 lines, a sheet's 1 MB and 10,000 rows; frames up to 64 KiB) and every line a sheet cannot
-hold ([Live sheets](#live-sheets)), and never creates a version; checkpoints and discards go through
+50,000 lines, a deck's 1 MB and 50,000 lines, a sheet's 1 MB and 10,000 rows; frames up to 64
+KiB), every line a sheet cannot hold ([Live sheets](#live-sheets)) and every edit that would change
+a deck's structure ([Decks on the page](#decks-on-the-page)), and never creates a version; checkpoints and discards go through
 the app host's REST API.
 
 **The slides channel.** `/__plinth/room/v1/slides` carries slide numbers and nothing else
@@ -1672,7 +1676,7 @@ the leader, so followers do not get `stopped` while the room has not yet seen th
 **Caps.** Per artifact, per viewer and per connection, with a connect throttle (see
 [Rate limits and quotas](#rate-limits-and-quotas)); a socket's hibernation attachment stays under
 1,900 bytes, so an update that would pass it is refused. A room stores almost nothing: its alarm
-and, for a doc or sheet edited on its page, one record of the saves in progress (their hashes, revs
+and, for a doc, deck or sheet edited on its page, one record of the saves in progress (their hashes, revs
 and lock ids, never text), removed when the artifact is deleted or taken down.
 
 **Availability check.** `GET /__plinth/api/v1/room` runs the data API's caller checks 1 to 4, then
@@ -2500,7 +2504,8 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
 
 ## Inline editing
 
-Owners and editors edit docs and sheets on their page (spec: "Editing", "Editing on the page").
+Owners and editors edit docs, decks and sheets on their page (spec: "Editing", "Editing on the
+page").
 Every editing control, and every rendering of draft or version content, runs in Plinth's own
 renderer on the artifact's content origin (`script-src 'self'`); the app page holds the strip and
 makes the REST calls, and renders no content. Nothing new is reachable from a page: no endpoint,
@@ -2539,11 +2544,12 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   Publish would refuse, and a person's natural edit cannot either: the doc editor escapes a
   leading `<` of any block it writes as `\<`, and a Delete or Move that would bring an agent's
   block starting like an HTML document to the top writes that block escaped in the same edit
-  ([Docs as formatted text](#docs-as-formatted-text)). Structural ops must be of a kind the
-  artifact's type takes, and may not touch another socket's lease.
+  ([Docs as formatted text](#docs-as-formatted-text)); a deck keeps its structure ([Decks on the
+  page](#decks-on-the-page)). Structural ops must be of a kind the artifact's type takes, and may
+  not touch another socket's lease.
 - **Never merged, except a doc's clean merge.** A doc's draft is merged with a version published
   meanwhile only when `merge3` is clean, the result fits and it passes the doc's rules (#49). A
-  sheet's draft is never merged. Otherwise the draft freezes, and the editors see the whole-draft
+  sheet's or a deck's draft is never merged. Otherwise the draft freezes, and the editors see the whole-draft
   review: both whole sides rendered in the frame, each against the files it would publish, the
   change lists of both with their files parts, and exactly two choices. Neither choice combines
   anything, so neither can produce a result that means something nobody wrote.
@@ -2617,8 +2623,9 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   presses Send. An `ask` that passes these checks is still only a hint: the app takes it while the
   tab is visible and no dialog is open, and one that would open the closed comments panel or the
   Ask dialog at most once a second (the reopen limit of comments from the page), so a frame
-  cannot keep reopening what the person closed. The doc renderer sends `ask` with block anchors;
-  other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
+  cannot keep reopening what the person closed. The doc renderer sends `ask` with block anchors,
+  and the slides renderer with slide anchors and structural words ([Decks on the
+  page](#decks-on-the-page)); other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
   bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose
   origin is `"null"`; the bar's Ask an agent and the comments panel need none.
 - **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path
@@ -2672,6 +2679,48 @@ CSP, sandbox flag or env var was added.
   [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "Pointing at" chip, is
   one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the
   message for any other value, renders it as text, and never posts it.
+
+## Decks on the page
+
+People edit a deck's slide text, speaker notes and settings on its page (spec: "Decks on the
+page"), through the doc channel and the whole-draft review that docs and sheets use. A deck is
+split into slides before Markdown, so a few lines that are ordinary Markdown are structure in a
+deck (`---`, `|||`, `Note:`, front matter `key: value` lines at its start, and the fences that
+decide which of those count). Text a person types must never become any of them. Nothing new is
+reachable from a page: no endpoint, cookie, CSP, sandbox flag or env var was added.
+
+- **The room checks the structure, not the slide count.** Every text edit of a deck runs the
+  slides structure rule in the room (`liveTypes.ts`, on `deckLayout` in `slides.ts`, which
+  `parseDeck` reads every deck through, so the room and every slide shown cannot disagree): the
+  edit lies inside one part of one raw slide and never in the front matter, it removes and puts in
+  the same structural kinds in the same order, it leaves the fence state as it found it, it
+  leaves where the front matter ends unchanged, and `deckKeeps` then checks the whole result:
+  every line outside the edit has the kind it had and the front matter is byte for byte as it
+  was. So a forged edit that adds a `---`, opens an unclosed fence that would swallow a later
+  separator, drops a notes marker, or types `aspect: 4:3` under a bare opening `---` is refused
+  (`invalid`) and changes nothing. An inserted line may not hold a carriage return (which
+  `parseDeck` reads as a line break), and a deck is put in the draft with CRLF read as LF.
+- **Structure changes only through struct ops**, whose kind must be the deck's (a sheet's op on a
+  deck is `invalid`), at the current `rev`, and whose postcondition runs in the room before the
+  result is kept: `deckKeeps` with the op's line map (only `set_deck` may write the front matter),
+  the raw slide count, every slide the op does not name byte for byte, and the deck's rules
+  (size, at most 500 raw slides, no HTML-document start). No op leaves a bare `---` at line 0. The
+  footer `set_deck` writes is plain text on one line (no control or format characters, at most
+  120 characters), checked by the frame schema and again by the op.
+- **Ops never touch a part someone is typing in.** An op lists every range it removes or rewrites
+  and every point it inserts at, and is refused (`held`) while another socket's lease overlaps
+  one; every other lease moves by the op's line map, so it keeps exactly the lines it held, and a
+  lease the map cannot keep ends rather than move onto other lines.
+- **What is written.** The slides serializer escapes deck structure per part, on top of the doc's
+  escaping, so a person can type `---`, `Note:`, `|||` or `Date: 3 March` and the deck shows
+  exactly that text; it reads its own output back before it sends, and sends nothing that would
+  not read back into the same model.
+- **Ask an agent from a slide.** The renderer's `ask` carries a structural anchor
+  (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`) and structural words ("Slide 3, image
+  1"), never the deck's text, so no draft text reaches the app page.
+- **No HTML parsing in the editor.** As for docs: the editable block is drawn from its model with
+  `createElement` and `textContent`, read back by allowlist, and every rendered block, note and
+  kept part goes through the unchanged sanitizer.
 
 ## Comparing versions
 

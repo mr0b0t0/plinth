@@ -85,7 +85,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "8a7b13ba735c4980b0d2d0b99e0812fdae5e785b0e7f093af2e12514534a8e21",
+      tools: "e58551fda8e9ecb422c7cff832d55f2df7a630eef8a1362560c1ad149171cda2",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -95,7 +95,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "2957bdacdbb206ec1d7b007f778e1193932d29c39c4d96d5f5343e1bd0c948d8",
+      tools: "9fa951273eb62e27a10ee4dfbc897c2f4d4e738caa2172fb80c34e275c2a74b0",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -107,7 +107,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "429c72903e49804cc8471455bedbb383e5250a4a8faf7d6b8d4d47fd6edaf5e3",
+      tools: "3c0de5f07a06560ef6eeeb7dd3da7232348943a1ce7b08364f348385e4821063",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -117,7 +117,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "26ebb339ce58415212f5a712d97247f31e08c560d2ccaecc7b319981b4cb6e1c",
+      tools: "ef3c4093902c74976e96a484c975516d308f1dfcf2d14af222e5b80536eb3675",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "2a24eb0eedee809683ad4aec0509c0bb0626a4a53ffd5ee771625da43f35a1ee",

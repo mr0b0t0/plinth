@@ -483,7 +483,13 @@ export class Follow {
 
   /** Following someone else: the deck shows the leader's slide, whatever the app asks for. */
   get holding(): boolean {
-    return !this.detached && this.following && !this.client.wantLead && this.client.leader !== null;
+    return (
+      !this.detached &&
+      !this.paused &&
+      this.following &&
+      !this.client.wantLead &&
+      this.client.leader !== null
+    );
   }
 
   /**
@@ -536,9 +542,26 @@ export class Follow {
     this.sync();
   }
 
+  /**
+   * Edit mode (slides-text): the deck shows every raw slide, so its numbers are not the ones
+   * viewers see. While paused the deck neither follows the leader nor sends its own slide; on
+   * resume it catches up (a lead sends the slide shown, `shown` in the deck's own numbers).
+   */
+  pause(on: boolean, shown?: number): void {
+    if (this.paused === on) return;
+    this.paused = on;
+    if (on) return;
+    if ((this.client.leading || this.client.wantLead) && shown !== undefined) {
+      this.client.moved(shown);
+    }
+    this.sync();
+  }
+
+  private paused = false;
+
   /** The deck changed slide, by the person, the app or the leader. */
   private moved(n: number): void {
-    if (this.applying) return;
+    if (this.applying || this.paused) return;
     if (this.client.leading || this.client.wantLead) {
       this.client.moved(n);
       return;
@@ -556,7 +579,13 @@ export class Follow {
     const c = this.client;
     const leader = c.leader;
     if (!leader) this.following = true;
-    if (leader && this.following && !c.wantLead && this.o.deck.current !== leader.slide) {
+    if (
+      !this.paused &&
+      leader &&
+      this.following &&
+      !c.wantLead &&
+      this.o.deck.current !== leader.slide
+    ) {
       this.applying = true;
       try {
         this.o.deck.go(leader.slide);
