@@ -247,10 +247,8 @@ export default function Dashboard() {
   const chooseDefault = async (a: ArtifactSummary, on: boolean) => {
     try {
       await setDefaultDesignSystem(a.id, on);
+      // The badge says it; only a failure needs a toast.
       setList((l) => (l.status === "ready" ? { ...l, items: applyDefault(l.items, a.id, on) } : l));
-      toast.success(
-        on ? "Set as your default design system" : "Removed as your default design system",
-      );
     } catch (e) {
       toast.error(
         "Could not change your default design system",

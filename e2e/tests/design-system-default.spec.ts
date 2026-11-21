@@ -43,7 +43,6 @@ test("the owner sets a design system as their default from the dashboard menu", 
   const dir = shotsDir("ds-default");
   if (dir) await page.screenshot({ path: `${dir}/${info.project.name}-menu.png` });
   await page.getByRole("menuitem", { name: "Set as default" }).click();
-  await expect(page.getByText("Set as your default design system")).toBeVisible();
   await expect(row.locator(".pl-badge")).toHaveText("Default design system");
   // The other design system keeps its plain badge.
   const other = page.locator(".pl-dash__card, .pl-dash__row").filter({ hasText: "Marketing" });
