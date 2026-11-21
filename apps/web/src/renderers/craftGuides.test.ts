@@ -5,6 +5,7 @@
 // The format limits the guides quote are pinned in apps/worker/test/craft-guides.test.ts.
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { DEFAULT_TEXT_PX } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_WIDTH } from "./sheet/grid.ts";
 import { FIT_STEPS } from "./slides/layout.ts";
@@ -42,11 +43,12 @@ describe("the craft guides match the renderers", () => {
     expect(sheet).toContain("Cells do not wrap");
   });
 
-  it("whiteboard: one text size, and a board opens fitted at no more than 100%", () => {
+  it("whiteboard: 14 px text unless a block names a size, and a board opens fitted at no more than 100%", () => {
     const wb = guide("whiteboard");
     const text = rule(read(path.join(here, "whiteboard/whiteboard.css")), ".wb-text");
     expect(text).toContain("font-size: 14px");
-    expect(wb).toContain("one size (14 px)");
+    expect(DEFAULT_TEXT_PX).toBe(14);
+    expect(wb).toContain("Block text is 14 px unless a block names a `size`");
     // A small board is not blown up past 100%.
     expect(fitCamera({ x: 0, y: 0, w: 200, h: 140 }, 1200, 800).zoom).toBe(1);
     expect(wb).toContain("at most 100%");
