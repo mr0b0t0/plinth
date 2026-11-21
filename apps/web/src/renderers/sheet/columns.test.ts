@@ -939,14 +939,15 @@ describe("freezing", () => {
   it("from the Column menu: up to the selected column, and unfrozen again", async () => {
     const f = solo();
     cell("B2").focus();
-    expect(columnItem("Unfreeze columns").disabled).toBe(true);
+    expect(columnItem("Unfreeze columns").hidden).toBe(true);
     item("Freeze up to this column").click();
     expect((await header(f)).freeze).toEqual({ cols: 2 });
     expect(said()).toBe("Columns A to B stay in view.");
     expect(cell("A2").classList.contains("plinth-sheet__frozen")).toBe(true);
-    // Frozen up to B already: only Unfreeze does something there.
+    // Frozen up to B already: only Unfreeze does something there, so only it shows.
     cell("B2").focus();
-    expect(columnItem("Freeze up to this column").disabled).toBe(true);
+    expect(columnItem("Freeze up to this column").hidden).toBe(true);
+    expect(item("Unfreeze columns").hidden).toBe(false);
     item("Unfreeze columns").click();
     expect((await header(f)).freeze).toBeUndefined();
     expect(cell("A2").classList.contains("plinth-sheet__frozen")).toBe(false);
@@ -956,10 +957,19 @@ describe("freezing", () => {
     const cols = Array.from({ length: 7 }, (_, i) => ({ name: `C${i}`, type: "text" }));
     solo({}, [JSON.stringify({ plinth: "sheet", v: 1, columns: cols }), '["a"]']);
     cell("E2").focus();
-    expect(columnItem("Freeze up to this column").disabled).toBe(false);
+    expect(columnItem("Freeze up to this column").hidden).toBe(false);
     key(item("Insert left"), "Escape");
     cell("F2").focus();
-    expect(columnItem("Freeze up to this column").disabled).toBe(true);
+    expect(columnItem("Freeze up to this column").hidden).toBe(true);
+    // Arrows skip the hidden items.
+    const items = [
+      ...document.querySelectorAll<HTMLButtonElement>("#plinth-sheet-menu-column [role=menuitem]"),
+    ];
+    const settings = items.find((b) => b.textContent === "Column settings…");
+    const del = items.find((b) => b.textContent === "Delete column") as HTMLButtonElement;
+    del.focus();
+    key(del, "ArrowDown");
+    expect(document.activeElement).toBe(settings);
   });
 
   it("has no header controls outside edit mode", () => {

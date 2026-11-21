@@ -484,6 +484,18 @@ test("a cell opens in a docked editor at phone width, and in the cell otherwise"
   expect(box && box.x >= 0 && box.x + box.width <= (page.viewportSize()?.width ?? 1024)).toBe(true);
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
+  // So does the Column menu, the one nearer the right edge.
+  await frame.getByRole("button", { name: "Column", exact: true }).click();
+  const columns = frame.getByRole("menu", { name: "Column" });
+  await expect(columns).toBeVisible();
+  const right = await columns.boundingBox();
+  expect(
+    right && right.x >= 0 && right.x + right.width <= (page.viewportSize()?.width ?? 1024),
+  ).toBe(true);
+  // Nothing is frozen: no Unfreeze to show.
+  await expect(columns.getByRole("menuitem", { name: "Unfreeze columns" })).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(columns).toBeHidden();
 });
 
 test("an agent's version during a row move or a width change is never merged: the review shows both", async ({

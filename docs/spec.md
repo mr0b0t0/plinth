@@ -2591,7 +2591,10 @@ and the whole-draft review is the only way on (below).
   they are the one way in to rows and columns: Row (insert above, insert below, move row up, move
   row down, delete) and Column (insert left, insert right, delete, "Freeze up to this column",
   "Unfreeze columns", and the column's settings, in a popover under the column's name that Escape
-  or Cancel closes). Alt+Shift+Up and Alt+Shift+Down move the selected row too, and a move is
+  or Cancel closes). A freeze item shows only where it does something: "Freeze up to this column"
+  up to the fifth column and not when the columns are frozen up to that one already, "Unfreeze
+  columns" while some are frozen. A menu near the right edge of the page opens leftwards as far as
+  it needs to stay in view. Alt+Shift+Up and Alt+Shift+Down move the selected row too, and a move is
   announced ("Row 4 moved to row 3") once the room says it applied it, with its row selected where
   it went; rows move in the sheet's own order, so not while a sort is on. Freezing keeps up to five
   columns in view. The column settings set the name, type, number format, currency, decimals,

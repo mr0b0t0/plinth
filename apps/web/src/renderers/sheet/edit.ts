@@ -1447,11 +1447,18 @@ export class SheetEditor {
       list.append(item);
     }
     const enabled = () =>
-      [...list.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].filter((b) => !b.disabled);
+      [...list.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].filter(
+        (b) => !b.disabled && !b.hidden,
+      );
     const show = (focus: "first" | "last") => {
       this.closeMenu(false);
       this.updateStrip();
       list.hidden = false;
+      // Kept inside the page: a menu near the right edge (a phone) opens leftwards as far as needed.
+      list.style.left = "";
+      const room = (this.doc.documentElement.clientWidth || Number.POSITIVE_INFINITY) - 8;
+      const over = list.getBoundingClientRect().right - room;
+      if (over > 0) list.style.left = `${-over}px`;
       button.setAttribute("aria-expanded", "true");
       this.menuOpen = { button, list };
       this.doc.addEventListener("pointerdown", this.onOutside, true);
@@ -1525,8 +1532,13 @@ export class SheetEditor {
     set("rowUp", row <= 2 || row > last);
     set("rowDown", row < 2 || row >= last);
     set("rowDelete", row < 2);
-    set("colFreeze", col + 1 > MAX_FROZEN || frozen === col + 1);
-    set("colUnfreeze", frozen === 0);
+    // The freeze items show only where they do something.
+    const hide = (k: string, hidden: boolean) => {
+      const b = this.stripButtons.get(k);
+      if (b) b.hidden = hidden;
+    };
+    hide("colFreeze", col + 1 > MAX_FROZEN || frozen === col + 1);
+    hide("colUnfreeze", frozen === 0);
     set("colDelete", cols <= 1);
     set("colLeft", cols >= LIMITS.maxSheetColumns);
     set("colRight", cols >= LIMITS.maxSheetColumns);
