@@ -3156,9 +3156,10 @@ deleting slides, and a slide's columns, stay with agents for now.
   ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)). Typing a slide block or
   the notes cannot write as typed stays as typed, the place stays open, the frame reports unsent
   changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
-  Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the tab's
-  kept copy has it without its formatting, and in a room the holder sends `keep` every 20 s while
-  connected. If edit mode ends anyway, it is written without its formatting. Typing the room does
+  Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the
+  rescue store has it without its formatting, and in a room the holder sends `keep` every 20 s
+  while connected. Adding or removing speaker notes and applying deck settings wait too (with the
+  same words), since a structural change would take the place's lines from under it. If edit mode ends anyway, it is written without its formatting. Typing the room does
   not have yet when the lease ends (in the debounce, not writable as typed, or not sent because the
   deck is at its size limit, the block is too long or the socket is down) is kept: taken over,
   it goes in as a new block below the block (kept notes, after the slide's notes once nobody holds
@@ -3179,10 +3180,14 @@ deleting slides, and a slide's columns, stay with agents for now.
   deck at its size limit cannot take counts as `unsavable` too: its block stays open as typed
   (Escape, focus leaving and a click elsewhere leave it open, and the frame says "The deck is at
   its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S, Done
-  and Ask's "Publish my changes first" wait, the page asks before it is left, and the tab's kept
-  copy has the typing in its place. If edit mode ends anyway it is kept on the page with **Copy**,
-  still `unsavable`, and editing again opens it as a block of its own. Alone, the room's frame
-  limit does not apply to a block: only the deck's size limit does.
+  and Ask's "Publish my changes first" wait, the page asks before it is left, and the typing is in
+  the rescue store. The tab's kept copy stays the deck as written, which can still be published
+  from "Unpublished changes from earlier in this tab" after a reload (the typing would put it past
+  the size limit), and the rescue store writes the typing back once editing starts again. If edit
+  mode ends anyway it is kept on the page with **Copy**, still `unsavable`, and editing again opens
+  it as a block of its own. Alone, the room's frame limit does not apply to a block: only the
+  deck's size limit does. A struct op that removes the lines a solo place holds ends its lease as
+  a room's closed draft does, so its typing is written again or kept, never left unleased.
 - **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
   change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;

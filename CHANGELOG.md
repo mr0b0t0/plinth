@@ -421,7 +421,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   yet goes back in (below the block when someone took it over, in its place after a review), what
   cannot go in yet stays on the page with **Copy**, and after a reload it goes back into the slide
   or the speaker notes it was typed in. Editing alone (without live rooms), text a full deck
-  cannot take stays in its block, and Publish and Done wait until it is shortened.
+  cannot take stays in its block, and Publish and Done wait until it is shortened; the copy kept
+  for a reload can still be published, and the text comes back when editing starts again.
 
 ## 0.6.0 (2026-11-20)
 

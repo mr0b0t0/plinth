@@ -7,6 +7,7 @@
 // set_deck; and the review's deck pane draws each side with its own version's files.
 import {
   LIMITS,
+  liveSlidesTooLarge,
   parseDeck,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -14,8 +15,10 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
+import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import { boot, deckPane } from "./boot.ts";
-import { DECK_WORDS, EDIT_DEBOUNCE_MS } from "./edit.ts";
+import { DECK_WORDS, EDIT_DEBOUNCE_MS, LocalDeck } from "./edit.ts";
 import { EDIT_VIEW_WORDS } from "./editView.ts";
 import type { Geometry } from "./exportModel.ts";
 import type { PptxBuilder } from "./pptxModel.ts";
@@ -83,6 +86,18 @@ const lastStatus = (f: Framed) =>
   posts(f)
     .filter((p) => p.type === "live")
     .at(-1);
+
+/** The texts of the items the frame's rescue reports put in the app's store, and still there. */
+function rescued(f: Framed): string[] {
+  const items = new Map<string, string>();
+  for (const p of posts(f).filter((x) => x.type === "rescue")) {
+    for (const it of readRescueItems(p.upsert) ?? []) items.set(it.id, it.text);
+    for (const id of [...((p.written as string[]) ?? []), ...((p.gone as string[]) ?? [])]) {
+      items.delete(id);
+    }
+  }
+  return [...items.values()];
+}
 
 function start(text: string): Framed {
   mount(text);
@@ -452,7 +467,7 @@ describe("typing the deck cannot write as typed, alone", () => {
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
   };
 
-  it("is in the app's kept copy, without its marks, and marked unsavable", async () => {
+  it("is in the app's rescue store, without its marks, and marked unsavable", async () => {
     const f = start("# One\n---\n## Two");
     appMessage(f, msg({ type: "goto", slide: 2 }));
     (active().querySelector("h2") as HTMLElement).click();
@@ -463,7 +478,9 @@ describe("typing the deck cannot write as typed, alone", () => {
     const d = posts(f)
       .filter((p) => p.type === "draft")
       .at(-1);
-    expect(d).toMatchObject({ text: "# One\n---\n## abc", unsavable: true });
+    // The app's kept copy is the deck as written; the typing is kept beside it.
+    expect(d).toMatchObject({ text: "# One\n---\n## Two", unsavable: true });
+    expect(rescued(f)).toEqual(["## abc"]);
     // The keystroke is not undone.
     expect(editable().textContent).toBe("abc");
   });
@@ -504,8 +521,6 @@ describe("typing a deck at its size limit cannot take, alone", () => {
   // A third slide fills the deck to 23 bytes under its size limit; the typing adds 104.
   const deck = `# One\n---\n## Two\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
   const typed = `Two ${"z".repeat(100)}`;
-  /** The deck with the typing in slide 2's title, as the app's kept copy holds it. */
-  const withTyping = deck.replace("## Two\n", `## ${typed}\n`);
   /** The last draft the frame answered a `collect` with. */
   const lastDraft = (f: Framed) =>
     posts(f)
@@ -531,18 +546,41 @@ describe("typing a deck at its size limit cannot take, alone", () => {
     expect(lastStatus(f)).toMatchObject({ unsavable: true, publishable: false });
   });
 
-  it("answers the app's collect (Publish) as unsavable, with the typing in its copy", () => {
+  it("answers the app's collect (Publish) as unsavable, its copy one that can be published", () => {
     const f = typeTooMuch();
     appMessage(f, msg({ type: "collect", nonce: NONCE }));
+    // The kept copy is the deck as written, within its size limit, so a reload can still publish
+    // every edit written before; the typing it could not take is in the rescue store beside it.
     expect(lastDraft(f)).toEqual(
-      expect.objectContaining({ type: "draft", nonce: NONCE, text: withTyping, unsavable: true }),
+      expect.objectContaining({ type: "draft", nonce: NONCE, text: deck, unsavable: true }),
     );
+    expect(liveSlidesTooLarge(deck)).toBe(false);
+    expect(rescued(f)).toEqual([`## ${typed}`]);
   });
 
   it("answers a collect right after typing as unsavable too, before the pause ends", () => {
     const f = typeTooMuch(false);
     appMessage(f, msg({ type: "collect", nonce: NONCE }));
-    expect(lastDraft(f)).toMatchObject({ text: withTyping, unsavable: true });
+    expect(lastDraft(f)).toMatchObject({ text: deck, unsavable: true });
+    expect(rescued(f)).toEqual([`## ${typed}`]);
+  });
+
+  it("keeps the edits written before it publishable in the kept copy", () => {
+    const f = start(deck);
+    // An edit the deck takes, then typing it cannot.
+    (active().querySelector("h1") as HTMLElement).click();
+    typeText("Uno");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    editable().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    appMessage(f, msg({ type: "goto", slide: 2 }));
+    (active().querySelector("h2") as HTMLElement).click();
+    typeText(typed);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    appMessage(f, msg({ type: "collect", nonce: NONCE }));
+    const kept = lastDraft(f);
+    expect(kept).toMatchObject({ text: deck.replace("# One", "# Uno"), unsavable: true });
+    expect(liveSlidesTooLarge(kept?.text as string)).toBe(false);
+    expect(rescued(f)).toEqual([`## ${typed}`]);
   });
 
   it("sends no save from the frame's Cmd/Ctrl+S", () => {
@@ -596,11 +634,12 @@ describe("typing a deck at its size limit cannot take, alone", () => {
     expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
     await Promise.resolve();
     expect(lastStatus(f)).toMatchObject({ unsavable: true, publishable: false });
-    // The app's kept copy and Publish see it.
+    // Publish sees it; the app's kept copy is the deck as written, the typing in its store.
     appMessage(f, msg({ type: "collect", nonce: NONCE }));
     const kept = lastDraft(f);
     expect(kept?.unsavable).toBe(true);
-    expect(kept?.text).toBe(deck.replace("---\n## Two\n", `---\n\n## ${typed}\n\n## Two\n`));
+    expect(kept?.text).toBe(deck);
+    expect(rescued(f)).toEqual([`## ${typed}`]);
     // Editing again opens it in a block of its own, to be shortened.
     appMessage(f, msg({ type: "edit", on: true }));
     expect(editable().textContent).toBe(typed);
@@ -608,5 +647,115 @@ describe("typing a deck at its size limit cannot take, alone", () => {
     typeText("Two, again");
     expect(collect(f)).toBe(deck.replace("## Two\n", "## Two\n\n## Two, again\n"));
     expect(lastDraft(f)?.unsavable).toBeUndefined();
+    // Written: the store lets it go.
+    expect(rescued(f)).toEqual([]);
+  });
+
+  it("is written back from the app's store after a reload, once the deck can take it", async () => {
+    const USER = "u1";
+    const ART = "art1";
+    sessionStorage.clear();
+    let f = typeTooMuch();
+    for (const p of posts(f).filter((x) => x.type === "rescue")) {
+      mergeRescue(USER, ART, readRescueItems(p.upsert) ?? [], [
+        ...((p.written as string[]) ?? []),
+        ...((p.gone as string[]) ?? []),
+      ]);
+    }
+    // A reload: the kept copy was published from the notice with some room made, and editing
+    // starts again on it; the app offers what its store kept.
+    stop?.();
+    stop = undefined;
+    const roomy = `# One\n---\n## Two\n---\n${"y".repeat(100)}`;
+    f = start(roomy);
+    appMessage(f, msg({ type: "rescue", items: readRescueItems(loadRescue(USER, ART)) }));
+    await Promise.resolve();
+    const text = collect(f);
+    expect(text).toContain(typed);
+    expect(parseDeck(text).slides[1]?.head).toContain(typed);
+    sessionStorage.clear();
+  });
+});
+
+describe("speaker notes the deck at its size limit cannot take, alone", () => {
+  const deck = `# One\n\nNote: hi\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
+  const more = `hi ${"z".repeat(200)}`;
+
+  /** Opens slide 1's notes and types more than the deck can take. */
+  const typeTooMuch = () => {
+    const f = start(deck);
+    (active().querySelector(".plinth-slides__notepad-body") as HTMLElement).click();
+    const ed = document.querySelector(
+      '.plinth-slides__notepad-edit [contenteditable="true"]',
+    ) as HTMLElement;
+    ed.textContent = more;
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    return { f, ed };
+  };
+
+  it.each(["remove", "add"] as const)(
+    "refuses %s notes while the open notes hold that typing",
+    async (what) => {
+      const { f, ed } = typeTooMuch();
+      if (what === "remove") {
+        (active().querySelector(".plinth-slides__notepad-remove") as HTMLButtonElement).click();
+      } else {
+        // Another slide's Add speaker notes: no struct op goes out from under the open notes.
+        appMessage(f, msg({ type: "goto", slide: 2 }));
+        (active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement).click();
+        vi.advanceTimersByTime(1);
+      }
+      // Nothing changed: the notes are in the deck, still open with the typing, under their lease.
+      expect(collect(f)).toBe(deck);
+      expect(ed.isConnected).toBe(true);
+      expect(ed.textContent).toBe(more);
+      expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
+      await Promise.resolve();
+      expect(lastStatus(f)?.unsavable).toBe(true);
+      // Shortened, it is written in place, and the notes close as usual.
+      ed.textContent = "short";
+      ed.dispatchEvent(new Event("input", { bubbles: true }));
+      const text = collect(f);
+      expect(text).toBe(deck.replace("Note: hi", "Note: short"));
+      expect(parseDeck(text).slides[1]?.notes).toBe("");
+      await Promise.resolve();
+      expect(lastStatus(f)?.unsavable).toBeUndefined();
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.querySelector(".plinth-slides__notepad-edit")).toBeNull();
+    },
+  );
+});
+
+describe("a local deck's struct op that removes its held lines", () => {
+  it("ends the lease through lost(), as a room's closed draft does", () => {
+    const lost = vi.fn();
+    const changed = vi.fn();
+    const d = new LocalDeck("# One\n\nNote: hi\n---\n# Two", {
+      granted: vi.fn(),
+      changed,
+      structLanded: vi.fn(),
+      error: vi.fn(),
+      lost,
+    });
+    d.lease({ start: 2, end: 3 });
+    expect(d.struct({ op: "remove_notes", n: 1 })).toBe(true);
+    expect(d.mine).toBeNull();
+    expect(lost).toHaveBeenCalledWith("closed");
+  });
+
+  it("keeps a lease the op does not touch, moved with its lines", () => {
+    const lost = vi.fn();
+    const d = new LocalDeck("# One\n\nNote: hi\n---\n# Two", {
+      granted: vi.fn(),
+      changed: vi.fn(),
+      structLanded: vi.fn(),
+      error: vi.fn(),
+      lost,
+    });
+    d.lease({ start: 4, end: 5 });
+    expect(d.struct({ op: "remove_notes", n: 1 })).toBe(true);
+    expect(d.lines[d.mine?.start ?? -1]).toBe("# Two");
+    expect(lost).not.toHaveBeenCalled();
   });
 });

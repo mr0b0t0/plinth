@@ -18,10 +18,10 @@
 // offers "Ask an agent", and an image also "Delete". Images are drawn from the draft's base
 // version's files (../common/files.ts), which are the files a Publish keeps.
 //
-// Typing the room does not hold yet is never dropped: it is written again where it can go, kept on
-// the page with Copy where it cannot, and (rooms only) mirrored in the app's rescue store, each
-// item tagged with the part it was typed in (a slide or its notes), so a reload writes it back
-// into that part.
+// Typing the draft does not hold yet is never dropped: it is written again where it can go, kept
+// on the page with Copy where it cannot, and mirrored in the app's rescue store (alone too, beside
+// the app's kept copy of the deck as written), each item tagged with the part it was typed in (a
+// slide or its notes), so a reload writes it back into that part.
 //
 // Two backends: the room's draft socket (../common/live.ts, "room" mode), or a local copy that only
 // this frame edits ("solo" mode, where the app saves it through its own session). Everything this
@@ -157,6 +157,8 @@ export class LocalDeck implements DeckBackend {
       changed(): void;
       structLanded(op: SlidesStructOp): void;
       error(code: "invalid" | "too_large"): void;
+      /** The held lease ended under an op (a struct op that removed one of its lines). */
+      lost(reason: LeaseLoss): void;
     },
   ) {
     this.lines = splitLines(baseText);
@@ -220,6 +222,9 @@ export class LocalDeck implements DeckBackend {
     if (this.mine) {
       const moved = mapRange(this.mine, r.map, before, r.lines.length);
       this.mine = moved ? { ...this.mine, ...moved } : null;
+      // The op removed one of its lines: the lease ends as a room's does when the draft closes
+      // under it, so typing it held is written again or kept, never left on the page unleased.
+      if (!moved) this.events.lost("closed");
     }
     this.events.structLanded(op);
     this.events.changed();
@@ -251,7 +256,7 @@ export interface DeckEditorHooks {
 }
 
 /**
- * A change to the deck's rescue store (rooms only), for the app's copy in its own storage, which
+ * A change to the deck's rescue store, for the app's copy in its own storage, which
  * only ever merges, as a doc's does (renderers/doc/edit.ts RescueReport): `upsert` adds or
  * updates items by id, `written` names items the room acknowledged, `gone` items dropped on
  * purpose (a discard). Each item says whether it was typed on a slide or in its speaker notes, so
@@ -613,36 +618,6 @@ function plainText(models: readonly RichBlock[], env: MdEnv): string {
     .join("\n\n");
 }
 
-/**
- * Kept typing's lines without its marks, as the place it was typed in would hold them (a slide's
- * blocks, blank lines between, or the notes part), or null when they cannot be written.
- */
-function keptLines(p: {
-  kind: "block" | "notes";
-  ctx: DeckPartContext;
-  env: MdEnv;
-  form: NotesForm;
-  models: readonly RichBlock[];
-}): string[] | null {
-  const models = p.models.map(withoutMarks);
-  if (p.kind === "notes") {
-    try {
-      return serializeNotes(models, p.form, p.ctx.settings);
-    } catch {
-      return null;
-    }
-  }
-  const lines: string[] = [];
-  for (const m of models) {
-    const part = deckBlockLines(m, p.ctx, p.env);
-    if (part === null) return null;
-    if (part.length === 0) continue;
-    if (lines.length > 0) lines.push("");
-    lines.push(...part);
-  }
-  return lines;
-}
-
 /** A rescued text read back as blocks to write (a reload's), or null when one cannot be. */
 function modelsOf(text: string): RichBlock[] | null {
   const env = docEnv(text);
@@ -680,7 +655,7 @@ export class SlidesEditor {
   private deleting = false;
   /** A place closed with its last edit not acknowledged yet (see Closing). */
   private closing: Closing | null = null;
-  /** Typed text the room does not hold yet, by id, mirrored in the app's store (rooms only). */
+  /** Typed text the draft does not hold yet, by id, mirrored in the app's store. */
   private readonly rescues = new Map<string, DeckRescue>();
   private reportN = 0;
   private rescueN = 0;
@@ -762,7 +737,8 @@ export class SlidesEditor {
    * open place's when it cannot be written as typed or was not sent (the deck at its size limit),
    * and typing kept from a place that closed. In solo mode this is what the app hears as
    * `unsavable`: the frame's text is the whole draft, so nothing is published, Done keeps editing
-   * on and the page asks before it is left, until it is written.
+   * on and the page asks before it is left, until it is written. The app's kept copy is that text,
+   * which can be published; the typing is in the rescue store beside it (keepRescue).
    */
   get unwritten(): boolean {
     return (
@@ -813,50 +789,6 @@ export class SlidesEditor {
       }
       if (b.connected && b.mine) b.keep?.();
     }, LIMITS.liveLeaseKeepS * 1000);
-  }
-
-  /**
-   * Solo: the deck's text with every typing it does not hold put in (`unwritten`), for the app's
-   * kept copy, else null. The open place's goes in its place (without its marks when it cannot be
-   * written with them), a closed place's over the lines its lease held, and kept typing where it
-   * was, with blank lines around it. The copy may be past the deck's size limit: it is kept, not
-   * published.
-   */
-  textWithTyping(): string | null {
-    if (!this.unwritten) return null;
-    const all = this.backend.lines;
-    const edits: { at: number; del: number; ins: string[] }[] = [];
-    const o = this.open;
-    const mine = this.backend.mine;
-    if (o && mine && (this.stuck || o.notSent)) {
-      const ins = this.linesNow(o) ?? this.linesNow(o, undefined, true);
-      if (ins !== null) edits.push({ at: mine.start, del: mine.end - mine.start, ins });
-    }
-    const c = this.closing;
-    if (c?.snap.unsent) {
-      const ins = c.snap.typed ?? keptLines(c.snap);
-      if (ins !== null) edits.push({ at: c.start, del: c.end - c.start, ins });
-    }
-    const edges = memo(() => blockEdges(all));
-    for (const w of this.keptWants()) {
-      const ins = w.raw !== undefined ? w.raw.split("\n") : keptLines(w.open);
-      if (ins === null || ins.length === 0) continue;
-      const found = markAt(all, w.mark, w.range.start, edges);
-      const at = found >= 0 ? found : Math.min(Math.max(0, w.range.start), all.length);
-      edits.push({ at, del: 0, ins: ["", ...ins, ""] });
-    }
-    // Kept typing never goes inside a place replaced here: above it instead.
-    for (const e of edits) {
-      if (e.del > 0) continue;
-      const inside = edits.find((r) => r.del > 0 && r.at < e.at && e.at < r.at + r.del);
-      if (inside) e.at = inside.at;
-    }
-    // From the bottom up, so each edit's lines are where they were; at the same line, a replaced
-    // place first and kept typing above it.
-    edits.sort((a, b) => b.at - a.at || b.del - a.del);
-    const out = [...all];
-    for (const e of edits) out.splice(e.at, e.del, ...e.ins);
-    return joinLines(out);
   }
 
   /** The range of the block open in the editor (its lines are not part of its slide's key). */
@@ -1105,8 +1037,7 @@ export class SlidesEditor {
   }
 
   private addNotes(v: EditSlideView): void {
-    if (!this.writable()) return;
-    this.close(true);
+    if (!this.writable() || !this.closeForStruct()) return;
     const n = v.n;
     const count = deckLayout(this.backend.lines).slides.length;
     this.afterStruct = (op) => {
@@ -1124,9 +1055,29 @@ export class SlidesEditor {
   }
 
   private removeNotes(v: EditSlideView): void {
-    if (!this.writable()) return;
-    this.close(true);
+    if (!this.writable() || !this.closeForStruct()) return;
     if (!this.backend.struct({ op: "remove_notes", n: v.n })) this.notify(DECK_WORDS.notConnected);
+  }
+
+  /**
+   * Whether a place stays open that close() could not close (its typing cannot be written as
+   * typed, or alone the deck is at its size limit), saying why. Nothing that would take its lines
+   * or its lease from under it goes out meanwhile: a new lease, or a struct op (which ends the
+   * sender's own lease where it touches it, leaving the typing on the page with no lease to write
+   * it).
+   */
+  private heldOpen(): boolean {
+    const o = this.open;
+    if (!o) return false;
+    if (this.stuck) this.notify(DECK_WORDS.unsavable);
+    else if (o.notSent) this.notify(DECK_WORDS.fullHere);
+    return true;
+  }
+
+  /** Closes the open place before a struct op; false (and nothing goes out) when it stays open. */
+  private closeForStruct(): boolean {
+    this.close(true);
+    return !this.heldOpen();
   }
 
   /** Run once this editor's own struct op landed. */
@@ -1256,13 +1207,9 @@ export class SlidesEditor {
 
   private request(ask: Omit<Want, "mark" | "tries">): void {
     if (this.want) return;
-    if (this.open) {
-      // The place open could not close (its typing cannot be written as typed): a new lease would
-      // take its place from under it.
-      if (this.stuck) this.notify(DECK_WORDS.unsavable);
-      else if (this.open.notSent) this.notify(DECK_WORDS.fullHere);
-      return;
-    }
+    // The place open could not close (its typing cannot be written as typed, or alone the deck is
+    // at its size limit): a new lease would take its place from under it.
+    if (this.heldOpen()) return;
     const w: Want = { ...ask, mark: markOf(this.backend.lines, ask.range), tries: 0 };
     this.want = w;
     if (!this.backend.lease(w.range)) {
@@ -1526,8 +1473,14 @@ export class SlidesEditor {
     o.sent = text;
     o.wrote = true;
     delete o.notSent;
-    // Kept typing on its way: the store keeps what was sent until the room acknowledges it.
-    if (o.rescue) o.rescue = this.keepRescue(o.rescue, blocks ?? o.editors.map((r) => r.model), o);
+    if (o.rescue && this.solo) {
+      // Alone the edit is in the draft at once: the app keeps its copy, then lets the item go.
+      this.dropRescue(o.rescue);
+      delete o.rescue;
+    } else if (o.rescue) {
+      // Kept typing on its way: the store keeps what was sent until the room acknowledges it.
+      o.rescue = this.keepRescue(o.rescue, blocks ?? o.editors.map((r) => r.model), o);
+    }
     return true;
   }
 
@@ -2382,8 +2335,10 @@ export class SlidesEditor {
   /**
    * The rescue item for typing kept in the place `where` describes (made, or brought up to date):
    * its text without its marks, whether it was typed on a slide or in its notes, the raw slide and
-   * that slide's first line of text, and `near`, the line it belongs at. Rooms only: a solo tab's
-   * typing is in the app's kept copy. Returns its id (or `id` as it was, when nothing is kept).
+   * that slide's first line of text, and `near`, the line it belongs at. Alone too: a solo tab's
+   * kept copy is the deck's text as written, which can be published (typing at the deck's size
+   * limit would put it past it), so typing it does not hold is kept here, apart. Returns its id
+   * (or `id` as it was, when nothing is kept).
    */
   private keepRescue(
     id: string | undefined,
@@ -2391,7 +2346,6 @@ export class SlidesEditor {
     where: { kind: Open["kind"]; n: number; env: MdEnv },
     near?: number,
   ): string | undefined {
-    if (!this.backend.keep) return id;
     const text = plainText(models, where.env);
     if (text === "") return id;
     const rid = id ?? `d${Date.now().toString(36)}${++this.rescueN}`;
@@ -2471,7 +2425,6 @@ export class SlidesEditor {
    * text then, else by its number. What cannot be placed is kept to copy.
    */
   offerRescue(items: readonly RescueItem[]): void {
-    if (!this.backend.keep) return;
     if (!this.backend.ready || !this.backend.settled) {
       // Placed once the room's draft is here (changed).
       this.offered.push(...items);
@@ -2796,6 +2749,8 @@ export class SlidesEditor {
     ).settings;
     const pop = settingsPopover(this.doc, s, {
       apply: (next) => {
+        // A place that could not close keeps its lease: the settings wait until it is written.
+        if (this.open && (this.stuck || this.open.notSent) && this.heldOpen()) return;
         this.settingsPending = true;
         this.syncSettingsButtons();
         if (!this.backend.struct({ op: "set_deck", ...next })) {

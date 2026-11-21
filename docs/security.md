@@ -2540,7 +2540,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   text from the app.
 - **The rescue store.** A doc block's or a deck's typing the room's draft does not hold yet
   (typing that cannot be written as typed, or that a lost lease, a freeze or a takeover kept from
-  being written) is held by the frame and posted to the app as a keyed editing message (`rescue`:
+  being written; a deck's edited alone too, typing its size limit kept out) is held by the frame and posted to the app as a keyed editing message (`rescue`:
   at most 20 items and 256 KiB of text in all, the same limits on both sides: an id, the block's
   text without its marks, and a line number; a deck's item also its part, `slide` or `notes`, its
   raw slide number and that slide's first line of text, at most 120 characters and counted in the

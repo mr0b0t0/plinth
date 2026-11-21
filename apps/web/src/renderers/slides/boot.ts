@@ -44,7 +44,7 @@ import {
 } from "../common/editSession.ts";
 import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
-import { type ClientLease, LiveDocClient } from "../common/live.ts";
+import { type ClientLease, type LeaseLoss, LiveDocClient } from "../common/live.ts";
 import { bringIntoPane, CHANGED_ATTR, DraftReview, type ReviewPane } from "../common/review.ts";
 import { reconcile } from "../doc/blocks.ts";
 import { buildDeck, type SlideView } from "./deck.ts";
@@ -715,6 +715,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         status();
       },
       structLanded: (op: SlidesStructOp) => editor?.structLanded(op),
+      lost: (reason: LeaseLoss) => editor?.lost(reason),
       // A deck at its size limit keeps the typing (the editor checks first); only `invalid` puts
       // a block back.
       error: (code: "invalid" | "too_large") =>
@@ -836,11 +837,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       } else if (m.type === "collect" && local) {
         editor?.flush();
         // Typing the deck's text does not hold (it cannot be written as typed, or the deck is at
-        // its size limit): the app publishes nothing, and keeps a copy with it in.
-        if (keptBack()) {
-          const kept = editor?.textWithTyping() ?? local.text;
-          post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
-        } else post({ type: "draft", nonce: m.nonce, text: local.text });
+        // its size limit): the app publishes nothing. Its kept copy is the text as written, which
+        // can still be published after a reload; the typing is in the rescue store beside it.
+        if (keptBack()) post({ type: "draft", nonce: m.nonce, text: local.text, unsavable: true });
+        else post({ type: "draft", nonce: m.nonce, text: local.text });
       } else if (m.type === "review") {
         editor?.flush();
         void session.open(m);
