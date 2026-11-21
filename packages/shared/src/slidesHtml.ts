@@ -14,6 +14,7 @@
 
 import { LIMITS } from "./constants.ts";
 import { cssBlockProblem, cssUrlArgs, isPlainRelativeUrl } from "./designSystem.ts";
+import { DS_FOLDER_RE } from "./designSystemFiles.ts";
 
 /** The files of an HTML deck. */
 export const HTML_DECK_INDEX = "deck.json";
@@ -80,8 +81,6 @@ export const SLIDE_EMBED_PROTOCOL_VERSION = 1;
 /** A slide id, which is also its file name: `slides/<id>.html`. */
 export const SLIDE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const SLIDE_PATH_RE = /^slides\/([A-Za-z0-9_-]{1,64})\.html$/;
-/** A design system's folder under ds/, as Claude names it. */
-export const DS_FOLDER_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const FAMILY_RE = /^[A-Za-z][A-Za-z0-9 _-]{0,39}$/;
 const GOOGLE_CSS2 = "https://fonts.googleapis.com/css2?";
 const GOOGLE_QUERY_RE = /^[A-Za-z0-9+:@;,.&=_-]{1,1000}$/;

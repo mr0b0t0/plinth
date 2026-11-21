@@ -60,7 +60,9 @@ test("an HTML deck renders, steps and runs its embed under an opaque origin", as
   await page.goto(`${OPAQUE_APP_ORIGIN}/a/${artifact.slug}`);
   const locator = page.frameLocator(CURRENT_FRAME);
   await expect(locator.locator('html[data-ready="ok"]')).toHaveCount(1, { timeout: 15_000 });
-  const frame = (await (await page.locator(CURRENT_FRAME).elementHandle())?.contentFrame()) as Frame;
+  const frame = (await (
+    await page.locator(CURRENT_FRAME).elementHandle()
+  )?.contentFrame()) as Frame;
   expect(await frame.evaluate(() => window.origin)).toBe("null");
   expect(
     await frame.evaluate(() => document.querySelectorAll(".plinth-slides__slide").length),
