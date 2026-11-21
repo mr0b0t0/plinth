@@ -338,6 +338,8 @@ describe("helpers", () => {
     expect(pngScale({ width: 1280, height: 720 })).toBe(2);
     expect(pngScale({ width: 1080, height: 1080 })).toBe(1);
     expect(pngScale({ width: 1920, height: 1080 })).toBe(1);
+    // A fluid board grows as it renders: never 2x.
+    expect(pngScale({ width: 1000, height: 1000, auto_height: true })).toBe(1);
     expect(pngScale({ width: 1728, height: 2304 })).toBe(1);
     expect(pngScale({ width: 2000, height: 3000 })).toBeNull();
     expect(pngScale({ width: 4096, height: 4096 })).toBeNull();

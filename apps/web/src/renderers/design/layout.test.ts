@@ -119,6 +119,94 @@ describe("layoutBoards", () => {
   });
 });
 
+describe("placement and notes", () => {
+  const at = (id: string, width: number, height: number, x: number, y: number) => ({
+    ...b(id, width, height),
+    x,
+    y,
+  });
+  const note = (
+    key: string,
+    kind: "title" | "sticky",
+    after: number,
+    w = 300,
+    h = 64,
+    x: number | null = null,
+    y: number | null = null,
+  ) => ({ key, kind, w, h, x, y, after });
+
+  it("lays out a design without notes or places exactly as before", () => {
+    const plain = layoutBoards(KIT, 1.6);
+    const withNulls = layoutBoards(
+      KIT.map((k) => ({ ...k, x: null, y: null })),
+      1.6,
+      [],
+    );
+    expect(withNulls).toEqual(plain);
+    expect(plain.notes).toEqual([]);
+  });
+
+  it("puts placed boards exactly where they say, their label band in the bounds", () => {
+    const l = layoutBoards([at("a", 400, 300, 100, 50), at("b", 200, 200, 600, 50)]);
+    expect(l.items.map((i) => [i.id, i.x, i.y])).toEqual([
+      ["a", 100, 50],
+      ["b", 600, 50],
+    ]);
+    expect(l.bounds).toEqual({ x: 100, y: 50 - LAYOUT.label, w: 700, h: 300 + LAYOUT.label });
+  });
+
+  it("packs the rest under the placed boards and notes", () => {
+    const l = layoutBoards([at("a", 400, 300, 0, 0), b("c", 300, 300)], 1.6, [
+      note("n1", "sticky", 0, 240, 200, 500, 0),
+    ]);
+    const c = l.items.find((i) => i.id === "c");
+    expect(c?.x).toBe(0);
+    expect(c?.y).toBe(300 + LAYOUT.rowGap + LAYOUT.label);
+    expect(l.notes).toEqual([{ key: "n1", x: 500, y: 0, w: 240, h: 200 }]);
+    expect(l.bounds.w).toBe(740);
+  });
+
+  it("starts a row at a title note, with the boards after it under the title", () => {
+    const l = layoutBoards([b("a", 400, 300), b("b", 400, 300), b("c", 400, 300)], 100, [
+      note("t", "title", 2, 500, 64),
+    ]);
+    const [a, bb, c] = l.items;
+    expect(a?.row).toBe(0);
+    expect(bb?.row).toBe(0);
+    expect(c?.row).toBe(1);
+    const t = l.notes[0];
+    expect(t?.x).toBe(0);
+    expect(t?.y).toBe(LAYOUT.label + 300 + LAYOUT.rowGap);
+    expect(c?.y).toBe((t?.y ?? 0) + 64 + LAYOUT.titleGap + LAYOUT.label);
+  });
+
+  it("gives a sticky a place in its row, inside its section", () => {
+    const l = layoutBoards([b("a", 400, 300, "S"), b("b", 400, 300, "S")], 100, [
+      note("s", "sticky", 1, 240, 120),
+    ]);
+    const [a, bb] = l.items;
+    const s = l.notes[0];
+    expect(s?.x).toBe((a?.x ?? 0) + 400 + LAYOUT.gap);
+    expect(s?.y).toBe(a?.y);
+    expect(bb?.x).toBe((s?.x ?? 0) + 240 + LAYOUT.gap);
+  });
+
+  it("zooms to a tall fluid board at its width, from its top", () => {
+    const item = { x: 0, y: 28, w: 1000, h: 6000 };
+    const whole = zoomToBoard(item, { width: 1000, height: 800 }, 0, 28);
+    const top = zoomToBoard(item, { width: 1000, height: 800 }, 0, 28, true);
+    expect(top.scale).toBe(1);
+    expect(top.scale).toBeGreaterThan(whole.scale);
+    // The board's top sits one label band under the room's top, whatever the zoom.
+    expect(top.y + 28 * top.scale).toBe(LAYOUT.label);
+    // A board that fits whole is shown whole either way.
+    const small = { x: 0, y: 28, w: 400, h: 300 };
+    expect(zoomToBoard(small, { width: 1000, height: 800 }, 0, 28, true)).toEqual(
+      zoomToBoard(small, { width: 1000, height: 800 }, 0, 28),
+    );
+  });
+});
+
 describe("transforms", () => {
   it("fits a rect centred, never above 100%", () => {
     const t = fitTransform({ x: 0, y: 0, w: 2000, h: 1000 }, { width: 1048, height: 600 }, 24);

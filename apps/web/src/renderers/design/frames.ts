@@ -8,26 +8,57 @@
 // (the frame's origin is opaque, so no target origin can name it, and the board's HTML is what the
 // framed design may see anyway). Later `ready`s from it, and messages from any other window, are
 // ignored. The loader then says `loaded` when the board's document has finished loading.
+//
+// A fluid board (height="auto") is told so in `render`, and its loader reports its content's
+// height with `size` (before `loaded`, then on every change): the board takes it, kept between
+// its least height and DESIGN_LIMITS.maxAutoHeight, and remembers it while its frame is away. A
+// link with href="#board=<id>" in a board makes its loader post `goto`, which the canvas follows
+// only from the board in use. Board scripts share the loader's window and can forge any of these;
+// none reaches beyond the canvas's own view.
 import {
   BOARD_IFRAME_SANDBOX,
   BOARD_MESSAGE_SOURCE,
   BOARD_PROTOCOL_VERSION,
   DESIGN_LIMITS,
   type DesignBoard,
+  isArtboardId,
 } from "@plinth/shared";
 
-type BoardMessage = "ready" | "loaded";
+type BoardMessage =
+  | { type: "ready" }
+  | { type: "loaded" }
+  | { type: "size"; height: number }
+  | { type: "goto"; board: string };
 
 /** A message from a board loader, or null. The caller checks which window sent it. */
 export function readBoardMessage(data: unknown): BoardMessage | null {
   if (typeof data !== "object" || data === null) return null;
   const m = data as Record<string, unknown>;
   if (m.source !== BOARD_MESSAGE_SOURCE || m.v !== BOARD_PROTOCOL_VERSION) return null;
-  return m.type === "ready" || m.type === "loaded" ? m.type : null;
+  if (m.type === "ready" || m.type === "loaded") return { type: m.type };
+  if (m.type === "size") {
+    const h = m.height;
+    return typeof h === "number" && Number.isFinite(h) && h > 0
+      ? { type: "size", height: Math.ceil(h) }
+      : null;
+  }
+  if (m.type === "goto") return isArtboardId(m.board) ? { type: "goto", board: m.board } : null;
+  return null;
 }
 
-export function renderMessage(html: string) {
-  return { source: BOARD_MESSAGE_SOURCE, v: BOARD_PROTOCOL_VERSION, type: "render", html };
+export function renderMessage(html: string, fluid = false) {
+  return {
+    source: BOARD_MESSAGE_SOURCE,
+    v: BOARD_PROTOCOL_VERSION,
+    type: "render",
+    html,
+    ...(fluid ? { fluid: true } : {}),
+  };
+}
+
+/** A fluid board's height for a measured content height: never under its least, never over the cap. */
+export function fluidHeight(board: Pick<DesignBoard, "height">, measured: number): number {
+  return Math.min(DESIGN_LIMITS.maxAutoHeight, Math.max(board.height, Math.ceil(measured)));
 }
 
 interface Slot {
@@ -47,6 +78,10 @@ export interface BoardFramesOptions {
   documentFor: (board: DesignBoard) => string;
   /** After any board's frame mounts, unmounts or finishes loading. */
   onChange?: () => void;
+  /** A fluid board's height changed (already clamped by fluidHeight). */
+  onResize?: (id: string, height: number) => void;
+  /** A link in board `from` asked for board `to` (a prototype flow). */
+  onGoto?: (from: string, to: string) => void;
   /** Most frames alive at once outside print. */
   maxLive?: number;
   /** Test seam: makes the (empty) iframe element each mount uses. */
@@ -58,6 +93,8 @@ export class BoardFrames {
   private readonly pinned = new Set<string>();
   private tick = 0;
   private all = false;
+  /** Fluid boards' measured heights, kept while their frames are away. */
+  private readonly heights = new Map<string, number>();
   private readonly onMessage: (e: MessageEvent) => void;
 
   constructor(private readonly o: BoardFramesOptions) {
@@ -128,6 +165,11 @@ export class BoardFrames {
     this.all = false;
   }
 
+  /** A board's height now: a fluid board's measured one, else its own. */
+  heightOf(board: DesignBoard): number {
+    return board.autoHeight ? (this.heights.get(board.id) ?? board.height) : board.height;
+  }
+
   frameOf(id: string): HTMLIFrameElement | null {
     return this.slots.get(id)?.frame ?? null;
   }
@@ -174,7 +216,7 @@ export class BoardFrames {
     f.setAttribute("scrolling", "no");
     f.setAttribute("allow", "");
     f.setAttribute("width", String(s.board.width));
-    f.setAttribute("height", String(s.board.height));
+    f.setAttribute("height", String(this.heightOf(s.board)));
     f.title = s.board.name;
     f.tabIndex = -1;
     s.frame = f;
@@ -205,15 +247,30 @@ export class BoardFrames {
       }
     }
     if (!slot?.frame) return;
-    const kind = readBoardMessage(e.data);
-    if (kind === "ready") {
+    const m = readBoardMessage(e.data);
+    if (!m) return;
+    if (m.type === "ready") {
       if (slot.rendered) return;
       slot.rendered = true;
       const html = this.o.documentFor(slot.board);
-      slot.frame.contentWindow?.postMessage(renderMessage(html), "*");
+      slot.frame.contentWindow?.postMessage(renderMessage(html, slot.board.autoHeight), "*");
       return;
     }
-    if (kind === "loaded" && slot.rendered && !slot.loaded) {
+    if (!slot.rendered) return;
+    if (m.type === "size") {
+      if (!slot.board.autoHeight) return;
+      const h = fluidHeight(slot.board, m.height);
+      if (h === this.heightOf(slot.board)) return;
+      this.heights.set(slot.board.id, h);
+      slot.frame.setAttribute("height", String(h));
+      this.o.onResize?.(slot.board.id, h);
+      return;
+    }
+    if (m.type === "goto") {
+      this.o.onGoto?.(slot.board.id, m.board);
+      return;
+    }
+    if (m.type === "loaded" && !slot.loaded) {
       slot.loaded = true;
       slot.el.setAttribute("data-loaded", "");
       this.o.onChange?.();

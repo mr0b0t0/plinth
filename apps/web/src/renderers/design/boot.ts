@@ -8,12 +8,19 @@
 // DOMContentLoaded) sees the finished DOM.
 //
 // The shell's DOM never receives author markup: the shared section and the fragments exist here
-// only as strings posted to board frames, names only as textContent, and ids are
+// only as strings posted to board frames, names and note text only as textContent, and ids are
 // [a-z0-9-]. It reads only window properties the platform defines, never a global by name.
+//
+// A fluid board (height="auto") grows to the height its loader measures, and the rows are laid
+// out again round it (the view stays put unless it is fitting). The app keeps the board on view
+// in its address (#board=<id>): the canvas says which board it shows (`ready`, `board`) and goes
+// to one when the app asks (`goto`). A link in the board in use whose href is #board=<id> moves
+// the canvas to that board and puts it in use (a prototype flow).
 // <html> carries data-ready ("ok" or "error"), data-boards, data-boards-loaded and data-zoom for
 // tests and thumbnails.
 import {
   boardDocument,
+  DESIGN_LIMITS,
   type DesignBoard,
   parseDesign,
   REVIEW_MODE_PARAM,
@@ -30,6 +37,8 @@ import {
   type Layout,
   type LayoutItem,
   layoutBoards,
+  layoutUnit,
+  type NoteBox,
   type Size,
   screenRect,
   type Transform,
@@ -37,8 +46,8 @@ import {
   zoomToBoard,
 } from "./layout.ts";
 import { pageName, preparePrint, printCss, printStyle } from "./print.ts";
-import { fromApp, readDesignAppMessage } from "./protocol.ts";
-import { boardLabel, boardSlot, el, toolbar } from "./ui.ts";
+import { fromApp, postToApp, readDesignAppMessage } from "./protocol.ts";
+import { boardLabel, boardSlot, el, noteEl, toolbar } from "./ui.ts";
 
 const ROOT_ID = "__plinth-design";
 const DATA_ID = "__plinth-content";
@@ -58,6 +67,8 @@ const TOOLBAR_SPACE = 66;
 const LABEL_PX = 26;
 /** Below this on-screen board width, a label shows only the board's name. */
 const NARROW_LABEL_PX = 200;
+/** A note's box before it has a layout size (a test DOM): a title's line, a sticky's square. */
+const NOTE_FALLBACK = { title: 64, sticky: DESIGN_LIMITS.stickyWidth } as const;
 
 export function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -146,15 +157,34 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
 
   let frames: BoardFrames;
   const loadedChanged = () => html.setAttribute("data-boards-loaded", String(frames.loadedCount()));
+  // Set once the layout below exists: a fluid board's new height, and a flow's link.
+  let resized: (id: string, height: number) => void = () => {};
+  let flow: (from: string, to: string) => void = () => {};
   frames = new BoardFrames({
     win,
     loaderUrl: boardLoaderUrl(loc),
     documentFor,
     onChange: loadedChanged,
+    onResize: (id, h) => resized(id, h),
+    onGoto: (from, to) => flow(from, to),
     ...(opts.maxLive ? { maxLive: opts.maxLive } : {}),
     ...(opts.createFrame ? { createFrame: opts.createFrame } : {}),
   });
   cleanups.push(() => frames.destroy());
+
+  /** The boards at their heights now (a fluid board's measured one). */
+  const currentBoards = () => design.boards.map((b) => ({ ...b, height: frames.heightOf(b) }));
+  const slotOf = (id: string) =>
+    root.querySelector<HTMLElement>(`.plinth-design__board[data-board="${id}"]`);
+  /** A fluid board's slot takes its new height, and its print page its size. */
+  const sizeSlot = (id: string, h: number) => {
+    const slot = slotOf(id);
+    const b = design.boards.find((x) => x.id === id);
+    if (!slot || !b) return;
+    slot.style.height = `${h}px`;
+    slot.dataset.size = pageName({ width: b.width, height: h });
+    if (root.hasAttribute("data-print")) printStyle(doc).textContent = printCss(currentBoards());
+  };
 
   const printNow = (boards: readonly DesignBoard[], after: () => void) =>
     preparePrint(win, {
@@ -187,6 +217,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       frames.add(b, slot);
     }
     root.replaceChildren(stage);
+    resized = sizeSlot;
     html.setAttribute("data-boards", String(boards.length));
     html.setAttribute("data-boards-loaded", "0");
     html.setAttribute("data-zoom", "100");
@@ -227,21 +258,31 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   const labels = new Map<string, HTMLElement>();
 
   let auto = true;
+  /** The board last zoomed to, while the view has not moved since: it is zoomed to again when the
+   * rows are laid out anew (a fluid board grew). */
+  let followed: string | null = null;
   let view: Viewport;
   let layout: Layout = layoutBoards(design.boards);
   let itemById = new Map<string, LayoutItem>();
 
-  // The board last zoomed to: its label offers Interact (design.css) until Fit.
+  // The board last zoomed to: its label offers Interact (design.css) until Fit, and the app keeps
+  // it in its address.
+  let active: string | null = null;
   const setActive = (id: string | null) => {
     for (const [bid, label] of labels) label.toggleAttribute("data-active", bid === id);
+    if (id === active) return;
+    active = id;
+    postToApp(win, appOrigin, { type: "board", board: id });
   };
   const zoomTo = (id: string) => {
     const item = itemById.get(id);
     if (!item) return;
     auto = false;
+    followed = id;
     setActive(id);
     const size = view.size();
-    view.set(zoomToBoard(item, size, insets(size), LAYOUT.label * layout.unit));
+    const fluid = byId.get(id)?.autoHeight === true;
+    view.set(zoomToBoard(item, size, insets(size), LAYOUT.label * layout.unit, fluid));
   };
 
   for (const b of design.boards) {
@@ -258,13 +299,46 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     labels.set(b.id, label);
   }
 
+  // Notes sit in the world, under the boards' labels, and move and zoom with the boards.
+  const noteEls = design.notes.map((n, i) => {
+    const e = noteEl(doc, n, `note-${i + 1}`);
+    world.append(e);
+    return e;
+  });
+  /**
+   * Each note's box, measured once it is in the document (its text sets its size). Notes grow
+   * with the design as the gaps between boards do (`unit`), so a title still reads as one over
+   * rows of tall boards.
+   */
+  const noteBoxes = (unit: number): NoteBox[] => {
+    world.style.setProperty("--pd-unit", String(unit));
+    return design.notes.map((n, i) => {
+      const e = noteEls[i] as HTMLElement;
+      const fallback = (n.kind === "title" ? NOTE_FALLBACK.title : NOTE_FALLBACK.sticky) * unit;
+      return {
+        key: e.dataset.note as string,
+        kind: n.kind,
+        w:
+          e.offsetWidth ||
+          (n.width ?? (n.kind === "title" ? 6 * NOTE_FALLBACK.title : DESIGN_LIMITS.stickyWidth)) *
+            unit,
+        h: e.offsetHeight || fallback,
+        x: n.x,
+        y: n.y,
+        after: n.after,
+      };
+    });
+  };
+
   const bar = toolbar(doc, {
     zoomOut: () => {
       auto = false;
+      followed = null;
       view.zoomBy(1 / ZOOM_STEP);
     },
     zoomIn: () => {
       auto = false;
+      followed = null;
       view.zoomBy(ZOOM_STEP);
     },
     fit: () => fitAll(),
@@ -283,15 +357,22 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   /** Lays the boards out for the room the viewport leaves them. */
   function relayout(size: Size) {
     const p = insets(size);
+    const boards = currentBoards();
     layout = layoutBoards(
-      design.boards,
+      boards,
       (size.width - p.left - p.right) / (size.height - p.top - p.bottom),
+      noteBoxes(layoutUnit(boards.reduce((m, b) => Math.max(m, b.height), 0))),
     );
     itemById = new Map(layout.items.map((it) => [it.id, it]));
     for (const it of layout.items) {
       // Custom properties, so the print layout can drop the position without !important.
       slots.get(it.id)?.style.setProperty("--pd-x", `${it.x}px`);
       slots.get(it.id)?.style.setProperty("--pd-y", `${it.y}px`);
+    }
+    for (const n of layout.notes) {
+      const e = noteEls.find((x) => x.dataset.note === n.key);
+      e?.style.setProperty("--pd-x", `${n.x}px`);
+      e?.style.setProperty("--pd-y", `${n.y}px`);
     }
   }
 
@@ -333,6 +414,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
 
   function fitAll() {
     auto = true;
+    followed = null;
     setActive(null);
     const size = view.size();
     relayout(size);
@@ -340,6 +422,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   }
   function actual() {
     auto = false;
+    followed = null;
     view.zoomTo(1);
   }
 
@@ -368,12 +451,41 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   html.setAttribute("data-boards", String(design.boards.length));
   html.setAttribute("data-boards-loaded", "0");
 
+  // A fluid board grew or shrank: the rows are laid out again round it, the view kept where it
+  // is unless it is fitting.
+  let relayoutQueued = false;
+  resized = (id, h) => {
+    sizeSlot(id, h);
+    if (relayoutQueued) return;
+    relayoutQueued = true;
+    schedule(() => {
+      relayoutQueued = false;
+      if (root.hasAttribute("data-print")) return;
+      if (auto) fitAll();
+      else {
+        relayout(view.size());
+        if (followed) zoomTo(followed);
+        else view.set(view.t);
+      }
+    });
+  };
+
+  // A link in the board in use names another: the canvas goes there and puts it in use.
+  flow = (from, to) => {
+    if (review || interacting !== from || !byId.has(to)) return;
+    const hadFocus = doc.activeElement === frames.frameOf(from);
+    zoomTo(to);
+    setInteract(to);
+    if (hadFocus) frames.frameOf(to)?.focus();
+  };
+
   cleanups.push(
     bindCanvasInput(canvas, view, {
       fit: fitAll,
       actual,
       moved: () => {
         auto = false;
+        followed = null;
       },
       isControl: (t) =>
         t.closest(".plinth-design__toolbar, .plinth-design__label, .plinth-design__frame") !== null,
@@ -393,11 +505,23 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
 
   const printAll = () => {
     setInteract(null);
-    void printNow(design.boards, () => view.set(view.t));
+    void printNow(currentBoards(), () => {
+      // Fluid boards may have grown while every board was mounted.
+      if (auto) fitAll();
+      else {
+        relayout(view.size());
+        view.set(view.t);
+      }
+    });
   };
   listen("message", (e) => {
     if (!fromApp(e, win, appOrigin)) return;
-    if (readDesignAppMessage(e.data)?.type === "print") printAll();
+    const m = readDesignAppMessage(e.data);
+    if (m?.type === "print") printAll();
+    else if (m?.type === "goto" && byId.has(m.board)) {
+      if (interacting && interacting !== m.board) setInteract(null);
+      zoomTo(m.board);
+    }
   });
   // Ctrl/Cmd+P inside the frame prints the design, one board per page, not the app around it.
   listen("keydown", (e) => {
@@ -413,6 +537,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
 
   fitAll();
   html.setAttribute("data-ready", "ok");
+  postToApp(win, appOrigin, { type: "ready", board: active });
   return {
     stop: () => {
       for (const f of cleanups.splice(0)) f();

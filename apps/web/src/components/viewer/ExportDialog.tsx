@@ -19,13 +19,16 @@ export interface ExportDialogProps {
   version: number;
 }
 
-/** The PNG scale for a board: 2x where it fits the pixel cap, else 1x, else null (PDF only). */
+/**
+ * The PNG scale for a board: 2x where it fits the pixel cap, else 1x, else null (PDF only). A
+ * fluid board (auto_height) is as tall as its content, which only the render knows: always 1x.
+ */
 export function pngScale(
-  b: { width: number; height: number },
+  b: { width: number; height: number; auto_height?: boolean },
   max: number = DESIGN_EXPORT.maxPixels,
 ): 1 | 2 | null {
   const px = b.width * b.height;
-  if (px * 4 <= max) return 2;
+  if (px * 4 <= max && b.auto_height !== true) return 2;
   return px <= max ? 1 : null;
 }
 
@@ -209,7 +212,7 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
               options
                 ? boards.map((b) => ({
                     value: b.id,
-                    label: `${b.name} (${b.width} × ${b.height})`,
+                    label: `${b.name} (${b.width} × ${b.auto_height ? "auto" : b.height})`,
                   }))
                 : [{ value: "", label: "Loading boards…" }]
             }
