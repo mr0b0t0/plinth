@@ -3034,7 +3034,16 @@ function designExportSchemas(): Record<string, Json> {
           id: str(),
           name: str({ description: "Untrusted text" }),
           width: int({ minimum: 16, maximum: 4096 }),
-          height: int({ minimum: 16, maximum: 4096 }),
+          height: int({
+            minimum: 16,
+            maximum: 4096,
+            description:
+              "For a board with auto_height, its least height: the rendered board is as tall as its content",
+          }),
+          auto_height: {
+            type: "boolean",
+            description: 'height="auto": a fluid page measured as it renders, up to 8000 px',
+          },
         }),
       },
       max_pixels: int({

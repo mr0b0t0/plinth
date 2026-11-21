@@ -25,6 +25,8 @@
 // update_artifact and start_upload, the sentence that nothing on Plinth chooses local files on the
 // six tools that return what it names (and after UNTRUSTED_NOTE in the instructions, whose bytes
 // stay the same), and sensitive_file in the instructions only.
+// The design canvas (fluid boards, placement, notes, flows and #board= links) adds its sentence to
+// the design publish note.
 // Ask an agent adds list_mentions' sentence on requests sent from the app (the "@agent:other" target
 // for every other client) and the untrusted note's Ask an agent sentence, on every instance.
 import { describe, expect, it } from "vitest";
@@ -85,7 +87,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "8a7b13ba735c4980b0d2d0b99e0812fdae5e785b0e7f093af2e12514534a8e21",
+      tools: "2110fc2109c77781c09fa6c94e3b3e0f2ad0a265b4c91d9cd5f417711992a01b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -95,7 +97,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "2957bdacdbb206ec1d7b007f778e1193932d29c39c4d96d5f5343e1bd0c948d8",
+      tools: "341bd332cb2d0d65a4d275e79d2b5ae2fd3fa77b2ef1d5cba941d8caf2e03ea2",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -107,7 +109,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "429c72903e49804cc8471455bedbb383e5250a4a8faf7d6b8d4d47fd6edaf5e3",
+      tools: "719ccaae2e33544a2296ed2b2e442bbfe93efe5e67d4a98209c58ad089fe4965",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -117,7 +119,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "26ebb339ce58415212f5a712d97247f31e08c560d2ccaecc7b319981b4cb6e1c",
+      tools: "76a13ffd008906f7c83dfad0bd752d1d66e0d83e1b98e040a20eb4fb8e4c29fb",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "2a24eb0eedee809683ad4aec0509c0bb0626a4a53ffd5ee771625da43f35a1ee",

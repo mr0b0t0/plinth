@@ -122,7 +122,11 @@ export const DESIGN_PUBLISH_NOTE =
   '(a preset, "WxH", or width and height) followed by its HTML fragment. Each artboard renders alone ' +
   "at its exact size with an opaque origin: inline scripts and allowlisted CDN scripts run, but no " +
   "fetch of the artifact's files, no storage, and no font files from assets (use Google Fonts or " +
-  "data: URLs). Assets: images, CSS, JS, mp4/webm by relative path. Up to 60 artboards, 2 MB. ";
+  "data: URLs). Assets: images, CSS, JS, mp4/webm by relative path. Up to 60 artboards, 2 MB. " +
+  'height="auto" with a size or width makes a web page board as tall as its content; x and y ' +
+  "place a board on the canvas (rows by default); a line <!-- note --> or <!-- note " +
+  'kind="title" --> followed by plain text adds a sticky or a title; a link href="#board=<id>" ' +
+  "moves the canvas to that board, and <app url>#board=<id> opens the design on it. ";
 
 /** What publish_artifact says about the sheet type. */
 export const SHEET_PUBLISH_NOTE =

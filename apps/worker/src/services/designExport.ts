@@ -167,6 +167,17 @@ export function setDesignExportLauncher(l: Launch | null): void {
 export { redactUrls };
 
 /** A render whose file would pass the job's byte cap (DESIGN_EXPORT.maxBytes): refused, not sent. */
+/** A fluid board rendered taller than a PNG at its scale may be. */
+export class ExportOverPixels extends Error {
+  constructor(
+    readonly width: number,
+    readonly height: number,
+  ) {
+    super(`the board rendered at ${width}x${height} px, over the pixel limit`);
+    this.name = "ExportOverPixels";
+  }
+}
+
 export class ExportTooLarge extends Error {
   constructor(readonly maxBytes: number) {
     super(`the file is over ${maxBytes} bytes`);
@@ -329,6 +340,11 @@ export async function browserExport(
     const el = await page.$(designExportBoardSelector(job.board));
     const box = el ? await el.boundingBox() : null;
     if (!box) throw new Error("the board is not on the page");
+    // A fluid board's height is known only now: the pixel cap holds for what it rendered at.
+    const scale = job.viewport.deviceScaleFactor;
+    if (Math.ceil(box.width) * Math.ceil(box.height) * scale * scale > DESIGN_EXPORT.maxPixels) {
+      throw new ExportOverPixels(Math.ceil(box.width * scale), Math.ceil(box.height * scale));
+    }
     // The browser's base64 as it came: its size is checked before anything is decoded, and it is
     // decoded once, into the bytes that are sent.
     const shot = await page.screenshot({
@@ -453,6 +469,7 @@ export async function designExportOptions(
       name: b.name,
       width: b.width,
       height: b.height,
+      auto_height: b.autoHeight,
     })),
     max_pixels: DESIGN_EXPORT.maxPixels,
   };
@@ -736,6 +753,13 @@ export async function exportDesign(
     if (file.size > job.maxBytes) throw new ExportTooLarge(job.maxBytes);
   } catch (e) {
     // The file, not the moment: trying again gives the same answer, so say what to change.
+    if (e instanceof ExportOverPixels) {
+      throw invalid(
+        `This board rendered at ${e.width}x${e.height} px, over the ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} pixel limit for a PNG: ${scale > 1 ? "use scale=1, or " : "use "}format=pdf`,
+        "scale",
+        { max_pixels: DESIGN_EXPORT.maxPixels },
+      );
+    }
     if (e instanceof ExportTooLarge) {
       const mb = Math.floor(e.maxBytes / 1_048_576);
       throw new ApiError(

@@ -29,6 +29,7 @@ import {
   EXPORT_RUN,
   type ExportBytes,
   type ExportJob,
+  ExportOverPixels,
   ExportTooLarge,
   exportArtifactKey,
   exportFileName,
@@ -161,9 +162,9 @@ describe("export options", () => {
       id: d.id,
       version: 1,
       boards: [
-        { id: "home", name: "Home", width: 393, height: 852 },
-        { id: "post", name: "Launch post", width: 1080, height: 1080 },
-        { id: "mrec", name: "Ad 300x250", width: 300, height: 250 },
+        { id: "home", name: "Home", width: 393, height: 852, auto_height: false },
+        { id: "post", name: "Launch post", width: 1080, height: 1080, auto_height: false },
+        { id: "mrec", name: "Ad 300x250", width: 300, height: 250, auto_height: false },
       ],
       max_pixels: DESIGN_EXPORT.maxPixels,
     });
@@ -456,6 +457,37 @@ describe("export", () => {
     const pdf = await run(exportUrl(d.id, "format=pdf&board=poster"), { headers: a.auth });
     expect(pdf.status).toBe(200);
     expect(jobs).toHaveLength(2);
+  });
+
+  it("lists a fluid board's least height, and refuses one that rendered past the pixel cap", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const a = await agent();
+      const d = await publishDesign(a.auth, {
+        content:
+          '<!-- artboard id="site" name="Site" size="desktop" height="auto" -->\n<main>Hi</main>',
+      });
+      const options = await json(
+        await run(`/api/v1/artifacts/${d.id}/export/options`, { headers: a.auth }),
+      );
+      expect(options.boards).toEqual([
+        { id: "site", name: "Site", width: 1440, height: 900, auto_height: true },
+      ]);
+      // Only the render knows how tall it grew.
+      setDesignExportShooter(async (_b, job) => {
+        jobs.push(job);
+        throw new ExportOverPixels(1440, 3000);
+      });
+      const png = await run(exportUrl(d.id, "format=png&board=site"), { headers: a.auth });
+      expect(png.status).toBe(400);
+      const body = await json(png);
+      expect(body.error.code).toBe("invalid_input");
+      expect(body.error.message).toBe(
+        "This board rendered at 1440x3000 px, over the 4,000,000 pixel limit for a PNG: use format=pdf",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("refuses a file over the byte cap with 413, and says what to change", async () => {
