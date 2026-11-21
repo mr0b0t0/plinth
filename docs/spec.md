@@ -3227,9 +3227,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   deck's layout, so it wasn't kept." The editor's messages (this one, "Ana is editing slide 3.",
   which names the holder by a first name taken from their address, or "Someone", and the others)
   go to the deck's live region and show for a few seconds in the deck's one notice, a toast that
-  floats over the stage and never moves or resizes the slide: over the top of the slide's own
-  margin, letting taps through, or at phone width in the empty stage under the notes panel and the
-  deck's controls. While typing is kept on the
+  floats over the stage and never moves or resizes the slide: inside the slide's top right corner,
+  letting taps through, or at phone width in the empty stage under the notes panel and the deck's
+  controls. While typing is kept on the
   page, that notice is the kept typing's, with **Copy**, and messages are only read out. A block
   holding typing it cannot write as typed keeps it as
   typed, and typing kept from a lease that ended (below) is kept on the page instead.
@@ -3288,8 +3288,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   that version changed nothing the draft holds or is the draft, and the whole-draft review shows
   both decks as slides, side by side (one at a time at phone width), each with its own version's
   images, the slides that changed marked, and the two change lists. A side that scrolls to its
-  first change puts that slide at the top of the pane, the slide before it out of view, so no slide
-  is cut at the top. "Publish your changes"
+  first change puts that slide at the top of the pane with the same margin above it as slide 1 has,
+  and nothing of the slide before it in view, so no slide is cut at the top. Side by side, the two
+  panes' rules under their change lists and the bottoms of their slides line up. "Publish your changes"
   publishes the draft deck as it is with its base's files; an empty draft deck cannot be (its
   Publish is off, with the reason).
 - **Security.** The structure rule and the struct ops' postconditions run in the room on every

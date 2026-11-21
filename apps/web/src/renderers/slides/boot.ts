@@ -336,6 +336,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const scale = () => {
     root.toggleAttribute("data-top", false);
     root.style.removeProperty("--under-notes");
+    root.style.removeProperty("--slide-top");
+    root.style.removeProperty("--slide-side");
     if (mode === "overview") {
       const cols = overviewColumns(win.innerWidth, fixedOverview);
       root.style.setProperty("--cols", String(cols));
@@ -365,6 +367,15 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         ? win.innerHeight - GUTTER - h
         : Math.max(0, (win.innerHeight - h - notes) / 2) + notes;
       root.style.setProperty("--controls-bottom", `${Math.floor(below) + CONTROLS_INSET}px`);
+      // The editor's notice sits inside the slide's top right corner, clear of a heading.
+      root.style.setProperty(
+        "--slide-top",
+        `${Math.max(0, Math.round(win.innerHeight - below - h))}px`,
+      );
+      root.style.setProperty(
+        "--slide-side",
+        `${Math.max(0, Math.round((win.innerWidth - canvas.width * s) / 2))}px`,
+      );
     }
     presenter?.layout();
   };

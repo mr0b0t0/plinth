@@ -1245,7 +1245,7 @@ body {
 }
 
 /* The one notice, a toast floating over the top of the stage (the slide never moves or resizes for
-   it): the editor's last message for a few seconds (edit.ts notify), which lets taps through to the
+   it; inside the slide's top right corner when a slide shows whole): the editor's last message for a few seconds (edit.ts notify), which lets taps through to the
    slide under it, else typing kept on the page, with Copy. */
 .plinth-slides__notice {
   position: absolute;
@@ -1291,6 +1291,16 @@ body {
 .plinth-slides__kept-copy:focus-visible {
   outline: 2px solid var(--slides-live);
   outline-offset: 2px;
+}
+
+/* A slide shown whole: the notice sits inside its top right corner, where a heading seldom
+   reaches (--slide-top and --slide-side, boot.ts scale). */
+.plinth-slides[data-mode="deck"]:not([data-top]) .plinth-slides__notice {
+  top: calc(var(--slide-top, 16px) + 12px);
+  right: calc(var(--slide-side, 16px) + 12px);
+  left: auto;
+  max-width: calc(100vw - 2 * var(--slide-side, 16px) - 24px);
+  transform: none;
 }
 
 @media print {
@@ -1476,4 +1486,37 @@ body {
   .plinth-slides__frame[data-review-changed] {
   background-image: none;
   box-shadow: none;
+}
+
+/* More room between the slides than above the first: a pane scrolled to a change (startPaneAt)
+   shows only the well above it, as an unscrolled pane does above slide 1, and nothing of the slide
+   before it, its shadow included. */
+.plinth-review__body .plinth-slides.plinth-review__deck[data-mode] .plinth-slides__deck {
+  row-gap: 24px;
+}
+
+/* Both panes: the rule under the change list, then a strip of the pane's own background, then the
+   slides, however far the pane is scrolled. The strip is the body's top border, which never
+   scrolls; the rule is painted on it. */
+.plinth-review__pane > .plinth-review__body {
+  padding-top: 0;
+  border-top: 9px solid transparent;
+  background:
+    linear-gradient(var(--review-border), var(--review-border)) top / 100% 1px no-repeat border-box;
+}
+
+/* Side by side, the panes share their rows: both rules at one height and both wells ending
+   together, whichever side lists more changes or has fewer slides. */
+@media (min-width: 641px) {
+  .plinth-review__panes {
+    grid-template-rows: repeat(3, auto);
+  }
+
+  .plinth-review__panes > .plinth-review__pane {
+    display: grid;
+    grid-row: span 3;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: subgrid;
+    align-self: stretch;
+  }
 }

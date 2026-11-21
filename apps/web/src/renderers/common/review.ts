@@ -657,24 +657,29 @@ export class DraftReview {
 }
 
 /**
- * Scroll `pane` so the item `target` starts it, the item before it just out of view, so no item is
- * cut at the top (a deck's slides). A change near the end gets room below the last item, so it can
- * still start the pane.
+ * Scroll `pane` so the item `target` starts it with the list's top padding above it, as the first
+ * item starts an unscrolled pane, so no item is cut at the top and nothing of the item before it
+ * shows (a deck's slides). A change near the end gets room below the last item, so it can still
+ * start the pane.
  */
 export function startPaneAt(pane: HTMLElement, target: Element): void {
   const list = target.parentElement;
-  const prev = target.previousElementSibling;
-  const want = prev
-    ? pane.scrollTop +
-      prev.getBoundingClientRect().bottom -
-      pane.getBoundingClientRect().top -
-      pane.clientTop
+  const view = pane.ownerDocument.defaultView;
+  const pad = (side: "paddingTop" | "paddingBottom") =>
+    list && view ? Number.parseFloat(view.getComputedStyle(list)[side]) || 0 : 0;
+  const want = target.previousElementSibling
+    ? Math.max(
+        0,
+        pane.scrollTop +
+          target.getBoundingClientRect().top -
+          pane.getBoundingClientRect().top -
+          pane.clientTop -
+          pad("paddingTop"),
+      )
     : 0;
   const short = want - (pane.scrollHeight - pane.clientHeight);
-  const view = pane.ownerDocument.defaultView;
-  if (list && short > 0 && view) {
-    const pad = Number.parseFloat(view.getComputedStyle(list).paddingBottom) || 0;
-    list.style.paddingBottom = `${Math.ceil(pad + short)}px`;
+  if (list && short > 0) {
+    list.style.paddingBottom = `${Math.ceil(pad("paddingBottom") + short)}px`;
   }
   pane.scrollTop = want;
 }
