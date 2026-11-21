@@ -1610,12 +1610,18 @@ export class SlidesEditor {
     return false;
   }
 
-  /** Draws the open place again from the room's lines (its lease is kept). */
+  /**
+   * Draws the open place again from the room's lines (its lease is kept). What was typed in it
+   * that the room's lines do not hold is never dropped with it: it goes into the rescue store and
+   * is kept on the page with Copy (park), counted as unsaved, written back as a new block after a
+   * reconnect or a reload. A duplicate at worst, never a loss.
+   */
   private putBack(): void {
     const o = this.open;
     const mine = this.backend.mine;
     if (!o || !mine) return;
     const lines = this.backend.lines.slice(mine.start, mine.end);
+    this.keepTyped(o, mine.start, lines);
     o.sent = joinLines(lines);
     delete o.notSent;
     if (o.kind === "notes") {
@@ -1631,6 +1637,32 @@ export class SlidesEditor {
     const shown = deckPartShown(lines, false).join("\n").trim();
     const model = shown === "" ? null : editableBlock(shown, TOOLS, o.env);
     o.editors[0]?.setModel(model ?? para());
+  }
+
+  /**
+   * Keeps a copy of the open place's typing (putBack): when it holds text the room's `lines` of it
+   * do not, it is parked with Copy, in its own kind of part, and closed once written.
+   */
+  private keepTyped(o: Open, at: number, lines: readonly string[]): void {
+    const typed = this.linesNow(o);
+    if (typed !== null && joinLines(typed) === joinLines(lines)) return;
+    const models = o.editors.map((r) => (typed === null ? withoutMarks(r.model) : r.model));
+    if (!models.some((m) => hasText(m, o.env))) return;
+    const { kind, n, ctx, env, pad, form } = o;
+    // The place's own store item (if any) goes with the copy: the place holds the room's text now.
+    const rescue = this.keepRescue(o.rescue, models, o, at);
+    delete o.rescue;
+    this.park({
+      range: { start: at, end: at },
+      mark: markOf(this.backend.lines, { start: at, end: at }),
+      tries: 0,
+      focus: "end",
+      open: { kind, n, ctx, env, pad, form, models },
+      resend: true,
+      closeAfter: true,
+      ...this.refOf(n),
+      ...(rescue ? { rescue } : {}),
+    });
   }
 
   private split(rich: RichBlockEditor, keep: RichBlock, next: RichBlock | null): void {

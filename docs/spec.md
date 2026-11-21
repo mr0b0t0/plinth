@@ -3176,7 +3176,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
   block at the block end nobody's lease touches on its own slide, else the nearest one, three
   places at most, and never in speaker notes. A room's refusal never replaces it with the room's
-  text. What no place takes stays on the page ("Couldn't add
+  text. A refused edit of a block still open (`invalid`) draws the room's text again in it, and
+  what was typed there that the room does not hold is kept on the page with **Copy** and in the
+  rescue store, as below: a duplicate at worst, never a loss. What no place takes stays on the page ("Couldn't add
   your text yet", with **Copy**; "Couldn't add your text yet. Copy it before you reload" when the
   app's rescue store could not take it), counts as unsent changes
   (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a

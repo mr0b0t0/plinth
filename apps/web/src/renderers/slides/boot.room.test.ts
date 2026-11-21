@@ -1613,4 +1613,47 @@ describe("typing kept across a reload (the rescue store)", () => {
     s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: DECK });
     expect(stored()).toEqual([]);
   });
+
+  it("keeps typing the room refuses as invalid, with Copy and in the store, across a reload", async () => {
+    const DECK = "# One\n---\n## Two";
+    const s = startKept(DECK);
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__slide h2') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    const ed = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    ed.textContent = "Two typed a lot";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "## Two typed a lot" }]);
+    s.frame({ t: "error", code: "invalid" });
+    // The block shows the room's text again, and what was typed is kept: on the page with Copy,
+    // in the app's store, and counted as not saved.
+    const open = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+    expect(open?.textContent).toBe("Two");
+    const bar = document.querySelector(".plinth-slides__kept");
+    expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+    expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+    expect(stored()).toEqual([
+      expect.objectContaining({ text: "## Two typed a lot", part: "slide", slide: 2 }),
+    ]);
+    for (let i = 0; i < 3; i++) await Promise.resolve();
+    const live = parent.postMessage.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((p) => p.type === "live")
+      .at(-1);
+    expect(live?.unflushed).toBe(true);
+    // A reload writes it back on its slide, as a new block below the title.
+    const again = reload(DECK);
+    expect(again.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    again.frame({ t: "leased", lease: "l2", start: 3, end: 3, holder: YOU.id, by: YOU.email });
+    expect(again.sent.slice(-2)).toEqual([
+      expect.objectContaining({ t: "edit", lease: "l2", text: "\n## Two typed a lot" }),
+      { t: "release", lease: "l2" },
+    ]);
+  });
 });
