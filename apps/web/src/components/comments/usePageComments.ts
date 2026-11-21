@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PinPosition } from "./bridge.ts";
 import { buildThreads, pageThreadItems } from "./model.ts";
 import { connectPageChannel, type PageChannel, type PageFrameMessage } from "./pageChannel.ts";
+import { type ReopenGate, reopenGate } from "./reopenGate.ts";
 
 export type PageComposeResult =
   | { status: "posted"; id: string }
@@ -85,7 +86,7 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
   const pendingRef = useRef<Set<string>>(new Set());
   const lastComposeRef = useRef(Number.NEGATIVE_INFINITY);
   const lastOpenRef = useRef(Number.NEGATIVE_INFINITY);
-  const lastReopenRef = useRef(Number.NEGATIVE_INFINITY);
+  const reopenRef = useRef<ReopenGate>(reopenGate());
   // The latest reported positions, whether or not they are shown yet.
   const latestPositionsRef = useRef<Map<string, PinPosition>>(NO_POSITIONS);
   const showPinsRef = useRef(showPins);
@@ -117,12 +118,8 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
       const doc = (cur.opts.win ?? window).document;
       // A request that would open the panel the person closed: at most one a second, compose and
       // open together. Taking the slot is the caller's job, once the request is accepted.
-      const reopenRefused = (t: number) =>
-        !cur.opts.panelOpen() &&
-        t - lastReopenRef.current < PAGE_COMMENT_LIMITS.reopenMinIntervalMs;
-      const takeReopen = (t: number) => {
-        if (!cur.opts.panelOpen()) lastReopenRef.current = t;
-      };
+      const reopenRefused = (t: number) => reopenRef.current.refused(t, !cur.opts.panelOpen());
+      const takeReopen = (t: number) => reopenRef.current.take(t, !cur.opts.panelOpen());
       switch (msg.type) {
         case "hello": {
           // The runtime says hello again only while unanswered, once a second: one answer a

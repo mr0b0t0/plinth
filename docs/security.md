@@ -2610,12 +2610,18 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   form, so a document the frame navigated to cannot open the dialog with an anchor it chose.
   Its anchor is a structural key and a short plain-text label, rendered as text in the dialog, the
   chip and the thread. The dialog posts nothing on its own: the person writes the request and
-  presses Send. Outside edit mode Ask an agent uses the comments panel and its review-mode bridge,
-  unchanged. Under opaque isolation no editing message is exchanged with a frame whose origin is
+  presses Send. An `ask` that passes these checks is still only a hint: the app takes it while the
+  tab is visible and no dialog is open, and one that would open the closed comments panel or the
+  Ask dialog at most once a second (the reopen limit of comments from the page), so a frame
+  cannot keep reopening what the person closed. No renderer sends `ask` yet. Outside edit mode Ask
+  an agent uses the comments panel and its review-mode bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose origin is
   `"null"`; the bar's Ask an agent and the comments panel need none.
-- **Publish first.** "Publish my changes first" runs the strip's own Publish (the room checkpoint,
-  or the solo `PUT` with `base_version`), with every check it has; when it does not succeed nothing
-  is posted, so a request never points at a version that does not hold what the person saw.
+- **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path
+  (the room checkpoint, or the solo `PUT` with `base_version` and `files_from_version`), with every
+  check it has, reporting its refusal to the dialog instead of as a toast; when it does not succeed
+  nothing is posted, so a request never points at a version that does not hold what the person saw.
+- **Refused before it counts.** A `request_to` that no agent can take (`no_agent`), or from someone
+  without the mention right, is refused before the comment rate limit counts it.
 
 ## Comparing versions
 

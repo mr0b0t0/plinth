@@ -98,6 +98,11 @@ export interface Grid {
   reveal(row: number, col: number): void;
   /** Sort, filter, scroll and selection, to carry over to a rebuilt grid. */
   view(): GridView;
+  /**
+   * The next row shown above (-1) or below (1) an A1 row, in the order shown, past the rows a
+   * filter hides: 1 above the first row shown, null below the last.
+   */
+  nextShown(row: number, step: -1 | 1): number | null;
   restore(v: GridView): void;
 }
 
@@ -625,6 +630,7 @@ export function buildGrid(
       if (left < frozenEdge) scroll.scrollLeft -= frozenEdge - left;
       else if (right > width) scroll.scrollLeft += Math.min(right - width, left - frozenEdge);
     },
+    nextShown: (row, step) => nextShown(row, step),
     view: () => ({
       sort,
       filter: filterValue,

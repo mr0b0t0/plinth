@@ -1302,7 +1302,11 @@ export class SheetEditor {
     this.grid?.select(o.row, o.col);
   }
 
-  /** Put an open field where it is edited: in its cell, or docked at the bottom of the page. */
+  /**
+   * Put an open field where it is edited: in its cell, or docked at the bottom of the page. A
+   * field already in the dock stays where it is (a rebuild only renames its place): moving a
+   * focused field would close a phone's keyboard.
+   */
   private place(o: Open): void {
     if (!o.docked) {
       o.td.replaceChildren(o.field);
@@ -1312,6 +1316,16 @@ export class SheetEditor {
     const d = this.doc;
     const name = o.row === 1 ? "Column name" : (this.header()?.columns[o.col]?.name ?? "");
     const where = a1(o.row, o.col);
+    const fieldLabel = `Edit ${where}${name && o.row > 1 ? `, ${name}` : ""}. Enter to finish, Escape to cancel.`;
+    if (this.dock && o.field.parentNode === this.dock) {
+      this.dock.setAttribute("aria-label", `Edit ${where}`);
+      const addr = this.dock.querySelector(".plinth-sheet__dock-addr");
+      const named = this.dock.querySelector(".plinth-sheet__dock-name");
+      if (addr) addr.textContent = where;
+      if (named) named.textContent = name;
+      o.field.setAttribute("aria-label", fieldLabel);
+      return;
+    }
     let dock = this.dock;
     if (!dock) {
       dock = d.createElement("div");
@@ -1337,15 +1351,15 @@ export class SheetEditor {
     done.type = "button";
     done.className = "plinth-sheet__btn plinth-sheet__dock-save";
     done.setAttribute("aria-label", "Save cell");
+    // A tap keeps the focus in the field: iOS would move it to the page first, and the field's
+    // blur would then cancel a value it cannot save. Keyboard focus and Enter still reach it.
+    keepFocus(done);
     done.addEventListener("click", () => {
       const at = this.open;
       if (!at) return;
       if (this.commit()) this.focusCell(at.row, at.col);
     });
-    o.field.setAttribute(
-      "aria-label",
-      `Edit ${where}${name && o.row > 1 ? `, ${name}` : ""}. Enter to finish, Escape to cancel.`,
-    );
+    o.field.setAttribute("aria-label", fieldLabel);
     dock.replaceChildren(label, o.field, done);
     // The page keeps the cell above the docked panel in view.
     this.doc.documentElement.style.setProperty("--sheet-dock-h", `${dock.offsetHeight || 120}px`);
@@ -1528,9 +1542,11 @@ export class SheetEditor {
       const b = this.stripButtons.get(k);
       if (b) b.disabled = disabled;
     };
+    // Rows move in the sheet's own order, so not while a sort shows another one.
+    const sorted = this.grid.view().sort !== null;
     set("rowAbove", row < 2);
-    set("rowUp", row <= 2 || row > last);
-    set("rowDown", row < 2 || row >= last);
+    set("rowUp", sorted || row < 2 || row > last || this.neighbour(row, -1) < 2);
+    set("rowDown", sorted || row < 2 || this.neighbour(row, 1) > last);
     set("rowDelete", row < 2);
     // The freeze items show only where they do something: not in a frame too narrow to keep
     // those columns in view, where they would scroll with the rest (grid.ts, unfreezeQuery).
@@ -1616,9 +1632,21 @@ export class SheetEditor {
   }
 
   /**
+   * Where a row moves up or down to, as an A1 row: the next one, or while a filter hides rows the
+   * next row shown, so the row trades places with the one the person sees beside it and the rows
+   * hidden in between keep their order after it. Below 2 or past the last row: nowhere.
+   */
+  private neighbour(row: number, dir: -1 | 1): number {
+    const g = this.grid;
+    if (!g?.view().filter.trim()) return row + dir;
+    return g.nextShown(row, dir) ?? this.backend.lines.length + 1;
+  }
+
+  /**
    * Move a row (the selected one by default) up or down by one, in the sheet's own order: the
-   * room rewrites every formula's references so they keep pointing at the same cells. Once it
-   * lands the row stays selected where it went, and the move is announced.
+   * room rewrites every formula's references so they keep pointing at the same cells. While a
+   * filter is on, it moves past the rows hidden next to it (neighbour). Once it lands the row
+   * stays selected where it went, and the move is announced.
    */
   moveRow(dir: -1 | 1, row = this.grid?.selected().row ?? 0, focus = false): void {
     const g = this.grid;
@@ -1628,17 +1656,18 @@ export class SheetEditor {
       return;
     }
     const lines = this.backend.lines;
-    const to = row + dir;
+    const to = this.neighbour(row, dir);
     const line = lines[row - 1];
     if (row < 2 || to < 2 || to > lines.length || line === undefined) return;
     const op: SheetStructOp = { op: "move_rows", from: row, count: 1, to };
     // Set first: alone (solo), the move lands before struct() returns.
     this.moving = { col: g.selected().col, focus, arrived: false };
+    const step = to - row;
     const sent = this.struct(op, (now) => {
       const at = locateBlock(now, line, row - 1);
       const from = at + 1;
-      if (at < 1 || from + dir < 2 || from + dir > now.length) return null;
-      return { op: "move_rows", from, count: 1, to: from + dir };
+      if (at < 1 || from + step < 2 || from + step > now.length) return null;
+      return { op: "move_rows", from, count: 1, to: from + step };
     });
     if (!sent) this.moving = null;
   }
@@ -2215,6 +2244,10 @@ export class SheetEditor {
         const remove = small("×", `Remove ${shown()}`, () => drop(i), false);
         up.classList.add("plinth-sheet__ghost--move");
         down.classList.add("plinth-sheet__ghost--move");
+        // Shown only while the option has the focus (or the pointer): a tap keeps that focus,
+        // so the button stays shown and takes the tap.
+        keepFocus(up);
+        keepFocus(down);
         r.input.oninput = () => {
           up.setAttribute("aria-label", `Move ${shown()} up`);
           down.setAttribute("aria-label", `Move ${shown()} down`);
@@ -2367,4 +2400,15 @@ export function notKept(text: string, at?: string): string {
     shown = `${(space >= NOT_KEPT_CHARS / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
   }
   return `Not kept${at ? ` in ${at}` : ""}: "${shown}"`;
+}
+
+/**
+ * A control that a tap or a click leaves the focus where it was, as the docked field and the
+ * option list need: its pointer and mouse presses do not move the focus, so nothing blurs before
+ * its click. Tab still reaches it, and Enter and Space still press it.
+ */
+function keepFocus(b: HTMLButtonElement): void {
+  const hold = (e: Event) => e.preventDefault();
+  b.addEventListener("pointerdown", hold);
+  b.addEventListener("mousedown", hold);
 }

@@ -894,12 +894,14 @@ anchor in `list_comments` and in mention tasks, as untrusted data like the comme
 travels in a structured field, never as `@name` text: `request_to` on `POST
 /api/v1/artifacts/:ref/comments` is one of the client types (`claude`, `codex` or `other`), accepted
 on a root comment only (400 `invalid_input`, reason `reply`, on a reply). It makes one task for the
-owner's connections of that client type, target label `@claude`, `@codex` or `@agent` (`other`
-covers every client that is not Claude or Codex, which no `@name` reaches), unless the body already
+owner's connections of that client type, target label `@claude`, `@codex` or `@agent:other` (`other`
+covers every client that is not Claude or Codex, which no `@name` reaches; the `:` keeps it apart
+from `@agent`, a mention of a connection labelled "Agent"), unless the body already
 names that type. It is refused with 400 `invalid_input`, reason `no_agent`, and nothing is written,
 when the owner has no connection of that type that can take mentions (not revoked, not limited to
-one artifact, with the `mentions` scope). An agent's `request_to`, like its `@mentions`, creates no
-task.
+one artifact, with the `mentions` scope); that check, and the mention right's (403 otherwise),
+come before the comment rate limit, so a refused request does not count against it. An agent's
+`request_to`, like its `@mentions`, creates no task.
 
 ### Shared data and viewer identity
 
@@ -2619,10 +2621,15 @@ and the whole-draft review is the only way on (below).
   mostly). A menu near the right edge of the page opens leftwards as far as it needs to stay in
   view. Alt+Shift+Up and Alt+Shift+Down move the selected row too, and a move is
   announced ("Row 4 moved to row 3") once the room says it applied it, with its row selected where
-  it went; rows move in the sheet's own order, so not while a sort is on. Freezing keeps up to five
+  it went; rows move in the sheet's own order, so not while a sort is on (the Row menu's moves are
+  then unavailable, and the keys say "Turn the sort off first"). While a filter hides rows, a row
+  moves past the hidden ones to the next row shown, so it trades places with the row the person
+  sees beside it, and the hidden rows in between keep their order after it; the first row shown
+  does not move up, nor the last one down. Freezing keeps up to five
   columns in view. The column settings set the name, type, number format, currency, decimals,
   thousands separators (on unless turned off) and a select column's options, as a list: rename one
-  in place, move it up or down (its arrows show on hover or focus), remove it with ×, or type one
+  in place, move it up or down (its arrows show on hover or focus, and cannot be pressed while
+  hidden), remove it with ×, or type one
   in "New option" and press Enter to add it (text left there is added on Apply too; at most 100,
   of at most 100 characters each). An option a cell holds cannot be removed (the settings name the
   cell); renaming one that cells hold renames it in those cells too, in one change of the whole
@@ -2652,7 +2659,9 @@ and the whole-draft review is the only way on (below).
   downloads give what the page shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
   bottom of the page under the cell's address and the column's name ("B6 · Owner"), with one
-  button, a check named "Save cell" (Enter saves too); the formula bar is hidden while it is open,
+  button, a check named "Save cell" (Enter saves too; pressing it leaves the focus in the field, so
+  a value it cannot save stays there with the reason), and the field stays in place, focused,
+  while the grid is built again around it; the formula bar is hidden while it is open,
   and the page keeps the cell, ringed, in view above it. The column settings are a sheet across the
   bottom there, titled with the column ("Column C"), with Cancel and Apply pinned under fields that
   scroll. A cell that is focused or opened is scrolled clear of the sticky header rows and sideways
@@ -2803,11 +2812,17 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
-  draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
-  and a page anchor (`{ kind: "page", key, text }`, a structural name such as `slide-3:image-1`,
-  shown as text); the renderer releases its own lease before it asks. While the app is in edit
-  mode, an `ask` without the frame's key is dropped like any other editing message; only outside
-  edit mode does a keyless `ask` open the comments panel in request mode. It has the composer's
+  draft. It opens from the ⋯ item. The renderer protocol also has an `ask` message, which opens it
+  about a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural
+  name shown as text); a renderer releases its own lease before it asks. No renderer sends one
+  yet: the doc, sheet, deck and design renderers have no control of their own to ask from, so a
+  request from the Ask dialog has no page anchor today. While the app is in edit mode, an `ask`
+  without the frame's key is dropped like any other editing message; only outside edit mode does a
+  keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
+  refuse, under the rules for a page's own compose ([comments from the
+  page](#comments-from-the-page-decided-2026-11-19)): it is accepted only while the tab is visible and no dialog is
+  open, and one that would open the closed panel or the Ask dialog at most once a second
+  (`PAGE_COMMENT_LIMITS.reopenMinIntervalMs`, shared with the page's compose and open). It has the composer's
   "Pointing at “…”" chip when the renderer named a place (dropping it makes the request about the
   whole page), the description, the agent choice as in the composer, and "Publish my changes
   first"; the footer holds only Cancel and Send. "Publish my changes first" is off by default and
@@ -2815,7 +2830,9 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   "This also publishes the others' changes."). With it on, the request is posted after the strip's
   Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
   cannot be a version yet, a lost session) nothing is posted, the dialog says why in the strip's
-  words and offers "Post without publishing" or Cancel. Otherwise the request is posted against the
+  words and offers "Post without publishing" or Cancel. That Publish is the strip's own, on the
+  same code path, telling its refusal to the dialog instead of as a toast: a lost session reads the
+  gate again and a conflict opens the review, as Publish does. Otherwise the request is posted against the
   version being edited. After posting, a notification says "Request sent to Claude". At phone
   width the dialog is a sheet flush with the bottom edge. The agent's
   answer is a version like any other, handled by the draft's rules.
