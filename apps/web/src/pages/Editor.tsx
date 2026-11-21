@@ -6,6 +6,7 @@ import {
   API,
   APP_ROUTES,
   type ArtifactDetail,
+  isLiveType,
   type LiveDraftInfo,
   route,
   sourceOf,
@@ -69,7 +70,7 @@ async function load(slug: string): Promise<Load> {
  * is off here).
  */
 async function pageEdits(artifact: ArtifactDetail): Promise<LiveDraftInfo | null> {
-  if (!sourceOf(artifact).def.liveEdit) return null;
+  if (!isLiveType(sourceOf(artifact).def)) return null;
   try {
     const info = await liveInfo(artifact.id);
     return info.draft?.dirty ? info.draft : null;

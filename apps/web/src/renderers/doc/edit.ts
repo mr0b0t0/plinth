@@ -8,7 +8,24 @@
 // text that only this frame edits ("solo" mode, where the app saves it through its own session).
 // The editor never parses HTML from anyone: the textarea is created with createElement and filled
 // through .value, and every rendered block went through the unchanged sanitizer first.
-import { joinLines, LIMITS, type LineRange, rangesOverlap, splitLines } from "@plinth/shared";
+//
+// Before a block is sent, a `<` that would open `<html` or `<!doctype html` at the start of one of
+// its top-level blocks is written `\<` (it renders as `<`), so no block can ever make the doc start
+// like an HTML document, which no Publish could save. The doc's live rules (liveTypes.ts) run on
+// the edit before it is sent, as the room runs them; a refusal (here, or from the room when the
+// lines changed first) puts the block back as the room has it and says why. Images are drawn from
+// the draft's base version's files (common/files.ts), which are the files a Publish keeps.
+import {
+  blockLines,
+  escapeHtmlDocumentStarts,
+  joinLines,
+  LIMITS,
+  type LineRange,
+  liveRules,
+  rangesOverlap,
+  splitLines,
+} from "@plinth/shared";
+import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
   type LeaseDenial,
@@ -20,6 +37,11 @@ import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./block
 
 export const EDIT_DEBOUNCE_MS = 250;
 const STALE_RETRIES = 3;
+const RULES = liveRules("doc");
+
+/** Why a block was not kept, in the doc's words. */
+export const REFUSED_EDIT =
+  "That change would make the doc start like a web page, which a doc can't publish, so it wasn't kept.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
 export type DocBackend = LiveBackend;
@@ -88,6 +110,10 @@ export class LocalDoc implements DocBackend {
 export interface EditorHooks {
   save(): void;
   status(): void;
+  /** Esc at the top level of edit mode: the app moves focus to its strip. */
+  leave?(): void;
+  /** The version whose files the draft is drawn with (its base), or null for the page's own. */
+  fileVersion?(): number | null;
 }
 
 interface Want extends LineRange {
@@ -241,6 +267,9 @@ export class DocEditor {
     for (const id of [...this.labels.keys()]) if (!labelled.has(id)) this.labels.delete(id);
     reconcile(this.root, desired);
     this.root.classList.toggle("plinth-doc--editing", this.editing);
+    // In edit mode the draft is drawn with its base's files, which are the ones a Publish keeps;
+    // view mode keeps the page's own addresses, as before.
+    pinFiles(this.root, this.editing ? (this.hooks.fileVersion?.() ?? null) : null);
     if (this.field) this.grow(this.field);
   }
 
@@ -329,6 +358,10 @@ export class DocEditor {
 
   private readonly onKey = (e: KeyboardEvent) => {
     if (e.target === this.field) return this.onFieldKey(e);
+    if (e.key === "Escape" && !e.defaultPrevented) {
+      this.hooks.leave?.();
+      return;
+    }
     if (e.key !== "Enter") return;
     const top = this.topLevel(e.target);
     if (!top || top !== e.target) return;
@@ -587,13 +620,55 @@ export class DocEditor {
 
   private send(): void {
     const f = this.field;
-    if (!f || !this.backend.mine) return;
+    const mine = this.backend.mine;
+    if (!f || !mine) return;
+    this.escapeField(f);
     const text = padded(f.value, this.pad);
     if (new TextEncoder().encode(text).byteLength > LIMITS.liveDocFrameBytes - 256) {
       this.showNotice("This block is too long to send. Split it into smaller blocks.");
       return;
     }
+    // The room's rules, checked here first: a refusal is never silent.
+    const lines = this.backend.lines;
+    if (RULES?.checkEdit(lines, mine.start, mine.end - mine.start, blockLines(text))) {
+      this.refused(REFUSED_EDIT);
+      return;
+    }
     this.backend.edit(text);
+  }
+
+  /**
+   * Write a leading `<html` or `<!doctype html` of any top-level block in the field as `\<html`,
+   * keeping the caret where it was in the text.
+   */
+  private escapeField(f: HTMLTextAreaElement): void {
+    const { text, at } = escapeHtmlDocumentStarts(f.value);
+    if (at.length === 0) return;
+    const shift = (p: number) => p + at.filter((i) => i < p).length;
+    const start = shift(f.selectionStart ?? 0);
+    const end = shift(f.selectionEnd ?? 0);
+    f.value = text;
+    try {
+      f.setSelectionRange(start, end);
+    } catch {
+      // A field that is not focused keeps no selection.
+    }
+  }
+
+  /**
+   * An edit was refused (by this frame's check, or by the room because the lines changed first):
+   * the block goes back to the room's text and stays open, and the frame says why.
+   */
+  refused(reason: string): void {
+    this.cancelTimer();
+    const f = this.field;
+    const mine = this.backend.mine;
+    if (f && mine) {
+      f.value = unpadded(joinLines(this.backend.lines.slice(mine.start, mine.end)), this.pad);
+      this.grow(f);
+    }
+    this.showNotice(reason);
+    this.hooks.status();
   }
 
   /** Send a pending block now. */

@@ -31,6 +31,7 @@
 import {
   type ArtifactType,
   hasPageCapabilities,
+  isLiveType,
   ROOM_KINDS,
   ROOM_LIMITS,
   ROOM_PATH_PREFIX,
@@ -188,7 +189,7 @@ function fitsKind(kind: RoomKind, target: RoomTarget, config: Config, env: Bindi
     case "page":
       return hasPageCapabilities(typeDef(target.type)) && target.caps?.room === true;
     case "doc":
-      return typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
+      return isLiveType(typeDef(target.type)) && liveEditMode(config, env) === "room";
     case "slides":
       return typeDef(target.type)?.follow === true && slidesFollowActive(config, env);
   }

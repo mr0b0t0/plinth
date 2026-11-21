@@ -6,8 +6,8 @@ import {
   publishArtifactInput,
   renameArtifactInput,
   restoreVersionInput,
+  restUpdateArtifactInput,
   setVisibilityInput,
-  updateArtifactInput,
 } from "@plinth/shared";
 import { Hono } from "hono";
 import { applyAppHeaders } from "../app/headers.ts";
@@ -60,7 +60,7 @@ artifactsApi.get("/artifacts/:ref", async (c) => {
 
 artifactsApi.put("/artifacts/:ref", async (c) => {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const input = parseInput(updateArtifactInput, { ...(body ?? {}), id: c.req.param("ref") });
+  const input = parseInput(restUpdateArtifactInput, { ...(body ?? {}), id: c.req.param("ref") });
   return c.json(await updateArtifact(serviceCtx(c), input));
 });
 

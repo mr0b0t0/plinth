@@ -18,5 +18,5 @@ export const designSystem: TypeModule<"design_system"> = {
   assetTypes: /^(image\/(png|jpeg|gif|webp|avif|svg\+xml)|font\/(woff2|woff|ttf|otf))$/,
   renderer: { script: "ds.js", style: "ds.css" },
   editor: { language: "json", wordWrap: "off" },
-  liveEdit: false,
+  edit: "ask",
 };

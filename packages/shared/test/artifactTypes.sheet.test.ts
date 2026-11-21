@@ -34,7 +34,7 @@ describe("sheet type", () => {
     for (const t of ["", "image/png", "text/css", "text/plain", "application/octet-stream"]) {
       expect(d.assetTypes?.test(t), t).toBe(false);
     }
-    expect(d.liveEdit).toBe(true);
+    expect(d.edit).toBe("live");
     // People never see a sheet's source: no editor, so no source Edit and no source diff.
     expect(d.editor).toBeNull();
     expect(rendererFiles(d)).toEqual([

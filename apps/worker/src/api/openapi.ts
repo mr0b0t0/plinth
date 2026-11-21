@@ -29,6 +29,7 @@ import {
   grantsReplaceInput,
   INVITATION_SKIP_REASONS,
   invitationEmailsInput,
+  isLiveType,
   LIMITS,
   liveCheckpointInput,
   MAX_PEOPLE_LISTED,
@@ -49,6 +50,7 @@ import {
   reportInput,
   requestLoginInput,
   restoreVersionInput,
+  restUpdateArtifactInput,
   reviewLoginInput,
   SCOPES,
   SHA256_RE,
@@ -59,7 +61,6 @@ import {
   TTL,
   TYPE_REGISTRY,
   UPLOAD_TOKEN_PREFIX,
-  updateArtifactInput,
   updateCategoryShareInput,
   updateCommentInput,
   updateProfileInput,
@@ -161,7 +162,7 @@ const viewStub = { id: str(), slug: str(), title: str() };
 function requestSchemas(): Record<string, Json> {
   return {
     PublishArtifactInput: fromZod(publishArtifactInput),
-    UpdateArtifactInput: fromZod(updateArtifactInput.omit({ id: true })),
+    UpdateArtifactInput: fromZod(restUpdateArtifactInput.omit({ id: true })),
     RenameArtifactInput: fromZod(renameArtifactInput),
     RenameCategoryInput: fromZod(renameCategoryInput),
     RestoreVersionInput: fromZod(restoreVersionInput.pick({ base_version: true })),
@@ -762,6 +763,11 @@ function responseSchemas(): Record<string, Json> {
         description:
           "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode",
       },
+      inline_editing: {
+        oneOf: [enumOf(["room", "solo"]), { type: "null" }],
+        description:
+          "How owners and editors edit docs and sheets on their page here: room (live with each other), solo (alone, without rooms), or null when editing on the page is off (ALLOW_LIVE_EDITING=false, or opaque isolation)",
+      },
       live_views: {
         type: "boolean",
         description:
@@ -1316,7 +1322,7 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
           "may view it and it is one, else null",
       };
     }
-    if (TYPE_REGISTRY[t].liveEdit) {
+    if (isLiveType(TYPE_REGISTRY[t])) {
       detail.properties.live_draft = {
         oneOf: [ref("LiveDraftMeta"), { type: "null" }],
         description:
@@ -1460,7 +1466,8 @@ function liveSchemas(): Record<string, Json> {
     base_version: int({ minimum: 1, description: "The version the draft is based on" }),
     dirty: { type: "boolean" },
     conflict_version: nullable("integer", {
-      description: "A version published meanwhile that changed the same lines; needs review",
+      description:
+        "A version published meanwhile that the draft is frozen against: the editors review the whole draft beside it",
     }),
     updated_at: dateTime,
   };
@@ -1477,9 +1484,9 @@ function liveSchemas(): Record<string, Json> {
         "sign_in",
       ]),
       description:
-        "On-page editing of a doc: owners and editors on the current version, while live editing " +
-        "is on with origin isolation. sign_in: a viewer session, confirmed by code where the " +
-        "address may not sign in (single-user mode), so watch only",
+        "On-page editing of a doc or a sheet: owners and editors on the current version, while " +
+        "live editing is on with origin isolation. sign_in: a viewer session, confirmed by code " +
+        "where the address may not sign in (single-user mode), so watch only",
     },
     LiveInfo: obj({
       mode: { oneOf: [mode, { type: "null" }] },
@@ -1488,15 +1495,6 @@ function liveSchemas(): Record<string, Json> {
       idle_checkpoint_s: int({ minimum: 0 }),
       auto_checkpoint_min_s: int({ minimum: 0 }),
     }),
-    LiveDraftText: {
-      ...obj({
-        text: str(),
-        base_version: int({ minimum: 1 }),
-        rev: int({ minimum: 0 }),
-        conflict_version: nullable("integer"),
-      }),
-      description: "The unsaved draft's Markdown, to review a conflict. Untrusted text",
-    },
     LiveCheckpointResult: {
       oneOf: [
         obj({
@@ -1811,29 +1809,19 @@ function liveOperations(): Operation[] {
       errors: [400, 401, 403, 404],
     },
     {
-      method: "get",
-      path: API.liveDraft,
-      operationId: "getLiveDraft",
-      summary: "The unsaved draft's text, to review a conflict",
-      description: `${who} Needs live editing with rooms on the instance.`,
-      tag: "Live editing",
-      auth: "user",
-      ok: [200, "LiveDraftText"],
-      errors: [400, 401, 403, 404, 503],
-    },
-    {
       method: "post",
       path: API.liveCheckpoint,
       operationId: "liveCheckpoint",
-      summary: "Save the unsaved draft as the next version",
+      summary: "Publish the unpublished draft as the next version",
       description:
-        `${who} The version is published with the draft's base_version, so a stale draft is ` +
-        "refused (409) and nothing is overwritten. A draft equal to its base writes nothing. " +
-        "resolved_text is accepted only while the draft is in conflict, with the conflict_version " +
-        "the editor reviewed (409 when the draft now conflicts with a newer version). A sheet's " +
-        "draft is never merged: its resolved_text must be the draft itself, saved on top of the " +
-        "conflicting version, or that version's text, which drops the draft (400 not_a_choice " +
-        "otherwise, 409 when rev is not the draft's).",
+        `${who} The room's own draft is published with the draft's base_version and the files ` +
+        "of that version, so a stale draft is refused (409) and nothing is overwritten. A draft " +
+        "equal to its base writes nothing; a frozen draft is published only with " +
+        "conflict_version (Publish your changes in the review), over that version, which stays in the " +
+        "history. With conflict_version: 200 busy while another save or choice runs, then 409 " +
+        "live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) " +
+        "or live_moved (rev is not current), all before clean. 409 live_unpublishable for a " +
+        "draft that cannot be a version yet.",
       tag: "Live editing",
       auth: "user",
       body: "LiveCheckpointInput",
@@ -1844,14 +1832,22 @@ function liveOperations(): Operation[] {
       method: "delete",
       path: API.liveDraft,
       operationId: "discardLiveDraft",
-      summary: "Discard the unsaved draft (409 when it changed past rev)",
+      summary: "Discard the unpublished draft (409 when it changed past rev)",
       description:
         `${who} ` +
         "409 with reason live_busy while a save or a review choice is publishing or discarding " +
-        "the same draft.",
+        "the same draft. With conflict_version (Discard your changes in the review): 409 live_resolved " +
+        "when the draft is no longer frozen, live_conflict when a newer version froze it.",
       tag: "Live editing",
       auth: "user",
-      query: [{ name: "rev", schema: int({ minimum: 0 }), description: "The draft revision seen" }],
+      query: [
+        { name: "rev", schema: int({ minimum: 0 }), description: "The draft revision seen" },
+        {
+          name: "conflict_version",
+          schema: int({ minimum: 1 }),
+          description: "Discard your changes: the version the frozen draft was reviewed against",
+        },
+      ],
       ok: [204, null],
       errors: [400, 401, 403, 404, 409, 503],
     },

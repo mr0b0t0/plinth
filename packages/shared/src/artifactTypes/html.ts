@@ -16,5 +16,5 @@ export const html: TypeModule<"html"> = {
   assetTypes: null,
   renderer: null,
   editor: { language: "html", wordWrap: "on" },
-  liveEdit: false,
+  edit: "ask",
 };

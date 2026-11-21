@@ -143,9 +143,16 @@ export function Toaster() {
   );
 }
 
+/**
+ * How long a pointer or focus resting on a toast holds it, at most: a pointer left on a toast
+ * never keeps it on screen for good.
+ */
+export const TOAST_PAUSE_MAX_MS = 10_000;
+
 function ToastView({ toast }: { toast: ToastRecord }) {
   const ToneIcon = ICONS[toast.tone];
   const paused = useRef(false);
+  const pausedFor = useRef(0);
   const remaining = useRef(toast.duration);
 
   useEffect(() => {
@@ -153,7 +160,9 @@ function ToastView({ toast }: { toast: ToastRecord }) {
     let last = Date.now();
     const timer = window.setInterval(() => {
       const now = Date.now();
-      if (!paused.current) remaining.current -= now - last;
+      if (paused.current && pausedFor.current < TOAST_PAUSE_MAX_MS) {
+        pausedFor.current += now - last;
+      } else remaining.current -= now - last;
       last = now;
       if (remaining.current <= 0) dismissToast(toast.id);
     }, 100);

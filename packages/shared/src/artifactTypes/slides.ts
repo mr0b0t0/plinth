@@ -23,7 +23,7 @@ export const slides: TypeModule<"slides"> = {
     lazy: [{ file: "slides-pptx.js", entry: "pptx.ts" }],
   },
   editor: { language: "markdown", wordWrap: "on" },
-  liveEdit: false,
+  edit: "ask",
   present: true,
   // Owners and editors lead identified viewers over the room's `slides` channel (rooms/slides.ts).
   follow: true,

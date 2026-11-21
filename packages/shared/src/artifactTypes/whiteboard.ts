@@ -22,7 +22,7 @@ export const whiteboard: TypeModule<"whiteboard"> = {
   assetTypes: null,
   renderer: { script: "whiteboard.js", style: "whiteboard.css", runtime: true },
   editor: null,
-  liveEdit: false,
+  edit: "board",
   pageData: "fixed",
   assets: false,
   upload: false,

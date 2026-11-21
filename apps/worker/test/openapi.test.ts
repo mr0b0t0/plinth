@@ -279,13 +279,14 @@ describe("OpenAPI document", () => {
     );
   });
 
-  it("documents the four live editing operations as session-only (never bearer, never MCP)", () => {
+  it("documents the three live editing operations as session-only (never bearer, never MCP)", () => {
     const live = [
       ["/artifacts/{ref}/live", "get"],
-      ["/artifacts/{ref}/live/draft", "get"],
       ["/artifacts/{ref}/live/checkpoint", "post"],
       ["/artifacts/{ref}/live/draft", "delete"],
     ] as const;
+    // No operation returns draft text.
+    expect(doc.paths["/artifacts/{ref}/live/draft"]?.get).toBeUndefined();
     for (const [path, method] of live) {
       const op = doc.paths[path]?.[method];
       expect(op, `${method} ${path}`).toBeDefined();

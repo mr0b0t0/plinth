@@ -11,6 +11,11 @@ async function loadPage() {
   return (await import("./ArtifactPage.tsx")).default;
 }
 
+/** The frame key an owner's or editor's frame carries in its address, and the address without it. */
+const keyOf = (el: Element) =>
+  /#plinth-k=([A-Za-z0-9_-]{43})$/.exec(el.getAttribute("src") ?? "")?.[1];
+const srcOf = (el: Element) =>
+  (el.getAttribute("src") ?? "").replace(/#plinth-k=[A-Za-z0-9_-]{43}$/, "");
 const ENTER = (n: number) =>
   `http://art123.content.localhost:8787/__plinth/enter?t=token-${n}&next=%2F`;
 
@@ -488,7 +493,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
   const docGate = (over: Partial<Extract<ViewGate, { status: "ok" }>> = {}, n = 1) =>
     okGate({ artifact: DOC, role: "editor", live: live(), ...over }, n);
 
-  it("gives owners and editors an Edit toggle and an Edit source item, viewers neither", async () => {
+  it("gives owners and editors an Edit toggle, the one way in, and viewers none", async () => {
     stubApi({ me: ME, handle: (c) => (c.path.startsWith("/view/") ? json(docGate()) : undefined) });
     let ArtifactPage = await loadPage();
     const user = userEvent.setup();
@@ -497,9 +502,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     const toggle = screen.getByRole("button", { name: "Edit" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     await user.click(screen.getByRole("button", { name: "Artifact actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit source" }).getAttribute("href")).toBe(
-      "/a/garden-plan/edit",
-    );
+    // No source beside it: the menu has no editor item for a doc edited on its page.
+    expect(screen.queryByRole("menuitem", { name: "Edit source" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Edit" })).toBeNull();
     await user.keyboard("{Escape}");
     await user.click(toggle);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
@@ -513,7 +518,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
         screen.getByRole("region", { name: "Editing on the page" }),
       ),
     );
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    // The toggle is the way out too: the strip has no Done beside it on a wide screen.
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    await user.click(toggle);
     await waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
     expect(screen.queryByRole("region", { name: "Editing on the page" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(toggle));
@@ -548,7 +555,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     );
   });
 
-  it("tells editors about unsaved page edits, and turns comments off while editing", async () => {
+  it("tells editors about unpublished page changes, and turns comments off while editing", async () => {
     const draft = {
       base_version: 3,
       dirty: true,
@@ -568,14 +575,17 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
-    expect(screen.getByRole("note").textContent).toContain(
-      "Unsaved page edits by bo@example.org, 2 h ago",
-    );
+    expect(screen.getByRole("note").textContent).toBe("Unpublished changes · Bo, 2 h ago");
     await user.click(screen.getByRole("button", { name: "Comments" }));
     expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
-    await user.click(screen.getByRole("button", { name: "Continue editing" }));
+    // The notice offers no action of its own: the bar's Edit toggle is the one way in, the edit
+    // strip holds Publish and the ⋯ menu Discard.
+    expect(screen.queryByRole("button", { name: "Continue editing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     // Editing and review mode exclude each other: the panel closes.
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
@@ -583,7 +593,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
-    // The notice that held focus is gone: focus is in the edit bar, not on the body.
+    // Focus is in the edit bar, not on the body.
     await waitFor(() =>
       expect(document.activeElement).toBe(
         screen.getByRole("region", { name: "Editing on the page" }),
@@ -591,7 +601,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     );
   });
 
-  it("does not offer to save or discard the shared draft before the room is reachable", async () => {
+  it("says the shared draft exists before the room is reachable, with no action of its own", async () => {
     const draft = {
       base_version: 3,
       dirty: true,
@@ -607,13 +617,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     const ArtifactPage = await loadPage();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
-    expect(screen.getByRole("note").textContent).toContain("Connecting to the live draft…");
-    expect(
-      (screen.getByRole("button", { name: "Save as version" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect((screen.getByRole("button", { name: "Discard" }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(screen.getByRole("note").textContent).toContain("Unpublished changes");
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
   });
 
   describe("while the frame follows the room", () => {
@@ -654,11 +660,14 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      // An editor's frame has a fresh key in its address; its editing messages carry it.
+      expect(keyOf(frame)).toMatch(/^[A-Za-z0-9_-]{43}$/);
       const e = new MessageEvent("message", {
         origin: "http://art123.content.localhost:8787",
         data: {
           source: "plinth-renderer",
           v: 1,
+          key: keyOf(frame),
           type: "live",
           connected: true,
           failed: false,
@@ -682,8 +691,33 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
       const shown = await screen.findByTitle("Plan, version 4");
       expect(shown).toBe(frame);
-      expect(shown.getAttribute("src")).toBe(ENTER(1));
+      expect(srcOf(shown)).toBe(ENTER(1));
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
+    });
+
+    it("while editing, a newer version raises no toast: the edit strip says it", async () => {
+      let current = 3;
+      let n = 0;
+      stubApi({
+        me: ME,
+        handle: (c) =>
+          c.path.startsWith("/view/")
+            ? json(
+                docGate({ artifact: { ...DOC, current_version: current, version: current } }, ++n),
+              )
+            : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      roomStatus(frame, true);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
+      current = 4;
+      await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+      await screen.findByTitle("Plan, version 4");
+      expect(screen.queryByText("Updated to v4")).toBeNull();
     });
 
     /** A stand-in watch socket the test can send frames and a close through. */
@@ -719,6 +753,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
         data: {
           source: "plinth-renderer",
           v: 1,
+          key: keyOf(frame),
           type: "live",
           connected,
           failed: false,
@@ -760,13 +795,13 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       // The gate was read again, but the frame that follows the room stays.
       expect(n).toBe(2);
       expect(screen.getByTitle("Plan, version 3")).toBe(frame);
-      expect(frame.getAttribute("src")).toBe(ENTER(1));
+      expect(srcOf(frame)).toBe(ENTER(1));
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
-      // The pause ends (the room socket closed with the old pass): a fresh gate renews the frame.
+      // The pause ends (the room socket closed with the old pass): a fresh gate renews the frame,
+      // with a key of its own.
       roomStatus(frame, false);
-      await waitFor(() =>
-        expect(screen.getByTitle("Plan, version 3").getAttribute("src")).not.toBe(ENTER(1)),
-      );
+      await waitFor(() => expect(srcOf(screen.getByTitle("Plan, version 3"))).not.toBe(ENTER(1)));
+      expect(keyOf(screen.getByTitle("Plan, version 3"))).not.toBe(keyOf(frame));
     });
 
     it("a sharing change that ends access shows the gate, even while paused", async () => {
@@ -805,9 +840,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       ws.frame({ t: "welcome", v: 1, version: 3 });
       ws.revoke();
       const fresh = await waitFor(() => {
-        const f = [...document.querySelectorAll("iframe")].find(
-          (x) => x.getAttribute("src") === ENTER(2),
-        );
+        const f = [...document.querySelectorAll("iframe")].find((x) => srcOf(x) === ENTER(2));
         if (!f) throw new Error("not renewed yet");
         return f;
       });
@@ -836,7 +869,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const post = (data: Record<string, unknown>) => {
         const e = new MessageEvent("message", {
           origin: "http://art123.content.localhost:8787",
-          data: { source: "plinth-renderer", v: 1, ...data },
+          data: { source: "plinth-renderer", v: 1, key: keyOf(frame), ...data },
         });
         Object.defineProperty(e, "source", { value: frame.contentWindow });
         act(() => {

@@ -119,9 +119,10 @@
   background: var(--color-accent-soft);
   color: var(--color-accent-ink);
 }
-.pl-editbar {
+.pl-editbar,
+.pl-livenotice {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   min-height: var(--control-md);
@@ -131,121 +132,84 @@
   background: var(--color-surface);
   font-size: var(--text-sm);
 }
+.pl-editbar__state,
+.pl-livenotice {
+  color: var(--color-accent-ink);
+  font-weight: var(--weight-medium);
+}
 .pl-editbar__state {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1-5);
   min-width: 0;
-  color: var(--color-accent-ink);
-  font-weight: var(--weight-medium);
 }
-.pl-editbar__status {
-  overflow-wrap: anywhere;
+/* One line at every width: what does not fit ends in an ellipsis. */
+.pl-editbar__status,
+.pl-livenotice__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.pl-editbar__state > svg,
+.pl-livenotice > svg {
+  flex: none;
+}
+/* Publish off (the changes cannot be published yet; its tooltip says why): quiet, not a grey
+   block. */
+.pl-editbar__publish[aria-disabled="true"]:not([data-loading]) {
+  border-color: var(--color-border-strong);
+  background: transparent;
+  color: var(--color-ink-faint);
+}
+/* At phone width the strip stays one line: a short status ("v5 published") stands in for the long
+   words, which are still read. */
+.pl-editbar__short {
+  display: none;
+}
+@media (max-width: 30rem) {
+  .pl-editbar__short {
+    display: inline;
+  }
+  .pl-editbar__long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+/* How many others are editing; who and where are in its tooltip. */
 .pl-editbar__editors {
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1-5);
-  min-width: 0;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
   color: var(--color-ink-muted);
-  overflow-wrap: anywhere;
-}
-.pl-editbar__editor + .pl-editbar__editor::before {
-  content: "· ";
-  color: var(--color-ink-ghost);
+  font-variant-numeric: tabular-nums;
 }
 .pl-editbar__typing {
   color: var(--color-accent-ink);
 }
-.pl-editbar__count,
-.pl-editbar__narrow {
-  display: none;
-}
-.pl-editbar__actions {
+.pl-editbar__actions,
+.pl-livenotice__actions {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1-5);
   margin-left: auto;
 }
+/* Every live notice reads as the edit strip does: a bronze rule, a pencil and bronze words. */
 .pl-livenotice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1-5) var(--space-3);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--page-pad);
-  border-bottom: var(--border-width) solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-ink-muted);
-  font-size: var(--text-sm);
-}
-.pl-livenotice--conflict,
-.pl-livenotice--editing {
-  border-left: 2px solid var(--color-accent);
-  color: var(--color-ink);
-}
-.pl-livenotice__text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.pl-livenotice__hint {
-  color: var(--color-ink-faint);
-}
-.pl-livenotice__actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-left: auto;
+  gap: var(--space-1-5);
 }
 @media (max-width: 52rem) {
   .pl-editbar,
   .pl-livenotice {
     padding-inline: var(--space-4);
   }
-}
-/* Phone width: the status, who is here (a count) and the buttons share one line. */
-@media (max-width: 40rem) {
-  .pl-editbar {
-    flex-wrap: nowrap;
-    gap: var(--space-2);
-  }
-  .pl-editbar__state {
-    flex: 1 1 auto;
-  }
-  .pl-editbar__state > svg {
-    display: none;
-  }
-  .pl-editbar__editors {
-    flex: none;
-  }
-  .pl-editbar__count,
-  .pl-editbar__narrow {
-    display: inline;
-  }
-  .pl-editbar__wide {
-    display: none;
-  }
-  .pl-editbar__names {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  .pl-editbar__actions {
-    flex: none;
-  }
-}
-/* The review dialog's diff (ConflictView with editor.css). The dialog body has no definite
-   height, so the flex rules the source editor uses would give Monaco 0px: the diff gets its own. */
-.pl-liveconflict .pl-conflict {
-  flex: none;
-}
-.pl-liveconflict .pl-conflict__diff {
-  flex: none;
-  height: min(60vh, 32rem);
-  min-height: 16rem;
 }
 /* Shared data: what the page sees and saves. Long emails wrap rather than widen the page. */
 .pl-viewer__data {

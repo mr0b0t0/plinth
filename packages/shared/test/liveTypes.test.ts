@@ -1,11 +1,16 @@
-// The live-editing rules per type (#36): every type with liveEdit has rules; a doc's draft takes
-// any lines; a sheet's draft takes only valid, canonical rows and a header with the same number of
-// columns, re-checks every row when the header changes, and moves rows and columns only through
-// applySheetStruct, which both sides run to the same lines; and a sheet's draft is never merged.
+// The live-editing rules per type (#36): every type with `edit: "live"` has rules; a doc's draft
+// takes any lines that do not make it start like an HTML document; a sheet's draft takes only
+// valid, canonical rows and a header with the same number of columns, re-checks every row when the
+// header changes, changes its line count by a text edit only by appending, and moves rows and
+// columns only through applySheetStruct, which both sides run to the same lines; only a doc's
+// draft is ever merged.
 import { describe, expect, it } from "vitest";
 import {
   ARTIFACT_TYPES,
   applySheetStruct,
+  escapeHtmlDocumentStarts,
+  HTML_DOCUMENT_RE,
+  isLiveType,
   LIMITS,
   LIVE_TYPE_RULES,
   liveDocClientFrameSchema,
@@ -20,6 +25,7 @@ import {
   sheetHeaderLine,
   sheetRowLine,
   TYPE_REGISTRY,
+  versionRange,
 } from "../src/index.ts";
 
 const HEADER = JSON.stringify({
@@ -36,9 +42,18 @@ const sheet = liveRules("sheet");
 if (!sheet) throw new Error("no sheet rules");
 
 describe("live type rules", () => {
-  it("cover exactly the types with liveEdit", () => {
-    const live = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].liveEdit);
+  it("cover exactly the types with edit: live", () => {
+    const live = ARTIFACT_TYPES.filter((t) => isLiveType(TYPE_REGISTRY[t]));
     expect(live).toEqual(["doc", "sheet"]);
+    expect(ARTIFACT_TYPES.map((t) => TYPE_REGISTRY[t].edit)).toEqual([
+      "ask",
+      "live",
+      "ask",
+      "ask",
+      "ask",
+      "live",
+      "board",
+    ]);
     expect(Object.keys(LIVE_TYPE_RULES).sort()).toEqual([...live].sort());
     expect(liveRules("html")).toBeNull();
     expect(liveRules("constructor")).toBeNull();
@@ -49,18 +64,91 @@ describe("live type rules", () => {
     const doc = liveRules("doc");
     expect(doc?.checkEdit(["# A", ""], 0, 1, ["<script>", ""])).toBeNull();
     expect(doc?.valid("anything")).toBe(true);
-    expect(doc?.struct).toBe(false);
+    expect(doc?.struct).toBeNull();
     expect(doc?.tooLarge("a".repeat(LIMITS.maxDocBytes + 1))).toBe(true);
     expect(liveDocTooLarge("\n".repeat(LIMITS.maxLiveDocLines))).toBe(true);
+  });
+
+  it("a doc never starts like an HTML document, as the stager checks", () => {
+    const doc = liveRules("doc");
+    if (!doc) throw new Error("no doc rules");
+    for (const head of ["<html>", "<!DOCTYPE html>", "  <html lang=en>", "<HTML>", "<html"]) {
+      // Typed as the first block, or left first by deleting the block above it.
+      const lines = ["# Intro", "", "Text"];
+      const ins = head === "<html" ? ["<html", "x"] : [head];
+      expect(doc.checkEdit(lines, 0, 1, ins), head).toBe("invalid");
+      expect(doc.checkEdit(["# Intro", "", head, "x"], 0, 2, []), head).toBe("invalid");
+      expect(doc.valid(`${head}\nmore`), head).toBe(false);
+    }
+    // Blank lines first, then the start of a document.
+    expect(doc.checkEdit(["", "", "# A"], 2, 1, ["<html>"])).toBe("invalid");
+    // `<html` alone at the very end is not a document start (the regex wants a character after).
+    expect(doc.checkEdit([""], 0, 1, ["<html"])).toBeNull();
+    // An edit after the first block is never refused by this rule.
+    expect(doc.checkEdit(["# A", "", "b"], 2, 1, ["<html>"])).toBeNull();
+    // Escaped, it renders the same and passes.
+    expect(doc.checkEdit(["# A"], 0, 1, ["\\<html> basics"])).toBeNull();
+    expect(doc.valid("\\<html> basics")).toBe(true);
+    expect(doc.valid("text <html> later")).toBe(true);
+  });
+
+  it("checkEdit and valid agree with the stager's regex on random texts", () => {
+    const doc = liveRules("doc");
+    if (!doc) throw new Error("no doc rules");
+    const parts = [
+      "",
+      " ",
+      "\n",
+      "<html>",
+      "<!doctype html>",
+      "<html",
+      "# A",
+      "x",
+      "\\<html>",
+      "<p>",
+    ];
+    let seed = 7;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed % n;
+    };
+    for (let i = 0; i < 500; i++) {
+      const text = Array.from({ length: 1 + rand(5) }, () => parts[rand(parts.length)]).join("");
+      expect(doc.valid(text), JSON.stringify(text)).toBe(!HTML_DOCUMENT_RE.test(text));
+      // The edit that writes the whole text, from nothing.
+      const refused = doc.checkEdit([""], 0, 1, text.split("\n")) !== null;
+      expect(refused, JSON.stringify(text)).toBe(HTML_DOCUMENT_RE.test(text));
+    }
+  });
+
+  it("toLive and fromLive are the identity for docs and sheets; nothing is unpublishable", () => {
+    for (const t of ["doc", "sheet"]) {
+      const r = liveRules(t);
+      for (const s of ["", "# A\n", LINES.join("\n")]) {
+        expect(r?.fromLive(r.toLive(s))).toBe(s);
+        expect(r?.unpublishable(s)).toBeNull();
+      }
+    }
   });
 });
 
 describe("sheet edits", () => {
   it("takes a valid row in its canonical spelling", () => {
     expect(sheet.checkEdit(LINES, 1, 1, ['["Apples",4,"=B2*2"]'])).toBeNull();
-    // Insert a new row at the end, and delete one (an empty replacement).
+    // Insert a new row at the end.
     expect(sheet.checkEdit(LINES, 4, 0, ['["Plums",1]'])).toBeNull();
-    expect(sheet.checkEdit(LINES, 2, 1, [])).toBeNull();
+  });
+
+  it("changes the line count only by appending rows at the end", () => {
+    // A row in the middle moves only through a struct op, which rewrites the references it shifts.
+    expect(sheet.checkEdit(LINES, 2, 1, [])).toBe("invalid");
+    expect(sheet.checkEdit(LINES, 2, 0, ['["Plums",1]'])).toBe("invalid");
+    expect(sheet.checkEdit(LINES, 1, 1, ['["a",1]', '["b",2]'])).toBe("invalid");
+    expect(sheet.checkEdit(LINES, 3, 1, [])).toBe("invalid");
+    // The same count anywhere, or more lines ending at the last one (a paste past the end).
+    expect(sheet.checkEdit(LINES, 2, 1, ['["Plums",1]'])).toBeNull();
+    expect(sheet.checkEdit(LINES, 3, 1, ['["Sum",null,"=SUM(C2:C3)"]', '["x",1]'])).toBeNull();
+    expect(sheet.checkEdit(LINES, 4, 0, ['["x",1]', '["y",2]'])).toBeNull();
   });
 
   it("refuses a row that does not fit its columns, or is not canonical", () => {
@@ -87,7 +175,8 @@ describe("sheet edits", () => {
     // A header with another number of columns, or two lines in its place.
     const fewer = JSON.stringify({ plinth: "sheet", v: 1, columns: [{ name: "A", type: "text" }] });
     expect(sheet.checkEdit(LINES, 0, 1, [fewer])).toBe("invalid");
-    expect(sheet.checkEdit(LINES, 0, 1, [renamed, '["x"]'])).toBeNull();
+    // The header's lease is line 0: a row put in with it would shift every row below.
+    expect(sheet.checkEdit(LINES, 0, 1, [renamed, '["x"]'])).toBe("invalid");
     expect(sheet.checkEdit(LINES, 0, 1, [])).toBe("invalid");
     // Nothing goes above the header.
     expect(sheet.checkEdit(LINES, 0, 0, ['["x"]'])).toBe("invalid");
@@ -214,6 +303,23 @@ describe("sheet structural changes", () => {
   });
 });
 
+describe("struct op tables", () => {
+  it("a sheet takes its four ops, touches every lease, and applies them as the frames do", () => {
+    const s = sheet.struct;
+    if (!s) throw new Error("no struct rules");
+    expect([...s.kinds]).toEqual([
+      "insert_rows",
+      "delete_rows",
+      "insert_columns",
+      "delete_columns",
+    ]);
+    const op = { op: "insert_rows", before: 3, count: 1 } as const;
+    expect(s.touches(LINES, op)).toBe("all");
+    expect(s.apply(LINES, op)).toEqual({ lines: applySheetStruct(LINES, op) });
+    expect(s.apply(LINES, { op: "delete_rows", from: 9, count: 1 })).toEqual({ error: "invalid" });
+  });
+});
+
 describe("struct frames", () => {
   it("the client schema takes the four ops and nothing else", () => {
     const ok = [
@@ -245,8 +351,23 @@ describe("struct frames", () => {
 
 describe("merging", () => {
   it("a doc's draft is merged with a version published meanwhile; a sheet's never is", () => {
-    expect(liveRules("doc")?.merge).toBe(true);
-    expect(sheet.merge).toBe(false);
+    expect(liveRules("doc")?.merge).toBe("lines");
+    expect(sheet.merge).toBe("review");
+    // Only docs merge.
+    for (const [t, r] of Object.entries(LIVE_TYPE_RULES)) {
+      expect(r?.merge === "lines", t).toBe(t === "doc");
+    }
+  });
+
+  it("names a range of versions", () => {
+    expect(versionRange(6, 6)).toBe("v6");
+    expect(versionRange(6, 7)).toBe("v6 to v7");
+    expect(liveReplacesNote("Edited on the page", 6, 7)).toBe(
+      "Edited on the page. Replaces the changes in v6 to v7.",
+    );
+    const long = liveReplacesNote("x".repeat(LIMITS.maxNoteLength), 6, 17);
+    expect(long.length).toBeLessThanOrEqual(LIMITS.maxNoteLength);
+    expect(long.endsWith(". Replaces the changes in v6 to v17.")).toBe(true);
   });
 
   it("names the version a sheet's page edits replace, after the editor's own note, within the limit", () => {
@@ -264,5 +385,42 @@ describe("merging", () => {
     const emoji = liveReplacesNote("😀".repeat(LIMITS.maxNoteLength), 7);
     expect(emoji.length).toBeLessThanOrEqual(LIMITS.maxNoteLength);
     expect(emoji).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+});
+
+describe("the leading < escape", () => {
+  it("escapes <html and <!doctype html at the start of every top-level block", () => {
+    expect(escapeHtmlDocumentStarts("<html> basics")).toEqual({ text: "\\<html> basics", at: [0] });
+    expect(escapeHtmlDocumentStarts("Intro\n\n<html> basics\n\n  <!DOCTYPE html> too").text).toBe(
+      "Intro\n\n\\<html> basics\n\n  \\<!DOCTYPE html> too",
+    );
+    expect(escapeHtmlDocumentStarts("<html").text).toBe("\\<html");
+    // Not a block start (a paragraph's second line), inside fenced code, or indented code.
+    for (const t of ["Intro\n<html>", "```\n<html>\n```", "~~~\n\n<html>\n~~~", "\n\n    <html>"]) {
+      expect(escapeHtmlDocumentStarts(t).text, t).toBe(t);
+    }
+    // After a fence closes, a new block starts.
+    expect(escapeHtmlDocumentStarts("```\nx\n```\n<html>").text).toBe("```\nx\n```\n\\<html>");
+    // Other tags are left alone.
+    expect(escapeHtmlDocumentStarts("<div>\n\n<htmlx>").text).toBe("<div>\n\n<htmlx>");
+  });
+
+  it("every escaped block can become the doc's first block and still pass the doc rules", () => {
+    const doc = liveRules("doc");
+    if (!doc) throw new Error("no doc rules");
+    const text = escapeHtmlDocumentStarts("Intro\n\n<html> basics\n\n<!doctype html> two").text;
+    const lines = text.split("\n");
+    // Delete "Intro" and its blank line: the escaped block is first now.
+    expect(doc.checkEdit(lines, 0, 2, [])).toBeNull();
+    expect(doc.valid(lines.slice(2).join("\n"))).toBe(true);
+    expect(doc.valid(lines.slice(4).join("\n"))).toBe(true);
+    // Unescaped, the same deletion is refused.
+    expect(doc.checkEdit(["Intro", "", "<html> basics"], 0, 2, [])).toBe("invalid");
+  });
+
+  it("says where each backslash went in, for the caret", () => {
+    const { text, at } = escapeHtmlDocumentStarts("a\n\n<html>\n\n<html>");
+    expect(at).toEqual([3, 11]);
+    for (const [k, i] of at.entries()) expect(text[i + k]).toBe("\\");
   });
 });

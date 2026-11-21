@@ -7,6 +7,7 @@
 // "xlsx" imports a file into JSON lines first (shared import.ts). A new version of a sheet people
 // are editing on its page freezes their live draft for review (rooms/doc.ts): it is never merged.
 import {
+  HTML_DOCUMENT_RE,
   importSheet,
   parseSheet,
   type Sheet,
@@ -16,7 +17,6 @@ import {
 } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
-import { HTML_DOCUMENT_RE } from "./doc.ts";
 import { liveAfterCommit } from "./live.ts";
 
 const SKILL = 'See the plinth-artifacts skill, "Sheets".';

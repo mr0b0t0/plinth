@@ -275,7 +275,8 @@ A personal access token can be limited to one artifact (for CI: [Publishing from
 CI](#publishing-from-ci-decided-2026-11-19)). It always holds `artifacts:read` and may hold
 `artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the person's
 current rights) and publish new versions of it, and nothing else: no new artifacts, no other
-artifact (404 for every action, whatever its scopes), no sharing, title, category, restore, delete,
+artifact (404 for every action, whatever its scopes), no sharing, title, category, restore (nor an
+old version's files under a new source, `files_from_version`), delete,
 comments (reading or writing them), shared data, the people list, stats (its own artifact's, or
 the summary across its person's artifacts, which is always refused) or mentions (403 `token_bound` on its
 own artifact while it may view it; once its person may not, every action answers as viewing does).
@@ -609,11 +610,22 @@ the count survives.
 - Editors are the owner plus anyone granted the editor role.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
+- The source editor stays for the types that have one until each type's editing on the page
+  covers what it does. Where a doc can be edited on its page, the page is its one way in and the
+  viewer offers no source editor item; where it cannot (opaque isolation, the path fallback,
+  `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
+  whiteboards have no source editor.
 
-**On-page doc editing** (decided 2026-11-18, issue #36). Owners and editors edit a doc right on its
-rendered page, and the other editors with the page open see the changes as they are typed. HTML
-artifacts are edited in the source editor only: page scripts share the frame's origin and could
-forge edits that the editor's session would then save.
+**Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
+the draft's files decided 2026-11-19). Owners and editors edit a doc or a sheet right on its
+rendered page, and the other editors with the page open see the changes as they are typed. The
+registry says which types are edited this way (`edit: "live"`: docs and sheets); HTML pages,
+decks and design systems are edited in the source editor only and designs by agents only (`edit:
+"ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
+the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
+"board"`), and its settings are an app dialog. Every inline editing control and every rendering of
+draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
+page shows the strip and makes the REST calls, and renders no content.
 
 - **Who.** Owners and editors signed in to an account (policy action `live_edit`). Confirming the
   code at the gate signs an editor in, so they edit like any signed-in editor. Only an editor with
@@ -621,48 +633,182 @@ forge edits that the editor's session would then save.
   or in a session started before codes signed people in) watches the edits and is asked to sign in
   (`account_required`). Commenters and viewers see versions only. Agents never edit live: they
   publish versions.
-- **Concurrency.** The doc's room (its Durable Object, see [Live rooms](#live-rooms)) is the only
-  place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the room
-  enforces, so two people never edit the same lines. Each edit replaces the leased range whole, so
-  no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a client
-  that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A lease
-  idle for 60 s can be taken over.
-- **Drafts are not versions.** The draft is one `live_drafts` row per doc, written by the room at
-  most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a save).
-  It never moves backwards, never comes back after a delete or takedown, and an owner keeps at most
-  20. A draft back at its base is deleted, once no save of an earlier draft is still running
-  (until then its row stays, so a room woken meanwhile reloads that base rather than the save's
-  version).
-- **Checkpoints.** Save (Cmd/Ctrl+S), Done, or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet
-  (from the client that made the last edit, while it is editing; no sooner than
-  `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an autosave asked
-  for sooner is tried again once that time has passed) turn the
-  draft into the next version, through the ordinary publish path with the draft's `base_version`
-  and the note "Edited on the page". A draft equal to its base writes nothing. Checkpoints count
-  toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits made while a save runs are
-  kept on top of the new version.
-- **Versions from elsewhere.** When an agent, the source editor or a restore publishes a version
-  while a draft exists, the draft is merged onto it line by line when the two changed different
-  lines (the editors see "v5 was published; your edits were kept"). When they changed the same or
-  adjacent lines, the draft is frozen and an editor reviews the two side by side; nothing is
-  overwritten either way. `get_artifact` tells agents a draft exists (metadata only) and
-  `update_artifact` warns `live_draft`.
+- **Concurrency.** The artifact's room (its Durable Object, see [Live rooms](#live-rooms)) is the
+  only place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the
+  room enforces, so two people never edit the same lines. Each edit replaces the leased range
+  whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
+  client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
+  lease idle for 60 s can be taken over.
+- **Per-type rules.** The room checks every edit with the type's rules
+  (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
+  a refused edit means someone else changed the lines first or the edit was forged; the renderer
+  then puts the block back as the room has it, keeps it open and says why. The rules hold every
+  check the type's publish hook makes on the source alone, so a draft can always be published: a
+  doc never starts like a whole HTML document (`<html` or `<!doctype html` first, which the stager
+  refuses), and a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19). To keep
+  that rule out of people's way, the doc editor writes a `<` that would open `<html` or
+  `<!doctype html` at the start of any top-level block as `\<`, which renders as `<`, so any block
+  can become the first one when the block above it is deleted. A block an agent wrote that way is
+  not escaped; deleting the block above it is refused with the reason, and an agent's version can
+  change it.
+- **Drafts are not versions.** The draft is one `live_drafts` row per artifact, written by the room
+  at most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a
+  save). It never moves backwards, never comes back after a delete or takedown, and an owner keeps
+  at most 20. A draft back at its base is deleted, once no save of an earlier draft is still
+  running (until then its row stays, so a room woken meanwhile reloads that base rather than the
+  save's version).
+- **The draft's files are its base version's.** A person's page edit never adds, removes or
+  replaces a file (images are agent-only), so a draft is its text plus the files of the version it
+  is based on. Every page Publish stages exactly that: the text, and every file of the draft's base
+  version carried by reference (`files_from_version`), never the current version's files. For an
+  ordinary Publish the base is the current version, so nothing changes. In edit mode a doc draws
+  its images from the base version's files (`/__plinth/v/<base>/`), so the page never shows a file
+  the draft would not publish.
+- **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), leaving edit mode (the Edit
+  toggle, or Done at phone width), or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
+  while it is editing; no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version,
+  whoever made it, and an autosave asked for sooner is tried again once that time has passed) turn
+  the draft into the next version, through the ordinary publish path with the draft's
+  `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
+  nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
+  made while a save runs are kept on top of the new version. A draft that cannot be a version yet
+  (a type's `unpublishable` rule; no doc or sheet has one) is never checkpointed (409
+  `live_unpublishable`), and Publish is off, with the reason in its tooltip.
+- **Versions from elsewhere.** When an agent, the source editor, the CLI, REST or a restore
+  publishes a version vN while a draft exists:
+  - a draft with no changes moves to vN;
+  - a **doc's** draft is merged onto vN line by line when the two changed different lines and the
+    result fits the doc's rules (the editors see "v5 was published; your changes were kept"), as
+    #49 decided; otherwise it is frozen for review;
+  - a **sheet's** draft is never merged. A version's content is its source and its files together.
+    When vN's content equals the draft's base (it changed only the title, or restored the same
+    content), the base moves under the draft's lines as they are, which also unfreezes a draft
+    frozen against an older version; when it equals the draft, the draft ends; anything else
+    freezes it.
+
+  A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
+  autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
+  (for several versions since the draft's base: "v6 to v7 were published while you edited"; at
+  phone width "v6 published", so the strip stays one line), with "Review changes" in place of
+  Publish, and the ⋯ menu offers no Discard (the review holds both choices). While editing, the
+  strip carries
+  every newer version's news, so the app shows no "Updated to vN" toast.
+  Nothing is overwritten either way. `get_artifact` tells agents a draft exists (metadata only),
+  and `update_artifact` and `edit_sheet` warn `live_draft`.
+- **The whole-draft review.** "Review changes" opens the review inside the frame; while it is
+  open the strip shows its status only (no "Review changes" and no Done), and the review has no
+  heading of its own, since the strip already says what happened. It shows "Your changes" and "v6"
+  side by side (one at a time, with a "Your changes" and "v6" switch, at phone width), each drawn
+  read-only by the type's own renderer against the files it would publish: your changes against
+  the base version's files, vN against vN's. Each side grows with its content up to a maximum
+  height and scrolls beyond it; one wider than its pane fades at the edge it scrolls to. Each side
+  starts with its plain-language change list since the draft's base, from the History's
+  describers ([Comparing versions](#comparing-versions-decided-2026-11-19)), one line per change:
+  a short label ("Paragraph changed", with its place in front only when two would read the same;
+  a sheet's cell as its column and row, "Qty, row 3"), then a value that changed whole as
+  "18 → 24" (a sheet's in its column's format, as the grid shows it: "€89.00 → €95.00"), a longer
+  text as only the words that changed (removed ones struck through, added ones tinted, none of the
+  words both sides share, "…" between two changes), and nothing more when the excerpts do not
+  reach the change. vN's side also names each file it added, removed
+  or replaced, at most 50 of each kind, then "and N more files"; page changes never change files,
+  so their side lists none. Pressing an item brings both sides to the place it names. Each side
+  marks what changed since the base in the drawing itself, the same way in both themes (a bronze
+  tint and a bar at the left edge): a doc's changed blocks (a list's or a table's changed items),
+  with a short bar where blocks were removed, and a sheet's changed cells, by their entered value
+  or formula. Each side opens scrolled to its first change when that is out of view (at phone
+  width, when the switch first shows it); a sheet's changed column starts right after the row
+  numbers, never beside a cut-off sliver of another. The versions reviewed are every version since the draft's base; the strip and
+  the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
+  While a version waits for review, the version in the artifact bar is the draft's base.
+  The review looks like the app around it (ink primary, bronze for the live state, the app's
+  compact buttons) and has no explanatory paragraphs: exactly two choices, and Back:
+  - **Publish your changes**: the room's own frozen draft, byte for byte, becomes the next version on top
+    of vN, with the files of the draft's base version, and the note "Edited on the page. Replaces
+    the changes in v6." (or "… in v6 to v7."). vN stays in History and can be restored.
+  - **Discard your changes** asks first, in the app's own confirmation over the dimmed page, as
+    the ⋯ menu's Discard does ("Discard unpublished changes?", "The page goes back to v6 for
+    everyone editing it." or, solo, "The page goes back to v6.", Cancel and "Discard changes"),
+    then returns the page to vN for everyone. The frame only asks: its choice reaches the app as
+    before, and the app discards only on confirm; Cancel answers the frame `failed`, so the review
+    stays open with focus on its Discard.
+  - **Back** (or Esc), the review's one way out, closes it; the draft stays frozen and kept.
+
+  Both choices, every Publish and the ⋯ menu's "Discard unpublished changes" take the room's
+  checkpoint lock, so a frozen draft resolves exactly once and never on top of the other choice. A
+  choice is checked against the version and the draft revision it was reviewed for, in this order,
+  before anything else: another save or choice holds the lock (busy: the buttons go off with
+  "Another editor is choosing right now"); the draft is no longer frozen because another editor's
+  choice resolved it (409 `live_resolved`); a newer version froze it (409 `live_conflict`, and the
+  review opens again on the whole range); the draft moved on (409 `live_moved`). A save that
+  finishes after its 30 s lock ran out is finished onto the draft only when the draft's lines were
+  not replaced since its snapshot (the draft's epoch); otherwise its version is handled as any
+  version published meanwhile, so a late save never lands under a discarded draft. When a choice
+  resolves the draft, the room tells every editor (`reset` with `published` or `discarded`), and
+  every other open review closes with what happened ("Another editor published these changes as
+  v7."). A review also closes, with what really happened, whenever the draft is unfrozen another
+  way: a newer version that undid the one reviewed ("v7 undid the changes of v6. Your changes are
+  kept."), a doc version that merged cleanly, or a version equal to the draft.
 - **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
-  page alone, Save makes a version; the tab keeps a copy, and after a reload offers to save it as
-  a version or discard it); under opaque isolation and the path fallback, docs are edited in the
-  source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
-- **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
-  source") turns edit mode on; a strip under the bar says what is happening and who else is
-  editing, with Save version, Discard and Done. At phone width the strip keeps to one line: the
-  status, the number of people editing (their emails stay for screen readers) and the buttons,
-  with shorter labels ("Save", "Review"). A block opens as a plain text field holding its
-  Markdown; blocks other people hold show their email and their text as it arrives. Owners and
-  editors who are not editing see one line when unsaved page edits exist, when someone is editing,
-  or when a version needs review. Edit mode and comment review mode exclude each other. Draft text
-  never reaches the app page in room mode; in solo mode the frame hands it over only to be saved.
-- **REST.** `GET /api/v1/artifacts/:ref/live`, `GET .../live/draft` (the draft text, to review a
-  conflict), `POST .../live/checkpoint` and `DELETE .../live/draft?rev=n` (discard), for the
-  signed-in app only; not mirrored to MCP.
+  page alone; Publish makes a version over `PUT` with the shown version as `base_version` and its
+  files as `files_from_version`; the tab keeps a copy, and after a reload offers to publish it or
+  discard it; a Publish refused because a newer version is current opens the same review, the app
+  naming the version and its file changes from the two versions' file lists, and Publish your
+  changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
+  held, the app sends that copy with the review, and Publish your changes and Discard your changes
+  act on it); under opaque
+  isolation and the path fallback there is no editing on the page: docs are edited in the source
+  editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
+  off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
+- **On the page.** An Edit toggle in the artifact bar, the one way in (no source editor item
+  beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
+  "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
+  (who and where, "row 12", a structural place, never content, in its tooltip and its accessible
+  name), and Publish (a text button), shown once there is something to publish; when the changes
+  cannot be published yet it stays, off, with the reason in its tooltip. The strip has no menu of
+  its own and no second way out: the Edit toggle turns edit mode off, and only at phone width,
+  where the toggle folds into the ⋯ menu as "Edit on the page", does the strip add Done. Every
+  status has a short form at phone width ("Merged with v5", "Not connected", "Kept in this tab",
+  "v6 published"), so the strip stays one line. "Discard unpublished changes" is in the artifact's
+  ⋯ menu while editing with changes and nothing to review, behind the same confirmation. A doc's
+  block opens as a text field holding its Markdown, in the page's own type, size and line height,
+  with one focus outline and no box, so editing looks like the page; blocks other people hold show
+  their email and their text as it arrives. A "+" to add a block shows beside the block under the
+  pointer or being edited, above and below it, not beside every block; on touch, and at phone width
+  only the one above the block being edited and the one at the end, each on a line of its own, so
+  none covers a rule or text, the last clear of the page's bottom edge. Esc at the
+  top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
+  line when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
+  the email on hover), when someone is editing ("Ana is editing"), or when a version needs review;
+  it looks like the strip (a bronze rule, a pencil, one line) and has no buttons, because editing
+  starts only from the Edit toggle, the strip holds Publish and Review changes, and the ⋯ menu
+  Discard. Only the solo copy a tab kept from before a reload, which no frame holds, gets Publish
+  and Discard on that line.
+  Edit mode and comment review mode exclude each other. While the review is open, app
+  notifications keep clear of its choices, and no notification ever covers a dialog's controls.
+- **The frame key.** For an owner or editor who may edit on the page, the app opens each frame
+  load at its enter URL with a fresh 32-byte random key in the fragment (`#plinth-k=…`). The
+  fragment is never sent to a server, survives the enter redirect and appears in no `Referer`; the
+  renderer reads it once at boot, removes it from the address before it renders, and sends it with
+  every editing message. The app drops any editing message that does not carry the key of the
+  frame it holds, so a document the frame navigated to cannot drive editing.
+- **What crosses the frame boundary.** In room mode no draft or version text reaches the app page:
+  the frame reads the base version and vN from its own origin (`/__plinth/v/<n>/`) and the draft
+  from the room. In solo mode the frame hands the app its copy only to publish it, as a string the
+  app never renders. The app tells the frame which version and files to review (solo only), with
+  the copy the tab kept from before a reload when that is what is reviewed (the frame's own text,
+  handed back to the same frame origin, which checks it with the type's rules), and what came of a
+  choice (`reviewed`: busy, resolved, conflict, failed or done).
+- **REST.** `GET /api/v1/artifacts/:ref/live`, `POST .../live/checkpoint` (with
+  `conflict_version` for Publish your changes; no draft text is accepted) and `DELETE
+  .../live/draft?rev=n` (discard; with `&conflict_version=n` for Discard your changes), for the signed-in
+  app only; not mirrored to MCP. No route returns draft text. The 409 reasons are `live_conflict`,
+  `live_rebased`, `live_busy`, `live_resolved`, `live_moved` and `live_unpublishable`. `PUT
+  /api/v1/artifacts/:ref` takes `files_from_version` (that version's files instead of the current
+  version's; refused with `assets`, 404 for a version that does not exist or is newer than the
+  current one), from the signed-in app only: a token limited to one artifact gets 403
+  `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
+  new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
+  agents keep the carry rule.
 
 ### Categories (decided 2026-11-18)
 
@@ -1439,9 +1585,9 @@ document through the gate and the shared-data API, with all of their checks.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   One such notice shows at a time: a newer version's replaces the last, so versions published in
-  a row never stack. While the frame is held (a doc or sheet edited on its page, a deck
-  presented) no notice shows: the version picker takes the new number, and the edit strip says
-  what happened.
+  a row never stack. While someone edits on the page, or the frame is held (a doc or sheet edited
+  on its page, a deck presented), no notice shows: the version picker takes the new number, and
+  the edit strip says what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
@@ -2371,14 +2517,14 @@ agents on one artifact").
 ### Live sheets (decided 2026-11-19)
 
 Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
-([Editing](#editing)): the same Edit toggle, strip, Save version, Discard and Done, the same
+([Editing](#editing)): the same Edit toggle, strip, Publish and Discard, the same
 checkpoints, autosave and modes ("room" with live rooms, "solo" under origin
 isolation without rooms, none under opaque isolation or the path fallback), the same policy action
 `live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
 stored and no setting is added: the draft is a `live_drafts` row like a doc's, and the room's draft
-channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `liveEdit`. One thing
-differs: unlike a doc's, a sheet's draft is never merged with a version published meanwhile, and
-its review has exactly two choices (below).
+channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `edit: "live"`. One
+thing differs: unlike a doc's, a sheet's draft is never merged with a version published meanwhile,
+and the whole-draft review is the only way on (below).
 
 - **A row is a line.** The draft is the sheet's canonical JSON lines (see
   [Sheets](#sheets-decided-2026-11-19)): line 1 is the header (row 1), and row *r* is line *r*. A
@@ -2388,9 +2534,12 @@ its review has exactly two choices (below).
 - **What the room accepts.** Every line an edit puts in must be a valid row of the sheet in its one
   canonical spelling, or, on line 1, a header with the same number of columns; a changed header is
   checked against every row, so a type the cells do not fit is refused. Nothing goes above the
-  header, and the sheet limits hold (1 MB, 10,000 rows, 32 KiB a row, 50,000 formulas). A refused
-  edit is not applied and its sender gets `invalid` (or `too_large`). So the draft is always a valid
-  sheet, and a checkpoint stores it byte for byte.
+  header, and the sheet limits hold (1 MB, 10,000 rows, 32 KiB a row, 50,000 formulas). A text edit
+  changes the number of lines only by appending rows at the end (a paste past the last row): a row
+  in the middle moves only through `struct` (below), which rewrites the formula references the
+  move shifts, so no text edit can shift rows under another row's formula. A refused edit is not
+  applied and its sender gets `invalid` (or `too_large`). So the draft is always a valid sheet, and
+  a checkpoint stores it byte for byte.
 - **Rows and columns.** Inserting and deleting rows and columns is one more frame, `struct`, with
   the op as `edit_sheet` would take it (`insert_rows`, `delete_rows`, `insert_columns`,
   `delete_columns`) and no text. The room applies it only from a writer, at the draft's current
@@ -2402,35 +2551,24 @@ its review has exactly two choices (below).
   (an agent's `edit_sheet` or `update_artifact`, the CLI, REST, a restore or any other way).
   Rows and formulas refer to each other by position, and a line merge cannot tell a row edited in
   place from one deleted and another inserted, so it could put a value or a formula reference where
-  neither side wrote it. When such a version vN lands, the room freezes the draft: leases end,
-  edits and `struct` frames are refused (`frozen`), the Row and Column menus are hidden, and the
-  edit bar says "vN published" beside Review changes (the version picker shows vN too; the page
-  notice for owners and editors not editing says "vN published over unsaved changes"). Two cases need no review: a version whose sheet equals the draft's
-  base (it changed only the title, or restored the same content) moves the base under the draft's
-  lines as they are, and a version equal to the draft ends it. The review, titled "vN published
-  while you edited", shows the draft and vN side by side as read-only grids (one at a time, with
-  a "Mine" and "vN" switch, at phone width): every row, in the first column and the columns either
-  side changed since the draft's base (every column when that is all of them or the sides differ
-  in columns), with the changed cells marked and scrolled into view. What a grid cannot show (a
-  row or column removed, a column's type or settings) is named in one line under it ("Row 10
-  removed (Pears)"). It offers exactly two choices. **Publish mine** saves the draft as it is as vN+1, on top of vN, with the
-  note "Edited on the page. Replaces the changes in vN." (the editor's own note first); vN stays in
-  the history and can be restored. **Discard mine** asks once more in place: the button becomes
-  "Discard for everyone" in room mode ("Confirm discard" for a solo tab's own edits), and a second
-  press returns the page to vN for everyone. No second dialog opens over the review. Closing the review keeps the draft frozen. The checkpoint enforces this: a
-  frozen sheet draft is resolved only to the room's draft exactly or to vN exactly, at the draft's
-  current `rev`. Both choices, and the strip's Discard (a doc's too), run under the room's
-  checkpoint lock, so one resolves the draft and never on top of the other: a choice or a Discard
-  sent while another holds the lock is refused as busy ("These page edits are being published or
-  discarded right now", 409 `live_busy` on `DELETE live/draft`) and the review stays open, and
-  Discard mine drops the draft only while vN is still the version it was reviewed against. A save
-  that finishes after its lock ran out, onto a draft that a discard or reset replaced meanwhile, is
-  handled as any version published meanwhile instead of becoming the base under the replaced
-  draft. Otherwise the room still knows that save's version as its own (by its content) until it
-  finishes, so the draft moves onto it with the edits made during the save, and it is never frozen
-  against it, also when a later save took the lock and gave up, or the room left memory while the
-  save ran (it keeps each save in progress, by hash and never its text, in its own storage); a finish never puts the saved snapshot back over edits made after it, for docs too.
-  People editing the same draft together through the room are not affected.
+  neither side wrote it. When such a version vN lands, the room freezes the draft and the editors
+  see the whole-draft review ([Editing](#editing)): the draft and vN as read-only grids side by
+  side, with what each changed since the draft's base ("B7: 12 → 14", "Row 10 added (Pears)"), and
+  exactly two choices, Publish your changes (the room's own draft as vN+1, on top of vN, which
+  stays in the history) or Discard your changes (back to vN for everyone, after the app's
+  confirmation). The changed cells are marked in both grids. The two cases that need no review are a version whose sheet and files equal the
+  draft's base (it changed only the title, or restored the same content), which moves the base
+  under the draft's lines as they are, and a version equal to the draft, which ends it. Both
+  choices, and the ⋯ menu's Discard, run under the room's checkpoint lock against the version and
+  revision reviewed, so exactly one of them takes effect. A save that finishes after its lock ran
+  out, onto a draft that a discard or reset replaced meanwhile, is handled as any version published
+  meanwhile instead of becoming the base under the replaced draft. Otherwise the room still knows
+  that save's version as its own (by its content) until it finishes, so the draft moves onto it
+  with the edits made during the save, and it is never frozen against it, also when a later save
+  took the lock and gave up, or the room left memory while the save ran (it keeps each save in
+  progress, by hash and never its text, in its own storage); a finish never puts the saved
+  snapshot back over edits made after it, for docs too. People editing the same draft together
+  through the room are not affected.
   `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` reports the draft's
   metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a

@@ -83,7 +83,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "ded03e90816b1a553c09c3b8b7c1a4678ca9622263e63ba50548c6491f232b46",
+      tools: "ea56f4838cffff8085af0d72900e291a9ee5dde554c131c6adf01399552b9086",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -93,7 +93,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "9ca0046a7f728a968966aa3fec9d23a231808f1b86cbf6d3ffd87a2874bf0e9c",
+      tools: "7fddbb64bea4c55da8fa7ee3b95940c8504e0fec08720609e17a2d8bd1d459a7",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -105,7 +105,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "e7f050a59d9e4c9ba235e7f1b1e9f9fdfe59728e7ad9f5146c84406d4cb5f39c",
+      tools: "825e1ca55448a4a1d950df1b78e8aae0fc55d0057ebd95510b4d3d126769c450",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -115,7 +115,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "cce5ffc9450bb79817660422aee9c535e73c36b1f1e71c0337d46e0a4ae3da4f",
+      tools: "f9dc75f1f84e206997412ec3368c0b2c4642427ef504fdc6465d9bd96a411e0d",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "dcf077349eac3dad2bcd66acfd1cfa4a6dd4da4ede190eb983d35fc4e3aff528",

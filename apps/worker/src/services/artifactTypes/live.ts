@@ -1,11 +1,26 @@
 // The afterCommit hook of every type people edit on its page (docs and sheets, #36): a new version
 // is merged under a doc's live draft in the artifact's room (rooms/doc.ts), or frozen for review;
-// a sheet's draft is never merged, only frozen for review. The agent that published it is told so
-// once, with nothing to do.
+// a sheet's draft is reviewed, never merged: the people editing see the new version beside theirs
+// and keep one. The agent that published it is told so once, with nothing to do.
 import { liveRules, type PublishResult } from "@plinth/shared";
 import { notifyDocVersion } from "../../rooms/notify.ts";
 import type { CommittedVersion, TypeHooks } from "../artifactTypes.ts";
 import type { Ctx } from "../context.ts";
+
+/**
+ * What live_draft says: a doc's edits are merged onto the new version or reviewed (#49's words);
+ * every other type's are never merged, and the people editing keep one of the two versions.
+ */
+export function liveDraftWarning(noun: string, merges: boolean): string {
+  return merges
+    ? `People are editing this ${noun} on its page. Your version is published; their unsaved ` +
+        "edits are merged onto it or reviewed by them. Nothing was overwritten. No action needed."
+    : `People are editing this ${noun} on its page. Your version is published and is the ` +
+        "current version. Their unsaved edits are not merged with it: they see your version " +
+        "beside theirs and keep one. If they publish theirs, it becomes the next version and " +
+        "yours stays in History. No action needed; do not wait or retry. Read it again before " +
+        "your next change to it.";
+}
 
 /** People are editing the artifact on its page: say so, once, with nothing for the agent to do. */
 async function withLiveDraftWarning(
@@ -31,13 +46,7 @@ async function withLiveDraftWarning(
       {
         code: "live_draft",
         file,
-        message:
-          `People are editing this ${noun} on its page. Your version is published; their unsaved ` +
-          (merges
-            ? "edits are merged onto it or reviewed by them. "
-            : "edits are kept, and they review them beside your version and choose to publish " +
-              "them in its place or discard them. ") +
-          "Nothing was overwritten. No action needed.",
+        message: liveDraftWarning(noun, merges),
       },
     ],
   };
@@ -48,7 +57,7 @@ export function liveAfterCommit(noun: string): NonNullable<TypeHooks["afterCommi
   return async (ctx: Ctx, v: CommittedVersion) => {
     if (!v.update) return v.result;
     // A doc's live draft is merged onto the new version, or frozen for review; a sheet's is
-    // frozen for review (rooms/doc.ts).
+    // frozen for review unless the version changed nothing it holds (rooms/doc.ts).
     try {
       notifyDocVersion(ctx, v.result.id, v.result.version, v.sourceSha256);
     } catch {
@@ -60,7 +69,7 @@ export function liveAfterCommit(noun: string): NonNullable<TypeHooks["afterCommi
       v.result,
       v.def.sourcePath,
       noun,
-      liveRules(v.def.id)?.merge !== false,
+      liveRules(v.def.id)?.merge === "lines",
     );
   };
 }

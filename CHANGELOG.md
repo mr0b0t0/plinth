@@ -10,6 +10,40 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Review a newer version in the page itself.** When a version is published while people have
+  unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
+  the review inside the page: their changes and the new version (or every version since, named as
+  "v6 to v7") side by side, each with its own images, with what each changed, files included, and
+  two choices. Each side marks the blocks or cells it changed and opens at its first change, and
+  its list names each change once ("Paragraph changed", "Qty, row 3") with only the words or
+  values that changed, as the page shows them. **Publish your changes** publishes them as they are,
+  with the files they were made with, as the next version (the other stays in History); **Discard
+  your changes** asks first, in the app's own confirmation; **Back** leaves the review. It looks like the rest of the app. The
+  strip offers only **Review changes** while a version waits (and only its status while the
+  review is open, without an "Updated to" notification beside it), and the line shown to people
+  who are not editing is one short line of text in the strip's look ("Unpublished changes · Ana,
+  3 h ago"): the Edit toggle is the one way in. Both choices are safe against
+  another editor choosing at the same moment: exactly one takes effect, and every other open
+  review closes saying what happened. No source is shown. Changes
+  the tab kept from before a reload are reviewed the same way when a newer version is current.
+- **Publish on the page.** A doc that can be edited on its page no longer offers **Edit source**
+  in its menu: the Edit toggle is the one way in and out (on a phone, **Edit on the page** in the
+  ⋯ menu, and **Done** on the strip). The edit strip has one action, **Publish**, once there is
+  something to publish (when the changes can't be published yet, its tooltip says why), and its
+  status says "Draft saved", "Publishing…" and "Published as v7", on one line at any width.
+  **Discard unpublished changes** is in the ⋯ menu. The strip shows how many others are editing,
+  with who and where in a tooltip. A doc's block being edited keeps the page's own type, with no
+  box around it, and a "+" shows only beside the block under the pointer or being edited; on a
+  phone only the "+" above the block being edited and the one at the end show, clear of the text.
+  A page Publish keeps the files of the version the changes were made from
+  (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
+  get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
+  always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
+  is removed, and `GET /api/v1/config` says whether editing on the page is on (`inline_editing`).
+- **A doc never starts like a web page by accident.** Typing `<html>` at the start of a block is
+  kept as text, so the doc can still be published.
+- Notifications no longer cover a dialog's buttons, and a pointer resting on one no longer keeps
+  it on screen for good.
 - **Leading a deck is steadier.** A presenter whose connection drops keeps the lead when it comes
   back, instead of turning Lead viewers off and following its own old connection. Paging quickly (a held arrow key) always leaves
   followers on the presenter's last slide. A deck's room keeps 4 of its slots for owners and

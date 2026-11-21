@@ -22,5 +22,5 @@ export const sheet: TypeModule<"sheet"> = {
   assetTypes: /(?!)/,
   renderer: { script: "sheet.js", style: "sheet.css" },
   editor: null,
-  liveEdit: true,
+  edit: "live",
 };

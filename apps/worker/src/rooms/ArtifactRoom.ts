@@ -11,7 +11,7 @@
 // Message contents are never logged.
 //
 // A doc's or a sheet's room also carries Plinth's own editing channel (kind "doc" for every type
-// with liveEdit, rooms/doc.ts): the live draft, its leases and its D1 flush, and the checkpoint
+// with `edit: "live"`, rooms/doc.ts): the live draft, its leases and its D1 flush, and the checkpoint
 // RPCs the app host calls.
 // A deck's room carries Plinth's own follow-the-presenter channel (kind "slides", rooms/slides.ts):
 // slide numbers from owners and editors to the identified viewers who have the deck open.
@@ -66,7 +66,7 @@ import {
 import type { Bindings } from "../config.ts";
 import { randomString } from "../lib/crypto.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
-import { type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
+import { type DocDiscardResult, type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
 import { roomDeclaration } from "./notify.ts";
 import { SlidesChannel } from "./slides.ts";
 import { TrailingThrottle } from "./throttle.ts";
@@ -950,11 +950,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return this.doc.snapshot(artifactId);
   }
 
-  /** The checkpoint holding `lockId` saves an editor's resolution of a conflict instead. */
-  async docResolve(lockId: string, text: string): Promise<boolean> {
-    return this.doc.resolveWith(lockId, text);
-  }
-
+  /** Version n holds the checkpoint; `resolved` when it was "Publish your changes" in the review. */
   async docFinish(
     artifactId: string,
     n: number,
@@ -962,8 +958,9 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     lockId: string,
     epoch?: string,
     rev?: number,
+    resolved?: boolean,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, rev);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, rev, resolved === true);
   }
 
   /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */
@@ -971,12 +968,12 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     await this.doc.abortCheckpoint(lockId);
   }
 
-  /** Under the checkpoint lock: `busy` while another checkpoint holds it (rooms/doc.ts). */
+  /** Under the checkpoint lock: `busy` while another holder has it (rooms/doc.ts). */
   async docDiscard(
     artifactId: string,
     rev: number,
-    opts: { lock?: string; conflictVersion?: number } = {},
-  ): Promise<{ ok: boolean; rev: number; busy?: true }> {
+    opts: { conflictVersion?: number } = {},
+  ): Promise<DocDiscardResult> {
     return this.doc.discard(artifactId, rev, opts);
   }
 

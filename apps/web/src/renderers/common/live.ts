@@ -14,8 +14,11 @@
 //   falls back to editing alone (solo).
 // - A sheet's `struct` frame (rows and columns) is applied with the applier the sheet renderer
 //   passes in (applySheetStruct), exactly as the room applied it; without one (a doc) it resyncs.
+// - While the draft is frozen for review, `conflictFiles` holds what the version it is frozen
+//   against changed in the files (from `welcome` and `conflict`), for the review's files part.
 import {
   blockLines,
+  type FileChangeSummary,
   joinLines,
   LIMITS,
   type LineRange,
@@ -58,8 +61,16 @@ export interface LiveDocListener {
   denied(reason: LeaseDenial, by?: string): void;
   /** This socket lost its lease. With "reconnect" and "rebased" the editor keeps its text. */
   lost(reason: LeaseLoss): void;
-  /** A version was saved, reset or merged onto. */
-  version(kind: "saved" | "reset" | "rebased" | "conflict", version: number): void;
+  /**
+   * A version was saved, reset or merged onto, or froze the draft. `why` comes with a reset that
+   * an editor's choice caused ("published", "discarded"); `was` is the version the draft was
+   * frozen against before this frame (a reset or rebase that unfroze it), or null.
+   */
+  version(
+    kind: "saved" | "reset" | "rebased" | "conflict",
+    version: number,
+    info: { why?: "published" | "discarded"; was: number | null },
+  ): void;
   error(code: LiveDocErrorCode): void;
   /** This socket's struct frame was refused (a sheet's rows or columns). */
   structDenied?(reason: LeaseDenial, by?: string): void;
@@ -131,6 +142,8 @@ export class LiveDocClient implements LiveBackend {
   baseVersion = 0;
   flushedRev = 0;
   conflictVersion: number | null = null;
+  /** While frozen: the files the version it is frozen against changed since the base. */
+  conflictFiles: FileChangeSummary | null = null;
   you: { id: string; email: string; right: "watch" | "write" } | null = null;
   leases = new Map<string, ClientLease>();
   mine: ClientLease | null = null;
@@ -478,7 +491,7 @@ export class LiveDocClient implements LiveBackend {
       }
       case "saved":
         this.baseVersion = f.version;
-        L.version("saved", f.version);
+        L.version("saved", f.version, { was: this.conflictVersion });
         {
           L.status();
           return;
@@ -493,28 +506,34 @@ export class LiveDocClient implements LiveBackend {
           of: -1,
           parts: [],
           apply: (text) => {
+            const was = this.conflictVersion;
             this.lines = splitLines(text);
             this.rev = f.rev;
             this.gen = gen;
             this.baseVersion = f.version;
             this.conflictVersion = null;
+            this.conflictFiles = null;
             this.dirty = kind === "rebased";
             L.changed();
-            L.version(kind, f.version);
+            L.version(kind, f.version, {
+              was,
+              ...(f.t === "reset" && f.why ? { why: f.why } : {}),
+            });
             L.status();
           },
         };
         return;
       }
-      case "conflict":
+      case "conflict": {
+        const was = this.conflictVersion;
         this.conflictVersion = f.version;
+        this.conflictFiles = f.files ?? null;
         this.dirty = true;
-        L.version("conflict", f.version);
+        L.version("conflict", f.version, { was });
         L.changed();
-        {
-          L.status();
-          return;
-        }
+        L.status();
+        return;
+      }
       case "status":
         this.dirty = f.dirty;
         this.editors = f.editors;
@@ -554,6 +573,7 @@ export class LiveDocClient implements LiveBackend {
         this.baseVersion = f.base_version;
         this.flushedRev = f.flushed_rev;
         this.conflictVersion = f.conflict_version;
+        this.conflictFiles = f.conflict_version !== null ? (f.files ?? null) : null;
         this.lastByYou = f.last_by_you;
         const now = Date.now();
         const old = this.leases;
@@ -763,6 +783,22 @@ function isStructOp(op: unknown): boolean {
   }
 }
 const LOST_REASONS = new Set(["takeover", "rebased", "closed"]);
+const FILE_KINDS = new Set(["added", "removed", "replaced", "same"]);
+
+/** A frame's `files` (summarizeFileChanges), as liveFilesSchema checks it. */
+function isFiles(v: unknown): boolean {
+  if (!isObj(v) || !isInt(v.more) || !isInt(v.same)) return false;
+  for (const k of ["added", "removed", "replaced"] as const) {
+    const list = v[k];
+    if (!Array.isArray(list) || list.length > 50) return false;
+    for (const c of list) {
+      if (!isObj(c) || !isStr(c.path, 512) || !FILE_KINDS.has(c.kind as string)) return false;
+      if (c.before !== undefined && !isInt(c.before)) return false;
+      if (c.after !== undefined && !isInt(c.after)) return false;
+    }
+  }
+  return true;
+}
 const ERROR_CODES = new Set([
   "invalid",
   "too_large",
@@ -798,7 +834,7 @@ export function readServerFrame(raw: unknown): LiveDocServerFrame | null {
           if (!isObj(p) || !isId(p.id) || !isEmail(p.email)) return false;
           if (p.lease !== null && !isLease(p.lease)) return false;
         }
-        return true;
+        return f.files === undefined || isFiles(f.files);
       }
       case "text":
         return isGen(f.gen) && isInt(f.part) && isInt(f.of, 1) && typeof f.chunk === "string";
@@ -832,10 +868,16 @@ export function readServerFrame(raw: unknown): LiveDocServerFrame | null {
       case "saved":
         return isVersion(f.version) && isInt(f.rev);
       case "reset":
+        return (
+          isVersion(f.version) &&
+          isGen(f.gen) &&
+          isInt(f.rev) &&
+          (f.why === undefined || f.why === "published" || f.why === "discarded")
+        );
       case "rebased":
         return isVersion(f.version) && isGen(f.gen) && isInt(f.rev);
       case "conflict":
-        return isVersion(f.version);
+        return isVersion(f.version) && (f.files === undefined || isFiles(f.files));
       case "status":
         return (
           typeof f.dirty === "boolean" &&

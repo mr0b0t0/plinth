@@ -1,8 +1,9 @@
 // Editing a doc on its page, live across editors (#36): the owner and an editor have the doc open
 // in two browser contexts. A block one of them opens shows up held in the other, the text arrives
-// as it is typed, Save makes an immutable version, a version an agent publishes meanwhile is merged
-// under the page edits (or frozen for review when it touches the same lines), and a commenter
-// never sees draft text. The opaque-isolation case is in live-edit-opaque.spec.ts.
+// as it is typed, Publish makes an immutable version, a version an agent publishes meanwhile is
+// merged under the page edits (or frozen for the whole-draft review in the page when it touches the
+// same lines), two editors' choices in the review never both take effect, and a commenter never
+// sees draft text. The opaque-isolation case is in live-edit-opaque.spec.ts.
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
@@ -81,6 +82,25 @@ async function startEditing(page: Page) {
   await expect(page.frameLocator(CURRENT_FRAME).locator("main.plinth-doc--editing")).toBeVisible();
 }
 
+/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
+async function stopEditing(page: Page) {
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) {
+    // On a wide screen the toggle is the one way in and out: the strip has no Done.
+    await expect(
+      page
+        .getByRole("region", { name: "Editing on the page" })
+        .getByRole("button", { name: "Done" }),
+    ).toHaveCount(0);
+    await toggle.click();
+  } else {
+    await page
+      .getByRole("region", { name: "Editing on the page" })
+      .getByRole("button", { name: "Done" })
+      .click();
+  }
+}
+
 const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
 
 /** Wait until the frame reports the doc socket open (the bar stops saying "Connecting…"). */
@@ -94,7 +114,7 @@ async function connected(page: Page) {
   );
 }
 
-test("two editors on one doc: a held block, typing that arrives live, Save makes v2", async ({
+test("two editors on one doc: a held block, typing that arrives live, Publish makes v2", async ({
   page,
   browser,
 }, info) => {
@@ -145,16 +165,16 @@ test("two editors on one doc: a held block, typing that arrives live, Save makes
 
   await field.press("Escape");
   await expect(frameOf(page).locator("p", { hasText: "Typed live." })).toBeVisible();
-  await page.getByRole("button", { name: "Save version" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
-    "Saved as v2",
+    "Published as v2",
   );
   const detail = await apiGet(page.request, `/artifacts/${s.id}`);
   expect(detail.body.current_version).toBe(2);
   expect(detail.body.content).toContain("First paragraph. Typed live.");
   expect(detail.body.content).toContain("Third paragraph. And theirs.");
 
-  await page.getByRole("button", { name: "Done" }).click();
+  await stopEditing(page);
   await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
   await other.context().close();
 });
@@ -174,7 +194,7 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   await field.pressSequentially(" Mine.");
   await field.press("Escape");
   await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
-    "Unsaved changes",
+    "Draft saved",
   );
 
   const client = await mcpClient(s.token);
@@ -191,11 +211,10 @@ test("an agent's version is merged under the page edits, or frozen for review wh
     );
     expect(clean.isError, clean.text).toBe(false);
     expect(clean.data.warnings.map((w) => w.code)).toContain("live_draft");
-    await expect(
-      page.getByText("v2 was published. Your page edits were kept on top of it."),
-    ).toBeVisible({
-      timeout: 10_000,
-    });
+    await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
+      "v2 was published; your changes were kept",
+      { timeout: 10_000 },
+    );
     await expect(frameOf(page).locator("p", { hasText: "Third, by the agent." })).toBeVisible();
     await expect(frameOf(page).locator("p", { hasText: "First paragraph. Mine." })).toBeVisible();
 
@@ -210,32 +229,151 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   } finally {
     await client.close();
   }
-  await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
-    "changed the same lines",
-    { timeout: 10_000 },
+  const bar = page.getByRole("region", { name: "Editing on the page" });
+  await expect(bar).toContainText("v3 was published while you edited", {
+    timeout: 10_000,
+  });
+  // The review opens in the page itself: both docs rendered, and what each changed.
+  await bar.getByRole("button", { name: "Review changes" }).click();
+  const review = frameOf(page).getByRole("region", { name: "Review v3 and your changes" });
+  await expect(review).toBeVisible();
+  // The strip says what happened, once: the review has no heading repeating it.
+  await expect(review.getByRole("heading", { level: 2 })).toHaveCount(0);
+  // While the review is open, the strip shows its status only: the review's Back is the one way
+  // out, so neither "Review changes" nor Done is offered there.
+  await expect(bar.getByRole("button", { name: "Review changes" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Done" })).toHaveCount(0);
+  await expect(bar).toContainText("v3 was published while you edited");
+  // The update shows in the strip only: no toast repeats it while editing.
+  await expect(page.getByText("Updated to v3")).toHaveCount(0);
+  // The bar names the base the changes were made on, not the version waiting for review, however
+  // late the news of it arrives.
+  await page.waitForTimeout(1_000);
+  await expect(page.locator(".pl-viewer__version")).toContainText(/^\s*v2\b/);
+  const mine = review.getByRole("region", { name: "Your changes" });
+  await expect(mine.getByRole("list", { name: "Changes" })).toContainText("Paragraph changed");
+  await expect(mine).toContainText("First paragraph. Mine.");
+  // Each side marks the blocks it changed since the base.
+  await expect(mine.locator("[data-review-changed]").first()).toContainText(
+    "First paragraph. Mine.",
   );
-  await page.getByRole("button", { name: "Review changes" }).click();
-  const dialog = page.getByRole("dialog", { name: "Review the page edits" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("v3 was published while you were editing")).toBeVisible();
-  // The diff is really there (the dialog body has no height of its own for Monaco to fill).
-  const diff = dialog.locator(".pl-conflict__diff .monaco-diff-editor");
-  await expect(diff).toBeVisible({ timeout: 15_000 });
-  expect((await diff.boundingBox())?.height ?? 0).toBeGreaterThan(200);
-  // Taking v3 would drop everyone's page edits: it asks first, and Cancel keeps them.
-  await dialog.getByRole("button", { name: "Discard the page edits and keep v3" }).click();
-  const ask = page.getByRole("alertdialog", { name: "Discard everyone's page edits?" });
-  await expect(ask).toBeVisible();
+  const theirs = review.getByRole("region", { name: "v3" });
+  const toV3 = review.getByRole("radio", { name: "v3" });
+  if (await toV3.isVisible()) await toV3.click();
+  await expect(theirs).toContainText("First, rewritten by the agent.");
+  // The History describers name a paragraph rewritten past recognition as removed and added.
+  await expect(theirs.getByRole("list", { name: "Changes" })).toContainText(
+    "Paragraph added: First, rewritten by the agent.",
+  );
+  // No source is shown: no Markdown field, and no editor.
+  await expect(review.locator("textarea, .monaco-editor")).toHaveCount(0);
+  // Discard your changes asks first, in the app's own dialog over the dimmed page; Cancel keeps
+  // them and goes back to the review.
+  await review.getByRole("button", { name: "Discard your changes" }).click();
+  await expect(frameOf(page).getByRole("alertdialog")).toHaveCount(0);
+  const ask = page.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+  await expect(ask).toContainText("The page goes back to v3 for everyone editing it.");
+  await expect(page.locator(".pl-dialog-backdrop").first()).toBeVisible();
   await ask.getByRole("button", { name: "Cancel" }).click();
-  await dialog.getByRole("button", { name: "Save as new version on top of v3" }).click();
-  const confirm = page.getByRole("dialog", { name: "Save the page edits as v4?" });
-  await confirm.getByLabel("I reviewed the differences between v3 and the page edits").check();
-  await confirm.getByRole("button", { name: "Save as v4" }).click();
+  await expect(ask).toHaveCount(0);
+  await expect(review.getByRole("button", { name: "Discard your changes" })).toBeEnabled();
+  await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
   await expect
     .poll(async () => (await apiGet(page.request, `/artifacts/${s.id}`)).body.current_version)
     .toBe(4);
+  await expect(review).toHaveCount(0);
+  await expect(bar).toContainText("Published as v4", { timeout: 10_000 });
   const v4 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
   expect(v4).toContain("First paragraph. Mine.");
+  expect(v4).toContain("Third, by the agent.");
+  expect(v4).not.toContain("rewritten by the agent");
+  const versions = await apiGet(page.request, `/artifacts/${s.id}/versions`);
+  expect(versions.body.items[0]).toMatchObject({
+    number: 4,
+    note: "Edited on the page. Replaces the changes in v3.",
+  });
+});
+
+test("a review open in two browsers: one choice takes effect, and the other review closes saying so", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const s = await setup(page);
+  await openAs(browser, s.owner, s.slug, page);
+  const other = await openAs(browser, s.editor, s.slug);
+  for (const p of [page, other]) {
+    await startEditing(p);
+    await connected(p);
+  }
+  const client = await mcpClient(s.token);
+  /** The owner edits the first paragraph, and the agent rewrites it on `base`. */
+  async function clash(base: number, mark: string) {
+    await frameOf(page).locator("p", { hasText: "First" }).first().click();
+    const field = frameOf(page).locator("textarea.plinth-doc__field");
+    await field.press("End");
+    await field.pressSequentially(` ${mark}`);
+    await field.press("Escape");
+    const now = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
+    const r = await tool(client, "update_artifact", {
+      id: s.id,
+      content: now.replace(/^First.*$/m, `First, by the agent ${mark}.`),
+      base_version: base,
+    });
+    expect(r.isError, r.text).toBe(false);
+    for (const p of [page, other]) {
+      const bar = p.getByRole("region", { name: "Editing on the page" });
+      await expect(bar).toContainText(`v${base + 1} was published while you edited`, {
+        timeout: 10_000,
+      });
+      await bar.getByRole("button", { name: "Review changes" }).click();
+      await expect(
+        frameOf(p).getByRole("region", { name: `Review v${base + 1} and your changes` }),
+      ).toBeVisible();
+    }
+  }
+  try {
+    await clash(1, "one");
+    // The owner publishes theirs; the editor's review closes with what happened.
+    await frameOf(page).getByRole("button", { name: "Publish your changes", exact: true }).click();
+    await expect(frameOf(other).locator(".plinth-review__announce")).toHaveText(
+      "Another editor published these changes as v3.",
+      { timeout: 10_000 },
+    );
+    await expect(frameOf(other).locator(".plinth-review")).toHaveCount(0);
+    await expect
+      .poll(async () => (await apiGet(page.request, `/artifacts/${s.id}`)).body.current_version)
+      .toBe(3);
+
+    // Both choices at once: exactly one takes effect, and History gains at most one version.
+    await clash(3, "two");
+    await frameOf(other).getByRole("button", { name: "Discard your changes" }).click();
+    const confirm = other.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+    await expect(confirm).toBeVisible();
+    // Dispatched, not clicked (a click first waits for its target to settle), and the losing
+    // choice's button may be gone already: the other choice won, which is what this checks.
+    const publish = frameOf(page).getByRole("button", {
+      name: "Publish your changes",
+      exact: true,
+    });
+    await expect(publish).toBeEnabled();
+    const press = (button: typeof publish) =>
+      button.dispatchEvent("click", undefined, { timeout: 5_000 }).catch(() => undefined);
+    await Promise.all([
+      press(confirm.getByRole("button", { name: "Discard changes", exact: true })),
+      press(publish),
+    ]);
+    for (const p of [page, other]) {
+      await expect(frameOf(p).locator(".plinth-review")).toHaveCount(0, { timeout: 15_000 });
+    }
+    const after = (await apiGet(page.request, `/artifacts/${s.id}`)).body;
+    expect([4, 5]).toContain(after.current_version);
+    const versions = await apiGet(page.request, `/artifacts/${s.id}/versions`);
+    expect(versions.body.items.length).toBe(after.current_version);
+  } finally {
+    await client.close();
+    await other.context().close();
+  }
 });
 
 test("a commenter never sees draft text, nor any editing control", async ({ page, browser }) => {
@@ -254,6 +392,6 @@ test("a commenter never sees draft text, nor any editing control", async ({ page
   await expect(frameOf(commenter).locator("p", { hasText: "Second paragraph." })).toBeVisible();
   await expect(frameOf(commenter).locator("main")).not.toContainText("Secret draft words");
   await expect(commenter.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-  await expect(commenter.getByText(/Unsaved page edits/)).toHaveCount(0);
+  await expect(commenter.getByText(/Unpublished changes/)).toHaveCount(0);
   await commenter.context().close();
 });

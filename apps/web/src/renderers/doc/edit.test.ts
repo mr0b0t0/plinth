@@ -3,7 +3,7 @@
 // app, blocks other people hold show who holds them, and touch screens get a 16px field.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientLease } from "../common/live.ts";
-import { DocEditor, EDIT_DEBOUNCE_MS, LocalDoc, padded, unpadded } from "./edit.ts";
+import { DocEditor, EDIT_DEBOUNCE_MS, LocalDoc, padded, REFUSED_EDIT, unpadded } from "./edit.ts";
 
 let root: HTMLElement;
 let save: ReturnType<typeof vi.fn<() => void>>;
@@ -278,5 +278,68 @@ describe("DocEditor", () => {
       vi.advanceTimersByTime(1);
       expect(sent).toEqual(["two, typed offline"]);
     })();
+  });
+});
+
+describe("DocEditor: refusals, the leading < escape, files and leaving", () => {
+  it("writes a leading <html in any block as \\<html, which renders the same and is published", () => {
+    const { local, editor } = setup("Intro\n\nText");
+    click(root.querySelectorAll("p")[1] as Element);
+    const field = editor.fieldElement as HTMLTextAreaElement;
+    type(field, "<html> basics\n\nand <html> inside");
+    field.setSelectionRange(13, 13);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("Intro\n\n\\<html> basics\n\nand <html> inside");
+    expect(field.value).toBe("\\<html> basics\n\nand <html> inside");
+    // The caret moved with the backslash.
+    expect(field.selectionStart).toBe(14);
+    key(field, "Escape");
+    // Deleting the first block now leaves an escaped block first: still a doc.
+    expect(root.textContent).toContain("<html> basics");
+  });
+
+  it("a change that would make the doc start like a web page is not kept, and says why", () => {
+    // An agent wrote a second block that starts like an HTML document.
+    const { local, editor } = setup("Intro\n\n<html> basics");
+    const status = vi.fn();
+    (editor as unknown as { hooks: { status: () => void } }).hooks.status = status;
+    click(root.querySelector("p") as Element);
+    const field = editor.fieldElement as HTMLTextAreaElement;
+    type(field, "");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // Not applied: the block is back as the doc has it, still open, with the reason.
+    expect(local.text).toBe("Intro\n\n<html> basics");
+    expect(field.value).toBe("Intro");
+    expect(editor.fieldElement).toBe(field);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(REFUSED_EDIT);
+  });
+
+  it("a refusal from the room puts the block back from the room's lines", () => {
+    const { editor } = setup("one\n\ntwo");
+    click(root.querySelector("p") as Element);
+    const field = editor.fieldElement as HTMLTextAreaElement;
+    type(field, "changed");
+    editor.refused(REFUSED_EDIT);
+    expect(field.value).toBe("one");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(REFUSED_EDIT);
+  });
+
+  it("draws images from the draft's base version, and Esc at the top level leaves", () => {
+    const leave = vi.fn();
+    const events = {
+      granted: (l: ClientLease) => editor.granted(l),
+      changed: () => editor.changed(),
+    };
+    const local = new LocalDoc("![Chart](chart.png)\n\nText", events);
+    const editor: DocEditor = new DocEditor(root, window, local, {
+      save,
+      status: () => undefined,
+      leave,
+      fileVersion: () => 5,
+    });
+    editor.setEditing(true);
+    expect(root.querySelector("img")?.getAttribute("src")).toBe("/__plinth/v/5/chart.png");
+    key(root.querySelector("p") as Element, "Escape");
+    expect(leave).toHaveBeenCalledTimes(1);
   });
 });

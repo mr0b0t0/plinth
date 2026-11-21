@@ -8,6 +8,7 @@ import {
   type ClientType,
   type EffectiveRole,
   hasPageCapabilities,
+  isLiveType,
   isPersonalDocId,
   type LiveViewPool,
   pageDataOf,
@@ -403,7 +404,7 @@ const NO_ROOM: RoomAccess = {
  * and sets presence; owners and editors emit any topic, commenters only the page's open topics
  * (none on a whiteboard only editors may change: pageWriteFloor), and viewers never emit (as Claude's
  * artifact `room` capability, which never lets a plain viewer emit). Identities show only with
- * `viewer`. A doc socket is Plinth's own editing channel for types with liveEdit: owners and
+ * `viewer`. A doc socket is Plinth's own editing channel for live types (`edit: "live"`): owners and
  * editors only, who see each other's emails; signed-in ones write, ones confirmed by code watch.
  * Checked at the upgrade, and through the room's stamped header on every message.
  */
@@ -417,7 +418,7 @@ export function roomAccess(
   if (kind === "slides") return slidesRoomAccess(claim, ctx.type);
   const editor = claim.role === "owner" || claim.role === "editor";
   if (kind === "doc") {
-    if (!TYPE_REGISTRY[ctx.type]?.liveEdit || !editor) return NO_ROOM;
+    if (!isLiveType(TYPE_REGISTRY[ctx.type]) || !editor) return NO_ROOM;
     return {
       join: true,
       emit: "none",
@@ -740,6 +741,17 @@ export function grantedRole(artifact: CategoryArtifactFacts, access: AccessFacts
  */
 export function seesCategorySharing(p: Principal): boolean {
   return boundArtifactOf(p) === null;
+}
+
+/**
+ * May this principal publish a version carrying another version's files (`files_from_version`)?
+ * Only the app's page Publish does: a signed-in person, who already holds `edit`. Never an agent
+ * or a bearer token, which sends its own files or carries the current ones: with an old version's
+ * files under a new source, a token limited to one artifact could bring back files a restore (which
+ * it may not do) would. Checked after the `edit` policy.
+ */
+export function mayPublishWithFilesOf(p: Principal): p is Extract<Principal, { kind: "user" }> {
+  return p.kind === "user";
 }
 
 /**

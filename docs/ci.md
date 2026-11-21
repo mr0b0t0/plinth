@@ -165,7 +165,7 @@ takes two).
 | `outcome` | `published`, `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error` |
 | `current-version` | On a conflict, the version someone else published |
 | `verified` | `true` when every file was read back and matched |
-| `warnings` | The number of publish warnings to fix (missing files, blocked hosts). Not counted: `not_scanned` (some files were not checked) and `live_draft` (people have unsaved edits on a doc's page; nothing was overwritten) |
+| `warnings` | The number of publish warnings to fix (missing files, blocked hosts). Not counted: `not_scanned` (some files were not checked) and `live_draft` (people have unsaved edits on the page of a doc or a sheet; the version was published, and nothing was overwritten) |
 | `json` | The CLI's `--json` output (untrusted, see above) |
 
 ## Pull requests and forks

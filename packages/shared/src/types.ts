@@ -505,6 +505,13 @@ export interface AppConfig {
    */
   artifact_types?: { id: ArtifactType; available: boolean }[];
   /**
+   * How owners and editors edit docs and sheets on their page here: "room" (live with each other,
+   * with rooms), "solo" (alone, origin isolation without rooms), or null when editing on the page
+   * is off (ALLOW_LIVE_EDITING=false, or opaque isolation and the path fallback). The Worker
+   * always sends it; absent reads as null.
+   */
+  inline_editing?: "room" | "solo" | null;
+  /**
    * Owners may have Plinth email the people they add (docs/spec.md "Invitation emails"): false when
    * the operator set INVITATION_EMAILS_PER_DAY=0, with EMAIL_PROVIDER=console outside development,
    * and in SINGLE_USER_MODE (config.ts invitationEmailsActive). The Worker always sends it; absent
@@ -612,14 +619,6 @@ export interface LiveInfo {
   editors_online: number | null;
   idle_checkpoint_s: number;
   auto_checkpoint_min_s: number;
-}
-
-/** GET /api/v1/artifacts/:ref/live/draft: the draft text, to review a conflict. */
-export interface LiveDraftText {
-  text: string;
-  base_version: number;
-  rev: number;
-  conflict_version: number | null;
 }
 
 /** POST /api/v1/artifacts/:ref/live/checkpoint */

@@ -179,6 +179,19 @@ export const updateArtifactInput = z.object({
 export type UpdateArtifactInput = z.input<typeof updateArtifactInput>;
 
 /**
+ * PUT /api/v1/artifacts/:ref: the update, plus the field the app's on-page Publish uses. MCP's
+ * update_artifact takes updateArtifactInput, without it, so agents keep the carry rule.
+ */
+export const restUpdateArtifactInput = updateArtifactInput.extend({
+  files_from_version: versionNumberSchema
+    .optional()
+    .describe(
+      "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. The signed-in app only: a token limited to one artifact gets 403 token_bound, any other bearer token 403 app_only. Not with assets; a version that does not exist or is newer than the current one is 404",
+    ),
+});
+export type RestUpdateArtifactInput = z.input<typeof restUpdateArtifactInput>;
+
+/**
  * start_upload and POST /uploads. Flat, like the other inputs; the service enforces the cross-field
  * rules: title and type only without id, base_version required with id (and refused without it),
  * note only with id; category in either mode, owner only with id.

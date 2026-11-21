@@ -5,9 +5,11 @@
 //   app -> frame: print                          the frame calls its own window.print()
 //   app -> frame: export { format }              "csv" or "xlsx": the frame builds the file and
 //                                                downloads it from a blob: URL
-//   app -> frame: edit { on }                    edit mode on or off (room, or solo without one)
+//   app -> frame: edit { on, base? }             edit mode on or off (room, or solo without one)
 //   app -> frame: collect { nonce }              solo: the frame answers draft { nonce, text }
-//   frame -> app: live { ...status }, save, draft { nonce, text }   as the doc renderer sends them
+//   app -> frame: review, reviewed               the whole-draft review (common/editSession.ts)
+//   frame -> app: live { ...status }, save, draft { nonce, text }, resolved, leave
+//                                                as the doc renderer sends them, with the frame key
 //
 // The frame acts on a message only when it comes from its parent window at the app origin.
 import {
@@ -16,14 +18,12 @@ import {
   SHEET_EXPORT_FORMATS,
   type SheetExportFormat,
 } from "@plinth/shared";
+import { type EditAppMessage, readEditMessage } from "../common/editSession.ts";
 
 export type SheetAppMessage =
   | { type: "print" }
   | { type: "export"; format: SheetExportFormat }
-  | { type: "edit"; on: boolean }
-  | { type: "collect"; nonce: string };
-
-const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+  | EditAppMessage;
 
 /** A message from the app page, validated, or null. The caller checks source and origin. */
 export function readSheetAppMessage(data: unknown): SheetAppMessage | null {
@@ -34,11 +34,7 @@ export function readSheetAppMessage(data: unknown): SheetAppMessage | null {
   if (m.type === "export" && SHEET_EXPORT_FORMATS.some((f) => f === m.format)) {
     return { type: "export", format: m.format as SheetExportFormat };
   }
-  if (m.type === "edit" && typeof m.on === "boolean") return { type: "edit", on: m.on };
-  if (m.type === "collect" && typeof m.nonce === "string" && NONCE_RE.test(m.nonce)) {
-    return { type: "collect", nonce: m.nonce };
-  }
-  return null;
+  return readEditMessage(data);
 }
 
 /** Whether a message event comes from the app page that frames this sheet. */

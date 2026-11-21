@@ -1,9 +1,17 @@
-// The slim strip under the artifact bar while a doc is edited on its page (#36): what is going on
-// (announced politely), who else is editing, Save version (the one primary action), Discard in the
-// overflow menu behind a confirm, and Done.
-import { DotsThreeIcon, FloppyDiskIcon, PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
-import { type FormEvent, type Ref, useId, useState } from "react";
-import { Button, ConfirmDialog, Dialog, Input, Menu } from "../ui/index.ts";
+// The slim strip under the artifact bar while a doc or a sheet is edited on its page (#36): what
+// is going on (announced politely), how many others are editing (who and where in its tooltip
+// and its name) and Publish (the one primary action, Cmd/Ctrl+S), shown once there is something
+// to publish. When the changes cannot be published yet, Publish stays visible but off, and says
+// why in its tooltip. The bar's Edit toggle is the way in and out; only at phone width, where the
+// toggle folds into the ⋯ menu, does the strip add Done. Discarding the changes is in the ⋯ menu
+// (stageItems.tsx). While a version published meanwhile waits for review, Publish gives way to
+// "Review changes", which opens the whole-draft review in the frame (the review holds the two
+// choices and its own way out, Back). While that review is open the strip shows its status only.
+// At phone width every status has a short form, so the strip stays one line.
+import { PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
+import { versionRange } from "@plinth/shared";
+import type { Ref } from "react";
+import { Button, Tooltip } from "../ui/index.ts";
 import type { LivePhase } from "./useLiveEdit.ts";
 
 export interface EditBarProps {
@@ -15,71 +23,115 @@ export interface EditBarProps {
   /** Room mode, before the frame first reported. */
   connecting?: boolean;
   dirty: boolean;
+  /** Room mode: everything typed has been written to the draft (flushed). */
+  flushed?: boolean;
   saving: boolean;
   savedVersion: number | null;
   rebasedVersion: number | null;
   /** Solo: a version published while editing. */
   newerVersion?: number | null;
-  /**
-   * False for a type whose page edits are never merged (a sheet): a version published meanwhile
-   * always stops editing for a review, whatever lines it changed. Default true (a doc).
-   */
-  merges?: boolean;
   /** The version the frozen page edits are reviewed against, when known. */
   conflictVersion?: number | null;
-  editors: { email: string; block: boolean }[];
-  onSave: (note?: string) => void;
-  onDiscard: () => void;
+  /** False when the draft cannot be a version yet: Publish is off, with `unpublishableReason`. */
+  publishable?: boolean;
+  unpublishableReason?: string;
+  editors: { email: string; block: boolean; where?: string }[];
+  onPublish: () => void;
   onDone: () => void;
   onReview?: () => void;
+  /** The whole-draft review is open in the frame: the strip shows its status only. */
+  reviewing?: boolean;
+  /** Phone width: the bar's Edit toggle is in the ⋯ menu, so the strip has its own Done. */
+  compact?: boolean;
   /** The strip's accessible name (the design page shows several at once). */
   label?: string;
   /** The strip itself, focusable, so focus can move to it when editing starts. */
   focusRef?: Ref<HTMLElement>;
 }
 
-/** The status line's words. */
+/** The status line's words, most urgent first. */
 export function editStatus(p: EditBarProps): string {
-  if (p.saving) return "Saving…";
-  if (p.phase === "conflict" && p.merges === false) {
-    return p.conflictVersion ? `v${p.conflictVersion} published` : "A newer version was published";
+  if (p.saving) return "Publishing…";
+  if (p.phase === "conflict") {
+    const n = p.conflictVersion;
+    if (!n) return "A newer version was published while you edited";
+    const from = Math.min(p.version + 1, n);
+    return from < n
+      ? `${versionRange(from, n)} were published while you edited`
+      : `v${n} was published while you edited`;
   }
-  if (p.phase === "conflict") return "A newer version changed the same lines. Review the changes.";
-  if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;
+  if (p.newerVersion) return `v${p.newerVersion} was published while you edited`;
   if (p.mode === "room" && p.connecting) return "Connecting…";
-  if (p.mode === "room" && !p.connected) return "Not connected, your edits are kept";
-  if (p.rebasedVersion && p.dirty)
-    return `v${p.rebasedVersion} was published; your edits were kept`;
-  if (p.savedVersion && !p.dirty) return `Saved as v${p.savedVersion}`;
-  if (p.dirty) return "Unsaved changes";
+  if (p.mode === "room" && !p.connected) return "Not connected, your changes are kept";
+  if (p.rebasedVersion && p.dirty) {
+    return `v${p.rebasedVersion} was published; your changes were kept`;
+  }
+  if (p.savedVersion && !p.dirty) return `Published as v${p.savedVersion}`;
+  if (p.dirty && p.mode === "solo") return "Unpublished changes, kept in this tab";
+  if (p.dirty) return p.flushed === false ? "Saving draft…" : "Draft saved";
   return `Editing v${p.version}`;
 }
 
-/** A button's label, shorter at phone width so the strip stays one line (the name is aria-label). */
-function Label({ wide, narrow }: { wide: string; narrow: string }) {
-  return (
-    <>
-      <span className="pl-editbar__wide">{wide}</span>
-      <span className="pl-editbar__narrow">{narrow}</span>
-    </>
-  );
+/**
+ * The status at phone width, where the long words would wrap the strip to two lines, or null when
+ * it is the same as the long one.
+ */
+export function editStatusShort(p: EditBarProps): string | null {
+  if (p.saving) return null;
+  if (p.phase === "conflict") {
+    const n = p.conflictVersion;
+    if (!n) return "Newer version published";
+    const from = Math.min(p.version + 1, n);
+    return `${versionRange(from, n)} published`;
+  }
+  if (p.newerVersion) return `v${p.newerVersion} published`;
+  if (p.mode === "room" && p.connecting) return null;
+  if (p.mode === "room" && !p.connected) return "Not connected";
+  if (p.rebasedVersion && p.dirty) return `Merged with v${p.rebasedVersion}`;
+  if (p.savedVersion && !p.dirty) return null;
+  if (p.dirty && p.mode === "solo") return "Kept in this tab";
+  return null;
+}
+
+/** "ana@example.org (editing row 12)" for one of the others editing. */
+function editorText(e: { email: string; block: boolean; where?: string }): string {
+  if (!e.block) return e.email;
+  return e.where ? `${e.email} (editing ${e.where})` : `${e.email} (editing)`;
+}
+
+/** Who else is editing and where, for the count's tooltip and name. */
+export function editorsText(editors: EditBarProps["editors"]): string {
+  return `Also here: ${editors.map(editorText).join(", ")}`;
 }
 
 export function EditBar(props: EditBarProps) {
-  const { phase, dirty, saving, editors, onSave, onDiscard, onDone, onReview } = props;
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const noteForm = useId();
+  const { phase, dirty, saving, editors, onPublish, onDone, onReview } = props;
   const conflict = phase === "conflict";
-  const shown = editors.slice(0, 3);
-  const more = editors.length - shown.length;
-  const submitNote = (e: FormEvent) => {
-    e.preventDefault();
-    setNoteOpen(false);
-    onSave(note.trim() || undefined);
-    setNote("");
-  };
+  const publishable = props.publishable !== false;
+  const status = editStatus(props);
+  const short = editStatusShort(props);
+  const reason = !publishable
+    ? (props.unpublishableReason ?? "These changes can't be published yet.")
+    : null;
+  // Publish shows once there is something to publish (or while it publishes).
+  const showPublish = !conflict && (dirty || saving);
+  const publish = (
+    <Button
+      variant="primary"
+      size="sm"
+      className="pl-editbar__publish"
+      loading={saving}
+      // Off but focusable when the changes cannot be published yet, so its tooltip says why.
+      {...(reason && !saving
+        ? { "aria-disabled": true, onClick: undefined }
+        : { onClick: () => onPublish() })}
+      aria-keyshortcuts="Meta+S Control+S"
+      // The label hides under the spinner while publishing; the name stays.
+      aria-label="Publish"
+    >
+      Publish
+    </Button>
+  );
 
   return (
     <section
@@ -91,112 +143,56 @@ export function EditBar(props: EditBarProps) {
       <span className="pl-editbar__state">
         <PencilSimpleIcon size={14} aria-hidden="true" />
         <span aria-live="polite" className="pl-editbar__status">
-          {editStatus(props)}
+          {short ? (
+            <>
+              <span className="pl-editbar__long">{status}</span>
+              <span className="pl-editbar__short" aria-hidden="true">
+                {short}
+              </span>
+            </>
+          ) : (
+            status
+          )}
         </span>
       </span>
       {editors.length > 0 && (
-        <span className="pl-editbar__editors">
-          <UsersIcon size={14} aria-hidden="true" />
-          {/* At phone width the names collapse to a count (they stay for screen readers). */}
-          <span className="pl-editbar__count" aria-hidden="true">
+        // How many others are here, at every width; who and where are its tooltip and its name.
+        <Tooltip content={editorsText(editors)} placement="bottom">
+          <span
+            className="pl-editbar__editors"
+            role="img"
+            aria-label={editorsText(editors)}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users can read who in the tooltip
+            tabIndex={0}
+          >
+            <UsersIcon size={14} aria-hidden="true" />
             {editors.length}
           </span>
-          <span className="pl-editbar__names">
-            <span className="visually-hidden">Also here: </span>
-            {shown.map((e) => (
-              <span key={e.email} className="pl-editbar__editor">
-                {e.email}
-                {e.block && <span className="pl-editbar__typing"> (editing)</span>}
-              </span>
-            ))}
-            {more > 0 && <span className="pl-editbar__editor">+{more}</span>}
-          </span>
+        </Tooltip>
+      )}
+      {!props.reviewing && (
+        <span className="pl-editbar__actions">
+          {conflict
+            ? onReview && (
+                <Button variant="primary" size="sm" onClick={onReview}>
+                  Review changes
+                </Button>
+              )
+            : showPublish &&
+              (reason && !saving ? (
+                <Tooltip content={reason} placement="bottom">
+                  {publish}
+                </Tooltip>
+              ) : (
+                publish
+              ))}
+          {props.compact && (
+            <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
+              Done
+            </Button>
+          )}
         </span>
       )}
-      <span className="pl-editbar__actions">
-        {conflict && onReview ? (
-          <Button variant="primary" size="sm" onClick={onReview} aria-label="Review changes">
-            <Label wide="Review changes" narrow="Review" />
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            size="sm"
-            icon={FloppyDiskIcon}
-            loading={saving}
-            disabled={!dirty}
-            aria-keyshortcuts="Meta+S Control+S"
-            // The label hides under the spinner while saving; the name stays.
-            aria-label="Save version"
-            onClick={() => onSave()}
-          >
-            <Label wide="Save version" narrow="Save" />
-          </Button>
-        )}
-        <Menu
-          label="More editing actions"
-          icon={DotsThreeIcon}
-          iconOnly
-          variant="ghost"
-          size="sm"
-          align="end"
-          items={[
-            {
-              label: "Save with a note…",
-              disabled: !dirty || conflict,
-              onSelect: () => setNoteOpen(true),
-            },
-            {
-              label: "Discard unsaved changes",
-              danger: true,
-              disabled: !dirty,
-              onSelect: () => setConfirmDiscard(true),
-            },
-          ]}
-        />
-        <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
-          Done
-        </Button>
-      </span>
-      <Dialog
-        open={noteOpen}
-        onClose={() => setNoteOpen(false)}
-        title="Save version"
-        description="A short note helps people find this version in the history."
-        size="sm"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setNoteOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" form={noteForm}>
-              Save version
-            </Button>
-          </>
-        }
-      >
-        <form id={noteForm} onSubmit={submitNote} noValidate>
-          <Input
-            label="Note"
-            value={note}
-            maxLength={500}
-            autoComplete="off"
-            onChange={(e) => setNote(e.currentTarget.value)}
-          />
-        </form>
-      </Dialog>
-      <ConfirmDialog
-        open={confirmDiscard}
-        onClose={() => setConfirmDiscard(false)}
-        onConfirm={() => {
-          setConfirmDiscard(false);
-          onDiscard();
-        }}
-        title="Discard unsaved changes?"
-        description="The page goes back to the current version, for everyone editing it. Saved versions are not touched."
-        confirmLabel="Discard changes"
-        danger
-      />
     </section>
   );
 }

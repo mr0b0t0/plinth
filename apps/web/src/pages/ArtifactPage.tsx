@@ -58,11 +58,14 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // A fresh gate for a newer version waits here until the stage has applied it: in place for a
   // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
   const [pending, setPending] = useState<OkGate | null>(null);
+  // While editing on the page the edit strip says what a newer version did ("v5 was published
+  // while you edited", "your changes were kept"), so no toast repeats it.
+  const editingRef = useRef(false);
   const show = (gate: OkGate, quiet = false) => {
     const moved = gate.artifact.version !== shown?.artifact.version;
     setPending(null);
     setGate(gate);
-    if (!pinned && moved && !quiet && pause === null) {
+    if (!pinned && moved && !quiet && pause === null && !editingRef.current) {
       if (updatedToast.current !== null) dismissToast(updatedToast.current);
       updatedToast.current = showToast({ title: `Updated to v${gate.artifact.version}` });
     }
@@ -157,6 +160,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   }, [commentsOpen, shown, pageComments]);
   // Editing on the page and review mode (the comment-anchoring frame) exclude each other.
   const onEditModeChange = useCallback((on: boolean) => {
+    editingRef.current = on;
     if (!on) return;
     setCommentsOpen(false);
     setReview(false);

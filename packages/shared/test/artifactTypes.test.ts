@@ -61,8 +61,8 @@ describe("type registry", () => {
     expect(TYPE_REGISTRY.doc.maxSourceBytes).toBe(LIMITS.maxDocBytes);
     expect(TYPE_REGISTRY.doc.editor).toEqual({ language: "markdown", wordWrap: "on" });
     // Docs are edited on their page (Plinth's own renderer); HTML pages only in the source editor.
-    expect(TYPE_REGISTRY.doc.liveEdit).toBe(true);
-    expect(TYPE_REGISTRY.html.liveEdit).toBe(false);
+    expect(TYPE_REGISTRY.doc.edit).toBe("live");
+    expect(TYPE_REGISTRY.html.edit).toBe("ask");
     // The HTML editor keeps the wrapping it had before types existed.
     expect(TYPE_REGISTRY.html.editor).toEqual({ language: "html", wordWrap: "on" });
   });

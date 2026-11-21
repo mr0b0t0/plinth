@@ -94,6 +94,20 @@
   }
 }
 
+/* A modal dialog is above every toast, so no toast ever covers its controls. */
+body:has(.pl-dialog-root) .pl-toaster {
+  z-index: calc(var(--z-dialog) - 1);
+}
+
+/* While the artifact frame shows the whole-draft review, toasts keep clear of its choices, which
+   sit at the bottom at phone width. */
+@media (max-width: 40rem) {
+  body.pl-reviewing .pl-toaster {
+    top: var(--space-2);
+    bottom: auto;
+  }
+}
+
 @keyframes pl-toast-in {
   from {
     opacity: 0;

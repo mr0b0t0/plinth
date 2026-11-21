@@ -281,12 +281,15 @@ describe("REST inputs", () => {
       true,
     );
     expect(
+      liveCheckpointInput.safeParse({ base_version: 4, rev: 9, reason: "idle", note: "n" }).success,
+    ).toBe(true);
+    // Publish your changes names the version reviewed; the room publishes its own draft.
+    expect(
       liveCheckpointInput.safeParse({
         base_version: 4,
         rev: 9,
-        reason: "idle",
-        note: "n",
-        resolved_text: "# Merged",
+        reason: "save",
+        conflict_version: 6,
       }).success,
     ).toBe(true);
     for (const bad of [
@@ -295,24 +298,20 @@ describe("REST inputs", () => {
       { base_version: 1, rev: -1, reason: "save" },
       { base_version: 1, rev: 1, reason: "later" },
       { base_version: 1, rev: 1, reason: "save", note: "x".repeat(LIMITS.maxNoteLength + 1) },
-      {
-        base_version: 1,
-        rev: 1,
-        reason: "save",
-        resolved_text: "\n".repeat(LIMITS.maxLiveDocLines),
-      },
-      {
-        base_version: 1,
-        rev: 1,
-        reason: "save",
-        resolved_text: "x".repeat(LIMITS.maxDocBytes + 1),
-      },
+      // No draft text travels from the app any more.
+      { base_version: 1, rev: 1, reason: "save", resolved_text: "# Mine", conflict_version: 2 },
+      { base_version: 1, rev: 1, reason: "save", conflict_version: 0 },
     ])
       expect(liveCheckpointInput.safeParse(bad).success).toBe(false);
   });
 
   it("discard takes the revision from the query string", () => {
     expect(liveDiscardQuery.parse({ rev: "12" })).toEqual({ rev: 12 });
+    expect(liveDiscardQuery.parse({ rev: "12", conflict_version: "6" })).toEqual({
+      rev: 12,
+      conflict_version: 6,
+    });
+    expect(liveDiscardQuery.safeParse({ rev: "1", conflict_version: "0" }).success).toBe(false);
     expect(liveDiscardQuery.safeParse({ rev: "-1" }).success).toBe(false);
     expect(liveDiscardQuery.safeParse({ rev: "1.5" }).success).toBe(false);
     expect(liveDiscardQuery.safeParse({}).success).toBe(false);

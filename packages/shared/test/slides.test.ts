@@ -279,7 +279,7 @@ describe("the slides registry row and shell", () => {
       maxSourceBytes: LIMITS.maxSlidesBytes,
       reservedPaths: ["index.html", "slides.md"],
       renderer: { script: "slides.js", style: "slides.css" },
-      liveEdit: false,
+      edit: "ask",
       present: true,
     });
     expect(d.assetTypes?.test("image/svg+xml")).toBe(true);

@@ -2,7 +2,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button } from "./Button.tsx";
-import { clearToasts, Toaster, useToast } from "./Toast.tsx";
+import { clearToasts, TOAST_PAUSE_MAX_MS, Toaster, useToast } from "./Toast.tsx";
 
 afterEach(() => {
   act(() => clearToasts());
@@ -82,6 +82,32 @@ describe("Toast", () => {
     expect(screen.getByRole("status").textContent).toContain("Link copied");
     act(() => {
       vi.advanceTimersByTime(400);
+    });
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("a pointer left resting on a toast holds it only for a while, and it stays dismissible", () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <Toaster />
+        <Raise />
+      </>,
+    );
+    act(() => screen.getByRole("button", { name: "Copy" }).click());
+    const toast = screen.getByText("Link copied").closest(".pl-toast") as HTMLElement;
+    act(() => {
+      toast.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(TOAST_PAUSE_MAX_MS - 100);
+    });
+    // Held while the pointer rests on it...
+    expect(screen.getByRole("status").textContent).toContain("Link copied");
+    expect(screen.getByRole("button", { name: "Dismiss: Link copied" })).toBeTruthy();
+    // ...but not for good: its own time runs once the hold is used up.
+    act(() => {
+      vi.advanceTimersByTime(5400);
     });
     expect(screen.getByRole("status").textContent).toBe("");
   });

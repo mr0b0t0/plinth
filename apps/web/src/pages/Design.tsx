@@ -70,9 +70,11 @@ import {
   pairColors,
 } from "../styles/contrast.ts";
 import "../styles/design-page.css";
+import { useMediaQuery } from "../components/editor/useMediaQuery.ts";
 import { EditBar, type EditBarProps } from "../components/viewer/EditBar.tsx";
 import { LiveDraftNotice } from "../components/viewer/LiveDraftNotice.tsx";
 import type { LiveFrameStatus } from "../components/viewer/rendererProtocol.ts";
+import { VIEWER_COMPACT_QUERY } from "../components/viewer/ViewerStage.tsx";
 import "../components/viewer/viewer.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
 
@@ -1293,21 +1295,34 @@ const EDIT_STATES: [string, Partial<EditBarProps>][] = [
   ["Editing", {}],
   ["Connecting", { connecting: true, connected: false }],
   [
-    "Unsaved changes, with co-editors",
+    "Draft saved, with co-editors",
     {
       dirty: true,
+      flushed: true,
       phase: "dirty",
       editors: [
-        { email: "bo@example.org", block: true },
+        { email: "bo@example.org", block: true, where: "row 12" },
         { email: "cy@example.org", block: false },
       ],
     },
   ],
-  ["Saving", { dirty: true, saving: true, phase: "saving" }],
-  ["Saved", { savedVersion: 5 }],
-  ["A version merged under the edits", { dirty: true, rebasedVersion: 5 }],
+  ["Saving the draft", { dirty: true, flushed: false, phase: "dirty" }],
+  ["Publishing", { dirty: true, saving: true, phase: "saving" }],
+  ["Published", { savedVersion: 5 }],
+  ["A version merged under the changes", { dirty: true, rebasedVersion: 5 }],
   ["Not connected", { dirty: true, connected: false }],
-  ["Conflict", { dirty: true, phase: "conflict" }],
+  ["A version to review", { dirty: true, phase: "conflict", conflictVersion: 5 }],
+  ["Versions to review", { dirty: true, phase: "conflict", conflictVersion: 6 }],
+  ["Reviewing", { dirty: true, phase: "conflict", conflictVersion: 5, reviewing: true }],
+  [
+    "Cannot be published yet",
+    {
+      dirty: true,
+      phase: "dirty",
+      publishable: false,
+      unpublishableReason: "These changes can't be published yet.",
+    },
+  ],
   [
     "Solo, a newer version published",
     { mode: "solo", dirty: true, phase: "solo", newerVersion: 5 },
@@ -1327,10 +1342,13 @@ const LIVE_STATUS: LiveFrameStatus = {
   last_by_you: false,
   last_edit_at: null,
   editors: [],
+  publishable: true,
 };
 
-/** On-page doc editing (#36): the edit strip and the unsaved-edits line in every state. */
+/** On-page editing (#36): the edit strip and the unpublished-changes line in every state. */
 function LiveEditSpecimens() {
+  // Done is on the strip only where the bar's Edit toggle folds into the ⋯ menu.
+  const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const bar: EditBarProps = {
     phase: "editing",
     mode: "room",
@@ -1341,19 +1359,15 @@ function LiveEditSpecimens() {
     savedVersion: null,
     rebasedVersion: null,
     editors: [],
-    onSave: noop,
-    onDiscard: noop,
+    onPublish: noop,
     onDone: noop,
     onReview: noop,
+    compact,
   };
-  const notice = { onSave: noop, onContinue: noop, onDiscard: noop, onReview: noop };
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
     <>
-      <Specimen
-        title="Edit bar"
-        note="Under the artifact bar while a doc is edited on its page. Save version is the one ink primary; bronze marks the live state."
-      >
+      <Specimen title="Edit bar" note="Under the artifact bar while editing on the page.">
         <div className="ds-stack">
           {EDIT_STATES.map(([label, over]) => (
             <div key={label}>
@@ -1364,7 +1378,7 @@ function LiveEditSpecimens() {
         </div>
       </Specimen>
       <Specimen
-        title="Unsaved page edits"
+        title="Unpublished changes on the page"
         note="One line for owners and editors who are not editing. Viewers and commenters never see it."
       >
         <div className="ds-stack">
@@ -1377,17 +1391,14 @@ function LiveEditSpecimens() {
               updated_by_email: "bo@example.org",
             }}
             status={null}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
             status={{ ...LIVE_STATUS, editors: [{ email: "bo@example.org", block: true }] }}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
             status={{ ...LIVE_STATUS, dirty: true, conflict_version: 5 }}
-            {...notice}
           />
           <LiveDraftNotice
             draft={null}
@@ -1395,19 +1406,6 @@ function LiveEditSpecimens() {
             restore={{ text: "", base: 4, saved_at: hoursAgo }}
             onSaveRestore={noop}
             onDropRestore={noop}
-            {...notice}
-          />
-          <LiveDraftNotice
-            draft={{
-              base_version: 4,
-              dirty: true,
-              conflict_version: null,
-              updated_at: hoursAgo,
-              updated_by_email: "bo@example.org",
-            }}
-            status={null}
-            signIn
-            {...notice}
           />
         </div>
       </Specimen>

@@ -1,7 +1,9 @@
-// On-page doc editing on the app host (#36): GET live, GET live/draft, POST live/checkpoint and
-// DELETE live/draft. Policy (`live_edit`: signed-in owners and editors, never agents), CSRF and
-// the exact Origin, zod inputs, the checkpoint steps, versions published from outside (merge or
-// freeze), discard, and every path that clears a draft (delete, takedown, retention).
+// On-page doc editing on the app host (#36): GET live, POST live/checkpoint and DELETE live/draft
+// (no route returns draft text: GET live/draft is gone). Policy (`live_edit`: signed-in owners and
+// editors, never agents), CSRF and the exact Origin, zod inputs, the checkpoint steps, versions
+// published from outside (merge or freeze), the review's two choices (Publish your changes, Discard your changes)
+// against the version reviewed, discard, and every path that clears a draft (delete, takedown,
+// retention).
 import {
   createExecutionContext,
   evictDurableObject,
@@ -147,7 +149,6 @@ describe("live API: who may call it", () => {
     const viewerP = await viewerSession(coded);
     const routes: [string, string, unknown?][] = [
       ["GET", `/artifacts/${id}/live`],
-      ["GET", `/artifacts/${id}/live/draft`],
       ["POST", `/artifacts/${id}/live/checkpoint`, { base_version: 1, rev: 0, reason: "save" }],
       ["DELETE", `/artifacts/${id}/live/draft?rev=0`],
     ];
@@ -164,6 +165,8 @@ describe("live API: who may call it", () => {
       expect((await ask(bot.auth)).status, `${method} ${path} agent`).toBe(403);
       expect((await ask(viewerP)).status, `${method} ${path} viewer principal`).toBe(401);
     }
+    // No route hands draft text to the app: the renderer reads it on the draft socket.
+    expect((await api(`/artifacts/${id}/live/draft`, ownerP.session.headers)).status).toBe(404);
   });
 
   it("needs the CSRF header and the exact Origin on writes; validates input after policy", async () => {
@@ -534,52 +537,50 @@ describe("live API: versions published from outside", () => {
       method: "PUT",
       body: { content: BASE.replace("First.", "First, by an agent."), base_version: 1 },
     });
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    // The frame lists what v2 changed in the files (nothing: no images changed).
+    expect(await a.nextOf("conflict")).toEqual({
+      t: "conflict",
+      version: 2,
+      files: { added: [], removed: [], replaced: [], more: 0, same: 0 },
+    });
     expect(await draft(id)).toMatchObject({ base_version: 1, conflict_version: 2 });
     a.send({ t: "lease", rev: 1, start: 0, end: 1 });
     expect(await a.nextOf("lease_denied")).toEqual({ t: "lease_denied", reason: "frozen" });
     const refused = await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save" });
     expect(refused.status).toBe(409);
     expect((await json(refused)).error.details.reason).toBe("live_conflict");
-    expect(await json(await api(`/artifacts/${id}/live/draft`, h))).toEqual({
-      text: "# Plan\n\nFirst, by a person.\n\nSecond.\n",
+    // No text comes from the app: a resolution text is refused outright.
+    const text = await checkpoint(id, h, {
       base_version: 1,
       rev: 1,
+      reason: "save",
+      resolved_text: "# Plan\n\nMixed.\n",
       conflict_version: 2,
     });
-    const resolved = "# Plan\n\nFirst, by a person and an agent.\n\nSecond.\n";
-    // A resolution must name the conflict it was reviewed against.
-    const unnamed = await checkpoint(id, h, {
+    expect(text.status).toBe(400);
+    // Publish your changes: the room's own frozen draft, byte for byte, over v2, which stays in History.
+    const mine = "# Plan\n\nFirst, by a person.\n\nSecond.\n";
+    const ok = await json(
+      await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save", conflict_version: 2 }),
+    );
+    expect(ok).toMatchObject({ saved: true, version: { version: 3 } });
+    expect((await versionRow(id, 3))?.note).toBe("Edited on the page. Replaces the changes in v2.");
+    const reset = await a.nextOf("reset");
+    expect(reset).toMatchObject({ version: 3, why: "published" });
+    expect(await readText(a, reset.gen)).toBe(mine);
+    expect(await draft(id)).toBeNull();
+    // A second choice against v2 finds the draft resolved: 409, never 200 clean.
+    const again = await checkpoint(id, h, {
       base_version: 1,
       rev: 1,
       reason: "save",
-      resolved_text: resolved,
+      conflict_version: 2,
     });
-    expect(unnamed.status).toBe(400);
-    const ok = await json(
-      await checkpoint(id, h, {
-        base_version: 1,
-        rev: 1,
-        reason: "save",
-        resolved_text: resolved,
-        conflict_version: 2,
-      }),
-    );
-    expect(ok).toMatchObject({ saved: true, version: { version: 3 } });
-    const reset = await a.nextOf("reset");
-    expect(reset.version).toBe(3);
-    expect(await readText(a, reset.gen)).toBe(resolved);
-    expect(await draft(id)).toBeNull();
-    // resolved_text outside a conflict is refused.
-    await editLines(a, 2, 3, "Again.", reset.rev);
-    const wrong = await checkpoint(id, h, {
-      base_version: 3,
-      rev: reset.rev + 1,
-      reason: "save",
-      resolved_text: "x",
-      conflict_version: 3,
+    expect(again.status).toBe(409);
+    expect((await json(again)).error.details).toMatchObject({
+      reason: "live_resolved",
+      current_version: 3,
     });
-    expect(wrong.status).toBe(400);
     a.ws.close(1000);
   });
 
@@ -709,20 +710,19 @@ describe("live API: resolving conflicts, and a room that missed a version", () =
       method: "PUT",
       body: { content: BASE.replace("First.", "First, by an agent."), base_version: 1 },
     });
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    expect(await a.nextOf("conflict")).toMatchObject({ t: "conflict", version: 2 });
     // The editor reviews against v2; meanwhile v3 rewrites the same paragraph again.
     const v3 = BASE.replace("First.", "First, by an agent, twice.");
     await api(`/artifacts/${id}`, owner.auth, {
       method: "PUT",
       body: { content: v3, base_version: 2 },
     });
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 3 });
-    const keepMine = {
-      base_version: 1,
-      rev: 1,
-      reason: "save",
-      resolved_text: "# Plan\n\nFirst, by a person.\n\nSecond.\n",
-    };
+    expect(await a.nextOf("conflict")).toMatchObject({ t: "conflict", version: 3 });
+    const keepMine = { base_version: 1, rev: 1, reason: "save" };
+    // An older rev is sent back to review again.
+    const moved = await checkpoint(id, h, { ...keepMine, rev: 0, conflict_version: 3 });
+    expect(moved.status).toBe(409);
+    expect((await json(moved)).error.details.reason).toBe("live_moved");
     const stale = await checkpoint(id, h, { ...keepMine, conflict_version: 2 });
     expect(stale.status).toBe(409);
     expect((await json(stale)).error.details).toMatchObject({
@@ -733,10 +733,14 @@ describe("live API: resolving conflicts, and a room that missed a version", () =
     expect(await versionRow(id, 4)).toBeFalsy();
     const ok = await json(await checkpoint(id, h, { ...keepMine, conflict_version: 3 }));
     expect(ok).toMatchObject({ saved: true, version: { version: 4 } });
+    // The note names the whole range the page changes replace.
+    expect((await versionRow(id, 4))?.note).toBe(
+      "Edited on the page. Replaces the changes in v2 to v3.",
+    );
     a.ws.close(1000);
   });
 
-  it("taking the latest version drops the draft for everyone and writes no version", async () => {
+  it("Discard your changes drops the draft for everyone and writes no version", async () => {
     const { owner, id, ownerP } = await docSetup(BASE);
     const h = ownerP.session.headers;
     const a = await connectDoc(id, ownerP.cookie);
@@ -746,17 +750,28 @@ describe("live API: resolving conflicts, and a room that missed a version", () =
       method: "PUT",
       body: { content: theirs, base_version: 1 },
     });
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
-    const res = await checkpoint(id, h, {
-      base_version: 1,
-      rev: 1,
-      reason: "save",
-      resolved_text: theirs,
-      conflict_version: 2,
+    expect(await a.nextOf("conflict")).toMatchObject({ t: "conflict", version: 2 });
+    // Against another version it is refused: the draft is frozen against v2.
+    const wrong = await api(`/artifacts/${id}/live/draft?rev=1&conflict_version=3`, h, {
+      method: "DELETE",
     });
-    expect(await json(res)).toEqual({ saved: false, reason: "unchanged" });
+    expect(wrong.status).toBe(409);
+    expect((await json(wrong)).error.details).toMatchObject({
+      reason: "live_conflict",
+      current_version: 2,
+    });
+    const res = await api(`/artifacts/${id}/live/draft?rev=1&conflict_version=2`, h, {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(204);
     const reset = await a.nextOf("reset");
-    expect(reset.version).toBe(2);
+    expect(reset).toMatchObject({ version: 2, why: "discarded" });
+    // A second Discard your changes finds the draft resolved.
+    const again = await api(`/artifacts/${id}/live/draft?rev=1&conflict_version=2`, h, {
+      method: "DELETE",
+    });
+    expect(again.status).toBe(409);
+    expect((await json(again)).error.details.reason).toBe("live_resolved");
     expect(await readText(a, reset.gen)).toBe(theirs);
     expect(await draft(id)).toBeNull();
     expect(await versionRow(id, 3)).toBeFalsy();
@@ -817,7 +832,7 @@ describe("live API: resolving conflicts, and a room that missed a version", () =
       reason: "live_conflict",
       current_version: 2,
     });
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    expect(await a.nextOf("conflict")).toMatchObject({ t: "conflict", version: 2 });
     expect(await draft(id)).toMatchObject({ base_version: 1, conflict_version: 2 });
     a.ws.close(1000);
   });
@@ -884,7 +899,7 @@ describe("live API: checkpoint locks", () => {
 });
 
 describe("live API: the remaining refusals", () => {
-  it("a room that answers 'gone' gives 404 on checkpoint and on the draft", async () => {
+  it("a room that answers 'gone' gives 404 on checkpoint", async () => {
     const { id, ownerP } = await docSetup(BASE);
     const h = ownerP.session.headers;
     await runInDurableObject(stubFor(id), async (room) => {
@@ -902,7 +917,6 @@ describe("live API: the remaining refusals", () => {
       doc.peek = async () => null;
     });
     expect((await checkpoint(id, h, { base_version: 1, rev: 0, reason: "save" })).status).toBe(404);
-    expect((await api(`/artifacts/${id}/live/draft`, h)).status).toBe(404);
   });
 
   it("with LIVE_CHECKPOINT_IDLE_S=0 an idle save is always too_soon, with no retry", async () => {

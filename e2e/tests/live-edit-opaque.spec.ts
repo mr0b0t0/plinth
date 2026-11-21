@@ -42,6 +42,8 @@ test("no on-page editing of a doc, and rooms report opaque_isolation without a r
     timeout: 15_000,
   });
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  // No frame key either: nothing on the page is an editing channel.
+  expect(await page.locator(CURRENT_FRAME).getAttribute("src")).not.toContain("#plinth-k=");
   await page.getByRole("button", { name: "Artifact actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Edit", exact: true })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Edit on the page" })).toHaveCount(0);

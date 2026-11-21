@@ -37,7 +37,7 @@ describe("design_system type", () => {
     for (const t of ["text/javascript", "text/css", "text/html", "application/json"]) {
       expect(d.assetTypes?.test(t)).toBe(false);
     }
-    expect(d.liveEdit).toBe(false);
+    expect(d.edit).toBe("ask");
     expect(d.editor).toEqual({ language: "json", wordWrap: "off" });
     expect(rendererFiles(d)).toEqual([
       { name: "ds.js", contentType: "text/javascript" },

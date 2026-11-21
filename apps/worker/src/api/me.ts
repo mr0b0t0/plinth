@@ -20,6 +20,7 @@ import {
   designExportActive,
   instanceLimits,
   invitationEmailsActive,
+  liveEditMode,
   sharedDataActive,
 } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
@@ -64,6 +65,7 @@ meApi.get("/config", (c) => {
       id,
       available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
     })),
+    inline_editing: liveEditMode(config, c.env),
     invitation_emails: invitationEmailsActive(config),
     live_views: config.allowLiveViews,
     design_export: designExportActive(config, c.env),

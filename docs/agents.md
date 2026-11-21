@@ -454,10 +454,12 @@ width. Publish it as is (`publish_artifact` with its HTML) to try it with someon
 "Multiplayer pages (rooms)" section has the full API and limits.
 
 Doc and sheet artifacts get the same live machinery without declaring anything: where an instance
-has live editing on, owners and editors edit a doc or a sheet on its page together, and Save (or a
-pause) makes a version. An agent's `update_artifact` (or `edit_sheet`) on a doc or sheet being
+has live editing on, owners and editors edit a doc or a sheet on its page together, and Publish (or
+a pause) makes a version. An agent's `update_artifact` (or `edit_sheet`) on a doc or sheet being
 edited gets the `live_draft` warning, which needs no action
-([mcp.md](mcp.md#publish-warnings)).
+([mcp.md](mcp.md#publish-warnings)): your version is published either way, and when it is not
+combined with their changes, the people editing review it beside theirs and keep one. Read the
+artifact again before your next change to it.
 
 ## Comments from the page
 

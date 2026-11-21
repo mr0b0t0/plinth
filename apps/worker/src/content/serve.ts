@@ -7,6 +7,7 @@ import {
   COOKIES,
   type EffectiveRole,
   HOST_COOKIE_PREFIX,
+  isLiveType,
   REVIEW_MODE_PARAM,
   TTL,
   typeDef,
@@ -712,7 +713,7 @@ async function serve(
     // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
     const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";
     const live =
-      def.liveEdit &&
+      isLiveType(def) &&
       socket !== undefined &&
       liveEditMode(config, env) === "room" &&
       editor &&

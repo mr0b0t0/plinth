@@ -23,6 +23,6 @@ export const design: TypeModule<"design"> = {
     /^(image\/(png|jpeg|gif|webp|avif|svg\+xml)|text\/css|text\/javascript|application\/javascript|video\/(mp4|webm))(;|$)/,
   renderer: { script: "design.js", style: "design.css", frame: BOARD_LOADER_FILE },
   editor: null,
-  liveEdit: false,
+  edit: "ask",
   opaqueFrames: true,
 };

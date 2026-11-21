@@ -16,5 +16,5 @@ export const doc: TypeModule<"doc"> = {
   assetTypes: /^image\/(png|jpeg|gif|webp|avif|svg\+xml)$/,
   renderer: { script: "doc.js", style: "doc.css" },
   editor: { language: "markdown", wordWrap: "on" },
-  liveEdit: true,
+  edit: "live",
 };

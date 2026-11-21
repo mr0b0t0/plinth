@@ -19,7 +19,7 @@
         "language": "html",
         "wordWrap": "on"
       },
-      "liveEdit": false
+      "edit": "ask"
     }
   ],
   [
@@ -46,7 +46,7 @@
         "language": "markdown",
         "wordWrap": "on"
       },
-      "liveEdit": true
+      "edit": "live"
     }
   ],
   [
@@ -79,7 +79,7 @@
         "language": "markdown",
         "wordWrap": "on"
       },
-      "liveEdit": false,
+      "edit": "ask",
       "present": true,
       "follow": true,
       "fileExports": [
@@ -111,7 +111,7 @@
         "language": "json",
         "wordWrap": "off"
       },
-      "liveEdit": false
+      "edit": "ask"
     }
   ],
   [
@@ -136,7 +136,7 @@
         "frame": "board.html"
       },
       "editor": null,
-      "liveEdit": false,
+      "edit": "ask",
       "opaqueFrames": true
     }
   ],
@@ -161,7 +161,7 @@
         "style": "sheet.css"
       },
       "editor": null,
-      "liveEdit": true
+      "edit": "live"
     }
   ],
   [
@@ -186,7 +186,7 @@
         "runtime": true
       },
       "editor": null,
-      "liveEdit": false,
+      "edit": "board",
       "pageData": "fixed",
       "assets": false,
       "upload": false,

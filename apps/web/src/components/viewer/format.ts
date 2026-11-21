@@ -26,6 +26,17 @@ export function timeAgo(iso: string | null | undefined, now: number = Date.now()
   return d === 1 ? "1 day ago" : `${d} days ago`;
 }
 
+/** "ana.costa-x1@example.com" -> "Ana": a first name from an email, for one-line notices. */
+export function personName(email: string): string {
+  const first = email
+    .replace(/@.*$/, "")
+    .split(/[\s._+-]+/)
+    .find((w) => /^\p{L}/u.test(w));
+  if (!first) return email;
+  const [head = "", ...rest] = Array.from(first);
+  return head.toLocaleUpperCase() + rest.join("");
+}
+
 /** "12 Nov 2026" for a UTC day ("2026-11-12"); the raw value when it does not parse. */
 export function formatDay(day: string): string {
   const d = new Date(`${day}T00:00:00Z`);
