@@ -491,9 +491,15 @@ describe("renderer protocol: the frame key and the review", () => {
     expect(
       read(src, frame, { ...base, type: "live", key: KEY, ...status, publishable: false }),
     ).toMatchObject({ status: { publishable: false } });
+    // A block whose text the page cannot write yet (doc-blocks): only ever `true`.
+    expect(
+      read(src, frame, { ...base, type: "live", key: KEY, ...status, unsavable: true }),
+    ).toMatchObject({ status: { unsavable: true } });
     for (const over of [
       { publishable: "no" },
       { unavailable: "big" },
+      { unsavable: false },
+      { unsavable: "yes" },
       { editors: [{ email: "a@b.c", block: true, where: "x".repeat(81) }] },
     ]) {
       expect(read(src, frame, { ...base, type: "live", key: KEY, ...status, ...over })).toBeNull();

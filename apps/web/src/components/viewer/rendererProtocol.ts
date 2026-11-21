@@ -336,6 +336,11 @@ export interface LiveFrameStatus {
   publishable: boolean;
   /** The frame cannot edit this artifact on its page (it is too large to). */
   unavailable?: "too_large";
+  /**
+   * An open block holds text the page cannot write as typed yet (the frame says so): it is not
+   * in the draft, so editing may not end and nothing may be published until it is changed.
+   */
+  unsavable?: true;
 }
 
 /**
@@ -548,6 +553,7 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
   const publishable = m.publishable === undefined ? true : m.publishable;
   if (!isBool(publishable)) return null;
   if (m.unavailable !== undefined && m.unavailable !== "too_large") return null;
+  if (m.unsavable !== undefined && m.unsavable !== true) return null;
   return {
     connected: connected as boolean,
     failed: failed as boolean,
@@ -563,6 +569,7 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
     editors: list,
     publishable,
     ...(m.unavailable === "too_large" ? { unavailable: "too_large" as const } : {}),
+    ...(m.unsavable === true ? { unsavable: true as const } : {}),
   };
 }
 

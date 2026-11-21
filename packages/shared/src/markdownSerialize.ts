@@ -22,6 +22,12 @@ export interface MarkdownDialect {
   readonly gfm: boolean;
   /** Bare URLs become links (markdown-it's linkify). */
   readonly linkify: boolean;
+  /**
+   * Write the characters next to an emphasis or strikethrough delimiter as numeric character
+   * references where the delimiter would otherwise not open or close (see serializeInline). Set
+   * only by verifyBlock, for a block whose plain form does not read back.
+   */
+  readonly guard?: boolean;
 }
 
 /** The doc's dialect: CommonMark with GitHub tables, strikethrough and bare-URL links, html off. */
@@ -657,6 +663,7 @@ export function isEmptyBlock(b: RichBlock): boolean {
 const ENTITY_RE = /&(?=#[0-9]{1,7};|#[xX][0-9a-fA-F]{1,6};|[A-Za-z][A-Za-z0-9]{1,31};)/g;
 const URL_RUN_RE = /(?<![A-Za-z0-9.+-])(?:https?:\/\/|mailto:)[^\s<]*/gi;
 const ALNUM_RE = /[\p{L}\p{N}]/u;
+const ASCII_PUNCT_RE = /^[!-/:-@[-`{-~]$/;
 
 /** Escapes inline syntax in one line of text (no line breaks). */
 function escapeInlineText(text: string, d: MarkdownDialect, inTable: boolean): string {
@@ -758,22 +765,62 @@ function serializeInline(
   let openLink: LinkMark | undefined;
   /** Text written on this line so far, before line-start escaping. */
   let fresh = true;
+  // Guarded (d.guard): CommonMark decides whether `*`, `**` or `~~` opens or closes from the
+  // characters on either side of it. A closing one after punctuation, with a letter after it
+  // ("*重要，*的"), closes nothing, and neither does an opening one before punctuation with a
+  // letter before it. The character on the outside is then written as a numeric character
+  // reference ("&#x7684;"), which reads as punctuation there and renders as the same character;
+  // so is white space on the inside, which would stop it opening or closing. `edge` is the last
+  // thing written: text (its last character), a delimiter (with the character inside it: the last
+  // one before a closing one, the next one after an opening one), or something else.
+  let edge: { k: "text"; ch: string } | { k: "open" | "close"; inner: string } | null = null;
+  /** The first character of the segment about to be written (what an opening one has inside). */
+  let upcoming = "";
   const write = (s: string) => {
     lines[lines.length - 1] += s;
   };
+  const tight = (ch: string) => ch === "" || /^[\s\p{P}\p{S}]$/u.test(ch);
+  const ref = (ch: string) => `&#x${(ch.codePointAt(0) as number).toString(16).toUpperCase()};`;
+  const delimiter = (s: string, closing: boolean) => {
+    const before = edge?.k === "text" ? edge.ch : "";
+    const inner = closing ? before : upcoming;
+    if (d.guard && before !== "") {
+      // The text just written is inside a closing one, outside an opening one.
+      const needs = closing ? /^\s$/u.test(before) : !ASCII_PUNCT_RE.test(before) && tight(inner);
+      const line = lines[lines.length - 1] as string;
+      if (needs && line.endsWith(before)) {
+        lines[lines.length - 1] = line.slice(0, -before.length) + ref(before);
+      }
+    }
+    write(s);
+    edge = { k: closing ? "close" : "open", inner };
+  };
   const writeText = (s: string) => {
-    let t = escapeInlineText(s, d, inTable);
-    if (fresh && opts.lineStart) t = escapeLineStart(t);
+    let head = "";
+    let rest = s;
+    if (d.guard && edge !== null && edge.k !== "text" && s !== "") {
+      const ch = String.fromCodePoint(s.codePointAt(0) as number);
+      const needs =
+        edge.k === "close" ? !ASCII_PUNCT_RE.test(ch) && tight(edge.inner) : /^\s$/u.test(ch);
+      if (needs) {
+        head = ref(ch);
+        rest = s.slice(ch.length);
+      }
+    }
+    let t = head + escapeInlineText(rest, d, inTable);
+    if (fresh && opts.lineStart && head === "") t = escapeLineStart(t);
     if (t !== "") fresh = false;
     write(t);
+    if (s !== "") edge = { k: "text", ch: Array.from(s).at(-1) as string };
   };
   const close = (k: Mark) => {
     if (k === "link") {
       write(`]${openLink?.dest ?? linkDest(openLink as LinkMark)}`);
       openLink = undefined;
-    } else if (k === "strike") write("~~");
-    else if (k === "strong") write("**");
-    else if (k === "em") write("*");
+      edge = null;
+    } else if (k === "strike") delimiter("~~", true);
+    else if (k === "strong") delimiter("**", true);
+    else if (k === "em") delimiter("*", true);
   };
   const openMark = (k: Mark, m: RichMarks) => {
     if (k === "link") {
@@ -784,11 +831,12 @@ function serializeInline(
       }
       write("[");
       openLink = m.link;
+      edge = null;
     } else if (k === "strike") {
       if (!d.gfm) throw new Unsupported();
-      write("~~");
-    } else if (k === "strong") write("**");
-    else if (k === "em") write("*");
+      delimiter("~~", false);
+    } else if (k === "strong") delimiter("**", false);
+    else if (k === "em") delimiter("*", false);
     fresh = false;
   };
   const target = (m: RichMarks): Mark[] => ORDER.filter((k) => k !== "code" && hasMark(m, k));
@@ -831,17 +879,22 @@ function serializeInline(
       if (s.k === "br") write("\\");
       lines.push("");
       fresh = true;
+      edge = null;
       continue;
     }
     if (s.k === "br") continue;
     last = s.m;
+    upcoming =
+      s.k === "text" && !s.m.code ? String.fromCodePoint(s.text.codePointAt(0) ?? 32) : "`";
     sync(s.m);
     if (s.k === "atom") {
       write(s.md);
       fresh = false;
+      edge = null;
     } else if (s.m.code) {
       write(codeSpan(s.text, inTable));
       fresh = false;
+      edge = null;
     } else writeText(s.text);
   }
   sync({});
@@ -1044,9 +1097,22 @@ export function editableBlock(text: string, tools: MarkdownTools, env: MdEnv): R
  * always verifies.
  */
 export function verifyBlock(block: RichBlock, tools: MarkdownTools, env: MdEnv): string | null {
+  const plain = verifyAs(block, tools.dialect, tools, env);
+  if (plain !== null) return plain;
+  // A delimiter next to punctuation may not open or close as written: try once more with the
+  // characters around it written as character references (MarkdownDialect.guard).
+  return verifyAs(block, { ...tools.dialect, guard: true }, tools, env);
+}
+
+function verifyAs(
+  block: RichBlock,
+  d: MarkdownDialect,
+  tools: MarkdownTools,
+  env: MdEnv,
+): string | null {
   let out: string;
   try {
-    out = serializeBlock(block, tools.dialect);
+    out = serializeBlock(block, d);
   } catch (e) {
     if (e instanceof Unsupported) return null;
     throw e;

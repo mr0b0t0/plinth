@@ -117,6 +117,13 @@ export const CLEAR_REFUSED = "Couldn't remove this block now. Try again.";
  * Why what was typed in a block closed while it was being removed (removeCleared) did not reach
  * the doc: the place it was going to changed, or someone else holds it.
  */
+/**
+ * Typing the page cannot write as Markdown as it stands (a mark CommonMark cannot open or close
+ * there): the text stays in the block, which stays open, and nothing is published until it changes.
+ */
+export const UNSAVABLE = "This text can't be saved as typed. Change it to continue.";
+/** Edit mode ended with such a block open: its text was kept without its formatting. */
+export const FORMAT_DROPPED = "Formatting in the block you were typing in couldn't be kept.";
 export const NOT_KEPT = "What you typed in the block you closed couldn't be added. Type it again.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
@@ -592,6 +599,11 @@ export class DocEditor {
   private clearing: Clearing | null = null;
   /** A lease request is on its way over the socket and has had no answer yet. */
   private asking = false;
+  /**
+   * The open block's text could not be written as Markdown at its last send (UNSAVABLE): it is not
+   * in the doc, so it counts as pending, and the block does not close until the text changes.
+   */
+  private stuck = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -617,7 +629,12 @@ export class DocEditor {
    * typed in one closed meanwhile is.
    */
   get pending(): boolean {
-    return this.timer !== null || this.clearing !== null || this.want?.kept === true;
+    return this.timer !== null || this.clearing !== null || this.want?.kept === true || this.stuck;
+  }
+
+  /** The open block holds text that cannot be written as typed (see `stuck`). */
+  get unsavable(): boolean {
+    return this.stuck;
   }
 
   /** A block op or a cleared block's removal is on its way: other ops and opens wait for it. */
@@ -846,7 +863,8 @@ export class DocEditor {
   setEditing(on: boolean): void {
     if (on === this.editing) return;
     if (!on) {
-      this.close(true);
+      this.salvage();
+      this.close(true, false, true);
       this.deselect();
     }
     this.editing = on;
@@ -945,7 +963,7 @@ export class DocEditor {
       if (active && open.rich.el.contains(active)) return;
       if (!this.doc.hasFocus()) return;
       if (this.want?.keep !== undefined) return;
-      this.close(true);
+      if (!this.close(true)) open.rich.focus("end");
     }, 0);
   };
 
@@ -1011,7 +1029,7 @@ export class DocEditor {
       // A block op is waiting for its lease, or a cleared block is being removed (which this
       // closes): open this block once that is done, found again by its text (the op may move it,
       // or give a list another marker).
-      this.close(true);
+      if (!this.close(true)) return;
       this.queued = () => {
         const blocks = this.blocks();
         const i = this.findBlock(blocks, text, near, true);
@@ -1036,7 +1054,7 @@ export class DocEditor {
       this.open.rich.focus("end");
       return;
     }
-    this.close(true);
+    if (!this.close(true)) return;
     // close() may have sent the open block's typing, which moves the lines (solo): find the block
     // again.
     const blocks = this.blocks();
@@ -1069,11 +1087,11 @@ export class DocEditor {
     if (!this.canWrite) return;
     const point = this.pointAt(where);
     if (this.busy) {
-      this.close(true);
+      if (!this.close(true)) return;
       this.queued = () => this.openInsert(point(), initial);
       return;
     }
-    this.close(true);
+    if (!this.close(true)) return;
     this.deselect();
     // close() may have sent the open block's typing, which moves the lines (solo).
     const at = point();
@@ -1124,7 +1142,7 @@ export class DocEditor {
                 this.showNotice(STILL_MAKING);
                 return;
               }
-              this.close(true);
+              if (!this.close(true)) return;
               this.want = { start: l.start, end: l.end, text: "", insert: false, tries: 0 };
               if (this.backend.takeover(l.id)) {
                 this.asking = true;
@@ -1242,7 +1260,8 @@ export class DocEditor {
         },
         {
           label: "Delete",
-          run: () => (found ? this.remove(found.block.start) : this.close(true, true)),
+          // A new block with no lines yet is given up, typing and all: the person asked for that.
+          run: () => (found ? this.remove(found.block.start) : this.close(true, true, true)),
         },
       ],
     });
@@ -1277,7 +1296,7 @@ export class DocEditor {
         : !image && nodes
           ? blockWords(nodes)
           : "";
-    this.close(true);
+    if (!this.close(true)) return;
     this.deselect();
     const n = index + 1;
     this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text }, what);
@@ -1341,7 +1360,7 @@ export class DocEditor {
       found ? lines[found.block.core.start] : undefined,
       next ? lines[next.core.start] : undefined,
     ];
-    this.close(true);
+    if (!this.close(true)) return;
     // close() may have changed the lines (solo): find the block again.
     const at = start === null ? 0 : (this.blockAt(start) ?? found)?.block.end;
     if (at === undefined) return;
@@ -1364,7 +1383,7 @@ export class DocEditor {
       this.showNotice(STILL_MAKING);
       return;
     }
-    this.close(true);
+    if (!this.close(true)) return;
     this.deselect();
     const p = plan();
     if (!p) return;
@@ -2061,6 +2080,7 @@ export class DocEditor {
   // ---------- the open block ----------
 
   private dropOpen(): void {
+    this.stuck = false;
     const open = this.open;
     if (!open) return;
     open.menu.close(false);
@@ -2079,7 +2099,8 @@ export class DocEditor {
     const keepCore = verifyBlock(keep, TOOLS, open.env);
     const nextCore = next ? verifyBlock(next, TOOLS, open.env) : "";
     if (keepCore === null || nextCore === null) {
-      this.showNotice(FORMAT_LOST);
+      // Nothing is split, and the text stays as typed.
+      this.showNotice(UNSAVABLE);
       return;
     }
     if (keepCore === "" && nextCore === "" && this.emptyJoins()) {
@@ -2099,7 +2120,7 @@ export class DocEditor {
         this.schedule(EDIT_DEBOUNCE_MS);
         return;
       }
-      this.close(true);
+      if (!this.close(true)) return;
       this.openInsert(mine.start + (this.pad.before ? 1 : 0), para());
       return;
     }
@@ -2151,7 +2172,7 @@ export class DocEditor {
     const text = next ? joinLines(this.backend.lines.slice(next.start, next.end)) : "";
     // Focus stays on the block just closed (there may be no next one, and the next one opens
     // only once its lease arrives), never on the frame's body.
-    this.close(true, true);
+    if (!this.close(true, true)) return;
     if (!next) return;
     // close() may have changed the lines: find the next block again.
     const blocks = this.blocks();
@@ -2204,8 +2225,17 @@ export class DocEditor {
     }
     const block = this.currentText();
     if (block === null) {
-      this.showNotice(FORMAT_LOST);
+      // Never dropped: the text stays in the block, the block stays open and counts as pending
+      // (close() refuses), and the person changes it. The keystroke is not undone.
+      this.stuck = true;
+      this.showNotice(UNSAVABLE);
+      this.hooks.status();
       return false;
+    }
+    if (this.stuck) {
+      this.stuck = false;
+      if (this.notice?.textContent === UNSAVABLE) this.hideNotice();
+      this.hooks.status();
     }
     const text = padded(block, this.pad);
     const lines = this.backend.lines;
@@ -2380,7 +2410,7 @@ export class DocEditor {
     const open = this.open;
     if (!open || isEmptyBlock(open.rich.model)) return null;
     const core = verifyBlock(open.rich.model, TOOLS, open.env);
-    if (core === null) this.showNotice(FORMAT_LOST);
+    if (core === null) this.showNotice(UNSAVABLE);
     return core ? core : null;
   }
 
@@ -2486,9 +2516,22 @@ export class DocEditor {
 
   /** Send a pending block now. */
   flush(): void {
-    if (!this.timer) return;
+    if (!this.timer && !this.stuck) return;
     this.cancelTimer();
     this.send();
+  }
+
+  /**
+   * Edit mode is ending with a block whose text cannot be written as typed: its text is kept
+   * without its formatting, which can always be written, rather than lost with the block.
+   */
+  private salvage(): void {
+    const open = this.open;
+    if (!open || !this.backend.mine || this.clearing) return;
+    this.flush();
+    if (!this.stuck) return;
+    open.rich.setModel(withoutMarks(open.rich.model));
+    if (this.send()) this.showNotice(FORMAT_DROPPED);
   }
 
   /**
@@ -2497,12 +2540,20 @@ export class DocEditor {
    * a Delete does, and the lease is released where it lands, once what was typed in the block
    * meanwhile is written there (keepTyped).
    */
-  close(release: boolean, refocus = false): void {
+  close(release: boolean, refocus = false, force = false): boolean {
     const open = this.open;
     const held = this.held;
-    if (this.want && !this.want.op && !this.clearing) this.want = null;
-    if (!open) return;
+    if (!open) {
+      if (this.want && !this.want.op && !this.clearing) this.want = null;
+      return true;
+    }
     this.flush();
+    if (this.stuck && !force) {
+      // What is typed cannot be written yet: the block stays open with it (UNSAVABLE).
+      this.showNotice(UNSAVABLE);
+      return false;
+    }
+    if (this.want && !this.want.op && !this.clearing) this.want = null;
     const c = this.clearing;
     if (c) {
       c.drop = true;
@@ -2521,6 +2572,7 @@ export class DocEditor {
       }
     }
     this.hooks.status();
+    return true;
   }
 
   // ---------- notices ----------
@@ -2701,4 +2753,16 @@ function removedText(
 function overlaps(block: Block | LineRange, l: LineRange): boolean {
   if (block.start === block.end) return false;
   return rangesOverlap(block, l);
+}
+
+/** `b` with every mark taken off its text (links and code too), which can always be written. */
+function withoutMarks(b: RichBlock): RichBlock {
+  const strip = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(strip);
+    if (v === null || typeof v !== "object") return v;
+    const o = v as Record<string, unknown>;
+    if (o.k === "text" || o.k === "atom") return { ...o, m: {} };
+    return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, strip(x)]));
+  };
+  return strip(b) as RichBlock;
 }

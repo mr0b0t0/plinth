@@ -125,8 +125,9 @@ is published and their unsaved edits are merged onto it or reviewed by them. It 
 never wait, poll or retry for them. The draft text is never shown to you.
 
 People edit a doc on its page as formatted text, never as Markdown, and Plinth writes their
-changes back as Markdown: emphasis as `*…*`, a `<` at the start of a block as `\<`, and a block
-they did not touch keeps its bytes. Constructs the page cannot show faithfully as formatted text
+changes back as Markdown: emphasis as `*…*`, a `<` at the start of a block as `\<`, now and then a
+character next to a mark as a character reference (`*重要，*&#x7684;`, which renders as "的"), and
+a block they did not touch keeps its bytes. Constructs the page cannot show faithfully as formatted text
 (a code block inside a list item, a reference definition inside a quote) stay as you wrote them;
 people ask you to change those, and to add or replace images.
 

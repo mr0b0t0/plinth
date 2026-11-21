@@ -190,14 +190,15 @@ function live(
       editing: editor?.editing ?? false,
       holding: (editor?.editing ?? false) && backend?.mine != null,
       dirty: local ? local.dirty : (c?.dirty ?? false),
-      unflushed: c ? c.unflushed || (editor?.pending ?? false) : false,
+      unflushed: c ? c.unflushed || (editor?.pending ?? false) : (editor?.unsavable ?? false),
       rev: c?.rev ?? 0,
       base_version: c?.baseVersion ?? 0,
       conflict_version: c?.conflictVersion ?? null,
       last_by_you: c?.lastByYou ?? false,
       last_edit_at: c?.lastEditAt ?? null,
       editors,
-      publishable: RULES?.unpublishable(text) === null,
+      publishable: RULES?.unpublishable(text) === null && !(editor?.unsavable ?? false),
+      ...(editor?.unsavable ? { unsavable: true as const } : {}),
     };
     post({ type: "live", ...s });
   };

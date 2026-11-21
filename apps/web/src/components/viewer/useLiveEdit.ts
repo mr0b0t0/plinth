@@ -657,6 +657,9 @@ export function useLiveEdit({
   const done = useCallback(async (): Promise<boolean> => {
     const s = latest.current.status;
     const m = latest.current.mode;
+    // A block holds text the page cannot write yet: it is not in the draft, so editing stays on
+    // (the frame says what to change) rather than losing it.
+    if (s?.unsavable) return false;
     // Room edits stay in the shared draft whatever the save does, so editing ends either way. A
     // frozen draft, or one that cannot be a version yet, is kept as it is.
     if (m === "room" && s?.dirty && s.conflict_version === null && s.publishable !== false) {

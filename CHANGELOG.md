@@ -378,7 +378,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the block menu (Move and Delete). The **+** between blocks is gone: **Insert below** or Enter
   adds a block. Opening a block moves nothing on the page and hides next to nothing: the format bar
   shows only for selected text, the block's menu sits on its edge, and heading anchors are hidden
-  while editing.
+  while editing. Punctuation typed at the edge of bold, italic or strikethrough is kept, and text
+  the page cannot save as typed stays in its block, which stays open and keeps Publish off until
+  it is changed.
 
 ## 0.6.0 (2026-11-20)
 

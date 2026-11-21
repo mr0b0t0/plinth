@@ -21,6 +21,7 @@ import {
   READ_ONLY_NOTE,
   REFUSED_EDIT,
   TOO_LONG,
+  UNSAVABLE,
   unpadded,
 } from "./edit.ts";
 
@@ -203,15 +204,34 @@ describe("DocEditor: formatted text", () => {
   });
 
   it("undoes a formatting command the serializer cannot keep, and says so", () => {
+    // Bold over "bc" in "*ab*c" overlaps the emphasis without nesting in it: no CommonMark form.
+    const { local, editor } = setup("*ab*c");
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    const em = r.editable.querySelector("em") as HTMLElement;
+    const range = document.createRange();
+    range.setStart(em.firstChild as Text, 1);
+    range.setEnd(r.editable.lastChild as Text, 1);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    key(r.editable, "b", { metaKey: true });
+    expect(r.editable.querySelector("strong")).toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(FORMAT_LOST);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("*ab*c");
+  });
+
+  it("bolds text that ends in punctuation right before a letter", () => {
     const { local, editor } = setup("(a)b");
     click(root.querySelector("p") as Element);
     const r = rich(editor);
     select(r.editable, 0, 3);
     key(r.editable, "b", { metaKey: true });
-    expect(r.editable.querySelector("strong")).toBeNull();
-    expect(document.querySelector('[role="status"]')?.textContent).toContain(FORMAT_LOST);
-    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
-    expect(local.text).toBe("(a)b");
+    expect(r.editable.querySelector("strong")?.textContent).toBe("(a)");
+    key(r.editable, "Escape");
+    expect(local.text).toBe("**(a)**&#x62;");
+    expect(root.querySelector("p strong")?.textContent).toBe("(a)");
+    expect(root.querySelector("p")?.textContent).toBe("(a)b");
   });
 
   it("reads only the allowlist back from the DOM: anything else counts as its text", () => {
@@ -2054,5 +2074,152 @@ describe("blockWords", () => {
     expect(blockWords([...host.childNodes])).toBe("Maria: launch post · Ana: emails subject: Hi");
     host.innerHTML = "<table><tr><th>Risk</th><th>Owner</th></tr><tr><td>PSL</td></tr></table>";
     expect(blockWords([...host.childNodes])).toBe("Risk Owner PSL");
+  });
+});
+
+// ---------- typing next to a mark ----------
+
+/** Appends `ch` to the text node `node` at `at` (its end by default), as typing there would. */
+function typeInto(node: Text, ch: string, at = node.length) {
+  node.insertData(at, ch);
+  node.parentElement
+    ?.closest('[contenteditable="true"]')
+    ?.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function notice(): string {
+  return document.querySelector('[role="status"]')?.textContent ?? "";
+}
+
+describe("typing next to a mark", () => {
+  it("sends punctuation typed at the end of an italic run before more text", () => {
+    const { local, editor } = setup("这是*重要*的事情");
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    const em = r.editable.querySelector("em") as HTMLElement;
+    typeInto(em.firstChild as Text, "，");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(editor.pending).toBe(false);
+    expect(local.text).toBe("这是*重要，*&#x7684;事情");
+    // More typing after it goes in too.
+    typeInto(r.editable.lastChild as Text, "。");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(editor.pending).toBe(false);
+    expect(local.text).toBe("这是*重要，*&#x7684;事情。");
+    key(r.editable, "Escape");
+    expect(root.querySelector("p em")?.textContent).toBe("重要，");
+    expect(root.querySelector("p")?.textContent).toBe("这是重要，的事情。");
+  });
+
+  it("keeps text it cannot write open and pending: no close, no Publish, nothing lost", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    const status = vi.fn();
+    (editor as unknown as { hooks: { status: () => void } }).hooks.status = status;
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    // Emphasis and strong that overlap without nesting, as a browser can leave them.
+    r.editable.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("ab\n\nnext");
+    expect(editor.pending).toBe(true);
+    expect(editor.unsavable).toBe(true);
+    expect(notice()).toContain(UNSAVABLE);
+    expect(status).toHaveBeenCalled();
+    // The keystroke is not undone: the text stays as typed.
+    expect(r.editable.textContent).toBe("abc");
+    // Esc, a click on another block and Tab keep the block open with its text.
+    key(r.editable, "Escape");
+    expect(editor.openEditor).toBe(r);
+    click(root.querySelectorAll("p")[0] as Element);
+    expect(editor.openEditor).toBe(r);
+    key(r.editable, "Tab");
+    expect(editor.openEditor).toBe(r);
+    expect(editor.pending).toBe(true);
+    // Changing it so it can be written sends it, and the block closes as usual.
+    r.editable.innerHTML = "<em>a</em><strong>bc</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(editor.pending).toBe(false);
+    expect(editor.unsavable).toBe(false);
+    expect(local.text).toBe("*a***bc**\n\nnext");
+    key(r.editable, "Escape");
+    expect(editor.openEditor).toBeNull();
+  });
+
+  it("keeps such text without its formatting when edit mode ends anyway", () => {
+    const { local, editor } = setup("ab");
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    r.editable.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(editor.unsavable).toBe(true);
+    editor.setEditing(false);
+    expect(local.text).toBe("abc");
+    expect(editor.pending).toBe(false);
+  });
+
+  // Every single character typed in or at the edge of a formatted run, over a fixed corpus, is
+  // either in the doc or leaves the block open and pending: never neither.
+  it("never leaves typing neither sent nor pending", () => {
+    const CORPUS = [
+      "这是*重要*的事情",
+      "foo *bar* baz",
+      "a**b**c",
+      "x ~~y~~ z",
+      "(*x*)",
+      "中文**粗体**中文",
+    ];
+    const CHARS = [..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", " ", "a", "中", "，", "。"];
+    let tried = 0;
+    const lost: string[] = [];
+    for (const md of CORPUS) {
+      const runs = (() => {
+        const { editor } = setup(md);
+        click(root.querySelector("p") as Element);
+        const n = rich(editor).editable.querySelectorAll("em, strong, s, del").length;
+        editor.setEditing(false);
+        document.body.innerHTML = "";
+        return n;
+      })();
+      for (let run = 0; run < runs; run++) {
+        for (const ch of CHARS) {
+          for (const where of ["start", "end"] as const) {
+            root = document.createElement("main");
+            document.body.append(root);
+            const { local, editor } = setup(md);
+            click(root.querySelector("p") as Element);
+            const r = rich(editor);
+            const mark = r.editable.querySelectorAll("em, strong, s, del")[run] as HTMLElement;
+            const walker = document.createTreeWalker(mark, NodeFilter.SHOW_TEXT);
+            const first = walker.nextNode() as Text;
+            let last = first;
+            for (let t = walker.nextNode(); t; t = walker.nextNode()) last = t as Text;
+            if (where === "start") typeInto(first, ch, 0);
+            else typeInto(last, ch);
+            const typed = r.editable.textContent ?? "";
+            vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+            tried++;
+            const sent = local.text !== md;
+            if (!sent && !editor.pending) lost.push(`${md} ${where} of run ${run}: ${ch}`);
+            key(r.editable, "Escape");
+            if (sent) {
+              const shown = (root.querySelector("p")?.textContent ?? "").replace(/\s+/g, " ");
+              if (
+                shown !== typed.replace(/\s+/g, " ").trim() &&
+                shown !== typed.replace(/\s+/g, " ")
+              ) {
+                lost.push(`${md} ${where} of run ${run}: ${ch} shows ${shown}, typed ${typed}`);
+              }
+            } else if (editor.openEditor !== r) lost.push(`${md}: ${ch} closed while pending`);
+            editor.setEditing(false);
+            document.body.innerHTML = "";
+          }
+        }
+      }
+    }
+    expect(tried).toBeGreaterThan(300);
+    expect(lost).toEqual([]);
   });
 });

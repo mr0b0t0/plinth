@@ -119,10 +119,17 @@ describe("RichBlockEditor", () => {
     caret(r.editable.firstChild as Node, 1);
     r.toggle("strong");
     expect(host.announce).toHaveBeenCalledWith("Select some text first.");
-    caret(r.editable.firstChild as Node, 0, 3);
-    r.toggle("strong");
-    expect(host.announce).toHaveBeenCalledWith(FORMAT_LOST);
-    expect(md(r.model)).toBe("(a)b");
+    // Bold over "bc" in "*ab*c" overlaps the emphasis without nesting in it: no CommonMark form.
+    const over = make({ t: "paragraph", c: [{ ...text("ab"), m: { em: true } }, text("c")] });
+    const em = over.r.editable.querySelector("em") as HTMLElement;
+    const range = document.createRange();
+    range.setStart(em.firstChild as Node, 1);
+    range.setEnd(over.r.editable.lastChild as Node, 1);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    over.r.toggle("strong");
+    expect(over.host.announce).toHaveBeenCalledWith(FORMAT_LOST);
+    expect(md(over.r.model)).toBe("*ab*c");
   });
 
   it("Enter in a paragraph hands the two halves to the host", () => {

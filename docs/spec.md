@@ -2951,7 +2951,14 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   byte for byte.
 - **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
   formatting command whose result CommonMark cannot express is undone, with "That formatting can't
-  be kept here.", and nothing is sent.
+  be kept here.", and nothing is sent. A mark next to punctuation that would not open or close as
+  written ("*重要，*的") is written with the character outside it, or white space inside it, as a
+  numeric character reference ("*重要，*&#x7684;"), which renders the same. Typing that still
+  cannot be written stays in the block as typed (the keystroke is not undone): the page says
+  "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab, a
+  click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and Publish
+  and autosave are off until the text changes. If edit mode ends anyway, its text is written
+  without its formatting rather than lost.
 - **Formatting and the block menu.** A format bar (bold, italic, code, strikethrough, link), shown
   only while text that takes marks is selected, next to the selection (below it on touch screens,
   where the browser's own selection menu is above), and the shortcuts Cmd/Ctrl+B, I, E (code), K (a

@@ -2651,8 +2651,11 @@ CSP, sandbox flag or env var was added.
   written back, renders exactly as the original with the page's own parser and reads back into the
   same model, so the editor cannot turn a block into something that renders differently. A block
   that fails is read-only (Ask an agent, Move and Delete, byte for byte). Every text the editor
-  sends is read back first and is not sent when it would not round trip. Untouched blocks, and the
-  reference definitions after a block, keep their bytes.
+  sends is read back first and is not sent when it would not round trip; such typing stays in the
+  open block and counts as unsent, so it is never dropped without the page saying so. A character
+  next to a mark may be written as a numeric character reference, never for ASCII punctuation
+  (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
+  blocks, and the reference definitions after a block, keep their bytes.
 - **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
   `block-3:image`) and, as its text, the block's first words (an image's alt text), at most the
   page anchor's 120 characters with control characters as spaces. The frame posts those words only

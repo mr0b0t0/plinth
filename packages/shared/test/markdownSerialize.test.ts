@@ -223,9 +223,18 @@ describe("escaping", () => {
   });
 
   it("verify refuses what CommonMark cannot read back, and the refused text is never sent", () => {
-    // Strong closing after punctuation right before a letter cannot close.
-    const m = para(text("(a)", { strong: true }), text("b"));
+    // Emphasis and strong that overlap without nesting have no CommonMark form.
+    const m = para(
+      text("a", { em: true }),
+      text("b", { em: true, strong: true }),
+      text("c", { strong: true }),
+    );
     expect(verifyBlock(m, DOC, ENV)).toBeNull();
+    // Strong closing after punctuation right before a letter is written with the letter as a
+    // character reference, so it closes.
+    expect(verifyBlock(para(text("(a)", { strong: true }), text("b")), DOC, ENV)).toBe(
+      "**(a)**&#x62;",
+    );
     expect(verifyBlock(para(text("ok", { strike: true })), CM, ENV)).toBeNull();
   });
 });
@@ -382,4 +391,84 @@ describe("random models read back as themselves", () => {
       expect(kept).toBeGreaterThan(360);
     });
   }
+});
+
+describe("a mark next to punctuation", () => {
+  // CommonMark opens and closes `*`, `**` and `~~` by the characters on either side, so a mark
+  // that ends in punctuation right before a letter ("*重要，*的") closes nothing as written. The
+  // character outside is then written as a character reference, which renders the same.
+  it("closes after punctuation before a letter", () => {
+    const m = para(text("这是"), text("重要，", { em: true }), text("的事情"));
+    const out = verifyBlock(m, DOC, ENV);
+    expect(out).toBe("这是*重要，*&#x7684;事情");
+    const back = blockFromSource(out as string, DOC.source, ENV);
+    expect(back && sameBlock(back, m)).toBe(true);
+    // Text that needs no reference is written as before.
+    expect(verifyBlock(para(text("a "), text("b", { em: true }), text(" c")), DOC, ENV)).toBe(
+      "a *b* c",
+    );
+  });
+
+  it("opens before punctuation after a letter", () => {
+    const m = para(text("a"), text("(b)", { strong: true }), text("c"));
+    const out = verifyBlock(m, DOC, ENV) as string;
+    expect(out).not.toBeNull();
+    const back = blockFromSource(out, DOC.source, ENV);
+    expect(back && sameBlock(back, m), out).toBe(true);
+  });
+
+  // Every single character typed anywhere in or around a formatted run, over a fixed corpus,
+  // can be written: none is refused, so the editor never has to hold typing back for it.
+  const CORPUS = [
+    "这是*重要*的事情",
+    "foo *bar* baz",
+    "a**b**c",
+    "x ~~y~~ z",
+    "a~~b~~c",
+    "*a* **b**",
+    "(*x*)",
+    "**bold *nested* bold**",
+    "[link *em*](https://x.example) after",
+    "*em* end.",
+    "start *em*",
+    "中文**粗体**中文",
+    "word *two words* word",
+    "see `code` and *em*",
+    "*a*,b",
+    "a.*b*",
+    "~~a~~*b*",
+  ];
+  const CHARS = [..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", " ", "a", "中", "，", "。", "1", "é"];
+  it("takes every single-character insertion in or next to a formatted run", () => {
+    const refused: string[] = [];
+    let tried = 0;
+    for (const md of CORPUS) {
+      const b = editableBlock(md, DOC, ENV);
+      if (b?.t !== "paragraph") throw new Error(`not an editable paragraph: ${md}`);
+      b.c.forEach((s, i) => {
+        if (s.k !== "text") return;
+        const marked = !!(s.m.em || s.m.strong || s.m.strike);
+        const nextToMark = [b.c[i - 1], b.c[i + 1]].some(
+          (n) => n?.k === "text" && !!(n.m.em || n.m.strong || n.m.strike),
+        );
+        if (!marked && !nextToMark) return;
+        for (let o = 0; o <= s.text.length; o++) {
+          for (const ch of CHARS) {
+            tried++;
+            const c = b.c.slice();
+            c[i] = { ...s, text: s.text.slice(0, o) + ch + s.text.slice(o) };
+            const m = normalizeBlock(para(...c));
+            const out = verifyBlock(m, DOC, ENV);
+            if (out === null) refused.push(`${md} [${i}:${o}] ${JSON.stringify(ch)}`);
+            else {
+              const back = blockFromSource(out, DOC.source, ENV);
+              if (!back || !sameBlock(back, m)) refused.push(`${md} -> ${out}`);
+            }
+          }
+        }
+      });
+    }
+    expect(tried).toBeGreaterThan(1500);
+    expect(refused).toEqual([]);
+  });
 });
