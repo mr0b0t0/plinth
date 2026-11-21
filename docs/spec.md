@@ -3150,9 +3150,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
   only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
   that repeat it, nor notes on a slide, and a lease granted on the other kind of part is let go
-  unused), on the slide it was on first (by that slide's first line of text, then its number),
-  then nearest to where it was (two slides may share a title; of two texts found there, the
-  longer), and what was typed since is sent there unless the room's block already reads exactly so. After a drop that
+  unused), nearest to where it was, and of two as near, the one on the slide it was on (by that
+  slide's first line of text outside the block, then its number; two slides may share a title),
+  then the longer text. After a drop, when the room holds exactly what the block last sent where
+  its lease started, the edit landed: the block is taken there and nothing is sent again (never
+  for kept typing written as a new block, which with no answer is always written again). What
+  was typed since is sent there unless the room's block already reads exactly so. After a drop that
   is the text sent last (it may have arrived without its answer), the text the room acknowledged
   or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.
   An empty one (an insert point, or a block emptied) is found by the lines around it, and an
@@ -3174,8 +3177,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   them, the slide found by its first line of text, then its number, then where the notes were);
   closed by a review or a reset, in its place again once the review ends; a block taken
   again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
-  block at the block end nobody's lease touches on its own slide, else the nearest one, three
-  places at most, and never in speaker notes. A room's refusal never replaces it with the room's
+  block at the nearest block end nobody's lease touches (of two as near, the one on its own
+  slide), three places at most, and never in speaker notes. A room's refusal never replaces it with the room's
   text. A refused edit of a block still open (`invalid`) draws the room's text again in it, and
   what was typed there that the room does not hold is kept on the page with **Copy** and in the
   rescue store, as below: a duplicate at worst, never a loss. What no place takes stays on the page ("Couldn't add

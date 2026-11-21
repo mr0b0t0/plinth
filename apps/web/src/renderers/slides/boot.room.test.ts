@@ -1276,6 +1276,73 @@ describe("typing goes back only into the kind of part it was typed in", () => {
     expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "Goodbye" }]);
   });
 
+  /** Clicks raw slide `n`'s h2 in edit mode, granted as l1 on `start`. */
+  const openTitle = (s: FakeSocket, n: number, start: number) => {
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: n });
+    (
+      document.querySelector(`.plinth-slides__frame[data-n="${n}"] .plinth-slides__slide h2`) as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start, end: start + 1 });
+    s.frame({ t: "leased", lease: "l1", start, end: start + 1, holder: YOU.id, by: YOU.email });
+  };
+
+  it("takes a retitled block again where it landed, never on a slide with its old title", () => {
+    const deck = "## Agenda\n---\n## Mid\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 1, 0);
+    type(SLIDE, "Plan");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(first)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "## Plan" }]);
+    // The edit lands, but the socket drops before its answer.
+    const s = reconnect("## Plan\n---\n## Mid\n---\n## Agenda");
+    // Slide 1, where the room holds what was sent; slide 3's "## Agenda" is never asked for.
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 0, end: 1 }]);
+    s.frame({ t: "leased", lease: "l2", start: 0, end: 1, holder: YOU.id, by: YOU.email });
+    expect(
+      document.querySelector(`.plinth-slides__frame[data-n="1"] .plinth-slides__slide ${SLIDE}`),
+    ).not.toBeNull();
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    // Nothing is sent again: the room has it.
+    expect(edits(s)).toEqual([]);
+  });
+
+  // Two slides titled "Agenda": slide 3's (line 6) is retitled, nothing sent yet.
+  const AGENDAS = "# Intro\n---\n## Agenda\n\nQ1\n---\n## Agenda\n\nQ2";
+
+  it("takes a duplicate title again on its own slide after a slide is added above it", () => {
+    start(AGENDAS);
+    const first = sock("doc");
+    welcomeDoc(first, AGENDAS, false);
+    openTitle(first, 3, 6);
+    type(SLIDE, "Agenda (Q2)");
+    // While away, a slide was added at the start: both titles moved two lines down, as near to
+    // line 6 as each other, and slide 3 is now the one with "Q1".
+    const s = reconnect(`# Cover\n---\n${AGENDAS}`);
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 8, end: 9 }]);
+    s.frame({ t: "leased", lease: "l2", start: 8, end: 9, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "## Agenda (Q2)" }]);
+  });
+
+  it("takes a duplicate title again on its own slide after a slide above it is removed", () => {
+    start(AGENDAS);
+    const first = sock("doc");
+    welcomeDoc(first, AGENDAS, false);
+    openTitle(first, 3, 6);
+    type(SLIDE, "Agenda (Q2)");
+    // While away, slide 1 was removed: slide 3 is slide 2 now, and the other "Agenda" is slide 1.
+    const s = reconnect("## Agenda\n\nQ1\n---\n## Agenda\n\nQ2");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 4, end: 5 }]);
+    s.frame({ t: "leased", lease: "l2", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "## Agenda (Q2)" }]);
+  });
+
   it("never opens a slide's block on speaker notes lines granted for it", () => {
     start(DECK);
     const s = sock("doc");
