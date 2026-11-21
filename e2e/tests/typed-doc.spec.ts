@@ -633,9 +633,7 @@ test.describe("editing a doc on its page as formatted text", () => {
       await askAgent.click();
       const dialog = page.getByRole("dialog", { name: "Ask an agent" });
       // It says which block it is about by the block's first words (quoted), never its number.
-      await expect(dialog.locator(".cm-anchor-chip")).toHaveText(
-        "Pointing at “An item fenced in a list”",
-      );
+      await expect(dialog.locator(".cm-anchor-chip q")).toHaveText("An item fenced in a list");
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await expect(dialog).toHaveCount(0);
 
@@ -657,7 +655,7 @@ test.describe("editing a doc on its page as formatted text", () => {
 
       // Compare lists the changes in words, with no Markdown on the page.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      const changes = page.getByRole("region", { name: "Changes", exact: true });
       await expect(changes.getByRole("listitem").first()).toBeVisible();
       await expect(page.locator("main")).not.toContainText("**");
       expect(problems).toEqual([]);
