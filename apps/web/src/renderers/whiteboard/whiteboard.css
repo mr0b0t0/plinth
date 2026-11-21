@@ -631,8 +631,14 @@ html[data-readonly="true"] .wb-block {
   border-top: 0;
 }
 
+/* One line, in the middle of its cell, where the words were. */
 .wb-block .wb-cell > .wb-edit {
-  padding: 0 10px;
+  top: 50%;
+  bottom: auto;
+  height: 24px;
+  padding: 3px 10px;
+  transform: translateY(-50%);
+  overflow: hidden;
 }
 
 /* No fill: only the outline. */
@@ -777,6 +783,10 @@ html[data-readonly="true"] .wb-block {
   }
   .wb-people li {
     gap: 0;
+  }
+  /* The shape list stays narrow, so the colour beside it stays in view. */
+  .wb-toolbar select {
+    max-width: 96px;
   }
   .wb-people span {
     position: absolute;

@@ -312,7 +312,7 @@ function sideRoute(a: Box, b: Box, fs: ArrowSide, ts: ArrowSide, gap: number): P
   let mid: Point[];
   if (h0 && h3) {
     // Facing each other with room between: one upright leg halfway. Otherwise around.
-    const facingEach = n0.x !== n3.x && (s3.x - s0.x) * n0.x >= 0;
+    const facingEach = n0.x !== n3.x && (p3.x - p0.x) * n0.x >= 0;
     if (facingEach) {
       const mx = (p0.x + p3.x) / 2;
       mid = [
@@ -331,7 +331,7 @@ function sideRoute(a: Box, b: Box, fs: ArrowSide, ts: ArrowSide, gap: number): P
       mid = [s0, { x: s0.x, y }, { x: s3.x, y }];
     }
   } else if (!h0 && !h3) {
-    const facingEach = n0.y !== n3.y && (s3.y - s0.y) * n0.y >= 0;
+    const facingEach = n0.y !== n3.y && (p3.y - p0.y) * n0.y >= 0;
     if (facingEach) {
       const my = (p0.y + p3.y) / 2;
       mid = [

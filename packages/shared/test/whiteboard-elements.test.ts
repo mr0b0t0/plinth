@@ -224,6 +224,14 @@ describe("drawing", () => {
     ]);
   });
 
+  it("joins facing sides that are close with one straight leg, never a detour", () => {
+    const below = { x: 0, y: 127, w: 100, h: 60 };
+    expect(arrowRoute(a, below, { fromSide: "bottom", toSide: "top" })).toEqual([
+      { x: 50, y: 104 },
+      { x: 50, y: 123 },
+    ]);
+  });
+
   it("follows planned bends as Claude's whiteboard reads them", () => {
     const to = { x: 600, y: 0, w: 100, h: 100 };
     // Leave downward, level 65 below from's centre, upright 160 left of it, level 75 above to's
