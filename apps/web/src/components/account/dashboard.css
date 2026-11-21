@@ -720,3 +720,22 @@
     display: none;
   }
 }
+
+/* New (NewMenu.tsx): in the top bar beside the search, and in the empty state beside Connect an
+   agent. At phone width the top bar keeps only its icon, still named "New". */
+.pl-dash__empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+@media (max-width: 40rem) {
+  .pl-topbar__actions .pl-dash-new .pl-dash-new__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

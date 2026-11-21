@@ -73,6 +73,13 @@ export interface ArtifactTypeDef {
    */
   edit: "live" | "ask" | "board";
   /**
+   * "New" on the dashboard offers this type blank (docs/spec.md "New and Import"): the label in the
+   * menu, and the title and starter content of the placeholder v1 it publishes before the page
+   * opens in edit mode. Absent: only agents create it (HTML pages and designs always). Only a live
+   * type has one, since a blank artifact is useful only where people can fill it on the page.
+   */
+  create?: CreateRow;
+  /**
    * The viewer offers Present and Presenter view, and review mode and the editor preview show
    * every page stacked (payload `view: "overview"`). Absent means false.
    */
@@ -131,6 +138,27 @@ export function pageDataOf(def: ArtifactTypeDef): "declared" | "fixed" | "none" 
  */
 export function hasPageCapabilities(def: ArtifactTypeDef | null): boolean {
   return def !== null && pageDataOf(def) !== "none";
+}
+
+/** What "New" publishes for a type people start in the app (ArtifactTypeDef.create). */
+export interface CreateRow {
+  /** The menu item ("Document"). */
+  label: string;
+  /** The new artifact's title ("Untitled document"). */
+  title: string;
+  /** v1's source, which the type's publish hook accepts as it is (a version is never empty). */
+  content: string;
+}
+
+/**
+ * The types "New" offers blank, in registry order: every type with a create row that people edit on
+ * the page. Whether this instance offers them at all (inline editing on, the type available) is the
+ * caller's to check.
+ */
+export function creatableTypes(): (ArtifactTypeDef & { create: CreateRow })[] {
+  return ARTIFACT_TYPES.map((t): ArtifactTypeDef => TYPE_REGISTRY[t]).filter(
+    (d): d is ArtifactTypeDef & { create: CreateRow } => d.create !== undefined && isLiveType(d),
+  );
 }
 
 /** A file a renderer builds in the frame for the viewer to download. */

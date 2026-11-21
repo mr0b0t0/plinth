@@ -560,6 +560,27 @@ export class SheetEditor {
     g.setHolders(held);
     this.updateStrip();
     this.syncPanel();
+    this.tryFirst();
+  }
+
+  // ---------- `?edit`: the focus on the first cell ----------
+
+  /** The app started editing from `?edit`: focus the first cell once the draft is drawn. */
+  private wantFirst = false;
+
+  focusFirst(): void {
+    this.wantFirst = true;
+    this.tryFirst();
+  }
+
+  /**
+   * A2, the first data cell (A1, the header, when there is no row), so typing fills it. Only once
+   * the draft is here, since a grid drawn from the version is rebuilt when the draft arrives.
+   */
+  private tryFirst(): void {
+    if (!this.wantFirst || !this.editing || !this.backend.ready || !this.grid) return;
+    this.wantFirst = false;
+    this.focusCell(2, 0, 1, 0);
   }
 
   // ---------- edit mode ----------
@@ -591,6 +612,7 @@ export class SheetEditor {
       this.said?.remove();
       this.said = null;
       this.moving = null;
+      this.wantFirst = false;
     }
     g?.el.classList.toggle("plinth-sheet__page--editing", on);
     this.render();

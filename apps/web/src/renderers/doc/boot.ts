@@ -273,6 +273,7 @@ function live(
       if (m.base !== undefined) soloBase = m.base;
       if (m.on && (!client || client.failed)) goSolo();
       editor?.setEditing(m.on);
+      if (m.focus === "first") editor?.focusFirst();
       editor?.render();
       status();
     } else if (m.type === "collect" && local) {

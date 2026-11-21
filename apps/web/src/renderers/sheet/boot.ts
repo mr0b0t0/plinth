@@ -479,6 +479,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (m.type === "edit") {
         if (m.on && (!client || client.failed)) goSolo();
         editor?.setEditing(m.on);
+        if (m.focus === "first") editor?.focusFirst();
         status();
       } else if (m.type === "collect" && local) {
         editor?.flush();

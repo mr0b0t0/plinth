@@ -150,17 +150,51 @@
   padding: 0.5em 0.75em;
   overflow: hidden;
   resize: none;
-  border: 1px solid var(--doc-live);
-  border-left-width: 3px;
+  border: 1px solid var(--doc-border);
+  border-left: 3px solid var(--doc-live);
   border-radius: 4px;
   background: var(--doc-bg);
   color: var(--doc-fg);
   font: 0.9375rem / 1.6 var(--doc-mono);
   tab-size: 2;
 }
+/* One focus mark: the open block's bronze border goes all the way round, with no second ring. */
 .plinth-doc__field:focus {
-  outline: 2px solid var(--doc-focus);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--doc-live);
+}
+@media (forced-colors: active) {
+  .plinth-doc__field:focus {
+    outline: 2px solid Highlight;
+  }
+}
+/* A one-line heading (data-heading, set by the editor) is typed in its heading's type. */
+.plinth-doc__field[data-heading] {
+  color: var(--doc-heading);
+  font-family: var(--doc-font);
+  font-weight: 650;
+  line-height: 1.25;
+  min-height: 0;
+  margin-block: 0.5rem;
+  padding: 0.25rem 0.75rem;
+}
+.plinth-doc__field[data-heading="1"] {
+  font-size: 2.1rem;
+  letter-spacing: -0.02em;
+}
+.plinth-doc__field[data-heading="2"] {
+  font-size: 1.5rem;
+}
+.plinth-doc__field[data-heading="3"] {
+  font-size: 1.22rem;
+}
+@media (max-width: 480px) {
+  .plinth-doc__field[data-heading="1"] {
+    font-size: 1.75rem;
+  }
+  .plinth-doc__field[data-heading="2"] {
+    font-size: 1.35rem;
+  }
 }
 @media (pointer: coarse) {
   .plinth-doc__field {
@@ -222,6 +256,10 @@
   .plinth-doc__insert {
     left: auto;
     right: 0;
+  }
+  /* There it would sit on the open block's corner: hidden until the block closes. */
+  .plinth-doc__insert:has(+ .plinth-doc__field) {
+    display: none;
   }
 }
 /* Touch has no hover: always visible, with an outline of at least 3:1 against the page. */

@@ -2762,6 +2762,11 @@
             "minLength": 1,
             "maxLength": 60,
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+          },
+          "note": {
+            "description": "A note for v1, shown in History (e.g. \"Imported from sales.xlsx\"). Empty: none",
+            "type": "string",
+            "maxLength": 500
           }
         },
         "required": ["title"]

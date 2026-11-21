@@ -271,6 +271,45 @@ export class DocEditor {
     // view mode keeps the page's own addresses, as before.
     pinFiles(this.root, this.editing ? (this.hooks.fileVersion?.() ?? null) : null);
     if (this.field) this.grow(this.field);
+    this.tryFirst();
+  }
+
+  // ---------- `?edit`: the first block, open for typing ----------
+
+  /** The app started editing from `?edit` (New and Import): open the first block once drawn. */
+  private wantFirst = false;
+
+  focusFirst(): void {
+    this.wantFirst = true;
+    this.tryFirst();
+  }
+
+  /** The block tryFirst opened: once granted, a heading's text is selected (selectHeading). */
+  private selectOnGrant = false;
+
+  /**
+   * Once the draft is here: open the doc's first block (a new doc's title) so the person types
+   * into it, with a heading's text selected so the first keystroke replaces "Untitled document".
+   * When that block is someone else's, or this person cannot write now, the block only takes the
+   * focus, and nothing is asked of the room.
+   */
+  private tryFirst(): void {
+    const b = this.backend;
+    if (!this.wantFirst || !this.editing || !b.ready) return;
+    this.wantFirst = false;
+    const first = parseBlocks(joinLines(b.lines)).find((x) => x.end > x.start);
+    if (!first) {
+      this.openInsert(0);
+      return;
+    }
+    if (b.you?.right !== "write" || b.conflictVersion !== null || this.heldBy(first)) {
+      const el = [...this.root.children].find((n) => rangeOf(n)?.start === first.start);
+      (el as HTMLElement | undefined)?.focus();
+      return;
+    }
+    this.selectOnGrant = true;
+    this.open(first);
+    if (!this.want) this.selectOnGrant = false;
   }
 
   private decorate(el: Element, held: boolean): void {
@@ -296,6 +335,15 @@ export class DocEditor {
   }
 
   private grow(el: HTMLTextAreaElement): void {
+    // A one-line heading is typed in its heading's type, so the open title looks like the title.
+    const level = headingLevel(el.value);
+    if (level) {
+      el.dataset.heading = String(level);
+      el.style.removeProperty("font-size");
+    } else {
+      delete el.dataset.heading;
+      if (this.win.matchMedia?.("(pointer: coarse)").matches) el.style.fontSize = "16px";
+    }
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight + 2}px`;
   }
@@ -315,6 +363,8 @@ export class DocEditor {
       this.root.removeEventListener("keydown", this.onKey);
       this.win.removeEventListener("keydown", this.onSaveKey);
       this.hideNotice();
+      this.wantFirst = false;
+      this.selectOnGrant = false;
     }
     this.render();
     this.hooks.status();
@@ -488,6 +538,8 @@ export class DocEditor {
     this.hideNotice();
     this.render();
     field.focus();
+    if (this.selectOnGrant) selectHeading(field);
+    this.selectOnGrant = false;
     if (keep !== undefined && padded(keep, this.pad) !== server) this.schedule(0);
     this.hooks.status();
   }
@@ -495,6 +547,7 @@ export class DocEditor {
   denied(reason: LeaseDenial, by?: string): void {
     const w = this.want;
     this.want = null;
+    this.selectOnGrant = false;
     if (reason === "stale" && w && w.tries < STALE_RETRIES) {
       this.retake(w);
       return;
@@ -751,4 +804,24 @@ export class DocEditor {
 function overlaps(block: Block | LineRange, l: LineRange): boolean {
   if (block.start === block.end) return false;
   return rangesOverlap(block, l);
+}
+
+/**
+ * Select a one-line heading's text after its `#` marker ("# Untitled document" selects
+ * "Untitled document"), so typing replaces it. Any other block is left as focus() put it.
+ */
+export function selectHeading(field: HTMLTextAreaElement): void {
+  const m = HEADING_LINE.exec(field.value.trimEnd());
+  if (!m) return;
+  const start = m[1]?.length ?? 0;
+  field.setSelectionRange(start, start + (m[2]?.trimEnd().length ?? 0));
+}
+
+/** A one-line ATX heading: its marker with the spaces after it, then its text. */
+const HEADING_LINE = /^(#{1,6}[ \t]+)(\S[^\n]*)$/;
+
+/** The level of a field that holds one heading line and nothing else, or 0. */
+export function headingLevel(value: string): number {
+  const m = HEADING_LINE.exec(value.trimEnd());
+  return m ? (m[1]?.trimEnd().length ?? 0) : 0;
 }

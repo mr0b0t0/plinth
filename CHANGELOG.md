@@ -347,6 +347,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   readers: one tab stop, the arrows, Home and End, and cells someone else is editing say so. When
   someone else's change redraws the grid, the focus stays where you were typing (the column
   settings, the filter or a cell).
+- **New and Import.** **New** on the dashboard starts a blank document or sheet that opens
+  straight in edit mode, with the focus on its title or first cell (where editing on the page is
+  on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
+  for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
+  file and keeps the link, sharing and comments; it asks again when a newer version was published
+  meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
+  by email code without an account to sign in first. HTML pages and designs still come only from
+  agents. `POST /api/v1/artifacts` takes `note` for the first version.
 
 ## 0.6.0 (2026-11-20)
 

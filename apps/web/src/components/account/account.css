@@ -964,3 +964,14 @@ ul.pl-acct-steps > li::before {
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
+
+/* The cells a refused spreadsheet import names (New's Import, a sheet's Replace with a file). */
+.pl-import-issues {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.pl-import-issues li + li {
+  margin-top: var(--space-1);
+}

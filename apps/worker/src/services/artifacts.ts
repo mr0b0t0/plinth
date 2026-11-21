@@ -491,6 +491,8 @@ export interface PublishInput {
   emails?: string[];
   /** The owner's category for it (docs/spec.md "Categories"). */
   category?: string;
+  /** v1's note (REST only: the app's New and Import; docs/spec.md "New and Import"). */
+  note?: string;
 }
 
 /** The stored category, echoed only when the call set one (the caller is then the owner). */
@@ -627,7 +629,9 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
   const passwordHash =
     input.visibility === "password" && input.password ? await hashPassword(input.password) : null;
   const staged = prepared?.text ?? text;
-  let result = await writeVersion(ctx, target, (s) => stageInline(s, staged, input.assets ?? []), {
+  const note = input.note?.trim();
+  const v1 = note ? { ...target, note } : target;
+  let result = await writeVersion(ctx, v1, (s) => stageInline(s, staged, input.assets ?? []), {
     visibility: input.visibility,
     passwordHash,
   });

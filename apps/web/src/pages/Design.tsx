@@ -1062,6 +1062,18 @@ function ComponentSpecimens() {
               { label: "Settings", icon: GearIcon, onSelect: () => undefined },
             ]}
           />
+          {/* The dashboard's New menu (NewMenu.tsx). */}
+          <Menu
+            label="New"
+            icon={PlusIcon}
+            variant="primary"
+            items={[
+              { label: "Document", onSelect: () => toast.success("New is a demo here") },
+              { label: "Sheet", onSelect: () => toast.success("New is a demo here") },
+              { type: "separator" },
+              { label: "Import a spreadsheet…", onSelect: () => undefined },
+            ]}
+          />
         </Row>
       </Specimen>
 
