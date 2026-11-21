@@ -379,11 +379,12 @@ describe("the design registry row", () => {
     }
   });
 
-  it("gives a frame only to types with opaque frames", () => {
+  it("gives opaque frames only to a design, and a framed page to a design and a deck", () => {
     for (const t of ARTIFACT_TYPES) {
       const def = TYPE_REGISTRY[t];
-      if (def.renderer?.frame) expect(def.opaqueFrames, t).toBe(true);
       if (t !== "design") expect(def.opaqueFrames, t).toBeUndefined();
+      // A deck's frame is its x-embed loader, not a design's opaque artboards.
+      if (def.renderer?.frame) expect(["design", "slides"], t).toContain(t);
     }
   });
 });
