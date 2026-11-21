@@ -417,10 +417,21 @@ export interface RescueItem {
   id: string;
   text: string;
   near: number;
+  /**
+   * A deck's item (slides/edit.ts): typed on a slide or in its speaker notes, which it goes back
+   * into after a reload (notes never onto a slide); the raw slide it was on; and that slide's
+   * first line of text then, to find the slide again when slides moved. A doc's has none.
+   */
+  part?: RescuePart;
+  slide?: number;
+  ref?: string;
 }
+export type RescuePart = "slide" | "notes";
 /** A rescue store holds at most this many items, and this much text in all (UTF-16 units). */
 export const MAX_RESCUE_ITEMS = 20;
 export const MAX_RESCUE_TOTAL = 256 * 1024;
+/** A deck item's `ref` is at most this long (UTF-16 units). */
+export const MAX_RESCUE_REF = 120;
 const RESCUE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** A list of rescue items, checked field by field (from the frame, or from storage), or null. */
@@ -432,13 +443,20 @@ export function readRescueItems(v: unknown): RescueItem[] | null {
   let total = 0;
   for (const it of v) {
     if (typeof it !== "object" || it === null) return null;
-    const { id, text, near } = it as Record<string, unknown>;
+    const { id, text, near, part, slide, ref } = it as Record<string, unknown>;
     if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
     if (typeof text !== "string" || text.length > LIMITS.liveDocFrameBytes) return null;
     if (!isLine(near)) return null;
-    total += text.length;
+    const item: RescueItem = { id, text, near };
+    if (part === "slide" || part === "notes") item.part = part;
+    else if (part !== undefined) return null;
+    if (isLine(slide) && slide >= 1) item.slide = slide;
+    else if (slide !== undefined) return null;
+    if (typeof ref === "string" && ref.length <= MAX_RESCUE_REF) item.ref = ref;
+    else if (ref !== undefined) return null;
+    total += text.length + (item.ref?.length ?? 0);
     if (total > MAX_RESCUE_TOTAL) return null;
-    out.push({ id, text, near });
+    out.push(item);
   }
   return out;
 }

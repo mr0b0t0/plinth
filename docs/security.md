@@ -2538,11 +2538,13 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   and their places ("row 12", built by the renderer from lease positions, never content) become
   text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
-- **The rescue store.** A doc block's typing the room's draft does not hold yet (typing that
-  cannot be written as typed, or that a lost lease, a freeze or a takeover kept from being
-  written) is held by the frame and posted to the app as a keyed editing message (`rescue`: at
-  most 20 items and 256 KiB of text in all, the same limits on both sides: an id, the block's
-  text without its marks, and a line number). The app keeps it in its own origin's
+- **The rescue store.** A doc block's or a deck's typing the room's draft does not hold yet
+  (typing that cannot be written as typed, or that a lost lease, a freeze or a takeover kept from
+  being written) is held by the frame and posted to the app as a keyed editing message (`rescue`:
+  at most 20 items and 256 KiB of text in all, the same limits on both sides: an id, the block's
+  text without its marks, and a line number; a deck's item also its part, `slide` or `notes`, its
+  raw slide number and that slide's first line of text, at most 120 characters and counted in the
+  256 KiB, so kept speaker notes are only ever written back into notes). The app keeps it in its own origin's
   `sessionStorage` under the signed-in account and the artifact
   (`plinth-draft:page-rescue:<user id>:<artifact id>`, beside the solo kept copy, with a copy in
   memory when storage is blocked), never in the content origin's storage. The frame sends changes

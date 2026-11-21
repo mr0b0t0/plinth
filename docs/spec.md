@@ -3129,15 +3129,18 @@ deleting slides, and a slide's columns, stay with agents for now.
   [Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19) (the same model, format
   bar, shortcuts, fidelity check and verify step). Enter at the end of a heading or paragraph opens
   a new paragraph below it; Enter inside one sends the text before and after the caret as two
-  blocks in one edit and then opens the second, so the text after the caret is in the draft at
-  once. The slide fits again as text changes. Presenting, full screen and
+  blocks in one edit, so the text after the caret is in the draft at once. The block closes then
+  and there (its lease is let go and its editor is gone, so no key typed before the room answers
+  can reach it), and the second block opens on its own lines once the room has let the lease go.
+  The slide fits again as text changes. Presenting, full screen and
   following the presenter wait until editing ends (Present is not offered while editing; Done
   publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
   Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
   neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
   or when the room merges a version into the draft, is taken again once the draft (after a merge,
-  the merged draft) is back, where the draft holds a text the room may have of it nearest to where
-  it was (two slides may share a title), and what was typed since is sent there. After a drop that
+  the merged draft) is back, where the draft holds a text the room may have of it as whole blocks
+  nearest to where it was (two slides may share a title; of two texts found there, the longer),
+  and what was typed since is sent there unless the room's block already reads exactly so. After a drop that
   is the text sent last (it may have arrived without its answer), the text the room acknowledged
   or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.
   An empty one (an insert point, or a block emptied) is found by the lines around it, and an
@@ -3160,8 +3163,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   never replaces it with the room's text. What no place takes stays on the page ("What you typed
   couldn't be added to the deck yet. It is kept here.", with **Copy**), counts as unsent changes
   (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a
-  reconnect; a discard drops it. The app's rescue store, which offers kept text back after a
-  reload, is the doc editor's alone for now: a deck's kept text lives in the frame.
+  reconnect; a discard drops it. A block closed, or split by Enter, whose last edit had no answer
+  when its lease went is written again (both halves of a split together) and closed. Kept text is
+  in the app's rescue store too, as a doc's is, each item saying whether it was typed on a slide
+  or in the speaker notes, the slide it was on and that slide's first line of text: after a reload
+  it is written back into the same part (a slide's as a new block near where it was on that slide,
+  notes after that slide's notes, never on a slide), or kept with **Copy** when that part is gone.
 - **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
   change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;

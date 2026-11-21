@@ -15,6 +15,8 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
+import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import { HIDDEN_CLOSE_MS } from "../common/live.ts";
 import { boot } from "./boot.ts";
 import { DECK_WORDS, EDIT_DEBOUNCE_MS } from "./edit.ts";
@@ -594,8 +596,10 @@ describe("keeping what was typed when the lease ends", () => {
     ed.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
     );
-    // Head and tail go in one edit, so the tail is in the deck whatever happens next.
+    // Head and tail go in one edit, so the tail is in the deck whatever happens next, and the
+    // block's lease is let go at once.
     expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "Hello\n\nworld" }]);
+    expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
     s.frame({
       t: "op",
       gen: "g1",
@@ -607,12 +611,10 @@ describe("keeping what was typed when the lease ends", () => {
       ins: "Hello\n\nworld",
       by: YOU.id,
     });
-    // The new block is the tail's own lines, asked for once the head's lease is let go.
-    expect(s.sent.slice(-2)).toEqual([
-      { t: "release", lease: "l1" },
-      { t: "lease", rev: 4, start: 4, end: 5 },
-    ]);
+    // The new block is the tail's own lines, asked for once the room let the head's lease go.
+    expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
     s.frame({ t: "released", lease: "l1" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 4, end: 5 });
     s.frame({ t: "leased", lease: "l2", start: 4, end: 5, holder: YOU.id, by: YOU.email });
     expect(editable().textContent).toBe("world");
     // Leaving the new block sends nothing more: both paragraphs stay.
@@ -644,13 +646,12 @@ describe("keeping what was typed when the lease ends", () => {
     ed.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
     );
-    // Nothing changed in the paragraph: the insert point below it is asked for at once.
+    // Nothing changed in the paragraph: the insert point below it is asked for once the room let
+    // the paragraph's lease go.
     expect(edits(s)).toEqual([]);
-    expect(s.sent.slice(-2)).toEqual([
-      { t: "release", lease: "l1" },
-      { t: "lease", rev: 3, start: 3, end: 3 },
-    ]);
+    expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
     s.frame({ t: "released", lease: "l1" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
     s.frame({ t: "leased", lease: "l2", start: 3, end: 3, holder: YOU.id, by: YOU.email });
     type("More");
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
@@ -743,6 +744,24 @@ describe("never dropping typing the room does not hold yet", () => {
       else delete (document as unknown as Record<string, unknown>).visibilityState;
       document.dispatchEvent(new Event("visibilitychange"));
     }
+  });
+
+  it("asks for no other block while such typing keeps its block open", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    stick();
+    const asked = s.sent.filter((f) => f.t === "lease").length;
+    app({ type: "goto", slide: 1 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="1"] .plinth-slides__slide h1') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    // A grant elsewhere would take the open block's place from under its typing.
+    expect(s.sent.filter((f) => f.t === "lease")).toHaveLength(asked);
+    expect(editable().textContent).toBe("abc");
   });
 
   it("leaves such typing as typed when the room refuses an earlier edit", () => {
@@ -926,5 +945,300 @@ describe("never dropping typing the room does not hold yet", () => {
     expect(edits(s)).toEqual([]);
     await settle();
     expect(lastStatus()?.unflushed).toBe(false);
+  });
+});
+
+describe("a split, and a block taken again after a reconnect", () => {
+  const editable = () => {
+    const ed = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    return ed;
+  };
+  const edits = (s: FakeSocket) => s.sent.filter((f) => f.t === "edit");
+
+  /** Opens slide 1's paragraph (line 2) and is granted its lease. */
+  const openPara = (s: FakeSocket) => {
+    app({ type: "edit", on: true });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="1"] .plinth-slides__slide p') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+  };
+
+  /** Presses Enter in `ed` with the caret `at` characters into its text. */
+  const enterAt = (ed: HTMLElement, at: number) => {
+    const node = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT).nextNode();
+    if (!node) throw new Error("no text");
+    const range = document.createRange();
+    range.setStart(node, at);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    ed.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  };
+
+  const DECK = "# Intro\n\nabcd";
+
+  it("closes the block at once: a key or a second Enter before the answer sends nothing", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openPara(s);
+    const ed = editable();
+    enterAt(ed, 2);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "ab\n\ncd" }]);
+    expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    // A key typed before the room answers, and a second Enter: the old block is gone, so neither
+    // can send the text before the caret alone over the tail.
+    ed.textContent = "abx";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    ed.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toHaveLength(1);
+    s.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l1",
+      seq: 1,
+      start: 2,
+      del: 1,
+      ins: "ab\n\ncd",
+      by: YOU.id,
+    });
+    s.frame({ t: "released", lease: "l1" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 4, end: 5 });
+    s.frame({ t: "leased", lease: "l2", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    expect(editable().textContent).toBe("cd");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toHaveLength(1);
+  });
+
+  it("writes both halves again when the socket drops between the split and its answer", () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openPara(first);
+    enterAt(editable(), 2);
+    expect(edits(first)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "ab\n\ncd" }]);
+    // The network goes before the room answers: the edit never landed.
+    first.drop();
+    vi.advanceTimersByTime(5000);
+    const second = sock("doc");
+    welcomeDoc(second, DECK, true, "g2");
+    expect(second.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    second.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    // Both halves, at once, and the place closes again: the person had left it.
+    expect(second.sent.slice(-2)).toEqual([
+      { t: "edit", lease: "l2", seq: 2, text: "ab\n\ncd" },
+      { t: "release", lease: "l2" },
+    ]);
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+  });
+
+  it("writes nothing again when the split landed before the socket dropped", () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openPara(first);
+    enterAt(editable(), 2);
+    first.drop();
+    vi.advanceTimersByTime(5000);
+    const second = sock("doc");
+    // The room took the edit; only its answer was lost.
+    welcomeDoc(second, "# Intro\n\nab\n\ncd", true, "g2");
+    expect(second.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 5 });
+    second.frame({ t: "leased", lease: "l2", start: 2, end: 5, holder: YOU.id, by: YOU.email });
+    expect(edits(second)).toEqual([]);
+    expect(second.sent.at(-1)).toEqual({ t: "release", lease: "l2" });
+  });
+
+  it("leases the whole block again when the text sent last is its first lines", () => {
+    const deck = "# Intro\n\n- one\n- two";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    app({ type: "edit", on: true });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="1"] .plinth-slides__slide ul') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(first.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 4 });
+    first.frame({ t: "leased", lease: "l1", start: 2, end: 4, holder: YOU.id, by: YOU.email });
+    // The last item is deleted, and the edit goes out; the socket drops before the room answers.
+    const ed = editable();
+    ed.querySelector("li:last-child")?.remove();
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(first)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "- one" }]);
+    first.drop();
+    vi.advanceTimersByTime(5000);
+    const second = sock("doc");
+    // The room never took it: it still holds both items, "- one" being the first of them.
+    welcomeDoc(second, deck, true, "g2");
+    expect(second.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 4 });
+    second.frame({ t: "leased", lease: "l2", start: 2, end: 4, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(second)).toEqual([{ t: "edit", lease: "l2", seq: 2, text: "- one" }]);
+  });
+});
+
+describe("typing kept across a reload (the rescue store)", () => {
+  // The app's copy, as the app keeps it: merge-only, in its own session storage
+  // (components/editor/draft.ts), fed by the frame's `rescue` reports.
+  const USER = "u1";
+  const ART = "art1";
+  const stored = () => readRescueItems(loadRescue(USER, ART)) ?? [];
+  const edits = (s: FakeSocket) => s.sent.filter((f) => f.t === "edit");
+
+  /** Boots the deck on `text` with the app keeping the frame's rescue reports. */
+  function startKept(text: string) {
+    start(text);
+    parent.postMessage.mockImplementation((m: Record<string, unknown>) => {
+      if (m.type !== "rescue") return;
+      const upsert = readRescueItems(m.upsert);
+      if (!upsert) throw new Error("bad rescue report");
+      mergeRescue(USER, ART, upsert, [
+        ...((m.written as string[]) ?? []),
+        ...((m.gone as string[]) ?? []),
+      ]);
+    });
+    const s = sock("doc");
+    welcomeDoc(s, text, true);
+    app({ type: "edit", on: true });
+    return s;
+  }
+
+  /** A reload: the old frame goes, a new one boots on `text` and is offered what the app kept. */
+  function reload(text: string) {
+    stop?.();
+    stop = undefined;
+    const s = startKept(text);
+    app({ type: "rescue", items: stored() });
+    return s;
+  }
+
+  /** Leaves typing in the open editor that cannot be written as Markdown as it stands. */
+  const stick = (sel: string) => {
+    const ed = document.querySelector(sel);
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    ed.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+  };
+
+  const NOTES = "# One\n---\n## Two\n\nNote:\nSay hi";
+
+  /** Opens slide 2's speaker notes (lines 4 and 5) and leaves typing in them it cannot write. */
+  const stickNotes = (s: FakeSocket) => {
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector(
+        '.plinth-slides__frame[data-n="2"] .plinth-slides__notepad-body',
+      ) as HTMLElement | null
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 4, end: 6 });
+    s.frame({ t: "leased", lease: "l1", start: 4, end: 6, holder: YOU.id, by: YOU.email });
+    stick('.plinth-slides__notepad-edit [contenteditable="true"]');
+  };
+
+  beforeEach(() => sessionStorage.clear());
+
+  it("writes a slide's kept text back on its slide after a reload", () => {
+    const DECK = "# One\n---\n## Two";
+    const s = startKept(DECK);
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__slide h2') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    stick('.plinth-slides__open [contenteditable="true"]');
+    expect(edits(s)).toEqual([]);
+    expect(stored()).toEqual([
+      expect.objectContaining({ text: "## abc", near: 2, part: "slide", slide: 2, ref: "## Two" }),
+    ]);
+    // The page is reloaded (after its warning): the new frame writes it back, as a new block below
+    // slide 2's title, and closes it.
+    const again = reload(DECK);
+    expect(again.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    again.frame({ t: "leased", lease: "l2", start: 3, end: 3, holder: YOU.id, by: YOU.email });
+    expect(again.sent.slice(-2)).toEqual([
+      expect.objectContaining({ t: "edit", lease: "l2", text: "\n## abc" }),
+      { t: "release", lease: "l2" },
+    ]);
+    expect(stored()).toHaveLength(1);
+    // Kept until the room says it holds it.
+    const seq = (edits(again)[0] as { seq: number }).seq;
+    again.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l2",
+      seq,
+      start: 3,
+      del: 0,
+      ins: "\n## abc",
+      by: YOU.id,
+    });
+    expect(stored()).toEqual([]);
+  });
+
+  it("writes speaker notes kept back into the same slide's notes, never onto the slide", () => {
+    const s = startKept(NOTES);
+    stickNotes(s);
+    expect(stored()).toEqual([
+      expect.objectContaining({ text: "abc", part: "notes", slide: 2, ref: "## Two" }),
+    ]);
+    const again = reload(NOTES);
+    // The notes are asked for, not a place on the slide.
+    expect(again.sent.filter((f) => f.t === "lease")).toEqual([
+      { t: "lease", rev: 3, start: 4, end: 6 },
+    ]);
+    again.frame({ t: "leased", lease: "l2", start: 4, end: 6, holder: YOU.id, by: YOU.email });
+    expect(again.sent.slice(-2)).toEqual([
+      expect.objectContaining({ t: "edit", lease: "l2", text: "Note:\nSay hi\n\nabc" }),
+      { t: "release", lease: "l2" },
+    ]);
+  });
+
+  it("keeps notes kept to copy when their slide has no notes now, and writes none on it", () => {
+    const s = startKept(NOTES);
+    stickNotes(s);
+    const again = reload("# One\n---\n## Two");
+    expect(again.sent.some((f) => f.t === "lease")).toBe(false);
+    const bar = document.querySelector(".plinth-slides__kept");
+    expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+    expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+    // Still in the app's store, for the next reload.
+    expect(stored()).toHaveLength(1);
+  });
+
+  it("drops what it kept from the store when the unpublished changes are discarded", () => {
+    const DECK = "# One\n---\n## Two";
+    const s = startKept(DECK);
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__slide h2') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    stick('.plinth-slides__open [contenteditable="true"]');
+    expect(stored()).toHaveLength(1);
+    s.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    s.frame({ t: "reset", version: 1, gen: "g1", rev: 4, why: "discarded" });
+    s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: DECK });
+    expect(stored()).toEqual([]);
   });
 });

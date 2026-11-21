@@ -18,6 +18,11 @@
 // offers "Ask an agent", and an image also "Delete". Images are drawn from the draft's base
 // version's files (../common/files.ts), which are the files a Publish keeps.
 //
+// Typing the room does not hold yet is never dropped: it is written again where it can go, kept on
+// the page with Copy where it cannot, and (rooms only) mirrored in the app's rescue store, each
+// item tagged with the part it was typed in (a slide or its notes), so a reload writes it back
+// into that part.
+//
 // Two backends: the room's draft socket (../common/live.ts, "room" mode), or a local copy that only
 // this frame edits ("solo" mode, where the app saves it through its own session). Everything this
 // file draws is made with createElement and textContent; every rendered block went through the
@@ -55,7 +60,11 @@ import {
   splitLines,
   verifyBlock,
 } from "@plinth/shared";
-import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
+import {
+  type AskWhat,
+  MAX_RESCUE_REF,
+  type RescueItem,
+} from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
@@ -96,6 +105,8 @@ export const DECK_WORDS = {
   waitsKept:
     "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.",
   stuckKept: "What you typed couldn't be added to the deck yet. It is kept here.",
+  frameOnly:
+    "What you typed couldn't be added to the deck yet. It's kept on this page until you reload. Copy it to be safe.",
   copy: "Copy",
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
@@ -234,6 +245,29 @@ export interface DeckEditorHooks {
   refit(): void;
   /** The frame's polite live region. */
   announce(text: string): void;
+  /** The rescue store changed: the app merges this into its copy (see DeckRescueReport). */
+  rescue?(report: DeckRescueReport): void;
+}
+
+/**
+ * A change to the deck's rescue store (rooms only), for the app's copy in its own storage, which
+ * only ever merges, as a doc's does (renderers/doc/edit.ts RescueReport): `upsert` adds or
+ * updates items by id, `written` names items the room acknowledged, `gone` items dropped on
+ * purpose (a discard). Each item says whether it was typed on a slide or in its speaker notes, so
+ * after a reload it goes back into the same part, never notes onto a slide.
+ */
+export interface DeckRescueReport {
+  upsert: RescueItem[];
+  written: string[];
+  gone: string[];
+  n: number;
+}
+
+/** A rescue store item as the editor keeps it, and whether the app's copy holds it. */
+interface DeckRescue extends RescueItem {
+  /** The report that last sent it to the app, and whether the app's store has it (null: unknown). */
+  reported: number | null;
+  kept: boolean | null;
 }
 
 /** A place in the deck the editor holds open. */
@@ -268,6 +302,49 @@ interface Open {
   kept?: true;
   /** An edit was sent for it. */
   wrote?: true;
+  /** The rescue store item for typing in it the room does not hold yet (kept, or stuck). */
+  rescue?: string;
+}
+
+/**
+ * What a place held when it closed or its lease ended: what was typed in it, and whether the room
+ * may not have it yet, to write it again (lost) rather than lose it.
+ */
+interface Snap {
+  kind: Open["kind"];
+  n: number;
+  ctx: DeckPartContext;
+  env: MdEnv;
+  pad: Open["pad"];
+  form: NotesForm;
+  models: RichBlock[];
+  /** Its lines as typed, or null when they cannot be written as typed. */
+  typed: string[] | null;
+  /** In the debounce, not writable as typed, or sent with no acknowledgement yet. */
+  unsent: boolean;
+  sent: string | null;
+  start: number;
+  around: Open["around"];
+  rescue?: string;
+}
+
+/**
+ * A place closed while its last edit had no acknowledgement (its release goes after it): kept
+ * until the room answers the edit and then the release, so a lease that ends first (a dropped
+ * socket, a takeover) writes it again. A split (Enter) closes its block this way at once, and
+ * opens the text after the caret on its own lines once the room let the old lease go.
+ */
+interface Closing {
+  lease: string;
+  snap: Snap;
+  /** The lease's lines as last seen. */
+  start: number;
+  end: number;
+  split?: {
+    /** How many lines the text after the caret takes (0: an insert point below). */
+    tail: number;
+    model: RichBlock;
+  };
 }
 
 /** A lease asked for and not answered yet, with what to open once it is granted. */
@@ -304,6 +381,12 @@ interface Want {
   fallbacks?: number;
   /** Speaker notes kept: added after the slide's notes as they are once nobody else holds them. */
   append?: true;
+  /** The rescue store item it writes (see DeckRescueReport). */
+  rescue?: string;
+  /** Written and closed once granted, never left open (its place had closed, or a reload's). */
+  closeAfter?: true;
+  /** Its text as kept, when it could not be read back as blocks (a reload's): copied as it is. */
+  raw?: string;
 }
 
 interface Mark {
@@ -327,9 +410,84 @@ function markIs(lines: readonly string[], range: LineRange, mark: Mark): boolean
   return now.text === mark.text && now.above === mark.above && now.below === mark.below;
 }
 
+const isBlank = (line: string | undefined) => line === undefined || line.trim() === "";
+
+/** `f`, worked out once, on first use. */
+function memo<T>(f: () => T): () => T {
+  let done: { v: T } | null = null;
+  return () => {
+    done ??= { v: f() };
+    return done.v;
+  };
+}
+
+/**
+ * The lines where a top-level block, or a slide part, starts or ends: a block's text matches a
+ * run of lines only where the run starts and ends at such a line (wholeBlockAt), so the text of a block
+ * that lost its last lines is never found as the first lines of the longer block still there.
+ */
+function blockEdges(lines: readonly string[]): Set<number> {
+  const edges = new Set<number>([0, lines.length]);
+  for (const slide of deckLayout(lines).slides) {
+    edges.add(slide.start);
+    edges.add(slide.end);
+    if (slide.notes) {
+      edges.add(slide.notes.start);
+      edges.add(slide.notes.end);
+    }
+    for (const part of [slide.head, ...slide.columns]) {
+      edges.add(part.start);
+      edges.add(part.end);
+      const shown = deckPartShown(lines.slice(part.start, part.end), false).join("\n");
+      for (const b of parseBlocks(shown)) {
+        edges.add(part.start + b.start);
+        edges.add(part.start + b.core.start);
+        edges.add(part.start + b.core.end);
+        edges.add(part.start + b.end);
+      }
+    }
+  }
+  return edges;
+}
+
+/**
+ * Where the text `text` sits in `lines` as whole blocks (it starts and ends at a block's edge, or
+ * at a blank line it holds itself), nearest to line `near`, or -1.
+ */
+function wholeBlockAt(
+  lines: readonly string[],
+  text: string,
+  near: number,
+  edges: () => Set<number>,
+): number {
+  const want = blockLines(text);
+  let best = -1;
+  for (let i = locateBlock(lines, text, 0); i >= 0 && i + want.length <= lines.length; i++) {
+    let ok = true;
+    for (let k = 0; k < want.length; k++) {
+      if (lines[i + k] !== want[k]) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    const end = i + want.length;
+    const head = isBlank(want[0]) || isBlank(lines[i - 1]) || edges().has(i);
+    const tail = isBlank(want.at(-1)) || isBlank(lines[end]) || edges().has(end);
+    if (!head || !tail) continue;
+    if (best === -1 || Math.abs(i - near) < Math.abs(best - near)) best = i;
+  }
+  return best;
+}
+
 /** Where the place `mark` describes starts in `lines`, nearest to line `near`, or -1. */
-function markAt(lines: readonly string[], mark: Mark, near: number): number {
-  if (mark.text !== "") return locateBlock(lines, mark.text, near);
+function markAt(
+  lines: readonly string[],
+  mark: Mark,
+  near: number,
+  edges: () => Set<number> = memo(() => blockEdges(lines)),
+): number {
+  if (mark.text !== "") return wholeBlockAt(lines, mark.text, near, edges);
   let best = -1;
   for (let p = 0; p <= lines.length; p++) {
     if ((lines[p - 1] ?? null) !== mark.above || (lines[p] ?? null) !== mark.below) continue;
@@ -437,6 +595,36 @@ function afterBareOpen(lines: readonly string[], n: number): boolean {
   return n === 2 && isSeparatorLine(lines[0]) && frontMatterEnd(lines) === -1;
 }
 
+/** Models' text as Markdown without their marks, one block per paragraph ("" for none). */
+function plainText(models: readonly RichBlock[], env: MdEnv): string {
+  return models
+    .map((m) => verifyBlock(withoutMarks(m), TOOLS, env))
+    .filter((t): t is string => t !== null && t.trim() !== "")
+    .join("\n\n");
+}
+
+/** A rescued text read back as blocks to write (a reload's), or null when one cannot be. */
+function modelsOf(text: string): RichBlock[] | null {
+  const env = docEnv(text);
+  const all = text.split("\n");
+  const out: RichBlock[] = [];
+  for (const b of parseBlocks(text)) {
+    const m = editableBlock(all.slice(b.core.start, b.core.end).join("\n"), TOOLS, env);
+    if (!m || m.t === "image" || m.t === "divider" || m.t === "indented") return null;
+    out.push(m);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** A raw slide's first line of text, to find the slide again after a reload (a rescue's ref). */
+function slideRef(lines: readonly string[], slide: { start: number; end: number }): string {
+  for (let i = slide.start; i < slide.end; i++) {
+    const t = (lines[i] ?? "").trim();
+    if (t !== "") return t.slice(0, MAX_RESCUE_REF);
+  }
+  return "";
+}
+
 const ATTR_EDIT = "data-plinth-edit";
 
 export class SlidesEditor {
@@ -450,8 +638,16 @@ export class SlidesEditor {
   private trimming = false;
   /** The block being emptied is an image's Delete: it closes once its edit is sent. */
   private deleting = false;
-  /** Run once the room acked what this editor sent (a split's new block below). */
-  private afterAck: (() => void) | null = null;
+  /** A place closed with its last edit not acknowledged yet (see Closing). */
+  private closing: Closing | null = null;
+  /** Typed text the room does not hold yet, by id, mirrored in the app's store (rooms only). */
+  private readonly rescues = new Map<string, DeckRescue>();
+  private reportN = 0;
+  private rescueN = 0;
+  /** Items the app kept from before a reload, written one at a time (nextKept). */
+  private fromStore: Want[] = [];
+  /** Items the app offered before the room's draft was here. */
+  private offered: RescueItem[] = [];
   private views: EditSlideView[] = [];
   private layout: DeckLayout | null = null;
   /** The bar of a selected block that is not edited in place (Ask an agent, Delete). */
@@ -503,7 +699,11 @@ export class SlidesEditor {
       this.want?.resend === true ||
       this.retake?.want.resend === true ||
       this.parked.length > 0 ||
-      this.toRetry.length > 0
+      this.toRetry.length > 0 ||
+      this.fromStore.length > 0 ||
+      this.offered.length > 0 ||
+      this.rescues.size > 0 ||
+      this.closing?.snap.unsent === true
     );
   }
 
@@ -823,8 +1023,12 @@ export class SlidesEditor {
   private afterStruct: ((op: SlidesStructOp) => void) | null = null;
 
   private openNotes(v: EditSlideView, models: RichBlock[]): void {
-    const range = this.notesRange(v);
-    if (!range || !this.writable()) return;
+    if (!this.writable()) return;
+    // A block open elsewhere closes first, sending what waits (request refuses while it stays open).
+    this.close(true);
+    const view = this.views.find((x) => x.n === v.n) ?? v;
+    const range = this.notesRange(view);
+    if (!range) return;
     const lines = this.backend.lines.slice(range.start, range.end);
     this.request({
       range,
@@ -942,6 +1146,12 @@ export class SlidesEditor {
 
   private request(ask: Omit<Want, "mark" | "tries">): void {
     if (this.want) return;
+    if (this.open) {
+      // The place open could not close (its typing cannot be written as typed): a new lease would
+      // take its place from under it.
+      if (this.stuck) this.notify(DECK_WORDS.unsavable);
+      return;
+    }
     const w: Want = { ...ask, mark: markOf(this.backend.lines, ask.range), tries: 0 };
     this.want = w;
     if (!this.backend.lease(w.range)) {
@@ -981,6 +1191,7 @@ export class SlidesEditor {
       start: lease.start,
       around: this.aroundOf(lease),
       ...(w.resend ? { kept: true as const } : {}),
+      ...(w.rescue ? { rescue: w.rescue } : {}),
     };
     for (const m of w.open.models) o.editors.push(this.makeEditor(o, m));
     host.append(...o.editors.map((r) => r.el));
@@ -990,9 +1201,11 @@ export class SlidesEditor {
     host.addEventListener("focusout", (e) => this.onFocusOut(e));
     this.open = o;
     this.setStuck(false);
-    if (!this.editing) {
-      // Edit mode ended while typing kept from a lease that ended was asked for: it is written
-      // as it is (without its marks when it cannot be written with them), and nothing opens.
+    if (!this.editing || w.closeAfter || (o.kind === "block" && o.editors.length > 1)) {
+      // Edit mode ended while typing kept from a lease that ended was asked for, the place it was
+      // typed in had closed (or it came back after a reload), or it is more than one block (the
+      // two halves of a split): it is written as it is (without its marks when it cannot be
+      // written with them), and nothing opens.
       this.writeKept(o);
       return;
     }
@@ -1126,10 +1339,11 @@ export class SlidesEditor {
         return null;
       }
     }
-    const model = o.editors[0]?.model;
-    if (!model) return null;
+    // One editor, or more for typing kept as more than one block (a split's two halves).
+    const models = blocks ?? o.editors.map((r) => r.model);
+    if (models.length === 0) return null;
     const lines: string[] = [];
-    for (const m of blocks ?? [model]) {
+    for (const m of models) {
       const part = deckBlockLines(strip(m), o.ctx, o.env);
       if (part === null) return null;
       if (part.length === 0) continue;
@@ -1148,8 +1362,15 @@ export class SlidesEditor {
     const lines = this.linesNow(o, blocks);
     if (lines === null) {
       // Never dropped: the text stays in the place as typed, which stays open and pending
-      // (close() keeps it), and nothing is published until it changes.
+      // (close() keeps it), and nothing is published until it changes. Its text without its marks
+      // goes into the rescue store, which a reload offers back.
       this.setStuck(true);
+      o.rescue = this.keepRescue(
+        o.rescue,
+        o.editors.map((r) => r.model),
+        o,
+        mine.start,
+      );
       this.notify(DECK_WORDS.unsavable);
       this.hooks.status();
       return false;
@@ -1192,6 +1413,8 @@ export class SlidesEditor {
     }
     o.sent = text;
     o.wrote = true;
+    // Kept typing on its way: the store keeps what was sent until the room acknowledges it.
+    if (o.rescue) o.rescue = this.keepRescue(o.rescue, blocks ?? o.editors.map((r) => r.model), o);
     return true;
   }
 
@@ -1257,47 +1480,81 @@ export class SlidesEditor {
       return;
     }
     // The text after the caret is sent in the same edit as the text before it, so it is in the
-    // deck at once, whatever happens to the lease asked for next; its block then opens on its own
-    // lines. With nothing after the caret, the new block is an insert point below.
+    // deck at once, whatever happens to the lease asked for next. Then the block closes at once,
+    // as a doc's does: its lease is let go and its editor is gone, so nothing typed from here on
+    // (a key, a second Enter) can send the text before the caret alone over both. What it sent is
+    // kept until the room answers (Closing): a lease that ends first writes both halves again.
+    // Once the room let the lease go, the text after the caret opens on its own lines; with
+    // nothing after the caret, the new block is an insert point below.
     const tail = next ? deckBlockLines(next, o.ctx, o.env) : [];
-    if (tail === null || this.linesNow(o, [keep, ...(next ? [next] : [])]) === null) {
+    const blocks = tail && tail.length > 0 && next ? [keep, next] : [keep];
+    if (tail === null || this.linesNow(o, blocks) === null) {
       // Nothing changes: the block stays as typed.
       this.notify(DECK_WORDS.unsavable);
       return;
     }
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    const sent = tail.length > 0 && next ? this.send([keep, next]) : this.send([keep]);
     // Not sent: the block stays as it was (or as the room has it, after a refusal).
-    if (!sent) return;
-    rich.setModel(keep);
-    const n = o.n;
-    const model = next ?? para();
-    const go = () => {
-      const mine = this.backend.mine;
-      if (!mine || this.open !== o) return;
-      const ctx = o.ctx;
-      const env = o.env;
-      const end = mine.end - (tail.length > 0 && o.pad.after ? 1 : 0);
-      const range =
-        tail.length > 0 ? { start: end - tail.length, end } : { start: mine.end, end: mine.end };
-      this.close(true);
-      this.request({
-        range,
-        focus: "start",
-        open: {
-          kind: "block",
-          n,
-          ctx,
-          env,
-          pad: tail.length > 0 ? { before: false, after: false } : this.padAt(range.start),
-          form: notesFormOf(undefined),
-          models: [model],
-        },
-      });
+    if (!this.send(blocks)) return;
+    const mine = this.backend.mine;
+    if (!mine || this.open !== o) return;
+    const snap = this.snapOf(o, blocks);
+    this.discardOpen();
+    this.closing = {
+      lease: mine.id,
+      snap,
+      start: mine.start,
+      end: mine.end,
+      split: { tail: tail.length, model: next ?? para() },
     };
-    if (this.backend.ackedText === o.sent) go();
-    else this.afterAck = go;
+    this.hooks.redraw();
+    // A local deck lets go at once, and the next block opens before this returns (changed).
+    this.backend.release();
+    this.hooks.status();
+  }
+
+  /** What the open place holds now (or `blocks` in it, a split's), to keep it (Snap). */
+  private snapOf(o: Open, blocks?: RichBlock[]): Snap {
+    const b = this.backend;
+    const mine = b.mine;
+    const { kind, n, ctx, env, pad, form } = o;
+    return {
+      kind,
+      n,
+      ctx,
+      env,
+      pad,
+      form,
+      models: blocks ?? o.editors.map((r) => r.model),
+      typed: this.linesNow(o, blocks),
+      unsent: this.timer !== null || this.stuck || (o.wrote === true && b.ackedText !== o.sent),
+      sent: o.sent,
+      start: mine?.start ?? o.start,
+      around: mine ? this.aroundOf(mine) : o.around,
+      ...(o.rescue ? { rescue: o.rescue } : {}),
+    };
+  }
+
+  /** A split's second block, once the room let the first one's lease go: on its own lines. */
+  private openTail(c: Closing): void {
+    const sp = c.split;
+    if (!sp || !this.editing || this.open || this.want || this.backend.mine) return;
+    const end = c.end - (sp.tail > 0 && c.snap.pad.after ? 1 : 0);
+    const range = sp.tail > 0 ? { start: end - sp.tail, end } : { start: c.end, end: c.end };
+    this.request({
+      range,
+      focus: "start",
+      open: {
+        kind: "block",
+        n: c.snap.n,
+        ctx: c.snap.ctx,
+        env: c.snap.env,
+        pad: sp.tail > 0 ? { before: false, after: false } : this.padAt(range.start),
+        form: notesFormOf(undefined),
+        models: [sp.model],
+      },
+    });
   }
 
   private tabOut(rich: RichBlockEditor, back: boolean): void {
@@ -1364,10 +1621,17 @@ export class SlidesEditor {
       // The text cannot be written as typed: it stays open so it is not lost.
       return;
     }
+    const mine = this.backend.mine;
+    const snap = this.snapOf(o);
     this.open = null;
-    this.afterAck = null;
     for (const r of o.editors) r.destroy();
-    if (release && this.backend.mine) this.backend.release();
+    if (snap.rescue && !snap.unsent) this.dropRescue(snap.rescue);
+    if (release && mine) {
+      // Its last edit has no answer yet: kept until the room's, which comes before the release's
+      // (Closing), so a lease that ends first writes it again.
+      if (snap.unsent) this.closing = { lease: mine.id, snap, start: mine.start, end: mine.end };
+      this.backend.release();
+    }
     const n = o.n;
     this.hooks.redraw();
     if (refocus) this.focusables(n)[0]?.focus();
@@ -1377,18 +1641,41 @@ export class SlidesEditor {
   // ---------- the room's answers ----------
 
   changed(): void {
-    // Kept typing the room acknowledged is in the draft: the place is an ordinary one again.
+    const b = this.backend;
+    if (this.offered.length > 0 && b.ready && b.settled) {
+      const items = this.offered;
+      this.offered = [];
+      this.offerRescue(items);
+    }
+    // Kept typing the room acknowledged is in the draft: the place is an ordinary one again, and
+    // its rescue item is written.
     const o = this.open;
-    if (o?.kept && o.wrote && this.timer === null && this.backend.ackedText === o.sent) {
-      delete o.kept;
+    if (o?.wrote && this.timer === null && !this.stuck && b.ackedText === o.sent) {
+      if (o.kept) delete o.kept;
+      if (o.rescue) {
+        this.dropRescue(o.rescue);
+        delete o.rescue;
+      }
+    }
+    const c = this.closing;
+    if (c && b.mine?.id === c.lease) {
+      // A closed place's lease moves with each op (its own edit's answer among them).
+      c.start = b.mine.start;
+      c.end = b.mine.end;
+      if (c.snap.unsent && b.ackedText === c.snap.sent) c.snap.unsent = false;
+      if (!c.snap.unsent && c.snap.rescue) {
+        this.dropRescue(c.snap.rescue);
+        delete c.snap.rescue;
+      }
+    } else if (c) {
+      // The room let it go, which it answers after the edit sent before the release: what the
+      // place sent is in the draft.
+      this.closing = null;
+      if (c.snap.rescue) this.dropRescue(c.snap.rescue);
+      this.openTail(c);
     }
     if (!this.retake) this.nextKept();
     if (this.retake) this.tryRetake();
-    if (this.afterAck && this.backend.ackedText === this.open?.sent) {
-      const run = this.afterAck;
-      this.afterAck = null;
-      run();
-    }
   }
 
   /** The room's status changed (a review froze or ended): kept typing that waited goes in. */
@@ -1425,17 +1712,34 @@ export class SlidesEditor {
   }
 
   lost(reason: LeaseLoss): void {
-    const o = this.open;
-    if (!o) return;
-    // What was typed, read while the editors are there: null when it cannot be written as typed.
-    const typed = this.linesNow(o);
-    // In the debounce, not writable as typed, or sent with no acknowledgement before the lease
-    // went (the room may never have taken it): a copy at worst, never a loss.
-    const unsent =
-      this.timer !== null || this.stuck || (o.wrote === true && this.backend.ackedText !== o.sent);
-    const models = o.editors.map((r) => r.model);
-    this.discardOpen();
+    const open = this.open;
+    const closing = this.closing;
+    let o: Snap;
+    if (open) {
+      // What was typed, read while the editors are there (typed is null when it cannot be written
+      // as typed), and whether the room may not have it: in the debounce, not writable as typed,
+      // or sent with no acknowledgement before the lease went. A copy at worst, never a loss.
+      o = this.snapOf(open);
+      this.discardOpen();
+    } else if (closing) {
+      // A place closed (or split by Enter) whose last edit had no answer when its lease went: it
+      // is written again, and closed once it is, since the person had left it.
+      this.closing = null;
+      if (!closing.snap.unsent) {
+        if (closing.snap.rescue) this.dropRescue(closing.snap.rescue);
+        return;
+      }
+      o = closing.snap;
+    } else return;
+    const { typed, unsent, models } = o;
+    const after = open ? {} : { closeAfter: true as const };
     const b = this.backend;
+    // Typing kept earlier that still waits for its place is never dropped for this one's: it goes
+    // in as a new block near it, after.
+    if (this.retake?.want.resend) {
+      this.fromStore.push(this.retake.want);
+      this.retake = null;
+    }
     if (reason === "reconnect" || reason === "rebased") {
       // The room merged a version or the socket dropped: take the block again once the draft is
       // back, and send what was typed since. It is looked for by each text the room may hold of
@@ -1458,6 +1762,8 @@ export class SlidesEditor {
       const mark = alts[0];
       if (keep && mark) {
         const { kind, n, ctx, env, pad, form } = o;
+        // Typing the room may not have is kept in the store too, until it is written.
+        const rescue = unsent ? this.keepRescue(o.rescue, models, o, o.start) : o.rescue;
         this.retake = {
           near: o.start,
           after: reason === "rebased" ? b.rev : null,
@@ -1469,10 +1775,12 @@ export class SlidesEditor {
             focus: "end",
             open: { kind, n, ctx, env, pad, form, models },
             resend: true,
+            ...after,
+            ...(rescue ? { rescue } : {}),
           },
         };
         this.tryRetake();
-      }
+      } else if (o.rescue) this.dropRescue(o.rescue, "gone");
     } else if (unsent && models.some((m) => hasText(m, o.env))) {
       // Taken over, or the draft closed under it (a review, a reset), with typing the room does
       // not have yet (in the debounce, or not writable as typed): never dropped with the block.
@@ -1482,6 +1790,8 @@ export class SlidesEditor {
       const keptModels = typed === null ? models.map(withoutMarks) : models;
       const { kind, n, ctx, env, pad, form } = o;
       const open = { kind, n, ctx, env, pad, form, models: keptModels };
+      const rescue = this.keepRescue(o.rescue, keptModels, o, o.start);
+      const extra = { ...after, ...(rescue ? { rescue } : {}) };
       // What the room holds of the block: its last acknowledged text (the text at the grant when
       // none was).
       const held = b.ackedText ?? o.sent ?? "";
@@ -1493,12 +1803,11 @@ export class SlidesEditor {
           mark: markOf(b.lines, { start: at, end: at }),
           tries: 0,
           focus: "end",
-          open:
-            kind === "notes"
-              ? open
-              : { ...open, pad: this.padAt(at), models: keptModels.slice(0, 1) },
+          // Every block it holds (a split's two halves too).
+          open: kind === "notes" ? open : { ...open, pad: this.padAt(at) },
           resend: true,
           ...(kind === "notes" ? { append: true as const } : {}),
+          ...extra,
         };
         this.retake = { near: at, after: null, want: w };
         this.notify(DECK_WORDS.takenKept);
@@ -1517,11 +1826,15 @@ export class SlidesEditor {
             focus: "end",
             open,
             resend: true,
+            ...extra,
           },
         };
         this.notify(DECK_WORDS.closedKept);
       }
       this.tryRetake();
+    } else if (o.rescue) {
+      // Nothing the room does not hold: what was kept of it is written.
+      this.dropRescue(o.rescue);
     }
     this.hooks.redraw();
     this.hooks.status();
@@ -1561,12 +1874,19 @@ export class SlidesEditor {
     }
     this.retake = null;
     // The same lines may sit on another slide too (two slides titled "Agenda"): the place
-    // nearest where the block was is the one taken.
+    // nearest where the block was is the one taken. Each text is found only as whole blocks, and
+    // of two found as near, the longer is taken: the text sent last can be the first lines of
+    // the block the room still holds (its last lines deleted, the edit never landed), which is
+    // then leased whole and written again, never leased short.
     let at = -1;
     let mark = w.mark;
+    const edges = memo(() => blockEdges(lines));
     for (const m of w.alts ?? [w.mark]) {
-      const p = markAt(lines, m, r.near);
-      if (p >= 0 && (at < 0 || Math.abs(p - r.near) < Math.abs(at - r.near))) {
+      const p = markAt(lines, m, r.near, edges);
+      if (p < 0) continue;
+      const d = Math.abs(p - r.near);
+      const was = Math.abs(at - r.near);
+      if (at < 0 || d < was || (d === was && m.text.length > mark.text.length)) {
         at = p;
         mark = m;
       }
@@ -1642,6 +1962,8 @@ export class SlidesEditor {
       },
       resend: true,
       ...(w.fallbacks !== undefined ? { fallbacks: w.fallbacks } : {}),
+      ...(w.rescue ? { rescue: w.rescue } : {}),
+      ...(w.closeAfter ? { closeAfter: true as const } : {}),
     };
     this.want = want;
     if (!b.lease(range)) {
@@ -1692,7 +2014,8 @@ export class SlidesEditor {
           n: at.n,
           ctx: { notes: false, settings: afterBareOpen(lines, at.n) },
           pad: this.padAt(at.at),
-          models: w.open.models.slice(0, 1),
+          // Every block it holds (a split's two halves too), written there together.
+          models: w.open.models,
         },
       },
     };
@@ -1729,7 +2052,10 @@ export class SlidesEditor {
    * unsent changes (the page asks before it is left). Tried again after a reconnect.
    */
   private park(w: Want): void {
-    if (!w.open.models.some((m) => hasText(m, w.open.env))) return;
+    if (!w.raw && !w.open.models.some((m) => hasText(m, w.open.env))) {
+      if (w.rescue) this.dropRescue(w.rescue, "gone");
+      return;
+    }
     this.parked.push({ ...w, tries: 0, fallbacks: 0, alts: undefined, append: undefined });
     this.showKept();
     this.hooks.status();
@@ -1742,13 +2068,16 @@ export class SlidesEditor {
     const mine = this.backend.mine;
     const at = mine?.start ?? o.start;
     const { kind, n, ctx, env, pad, form } = o;
+    const models = o.editors.map((r) => r.model);
+    const rescue = this.keepRescue(o.rescue, models, o, at);
     const w: Want = {
       range: { start: at, end: at },
       mark: markOf(this.backend.lines, { start: at, end: at }),
       tries: 0,
       focus: "end",
-      open: { kind, n, ctx, env, pad, form, models: o.editors.map((r) => r.model) },
+      open: { kind, n, ctx, env, pad, form, models },
       resend: true,
+      ...(rescue ? { rescue } : {}),
     };
     this.discardOpen();
     if (mine) this.backend.release();
@@ -1756,13 +2085,24 @@ export class SlidesEditor {
     this.hooks.redraw();
   }
 
-  /** After a reconnect, the next parked text is tried again (as a new block nearby). */
+  /**
+   * After a reconnect, the next parked text is tried again (as a new block nearby); after a reload,
+   * the next text the app kept is written back (offerRescue).
+   */
   private nextKept(): void {
     const b = this.backend;
-    if (this.toRetry.length === 0 || this.want || this.open || b.mine) return;
-    if (!b.connected || !b.ready || !b.settled) return;
-    const w = this.toRetry.shift() as Want;
+    if (this.toRetry.length + this.fromStore.length === 0 || this.want || this.open || b.mine) {
+      return;
+    }
+    if (!b.connected || !b.ready || !b.settled || b.conflictVersion !== null) return;
+    if (b.you?.right !== "write") return;
+    const w = (this.toRetry.shift() ?? this.fromStore.shift()) as Want;
     this.updateKept();
+    if (w.open.models.length === 0) {
+      // Not readable as blocks: kept to copy.
+      this.park(w);
+      return;
+    }
     this.anew({ ...w, fallbacks: 0 });
   }
 
@@ -1801,7 +2141,6 @@ export class SlidesEditor {
     this.timer = null;
     this.setStuck(false);
     this.open = null;
-    this.afterAck = null;
     for (const r of o.editors) r.destroy();
   }
 
@@ -1809,10 +2148,168 @@ export class SlidesEditor {
   clearKept(): void {
     this.parked = [];
     this.toRetry = [];
+    this.fromStore = [];
     if (this.retake?.want.resend) this.retake = null;
     if (this.want?.resend) this.want = null;
+    if (this.open?.rescue) delete this.open.rescue;
+    if (this.closing?.snap.rescue) delete this.closing.snap.rescue;
+    const ids = [...this.rescues.keys()];
+    this.rescues.clear();
+    if (ids.length > 0) this.report([], [], ids);
     this.updateKept();
     this.hooks.status();
+  }
+
+  // ---------- the rescue store ----------
+
+  /**
+   * The rescue item for typing kept in the place `where` describes (made, or brought up to date):
+   * its text without its marks, whether it was typed on a slide or in its notes, the raw slide and
+   * that slide's first line of text, and `near`, the line it belongs at. Rooms only: a solo tab's
+   * typing is in the app's kept copy. Returns its id (or `id` as it was, when nothing is kept).
+   */
+  private keepRescue(
+    id: string | undefined,
+    models: readonly RichBlock[],
+    where: { kind: Open["kind"]; n: number; env: MdEnv },
+    near?: number,
+  ): string | undefined {
+    if (!this.backend.keep) return id;
+    const text = plainText(models, where.env);
+    if (text === "") return id;
+    const rid = id ?? `d${Date.now().toString(36)}${++this.rescueN}`;
+    const was = this.rescues.get(rid);
+    const lines = this.backend.lines;
+    const slide = deckLayout(lines).slides.find((s) => s.n === where.n);
+    const r: DeckRescue = {
+      id: rid,
+      text,
+      near: Math.max(0, near ?? was?.near ?? slide?.start ?? 0),
+      part: where.kind === "notes" ? "notes" : "slide",
+      slide: where.n,
+      ref: slide ? slideRef(lines, slide) : (was?.ref ?? ""),
+      reported: was?.reported ?? null,
+      kept: was?.kept ?? null,
+    };
+    this.rescues.set(rid, r);
+    if (
+      !was ||
+      was.text !== r.text ||
+      was.near !== r.near ||
+      was.part !== r.part ||
+      was.slide !== r.slide ||
+      was.ref !== r.ref
+    ) {
+      this.report([r], [], []);
+    }
+    return rid;
+  }
+
+  /** Item `id` leaves the store: written (the room acknowledged its write) or gone (on purpose). */
+  private dropRescue(id: string, why: "written" | "gone" = "written"): void {
+    if (!this.rescues.delete(id)) return;
+    this.report([], why === "written" ? [id] : [], why === "gone" ? [id] : []);
+    this.updateKept();
+    this.hooks.status();
+  }
+
+  /** Tells the app what changed in the store (it merges; see DeckRescueReport). */
+  private report(upsert: DeckRescue[], written: string[], gone: string[]): void {
+    const n = ++this.reportN;
+    for (const r of upsert) r.reported = n;
+    this.hooks.rescue?.({
+      upsert: upsert.map(({ id, text, near, part, slide, ref }) => ({
+        id,
+        text,
+        near,
+        ...(part ? { part } : {}),
+        ...(slide ? { slide } : {}),
+        ...(ref !== undefined ? { ref } : {}),
+      })),
+      written,
+      gone,
+      n,
+    });
+  }
+
+  /**
+   * The app's answer to report `n` and the ones before it: the ids its store holds. An item it
+   * was sent but does not hold (over its limits) is on this page only, which the page says, with
+   * Copy.
+   */
+  rescueStored(ids: readonly string[], n: number): void {
+    const held = new Set(ids);
+    for (const r of this.rescues.values()) {
+      if (held.has(r.id)) r.kept = true;
+      else if (r.reported !== null && r.reported <= n) r.kept = false;
+    }
+    this.updateKept();
+  }
+
+  /**
+   * Items the app kept from before a reload: each one this page does not know is written back into
+   * the part it was typed in, one at a time, and closed once written: a slide's as a new block at
+   * the free place nearest where it was on its slide, notes after that slide's notes (never on a
+   * slide; kept to copy when the slide has no notes now). The slide is found by its first line of
+   * text then, else by its number. What cannot be placed is kept to copy.
+   */
+  offerRescue(items: readonly RescueItem[]): void {
+    if (!this.backend.keep) return;
+    if (!this.backend.ready || !this.backend.settled) {
+      // Placed once the room's draft is here (changed).
+      this.offered.push(...items);
+      return;
+    }
+    let added = false;
+    for (const it of items) {
+      if (this.rescues.has(it.id)) continue;
+      this.rescues.set(it.id, { ...it, reported: null, kept: true });
+      added = true;
+      const notes = it.part === "notes";
+      const lines = this.backend.lines;
+      const slides = deckLayout(lines).slides;
+      const byRef =
+        it.ref !== undefined && it.ref !== ""
+          ? slides
+              .filter((s) => slideRef(lines, s) === it.ref)
+              .sort((a, b) => Math.abs(a.start - it.near) - Math.abs(b.start - it.near))[0]
+          : undefined;
+      const slide = byRef ?? slides.find((s) => s.n === it.slide);
+      const n = slide?.n ?? it.slide ?? 1;
+      const models = modelsOf(it.text);
+      // Near its place, on its slide as it is now.
+      const near = slide ? Math.min(slide.end, Math.max(slide.start, it.near)) : it.near;
+      const w: Want = {
+        range: { start: slide ? slide.start : near, end: slide ? slide.start : near },
+        mark: { text: "", above: null, below: null },
+        tries: 0,
+        focus: "end",
+        open: {
+          kind: notes ? "notes" : "block",
+          n,
+          ctx: { notes, settings: afterBareOpen(lines, n) },
+          env: docEnv(it.text),
+          pad: { before: false, after: false },
+          form: notesFormOf(undefined),
+          models: models ?? [],
+        },
+        resend: true,
+        rescue: it.id,
+        closeAfter: true,
+        ...(models ? {} : { raw: it.text }),
+      };
+      if (!slide && (notes || !models)) {
+        // Its slide is gone: notes never go onto another slide's text; kept to copy.
+        this.park(w);
+        continue;
+      }
+      if (!notes) w.range = { start: near, end: near };
+      this.fromStore.push(w);
+    }
+    if (added) {
+      this.hooks.status();
+      this.nextKept();
+    }
   }
 
   private showKept(): void {
@@ -1831,18 +2328,26 @@ export class SlidesEditor {
     if (!root.contains(this.keptBar)) root.append(this.keptBar);
   }
 
-  /** Shows the notice while anything is kept on the page, and takes it away once nothing is. */
+  /**
+   * Shows the notice while anything is kept on the page, or kept only here (the app's store did not
+   * take it: over its limits), and takes it away once nothing is.
+   */
   private updateKept(): void {
-    if (this.parked.length + this.toRetry.length > 0) this.showKept();
-    else this.keptBar?.remove();
+    const only = [...this.rescues.values()].some((r) => r.kept === false);
+    if (this.parked.length + this.toRetry.length > 0 || only) {
+      this.showKept();
+      const text = this.keptBar?.querySelector(".plinth-slides__kept-text");
+      if (text) text.textContent = only ? DECK_WORDS.frameOnly : DECK_WORDS.stuckKept;
+    } else this.keptBar?.remove();
   }
 
   /** The kept texts, as Markdown without marks, one block per paragraph. */
   keptText(): string {
-    return [...this.parked, ...this.toRetry]
-      .flatMap((w) => w.open.models.map((m) => verifyBlock(withoutMarks(m), TOOLS, w.open.env)))
-      .filter((t): t is string => t !== null && t.trim() !== "")
-      .join("\n\n");
+    const store = [...this.rescues.values()].map((r) => r.text);
+    const others = [...this.parked, ...this.toRetry, ...this.fromStore]
+      .filter((w) => !(w.rescue && this.rescues.has(w.rescue)))
+      .map((w) => w.raw ?? plainText(w.open.models, w.open.env));
+    return [...store, ...others].filter((t) => t.trim() !== "").join("\n\n");
   }
 
   /** Puts every kept text on the clipboard, for the person to paste where they want it. */
@@ -1899,6 +2404,27 @@ export class SlidesEditor {
     }
     if (this.open?.kept) {
       this.parkOpen();
+      this.notify(reason);
+      return;
+    }
+    const c = this.closing;
+    if (!this.open && c?.snap.unsent) {
+      // The last edit of a place closed meanwhile was refused: what it held is kept to copy (and
+      // tried again after a reconnect), never put back as the room has it.
+      this.closing = null;
+      const s = c.snap;
+      const models = s.typed === null ? s.models.map(withoutMarks) : s.models;
+      const rescue = this.keepRescue(s.rescue, models, s, s.start);
+      this.park({
+        range: { start: s.start, end: s.start },
+        mark: markOf(this.backend.lines, { start: s.start, end: s.start }),
+        tries: 0,
+        focus: "end",
+        open: { kind: s.kind, n: s.n, ctx: s.ctx, env: s.env, pad: s.pad, form: s.form, models },
+        resend: true,
+        closeAfter: true,
+        ...(rescue ? { rescue } : {}),
+      });
       this.notify(reason);
       return;
     }

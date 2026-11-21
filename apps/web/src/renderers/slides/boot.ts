@@ -49,7 +49,13 @@ import { bringIntoPane, CHANGED_ATTR, DraftReview, type ReviewPane } from "../co
 import { reconcile } from "../doc/blocks.ts";
 import { buildDeck, type SlideView } from "./deck.ts";
 import { el } from "./dom.ts";
-import { DECK_WORDS, type DeckBackend, LocalDeck, SlidesEditor } from "./edit.ts";
+import {
+  DECK_WORDS,
+  type DeckBackend,
+  type DeckRescueReport,
+  LocalDeck,
+  SlidesEditor,
+} from "./edit.ts";
 import { buildEditDeck, type EditSlideView } from "./editView.ts";
 import { collectImages, saveBlob, writerLoader } from "./export.ts";
 import { buildExportModel, domGeometry, type Geometry, pptxFileName } from "./exportModel.ts";
@@ -666,6 +672,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     const hooks = {
       save: () => post({ type: "save" }),
       status,
+      // The rescue store: the app keeps a copy in its own storage (never this origin's).
+      rescue: (r: DeckRescueReport) => post({ type: "rescue", ...r }),
       leave: () => {
         if (!session.isOpen) post({ type: "leave" });
       },
@@ -810,6 +818,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         setEditing(m.on);
         if (m.on && m.focus === "first") editor?.focusFirst();
         status();
+      } else if (m.type === "rescue") {
+        // What the app kept from an earlier frame (a reload), and its answers to this one's reports.
+        if (m.items.length > 0) editor?.offerRescue(m.items);
+        if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
       } else if (m.type === "collect" && local) {
         editor?.flush();
         // Typing that cannot be written as typed is not in the deck: the app publishes nothing, and
