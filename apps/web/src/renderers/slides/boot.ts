@@ -261,8 +261,16 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   controls.addEventListener("focusin", activity);
 
   const fitView = (v: SlideView) => {
-    fitSlide(v.el, v.body, measure);
+    const fit = fitSlide(v.el, v.body, measure);
     fitted.add(v);
+    // While editing, a slide whose text had to shrink says so with a quiet badge (not an error).
+    let badge = v.frame.querySelector<HTMLElement>(".plinth-slides__dense");
+    if (editing && fit < 1) {
+      if (!badge) {
+        badge = el(doc, "p", "plinth-slides__dense", DECK_WORDS.dense);
+        v.frame.insertBefore(badge, v.frame.querySelector(".plinth-slides__canvas"));
+      }
+    } else badge?.remove();
   };
   // An image that loads late changes what fits.
   const watched = new WeakSet<SlideView>();
@@ -400,8 +408,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     // whatever asks for another view. Presenter view waits until editing ends.
     if (fixedOverview || next === mode) return;
     if (editing && next === "presenter") return;
+    const was = mode;
     mode = next;
     render();
+    // Leaving presenter view: the draft that waited is shown now.
+    if (was === "presenter") redraw();
     if (mode === "overview") revealSlide(doc, deck.current);
     root?.focus({ preventScroll: true });
     reportView();
@@ -518,10 +529,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   let live: ReturnType<typeof startLive> | null = null;
 
-  /**
-   * Draws the deck again from the draft: edit mode's raw slides from the editor's lines, else the
-   * slides the draft shows (the published deck while the draft shows none, or nothing is loaded).
-   */
+  /** Draws the deck again: edit mode's raw slides from the editor's lines, else the draft's. */
   const redraw = () => {
     const state = live?.state();
     if (editing && state?.editor && state.lines) {
@@ -546,10 +554,16 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       state.editor.decorate(built.views, layout);
       return;
     }
-    const text = state?.lines ? joinLines(state.lines) : payload.text;
+    // Outside edit mode, in room mode, the deck follows the draft's visible slides, as a doc's
+    // frame follows its draft (the published deck while the draft shows none), except in
+    // presenter view: a version published while presenting waits until it ends (the app holds
+    // the version too), and then the deck catches up.
+    // An audience window shows what its presenter window shows, never the draft.
+    if ((mode === "presenter" || follow?.detached) && !drawn.raw) return;
+    const draft = state?.lines ? joinLines(state.lines) : null;
+    const text = draft !== null && parseDeck(draft).slides.length > 0 ? draft : payload.text;
     if (!drawn.raw && text === drawn.text) return;
-    let shown = parseDeck(text);
-    if (shown.slides.length === 0) shown = parseDeck(payload.text);
+    const shown = parseDeck(text);
     const current = drawn.raw ? Math.max(1, deck.current - rawOffset) : deck.current;
     drawn = { text, raw: false };
     setViews(buildDeck(doc, shown), shown.settings, current);
@@ -660,7 +674,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     });
 
     const goSolo = () => {
-      local ??= new LocalDeck(payload?.text ?? "", events);
+      // The deck's live form, as the room holds it: CRLF read as LF.
+      local ??= new LocalDeck(RULES?.toLive(payload?.text ?? "") ?? "", events);
       if (editor) editor.setBackend(local);
       else editor = new SlidesEditor(win, local, hooks);
     };

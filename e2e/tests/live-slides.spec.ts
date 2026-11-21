@@ -178,15 +178,19 @@ test("edit a slide title and its notes in place, publish v2; Compare lists it; r
     ),
   );
 
-  // The notes stay notes when presenting.
-  await page
-    .getByRole("button", { name: "Edit", exact: true })
-    .isVisible()
-    .then(async (v) => {
-      if (v) await page.getByRole("button", { name: "Edit", exact: true }).click();
-      else await strip(page).getByRole("button", { name: "Done" }).click();
-    });
+  // Leaving edit mode shows v2, and its notes stay notes.
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) await toggle.click();
+  else await strip(page).getByRole("button", { name: "Done" }).click();
   await expect(strip(page)).toHaveCount(0);
+  await expect(frameOf(page).locator(".plinth-slides[data-editing]")).toHaveCount(0);
+  await expect(
+    frameOf(page).locator('.plinth-slides__frame[data-n="1"] .plinth-slides__slide h1'),
+  ).toHaveText("Q4 review and Q1 plan", { timeout: 10_000 });
+  await expect(frameOf(page).locator('.plinth-slides__frame[data-n="1"] h1')).toHaveCount(1);
+  await expect(frameOf(page).locator(".plinth-slides__handout").first()).toContainText(
+    "Welcome everyone. Thanks for coming.",
+  );
 
   await page.goto(`/a/${s.slug}/compare?from=1&to=2`);
   await expect(page.getByRole("region", { name: "Changes" })).toContainText("Title changed");

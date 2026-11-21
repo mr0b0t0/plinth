@@ -1063,7 +1063,8 @@ body {
   outline: none;
 }
 
-.plinth-slides__hidden {
+.plinth-slides__hidden,
+.plinth-slides__dense {
   margin: 0;
   font-size: 13px;
   color: var(--slides-muted);
@@ -1290,4 +1291,12 @@ body {
   .plinth-slides__canvas {
   outline: 3px solid var(--review-live, var(--slides-live));
   outline-offset: 2px;
+}
+
+/* A changed slide is outlined, not tinted like a doc's block. */
+.plinth-review__body
+  .plinth-slides.plinth-review__deck[data-mode]
+  .plinth-slides__frame[data-review-changed] {
+  background-image: none;
+  box-shadow: none;
 }

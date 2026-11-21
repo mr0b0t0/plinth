@@ -79,6 +79,7 @@ export const DECK_WORDS = {
   held: (who: string, n: number) => `${who} is editing slide ${n}. Try again when they finish.`,
   heldHere: (who: string) => `${who} is editing this. Try again when they finish.`,
   notConnected: "Not connected. Try again in a moment.",
+  notKept: "The deck changed while you were offline, so the block you were typing in was closed.",
   unsavable: "This text can't be saved as typed. Change it to continue.",
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
@@ -246,6 +247,8 @@ interface Want {
   emptyNow?: true;
   /** Its text starts selected, so typing replaces it (New's first title). */
   select?: true;
+  /** Taken again after a reconnect: what was typed is sent once it is open. */
+  resend?: true;
 }
 
 const para = (): RichBlock => ({ t: "paragraph", c: [] });
@@ -352,6 +355,12 @@ export class SlidesEditor {
   /** A settings op sent, waiting for its answer. */
   private settingsPending = false;
   private readonly decorated = new WeakSet<Element>();
+  /** What each slide's notes panel was last drawn from (drawNotes). */
+  private readonly notesDrawn = new WeakMap<EditSlideView, string>();
+
+  private fileBase(): number | null {
+    return this.hooks.fileVersion();
+  }
 
   constructor(
     private readonly win: Window,
@@ -516,6 +525,7 @@ export class SlidesEditor {
     const o = this.open;
     const panel = el(this.doc, "section", "plinth-slides__notepad");
     if (o?.kind === "notes" && o.n === v.n) {
+      this.notesDrawn.delete(v);
       if (host.contains(o.host)) return;
       panel.setAttribute("aria-label", DECK_WORDS.notes(v.shownN ?? v.n));
       panel.dataset.plinthControl = "";
@@ -524,9 +534,18 @@ export class SlidesEditor {
       this.refocus(o);
       return;
     }
+    const range = this.notesRange(v);
+    // Drawn again only when the notes, or what is held, changed: reading notes back is not free,
+    // and every edit anywhere in the deck draws the deck again.
+    const key = JSON.stringify([
+      v.shownN,
+      range ? this.backend.lines.slice(range.start, range.end) : null,
+      this.fileBase(),
+    ]);
+    if (this.notesDrawn.get(v) === key && host.firstChild) return;
+    this.notesDrawn.set(v, key);
     panel.setAttribute("aria-label", DECK_WORDS.notes(v.shownN ?? v.n));
     panel.dataset.plinthControl = "";
-    const range = this.notesRange(v);
     panel.append(this.notesHead(v, range !== null));
     if (!range) {
       const add = el(this.doc, "button", "plinth-slides__notepad-add", DECK_WORDS.addNotes);
@@ -789,6 +808,7 @@ export class SlidesEditor {
     const first = o.editors[w.focus === "start" ? 0 : o.editors.length - 1];
     first?.focus(w.focus);
     if (w.select) first?.selectText();
+    if (w.resend) this.schedule();
     this.hooks.status();
   }
 
@@ -1106,6 +1126,7 @@ export class SlidesEditor {
   // ---------- the room's answers ----------
 
   changed(): void {
+    if (this.retake) this.tryRetake();
     if (this.afterAck && this.backend.ackedText === this.open?.sent) {
       const run = this.afterAck;
       this.afterAck = null;
@@ -1131,25 +1152,49 @@ export class SlidesEditor {
   lost(reason: LeaseLoss): void {
     const o = this.open;
     if (!o) return;
-    if (reason === "reconnect" || reason === "rebased") {
-      // The room reloaded: take the same lines again and resend what was typed.
-      const sent = o.sent ?? "";
-      const at = locate(this.backend.lines, sent);
-      if (at >= 0) {
-        this.want = {
-          range: { start: at, end: at + (sent === "" ? 0 : sent.split("\n").length) },
-          focus: "end",
-          open: { ...o, models: o.editors.map((r) => r.model) },
-        };
-        this.open = null;
-        if (this.backend.lease(this.want.range)) return;
-        this.want = null;
-      }
-    }
     this.open = null;
+    const models = o.editors.map((r) => r.model);
     for (const r of o.editors) r.destroy();
+    if ((reason === "reconnect" || reason === "rebased") && o.sent) {
+      // The room reloaded or the socket dropped: take the same lines again once the draft is
+      // back, and send what was typed since.
+      const { kind, n, ctx, env, pad, form } = o;
+      this.retake = {
+        sent: o.sent,
+        want: {
+          range: { start: 0, end: 0 },
+          focus: "end",
+          open: { kind, n, ctx, env, pad, form, models },
+        },
+      };
+      this.tryRetake();
+    }
     this.hooks.redraw();
     this.hooks.status();
+  }
+
+  /** A block to take again after a reconnect: the room's text it had, and how to open it. */
+  private retake: { sent: string; want: Want } | null = null;
+
+  private tryRetake(): void {
+    const r = this.retake;
+    if (!r || this.want || this.open || !this.backend.connected || !this.backend.ready) return;
+    this.retake = null;
+    const at = locate(this.backend.lines, r.sent);
+    if (at < 0) {
+      this.notify(DECK_WORDS.notKept);
+      return;
+    }
+    const want: Want = {
+      ...r.want,
+      range: { start: at, end: at + r.sent.split("\n").length },
+      resend: true,
+    };
+    this.want = want;
+    if (!this.backend.lease(want.range)) {
+      this.want = null;
+      this.retake = r;
+    }
   }
 
   /** The socket closed: an asked-for lease is never answered. */

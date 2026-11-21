@@ -2,6 +2,7 @@
 // Audience window while presenter view is on) and, in the ⋯ menu, the print item (the frame
 // prints the handout with notes from presenter view) and Download .pptx.
 import { describe, expect, it, vi } from "vitest";
+import { DECK_SETTINGS_LABEL, unpublishableReason } from "./deckItems.ts";
 import type { StageContext } from "./stageItems.tsx";
 import { presentEntries, TYPE_MENU_ITEMS } from "./stageItems.tsx";
 import type { Presentation, PresentMode } from "./usePresentation.ts";
@@ -74,5 +75,46 @@ describe("the Present control", () => {
 
   it("offers full screen only in an audience window", () => {
     expect(labels(presentEntries(presentation("audience")))).toEqual(["Full screen"]);
+  });
+});
+
+describe("a deck being edited on the page", () => {
+  it("offers Deck settings…, which asks the frame at its exact origin to open them", () => {
+    const post = vi.fn();
+    const c = {
+      ...context("off"),
+      editing: true,
+      live: { mode: "room" },
+      frame: { contentWindow: { postMessage: post } },
+      config: { content_isolation: "origin", content_path_fallback: false },
+      contentOrigin: "http://art.content.localhost:8787",
+    } as unknown as StageContext;
+    const entries = deckMenu(c);
+    expect(labels(entries)).toEqual([
+      "Print or save as PDF",
+      "Download .pptx",
+      DECK_SETTINGS_LABEL,
+    ]);
+    const item = entries[2];
+    if (item && "onSelect" in item) item.onSelect?.();
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "deck_settings" }),
+      "http://art.content.localhost:8787",
+    );
+    // Never to an opaque frame: there is no editing on the page there.
+    post.mockClear();
+    const opaque = {
+      ...c,
+      config: { content_isolation: "opaque", content_path_fallback: false },
+    } as unknown as StageContext;
+    const again = deckMenu(opaque)[2];
+    if (again && "onSelect" in again) again.onSelect?.();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("says why an empty deck's Publish is off, in the deck's words", () => {
+    expect(unpublishableReason("slides")).toBe("Write something on a slide to publish");
+    expect(unpublishableReason("doc")).toBeUndefined();
+    expect(unpublishableReason("__proto__")).toBeUndefined();
   });
 });
