@@ -984,8 +984,10 @@ Every version counts, not only the current one: each is served at `/__plinth/v/<
 artifact's one origin under the same pass, so the token's version opened from History, left open
 in a tab, or framing `/` would call the people route with the reader's claim, and nothing on a
 request says which version's code made it. A person's later version or a restore does not turn the
-list back on, since versions are never deleted. Calls that are not about one artifact go
-through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
+list back on, since versions are never deleted. A bound token's `edit` does not reach `files_from_version` on `PUT
+/artifacts/:ref` (another version's files under a new source, part of a restore):
+`mayPublishWithFilesOf` admits only a signed-in person, and the token gets 403 `token_bound`.
+Calls that are not about one artifact go through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
 `start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
 `mayReadStatsSummary` refuses `GET /stats/artifacts` and `get_artifact_stats` without an id with
 `token_bound`, since the summary would list every artifact the person owns (one artifact's stats
@@ -2532,7 +2534,10 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   `PUT`), because a person's page edit never changes a file; for an ordinary Publish the base is
   the current version, as before. `files_from_version` names a version of this artifact, at most
   its current one, under the `edit` policy, and is refused together with `assets`; MCP's
-  `update_artifact` does not take it. The replaced versions stay in History, and the note names
+  `update_artifact` does not take it. Only a signed-in person may send it (`policy.ts`
+  `mayPublishWithFilesOf`): a token limited to one artifact gets 403 `token_bound` and any other
+  bearer token 403 `app_only`, so a token that may not restore cannot carry an old version's files
+  into a new version either. The replaced versions stay in History, and the note names
   them.
 - **Both choices are serialized.** "Publish your changes", "Discard your changes" (`DELETE
   live/draft` with `conflict_version`) and the strip's discard take the room's checkpoint lock before their first

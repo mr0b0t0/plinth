@@ -2815,7 +2815,7 @@
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
           },
           "files_from_version": {
-            "description": "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. Not with assets; a version that does not exist or is newer than the current one is 404",
+            "description": "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. The signed-in app only: a token limited to one artifact gets 403 token_bound, any other bearer token 403 app_only. Not with assets; a version that does not exist or is newer than the current one is 404",
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991

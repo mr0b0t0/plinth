@@ -517,6 +517,83 @@ describe("the review session", () => {
     );
   });
 
+  it("a choice before the newer version is drawn posts nothing; after the draw it names that version", async () => {
+    const c = client();
+    const { s, post, review } = session(c);
+    await s.open({ type: "review", nonce: NONCE });
+    // v7 is published while the v6 review is open; its source is slow to load.
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((r) => {
+      release = r;
+    });
+    const read = (
+      review as unknown as { setup: { fetchText: (n: number) => Promise<string | null> } }
+    ).setup;
+    const fetchText = read.fetchText;
+    read.fetchText = async (n) => {
+      if (n === 7) await slow;
+      return fetchText(n);
+    };
+    (c as { conflictVersion: number }).conflictVersion = 7;
+    s.version("conflict", 7, { was: 6 });
+    // v6 is still on screen: its choices are off, and a click posts nothing.
+    expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v6");
+    expect(button("Publish your changes")?.disabled).toBe(true);
+    expect(button("Discard your changes")?.disabled).toBe(true);
+    post.mockClear();
+    button("Publish your changes")?.click();
+    s.choose("publish");
+    s.choose("discard");
+    expect(post).not.toHaveBeenCalled();
+    // A busy or failed answer meanwhile does not turn them back on.
+    s.answer({ type: "reviewed", nonce: NONCE, result: "failed" });
+    expect(button("Publish your changes")?.disabled).toBe(true);
+    release();
+    await vi.waitFor(() => expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v7"));
+    expect(button("Publish your changes")?.disabled).toBe(false);
+    button("Publish your changes")?.click();
+    expect(post).toHaveBeenCalledWith({
+      type: "resolved",
+      nonce: NONCE,
+      outcome: "publish",
+      version: 7,
+      rev: 9,
+    });
+  });
+
+  it("solo: a new review's choices stay off until its version is drawn", async () => {
+    const { s, post, review } = session(null, MINE);
+    await s.open({ type: "review", nonce: NONCE, n: 6, base: 5, files: FILES });
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((r) => {
+      release = r;
+    });
+    const read = (
+      review as unknown as { setup: { fetchText: (n: number) => Promise<string | null> } }
+    ).setup;
+    const fetchText = read.fetchText;
+    read.fetchText = async (n) => {
+      if (n === 7) await slow;
+      return fetchText(n);
+    };
+    const NEXT = "m".repeat(24);
+    const opening = s.open({ type: "review", nonce: NEXT, n: 7, base: 5, files: FILES });
+    expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v6");
+    expect(button("Publish your changes")?.disabled).toBe(true);
+    button("Publish your changes")?.click();
+    expect(post).not.toHaveBeenCalled();
+    release();
+    await opening;
+    expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v7");
+    button("Publish your changes")?.click();
+    expect(post).toHaveBeenCalledWith({
+      type: "resolved",
+      nonce: NEXT,
+      outcome: "publish",
+      text: MINE,
+    });
+  });
+
   it("solo: opens on the version the app names, and Publish your changes sends the frame's own copy", async () => {
     const { s, post } = session(null, MINE);
     await s.open({ type: "review", nonce: NONCE, n: 6, base: 5, files: FILES });

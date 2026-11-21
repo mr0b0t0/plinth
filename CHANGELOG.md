@@ -36,7 +36,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   box around it, and a "+" shows only beside the block under the pointer or being edited; on a
   phone only the "+" above the block being edited and the one at the end show, clear of the text.
   A page Publish keeps the files of the version the changes were made from
-  (`files_from_version` on `PUT /api/v1/artifacts/:ref`). `GET /api/v1/artifacts/:ref/live/draft`
+  (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
+  get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
+  always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
   is removed, and `GET /api/v1/config` says whether editing on the page is on (`inline_editing`).
 - **A doc never starts like a web page by accident.** Typing `<html>` at the start of a block is
   kept as text, so the doc can still be published.
