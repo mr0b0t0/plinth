@@ -734,14 +734,18 @@ design:
 2. Read it with `get_design_system(id)`. It returns `css` (custom properties for light and dark),
    `font_links`, `tokens` with resolved values, `guidelines`, `components`, `files` and `install`.
    `include` and `components` trim the parts; `files` and `install` always come.
-3. Install it: pass `install.copy_files` as `copy_files` to `publish_artifact` or
-   `update_artifact` (or `start_upload`). The server copies `tokens.css`, `fonts.css`,
-   `components.css`, `tokens.json` and the font and image files they name into your artifact under
-   `install.folder` (`ds/<prefix>/`). Link `install.stylesheets` in that order, add each
-   `font_links` entry as `<link rel="stylesheet">`, and style with `var(--<prefix>-...)`. Follow
-   its guidelines and adapt its component examples. For a design, leave out the `fonts.css`,
-   `tokens.json` and font file entries (artboards cannot load them) and put the links in the
-   shared section. Pasting `css` into a `<style>` still works when you cannot copy.
+3. Install it: call `get_design_system` with `install_for` set to the type you are making
+   (`html`, `design`, `slides`...) and pass `install.copy_files` as `copy_files` to
+   `publish_artifact` or `update_artifact` (or `start_upload`), as given. The server copies
+   `tokens.css`, `fonts.css`, `components.css`, `tokens.json` and the font and image files they
+   name into your artifact under `install.folder` (`ds/<folder>/`), keeping only what that type
+   takes (a design gets no fonts or `tokens.json`). Link `install.stylesheets` in that order, add
+   each `font_links` entry as `<link rel="stylesheet">`, and style with `var(--<prefix>-...)`; a
+   design's links go in its shared section. `install.faces` and `install.record` fill a deck's
+   `faces` and `designSystems`. Follow its guidelines and adapt its component examples. A
+   `copy_folder_taken` refusal means another design system already uses that folder: read again
+   with `folder` set to another name. Pasting `css` into a `<style>` still works when you cannot
+   copy.
 4. Name it in your page's head (a design: its shared section):
    `<meta name="plinth-design-system" content="<id>@<version>">`, with the `version` you read.
 5. Before you update an artifact that names an older version, read the design system again and
