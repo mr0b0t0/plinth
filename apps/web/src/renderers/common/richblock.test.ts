@@ -132,6 +132,28 @@ describe("RichBlockEditor", () => {
     expect(md(over.r.model)).toBe("*ab*c");
   });
 
+  it("shows no format bar for the text selectText chose, until the selection changes", async () => {
+    const { r } = make({ t: "paragraph", c: [text("Untitled document")] });
+    const bar = r.el.querySelector<HTMLElement>(".plinth-rich__toolbar") as HTMLElement;
+    const settle = async () => {
+      document.dispatchEvent(new Event("selectionchange"));
+      await Promise.resolve();
+    };
+    r.selectText();
+    await settle();
+    expect(document.getSelection()?.toString()).toBe("Untitled document");
+    expect(bar.hidden).toBe(true);
+    // The selection leaves the block, then the person selects the same text: the bar shows.
+    const elsewhere = document.createElement("p");
+    elsewhere.textContent = "elsewhere";
+    document.body.append(elsewhere);
+    caret(elsewhere.firstChild as Node, 2);
+    await settle();
+    caret(r.editable.firstChild as Node, 0, "Untitled document".length);
+    await settle();
+    expect(bar.hidden).toBe(false);
+  });
+
   it("Enter in a paragraph hands the two halves to the host", () => {
     const { r, host } = make({ t: "paragraph", c: [text("onetwo")] });
     caret(r.editable.firstChild as Node, 3);
