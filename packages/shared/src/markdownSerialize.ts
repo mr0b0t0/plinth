@@ -1078,17 +1078,21 @@ export function editableBlock(text: string, tools: MarkdownTools, env: MdEnv): R
   const block = blockFromSource(text, tools.source, env);
   if (!block) return null;
   if (definesReferences(text, tools.source)) return null;
-  let out: string;
-  try {
-    out = serializeBlock(block, tools.dialect);
-  } catch (e) {
-    if (e instanceof Unsupported) return null;
-    throw e;
+  // The plain form, then the guarded one verifyBlock may have written (a character reference next
+  // to a mark), so a block saved that way opens for editing again.
+  for (const d of [tools.dialect, { ...tools.dialect, guard: true }]) {
+    let out: string;
+    try {
+      out = serializeBlock(block, d);
+    } catch (e) {
+      if (e instanceof Unsupported) return null;
+      throw e;
+    }
+    if (out === "" || !sameRendering(text, out, tools.render, env)) continue;
+    const again = blockFromSource(out, tools.source, env);
+    if (again && sameBlock(block, again)) return block;
   }
-  if (out === "" || !sameRendering(text, out, tools.render, env)) return null;
-  const again = blockFromSource(out, tools.source, env);
-  if (!again || !sameBlock(block, again)) return null;
-  return block;
+  return null;
 }
 
 /**
