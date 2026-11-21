@@ -765,6 +765,8 @@ export class DocEditor {
    * in the doc, so it counts as pending, and the block does not close until the text changes.
    */
   private stuck = false;
+  /** Why the open block is `stuck`: UNSAVABLE, or the reason its last send was refused. */
+  private stuckWhy = UNSAVABLE;
   /** While `stuck` in a room: says the lease is in use every LIMITS.liveLeaseKeepS (`keep`). */
   private keepAlive: ReturnType<typeof setInterval> | null = null;
   /** Text typed that is not in the draft yet, by id, until the room's lines hold it. */
@@ -822,6 +824,7 @@ export class DocEditor {
    * written, the block closes or the socket goes.
    */
   private setStuck(on: boolean): void {
+    if (!on) this.stuckWhy = UNSAVABLE;
     if (this.stuck === on) return;
     this.stuck = on;
     if (this.keepAlive) clearInterval(this.keepAlive);
@@ -1119,7 +1122,7 @@ export class DocEditor {
       this.flush();
       // Typing that cannot be written yet is not in the draft: no Publish goes out without it.
       if (this.stuck) {
-        this.showNotice(UNSAVABLE);
+        this.showNotice(this.stuckWhy);
         return;
       }
       this.hooks.save();
@@ -2590,19 +2593,25 @@ export class DocEditor {
       return true;
     }
     const block = this.currentText();
-    if (block === null) {
-      // Never dropped: the text stays in the block, the block stays open and counts as pending
-      // (close() refuses), and the person changes it. The keystroke is not undone. A room's copy
-      // goes to the rescue store too.
+    // Never dropped: text that cannot be written as typed, or whose send is refused (the doc is
+    // full, the block is over one frame, the socket did not take it), stays in the block, which
+    // stays open and counts as pending and unsavable (close() refuses, nothing is published or
+    // collected without it, leaving the page warns), and the person changes it or it is sent
+    // again (flush, a reconnect). The keystroke is not undone. A room's copy goes to the rescue
+    // store too, and a solo tab's kept copy has it (textWithTyping).
+    const stick = (why: string): false => {
       this.setStuck(true);
+      this.stuckWhy = why;
       this.noteStuck();
-      this.showNotice(UNSAVABLE);
+      this.showNotice(why);
       this.hooks.status();
       return false;
-    }
+    };
+    if (block === null) return stick(UNSAVABLE);
     if (this.stuck) {
+      const why = this.stuckWhy;
       this.setStuck(false);
-      if (this.notice?.textContent?.startsWith(UNSAVABLE)) this.hideNotice();
+      if (this.notice?.textContent?.startsWith(why)) this.hideNotice();
       this.hooks.status();
     }
     const text = padded(block, this.pad);
@@ -2619,10 +2628,7 @@ export class DocEditor {
     }
     const refusal =
       this.unsendable(lines, mine, text) ?? (this.backend.edit(text) ? null : NOT_SENT);
-    if (refusal) {
-      this.showNotice(refusal);
-      return false;
-    }
+    if (refusal) return stick(refusal);
     // Every accepted send from a block with a rescue copy replaces what that copy waits for.
     this.rescueSent(this.blockRescue, this.backend.lastSeq ?? null, mine.start, text);
     return true;
@@ -3346,8 +3352,8 @@ export class DocEditor {
     }
     this.flush();
     if (this.stuck && !force) {
-      // What is typed cannot be written yet: the block stays open with it (UNSAVABLE).
-      this.showNotice(UNSAVABLE);
+      // What is typed cannot be written yet: the block stays open with it, and the page says why.
+      this.showNotice(this.stuckWhy);
       return false;
     }
     if (this.want && !this.want.op && !this.clearing) this.want = null;

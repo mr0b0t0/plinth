@@ -3026,7 +3026,10 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   taken over or the draft changes under it, its text is written without its formatting rather than
   lost: in place of the block, or, when someone else took the block, as a new block below it; when
   there is no lease to write it with (not connected, or a review waits), it is written once there
-  is.
+  is. A send that is refused (the doc is at its size limit, the block is over one frame of the
+  room, or the socket did not take it) is handled the same way: the text stays in the open block
+  with the reason, counts as unsent and `unsavable`, goes to the rescue store (a room) or the kept
+  copy (solo), and is sent again once it fits or the draft is back.
 - **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
   until the room acknowledges a write of it (without that acknowledgement it is written again,
   a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which

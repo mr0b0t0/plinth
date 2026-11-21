@@ -2999,4 +2999,58 @@ describe("the rescue store", () => {
     expect(noticeButton("Copy")).toBeDefined();
     expect(noticeButton("Dismiss")).toBeDefined();
   });
+
+  it("solo: typing the doc has no room for stays pending, open and in the kept copy", () => {
+    const filler = "x".repeat(LIMITS.maxDocBytes - 10);
+    const { local, editor } = setup(`one\n\n${filler}`);
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    typeText(r.editable, "one and a lot more words");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`one\n\n${filler}`);
+    expect(notice()).toContain(DOC_FULL);
+    // Not in the doc: it counts as unsent and unsavable (no Publish, Done or collect without it).
+    expect(editor.pending).toBe(true);
+    expect(editor.unsavable).toBe(true);
+    expect(editor.textWithTyping()).toContain("one and a lot more words");
+    // Esc, a click elsewhere or Cmd/Ctrl+S keep the block open with what was typed.
+    key(r.editable, "Escape");
+    expect(editor.openEditor).toBe(r);
+    expect(r.editable.textContent).toBe("one and a lot more words");
+    expect(notice()).toContain(DOC_FULL);
+    // Made to fit, it goes in, and nothing is pending.
+    typeText(r.editable, "one two");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`one two\n\n${filler}`);
+    expect(editor.pending).toBe(false);
+    expect(editor.unsavable).toBe(false);
+  });
+
+  it("room: a send that is not taken, or too long for a frame, goes to the rescue store and stays open", () => {
+    const room = roomSetup("ab\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    const edit = room.edit.bind(room);
+    room.edit = () => false;
+    typeText(r.editable, "ab and more");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(notice()).toContain(NOT_SENT);
+    expect(kept()).toEqual(["ab and more"]);
+    expect(room.editor.pending).toBe(true);
+    expect(room.editor.close(true)).toBe(false);
+    expect(room.editor.openEditor).toBe(r);
+    // Taken again: the next send goes in.
+    room.edit = edit;
+    room.editor.flush();
+    expect(room.lines[0]).toBe("ab and more");
+    expect(room.editor.unsavable).toBe(false);
+    // Too long for one frame of the room: kept the same way.
+    const long = "y".repeat(LIMITS.liveDocFrameBytes - 100);
+    typeText(r.editable, long);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(notice()).toContain(TOO_LONG);
+    expect(room.editor.unsavable).toBe(true);
+    expect(kept()).toContain(long);
+    expect(room.editor.close(true)).toBe(false);
+  });
 });

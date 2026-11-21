@@ -24,7 +24,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   left by another account no longer warns the next person in the same tab. The Ask dialog's
   Publish first no longer shows a toast that disagrees with it. A CSV that is too large once
   converted to UTF-8 says so, and a UTF-16 file without a byte order mark is read as such (or
-  refused with a clear message) instead of filling every cell with NULs.
+  refused with a clear message) instead of filling every cell with NULs. Typing a doc could not
+  take (at its size limit, a block too long, or not sent) stays in its block, unsent, instead of
+  being dropped when the block closes.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
