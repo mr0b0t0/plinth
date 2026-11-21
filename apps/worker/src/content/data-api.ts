@@ -21,7 +21,9 @@
 //      fields): read only for a caller with a pass, so nobody else learns an artifact's type from
 //      the cap or makes the Worker hold a large body;
 //   9. the declaration (`data`);
-//  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write.
+//  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write; on a
+//      whiteboard, a page write must name the current board format in x-plinth-format (a 401
+//      `stale_page` otherwise, which an older page shows as "reload the page").
 // Bodies and document contents are never logged. Routes are entries of DATA_API_ROUTES, and the
 // dispatcher runs these checks before any handler, so a route cannot skip them.
 //
@@ -33,7 +35,9 @@
 // that declares only `room` has no shared data, and rooms may be on where shared data is off.
 import { waitUntil } from "cloudflare:workers";
 import {
+  BOARD_PAGE_FORMAT,
   CONTENT_DATA_HEADER,
+  CONTENT_FORMAT_HEADER,
   CONTENT_RESERVED_PREFIX,
   dataObjectSchema,
   type PageDoc,
@@ -408,6 +412,28 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
 // ---------- the dispatcher ----------
 
 /**
+ * A whiteboard's page writes whole blocks back from what its reader made of them, so a page
+ * loaded before a wider format would destroy what it cannot read (a table written back as an empty
+ * note, a long text cut). The current page names its format on every write (BOARD_PAGE_FORMAT);
+ * every other page write to a whiteboard is refused, a create, an update or a delete alike, before
+ * anything is read or changed. It is a 401 because the only page code that writes a board is the
+ * renderer, and the older renderers stop editing and say "Reload the page" on a 401 (any other
+ * refusal leaves them editable, so the next typed text would be refused too). Agents' and the
+ * app's writes never come through here.
+ */
+function refuseStalePage(request: Request, target: DataTarget): void {
+  if (target.type !== "whiteboard") return;
+  if (request.headers.get(CONTENT_FORMAT_HEADER) === BOARD_PAGE_FORMAT) return;
+  throw new ApiError(
+    "unauthorized",
+    "This board changed since the page was loaded. Reload the page.",
+    {
+      reason: "stale_page",
+    },
+  );
+}
+
+/**
  * Keep work alive after the response: the request's own waitUntil (cloudflare:workers), so the
  * content host's dispatch keeps its signature. Outside a request (never in production), the
  * promise simply runs on.
@@ -521,6 +547,7 @@ async function handle(
     access.write && claim
       ? { email: claim.email, role: claim.role, viewerId: claim.viewerId, via: "page" }
       : null;
+  if (writer && method !== "GET") refuseStalePage(request, target);
   const res = await route.handler({
     request,
     env,

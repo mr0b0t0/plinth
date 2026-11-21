@@ -59,7 +59,7 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
     return new PlinthError("network", msg || "Request failed (" + status + ")");
   }
 
-  async function call(method, path, body) {
+  async function call(method, path, body, format) {
     if (opaque) throw new PlinthError("unavailable", "Shared data is not available on this server.");
     var res;
     try {
@@ -67,7 +67,7 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
         method: method,
         credentials: "same-origin",
         cache: "no-store",
-        headers: { "x-plinth-data": "1", "content-type": "application/json" },
+        headers: Object.assign({ "x-plinth-data": "1", "content-type": "application/json" }, format && { "x-plinth-format": format }),
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (e) {

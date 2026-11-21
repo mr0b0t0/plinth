@@ -6,7 +6,7 @@
 // viewer gate and what the content host serves.
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { BOARD_TOPICS, type Role, TYPE_REGISTRY } from "@plinth/shared";
+import { BOARD_PAGE_FORMAT, BOARD_TOPICS, type Role, TYPE_REGISTRY } from "@plinth/shared";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { accessGrants, versions } from "../src/db/schema.ts";
@@ -108,8 +108,18 @@ async function person(id: string, role: Role) {
   return { user, cookie, gate, session: s };
 }
 
-/** A request the way the runtime makes it. */
-function api(id: string, path: string, cookie: string, method = "GET", body?: unknown) {
+/**
+ * A request the way the runtime makes it for the current board page, which names its format on
+ * writes; `format` null leaves it out (a page loaded before it), a string sends that instead.
+ */
+function api(
+  id: string,
+  path: string,
+  cookie: string,
+  method = "GET",
+  body?: unknown,
+  format: string | null = BOARD_PAGE_FORMAT,
+) {
   const headers = new Headers({
     "x-plinth-data": "1",
     "sec-fetch-site": "same-origin",
@@ -118,6 +128,7 @@ function api(id: string, path: string, cookie: string, method = "GET", body?: un
     cookie,
   });
   if (method !== "GET") headers.set("origin", contentOrigin(id));
+  if (method !== "GET" && format !== null) headers.set("x-plinth-format", format);
   if (body !== undefined) headers.set("content-type", "application/json");
   return run(`${contentOrigin(id)}/__plinth/api/v1${path}`, {
     method,
@@ -813,7 +824,7 @@ describe("the page's data API on a whiteboard", () => {
     expect(JSON.parse(goal2?.data as string)).not.toHaveProperty("color");
   });
 
-  it("refuses a page loaded before the wider format writing a newer block back as a note; agents may", async () => {
+  it("refuses every write from a page that does not name the current board format; agents may", async () => {
     const { owner, cookie, id } = await board('{"v":1}');
     const table = {
       kind: "table",
@@ -827,25 +838,53 @@ describe("the page's data API on a whiteboard", () => {
     const made = await api(id, "/data/blocks/tb", cookie, "PUT", { data: table, if_rev: 0 });
     expect(made.status).toBe(201);
     const rev = (await json(made)).rev as number;
-    // The older page's move: its reader made the table an empty note, written whole at the rev.
+    const stale = async (res: Response) => {
+      expect(res.status).toBe(401);
+      expect((await json(res)).error).toMatchObject({
+        code: "unauthorized",
+        details: { reason: "stale_page" },
+      });
+    };
+    // An older page's move: its reader made the table an empty note, written whole at the rev.
     const oldMove = { kind: "note", x: 40, y: 0, w: 240, h: 60, text: "" };
-    const res = await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove, if_rev: rev });
-    expect(res.status).toBe(400);
-    expect((await json(res)).error).toMatchObject({
-      code: "invalid_input",
-      details: { reason: "stale_page" },
-    });
-    // Without if_rev too (its plain set), and nothing changed.
-    expect((await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove })).status).toBe(400);
-    const row = (await docRows(id)).find((r) => r.doc_id === "tb");
-    expect(JSON.parse(row?.data as string)).toEqual(table);
+    for (const format of [null, "whiteboard.1"]) {
+      await stale(
+        await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove, if_rev: rev }, format),
+      );
+      // Its plain set, a new block, a delete (and the Undo that re-creates the table as an empty
+      // note once it is gone) are refused alike, before anything changes.
+      await stale(await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove }, format));
+      await stale(await api(id, "/data/blocks", cookie, "POST", { data: block() }, format));
+      await stale(
+        await api(id, `/data/blocks/tb?if_rev=${rev}`, cookie, "DELETE", undefined, format),
+      );
+      await stale(
+        await api(id, "/data/arrows", cookie, "POST", { data: { from: "tb", to: "x" } }, format),
+      );
+    }
+    // A text past the old 2,000-character limit, edited by one character: refused too.
+    const long = { ...block(), text: "x".repeat(3000) };
+    const put = await api(id, "/data/blocks/long", cookie, "PUT", { data: long, if_rev: 0 });
+    expect(put.status).toBe(201);
+    const edited = { ...long, text: `y${"x".repeat(1999)}` };
+    await stale(await api(id, "/data/blocks/long", cookie, "PUT", { data: edited }, null));
+    const rows = await docRows(id);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "tb")?.data as string)).toEqual(table);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "long")?.data as string)).toEqual(long);
+    expect(rows).toHaveLength(2);
+    // Reads need no format.
+    expect((await api(id, "/data/blocks/tb", cookie)).status).toBe(200);
     // The current page's move keeps every field and goes through.
     const moved = await api(id, "/data/blocks/tb", cookie, "PUT", {
       data: { ...table, x: 40 },
       if_rev: rev,
     });
     expect(moved.status).toBe(200);
-    // An agent may still replace a block whole.
+    // A reader without write access is refused for that, whatever it sends.
+    const viewer = await person(id, "viewer");
+    const vres = await api(id, "/data/blocks", viewer.cookie, "POST", { data: block() }, null);
+    expect(vres.status).toBe(403);
+    // An agent may still replace a block whole, with no format.
     const client = await mcpClient(owner.token);
     const r = await tool(client, "write_artifact_data", {
       id,

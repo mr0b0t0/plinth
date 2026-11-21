@@ -21,7 +21,6 @@ import {
   SHAPE_KINDS,
   safeHref,
   shapePath,
-  staleBoardWrite,
   tableLayout,
   textInset,
   trimRoute,
@@ -345,44 +344,33 @@ describe("inline marks", () => {
   });
 });
 
-describe("writes from a page loaded before the wider format", () => {
-  // What such a page's lenient reader made of a block, written back whole on a move.
-  const old = (b: Record<string, unknown>) => ({
-    kind: ["note", "text", "rect", "ellipse"].includes(b.kind as string) ? b.kind : "note",
-    x: 40,
-    y: b.y,
-    w: b.w,
-    h: b.h,
-    text: typeof b.text === "string" ? [...b.text].slice(0, 2000).join("") : "",
-    ...(["yellow", "green", "blue", "pink", "purple", "gray"].includes(b.color as string)
-      ? { color: b.color }
-      : {}),
+describe("the page's reader is lossless", () => {
+  // A page's save writes a block back whole, so whatever its reader drops from a valid block is
+  // lost for everyone. Every value the Worker accepts must come back exactly as stored.
+  it.each<[string, Record<string, unknown>]>([
+    ["a filled box", block({ hollow: false })],
+    ["a hollow box", block({ hollow: true })],
+    ["a wrapping note", block({ kind: "note", wrap: true })],
+    ["a note that does not wrap", block({ kind: "note", wrap: false })],
+    ["a text block", block({ kind: "text", size: "title", textAlign: "center", wrap: true })],
+    [
+      "a styled section",
+      block({ kind: "container", color: "#123456", stroke: "ink", hollow: false, z: -3 }),
+    ],
+    ["a table", table({ text: "", size: "small", textAlign: "right", fills: { r1: { c1: "" } } })],
+  ])("keeps %s as stored", (_name, stored) => {
+    expect(boardDocError("blocks", stored)).toBeNull();
+    expect(cleanBlock(stored)).toEqual(stored);
   });
 
-  it.each<[string, Record<string, unknown>, RegExp]>([
-    ["a table", table(), /drops cols/],
-    ["a diamond", block({ kind: "diamond" }), /turns a diamond into a note/],
-    ["sized text", block({ kind: "text", size: "title" }), /drops size/],
-    ["an outlined box", block({ stroke: "green" }), /drops stroke/],
-    ["a box in #rrggbb", block({ color: "#123456" }), /drops color/],
-    ["long text", block({ text: "x".repeat(3000) }), /cuts text/],
-  ])("refuses its move of %s", (_name, stored, why) => {
-    expect(staleBoardWrite("blocks", stored, old(stored))).toMatch(why);
+  it("keeps an arrow's empty label", () => {
+    const arrow = { from: "a", to: "b", label: "" };
+    expect(boardDocError("arrows", arrow)).toBeNull();
+    expect(cleanArrow(arrow)).toEqual(arrow);
   });
+});
 
-  it("refuses its rewrite of a routed arrow, and lets the current page's writes through", () => {
-    const arrow = { from: "a", to: "b", fromSide: "right", heads: ["none", "circle"] };
-    expect(staleBoardWrite("arrows", arrow, { from: "a", to: "b" })).toMatch(/drops fromSide/);
-    // The current page keeps every field: a move, a shape picked from the list, a new colour.
-    const d = block({ kind: "diamond", stroke: "green", color: "#123456" });
-    expect(staleBoardWrite("blocks", d, { ...d, x: 99 })).toBeNull();
-    expect(staleBoardWrite("blocks", d, { ...d, kind: "rect" })).toBeNull();
-    expect(staleBoardWrite("blocks", d, { ...d, color: "pink" })).toBeNull();
-    // A board in the old format moves as before.
-    const n = block({ kind: "note", color: "pink" });
-    expect(staleBoardWrite("blocks", n, old(n))).toBeNull();
-  });
-
+describe("table ids", () => {
   it("refuses ids an object lookup could reach through the prototype", () => {
     for (const id of ["__proto__", "constructor", "prototype"]) {
       expect(boardDocError("blocks", table({ cols: { c1: { at: 1 }, [id]: { at: 2 } } }))).toMatch(

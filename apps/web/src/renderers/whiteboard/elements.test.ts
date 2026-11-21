@@ -334,6 +334,10 @@ describe("a table cell typed while someone else changes the table", () => {
     return t;
   }
 
+  /** The notes on the server other than the table: where typed text is kept. */
+  const notes = (t: ReturnType<typeof setup>) =>
+    [...t.coll.docs.values()].filter((d) => d.id !== "t").map((d) => d.data as BoardBlock);
+
   /** The "Use mine" a message offered, from the sync's say or the board's own line. */
   function pressUseMine(t: ReturnType<typeof setup>) {
     const call = t.say.mock.calls.find((c) => c[1]?.label === "Use mine");
@@ -361,10 +365,34 @@ describe("a table cell typed while someone else changes the table", () => {
     theirs.rows = { ...theirs.rows, r2: { at: 2, c1: "Pro", c2: "$30" } };
     const t = typeOver(theirs, true);
     expect(t.coll.sets).toHaveLength(0);
-    expect(t.root.querySelector(".wb-msg")?.textContent).toMatch(/Their change was kept/);
+    // Her text is a note beside the table before she is told.
+    await vi.waitFor(() =>
+      expect(t.say).toHaveBeenCalledWith(
+        expect.stringMatching(/yours is in a new note/),
+        expect.anything(),
+      ),
+    );
+    expect(notes(t)).toMatchObject([{ kind: "note", x: 264, y: 0, text: "$25" }]);
     pressUseMine(t)();
     await vi.waitFor(() => expect(t.coll.sets).toHaveLength(1));
     expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r2: { c2: "$25" } } });
+  });
+
+  it("the table deleted while she writes: her text is a note where the table was", async () => {
+    const t = setup({ t: baseTable() });
+    t.board.startEditing("t", ["r2", "c2"]);
+    const ta = t.el("t").querySelector(".wb-cell textarea") as HTMLTextAreaElement;
+    ta.value = "$25";
+    // The next snapshot has no table: the editor goes with it, the text does not.
+    t.coll.docs.delete("t");
+    t.board.applySnapshot("blocks", []);
+    await vi.waitFor(() =>
+      expect(t.say).toHaveBeenCalledWith(
+        expect.stringMatching(/^Someone deleted this block/),
+        undefined,
+      ),
+    );
+    expect(notes(t)).toMatchObject([{ kind: "note", x: 264, y: 0, text: "$25" }]);
   });
 
   it("the same cell changed on the server: the save keeps theirs and offers hers back", async () => {
@@ -373,6 +401,7 @@ describe("a table cell typed while someone else changes the table", () => {
     const t = typeOver(theirs);
     await vi.waitFor(() => expect(t.board.sync?.saving("t")).toBe(false));
     expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r2: { c2: "$30" } } });
+    await vi.waitFor(() => expect(notes(t).map((n) => n.text)).toEqual(["$25"]));
     pressUseMine(t)();
     await vi.waitFor(() =>
       expect(t.coll.docs.get("t")?.data).toMatchObject({ rows: { r2: { c2: "$25" } } }),

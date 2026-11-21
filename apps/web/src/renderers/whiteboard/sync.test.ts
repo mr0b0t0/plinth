@@ -6,7 +6,15 @@ import type { BoardBlock } from "@plinth/shared";
 import { describe, expect, it, vi } from "vitest";
 import { BoardModel } from "./model.ts";
 import type { RuntimeCollection, RuntimeDoc } from "./runtime.ts";
-import { BoardSync, KEPT_THEIRS_TEXT, READ_ONLY_TEXT, USE_MINE_LABEL } from "./sync.ts";
+import {
+  BoardSync,
+  KEPT_AS_NOTE_TEXT,
+  KEPT_CHANGING_NOTE_TEXT,
+  KEPT_THEIRS_TEXT,
+  noteTexts,
+  READ_ONLY_TEXT,
+  USE_MINE_LABEL,
+} from "./sync.ts";
 
 const blk = (x: number): BoardBlock => ({ kind: "note", x, y: 0, w: 100, h: 80, text: "" });
 
@@ -141,14 +149,20 @@ describe("BoardSync", () => {
     // Their x and text stand; the colour, which they did not change, is written on top.
     expect(blocks.docs.get("a")?.data).toEqual({ ...blk(50), text: "theirs", color: "blue" });
     expect(blocks.calls.filter((c) => c.op === "set").map((c) => c.ifRev)).toEqual([3, 7]);
-    // Their text was kept over the viewer's, which they are offered back.
-    expect(deps.say).toHaveBeenCalledWith(
-      KEPT_THEIRS_TEXT,
-      expect.objectContaining({ label: USE_MINE_LABEL }),
+    // Their text was kept over the viewer's, which is a note beside it and offered back.
+    await vi.waitFor(() =>
+      expect(deps.say).toHaveBeenCalledWith(
+        KEPT_AS_NOTE_TEXT,
+        expect.objectContaining({ label: USE_MINE_LABEL }),
+      ),
     );
+    const note = blocks.calls.find((c) => c.op === "add");
+    expect(note?.data).toMatchObject({ kind: "note", x: 174, y: 0, text: "mine" });
     deps.say.mock.calls[0]?.[1]?.run();
     await vi.waitFor(() => expect(blocks.docs.get("a")?.data).toMatchObject({ text: "mine" }));
     expect(blocks.docs.get("a")?.data).toEqual({ ...blk(50), text: "mine", color: "blue" });
+    // Mine is in place: the note goes again.
+    await vi.waitFor(() => expect(blocks.docs.size).toBe(1));
   });
 
   it("writes a change made over an older copy at that copy's rev", async () => {
@@ -160,10 +174,94 @@ describe("BoardSync", () => {
     expect(await sync.saveBlock("a", { text: "mine" }, { text: "A1" }, 3)).toBe(true);
     expect(blocks.calls.filter((c) => c.op === "set").map((c) => c.ifRev)).toEqual([3]);
     expect(blocks.docs.get("a")).toEqual({ id: "a", data: { ...blk(0), text: "theirs" }, rev: 7 });
-    expect(deps.say).toHaveBeenCalledWith(
-      KEPT_THEIRS_TEXT,
-      expect.objectContaining({ label: USE_MINE_LABEL }),
+    await vi.waitFor(() =>
+      expect(deps.say).toHaveBeenCalledWith(
+        KEPT_AS_NOTE_TEXT,
+        expect.objectContaining({ label: USE_MINE_LABEL }),
+      ),
     );
+    expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text)).toEqual([
+      "theirs",
+      "mine",
+    ]);
+  });
+
+  it("keeps a note the viewer changed when Use mine puts the text back", async () => {
+    const { sync, blocks, model, put, deps } = setup();
+    put("a", { ...blk(0), text: "A1" }, 3);
+    blocks.docs.set("a", { id: "a", data: { ...blk(0), text: "theirs" }, rev: 7 });
+    model.upsertBlock("a", { ...blk(0), text: "theirs" }, 7);
+    await sync.saveBlock("a", { text: "mine" }, { text: "A1" }, 3);
+    await vi.waitFor(() => expect(deps.say).toHaveBeenCalled());
+    const id = [...blocks.docs.keys()].find((k) => k !== "a") as string;
+    // The viewer edits the note before choosing Use mine: it stays.
+    await sync.saveBlock(id, { text: "mine, and more" });
+    deps.say.mock.calls.at(-1)?.[1]?.run();
+    await vi.waitFor(() => expect(blocks.docs.get("a")?.data).toMatchObject({ text: "mine" }));
+    await Promise.resolve();
+    expect(blocks.docs.get(id)?.data).toMatchObject({ text: "mine, and more" });
+  });
+
+  it("keeps the viewer's cells from every attempt when a table keeps conflicting", async () => {
+    const { sync, blocks, model, deps } = setup();
+    const tbl = (c1: string, c2: string): BoardBlock => ({
+      kind: "table",
+      x: 0,
+      y: 0,
+      w: 200,
+      h: 60,
+      text: "",
+      cols: { c1: { at: 1 }, c2: { at: 2 } },
+      rows: { r1: { at: 1, c1, c2 } },
+    });
+    blocks.docs.set("t", { id: "t", data: tbl("a", "b"), rev: 3 });
+    model.upsertBlock("t", tbl("a", "b"), 3);
+    // Each write finds a peer's newer copy: first with the same cell changed (hers is lost to
+    // theirs), then with other changes, until the four attempts are spent.
+    let n = 0;
+    const set = blocks.set.bind(blocks);
+    blocks.set = async (id, data, opts) => {
+      n++;
+      const cur = blocks.docs.get(id);
+      blocks.docs.set(id, {
+        id,
+        data: n === 1 ? tbl("theirs", "b") : { ...(cur?.data as BoardBlock), x: n },
+        rev: 100 + n,
+      });
+      return set(id, data, opts);
+    };
+    const rows = { r1: { at: 1, c1: "mine", c2: "mine too" } };
+    expect(await sync.saveBlock("t", { rows }, undefined, 3)).toBe(false);
+    await vi.waitFor(() =>
+      expect(deps.say).toHaveBeenCalledWith(
+        KEPT_CHANGING_NOTE_TEXT,
+        expect.objectContaining({ label: USE_MINE_LABEL }),
+      ),
+    );
+    // One message, after the attempts: nothing earlier replaced it. The cell lost to theirs on
+    // the first attempt and the one never written are both in the note.
+    expect(deps.say).toHaveBeenCalledTimes(1);
+    expect(
+      blocks.calls.filter((c) => c.op === "add").map((c) => (c.data as BoardBlock).text),
+    ).toEqual(["mine\nmine too"]);
+    // Use mine puts both back in their cells.
+    blocks.set = set;
+    deps.say.mock.calls[0]?.[1]?.run();
+    await vi.waitFor(() =>
+      expect((blocks.docs.get("t")?.data as BoardBlock | undefined)?.rows?.r1).toEqual({
+        at: 1,
+        c1: "mine",
+        c2: "mine too",
+      }),
+    );
+  });
+
+  it("joins what is kept into as few notes as the text limit allows", () => {
+    expect(noteTexts(["a", "", "b"])).toEqual(["a\nb"]);
+    const big = "x".repeat(4000);
+    expect(noteTexts([big, "y"])).toEqual([big, "y"]);
+    expect(noteTexts([`${big}z`])).toEqual([big, "z"]);
+    expect(noteTexts([""])).toEqual([]);
   });
 
   it("gives up after four conflicts", async () => {

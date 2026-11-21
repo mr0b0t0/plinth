@@ -352,6 +352,30 @@ describe("runtime: errors", () => {
 });
 
 describe("runtime: documents", () => {
+  it("sends a collection's format on its writes only, and refuses a malformed one", async () => {
+    const { plinth, calls } = boot(fakeServer().handler);
+    const c = plinth.db.collection("blocks", { format: "whiteboard.2" });
+    expect(c.format).toBe("whiteboard.2");
+    expect(plinth.db.collection("blocks").format).toBeNull();
+    const d = await c.add({ v: 1 });
+    await c.set(d.id, { v: 2 }, { ifRev: d.rev });
+    await c.get(d.id);
+    await c.delete(d.id);
+    await plinth.db.collection("blocks").add({ v: 3 });
+    const fmt = calls.map((x) => [x.method, x.headers["x-plinth-format"] ?? null]);
+    expect(fmt).toEqual([
+      ["GET", null],
+      ["POST", "whiteboard.2"],
+      ["PUT", "whiteboard.2"],
+      ["GET", null],
+      ["DELETE", "whiteboard.2"],
+      ["POST", null],
+    ]);
+    for (const format of ["Board", "a b", "x".repeat(41), 2, ["whiteboard.2"]]) {
+      expect(() => plinth.db.collection("blocks", { format })).toThrow(/Bad format/);
+    }
+  });
+
   it("maps documents and the personal-document helpers", async () => {
     const { plinth, calls } = boot(fakeServer().handler);
     const c = plinth.db.collection("votes");

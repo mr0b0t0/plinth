@@ -12,12 +12,15 @@
 //              | "not_declared" | "preview" | "capture" | "expired" | "network"
 //   available, viewer ({ id, email | null, name | null, role } | null), canWrite, canListPeople:
 //              set once ready resolves
-//   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
+//   db.collection(name, { format }?): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
 //              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs }).
 //              While the app pushes changes (live views, runtime/live.ts) onSnapshot re-reads when
 //              told and polls only every 60 s; intervalMs applies while it does not. A Doc's
-//              createdBy and updatedBy are { email, name | null, role, via }
+//              createdBy and updatedBy are { email, name | null, role, via }. `format` (a
+//              lowercase letter, then up to 39 of a-z 0-9 . -) goes out as x-plinth-format on the
+//              collection's writes and reads back as .format: the format a typed renderer reads
+//              and writes, which a whiteboard's writes must name (BOARD_PAGE_FORMAT)
 //   people     who has access (owners and editors, pages that declare `data viewer people`):
 //              list({ q, limit }) -> [{ id, email, name | null, role, you }] (with .total, how
 //              many matched before limit), get(id) -> that or null; others get forbidden or

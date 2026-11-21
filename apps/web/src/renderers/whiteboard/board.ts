@@ -38,7 +38,7 @@ import {
 import type { Live } from "./live.ts";
 import { BoardModel, type DocIn, type Entry } from "./model.ts";
 import type { RuntimePeer } from "./runtime.ts";
-import { type BoardSync, KEPT_THEIRS_TEXT, putCells, USE_MINE_LABEL } from "./sync.ts";
+import { type BoardSync, DELETED_AS_NOTE_TEXT, KEPT_AS_NOTE_TEXT, putCells } from "./sync.ts";
 import {
   applyCamera,
   buildView,
@@ -121,6 +121,8 @@ export class Board {
   private editStart: {
     text: string;
     rev: number;
+    /** Where the block was: what the viewer wrote goes in a note there if it is deleted. */
+    box: { x: number; y: number; w: number; h: number };
     cell?: {
       row: string;
       col: string;
@@ -151,6 +153,12 @@ export class Board {
   // ---------- state ----------
 
   redraw(): void {
+    // The block being written in is gone (someone deleted it): end the edit while its editor is
+    // still on the page, so what was typed is kept (finishEditing puts it in a note).
+    if (this.editing && !this.model.blocks.has(this.editing)) {
+      this.finishEditing(true);
+      return;
+    }
     const peerSelections = new Map<string, number>();
     for (const p of this.peers) {
       const sel = p.presence?.sel;
@@ -444,9 +452,11 @@ export class Board {
       this.editStart = {
         text: value,
         rev: entry.rev,
+        box: { x: b.x, y: b.y, w: b.w, h: b.h },
         cell: { row: target[0], col: target[1], rows: b.rows ?? {}, cols: b.cols ?? {} },
       };
-    } else this.editStart = { text: b.text, rev: entry.rev };
+    } else
+      this.editStart = { text: b.text, rev: entry.rev, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
     this.editing = id;
     const ta = this.doc.createElement("textarea");
     ta.className = "wb-edit";
@@ -491,40 +501,44 @@ export class Board {
     const text = ta ? [...ta.value].slice(0, max).join("") : null;
     ta?.remove();
     const cur = this.model.blocks.get(id)?.data;
-    if (start.cell && keep && text !== null && text !== start.text && !cur) {
-      this.say("Someone deleted this table while you were writing in it.");
-    }
-    if (start.cell && cur) {
+    const sync = this.sync;
+    const typed = keep && text !== null && text !== start.text ? text : null;
+    if (typed !== null && !cur) {
+      // Deleted while the viewer wrote in it: what they wrote goes into a new note where it was.
+      void sync?.keepTyped(start.box, [typed], DELETED_AS_NOTE_TEXT);
+    } else if (start.cell && cur) {
       // A table: the cell goes into its row, over the rows as the edit began. Typed text is never
-      // dropped: when the cell, its row or its column changed meanwhile, theirs is kept and the
-      // viewer is offered theirs back ("Use mine"), which brings back a row or column that went.
+      // dropped: when the cell, its row or its column changed meanwhile, theirs is kept, the
+      // viewer's text goes into a new note beside the table, and Use mine puts it in the cell
+      // (bringing back a row or column that went).
       const { row, col, rows, cols } = start.cell;
       const nowRow = cur.rows && Object.hasOwn(cur.rows, row) ? cur.rows[row] : undefined;
       const colThere = cur.cols !== undefined && Object.hasOwn(cur.cols, col);
       const now = cellText(cur, row, col);
-      if (keep && text !== null && text !== start.text && !(nowRow && colThere && now === text)) {
+      if (typed !== null && !(nowRow && colThere && now === typed)) {
         if (nowRow && colThere && now === start.text) {
-          const next = { ...cur.rows, [row]: { ...nowRow, [col]: text } as TableRow };
+          const next = { ...cur.rows, [row]: { ...nowRow, [col]: typed } as TableRow };
           this.save(id, { rows: next }, { rows }, start.rev);
         } else {
-          const typed = text;
-          this.say(KEPT_THEIRS_TEXT, {
-            label: USE_MINE_LABEL,
-            run: () => {
-              const b = this.model.blocks.get(id)?.data;
-              if (b) this.save(id, putCells(b, { rows, cols }, [{ row, col, text: typed }]));
-            },
+          void sync?.keepTyped(cur, [typed], KEPT_AS_NOTE_TEXT, () => {
+            const b = this.model.blocks.get(id)?.data;
+            if (!b || this.readOnly || !sync) return Promise.resolve(false);
+            return sync.saveBlock(id, putCells(b, { rows, cols }, [{ row, col, text: typed }]));
           });
         }
       }
       // Draw the cells again (the edit emptied one).
       const el = this.view.blocks.get(id);
       if (el) forgetTable(el);
-    } else if (keep && text !== null && cur && text !== start.text && text !== cur.text) {
+    } else if (typed !== null && cur && typed !== cur.text) {
       if (cur.text !== start.text) {
         // A peer's text reached the model during the edit (a conflict on another save of it).
-        this.say(KEPT_THEIRS_TEXT, { label: USE_MINE_LABEL, run: () => this.save(id, { text }) });
-      } else this.save(id, { text }, { text: start.text }, start.rev);
+        void sync?.keepTyped(cur, [typed], KEPT_AS_NOTE_TEXT, () =>
+          !this.readOnly && sync && this.model.blocks.has(id)
+            ? sync.saveBlock(id, { text: typed })
+            : Promise.resolve(false),
+        );
+      } else this.save(id, { text: typed }, { text: start.text }, start.rev);
     }
     // A peer's save that came in during the edit: read now, or after the save just started.
     this.sync?.release(id);

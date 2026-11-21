@@ -9,7 +9,7 @@ import { type BoardBlock, parseBoardSettings } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board } from "./board.ts";
 import type { RuntimeCollection, RuntimeDoc } from "./runtime.ts";
-import { BoardSync, KEPT_THEIRS_TEXT, USE_MINE_LABEL } from "./sync.ts";
+import { BoardSync, DELETED_AS_NOTE_TEXT, KEPT_AS_NOTE_TEXT, USE_MINE_LABEL } from "./sync.ts";
 
 const blk = (x: number, text = ""): BoardBlock => ({
   kind: "note",
@@ -274,15 +274,64 @@ describe("Board and a peer's save during this viewer's text edit", () => {
     await vi.waitFor(() => expect(a.board.sync?.saving("a")).toBe(false));
     expect(blocks.sets.slice(1).map((c) => c.ifRev)).toEqual([3]);
     expect(blocks.docs.get("a")?.data).toEqual(blk(0, "from B"));
-    expect(a.say).toHaveBeenCalledWith(
-      KEPT_THEIRS_TEXT,
-      expect.objectContaining({ label: USE_MINE_LABEL }),
+    // A's text is already safe, in a new note beside the block, before A is told.
+    await vi.waitFor(() =>
+      expect(a.say).toHaveBeenCalledWith(
+        KEPT_AS_NOTE_TEXT,
+        expect.objectContaining({ label: USE_MINE_LABEL }),
+      ),
     );
+    const note = [...blocks.docs.values()].find((d) => d.id !== "a");
+    expect(note?.data).toMatchObject({ kind: "note", x: 124, y: 0, text: "from A" });
     await vi.waitFor(() => expect(a.board.model.blocks.get("a")?.data).toEqual(blk(0, "from B")));
-    // A chooses to put theirs back: written over B's text, at its rev.
+    // A chooses to put theirs back: written over B's text, at its rev, and the note goes.
     a.say.mock.calls[0]?.[1]?.run();
     await vi.waitFor(() => expect(blocks.docs.get("a")?.data).toEqual(blk(0, "from A")));
     expect(blocks.sets.at(-1)?.ifRev).toBe(11);
+    await vi.waitFor(() => expect(blocks.docs.has(note?.id ?? "")).toBe(false));
+  });
+
+  it("keeps A's text as a note when the message goes before A acts on it", async () => {
+    const { blocks, a, b } = pair();
+    type(a, "from A");
+    expect(await b.board.sync?.saveBlock("a", { text: "from B" })).toBe(true);
+    await a.board.sync?.refetch("blocks", "a");
+    a.board.finishEditing(true);
+    await vi.waitFor(() =>
+      expect(a.say).toHaveBeenCalledWith(KEPT_AS_NOTE_TEXT, expect.anything()),
+    );
+    // Another message replaces the offer, and the page is closed: the note is on the server.
+    a.board.say("Block deleted.");
+    expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text).sort()).toEqual([
+      "from A",
+      "from B",
+    ]);
+  });
+
+  it("keeps what A wrote in a note where the block was when B deletes it during the edit", async () => {
+    const { blocks, a, b } = pair();
+    type(a, "from A");
+    expect(await b.board.sync?.deleteBlock("a")).not.toBeNull();
+    // A's next snapshot no longer has it: the block goes, and with it the editor, but not the text.
+    a.board.applySnapshot("blocks", []);
+    await vi.waitFor(() => expect(a.say).toHaveBeenCalledWith(DELETED_AS_NOTE_TEXT, undefined));
+    expect(blocks.docs.has("a")).toBe(false);
+    const notes = [...blocks.docs.values()];
+    expect(notes.map((d) => d.data)).toEqual([
+      { kind: "note", x: 124, y: 0, w: 200, h: 140, text: "from A", z: 1 },
+    ]);
+    expect(a.root.querySelector("textarea")).toBeNull();
+  });
+
+  it("keeps what A wrote in a note when the block was deleted before A's save reached it", async () => {
+    const { blocks, a, b } = pair();
+    type(a, "from A");
+    expect(await b.board.sync?.deleteBlock("a")).not.toBeNull();
+    // A's board held the news during the edit: the save finds the block gone.
+    await a.board.sync?.refetch("blocks", "a");
+    a.board.finishEditing(true);
+    await vi.waitFor(() => expect(a.say).toHaveBeenCalledWith(DELETED_AS_NOTE_TEXT, undefined));
+    expect([...blocks.docs.values()].map((d) => (d.data as BoardBlock).text)).toEqual(["from A"]);
   });
 
   it("puts the edited text on top of a peer's change to another field", async () => {
@@ -296,7 +345,7 @@ describe("Board and a peer's save during this viewer's text edit", () => {
     expect(a.say).not.toHaveBeenCalled();
   });
 
-  it("does not write over a peer's text that reached the board during the edit", () => {
+  it("does not write over a peer's text that reached the board during the edit", async () => {
     const { blocks, a } = pair();
     type(a, "from A");
     // Another save of this block conflicted meanwhile and brought B's text into the model.
@@ -304,12 +353,17 @@ describe("Board and a peer's save during this viewer's text edit", () => {
     a.board.model.blocks.set("a", { data: blk(0, "from B"), rev: 20 });
     a.board.finishEditing(true);
     expect(blocks.sets).toHaveLength(0);
-    const msg = a.root.querySelector(".wb-msg");
-    expect(msg?.textContent).toContain(KEPT_THEIRS_TEXT);
-    const use = msg?.querySelector("button");
-    expect(use?.textContent).toBe(USE_MINE_LABEL);
-    use?.click();
-    expect(blocks.sets).toEqual([{ data: blk(0, "from A"), ifRev: 20 }]);
+    await vi.waitFor(() =>
+      expect(a.say).toHaveBeenCalledWith(
+        KEPT_AS_NOTE_TEXT,
+        expect.objectContaining({ label: USE_MINE_LABEL }),
+      ),
+    );
+    expect([...blocks.docs.values()].find((d) => d.id !== "a")?.data).toMatchObject({
+      text: "from A",
+    });
+    a.say.mock.calls[0]?.[1]?.run();
+    await vi.waitFor(() => expect(blocks.sets).toEqual([{ data: blk(0, "from A"), ifRev: 20 }]));
   });
 
   it("reads a peer's save it held during the edit once the edit is dropped", async () => {

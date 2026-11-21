@@ -29,7 +29,6 @@ import {
   mergeDocData,
   type PageDoc,
   type PageDocAuthor,
-  staleBoardWrite,
   utf8Length,
 } from "@plinth/shared";
 import { type Config, dataLimitsFor, sharedDataActive } from "../config.ts";
@@ -509,23 +508,6 @@ function prepareDoc(
   return measured;
 }
 
-/**
- * A page loaded before the wider whiteboard format writes back whole blocks read through its older
- * reader, which would turn a table or a diamond into an empty note (whiteboard.ts
- * staleBoardWrite). Refused as invalid, which such a page reports and never retries; agents may
- * still replace a block whole.
- */
-function refuseStaleBoardWrite(collection: string, existing: StoredDoc, data: unknown): void {
-  const why = staleBoardWrite(collection, parseData(existing), data);
-  if (why) {
-    throw new ApiError(
-      "invalid_input",
-      `This board changed since the page was loaded (${why}): reload the page to change it`,
-      { reason: "stale_page" },
-    );
-  }
-}
-
 /** A writer the page rules refuse outright (anonymous) never reaches the rate limits. */
 function requireWriter(writer: DataWriter | null, docId: string): DataWriter {
   if (writer) return writer;
@@ -841,8 +823,6 @@ export async function putDoc(
       continue;
     }
     authorize(w, target, collection, { docId, creatorEmail: existing.created_by_email }, "update");
-    if (target.type === "whiteboard" && w.via === "page")
-      refuseStaleBoardWrite(collection, existing, data);
     checkUserBytes(config, userBytes, size - existing.size_bytes);
     const any = anyCreator(w, target, collection, docId, "update");
     const row = await updateGuarded(

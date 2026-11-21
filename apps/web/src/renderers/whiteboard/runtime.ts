@@ -16,6 +16,8 @@ export interface RuntimeError extends Error {
 }
 
 export interface RuntimeCollection {
+  /** The format its writes name (x-plinth-format); a runtime older than the option has none. */
+  readonly format?: string | null;
   list(opts?: { limit?: number; cursor?: string }): Promise<{ docs: RuntimeDoc[] }>;
   all(): Promise<RuntimeDoc[]>;
   get(id: string): Promise<RuntimeDoc | null>;
@@ -68,7 +70,7 @@ export interface RuntimeRoom {
 
 export interface PlinthRuntime {
   ready: Promise<RuntimeSession>;
-  db: { collection(name: string): RuntimeCollection };
+  db: { collection(name: string, opts?: { format?: string }): RuntimeCollection };
   room: RuntimeRoom;
 }
 

@@ -81,18 +81,21 @@ export const DATA_FRAGMENT: RuntimeFragment = {
 
   // ---------- collections ----------
 
-  function collection(name) {
+  function collection(name, opts) {
     if (typeof name !== "string" || !/^[a-z][a-z0-9_-]{0,39}$/.test(name)) {
       throw new PlinthError("invalid", "Collection: a lowercase letter, then up to 39 of a-z 0-9 _ -");
     }
+    var format = (opts && opts.format) || null;
+    if (format && (typeof format != "string" || !/^[a-z][a-z0-9.-]{0,39}$/.test(format))) throw new PlinthError("invalid", "Bad format");
     var base = "/data/" + name;
     async function write(method, path, body) {
       await usable();
-      var r = await call(method, path, body);
+      var r = await call(method, path, body, format);
       kick();
       return r;
     }
     var c = {
+      format: format,
       list: async function (opts) {
         await usable();
         opts = opts || {};

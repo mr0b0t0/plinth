@@ -10,7 +10,12 @@
 //
 // window.plinth is read once, before any DOM is built, so nothing the page draws later can stand
 // in for it. html[data-ready="ok"|"error"] is set for thumbnails and end-to-end tests.
-import { parseBoardSettings, TYPED_PAYLOAD_VERSION, type TypedPayload } from "@plinth/shared";
+import {
+  BOARD_PAGE_FORMAT,
+  parseBoardSettings,
+  TYPED_PAYLOAD_VERSION,
+  type TypedPayload,
+} from "@plinth/shared";
 import { Board } from "./board.ts";
 import { loadCamera } from "./camera.ts";
 import { Live } from "./live.ts";
@@ -67,6 +72,12 @@ const STATUS_TEXT: Record<RoomStatus, string> = {
   closed: "Offline",
   unavailable: "Live cursors off",
 };
+
+/**
+ * Shown, read-only, when the page runtime is older than this board (it cannot name the board's
+ * format on writes, so the server would refuse every change): a reload brings both up to date.
+ */
+export const OUT_OF_DATE_TEXT = "This page is out of date. Reload the page to change the board.";
 
 export function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -136,8 +147,13 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
   // capture) never joins the room and cannot change the board: they see it as it is, with no
   // toolbar, "View only" or live-cursor status and no notice about either.
   if (session.viewer === null) board.hideToolbar();
-  const blocks = runtime.db.collection("blocks");
-  const arrows = runtime.db.collection("arrows");
+  // Every write names the board format this page reads and writes: the server refuses a page's
+  // write without it, so a page loaded before a wider format cannot write back what it could not
+  // read. A runtime too old to send it would have every change refused: say so before any typing.
+  const blocks = runtime.db.collection("blocks", { format: BOARD_PAGE_FORMAT });
+  const arrows = runtime.db.collection("arrows", { format: BOARD_PAGE_FORMAT });
+  const current = blocks.format === BOARD_PAGE_FORMAT && arrows.format === BOARD_PAGE_FORMAT;
+  const canWrite = session.canWrite && current;
   board.sync = new BoardSync({
     blocks,
     arrows,
@@ -193,14 +209,16 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
   }
   // A commenter is read-only only because the board's settings let editors alone change it.
   const why = session.viewer.role === "commenter" ? EDITORS_ONLY_WHY : "";
-  if (!session.canWrite) board.banner(READ_ONLY_TEXT, why);
+  if (!current) board.banner(OUT_OF_DATE_TEXT);
+  else if (!session.canWrite) board.banner(READ_ONLY_TEXT, why);
   board.setStatus(STATUS_TEXT.connecting, "connecting");
-  const live = new Live(runtime.room, session.canWrite, {
+  const live = new Live(runtime.room, canWrite, {
     peers: (list) => board.setPeers(list),
     moved: (id, x, y) => board.peerMoved(id, x, y),
     saved: (collection, id) => void board.sync?.refetch(collection, id),
     status: (s) => board.setStatus(STATUS_TEXT[s], s),
     canWrite: (may) => {
+      if (!current) return;
       board.setReadOnly(!may);
       if (may) board.banner("");
       else board.banner(READ_ONLY_TEXT, why);
@@ -212,7 +230,7 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
   if (!ready.available) {
     board.setStatus(STATUS_TEXT.unavailable, "unavailable");
     const why = ROOM_WHY[ready.reason ?? ""] ?? "the room is unavailable";
-    const saves = session.canWrite ? " Changes still save." : "";
+    const saves = canWrite ? " Changes still save." : "";
     board.say(`Live cursors are off here (${why}).${saves}`);
   }
 }

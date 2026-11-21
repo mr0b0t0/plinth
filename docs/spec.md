@@ -930,8 +930,10 @@ Decided 2026-11-14 (issue #1). Design:
 - **The page stays static.** Plinth adds one fixed, generic service per artifact: collections of
   JSON documents, shared by every version, served on the artifact's own content origin at
   `/__plinth/api/v1/`, plus a runtime script at `/__plinth/runtime.js` that defines
-  `window.plinth` (`ready`, `viewer`, `canWrite`, `db.collection(name)` with `list`, `all`, `get`,
-  `add`, `set`, `update`, `delete`, `mine`, `setMine`, `deleteMine`, `onSnapshot`). The CSP's
+  `window.plinth` (`ready`, `viewer`, `canWrite`, `db.collection(name, { format }?)` with `list`,
+  `all`, `get`, `add`, `set`, `update`, `delete`, `mine`, `setMine`, `deleteMine`, `onSnapshot`;
+  `format` is sent as `x-plinth-format` on the collection's writes, for a typed renderer naming
+  the format it reads and writes, which a whiteboard requires). The CSP's
   `connect-src 'self'` already allows it: no CSP change, no CORS, no app cookies on the content
   host.
 - **Declaration.** A page opts in with `<meta name="plinth-capabilities" content="data viewer">`
@@ -2360,13 +2362,19 @@ its page without a new version each time, and agents add and move blocks with
     without one document every add would rewrite. An arrow whose block is gone is not drawn and is
     never deleted on its own.
   - Pages loaded before this format read a block through an older reader and write it back whole
-    on every move, which would turn a newer block into an empty note. So a page's write that
-    replaces a stored block or arrow is refused (`invalid_input`, `details.reason: "stale_page"`)
-    when it drops a field the format gained (a table's cells, an outline, a size, a route), drops a
-    `#rrggbb` colour, turns a block of a newer kind into a note, or cuts its text to the old 2,000
-    characters. The current page never writes any of these; such a page reports the refusal and
-    does not retry, and a reload brings the current page. Agents' writes are not checked this way:
-    an agent's `set` may replace a block whole.
+    on every move, which would turn a newer block into an empty note, drop a table's cells or cut
+    a long text. So the board's page names the format it reads and writes on every write
+    (`x-plinth-format: whiteboard.2`, `BOARD_PAGE_FORMAT`, through
+    `db.collection(name, { format })`), and the Worker refuses every page write to a whiteboard
+    (create, update and delete alike) that does not, before anything changes: `401 unauthorized`,
+    `details.reason: "stale_page"`. A 401 is what the older pages already handle by turning
+    read-only with "Your access changed. Reload the page.", so they stop taking edits that could
+    not be saved; the reload brings the current page. The format is raised whenever a newer board
+    holds something an older page's reader drops. The page's reader (`cleanBlock`, `cleanArrow`)
+    keeps every value a valid block or arrow may hold, so the current page writes back what it
+    read. A page whose runtime is too old to send the header shows the board read-only with "This
+    page is out of date. Reload the page to change the board." Agents' and the app's writes are
+    not checked this way: an agent's `set` may replace a block whole.
   The server checks every whiteboard write against these shapes, from the page, agents and the
   app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
   versioned (shared data never is); every write is stamped with who made it.
@@ -2404,8 +2412,9 @@ its page without a new version each time, and agents add and move blocks with
   peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
   the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
   save never takes a drop back to where the block started. Text is written at the rev its edit
-  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
-  "Use mine" button that writes theirs over it. A
+  began from: a peer's text saved during the edit is kept, the viewer's text is written at once
+  as a new note beside the block, and the viewer is told and offered a "Use mine" button that
+  writes theirs over it and takes the note away again (unless it was changed meanwhile). A
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
   and follows on the shared-data poll. Block text is only ever drawn as text. People get the
@@ -2416,8 +2425,13 @@ its page without a new version each time, and agents add and move blocks with
   live and its blocks on the save); a double click on a table cell (or Enter on a table) edits
   that cell, written into its row at the rev the edit began from. A table's rows merge cell by cell: on a conflict the typed cell
   goes onto the newer rows unless that same cell changed or its row or column was removed, and then
-  the other writer's version stays and the viewer is offered "Use mine", which writes the typed text
-  back (bringing back a removed row or column). Typed text is never dropped silently. Adding sections and tables, and adding a table's rows and
+  the other writer's version stays, the typed text becomes a new note beside the table and the
+  viewer is offered "Use mine", which writes it back (bringing back a removed row or column).
+  Typed text is never dropped: whatever the viewer wrote that cannot go where it was written (a
+  peer's text or cell kept over it, a save that kept conflicting four times, the block or table
+  deleted while they wrote in it) is written as a new note beside the block, or where it was,
+  before the viewer is told, so a message replaced by the next one or a closed tab loses nothing.
+  Only a note the server refuses (a full board) leaves the offer alone holding it. Adding sections and tables, and adding a table's rows and
   columns, is for agents for now.
 - **The toolbar shows only what applies**, in one row on the board's own background. The add
   buttons show to people who may change the board; a selected block's colours, Connect (which

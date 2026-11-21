@@ -546,6 +546,13 @@ export const CONTENT_RESERVED_PREFIX = "/__plinth/";
 export const CONTENT_DATA_HEADER = "x-plinth-data";
 
 /**
+ * Header a typed renderer's page sends on its shared-data writes, naming the format it reads and
+ * writes (`db.collection(name, { format })`); a whiteboard's writes without the current one are
+ * refused (whiteboard.ts BOARD_PAGE_FORMAT). It adds nothing to the checks on CONTENT_DATA_HEADER.
+ */
+export const CONTENT_FORMAT_HEADER = "x-plinth-format";
+
+/**
  * Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">,
  * one token per line, in the order lists and the stored JSON use (the declaration registry; the
  * auxiliary metas are in data.ts):

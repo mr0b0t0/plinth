@@ -13,6 +13,14 @@ import { LIMITS } from "./constants.ts";
 import type { Capabilities } from "./data.ts";
 
 export const BOARD_FORMAT_VERSION = 1;
+/**
+ * What a board's page sends in CONTENT_FORMAT_HEADER on every write (`db.collection(name,
+ * { format })`): the reader it was built with. The Worker refuses a page's write to a whiteboard
+ * without it (`stale_page`), since a page loaded before a wider format writes back whole blocks
+ * read through its older reader and would destroy what it cannot read. Raised whenever a newer
+ * board holds something an older page's reader drops; agents' writes are never checked.
+ */
+export const BOARD_PAGE_FORMAT = "whiteboard.2";
 /** The two collections a board keeps, both shared: any permitted writer may move any block. */
 export const BOARD_COLLECTIONS = ["blocks", "arrows"] as const;
 export type BoardCollection = (typeof BOARD_COLLECTIONS)[number];
@@ -477,58 +485,6 @@ export function boardDocError(collection: string, data: unknown): string | null 
     : `Not a valid ${what}: ${message}`;
 }
 
-/** The block fields, block kinds and arrow fields a board had before the wider format. */
-const FORMAT_1_BLOCK_KEYS = new Set(["kind", "x", "y", "w", "h", "text", "color", "z"]);
-const FORMAT_1_KINDS = new Set(["note", "text", "rect", "ellipse"]);
-const FORMAT_1_ARROW_KEYS = new Set(["from", "to", "label", "style", "head"]);
-/** The text limit before the wider format: older pages cut a block's text to it when reading. */
-const FORMAT_1_MAX_TEXT = 2000;
-
-/**
- * Why a page's write that replaces a stored block or arrow looks like it came from a page loaded
- * before the wider element format, which would destroy what that page cannot read; null when it
- * does not. Such a page reads a block through its older lenient reader and writes it back whole
- * on every move: it turns any newer kind into a note, drops every newer field (a table's cells, a
- * section's colour, an outline, a size, an arrow's route), drops a #rrggbb colour and cuts text to
- * 2,000 characters. The current page never does any of these, since its reader keeps every valid
- * field and its controls never remove one, so the Worker refuses exactly these writes from pages;
- * an agent's `set` may still replace a block whole.
- */
-export function staleBoardWrite(
-  collection: string,
-  stored: unknown,
-  incoming: unknown,
-): string | null {
-  if (!isObject(stored) || !isObject(incoming)) return null;
-  const legacy = collection === "arrows" ? FORMAT_1_ARROW_KEYS : FORMAT_1_BLOCK_KEYS;
-  if (collection !== "arrows" && collection !== "blocks") return null;
-  for (const k of Object.keys(stored)) {
-    if (!legacy.has(k) && !has(incoming, k)) return `it drops ${k}`;
-  }
-  if (collection === "arrows") return null;
-  const kind = stored.kind;
-  if (typeof kind === "string" && !FORMAT_1_KINDS.has(kind) && incoming.kind === "note") {
-    return `it turns a ${kind} into a note`;
-  }
-  if (
-    typeof stored.color === "string" &&
-    HEX_COLOR_RE.test(stored.color) &&
-    !has(incoming, "color")
-  ) {
-    return "it drops color";
-  }
-  const text = stored.text;
-  if (
-    typeof text === "string" &&
-    typeof incoming.text === "string" &&
-    length(text) > FORMAT_1_MAX_TEXT &&
-    incoming.text === [...text].slice(0, FORMAT_1_MAX_TEXT).join("")
-  ) {
-    return "it cuts text to 2,000 characters";
-  }
-  return null;
-}
-
 function utf8Length(s: string): number {
   let n = 0;
   for (const ch of s) {
@@ -682,7 +638,8 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
 /**
  * A stored block as the renderer draws it, clamped into bounds and with unknown values dropped,
  * or null when it is not a block at all. The Worker already validates every write; this keeps a
- * hand-edited row from breaking the page.
+ * hand-edited row from breaking the page. Every value a valid block may hold is kept as it is (a
+ * page's save writes the block back whole), `hollow: false` and `wrap: true` included.
  */
 export function cleanBlock(data: unknown): BoardBlock | null {
   if (!isObject(data) || !finite(data.x) || !finite(data.y)) return null;
@@ -700,10 +657,10 @@ export function cleanBlock(data: unknown): BoardBlock | null {
   if (isBoardPaint(data.color)) out.color = data.color;
   if (finite(data.z)) out.z = clamp(Math.round(data.z), -L.maxZ, L.maxZ);
   if (isBoardInk(data.stroke)) out.stroke = data.stroke;
-  if (data.hollow === true) out.hollow = true;
+  if (typeof data.hollow === "boolean") out.hollow = data.hollow;
   if (oneOf(TEXT_SIZES, data.size)) out.size = data.size;
   if (oneOf(TEXT_ALIGNS, data.textAlign)) out.textAlign = data.textAlign;
-  if (data.wrap === false) out.wrap = false;
+  if (typeof data.wrap === "boolean") out.wrap = data.wrap;
   if (out.kind === "table") Object.assign(out, cleanTable(data));
   return out;
 }
@@ -771,7 +728,7 @@ export function cleanArrow(data: unknown): BoardArrow | null {
   if (!isObject(data) || !isBoardId(data.from) || !isBoardId(data.to)) return null;
   if (data.from === data.to) return null;
   const out: BoardArrow = { from: data.from, to: data.to };
-  if (typeof data.label === "string" && data.label) {
+  if (typeof data.label === "string") {
     out.label = [...data.label].slice(0, BOARD_LIMITS.maxLabel).join("");
   }
   if (oneOf(ARROW_STYLES, data.style)) out.style = data.style;
