@@ -27,6 +27,12 @@
 //   app -> frame: paired                   a deck is an audience window: it follows its presenter
 //                                          window, never the presenter in the room
 //   app -> frame: lead                     a deck's earlier frame was leading viewers: lead again
+//   app -> frame: deck_settings            a deck being edited on the page opens its settings
+//                                          popover (aspect, theme, page numbers, footer); exact
+//                                          origin only
+//   app -> frame: presenting { on }        a deck's frame is full screen (Present) or no longer:
+//                                          meanwhile it shows the published deck, not the room's
+//                                          live draft (presenter view it knows by itself)
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -175,14 +181,50 @@ export function leadMessage(): LeadMessage {
 }
 
 /**
- * Post a deck message (a slide number, a view name, or an export request with the app's own
- * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
- * opaque frames. False when it cannot.
+ * A deck being edited on the page opens its deck settings popover (the ⋯ menu's "Deck
+ * settings…"): the frame writes them with its own struct op. It carries no data.
+ */
+export interface DeckSettingsMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "deck_settings";
+}
+
+export function deckSettingsMessage(): DeckSettingsMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "deck_settings" };
+}
+
+/**
+ * The app shows the deck's frame full screen (Present), or no longer: the frame cannot tell by
+ * itself, and a frame that follows the room's live draft shows the published deck meanwhile, as
+ * in presenter view. A boolean, nothing else.
+ */
+export interface PresentingMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "presenting";
+  on: boolean;
+}
+
+export function presentingMessage(on: boolean): PresentingMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "presenting", on };
+}
+
+/**
+ * Post a deck message (a slide number, a view name, a boolean, or an export request with the
+ * app's own nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*"
+ * included for opaque frames. False when it cannot.
  */
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage | LeadMessage,
+  message:
+    | GotoMessage
+    | ViewMessage
+    | DeckExportMessage
+    | PairedMessage
+    | LeadMessage
+    | PresentingMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -375,10 +417,21 @@ export interface RescueItem {
   id: string;
   text: string;
   near: number;
+  /**
+   * A deck's item (slides/edit.ts): typed on a slide or in its speaker notes, which it goes back
+   * into after a reload (notes never onto a slide); the raw slide it was on; and that slide's
+   * first line of text then, to find the slide again when slides moved. A doc's has none.
+   */
+  part?: RescuePart;
+  slide?: number;
+  ref?: string;
 }
+export type RescuePart = "slide" | "notes";
 /** A rescue store holds at most this many items, and this much text in all (UTF-16 units). */
 export const MAX_RESCUE_ITEMS = 20;
 export const MAX_RESCUE_TOTAL = 256 * 1024;
+/** A deck item's `ref` is at most this long (UTF-16 units). */
+export const MAX_RESCUE_REF = 120;
 const RESCUE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** A list of rescue items, checked field by field (from the frame, or from storage), or null. */
@@ -390,13 +443,20 @@ export function readRescueItems(v: unknown): RescueItem[] | null {
   let total = 0;
   for (const it of v) {
     if (typeof it !== "object" || it === null) return null;
-    const { id, text, near } = it as Record<string, unknown>;
+    const { id, text, near, part, slide, ref } = it as Record<string, unknown>;
     if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
     if (typeof text !== "string" || text.length > LIMITS.liveDocFrameBytes) return null;
     if (!isLine(near)) return null;
-    total += text.length;
+    const item: RescueItem = { id, text, near };
+    if (part === "slide" || part === "notes") item.part = part;
+    else if (part !== undefined) return null;
+    if (isLine(slide) && slide >= 1) item.slide = slide;
+    else if (slide !== undefined) return null;
+    if (typeof ref === "string" && ref.length <= MAX_RESCUE_REF) item.ref = ref;
+    else if (ref !== undefined) return null;
+    total += text.length + (item.ref?.length ?? 0);
     if (total > MAX_RESCUE_TOTAL) return null;
-    out.push({ id, text, near });
+    out.push(item);
   }
   return out;
 }
@@ -578,6 +638,8 @@ export const APP_MESSAGE_KINDS = [
   "review",
   "reviewed",
   "rescue",
+  "deck_settings",
+  "presenting",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -594,7 +656,9 @@ export type AppToFrameMessage =
   | LeadMessage
   | ReviewMessage
   | ReviewedMessage
-  | RescueMessage;
+  | RescueMessage
+  | DeckSettingsMessage
+  | PresentingMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -609,7 +673,8 @@ export function postToRenderer(
     | VersionMessage
     | ReviewMessage
     | ReviewedMessage
-    | RescueMessage,
+    | RescueMessage
+    | DeckSettingsMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;

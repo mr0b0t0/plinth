@@ -61,9 +61,14 @@ describe("policy: roomAccess for the slides channel", () => {
       openTopics: [],
       slides: "watch",
     });
-    // A deck has no page room and no doc channel.
+    // A deck has no page room. Its doc channel is the draft socket people edit it on (slides-text):
+    // write for an owner with an account, as for a doc, and still no slides right there.
     expect(roomAccess(claimOf("owner", true), caps, "page", deck)).toEqual(NONE);
-    expect(roomAccess(claimOf("owner", true), null, "doc", deck)).toEqual(NONE);
+    expect(roomAccess(claimOf("owner", true), null, "doc", deck)).toMatchObject({
+      join: true,
+      doc: "write",
+    });
+    expect(roomAccess(claimOf("owner", true), null, "doc", deck)).not.toHaveProperty("slides");
     // Page and doc sockets carry no slides right.
     expect(
       roomAccess(claimOf("owner", true), caps, "page", { active: true, type: "html" }),

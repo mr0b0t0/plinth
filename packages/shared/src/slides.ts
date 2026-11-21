@@ -69,7 +69,7 @@ export interface ParsedDeck {
 export const SLIDE_DENSE = { chars: 900, lines: 14 } as const;
 
 /** Front matter must close within this many lines after its opening `---`. */
-const FRONT_MATTER_LINES = 20;
+export const FRONT_MATTER_LINES = 20;
 
 const SEPARATOR_RE = /^---[ \t]*$/;
 const COLUMN_RE = /^\|\|\|[ \t]*$/;
@@ -97,6 +97,18 @@ function readSetting(trimmed: string): { key: string; value: string } | null {
 /** Tracks fenced code blocks line by line (CommonMark: closed by the same character, as long). */
 class Fences {
   private open: { ch: string; len: number } | null = null;
+
+  /** Tracking that starts in the state `key` names (Fences.key): "" outside any fence. */
+  static from(key: string): Fences {
+    const f = new Fences();
+    if (key !== "") f.open = { ch: key[0] as string, len: Number(key.slice(1)) };
+    return f;
+  }
+
+  /** The state as a string: "" outside a fence, else the fence's character and length ("`3"). */
+  get key(): string {
+    return this.open ? `${this.open.ch}${this.open.len}` : "";
+  }
 
   /** Feeds one line; true while that line is inside (or opens or closes) a fence. */
   step(line: string): boolean {
@@ -180,8 +192,11 @@ function clip(s: string): string {
   return chars.length > 40 ? `${out}…` : out;
 }
 
-/** Where front matter ends (the closing `---` line index), or -1 when line 0 does not open it. */
-function frontMatterEnd(lines: string[]): number {
+/**
+ * Where front matter ends (the closing `---` line index), or -1 when line 0 does not open it. It
+ * reads at most FRONT_MATTER_LINES + 2 lines.
+ */
+export function frontMatterEnd(lines: readonly string[]): number {
   if (!SEPARATOR_RE.test(lines[0] ?? "")) return -1;
   const last = Math.min(lines.length - 1, FRONT_MATTER_LINES + 1);
   for (let i = 1; i <= last; i++) {
@@ -192,44 +207,249 @@ function frontMatterEnd(lines: string[]): number {
   return -1;
 }
 
-interface RawSlide {
-  /** 0-based index of the slide's first line. */
+// ---------- the deck's structure, line by line ----------
+
+/**
+ * What one line of a deck is: front matter (its opening `---`, a setting line, its closing
+ * `---`), a slide separator, a column separator (`|||`), a notes marker (`Note:` or `Notes:`), or
+ * text (everything else: Markdown, blank lines, and every line inside fenced code or after a
+ * slide's notes marker).
+ */
+export type DeckLineKind =
+  | "fm_open"
+  | "setting"
+  | "fm_close"
+  | "separator"
+  | "column"
+  | "note"
+  | "text";
+
+/** Lines [start, end), 0-based. */
+export interface DeckRange {
   start: number;
-  lines: string[];
+  end: number;
 }
 
-/** Turns one slide's lines into head, columns and notes. */
-function splitSlide(raw: RawSlide, n: number, problems: DeckProblem[]): SlideSource {
+/** One raw slide: every run of lines between separators, empty ones at the edges included. */
+export interface RawSlideLayout {
+  /** 1-based, counting every raw slide. */
+  n: number;
+  /** The slide's lines, without the separators around it. */
+  start: number;
+  end: number;
+  /** The lines before the first `|||` or notes marker. */
+  head: DeckRange;
+  /** After each `|||`, up to the next one or the notes marker (every one, past the third too). */
+  columns: DeckRange[];
+  /** From the notes marker to the slide's end, or null. */
+  notes: DeckRange | null;
+}
+
+export interface DeckLayout {
+  /** Every line's kind. */
+  kinds: DeckLineKind[];
+  /**
+   * Whether each line is inside fenced code, or opens or closes it (the separator, column and
+   * notes rules skip those lines). Front matter lines are never fenced.
+   */
+  fenced: boolean[];
+  /** The fence state after each line (an opaque key): "" outside any fence. */
+  fenceAfter: string[];
+  /** frontMatterEnd: the front matter's closing line, or -1. */
+  frontMatterEnd: number;
+  slides: RawSlideLayout[];
+}
+
+/**
+ * The deck's structure: every line's kind, the fence state after it, and the raw slides with the
+ * ranges of their parts. Pure, linear in the lines, never throws. parseDeck reads decks through
+ * it, so the room's checks (liveTypes.ts) and what a deck shows cannot disagree. The lines are a
+ * deck's text split on "\n" after CRLF became LF (parseDeck does that first; a live draft holds
+ * no "\r").
+ */
+export function deckLayout(lines: readonly string[]): DeckLayout {
+  const n = lines.length;
+  const kinds: DeckLineKind[] = new Array(n);
+  const fenced: boolean[] = new Array(n);
+  const fenceAfter: string[] = new Array(n);
+  const fm = frontMatterEnd(lines);
+  let from = 0;
+  if (fm > 0) {
+    for (let i = 0; i <= fm; i++) {
+      kinds[i] = i === 0 ? "fm_open" : i === fm ? "fm_close" : "setting";
+      fenced[i] = false;
+      fenceAfter[i] = "";
+    }
+    from = fm + 1;
+  }
+  const slides: RawSlideLayout[] = [];
+  let slide = newSlide(1, from);
+  let part: DeckRange = slide.head;
+  // One fence tracker for the whole deck, notes included: a separator inside a fence there does
+  // not split either. Within a slide it is the one a slide's own split would keep, since a slide
+  // starts outside any fence (a separator is read only there).
   const fences = new Fences();
-  const parts: string[][] = [[]];
-  const notes: string[] = [];
-  let inNotes = false;
-  let extraColumns = false;
-  for (let i = 0; i < raw.lines.length; i++) {
-    let line = raw.lines[i] ?? "";
-    if (inNotes) {
-      notes.push(line);
+  for (let i = from; i < n; i++) {
+    const line = lines[i] ?? "";
+    const wasInside = fences.inside;
+    const inFence = fences.step(line);
+    fenced[i] = wasInside || inFence;
+    fenceAfter[i] = fences.key;
+    const free = !wasInside && !inFence;
+    if (free && SEPARATOR_RE.test(line)) {
+      kinds[i] = "separator";
+      part.end = i;
+      slide.end = i;
+      slides.push(slide);
+      slide = newSlide(slides.length + 1, i + 1);
+      part = slide.head;
       continue;
     }
-    const wasInside = fences.inside;
-    const fenced = fences.step(line);
-    if (!wasInside && !fenced) {
+    if (free && slide.notes === null) {
       if (NOTE_RE.test(line)) {
-        inNotes = true;
-        notes.push(line.slice(line.indexOf(":") + 1).replace(/^[ \t]+/, ""));
+        kinds[i] = "note";
+        part.end = i;
+        slide.notes = { start: i, end: i + 1 };
+        part = slide.notes;
         continue;
       }
       if (COLUMN_RE.test(line)) {
-        if (parts.length > MAX_SLIDE_COLUMNS) extraColumns = true;
-        else parts.push([]);
+        kinds[i] = "column";
+        part.end = i;
+        part = { start: i + 1, end: i + 1 };
+        slide.columns.push(part);
         continue;
       }
-      if (ESCAPED_NOTE_RE.test(line)) line = line.slice(1);
     }
-    (parts[parts.length - 1] as string[]).push(line);
+    kinds[i] = "text";
+    part.end = i + 1;
+  }
+  part.end = Math.max(part.end, n);
+  slide.end = n;
+  slides.push(slide);
+  return { kinds, fenced, fenceAfter, frontMatterEnd: fm, slides };
+}
+
+function newSlide(n: number, start: number): RawSlideLayout {
+  return { n, start, end: start, head: { start, end: start }, columns: [], notes: null };
+}
+
+/**
+ * Whether each of `lines` is inside fenced code, or opens or closes it, starting outside any
+ * fence (as DeckLayout.fenced reads them).
+ */
+export function fencedLines(lines: readonly string[]): boolean[] {
+  const f = new Fences();
+  return lines.map((line) => {
+    const wasInside = f.inside;
+    return f.step(line) || wasInside;
+  });
+}
+
+/** Whether a line opens fenced code (outside any fence). */
+export function opensFence(line: string): boolean {
+  return new Fences().step(line);
+}
+
+/** The fence state (a DeckLayout fenceAfter key) after `lines`, starting in state `key`. */
+export function fenceStateAfter(key: string, lines: readonly string[]): string {
+  const f = Fences.from(key);
+  for (const l of lines) f.step(l);
+  return f.key;
+}
+
+/**
+ * Each line's kind as deckLayout reads it in a slide part, starting in fence state `key`:
+ * "separator" outside fences; "column" and "note" too outside fences while the slide has no notes
+ * yet (`inNotes` false), and every line after a "note" is text; anything else is "text".
+ */
+export function partLineKinds(
+  key: string,
+  lines: readonly string[],
+  inNotes: boolean,
+): DeckLineKind[] {
+  const f = Fences.from(key);
+  let notes = inNotes;
+  return lines.map((line) => {
+    const wasInside = f.inside;
+    const inFence = f.step(line);
+    if (wasInside || inFence) return "text";
+    if (SEPARATOR_RE.test(line)) return "separator";
+    if (notes) return "text";
+    if (NOTE_RE.test(line)) {
+      notes = true;
+      return "note";
+    }
+    return COLUMN_RE.test(line) ? "column" : "text";
+  });
+}
+
+/** Whether a line is a slide separator (`---`, trailing spaces and tabs allowed). */
+export function isSeparatorLine(line: string | undefined): boolean {
+  return line !== undefined && SEPARATOR_RE.test(line);
+}
+
+/** Whether a line is a notes marker (`Note:` or `Notes:` at its start). */
+export function isNoteLine(line: string | undefined): boolean {
+  return line !== undefined && NOTE_RE.test(line);
+}
+
+/** Whether a line, trimmed, reads as a `key: value` setting (what front matter is made of). */
+export function readsAsSetting(line: string): boolean {
+  return readSetting(line.trim()) !== null;
+}
+
+/** The marker word of a notes marker line ("Note" or "Notes"), and whether text follows it. */
+export function noteMarkerOf(line: string): { word: "Note" | "Notes"; inline: boolean } | null {
+  if (!NOTE_RE.test(line)) return null;
+  const colon = line.indexOf(":");
+  return {
+    word: line.slice(0, colon) === "Notes" ? "Notes" : "Note",
+    inline: line.slice(colon + 1).trim() !== "",
+  };
+}
+
+/**
+ * The text of a notes part (its marker line first), exactly as a slide shows it: what follows the
+ * colon on the marker line, with leading spaces and tabs dropped, then the following lines,
+ * trimmed.
+ */
+export function notesText(lines: readonly string[]): string {
+  const [first, ...rest] = lines;
+  if (first === undefined) return "";
+  const head = first.slice(first.indexOf(":") + 1).replace(/^[ \t]+/, "");
+  return [head, ...rest].join("\n").trim();
+}
+
+/** The Markdown of a head or column part, as a slide shows it: `\Note:` read as `Note:`. */
+export function partText(lines: readonly string[], layout: DeckLayout, part: DeckRange): string {
+  const out: string[] = [];
+  for (let i = part.start; i < part.end; i++) {
+    const line = lines[i] ?? "";
+    out.push(!layout.fenced[i] && ESCAPED_NOTE_RE.test(line) ? line.slice(1) : line);
+  }
+  return out.join("\n");
+}
+
+/** Turns one raw slide into head, columns and notes, as the deck shows it. */
+function splitSlide(
+  lines: readonly string[],
+  layout: DeckLayout,
+  raw: RawSlideLayout,
+  n: number,
+  problems: DeckProblem[],
+): SlideSource {
+  // Parts past the third column join the last one (their ||| line is dropped).
+  const parts: string[] = [partText(lines, layout, raw.head)];
+  const cols = raw.columns;
+  for (let c = 0; c < cols.length; c++) {
+    const col = cols[c] as DeckRange;
+    const text = partText(lines, layout, col);
+    if (c < MAX_SLIDE_COLUMNS) parts.push(text);
+    else if (col.end > col.start) parts[parts.length - 1] = `${parts[parts.length - 1]}\n${text}`;
   }
   const line = raw.start + 1;
-  if (extraColumns) {
+  if (cols.length > MAX_SLIDE_COLUMNS) {
     problems.push({
       code: "slides_setting",
       line,
@@ -237,9 +457,8 @@ function splitSlide(raw: RawSlide, n: number, problems: DeckProblem[]): SlideSou
       message: `Slide ${n} (line ${line}) has more than ${MAX_SLIDE_COLUMNS} columns; the rest join the last one`,
     });
   }
-  const texts = parts.map((p) => p.join("\n"));
-  let head = texts[0] ?? "";
-  let columns = texts.slice(1);
+  let head = parts[0] ?? "";
+  let columns = parts.slice(1);
   if (columns.length === 1) {
     problems.push({
       code: "slides_setting",
@@ -250,7 +469,8 @@ function splitSlide(raw: RawSlide, n: number, problems: DeckProblem[]): SlideSou
     head = `${head}\n\n${columns[0]}`;
     columns = [];
   }
-  return { n, line, head, columns, notes: notes.join("\n").trim() };
+  const notes = raw.notes ? notesText(lines.slice(raw.notes.start, raw.notes.end)) : "";
+  return { n, line, head, columns, notes };
 }
 
 function bodyOf(s: SlideSource): string {
@@ -259,48 +479,39 @@ function bodyOf(s: SlideSource): string {
 
 const isBlank = (s: string) => s.trim() === "";
 
-/** Splits a deck. Linear in the input; CRLF is read as LF; never throws. */
-export function parseDeck(text: string): ParsedDeck {
+/**
+ * The raw slides a deck shows, as indexes into deckLayout's slides [lo, hi): every one but the
+ * empty ones (no body, no notes) before the first and after the last slide with content.
+ */
+export function shownRange(
+  lines: readonly string[],
+  layout: DeckLayout,
+): { lo: number; hi: number } {
+  const empty = (r: RawSlideLayout) => {
+    const s = splitSlide(lines, layout, r, r.n, []);
+    return isBlank(bodyOf(s)) && isBlank(s.notes);
+  };
+  let lo = 0;
+  let hi = layout.slides.length;
+  while (lo < hi && empty(layout.slides[lo] as RawSlideLayout)) lo++;
+  while (hi > lo && empty(layout.slides[hi - 1] as RawSlideLayout)) hi--;
+  return { lo, hi };
+}
+
+/** The settings and slides of a laid-out deck (parseDeck, without reading the text again). */
+export function parseLaidOut(lines: readonly string[], layout: DeckLayout): ParsedDeck {
   const problems: DeckProblem[] = [];
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
   let settings: DeckSettings = { ...DEFAULT_DECK_SETTINGS };
-  let from = 0;
-  const end = frontMatterEnd(lines);
-  if (end > 0) {
-    settings = readSettings(lines.slice(1, end), 2, problems);
-    from = end + 1;
-  }
+  const end = layout.frontMatterEnd;
+  if (end > 0) settings = readSettings(lines.slice(1, end), 2, problems);
 
-  const raws: RawSlide[] = [];
-  let current: RawSlide = { start: from, lines: [] };
-  // Notes hold Markdown too: a separator inside a fence there does not split either.
-  const fences = new Fences();
-  for (let i = from; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const wasInside = fences.inside;
-    const fenced = fences.step(line);
-    if (!wasInside && !fenced && SEPARATOR_RE.test(line)) {
-      raws.push(current);
-      current = { start: i + 1, lines: [] };
-      continue;
-    }
-    current.lines.push(line);
-  }
-  raws.push(current);
-
-  const split = raws.map((r, i) => splitSlide(r, i + 1, []));
   // An empty slide (no body, no notes) before the first or after the last real one is dropped:
   // a deck that opens with `---` (not front matter) or ends with a stray `---`.
-  const empty = (s: SlideSource) => isBlank(bodyOf(s)) && isBlank(s.notes);
-  let lo = 0;
-  let hi = split.length;
-  while (lo < hi && empty(split[lo] as SlideSource)) lo++;
-  while (hi > lo && empty(split[hi - 1] as SlideSource)) hi--;
-
+  const { lo, hi } = shownRange(lines, layout);
   const slides: SlideSource[] = [];
   for (let i = lo; i < hi; i++) {
-    const raw = raws[i] as RawSlide;
-    const s = splitSlide(raw, slides.length + 1, problems);
+    const raw = layout.slides[i] as RawSlideLayout;
+    const s = splitSlide(lines, layout, raw, slides.length + 1, problems);
     slides.push(s);
     const body = bodyOf(s);
     if (isBlank(body)) {
@@ -329,6 +540,65 @@ export function parseDeck(text: string): ParsedDeck {
     }
   }
   return { settings, slides, problems };
+}
+
+/**
+ * A raw slide's own source as the deck shows it, for drawing every raw slide in edit mode (empty
+ * ones at the edges included), numbered by its raw number.
+ */
+export function rawSlideSource(
+  lines: readonly string[],
+  layout: DeckLayout,
+  raw: RawSlideLayout,
+): SlideSource {
+  return splitSlide(lines, layout, raw, raw.n, []);
+}
+
+/** Splits a deck. Linear in the input; CRLF is read as LF; never throws. */
+export function parseDeck(text: string): ParsedDeck {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  return parseLaidOut(lines, deckLayout(lines));
+}
+
+/**
+ * What a change to a deck must keep (the room's rule 5 on every text edit, and every struct op's
+ * postcondition; liveTypes.ts, slidesStruct.ts). `from[j]` is the line of `before` that line j of
+ * `after` came from, or -1 for a line the edit or op put in (whose kinds its own checks cover). It
+ * holds when every line that came from `before` has the kind it had there, and the front matter
+ * (its lines and where it ends) is as it was, unless `op` is "set_deck", which writes it. It has
+ * no merge clause: a deck draft is never merged.
+ */
+export function deckKeeps(
+  before: readonly string[],
+  after: readonly string[],
+  from: readonly number[],
+  op?: string,
+  layouts?: { before?: DeckLayout; after?: DeckLayout },
+): boolean {
+  const a = layouts?.before ?? deckLayout(before);
+  const b = layouts?.after ?? deckLayout(after);
+  if (from.length !== after.length) return false;
+  for (let j = 0; j < after.length; j++) {
+    const i = from[j] as number;
+    if (i < 0) continue;
+    if (i >= before.length || a.kinds[i] !== b.kinds[j]) return false;
+  }
+  if (op === "set_deck") return true;
+  if (a.frontMatterEnd !== b.frontMatterEnd) return false;
+  for (let i = 0; i <= a.frontMatterEnd; i++) if (before[i] !== after[i]) return false;
+  return true;
+}
+
+/**
+ * The `from` map of deckKeeps for an edit that replaced `del` lines at `start` with `ins` lines:
+ * each line of the result, the line it came from, or -1.
+ */
+export function editLineSources(total: number, start: number, del: number, ins: number): number[] {
+  const out = new Array<number>(total - del + ins);
+  for (let j = 0; j < out.length; j++) {
+    out[j] = j < start ? j : j < start + ins ? -1 : j - ins + del;
+  }
+  return out;
 }
 
 /**

@@ -64,6 +64,11 @@ export interface ItemWords {
 
 /** The attribute a pane sets on each block or cell that changed since the base. */
 export const CHANGED_ATTR = "data-review-changed";
+/**
+ * On a pane's drawing whose children are whole items (a deck's slides): a change is brought into
+ * view at the top of the pane, never centred with the item before it cut in half.
+ */
+export const REVIEW_START_ATTR = "data-review-start";
 
 export type ReviewOutcome = "publish" | "discard" | "cancelled";
 
@@ -78,6 +83,11 @@ export interface ReviewSetup {
   choose(outcome: ReviewOutcome, note?: string): void;
   /** For tests: reads a version's source. */
   fetchText?: (n: number) => Promise<string | null>;
+  /**
+   * Why "Publish your changes" is off for a draft the type cannot publish yet, in its words (an
+   * empty deck's). Absent: REVIEW_WORDS.unpublishable.
+   */
+  unpublishableWords?: string;
 }
 
 export interface ReviewState {
@@ -457,7 +467,7 @@ export class DraftReview {
     reason.setAttribute("role", "status");
     if (unpublishable) {
       publish.disabled = true;
-      reason.textContent = REVIEW_WORDS.unpublishable;
+      reason.textContent = this.setup.unpublishableWords ?? REVIEW_WORDS.unpublishable;
       reason.id = nextId("reason");
       publish.setAttribute("aria-describedby", reason.id);
     }
@@ -647,18 +657,51 @@ export class DraftReview {
 }
 
 /**
+ * Scroll `pane` so the item `target` starts it with the list's top padding above it, as the first
+ * item starts an unscrolled pane, so no item is cut at the top and nothing of the item before it
+ * shows (a deck's slides). A change near the end gets room below the last item, so it can still
+ * start the pane.
+ */
+export function startPaneAt(pane: HTMLElement, target: Element): void {
+  const list = target.parentElement;
+  const view = pane.ownerDocument.defaultView;
+  const pad = (side: "paddingTop" | "paddingBottom") =>
+    list && view ? Number.parseFloat(view.getComputedStyle(list)[side]) || 0 : 0;
+  const want = target.previousElementSibling
+    ? Math.max(
+        0,
+        pane.scrollTop +
+          target.getBoundingClientRect().top -
+          pane.getBoundingClientRect().top -
+          pane.clientTop -
+          pad("paddingTop"),
+      )
+    : 0;
+  const short = want - (pane.scrollHeight - pane.clientHeight);
+  if (list && short > 0) {
+    list.style.paddingBottom = `${Math.ceil(pad("paddingBottom") + short)}px`;
+  }
+  pane.scrollTop = want;
+}
+
+/**
  * Scroll `pane` so `target` is in view when it is not already wholly in view: centred from top to
  * bottom (clear of a sheet's sticky header rows), and from side to side with its left edge just
  * past whatever sticks at the left of its row (a sheet's row numbers and frozen columns), so its
- * column shows whole, with its name, and no unlabelled sliver of another is left beside them. True
- * when it scrolled.
+ * column shows whole, with its name, and no unlabelled sliver of another is left beside them. In
+ * a pane of whole items (REVIEW_START_ATTR, a deck's slides) the target starts the pane instead
+ * (startPaneAt). True when it scrolled.
  */
 function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
   const p = pane.getBoundingClientRect();
   const t = target.getBoundingClientRect();
   let moved = false;
   if (t.top < p.top || t.bottom > p.bottom) {
-    pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    if (target.parentElement?.closest(`[${REVIEW_START_ATTR}]`)) {
+      startPaneAt(pane, target);
+    } else {
+      pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    }
     moved = true;
   }
   if (sticks(target)) return moved;

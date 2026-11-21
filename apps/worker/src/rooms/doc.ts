@@ -25,11 +25,13 @@
 // is not, and a draft of every other type is frozen for review whenever the version changed its
 // content. Draft text is never logged.
 //
-// Every type with `edit: "live"` has a draft here (docs and sheets): the type's rules
+// Every type with `edit: "live"` has a draft here (docs, decks and sheets): the type's rules
 // (liveTypes.ts) check each edit and each merge, so a sheet's draft is always valid canonical JSON
-// lines and no draft starts like an HTML document. A sheet's rows and columns move with `struct`,
-// applied here and on every socket by the same pure function, only while nobody else holds a
-// lease. A sheet's draft is never merged: a version published under it freezes it, and the editors
+// lines, no text edit changes a deck's structure, and no draft starts like an HTML document. A
+// sheet's rows and columns move with `struct`, applied here and on every socket by the same pure
+// function, only while nobody else holds a lease; a deck's notes and settings do too, while no
+// other lease overlaps the ranges the op touches. A sheet's or a deck's draft is never merged: a
+// version published under it freezes it, and the editors
 // review the whole draft beside it and publish theirs (with its base's files) or discard it. Both
 // choices, and every save and discard, run under one checkpoint lock, so a frozen draft resolves
 // exactly once.
@@ -49,13 +51,15 @@ import {
   type LiveDocClientFrame,
   type LiveDocErrorCode,
   type LiveDocServerFrame,
+  type LiveStructOp,
   type LiveTypeRules,
   liveRules,
+  mapRange,
   merge3,
   rangesOverlap,
-  type SheetStructOp,
   shiftRange,
   splitLines,
+  structOverlaps,
   summarizeFileChanges,
   typeDef,
 } from "@plinth/shared";
@@ -327,7 +331,7 @@ export class LiveDoc {
     if (!isLiveType(def) || !def || !rules) return null;
     const baseSource = await this.readVersionText(row.base_prefix, def);
     if (baseSource === null) return null;
-    // The draft's lines are the type's live form of its source (identity for docs and sheets).
+    // The draft's lines are the type's live form of its source (identity for docs, decks and sheets).
     const baseText = rules.toLive(baseSource);
     const draft = row.content !== null && row.base_version !== null && row.rev !== null;
     const doc: Loaded = {
@@ -684,13 +688,15 @@ export class LiveDoc {
   }
 
   /**
-   * A structural change (a sheet's rows or columns): a writer's, at the current rev, of a kind the
-   * artifact's type takes, while no other socket's lease overlaps what the op touches ("all" for a
-   * sheet: no other lease at all, so no lease has to move). The sender's own lease ends first; the
-   * op is applied with the type's pure function and broadcast as it came, and every socket applies
-   * it to the same lines. The result must be a draft the type can hold.
+   * A structural change (a sheet's rows or columns, a deck's notes or settings): a writer's, at the
+   * current rev, of a kind the artifact's type takes, while no other socket's lease overlaps what
+   * the op touches ("all" for a sheet: no other lease at all, so no lease has to move; a deck's
+   * ranges per structOverlaps, and every lease then moves by the op's line map). The sender's own
+   * lease ends first unless the map keeps it; the op is applied with the type's pure function and
+   * broadcast as it came, and every socket applies it to the same lines. The result must be a
+   * draft the type can hold.
    */
-  private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: SheetStructOp) {
+  private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: LiveStructOp) {
     if (s.doc !== "write") return this.host.send(ws, { t: "struct_denied", reason: "watch" });
     const rules = doc.rules.struct;
     if (!rules?.kinds.includes(op.op)) return this.error(ws, "invalid");
@@ -702,7 +708,7 @@ export class LiveDoc {
     for (const o of this.host.sockets()) {
       const l = o.s.lease;
       if (o.ws === ws || !l) continue;
-      if (touched === "all" || touched.some((r) => rangesOverlap(r, l))) {
+      if (touched === "all" || touched.some((r) => structOverlaps(r, l))) {
         return this.host.send(ws, { t: "struct_denied", reason: "held", by: o.s.email });
       }
     }
@@ -714,11 +720,43 @@ export class LiveDoc {
     const text = joinLines(next);
     if (doc.rules.tooLarge(text)) return this.error(ws, "too_large");
     if (!doc.rules.valid(text)) return this.error(ws, "invalid");
+    // With real ranges (a deck), every other lease moves by the op's line map: none overlaps what
+    // the op touched, so each keeps its lines. The sender keeps its own lease the same way when the
+    // op did not touch it. Without a map (a sheet, "all"), nobody else holds one.
+    const ranges = touched === "all" ? null : touched;
+    const map = ranges ? applied.map : undefined;
+    const moved = (l: { start: number; end: number }) =>
+      map && ranges && !ranges.some((r) => structOverlaps(r, l))
+        ? mapRange(l, map, doc.lines.length, next.length)
+        : null;
     if (s.lease) {
-      const id = s.lease.id;
-      s.lease = null;
-      this.host.save(ws, s);
-      this.broadcast({ t: "released", lease: id });
+      const kept = moved(s.lease);
+      if (kept) {
+        s.lease = { ...s.lease, ...kept };
+        this.host.save(ws, s);
+      } else {
+        const id = s.lease.id;
+        s.lease = null;
+        this.host.save(ws, s);
+        this.broadcast({ t: "released", lease: id });
+      }
+    }
+    if (map) {
+      for (const o of this.host.sockets()) {
+        if (o.ws === ws || !o.s.lease) continue;
+        const kept = moved(o.s.lease);
+        if (!kept) {
+          // Never: the overlap check above refused an op that touches a held lease.
+          const id = o.s.lease.id;
+          o.s.lease = null;
+          this.host.save(o.ws, o.s);
+          this.host.send(o.ws, { t: "lease_lost", lease: id, reason: "closed" });
+          this.broadcast({ t: "released", lease: id }, o.ws);
+        } else if (kept.start !== o.s.lease.start || kept.end !== o.s.lease.end) {
+          o.s.lease = { ...o.s.lease, ...kept };
+          this.host.save(o.ws, o.s);
+        }
+      }
     }
     doc.lines = next;
     doc.rev += 1;
@@ -781,7 +819,7 @@ export class LiveDoc {
     const DB = this.host.env.DB;
     const rev = doc.rev;
     const live = this.text(doc);
-    // What is stored is the type's source form of the lines (identity for docs and sheets).
+    // What is stored is the type's source form of the lines (identity for docs, decks and sheets).
     const text = doc.rules.fromLive(live);
     const atBase = live === doc.baseText && doc.conflictVersion === null;
     // Equal to its base: there is no draft, and a reload takes "no row" as the current version.
@@ -1129,7 +1167,7 @@ export class LiveDoc {
         : { state: "gone", ...empty, unchanged: true };
     }
     const live = this.text(doc);
-    // What a version stores is the type's source form of the lines (identity for docs and sheets).
+    // What a version stores is the type's source form of the lines (identity for docs, decks and sheets).
     const text = doc.rules.fromLive(live);
     const epoch = doc.epoch;
     const unchanged = live === doc.baseText;

@@ -2,13 +2,15 @@
 // shared parser (packages/shared/src/slides.ts); at least one slide and at most LIMITS.maxSlides.
 // Its title is the first "# " heading, it declares no capabilities and its assets are images.
 // Publish warnings name the deck's problems (an ignored setting, an empty or a dense slide) and
-// the images its Markdown references that the version does not hold. A deck has no room, so
-// nothing happens after a commit.
+// the images its Markdown references that the version does not hold. A new version of a deck
+// people are editing on its page freezes their live draft for review (rooms/doc.ts): it is never
+// merged, and the agent is told so once, with nothing to do.
 import { deckImagePaths, LIMITS, type PublishWarning, parseDeck } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
 import { echo } from "../publishCheck.ts";
 import { docHooks, markdownTitle } from "./doc.ts";
+import { liveAfterCommit } from "./live.ts";
 
 /** The deck's own problems and its missing images, as publish warnings on slides.md. */
 export function deckWarnings(
@@ -59,4 +61,5 @@ export const slidesHooks: TypeHooks = {
   },
   assetRule: "A deck's assets are images (png, jpg, gif, webp, avif, svg)",
   sourceWarnings: (def, text, manifestPaths) => deckWarnings(def.sourcePath, text, manifestPaths),
+  afterCommit: liveAfterCommit("deck"),
 };

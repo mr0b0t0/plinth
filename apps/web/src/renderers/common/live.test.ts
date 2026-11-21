@@ -1,6 +1,12 @@
 // The live draft socket client: the gen and rev rules, resync, unflushed text and its re-take after a
 // reconnect, backoff, the hidden-tab rule and the solo fallback when the room never answers.
-import { applySheetStruct, LIMITS, liveDocServerFrameSchema } from "@plinth/shared";
+import {
+  applySheetStruct,
+  applySlidesStruct,
+  LIMITS,
+  liveDocServerFrameSchema,
+  type SlidesStructOp,
+} from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ClientLease,
@@ -514,6 +520,38 @@ describe("LiveDocClient: a sheet's struct frames", () => {
   });
 });
 
+describe("LiveDocClient: a deck's struct frames", () => {
+  const DECK = ["# A", "", "alpha", "", "---", "", "# B", "", "beta"].join("\n");
+
+  it("applies a deck's op while others hold leases, and moves every lease by its line map", () => {
+    const c = new LiveDocClient({
+      win: window,
+      listener: listener(),
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: (lines, op) => applySlidesStruct(lines, op as SlidesStructOp),
+    });
+    c.start();
+    welcome(sock(), DECK, {
+      leases: [{ id: "lb", start: 8, end: 9, by: "bo@example.org" }],
+      peers: [{ id: "s2", email: "bo@example.org", lease: "lb" }],
+    });
+    sock().frame({ t: "struct", gen: "g1", rev: 4, op: { op: "add_notes", n: 1 }, by: "s1" });
+    expect(c.rev).toBe(4);
+    expect(c.lines.slice(0, 6)).toEqual(["# A", "", "alpha", "", "Note:", ""]);
+    expect(c.leases.get("lb")).toMatchObject({ start: 10, end: 11 });
+    c.stop();
+  });
+
+  it("accepts a deck's ops and refuses a footer on two lines", () => {
+    const bad = { op: "set_deck", aspect: "16:9", theme: "auto", paginate: true, footer: "a\nb" };
+    expect(readServerFrame({ t: "struct", gen: "g", rev: 4, op: bad, by: "s" })).toBeNull();
+    expect(
+      readServerFrame({ t: "struct", gen: "g", rev: 4, op: { op: "add_notes", n: 0 }, by: "s" }),
+    ).toBeNull();
+  });
+});
+
 describe("readServerFrame", () => {
   const FRAMES: Record<string, unknown>[] = [
     {
@@ -561,6 +599,16 @@ describe("readServerFrame", () => {
     },
     { t: "struct", gen: "g", rev: 4, op: { op: "delete_columns", from: "C", count: 1 }, by: "s" },
     { t: "struct", gen: "g", rev: 4, op: { op: "move_rows", from: 5, count: 2, to: 2 }, by: "s" },
+    { t: "struct", gen: "g", rev: 4, op: { op: "add_notes", n: 3 }, by: "s" },
+    { t: "struct", gen: "g", rev: 4, op: { op: "remove_notes", n: 1 }, by: "s" },
+    { t: "struct", gen: "g", rev: 4, op: { op: "trim_start" }, by: "s" },
+    {
+      t: "struct",
+      gen: "g",
+      rev: 4,
+      op: { op: "set_deck", aspect: "4:3", theme: "dark", paginate: false, footer: "Q4" },
+      by: "s",
+    },
     { t: "struct_denied", reason: "held", by: "a@b.c" },
     { t: "struct_denied", reason: "stale" },
     { t: "kept", lease: "l_abc" },

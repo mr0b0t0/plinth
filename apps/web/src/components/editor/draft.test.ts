@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAX_RESCUE_REF, MAX_RESCUE_TOTAL, readRescueItems } from "../viewer/rendererProtocol.ts";
 import {
   clearAllDrafts,
   clearDraft,
@@ -195,6 +196,35 @@ describe("the doc frame's rescue store", () => {
     expect(
       mergeRescue("u1", "art1", [item("x", chunk), item("y", chunk), item("z", chunk)], []),
     ).toEqual(["z", "y"]);
+  });
+
+  it("keeps a deck item's part, slide and ref, and counts the ref against the cap", () => {
+    sessionStorage.clear();
+    const deck = {
+      id: "d1",
+      text: "abc",
+      near: 4,
+      part: "notes" as const,
+      slide: 2,
+      ref: "## Two",
+    };
+    expect(mergeRescue("u1", "art1", [deck], [])).toEqual(["d1"]);
+    expect(readRescueItems(loadRescue("u1", "art1"))).toEqual([deck]);
+    // A part that is neither a slide's nor notes, or a ref past its length, is not read.
+    expect(readRescueItems([{ ...deck, part: "body" }])).toBeNull();
+    expect(readRescueItems([{ ...deck, ref: "x".repeat(MAX_RESCUE_REF + 1) }])).toBeNull();
+    expect(readRescueItems([{ ...deck, slide: 0 }])).toBeNull();
+    // Text and refs together stay within the store's size, so what is kept always reads back.
+    sessionStorage.clear();
+    // Four texts that fit by themselves, but not with their refs: the newest three are kept.
+    const big = (id: string) => ({
+      ...deck,
+      id,
+      text: "y".repeat(MAX_RESCUE_TOTAL / 4 - 10),
+      ref: "r".repeat(MAX_RESCUE_REF),
+    });
+    expect(mergeRescue("u1", "art1", ["a", "b", "c", "d"].map(big), [])).toEqual(["d", "c", "b"]);
+    expect(readRescueItems(loadRescue("u1", "art1"))).toHaveLength(3);
   });
 
   it("is kept per person, counted for any person, and cleared only by clearRescueStores", () => {

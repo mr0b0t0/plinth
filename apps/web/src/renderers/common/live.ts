@@ -12,24 +12,30 @@
 //   unless it holds text the room has not written to D1 yet.
 // - If the very first connection never opens, the client reports `failed` and stops, and the app
 //   falls back to editing alone (solo).
-// - A sheet's `struct` frame (rows and columns) is applied with the applier the sheet renderer
-//   passes in (applySheetStruct), exactly as the room applied it; without one (a doc) it resyncs.
+// - A `struct` frame (a sheet's rows and columns, a deck's notes and settings) is applied with
+//   the applier the renderer passes in (applySheetStruct, applySlidesStruct), exactly as the room
+//   applied it; without one (a doc) it resyncs. A deck's op comes with its line map, and the
+//   leases still held move by it.
 // - While the draft is frozen for review, `conflictFiles` holds what the version it is frozen
 //   against changed in the files (from `welcome` and `conflict`), for the review's files part.
 import {
   blockLines,
   type FileChangeSummary,
+  FOOTER_UNSAFE_RE,
   joinLines,
   LIMITS,
+  type LineMap,
   type LineRange,
   type LiveDocErrorCode,
   type LiveDocServerFrame,
+  type LiveStructOp,
+  MAX_DECK_FOOTER,
+  mapRange,
   ROOM_CLOSE,
   ROOM_PATH_PREFIX,
   ROOM_PROTOCOL,
   SHEET_COLUMN_TYPES,
   SHEET_NUMBER_STYLES,
-  type SheetStructOp,
   shiftRange,
   splitLines,
 } from "@plinth/shared";
@@ -75,7 +81,7 @@ export interface LiveDocListener {
   /** This socket's struct frame was refused (a sheet's rows or columns). */
   structDenied?(reason: LeaseDenial, by?: string): void;
   /** This socket's struct frame was applied (just before `changed`), with its op. */
-  structLanded?(op: SheetStructOp): void;
+  structLanded?(op: LiveStructOp): void;
 }
 
 /** What an editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
@@ -123,7 +129,14 @@ export interface LiveDocOptions {
    */
   keepOpen?: () => boolean;
   /** Applies a struct frame's op to the lines (a sheet's applySheetStruct); absent for a doc. */
-  applyStruct?: (lines: readonly string[], op: SheetStructOp) => string[] | null;
+  /**
+   * A deck's ops (applySlidesStruct) also return their line map: the room applies them while other
+   * leases are held, and every lease moves by the map.
+   */
+  applyStruct?(
+    lines: readonly string[],
+    op: LiveStructOp,
+  ): string[] | { lines: string[]; map: LineMap } | null;
 }
 
 /** The doc socket's URL on this content origin. */
@@ -165,6 +178,11 @@ export class LiveDocClient implements LiveBackend {
   /** Why the room closed the socket for good (access changed, the artifact is gone). */
   ended: "unauthorized" | "gone" | null = null;
   dirty = false;
+  /**
+   * `dirty` is the room's word since this socket's welcome (a status frame, a reset or a rebase):
+   * until then it is not known whether the draft holds edits.
+   */
+  dirtyKnown = false;
   editors: string[] = [];
   lastByYou = false;
   lastEditAt: string | null = null;
@@ -401,7 +419,7 @@ export class LiveDocClient implements LiveBackend {
   }
 
   /** A sheet's rows or columns: applied by the room only while nobody else holds a lease. */
-  struct(op: SheetStructOp): boolean {
+  struct(op: LiveStructOp): boolean {
     if (this.you?.right !== "write" || this.conflictVersion !== null || !this.opts.applyStruct) {
       return false;
     }
@@ -553,6 +571,7 @@ export class LiveDocClient implements LiveBackend {
             this.conflictVersion = null;
             this.conflictFiles = null;
             this.dirty = kind === "rebased";
+            this.dirtyKnown = true;
             L.changed();
             L.version(kind, f.version, {
               was,
@@ -575,6 +594,7 @@ export class LiveDocClient implements LiveBackend {
       }
       case "status":
         this.dirty = f.dirty;
+        this.dirtyKnown = true;
         this.editors = f.editors;
         this.lastEditAt = f.last_edit_at;
         this.lastByYou = f.last_by_you;
@@ -624,6 +644,7 @@ export class LiveDocClient implements LiveBackend {
         this.rev = f.rev;
         this.lines = splitLines(text);
         this.baseVersion = f.base_version;
+        this.dirtyKnown = false;
         this.flushedRev = f.flushed_rev;
         this.conflictVersion = f.conflict_version;
         this.conflictFiles = f.conflict_version !== null ? (f.files ?? null) : null;
@@ -664,16 +685,31 @@ export class LiveDocClient implements LiveBackend {
   }
 
   private struct_(f: Extract<LiveDocServerFrame, { t: "struct" }>): void {
-    const apply = this.opts.applyStruct;
-    // The room applies a struct only while no other lease is held, and ends the sender's first.
-    if (!apply || f.gen !== this.gen || f.rev !== this.rev + 1 || this.leases.size > 0) {
+    const apply = this.opts.applyStruct?.bind(this.opts);
+    if (!apply || f.gen !== this.gen || f.rev !== this.rev + 1) {
       this.sync();
       return;
     }
-    const next = apply(this.lines, f.op);
-    if (!next) {
+    const applied = apply(this.lines, f.op);
+    // A sheet's: the room applies it only while no other lease is held, and ends the sender's
+    // first. A deck's comes with its line map, and every lease still held moves by it.
+    const map = applied && !Array.isArray(applied) ? applied.map : null;
+    const next = applied && !Array.isArray(applied) ? applied.lines : applied;
+    if (!next || (map === null && this.leases.size > 0)) {
       this.sync();
       return;
+    }
+    if (map) {
+      for (const [id, l] of this.leases) {
+        const moved = mapRange(l, map, this.lines.length, next.length);
+        if (!moved) {
+          this.sync();
+          return;
+        }
+        this.leases.set(id, { ...l, ...moved });
+      }
+      const own = this.mine ? this.leases.get(this.mine.id) : undefined;
+      if (own) this.mine = own;
     }
     this.lines = next;
     this.rev = f.rev;
@@ -843,6 +879,20 @@ function isStructOp(op: unknown): boolean {
         isRowCount(op.count) &&
         isSheetRow(op.to)
       );
+    case "add_notes":
+    case "remove_notes":
+      return onlyKeys(op, new Set(["op", "n"])) && isInt(op.n, 1, LIMITS.maxSlides);
+    case "set_deck":
+      return (
+        onlyKeys(op, new Set(["op", "aspect", "theme", "paginate", "footer"])) &&
+        (op.aspect === "16:9" || op.aspect === "4:3") &&
+        (op.theme === "auto" || op.theme === "light" || op.theme === "dark") &&
+        typeof op.paginate === "boolean" &&
+        isStr(op.footer, MAX_DECK_FOOTER) &&
+        !FOOTER_UNSAFE_RE.test(op.footer)
+      );
+    case "trim_start":
+      return onlyKeys(op, new Set(["op"]));
     default:
       return false;
   }

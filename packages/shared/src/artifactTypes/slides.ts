@@ -1,7 +1,8 @@
 // The slides type: Markdown in slides.md (a line --- between slides, packages/shared/src/slides.ts)
 // plus image assets, shown as a deck by Plinth's slides renderer (apps/web/src/renderers/slides/),
 // with paging, Present, a presenter view, print to PDF, a .pptx download and, where live rooms
-// run, following the presenter. Edited only in the source editor.
+// run, following the presenter. Owners and editors edit slide text, speaker notes and the deck's
+// settings on its page, live with each other (#36; the slides rules in liveTypes.ts).
 import type { TypeModule } from "../artifactTypes.ts";
 import { LIMITS } from "../constants.ts";
 
@@ -23,7 +24,11 @@ export const slides: TypeModule<"slides"> = {
     lazy: [{ file: "slides-pptx.js", entry: "pptx.ts" }],
   },
   editor: { language: "markdown", wordWrap: "on" },
-  edit: "ask",
+  edit: "live",
+  // "New" on the dashboard: v1 is this one slide, and the page opens in edit mode on its title.
+  create: { label: "Slide deck", title: "Untitled deck", content: "# Untitled deck\n" },
+  // What the agent-facing texts call one ("People are editing this deck on its page").
+  noun: "deck",
   present: true,
   // Owners and editors lead identified viewers over the room's `slides` channel (rooms/slides.ts).
   follow: true,

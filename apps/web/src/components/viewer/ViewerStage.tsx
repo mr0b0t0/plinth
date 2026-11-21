@@ -230,7 +230,9 @@ export function ViewerStage({
     review,
     leaveReview: onLeaveReview,
   });
-  const pause: WatchPause = live.pause ?? present.pause;
+  // Presenting holds a newer version until it ends, also while the room's draft socket is open
+  // (a deck's frame follows the draft only when nobody presents from it).
+  const pause: WatchPause = present.pause ?? live.pause;
   // Live views: shared-data changes reach the page's runtime (origin isolation only).
   useLiveDataRelay({
     frame,

@@ -5,6 +5,7 @@ import {
   APP_MESSAGE_KINDS,
   boardExportMessage,
   collectMessage,
+  deckSettingsMessage,
   editMessage,
   exportMessage,
   FRAME_MESSAGE_KINDS,
@@ -13,6 +14,7 @@ import {
   leadMessage,
   matchFrameMessage,
   pairedMessage,
+  presentingMessage,
   printMessage,
   readFrameMessage,
   rescueMessage,
@@ -49,6 +51,8 @@ describe("renderer protocol kinds", () => {
       "review",
       "reviewed",
       "rescue",
+      "deck_settings",
+      "presenting",
     ]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual([
       "live",
@@ -74,6 +78,8 @@ describe("renderer protocol kinds", () => {
         reviewMessage("n".repeat(16)),
         reviewedMessage("n".repeat(16), "busy"),
         rescueMessage([]),
+        deckSettingsMessage(),
+        presentingMessage(true),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -91,6 +97,8 @@ describe("renderer protocol kinds", () => {
       reviewMessage("x".repeat(16)),
       reviewedMessage("x".repeat(16), "done"),
       rescueMessage([{ id: "r1", text: "Kept", near: 0 }]),
+      deckSettingsMessage(),
+      presentingMessage(false),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });

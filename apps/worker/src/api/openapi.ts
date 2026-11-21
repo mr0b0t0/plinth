@@ -766,7 +766,7 @@ function responseSchemas(): Record<string, Json> {
       inline_editing: {
         oneOf: [enumOf(["room", "solo"]), { type: "null" }],
         description:
-          "How owners and editors edit docs and sheets on their page here: room (live with each other), solo (alone, without rooms), or null when editing on the page is off (ALLOW_LIVE_EDITING=false, or opaque isolation)",
+          "How owners and editors edit docs, decks and sheets on their page here: room (live with each other), solo (alone, without rooms), or null when editing on the page is off (ALLOW_LIVE_EDITING=false, or opaque isolation)",
       },
       live_views: {
         type: "boolean",
@@ -1486,7 +1486,7 @@ function liveSchemas(): Record<string, Json> {
         "sign_in",
       ]),
       description:
-        "On-page editing of a doc or a sheet: owners and editors on the current version, while " +
+        "On-page editing of a doc, a deck or a sheet: owners and editors on the current version, while " +
         "live editing is on with origin isolation. sign_in: a viewer session, confirmed by code " +
         "where the address may not sign in (single-user mode), so watch only",
     },
@@ -1796,14 +1796,14 @@ function categorySharingOperations(): Operation[] {
 
 function liveOperations(): Operation[] {
   const who =
-    "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and " +
+    "Signed-in owners and editors of a doc, a deck or a sheet only (live_edit); agents are refused and " +
     "publish versions instead.";
   return [
     {
       method: "get",
       path: API.live,
       operationId: "getLiveInfo",
-      summary: "On-page editing of a doc or a sheet: mode, unsaved draft, editors online",
+      summary: "On-page editing of a doc, a deck or a sheet: mode, unsaved draft, editors online",
       description: who,
       tag: "Live editing",
       auth: "user",
@@ -2898,7 +2898,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       {
         name: "Live editing",
         description:
-          "Editing a doc or a sheet on its page: the unsaved draft and checkpoints. Not for agents",
+          "Editing a doc, a deck or a sheet on its page: the unsaved draft and checkpoints. Not for agents",
       },
     ],
     paths,
@@ -3132,7 +3132,7 @@ function askSchemas(): Record<string, Json> {
     ViewGateLiveOff: {
       ...obj({ reason: enumOf(["disabled", "isolation"]) }),
       description:
-        "Editing on the page is off for this owner or editor of a doc or a sheet on the current " +
+        "Editing on the page is off for this owner or editor of a doc, a deck or a sheet on the current " +
         "version: `disabled` (ALLOW_LIVE_EDITING off) or `isolation` (CONTENT_ISOLATION=opaque, " +
         "or the path fallback). Never together with `live`",
     },

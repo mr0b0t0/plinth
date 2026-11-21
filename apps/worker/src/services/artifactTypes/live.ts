@@ -1,7 +1,7 @@
-// The afterCommit hook of every type people edit on its page (docs and sheets, #36): a new version
-// is merged under a doc's live draft in the artifact's room (rooms/doc.ts), or frozen for review;
-// a sheet's draft is reviewed, never merged: the people editing see the new version beside theirs
-// and keep one. The agent that published it is told so once, with nothing to do.
+// The afterCommit hook of every type people edit on its page (docs, decks and sheets, #36): a new
+// version is merged under a doc's live draft in the artifact's room (rooms/doc.ts), or frozen for
+// review; a sheet's or a deck's draft is reviewed, never merged: the people editing see the new
+// version beside theirs and keep one. The agent that published it is told so once, with nothing to do.
 import { liveRules, type PublishResult } from "@plinth/shared";
 import { notifyDocVersion } from "../../rooms/notify.ts";
 import type { CommittedVersion, TypeHooks } from "../artifactTypes.ts";

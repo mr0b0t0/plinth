@@ -21,7 +21,7 @@
     { "name": "Shared data", "description": "Documents pages keep. Mirrors the MCP data tools" },
     {
       "name": "Live editing",
-      "description": "Editing a doc or a sheet on its page: the unsaved draft and checkpoints. Not for agents"
+      "description": "Editing a doc, a deck or a sheet on its page: the unsaved draft and checkpoints. Not for agents"
     }
   ],
   "paths": {
@@ -2015,8 +2015,8 @@
     "/artifacts/{ref}/live": {
       "get": {
         "operationId": "getLiveInfo",
-        "summary": "On-page editing of a doc or a sheet: mode, unsaved draft, editors online",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead.",
+        "summary": "On-page editing of a doc, a deck or a sheet: mode, unsaved draft, editors online",
+        "description": "Signed-in owners and editors of a doc, a deck or a sheet only (live_edit); agents are refused and publish versions instead.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2047,7 +2047,7 @@
       "post": {
         "operationId": "liveCheckpoint",
         "summary": "Publish the unpublished draft as the next version",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. The room's own draft is published with the draft's base_version and the files of that version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing; a frozen draft is published only with conflict_version (Publish your changes in the review), over that version, which stays in the history. With conflict_version: 200 busy while another save or choice runs, then 409 live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) or live_moved (rev is not current), all before clean. 409 live_unpublishable for a draft that cannot be a version yet.",
+        "description": "Signed-in owners and editors of a doc, a deck or a sheet only (live_edit); agents are refused and publish versions instead. The room's own draft is published with the draft's base_version and the files of that version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing; a frozen draft is published only with conflict_version (Publish your changes in the review), over that version, which stays in the history. With conflict_version: 200 busy while another save or choice runs, then 409 live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) or live_moved (rev is not current), all before clean. 409 live_unpublishable for a draft that cannot be a version yet.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2090,7 +2090,7 @@
       "delete": {
         "operationId": "discardLiveDraft",
         "summary": "Discard the unpublished draft (409 when it changed past rev)",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft. With conflict_version (Discard your changes in the review): 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it.",
+        "description": "Signed-in owners and editors of a doc, a deck or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft. With conflict_version (Discard your changes in the review): 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -3877,6 +3877,10 @@
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
           },
+          "live_draft": {
+            "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
+            "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
+          },
           "capabilities": {
             "type": "array",
             "items": {
@@ -5285,7 +5289,7 @@
           },
           "inline_editing": {
             "oneOf": [{ "type": "string", "enum": ["room", "solo"] }, { "type": "null" }],
-            "description": "How owners and editors edit docs and sheets on their page here: room (live with each other), solo (alone, without rooms), or null when editing on the page is off (ALLOW_LIVE_EDITING=false, or opaque isolation)"
+            "description": "How owners and editors edit docs, decks and sheets on their page here: room (live with each other), solo (alone, without rooms), or null when editing on the page is off (ALLOW_LIVE_EDITING=false, or opaque isolation)"
           },
           "live_views": {
             "type": "boolean",
@@ -6249,7 +6253,7 @@
           }
         },
         "required": ["mode", "draft"],
-        "description": "On-page editing of a doc or a sheet: owners and editors on the current version, while live editing is on with origin isolation. sign_in: a viewer session, confirmed by code where the address may not sign in (single-user mode), so watch only"
+        "description": "On-page editing of a doc, a deck or a sheet: owners and editors on the current version, while live editing is on with origin isolation. sign_in: a viewer session, confirmed by code where the address may not sign in (single-user mode), so watch only"
       },
       "LiveInfo": {
         "type": "object",
@@ -7066,7 +7070,7 @@
         "type": "object",
         "properties": { "reason": { "type": "string", "enum": ["disabled", "isolation"] } },
         "required": ["reason"],
-        "description": "Editing on the page is off for this owner or editor of a doc or a sheet on the current version: `disabled` (ALLOW_LIVE_EDITING off) or `isolation` (CONTENT_ISOLATION=opaque, or the path fallback). Never together with `live`"
+        "description": "Editing on the page is off for this owner or editor of a doc, a deck or a sheet on the current version: `disabled` (ALLOW_LIVE_EDITING off) or `isolation` (CONTENT_ISOLATION=opaque, or the path fallback). Never together with `live`"
       }
     },
     "responses": {

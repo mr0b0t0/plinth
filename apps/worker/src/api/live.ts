@@ -1,4 +1,4 @@
-// On-page editing (#36): the live draft of a doc or a sheet, for signed-in owners and editors in
+// On-page editing (#36): the live draft of a doc, a deck or a sheet, for signed-in owners and editors in
 // the app (session cookie, CSRF and the exact Origin from `authenticate`). Agents are refused by
 // policy (`live_edit`): they publish versions. Not mirrored to MCP. No route returns draft text.
 import { API, liveCheckpointInput, liveDiscardQuery } from "@plinth/shared";

@@ -957,3 +957,566 @@ body {
     line-height: 1.5;
   }
 }
+
+/* ---------- on-page editing (edit.ts, editView.ts) ----------
+   Edit mode shows one slide at a time, scaled to fit above its speaker notes panel. Each text
+   element is a focus stop that opens in place; the open block is drawn by richblock.ts, whose
+   floating bars are counter-scaled so they read at their own size on a scaled slide. Colours are
+   the deck's own, with the editing accent (bronze, as the app's live state) for what is open or
+   held. */
+
+:root {
+  --slides-live: #8f5a2a;
+  --slides-live-soft: rgb(143 90 42 / 0.1);
+  --doc-bg: var(--slides-bg);
+  --doc-fg: var(--slides-fg);
+  --doc-border: var(--slides-rule);
+  --doc-live: var(--slides-live);
+  --doc-font: var(--slides-font);
+}
+
+:root[data-theme="dark"] {
+  --slides-live: #d39a62;
+  --slides-live-soft: rgb(211 154 98 / 0.14);
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --slides-live: #d39a62;
+    --slides-live-soft: rgb(211 154 98 / 0.14);
+  }
+}
+
+.plinth-slides[data-editing][data-mode] .plinth-slides__frame {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plinth-slides[data-editing][data-mode="deck"] .plinth-slides__frame:not([data-active]) {
+  display: none;
+}
+
+/* Following and leading wait while editing: the deck counts raw slides then. */
+.plinth-slides[data-editing] .plinth-slides__controls .plinth-slides__lead,
+.plinth-slides[data-editing] .plinth-slides__controls .plinth-slides__follow {
+  display: none;
+}
+
+.plinth-slides[data-editing] [data-plinth-edit] {
+  border-radius: 4px;
+  cursor: text;
+}
+
+.plinth-slides[data-editing] [data-plinth-edit="other"] {
+  cursor: pointer;
+}
+
+.plinth-slides[data-editing] [data-plinth-edit]:hover {
+  background: var(--slides-live-soft);
+  box-shadow: 0 0 0 8px var(--slides-live-soft);
+}
+
+.plinth-slides[data-editing] [data-plinth-edit]:focus-visible {
+  outline: 3px solid var(--slides-live);
+  outline-offset: 6px;
+}
+
+/* A block someone else holds: a bronze rule at its left. */
+.plinth-slides[data-editing] [data-held] {
+  box-shadow: -10px 0 0 -6px var(--slides-live);
+}
+
+/* An image block (a paragraph as wide as the slide around a smaller image): its tint, focus ring,
+   held rule and selection fit the image itself, so its bar sits on the image. */
+.plinth-slides[data-editing] [data-plinth-image]:is(:hover, :focus-visible, [data-held]) {
+  background: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.plinth-slides[data-editing] [data-plinth-image]:is(:hover, [data-selected]) img {
+  border-radius: 4px;
+  box-shadow: 0 0 0 8px var(--slides-live-soft);
+}
+
+.plinth-slides[data-editing] [data-plinth-image]:focus-visible img {
+  outline: 3px solid var(--slides-live);
+  outline-offset: 6px;
+}
+
+.plinth-slides[data-editing] [data-plinth-image][data-held] img {
+  box-shadow: -10px 0 0 -6px var(--slides-live);
+}
+
+.plinth-slides__open {
+  border-radius: 4px;
+  background: var(--slides-live-soft);
+  box-shadow: 0 0 0 8px var(--slides-live-soft);
+}
+
+.plinth-slides__open .plinth-rich__content {
+  outline: none;
+}
+
+.plinth-slides__slide .plinth-rich__toolbar,
+.plinth-slides__slide .plinth-rich__link,
+.plinth-slides__slide .plinth-rich__corner {
+  transform: scale(calc(1 / var(--s)));
+  transform-origin: 0 0;
+}
+
+/* Sized on the slide, but never under 16px text in a 44px target on screen, however small the
+   slide is drawn (a phone): the sizes are slide pixels, so the floor is divided by the scale. */
+.plinth-slides__placeholder {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: max(64px, calc(44px / var(--s, 1)));
+  margin: 0;
+  padding: 0 max(12px, calc(10px / var(--s, 1)));
+  border: max(2px, calc(1.5px / var(--s, 1))) dashed var(--slides-rule);
+  border-radius: max(8px, calc(6px / var(--s, 1)));
+  background: transparent;
+  color: var(--slides-muted);
+  font: 600 max(44px, calc(16px / var(--s, 1))) / 1.2 var(--slides-font);
+  cursor: text;
+}
+
+/* The whole empty slide starts its title. */
+.plinth-slides[data-editing] .plinth-slides__canvas[data-empty] {
+  cursor: text;
+}
+
+.plinth-slides__placeholder:hover,
+.plinth-slides__placeholder:focus-visible {
+  border-color: var(--slides-live);
+  color: var(--slides-fg);
+  outline: none;
+}
+
+.plinth-slides__dense {
+  margin: 0;
+  font-size: 13px;
+  color: var(--slides-muted);
+}
+
+.plinth-slides__notepad-host {
+  display: none;
+}
+
+.plinth-slides[data-editing][data-mode="deck"] .plinth-slides__notepad-host {
+  display: block;
+  width: calc(var(--w) * var(--s));
+  height: 132px; /* EDIT_NOTES_H in stage.ts, less the frame's 8px gap */
+}
+
+.plinth-slides__notepad {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 8px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Open notes: the whole card is tinted, as an open block on the slide is, with no focus box. */
+.plinth-slides__notepad[data-open] {
+  border-color: var(--slides-live-soft);
+  background: linear-gradient(var(--slides-live-soft), var(--slides-live-soft)), var(--slides-bg);
+}
+
+.plinth-slides__notepad-body,
+.plinth-slides__notepad-edit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 4px;
+}
+
+.plinth-slides__notepad-edit {
+  display: flex;
+  flex-direction: column;
+}
+
+.plinth-slides__notepad-edit .plinth-rich {
+  flex: 1;
+}
+
+.plinth-slides__notepad-body > :first-child,
+.plinth-slides__notepad-edit .plinth-rich__content > :first-child {
+  margin-top: 0;
+}
+
+.plinth-slides__frame .plinth-slides__notepad .plinth-slides__notepad-body p,
+.plinth-slides__frame .plinth-slides__notepad .plinth-slides__notepad-edit p {
+  margin: 0 0 6px;
+}
+
+.plinth-slides__notepad-body {
+  cursor: text;
+}
+
+/* Hovered, the card is tinted as it is when open, not a box inside it. */
+.plinth-slides__notepad:has(> .plinth-slides__notepad-body:hover) {
+  background: linear-gradient(var(--slides-live-soft), var(--slides-live-soft)), var(--slides-bg);
+}
+
+.plinth-slides__notepad-edit .plinth-rich__content {
+  min-height: 100%;
+  outline: none;
+}
+
+.plinth-slides__notepad-body:focus-visible {
+  outline: 2px solid var(--slides-live);
+  outline-offset: 2px;
+}
+
+.plinth-slides__ask,
+.plinth-slides__settings button {
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 8px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font: 500 13px / 1.2 var(--slides-font);
+  cursor: pointer;
+}
+
+/* No notes: the whole panel reads "Add speaker notes", as an empty field's placeholder. */
+.plinth-slides__notepad-add {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--slides-muted);
+  font: inherit;
+  text-align: start;
+  cursor: text;
+}
+
+.plinth-slides__notepad-add:hover {
+  color: var(--slides-fg);
+}
+
+.plinth-slides__ask:hover,
+.plinth-slides__settings button:hover {
+  background: var(--slides-code-bg);
+}
+
+.plinth-slides__notepad-add:focus-visible,
+.plinth-slides__ask:focus-visible,
+.plinth-slides__settings :focus-visible {
+  outline: 2px solid var(--slides-live);
+  outline-offset: 2px;
+}
+
+/* A block that is not edited in place, selected: what can be done with it, just above the block
+   (placeBar in edit.ts sets top and left), as the doc editor's bar sits on its block. */
+.plinth-slides__blockbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  gap: 4px;
+  width: max-content;
+  padding: 4px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 10px;
+  background: var(--slides-bg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+}
+
+/* The deck's controls step aside while a block's bar shows, so the two never overlap. */
+.plinth-slides:has(.plinth-slides__blockbar) .plinth-slides__controls:not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The one notice, a toast floating over the top of the stage (the slide never moves or resizes for
+   it; inside the slide's top right corner when a slide shows whole): the editor's last message for a few seconds (edit.ts notify), which lets taps through to the
+   slide under it, else typing kept on the page, with Copy. */
+.plinth-slides__notice {
+  position: absolute;
+  top: 28px; /* the gutter, then 12 px into the slide's own top margin */
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  min-height: 36px;
+  padding: 4px 14px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 10px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+  font: 14px / 1.4 var(--slides-font);
+  transform: translateX(-50%);
+}
+
+.plinth-slides__toast {
+  pointer-events: none;
+}
+
+.plinth-slides__kept {
+  padding-right: 4px;
+}
+
+.plinth-slides__kept-copy {
+  flex: none;
+  min-height: 28px;
+  padding: 2px 12px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plinth-slides__kept-copy:focus-visible {
+  outline: 2px solid var(--slides-live);
+  outline-offset: 2px;
+}
+
+/* A slide shown whole: the notice sits inside its top right corner, where a heading seldom
+   reaches (--slide-top and --slide-side, boot.ts scale). */
+.plinth-slides[data-mode="deck"]:not([data-top]) .plinth-slides__notice {
+  top: calc(var(--slide-top, 16px) + 12px);
+  right: calc(var(--slide-side, 16px) + 12px);
+  left: auto;
+  max-width: calc(100vw - 2 * var(--slide-side, 16px) - 24px);
+  transform: none;
+}
+
+@media print {
+  .plinth-slides__notice {
+    display: none;
+  }
+}
+
+/* Editing at phone width: the slide and its notes sit at the top, as the overview does, and the
+   controls (36 px tall), then the notice, sit in the empty stage under the notes (--under-notes,
+   boot.ts scale), so neither covers the slide being edited. */
+.plinth-slides[data-editing][data-top] .plinth-slides__deck {
+  align-items: flex-start;
+  padding-top: 16px;
+}
+
+.plinth-slides[data-editing][data-top] .plinth-slides__controls {
+  top: calc(var(--under-notes) + 8px);
+  bottom: auto;
+}
+
+.plinth-slides[data-editing][data-top] .plinth-slides__notice {
+  top: calc(var(--under-notes) + 52px);
+}
+
+/* On touch a tapped control keeps its hover, so its tooltip would stay up over the notes: the
+   buttons keep their names for assistive technology. */
+@media (hover: none) {
+  .plinth-slides[data-editing] .plinth-slides__btn[data-tip]::after {
+    display: none;
+  }
+}
+
+.plinth-slides__settings {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 12px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  font: 14px / 1.4 var(--slides-font);
+}
+
+/* The dialog takes focus when it opens: no ring until a key moves it to a setting. */
+.plinth-slides__settings:focus {
+  outline: none;
+}
+
+.plinth-slides__settings-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.plinth-slides__settings-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Page numbers: its box and words in the value column, in line with the other settings. */
+.plinth-slides__settings-check {
+  display: flex;
+  min-height: 32px;
+  padding-left: 104px; /* the label column and its gap */
+  cursor: pointer;
+}
+
+.plinth-slides__settings-check input {
+  margin: 0;
+  accent-color: var(--slides-fg);
+}
+
+.plinth-slides__settings-label {
+  color: var(--slides-muted);
+}
+
+.plinth-slides__select {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.plinth-slides__select::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--slides-muted);
+  border-bottom: 1.5px solid var(--slides-muted);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+.plinth-slides__settings select,
+.plinth-slides__settings input[type="text"] {
+  flex: 1;
+  min-height: 32px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 6px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font: inherit;
+}
+
+.plinth-slides__settings select {
+  padding-right: 32px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.plinth-slides__settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.plinth-slides__settings .plinth-slides__settings-apply {
+  border-color: var(--slides-fg);
+  background: var(--slides-fg);
+  color: var(--slides-bg);
+}
+
+.plinth-slides__settings .plinth-slides__settings-apply:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Phone width: the slide fills the width, its notes and the settings below it. */
+@media (max-width: 480px) {
+  .plinth-slides__settings {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+  .plinth-slides__ask,
+  .plinth-slides__settings button,
+  .plinth-slides__settings select,
+  .plinth-slides__settings input[type="text"],
+  .plinth-slides__settings-check {
+    min-height: 44px;
+  }
+  .plinth-slides__kept-copy {
+    min-height: 36px;
+  }
+}
+
+/* The review's deck panes: the slides stacked, as the overview shows them. */
+.plinth-review__deck {
+  position: static;
+  inset: auto;
+  overflow: visible;
+}
+
+.plinth-slides.plinth-review__deck[data-mode]
+  .plinth-slides__frame[data-review-changed]
+  .plinth-slides__canvas::after {
+  /* Inside the slide, over it: a pane's edge never clips it, at phone width either. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 3px solid var(--review-live, var(--slides-live));
+  pointer-events: none;
+}
+
+/* A changed slide is outlined, not tinted like a doc's block. */
+.plinth-review__body
+  .plinth-slides.plinth-review__deck[data-mode]
+  .plinth-slides__frame[data-review-changed] {
+  background-image: none;
+  box-shadow: none;
+}
+
+/* More room between the slides than above the first: a pane scrolled to a change (startPaneAt)
+   shows only the well above it, as an unscrolled pane does above slide 1, and nothing of the slide
+   before it, its shadow included. */
+.plinth-review__body .plinth-slides.plinth-review__deck[data-mode] .plinth-slides__deck {
+  row-gap: 24px;
+}
+
+/* Both panes: the rule under the change list, then a strip of the pane's own background, then the
+   slides, however far the pane is scrolled. The strip is the body's top border, which never
+   scrolls; the rule is painted on it. */
+.plinth-review__pane > .plinth-review__body {
+  padding-top: 0;
+  border-top: 9px solid transparent;
+  background:
+    linear-gradient(var(--review-border), var(--review-border)) top / 100% 1px no-repeat border-box;
+}
+
+/* Side by side, the panes share their rows: both rules at one height and both wells ending
+   together, whichever side lists more changes or has fewer slides. */
+@media (min-width: 641px) {
+  .plinth-review__panes {
+    grid-template-rows: repeat(3, auto);
+  }
+
+  .plinth-review__panes > .plinth-review__pane {
+    display: grid;
+    grid-row: span 3;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: subgrid;
+    align-self: stretch;
+  }
+}

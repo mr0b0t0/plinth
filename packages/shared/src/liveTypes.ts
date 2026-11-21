@@ -1,5 +1,5 @@
 // On-page editing (#36) per type: what the room, the renderers and the app check about a live
-// draft of each type whose registry row has `edit: "live"` (docs and sheets). The room enforces
+// draft of each type whose registry row has `edit: "live"` (docs, decks and sheets). The room enforces
 // these on every edit, structural change and merge; the renderers use the same rules to check
 // before they send, so a refusal from the room means another socket changed the lines first, or
 // the edit was forged. No zod, so the renderer bundles can import it.
@@ -12,6 +12,11 @@
 // and a checkpoint saves it byte for byte. A text edit changes the line count only by appending
 // rows at the end: rows in the middle move only through `struct`, which rewrites the formula
 // references the move shifts.
+// A deck's draft is its Markdown (slides.md) with LF line ends. A text edit stays inside one part
+// of one raw slide (a head, a column or its notes) and keeps every line's structural kind, the
+// fence state and the front matter (the structure rule, checkDeckEdit), so the deck's slides,
+// columns, notes and settings change only through `struct` (slidesStruct.ts). A draft may show no
+// slide; it is then not publishable ("empty").
 //
 // What happens to a changed draft when a version is published meanwhile is `merge`: a doc keeps
 // #49's rule (merged when merge3 is clean and the result fits, reviewed otherwise); a draft of every
@@ -29,6 +34,25 @@ import {
   trimRow,
 } from "./sheet/format.ts";
 import { applySheetStruct, SHEET_STRUCT_KINDS, type SheetStructOp } from "./sheet/ops.ts";
+import {
+  type DeckLayout,
+  type DeckRange,
+  deckKeeps,
+  deckLayout,
+  editLineSources,
+  FRONT_MATTER_LINES,
+  fenceStateAfter,
+  frontMatterEnd,
+  parseDeck,
+  partLineKinds,
+} from "./slides.ts";
+import {
+  applySlidesStruct,
+  deckDraftValid,
+  SLIDES_STRUCT_KINDS,
+  type SlidesStructOp,
+  slidesTouches,
+} from "./slidesStruct.ts";
 
 /** UTF-8 bytes of a string. */
 function utf8(s: string): number {
@@ -75,24 +99,31 @@ export function liveSheetTooLarge(text: string): boolean {
  */
 export type LineMap = readonly number[];
 
+/** Every live type's structural op: a sheet's rows and columns, a deck's notes and settings. */
+export type LiveStructOp = SheetStructOp | SlidesStructOp;
+
 /**
- * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows), as the room
- * and the renderers apply them.
+ * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows; a deck's
+ * notes and settings), as the room and the renderers apply them.
  */
 export interface LiveStructRules {
   /** The op kinds this type takes. The room refuses an op of another kind with `invalid`. */
   kinds: readonly string[];
-  /** Pure: the new lines (and, with real ranges, how untouched lines moved), or why not. */
+  /**
+   * Pure: the new lines, or why not. With real ranges from `touches`, also `map`: how every old
+   * line moved (-1: removed or rewritten), which the room moves the other leases by.
+   */
   apply(
     lines: readonly string[],
-    op: SheetStructOp,
+    op: LiveStructOp,
   ): { lines: string[]; map?: LineMap } | { error: LiveDocErrorCode };
   /**
    * Every range the op removes or rewrites, and every point it inserts at as a zero-length range,
-   * which no other socket's lease may overlap. "all": refused while any other socket holds a
-   * lease (a sheet's rows and columns, which rewrite formulas that may sit in any row).
+   * which no other socket's lease may overlap (liveLines.ts structOverlaps). "all": refused while
+   * any other socket holds a lease (a sheet's rows and columns, which rewrite formulas that may
+   * sit in any row).
    */
-  touches(lines: readonly string[], op: SheetStructOp): readonly LineRange[] | "all";
+  touches(lines: readonly string[], op: LiveStructOp): readonly LineRange[] | "all";
 }
 
 /** The rules of one live-editable type. */
@@ -121,10 +152,10 @@ export interface LiveTypeRules {
    * "review": never merged, the whole draft is reviewed beside the version (every other type).
    */
   merge: "lines" | "review";
-  /** The source text as the draft's lines, and back. Identity for docs and sheets. */
+  /** The source text as the draft's lines, and back. Identity for docs and sheets (a deck: LF). */
   toLive(source: string): string;
   fromLive(live: string): string;
-  /** Why a valid draft cannot become a version yet, or null (always null for docs and sheets). */
+  /** Why a valid draft cannot become a version yet (a deck that shows no slide), or null. */
   unpublishable(live: string): "empty" | null;
   /** The type's structural ops, or null for a type that has none (a doc). */
   struct: LiveStructRules | null;
@@ -239,7 +270,8 @@ const docRules: LiveTypeRules = {
 const sheetStruct: LiveStructRules = {
   kinds: SHEET_STRUCT_KINDS,
   apply(lines, op) {
-    const next = applySheetStruct(lines, op);
+    // The room checked the op's kind against `kinds` first.
+    const next = applySheetStruct(lines, op as SheetStructOp);
     return next ? { lines: next } : { error: "invalid" };
   },
   // A row or column insert, delete or move rewrites formulas that may sit in any row.
@@ -301,9 +333,199 @@ const sheetRules: LiveTypeRules = {
   struct: sheetStruct,
 };
 
+// ---------- slides (slides-text) ----------
+
+/** Whether a deck draft is past LIMITS.maxSlidesBytes or LIMITS.maxLiveDocLines. */
+export function liveSlidesTooLarge(text: string): boolean {
+  if (text.length > LIMITS.maxSlidesBytes || utf8(text) > LIMITS.maxSlidesBytes) return true;
+  return moreLinesThan(text, LIMITS.maxLiveDocLines);
+}
+
+/**
+ * The layout of the lines a deck edit starts from. The room checks every edit against the lines
+ * it holds, which are the previous edit's result: the layout computed for that result (rule 5) is
+ * kept and reused while the lines are equal to it, so rules 1 to 4 cost the edited lines plus one
+ * pass of string comparisons (the same strings, so each is a pointer check). One deck is kept.
+ */
+let lastDeck: { lines: readonly string[]; layout: DeckLayout } | null = null;
+
+function layoutOf(lines: readonly string[]): DeckLayout {
+  const c = lastDeck;
+  if (c && c.lines.length === lines.length) {
+    let same = true;
+    for (let i = 0; i < lines.length; i++) {
+      if (c.lines[i] !== lines[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return c.layout;
+  }
+  const layout = deckLayout(lines);
+  lastDeck = { lines: [...lines], layout };
+  return layout;
+}
+
+/**
+ * The part of a raw slide (its head, a column, or its notes) that holds [start, start + del), or
+ * the insert point at `start`: an insert point on the boundary of two parts belongs to the first.
+ */
+function partOf(
+  layout: DeckLayout,
+  start: number,
+  del: number,
+): { part: DeckRange; notes: boolean } | null {
+  const slides = layout.slides;
+  // The first raw slide that ends at or after `start` (an insert point at a slide's end belongs
+  // to it, before its separator).
+  let lo = 0;
+  let hi = slides.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((slides[mid] as (typeof slides)[number]).end < start) lo = mid + 1;
+    else hi = mid;
+  }
+  const s = slides[lo];
+  if (!s || start < s.start || start + del > s.end) return null;
+  const parts: { part: DeckRange; notes: boolean }[] = [
+    { part: s.head, notes: false },
+    ...s.columns.map((part) => ({ part, notes: false })),
+    ...(s.notes ? [{ part: s.notes, notes: true }] : []),
+  ];
+  for (const p of parts) {
+    const inside =
+      del === 0
+        ? p.part.start <= start && start <= p.part.end
+        : p.part.start <= start && start + del <= p.part.end;
+    if (inside) return p;
+  }
+  return null;
+}
+
+/**
+ * The slides structure rule (docs/spec.md "Slides"): an edit that replaces `del` lines at `start`
+ * with `ins` is taken only when (1) it lies inside one part of one raw slide (its head, one
+ * column, or its notes part), never in the front matter; (2) the structural kinds of the removed
+ * lines equal those of the inserted ones, read in the same part and fence state: none in a head
+ * or column, and in notes the marker first when the edit starts on it; (3) the fence state after
+ * the inserted lines is the one after the removed lines; (4) frontMatterEnd of the result is the
+ * deck's; (5) deckKeeps holds on the whole result. The result must not start like an HTML
+ * document, and no inserted line holds "\r", which the deck would read as a line break.
+ */
+function checkDeckEdit(
+  lines: readonly string[],
+  start: number,
+  del: number,
+  ins: readonly string[],
+): LiveDocErrorCode | null {
+  if (start < 0 || del < 0 || start + del > lines.length) return "invalid";
+  for (const l of ins) if (l.includes("\r")) return "invalid";
+  const layout = layoutOf(lines);
+  const fm = layout.frontMatterEnd;
+  // 1. Inside one part, never the front matter (an insert point at its closing line is in it).
+  if (fm > 0 && start <= fm) return "invalid";
+  const at = partOf(layout, start, del);
+  if (!at) return "invalid";
+  // 2. The same structural kinds, in order. In notes only a separator (outside fences) is
+  // structure, besides the marker on the part's first line.
+  const before = start > 0 ? (layout.fenceAfter[start - 1] ?? "") : "";
+  const marker = at.notes && start === at.part.start;
+  const kinds = partLineKinds(before, ins, at.notes && !marker);
+  if (marker && kinds[0] !== "note") return "invalid";
+  const removed = layout.kinds.slice(start, start + del).filter((k) => k !== "text");
+  const added = kinds.filter((k) => k !== "text");
+  if (removed.length !== added.length || removed.some((k, i) => k !== added[i])) {
+    return "invalid";
+  }
+  // 3. The fence state after the edit is the one the removed lines left.
+  const after = del > 0 ? (layout.fenceAfter[start + del - 1] ?? "") : before;
+  if (fenceStateAfter(before, ins) !== after) return "invalid";
+  // 4. frontMatterEnd is unchanged. It reads at most the first FRONT_MATTER_LINES + 2 lines.
+  const head: string[] = [];
+  const total = lines.length - del + ins.length;
+  for (let i = 0; i < Math.min(total, FRONT_MATTER_LINES + 2); i++) {
+    const line =
+      i < start ? lines[i] : i < start + ins.length ? ins[i - start] : lines[i - ins.length + del];
+    head.push(line ?? "");
+  }
+  if (frontMatterEnd(head) !== fm) return "invalid";
+  if (editStartsHtmlDocument(lines, start, del, ins)) return "invalid";
+  // 5. deckKeeps on the whole result: every line outside the edit keeps its kind, and the front
+  // matter is byte for byte as it was. Rules 1 to 4 imply it; it still runs on every edit.
+  const next = [...lines.slice(0, start), ...ins, ...lines.slice(start + del)];
+  const nextLayout = deckLayout(next);
+  const from = editLineSources(lines.length, start, del, ins.length);
+  if (!deckKeeps(lines, next, from, undefined, { before: layout, after: nextLayout })) {
+    return "invalid";
+  }
+  lastDeck = { lines: next, layout: nextLayout };
+  return null;
+}
+
+/** Whether a whole deck draft is one the slides rules can hold (`valid`, apart from its size). */
+function deckValid(text: string): boolean {
+  if (startsLikeHtmlDocument(text)) return false;
+  const lines = text.split("\n");
+  return deckDraftValid(lines, layoutOf(lines));
+}
+
+const slidesStruct: LiveStructRules = {
+  kinds: SLIDES_STRUCT_KINDS,
+  apply(lines, op) {
+    // The room checked the op's kind against `kinds` first; the op's postcondition runs inside.
+    const r = applySlidesStruct(lines, op as SlidesStructOp);
+    if (!r || startsLikeHtmlDocument(r.lines.join("\n"))) return { error: "invalid" };
+    return r;
+  },
+  // An op that does not apply touches nothing: `apply` refuses it.
+  touches: (lines, op) => slidesTouches(lines, op as SlidesStructOp) ?? [],
+};
+
+const slidesRules: LiveTypeRules = {
+  tooLarge: liveSlidesTooLarge,
+  checkEdit: checkDeckEdit,
+  valid: deckValid,
+  // A deck line's kind depends on the lines above it (fences, notes, columns), so a line merge
+  // could change what a line is: a deck draft is reviewed, never merged.
+  merge: "review",
+  // The deck's lines as the deck reads them: CRLF (and a lone CR) as LF, as parseDeck does, so a
+  // line the room checks is the line every slide shows. Identity for a deck without "\r".
+  toLive: (source) => (source.includes("\r") ? source.replace(/\r\n?/g, "\n") : source),
+  fromLive: identity,
+  // A draft may show no slide (an emptied New deck); it is never published like that.
+  unpublishable: (text) => (parseDeck(text).slides.length === 0 ? "empty" : null),
+  struct: slidesStruct,
+};
+
+/**
+ * How the renderer empties a block of a deck (all of its text deleted), so the room's structure
+ * rule takes it: the lines to send for [start, start + del), or "trim" when the deck must first
+ * lose the bare `---` lines at line 0 (the struct op trim_start, after which the renderer asks
+ * again with the moved range), or null when nothing would pass. Zero lines remove the block; one
+ * blank line (a single space, since an edit's text "" is no lines at all) keeps the lines around
+ * it apart (two text lines would run together, or a `---`
+ * would come to line 0 and turn the slide below it into settings); a deck that opens with a bare
+ * `---` would read blank lines under it as empty front matter, so it is trimmed first.
+ */
+export function deckEmptying(
+  lines: readonly string[],
+  start: number,
+  del: number,
+): { ins: string[] } | "trim" | null {
+  const kinds = layoutOf(lines).kinds;
+  const text = (i: number) => kinds[i] === "text" && (lines[i] ?? "").trim() !== "";
+  const joins = start > 0 && start + del < lines.length && text(start - 1) && text(start + del);
+  // The blank line is one space: an edit's text "" means no lines at all.
+  const tries: string[][] = joins ? [[" "]] : [[], [" "]];
+  for (const ins of tries) if (checkDeckEdit(lines, start, del, ins) === null) return { ins };
+  if (frontMatterEnd(lines) === -1 && /^---[ \t]*$/.test(lines[0] ?? "")) return "trim";
+  return null;
+}
+
 /** Every live-editable type's rules. A type with `edit: "live"` has an entry (liveTypes test). */
 export const LIVE_TYPE_RULES: Readonly<Partial<Record<ArtifactType, LiveTypeRules>>> = {
   doc: docRules,
+  slides: slidesRules,
   sheet: sheetRules,
 };
 

@@ -80,6 +80,11 @@ export interface ArtifactTypeDef {
    */
   create?: CreateRow;
   /**
+   * What agent-facing texts call one artifact of the type ("this deck", "a sheet, deck or design
+   * system"), when it is not its badge in lower case. Absent: the badge (or the label).
+   */
+  noun?: string;
+  /**
    * The viewer offers Present and Presenter view, and review mode and the editor preview show
    * every page stacked (payload `view: "overview"`). Absent means false.
    */
