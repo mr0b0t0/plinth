@@ -10,6 +10,19 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
+  the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
+  too (it showed a generic notification), and a lost session asks to sign in again. A request no
+  agent can take no longer counts against the hourly comment limit. Requests for clients other
+  than Claude and Codex are labelled `@agent:other`, so they never read like a mention of a
+  connection named "Agent". The renderer's `ask` message is limited like a page's own comment
+  requests (no dialog open, the tab visible, at most one reopen a second), and the docs no longer
+  promise page anchors that no renderer sends yet. On a sheet's page, tapping the docked check on
+  a phone keeps a value it cannot save instead of dropping it, the cell field stays put (and the
+  keyboard open) when someone else's change redraws the grid, an option's hidden arrows can't be
+  tapped, Move row up and down are off while a sort is on, and while a filter hides rows a row
+  moves past them to the next row shown.
+
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
   the review inside the page: their changes and the new version (or every version since, named as

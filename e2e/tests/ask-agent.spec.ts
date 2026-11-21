@@ -222,7 +222,7 @@ test("an owner whose only agent is another client sends to it, and that connecti
   try {
     const listed = await tool<{ items: MentionItem[] }>(client, "list_mentions", {});
     const task = listed.data.items.find((t) => t.artifact_id === art.id);
-    expect(task?.target).toBe("@agent");
+    expect(task?.target).toBe("@agent:other");
     if (!task) throw new Error("no task");
     const claimed = await tool<{ state: string }>(client, "claim_mention", { task_id: task.id });
     expect(claimed.data.state).toBe("claimed");

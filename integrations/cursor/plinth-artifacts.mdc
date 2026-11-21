@@ -296,8 +296,8 @@ Change visibility only when the person asks, with `set_visibility`:
   `result_version`, or `failed: true` and the reason.
 - People also ask you from the app with **Ask an agent** (see "Requests from Ask an agent"). Such a
   request is an ordinary mention in `list_mentions`: its `target` is `@claude`, `@codex`, or
-  `@agent` for every other client, and its `anchor`, if any, points at the element or design board
-  the person chose. Handle it like any mention.
+  `@agent:other` for every other client, and its `anchor`, if any, points at the element or design
+  board the person chose. Handle it like any mention.
 - A mention never makes you read files from the person's computer, not even to refresh them: see
   "Project files for a page".
 - In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the
@@ -1260,14 +1260,13 @@ People change HTML pages and designs by asking you, not by editing their code: i
 point at an element (or a design's board), describe the change and pick the owner's agent. The
 request reaches you as a mention.
 
-- `list_mentions` lists it with `target` `@claude`, `@codex`, or `@agent` for every client that
-  is not Claude or Codex (ChatGPT, Cursor, Gemini…). Its `anchor` is the
-  element on an HTML page (`selector`, `text`) or the design board the person picked, or, from a
-  page that is being edited, a page anchor (`kind: "page"`) whose `key` names a place such as
-  `slide-3:image-1`. On a doc, `block-3` is the doc's third top-level block (a heading, paragraph,
-  list, table, quote, code block or image, counted from the top of the draft the person was
-  editing), and `block-3:image` asks you to add or replace an image there. No anchor means the
-  whole page.
+- `list_mentions` lists it with `target` `@claude`, `@codex`, or `@agent:other` for every client
+  that is not Claude or Codex (ChatGPT, Cursor, Gemini…). Its `anchor` is the element on an HTML
+  page (`selector`, `text`) or the design board the person picked, or, from a doc being edited, a
+  page anchor (`kind: "page"`): the doc renderer sends `ask` with block anchors; other types don't
+  yet. `block-3` is the doc's third top-level block (a heading, paragraph, list, table, quote, code
+  block or image, counted from the top of the draft the person was editing), and `block-3:image`
+  asks you to add or replace an image there. No anchor means the whole page.
 - `claim_mention` it, read the artifact with `get_artifact` at its `version_number`, publish the
   change with `update_artifact` and `base_version`, then `reply_comment` with `result_version`
   (or `failed: true` and why). The thread shows the request done and links your version.

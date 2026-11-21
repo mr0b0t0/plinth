@@ -394,9 +394,53 @@ describe("rows move", () => {
     const f = solo();
     sortOf("A1").click();
     cell("A3").focus();
-    rowItem("Move row down").click();
+    // The Row menu offers neither move, as it offers nothing else that cannot run.
+    expect(rowItem("Move row down").disabled).toBe(true);
+    expect(item("Move row up").disabled).toBe(true);
+    expect(item("Insert above").disabled).toBe(false);
+    key(item("Insert above"), "Escape");
+    // The keys say why.
+    cell("A3").focus();
+    key(cell("A3"), "ArrowDown", { altKey: true, shiftKey: true });
     expect(notice()).toContain("Turn the sort off first");
     expect(await collected(f)).toEqual(LINES);
+  });
+
+  it("while a filter hides rows, moves past them to the next row shown", async () => {
+    const two = JSON.stringify({ plinth: "sheet", v: 1, columns: COLUMNS.slice(0, 2) });
+    const rows = ['["kiwi",1]', '["fig",2]', '["date",3]', '["kale",4]'];
+    const f = solo({}, [two, ...rows]);
+    const filter = document.querySelector(".plinth-sheet__filter-input") as HTMLInputElement;
+    filter.value = "k";
+    filter.dispatchEvent(new Event("input"));
+    // Shown: kiwi (row 2) and kale (row 5); fig and date are hidden between them.
+    cell("A5").focus();
+    expect(rowItem("Move row up").disabled).toBe(false);
+    expect(item("Move row down").disabled).toBe(true);
+    item("Move row up").click();
+    // Kale trades places with kiwi; the hidden rows keep their order, after it.
+    expect((await collected(f)).slice(1)).toEqual([
+      '["kale",4]',
+      '["kiwi",1]',
+      '["fig",2]',
+      '["date",3]',
+    ]);
+    expect(said()).toBe("Row 5 moved to row 2.");
+    expect(selectedCell()).toBe(cell("A2"));
+    // Kiwi is the last row shown now: it cannot move down, though hidden rows follow it.
+    cell("A3").focus();
+    expect(rowItem("Move row down").disabled).toBe(true);
+    key(item("Insert above"), "Escape");
+    // Kale (row 2) down with the keys: it trades places with kiwi again.
+    cell("A2").focus();
+    key(cell("A2"), "ArrowDown", { altKey: true, shiftKey: true });
+    expect((await collected(f)).slice(1)).toEqual([
+      '["kiwi",1]',
+      '["kale",4]',
+      '["fig",2]',
+      '["date",3]',
+    ]);
+    expect(said()).toBe("Row 2 moved to row 3.");
   });
 
   it("from the Row menu: the first row cannot move up nor the last one down", async () => {
@@ -781,6 +825,19 @@ describe("select options as a list", () => {
     expect((await header(f)).columns[4].options).toEqual(["new", "done"]);
   });
 
+  it("an option's moves keep the focus in the list when pressed, so a tap reaches them", () => {
+    solo();
+    cell("E2").focus();
+    columnItem("Column settings…").click();
+    const up = optionButton("Move done up");
+    expect(up.classList.contains("plinth-sheet__ghost--move")).toBe(true);
+    const press = new Event("pointerdown", { bubbles: true, cancelable: true });
+    up.dispatchEvent(press);
+    expect(press.defaultPrevented).toBe(true);
+    up.click();
+    expect(optionInputs()).toEqual(["done", "new"]);
+  });
+
   it("refuses to drop an option a cell holds, saying where", async () => {
     const f = solo();
     cell("E2").focus();
@@ -1044,6 +1101,91 @@ describe("the docked cell editor (phone width)", () => {
     expect(text("B3")).toBe("7");
     expect(document.activeElement).toBe(cell("B3"));
     expect((await collected(f))[2]).toBe('["Pears",7,0.5,false,"done"]');
+  });
+
+  it("a tap on the check keeps the focus in the field, so a refused value is kept, not cancelled", async () => {
+    const f = solo({ dock: true });
+    cell("B2").focus();
+    key(cell("B2"), "Enter");
+    const input = field() as HTMLInputElement;
+    input.value = "many";
+    input.dispatchEvent(new Event("input"));
+    const save = document.querySelector(".plinth-sheet__dock-save") as HTMLButtonElement;
+    // The press does not move the focus (iOS would move it to the page, and the blur cancel).
+    for (const type of ["pointerdown", "mousedown"]) {
+      const press = new Event(type, { bubbles: true, cancelable: true });
+      save.dispatchEvent(press);
+      expect(press.defaultPrevented, type).toBe(true);
+    }
+    expect(document.activeElement).toBe(input);
+    save.click();
+    expect(notice()).toContain("Qty takes numbers");
+    expect(field()).toBe(input);
+    expect(input.value).toBe("many");
+    expect(document.activeElement).toBe(input);
+    expect(await collected(f)).toEqual(LINES);
+  });
+
+  it("a rebuild leaves the docked field where it is, focused", async () => {
+    mount(LINES, "room");
+    const fr = framed();
+    stop = boot(fr.win, { dock: true, connect: () => new FakeSocket() as unknown as WebSocket });
+    const ws = FakeSocket.all.at(-1) as FakeSocket;
+    ws.frame({
+      t: "welcome",
+      v: 1,
+      you: { id: "s1", email: "ada@example.org", right: "write" },
+      gen: "g1",
+      rev: 3,
+      base_version: 2,
+      flushed_rev: 3,
+      conflict_version: null,
+      last_by_you: false,
+      leases: [],
+      peers: [],
+    });
+    ws.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: LINES.join("\n") });
+    send(fr, { type: "edit", on: true });
+    cell("B3").focus();
+    key(cell("B3"), "Enter");
+    expect(ws.sent.at(-1)).toMatchObject({ t: "lease", start: 2, end: 3 });
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: "ada@example.org" });
+    await tick();
+    const input = field() as HTMLInputElement;
+    const dock = document.querySelector(".plinth-sheet__dock") as HTMLElement;
+    expect(dock.contains(input)).toBe(true);
+    expect(document.activeElement).toBe(input);
+    const moved: Node[] = [];
+    const watch = new MutationObserver((records) => {
+      for (const r of records) moved.push(...r.removedNodes);
+    });
+    watch.observe(dock, { childList: true });
+    // Someone else renames a column: the header changed, so the grid is built again around the
+    // open field.
+    ws.frame({ t: "leased", lease: "l9", start: 0, end: 1, holder: "s2", by: "bo@example.org" });
+    const renamed = COLUMNS.map((c, i) => (i === 0 ? { ...c, name: "Thing" } : c));
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l9",
+      start: 0,
+      del: 1,
+      ins: JSON.stringify({ plinth: "sheet", v: 1, columns: renamed }),
+      by: "s2",
+      seq: 1,
+    });
+    ws.frame({ t: "released", lease: "l9" });
+    await tick();
+    watch.takeRecords().forEach((r) => {
+      moved.push(...r.removedNodes);
+    });
+    watch.disconnect();
+    expect(cell("A1").textContent).toContain("Thing");
+    expect(moved).not.toContain(input);
+    expect(dock.contains(input)).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(dock.getAttribute("aria-label")).toBe("Edit B3");
   });
 
   it("keeps a refused value in the docked field, and Escape closes it", async () => {

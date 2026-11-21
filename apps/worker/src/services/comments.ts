@@ -36,7 +36,7 @@ import { newId } from "../lib/crypto.ts";
 import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import { takesRequests } from "../policy.ts";
+import { type Decision, takesRequests } from "../policy.ts";
 import { decideFor, requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 
@@ -299,6 +299,11 @@ export async function insertComment(
   const versionNumber = input.version_number ?? artifact.currentVersion;
   await requireVersion(ctx, artifact, versionNumber);
 
+  // A request no agent can take is refused before it counts against the comment limit.
+  const mention = input.request_to
+    ? await checkRequest(ctx, artifact, input.request_to)
+    : undefined;
+
   await enforceCommentRate(ctx);
 
   const row: CommentRow = {
@@ -313,7 +318,7 @@ export async function insertComment(
     createdAt: nowIso(),
     resolvedAt: null,
   };
-  const tasks = await mentionTasksFor(ctx, artifact, row, input.request_to);
+  const tasks = await mentionTasksFor(ctx, artifact, row, input.request_to, mention);
   const insert = ctx.db.insert(comments).values(row);
   if (tasks.length > 0) {
     // One batch: the comment and its tasks are written together or not at all.
@@ -340,33 +345,22 @@ export async function insertComment(
  *   another user's connections.
  * - Anything else stays plain text.
  * - `requestTo` (Ask an agent) targets the owner's connections of that client type, as "@claude"
- *   does, once: a client type the body already names gets no second task. It needs a connection
- *   of that type that can take requests (policy.ts takesRequests); without one the whole comment
- *   is refused (`no_agent`) and nothing is written, so a request is never shown as sent to an
- *   agent that cannot receive it. A person without the mention right is refused too. An agent's
- *   `requestTo` creates no task, like its @mentions.
+ *   does, once: a client type the body already names gets no second task. checkRequest has
+ *   already refused one that no connection can take, before the comment limit counted it. An
+ *   agent's `requestTo` creates no task, like its @mentions.
  */
 async function mentionTasksFor(
   ctx: Ctx,
   artifact: ArtifactRow,
   comment: CommentRow,
   requestTo?: ClientType,
+  mention?: Decision,
 ): Promise<MentionTaskRow[]> {
   if (ctx.principal.kind === "agent") return [];
   const names = parseMentions(comment.body);
   if (names.length === 0 && !requestTo) return [];
-  const d = await decideFor(ctx, artifact, "mention");
-  if (!d.allow) {
-    if (requestTo) throw new ApiError("forbidden", "You cannot ask the owner's agents here");
-    return [];
-  }
-  if (requestTo && !(await requestTargets(ctx.db, artifact.ownerId)).includes(requestTo)) {
-    throw new ApiError(
-      "invalid_input",
-      "The owner has no agent of that kind connected to take requests",
-      { field: "request_to", reason: "no_agent" },
-    );
-  }
+  const d = mention ?? (await decideFor(ctx, artifact, "mention"));
+  if (!d.allow) return [];
 
   const base = {
     commentId: comment.id,
@@ -441,6 +435,31 @@ async function mentionTasksFor(
     });
   }
   return tasks;
+}
+
+/**
+ * A comment's `request_to` (Ask an agent), checked before anything is counted or written: the
+ * person needs the mention right (else `forbidden`), and the owner a connection of that client
+ * type that can take requests (policy.ts takesRequests; else `invalid_input`, reason `no_agent`),
+ * so a request is never shown as sent to an agent that cannot receive it. The `mention` decision,
+ * for the tasks; undefined for an agent, whose `request_to` creates no task.
+ */
+async function checkRequest(
+  ctx: Ctx,
+  artifact: ArtifactRow,
+  requestTo: ClientType,
+): Promise<Decision | undefined> {
+  if (ctx.principal.kind === "agent") return undefined;
+  const d = await decideFor(ctx, artifact, "mention");
+  if (!d.allow) throw new ApiError("forbidden", "You cannot ask the owner's agents here");
+  if (!(await requestTargets(ctx.db, artifact.ownerId)).includes(requestTo)) {
+    throw new ApiError(
+      "invalid_input",
+      "The owner has no agent of that kind connected to take requests",
+      { field: "request_to", reason: "no_agent" },
+    );
+  }
+  return d;
 }
 
 /**

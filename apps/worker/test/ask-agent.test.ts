@@ -3,10 +3,13 @@
 // such connection can take it; the gate's `ask` part lists those client types (never labels) for
 // everyone who may mention; the `live_off` part says why editing on the page is off, exactly where
 // `live` would be.
+
+import { env } from "cloudflare:workers";
 import type { Role } from "@plinth/shared";
 import { asc, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { agentConnections, comments, mentionTasks } from "../src/db/schema.ts";
+import { peek } from "../src/lib/ratelimit.ts";
 import { nowIso } from "../src/lib/time.ts";
 import { takesRequests } from "../src/policy.ts";
 import {
@@ -81,7 +84,7 @@ describe("request_to on a new comment", () => {
       });
       expect(res.status, await res.clone().text()).toBe(201);
       const c = await json(res);
-      const label = { claude: "@claude", codex: "@codex", other: "@agent" }[clientType];
+      const label = { claude: "@claude", codex: "@codex", other: "@agent:other" }[clientType];
       expect(c.mentions).toEqual([
         { task_id: expect.any(String), target: label, state: "pending", result_version: null },
       ]);
@@ -155,6 +158,50 @@ describe("request_to on a new comment", () => {
     expect((await postComment(session.headers, id, { body: "Please" })).status).toBe(201);
   });
 
+  it("does not count a request no agent can take against the comment limit", async () => {
+    const { id, session, owner } = await ownerWith();
+    const key = `comment:u:${owner.user.id}`;
+    const before = await peek(env.DB, key, 3600);
+    const refused = await postComment(session.headers, id, { body: "Please", request_to: "codex" });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).error.details).toMatchObject({ reason: "no_agent" });
+    expect(await peek(env.DB, key, 3600)).toBe(before);
+    // A viewer, who may not ask, is refused before it counts too.
+    const viewer = await personWith(id, "viewer");
+    const vkey = `comment:u:${viewer.user.id}`;
+    const res = await postComment(viewer.session.headers, id, { body: "Hi", request_to: "codex" });
+    expect(res.status).toBe(403);
+    expect(await peek(env.DB, vkey, 3600)).toBe(0);
+    // A plain comment still counts.
+    expect((await postComment(session.headers, id, { body: "Please" })).status).toBe(201);
+    expect(await peek(env.DB, key, 3600)).toBe(before + 1);
+  });
+
+  it("keeps the generic target apart from a connection labelled Agent", async () => {
+    const { owner, id, session } = await ownerWith();
+    const labelled = await createToken(owner.user.id, { clientType: "claude", label: "Agent" });
+    await createToken(owner.user.id, { clientType: "other", label: "ChatGPT" });
+    const asked = await json(
+      await postComment(session.headers, id, { body: "Add a footer", request_to: "other" }),
+    );
+    const mentioned = await json(
+      await postComment(session.headers, id, { body: "@agent add a footer" }),
+    );
+    const [request] = await tasksOf(asked.id);
+    const [mention] = await tasksOf(mentioned.id);
+    expect(request).toMatchObject({
+      targetLabel: "@agent:other",
+      targetClientType: "other",
+      targetConnection: null,
+    });
+    expect(mention).toMatchObject({
+      targetLabel: "@agent",
+      targetClientType: null,
+      targetConnection: labelled.connectionId,
+    });
+    expect(asked.mentions[0].target).not.toBe(mentioned.mentions[0].target);
+  });
+
   it("is refused on a reply", async () => {
     const { owner, id, session } = await ownerWith();
     await createToken(owner.user.id, { clientType: "claude" });
@@ -195,7 +242,7 @@ describe("request_to on a new comment", () => {
     const listed = await tool(client, "list_mentions", {});
     const task = listed.data.items.find((t: { comment_id: string }) => t.comment_id === c.id);
     expect(task).toMatchObject({
-      target: "@agent",
+      target: "@agent:other",
       comment_body: "Add a footer",
       comment_author_role: "commenter",
     });

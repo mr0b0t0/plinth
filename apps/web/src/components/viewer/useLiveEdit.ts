@@ -153,20 +153,41 @@ export interface LiveEdit {
   saveRestore(): Promise<void>;
   dropRestore(): void;
   /**
-   * Ask an agent's "Publish my changes first": publish now, as Publish does, and say what came of
-   * it: the version the request is then posted against, or why nothing was published, in the
-   * strip's words. A conflict opens the review, as Publish does.
+   * Ask an agent's "Publish my changes first": Publish, on the same path as the strip's, reporting
+   * instead of toasting. It says what came of it: the version the request is then posted against,
+   * or why nothing was published, in the strip's words. A lost session reloads the gate and a
+   * conflict opens the review, as Publish does.
    */
-  publishFirst(): Promise<{ version: number } | { error: string }>;
+  publishFirst(): Promise<PublishOutcome>;
 }
 
-const toast = (title: string, tone: "neutral" | "danger" | "success" | "warning" = "danger") =>
-  showToast({ title, tone });
+/**
+ * What came of a publish: the version it made (or, with nothing new to publish, the version being
+ * edited), or why nothing was published, in the strip's words.
+ */
+export type PublishOutcome = { version: number } | { error: string };
+
+/**
+ * How a publish that did not happen is told: "toast" (the strip's Publish, Done, the review), or
+ * "report" (Ask's "Publish my changes first"), which shows no toast and only returns the words, for
+ * the dialog to show. Either way a lost session reloads the gate and a conflict opens the review.
+ */
+type Tell = "toast" | "report";
+
+type Tone = "neutral" | "danger" | "success" | "warning";
+const toast = (title: string, tone: Tone = "danger") => showToast({ title, tone });
 
 const reasonOf = (e: unknown): string | null =>
   e instanceof ApiRequestError
     ? ((e.details as { reason?: string } | undefined)?.reason ?? null)
     : null;
+
+const UNPUBLISHABLE = "These changes can't be published yet.";
+const NOT_CONNECTED = "Not connected, your changes are kept.";
+const conflictText = (n: number | null) =>
+  n
+    ? `v${n} was published while you edited. Review it to go on.`
+    : "A newer version was published while you edited. Review it to go on.";
 
 /** A refused Publish with nothing newer to review against: the server's words, or these. */
 const NOT_PUBLISHED = "These changes could not be published. Try again.";
@@ -230,26 +251,44 @@ export function useLiveEdit({
 
   // ---------- errors ----------
 
-  const fail = useCallback(
-    (e: unknown, onConflict?: () => void) => {
+  /**
+   * A refused publish or discard, in the strip's words: shown as a toast, or only returned
+   * (`tell`). A lost session reloads the gate; a conflict runs `onConflict` (the review opens), and
+   * then nothing is shown, since the review says it, but the words are still returned.
+   */
+  const refuse = useCallback(
+    (e: unknown, onConflict?: () => void, tell: Tell = "toast"): { error: string } => {
+      const say = (text: string, tone: Tone = "danger") => {
+        if (tell === "toast") toast(text, tone);
+        return { error: text };
+      };
       if (!(e instanceof ApiRequestError)) {
-        toast(e instanceof Error ? e.message : "Something went wrong. Your changes are kept.");
-        return;
+        return say(e instanceof Error ? e.message : "Something went wrong. Your changes are kept.");
       }
       if (e.status === 401) {
-        toast("Sign in again to publish. Your changes are kept.");
         latest.current.onReload();
-      } else if (e.status === 403) toast(`You can no longer edit this ${noun}.`);
-      else if (e.status === 409 && onConflict) onConflict();
-      else if (e.status === 409 && reasonOf(e) === "live_busy") toast(CHOOSING_BUSY, "neutral");
-      else if (e.status === 409) toast(e.message);
-      else if (e.status === 413) toast(`This ${noun} is too large to publish as a version.`);
-      else if (e.status === 429) {
-        toast("Hourly version limit reached. Your changes stay as a draft.");
-      } else if (e.status === 503) toast("Live editing is unavailable. Your changes are kept.");
-      else toast(e.message);
+        return say("Sign in again to publish. Your changes are kept.");
+      }
+      if (e.status === 403) return say(`You can no longer edit this ${noun}.`);
+      if (e.status === 409 && onConflict) {
+        onConflict();
+        return { error: conflictText(currentOf(e)) };
+      }
+      if (e.status === 409 && reasonOf(e) === "live_busy") return say(CHOOSING_BUSY, "neutral");
+      if (e.status === 409) return say(e.message);
+      if (e.status === 413) return say(`This ${noun} is too large to publish as a version.`);
+      if (e.status === 429)
+        return say("Hourly version limit reached. Your changes stay as a draft.");
+      if (e.status === 503) return say("Live editing is unavailable. Your changes are kept.");
+      return say(e.message);
     },
     [noun],
+  );
+  const fail = useCallback(
+    (e: unknown, onConflict?: () => void) => {
+      refuse(e, onConflict);
+    },
+    [refuse],
   );
 
   // ---------- the review, in the frame ----------
@@ -429,16 +468,16 @@ export function useLiveEdit({
 
   /**
    * Solo: publish the frame's text as the next version over `over`, with the files of `base`
-   * (the version the text was made from). Null when it did not publish.
+   * (the version the text was made from). A refusal because a newer version is current opens the
+   * review (or runs `onConflict`).
    */
   const publishSolo = useCallback(
     async (
       text: string,
       over: number,
       base: number,
-      note?: string,
-      onConflict?: (e: ApiRequestError) => void,
-    ): Promise<PublishResult | null> => {
+      opts: { note?: string; onConflict?: (e: ApiRequestError) => void; tell?: Tell } = {},
+    ): Promise<PublishOutcome> => {
       try {
         const r = await api<PublishResult>(route(API.artifact, { ref: id }), {
           method: "PUT",
@@ -446,29 +485,43 @@ export function useLiveEdit({
             content: text,
             base_version: over,
             files_from_version: base,
-            ...(note ? { note } : {}),
+            ...(opts.note ? { note: opts.note } : {}),
           },
         });
         clearPageDraft(id);
         setRestore(null);
         setSavedVersion(r.version);
         latest.current.onReload();
-        return r;
+        return { version: r.version };
       } catch (e) {
-        fail(e, () => {
-          if (onConflict && e instanceof ApiRequestError) onConflict(e);
-          else void soloReviewRef.current(base, e);
-        });
-        return null;
+        return refuse(
+          e,
+          () => {
+            if (opts.onConflict && e instanceof ApiRequestError) opts.onConflict(e);
+            else void soloReviewRef.current(base, e);
+          },
+          opts.tell,
+        );
       }
     },
-    [id, fail],
+    [id, refuse],
   );
 
+  /**
+   * Room: publish the shared draft (POST live/checkpoint). With nothing new to publish, the
+   * outcome is the version being edited.
+   */
   const checkpoint = useCallback(
-    async (reason: "save" | "done" | "idle", note?: string): Promise<boolean> => {
+    async (
+      reason: "save" | "done" | "idle",
+      opts: { note?: string; tell?: Tell } = {},
+    ): Promise<PublishOutcome> => {
       const s = latest.current.status;
-      if (!s || savingRef.current) return false;
+      if (!s) return { error: NOT_CONNECTED };
+      if (savingRef.current) return { error: CHOOSING_BUSY };
+      const tell = opts.tell ?? "toast";
+      // An autosave says nothing about a draft it left as it was, only about a refusal.
+      const quiet = tell === "report" || reason === "idle";
       savingRef.current = true;
       setSaving(true);
       try {
@@ -476,55 +529,69 @@ export function useLiveEdit({
           base_version: s.base_version,
           rev: s.rev,
           reason,
-          ...(note ? { note } : {}),
+          ...(opts.note ? { note: opts.note } : {}),
         });
-        if (r.saved) setSavedVersion(r.version.version);
-        else if (reason === "idle" && r.reason === "too_soon" && r.retry_in_s) {
-          setIdleRetry({ rev: s.rev, ms: r.retry_in_s * 1000 });
-        } else if (reason === "save" && (r.reason === "clean" || r.reason === "unchanged")) {
-          toast("Nothing to publish: the page matches the current version.", "neutral");
-        } else if (reason !== "idle" && r.reason === "busy") {
-          toast(CHOOSING_BUSY, "neutral");
+        if (r.saved) {
+          setSavedVersion(r.version.version);
+          return { version: r.version.version };
         }
-        return true;
+        if (r.reason === "clean" || r.reason === "unchanged") {
+          if (reason === "save" && tell === "toast") {
+            toast("Nothing to publish: the page matches the current version.", "neutral");
+          }
+          return { version: s.base_version };
+        }
+        if (r.reason === "too_soon" && reason === "idle" && r.retry_in_s) {
+          setIdleRetry({ rev: s.rev, ms: r.retry_in_s * 1000 });
+        }
+        if (r.reason === "busy" && !quiet) toast(CHOOSING_BUSY, "neutral");
+        return { error: r.reason === "busy" ? CHOOSING_BUSY : NOT_PUBLISHED };
       } catch (e) {
         const code = reasonOf(e);
         if (code === "live_unpublishable") {
-          if (reason !== "idle") toast("These changes can't be published yet.", "neutral");
-          return false;
+          if (!quiet) toast(UNPUBLISHABLE, "neutral");
+          return { error: UNPUBLISHABLE };
         }
-        fail(e, code === "live_conflict" ? () => void openReview() : undefined);
-        return false;
+        return refuse(e, code === "live_conflict" ? () => void openReview() : undefined, tell);
       } finally {
         savingRef.current = false;
         setSaving(false);
       }
     },
-    [id, fail, openReview],
+    [id, refuse, openReview],
   );
 
-  const publish = useCallback(
-    async (note?: string) => {
+  /**
+   * Publish the page edits as the next version: the strip's Publish, Done in solo mode, and Ask's
+   * "Publish my changes first" (`tell: "report"`). Room: a checkpoint; solo: the frame's text over
+   * the version shown, with its files.
+   */
+  const publishNow = useCallback(
+    async (note: string | undefined, tell: Tell): Promise<PublishOutcome> => {
       const m = latest.current.mode;
-      if (m === "room") {
-        await checkpoint("save", note);
-        return;
-      }
-      if (m !== "solo" || savingRef.current) return;
+      if (m === "room") return checkpoint("save", { note, tell });
+      if (m !== "solo") return { error: "Editing on the page is not available." };
+      if (savingRef.current) return { error: CHOOSING_BUSY };
       savingRef.current = true;
       setSaving(true);
       try {
         const text = await collect();
         const v = latest.current.gate.artifact.version;
-        await publishSolo(text, v, v, note);
+        return await publishSolo(text, v, v, { note, tell });
       } catch (e) {
-        fail(e);
+        return refuse(e, undefined, tell);
       } finally {
         savingRef.current = false;
         setSaving(false);
       }
     },
-    [checkpoint, collect, publishSolo, fail],
+    [checkpoint, collect, publishSolo, refuse],
+  );
+  const publish = useCallback(
+    async (note?: string) => {
+      await publishNow(note, "toast");
+    },
+    [publishNow],
   );
   const publishRef = useRef(publish);
   publishRef.current = () => publish();
@@ -619,18 +686,21 @@ export function useLiveEdit({
       setSaving(true);
       try {
         const note = liveReplacesNote(m.note ?? LIVE_NOTE, r.base + 1, r.current);
-        const ok = await publishSolo(text, r.current, r.base, note, (e) => {
-          const newer = currentOf(e);
-          if (newer !== null && newer > r.current) {
-            // Another version is current now: the review opens again on the whole range.
-            done("conflict");
-            void soloReviewRef.current(r.base, e, kept);
-          } else {
-            done("failed");
-            toast(refusedText(e));
-          }
+        const out = await publishSolo(text, r.current, r.base, {
+          note,
+          onConflict: (e) => {
+            const newer = currentOf(e);
+            if (newer !== null && newer > r.current) {
+              // Another version is current now: the review opens again on the whole range.
+              done("conflict");
+              void soloReviewRef.current(r.base, e, kept);
+            } else {
+              done("failed");
+              toast(refusedText(e));
+            }
+          },
         });
-        if (ok) {
+        if (!("error" in out)) {
           done("done");
           setReview(null);
         } else if (reviewRef.current?.nonce === r.nonce) done("failed");
@@ -665,27 +735,13 @@ export function useLiveEdit({
     if (m === "room" && s?.dirty && s.conflict_version === null && s.publishable !== false) {
       await checkpoint("done");
     }
-    if (m === "solo" && s?.dirty) {
-      // Solo edits live only in this frame: leave edit mode only once they are published.
-      if (savingRef.current) return false;
-      savingRef.current = true;
-      setSaving(true);
-      try {
-        const text = await collect();
-        const v = latest.current.gate.artifact.version;
-        const r = await publishSolo(text, v, v);
-        if (!r) return false;
-      } catch (e) {
-        fail(e);
-        return false;
-      } finally {
-        savingRef.current = false;
-        setSaving(false);
-      }
+    // Solo edits live only in this frame: leave edit mode only once they are published.
+    if (m === "solo" && s?.dirty && "error" in (await publishNow(undefined, "toast"))) {
+      return false;
     }
     setEditing(false);
     return true;
-  }, [checkpoint, collect, publishSolo, fail]);
+  }, [checkpoint, publishNow]);
 
   const discard = useCallback(async () => {
     const m = latest.current.mode;
@@ -733,8 +789,8 @@ export function useLiveEdit({
     const { text, base } = restore;
     // Refused because a newer version is current: the frame reviews this copy, not its own (it
     // holds none, or one of the version it shows).
-    await publishSolo(text, base, base, undefined, (e) => {
-      void soloReviewRef.current(base, e, text);
+    await publishSolo(text, base, base, {
+      onConflict: (e) => void soloReviewRef.current(base, e, text),
     });
   }, [restore, publishSolo]);
 
@@ -745,94 +801,18 @@ export function useLiveEdit({
 
   // ---------- Ask an agent: publish first ----------
 
-  const publishFirst = useCallback(async (): Promise<{ version: number } | { error: string }> => {
+  const publishFirst = useCallback(async (): Promise<PublishOutcome> => {
     const s = latest.current.status;
     const m = latest.current.mode;
-    if (savingRef.current) return { error: CHOOSING_BUSY };
-    if (s?.conflict_version != null) {
-      return {
-        error: `v${s.conflict_version} was published while you edited. Review it to go on.`,
-      };
+    // What the strip shows instead of Publish, said up front: nothing is tried.
+    if (m === "room" || m === "solo") {
+      if (savingRef.current) return { error: CHOOSING_BUSY };
+      if (s?.conflict_version != null) return { error: conflictText(s.conflict_version) };
+      if (s?.publishable === false) return { error: UNPUBLISHABLE };
+      if (m === "room" && !s?.connected) return { error: NOT_CONNECTED };
     }
-    if (s && s.publishable === false)
-      return { error: "These page changes can't be published yet." };
-    const refused = (e: unknown): { error: string } => {
-      if (!(e instanceof ApiRequestError)) {
-        return { error: e instanceof Error ? e.message : "Your changes are kept." };
-      }
-      const code = reasonOf(e);
-      if (e.status === 401) return { error: "Sign in again to publish. Your changes are kept." };
-      if (e.status === 403) return { error: `You can no longer edit this ${noun}.` };
-      if (e.status === 409 && code === "live_busy") return { error: CHOOSING_BUSY };
-      if (e.status === 409 && code === "live_unpublishable") {
-        return { error: "These page changes can't be published yet." };
-      }
-      if (e.status === 409) {
-        const n = currentOf(e);
-        return {
-          error: n
-            ? `v${n} was published while you edited. Review it to go on.`
-            : "A newer version was published while you edited. Review it to go on.",
-        };
-      }
-      if (e.status === 413) return { error: `This ${noun} is too large to publish as a version.` };
-      if (e.status === 429) {
-        return { error: "Hourly version limit reached. Your changes stay as a draft." };
-      }
-      if (e.status === 503) return { error: "Live editing is unavailable. Your changes are kept." };
-      return { error: e.message };
-    };
-    if (m === "room") {
-      if (!s?.connected) return { error: "Not connected, your changes are kept." };
-      savingRef.current = true;
-      setSaving(true);
-      try {
-        const r = await liveCheckpoint(id, {
-          base_version: s.base_version,
-          rev: s.rev,
-          reason: "save",
-        });
-        if (r.saved) {
-          setSavedVersion(r.version.version);
-          return { version: r.version.version };
-        }
-        if (r.reason === "busy") return { error: CHOOSING_BUSY };
-        // Nothing new to publish: the version being edited is the one to ask about.
-        return { version: s.base_version };
-      } catch (e) {
-        // A conflict leaves "Review changes" in the strip, as the room says it froze the draft.
-        return refused(e);
-      } finally {
-        savingRef.current = false;
-        setSaving(false);
-      }
-    }
-    if (m !== "solo") return { error: "Editing on the page is not available." };
-    savingRef.current = true;
-    setSaving(true);
-    const v = latest.current.gate.artifact.version;
-    try {
-      const text = await collect();
-      const r = await api<PublishResult>(route(API.artifact, { ref: id }), {
-        method: "PUT",
-        body: { content: text, base_version: v, files_from_version: v },
-      });
-      clearPageDraft(id);
-      setRestore(null);
-      setSavedVersion(r.version);
-      latest.current.onReload();
-      return { version: r.version };
-    } catch (e) {
-      // Solo has no room to freeze the draft: the review opens, as for a refused Publish.
-      if (e instanceof ApiRequestError && e.status === 409) {
-        void soloReviewRef.current(v, e.details);
-      }
-      return refused(e);
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  }, [id, noun, collect]);
+    return publishNow(undefined, "report");
+  }, [publishNow]);
 
   // ---------- room: autosave after a quiet spell ----------
 
