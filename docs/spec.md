@@ -3175,6 +3175,14 @@ deleting slides, and a slide's columns, stay with agents for now.
   or in the speaker notes, the slide it was on and that slide's first line of text: after a reload
   it is written back into the same part (a slide's as a new block near where it was on that slide,
   notes after that slide's notes, never on a slide), or kept with **Copy** when that part is gone.
+  In solo mode the frame's text is the whole draft and no room makes space later, so typing the
+  deck at its size limit cannot take counts as `unsavable` too: its block stays open as typed
+  (Escape, focus leaving and a click elsewhere leave it open, and the frame says "The deck is at
+  its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S, Done
+  and Ask's "Publish my changes first" wait, the page asks before it is left, and the tab's kept
+  copy has the typing in its place. If edit mode ends anyway it is kept on the page with **Copy**,
+  still `unsavable`, and editing again opens it as a block of its own. Alone, the room's frame
+  limit does not apply to a block: only the deck's size limit does.
 - **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
   change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;

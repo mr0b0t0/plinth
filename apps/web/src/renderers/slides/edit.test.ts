@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot, deckPane } from "./boot.ts";
 import { DECK_WORDS, EDIT_DEBOUNCE_MS } from "./edit.ts";
 import { EDIT_VIEW_WORDS } from "./editView.ts";
+import type { Geometry } from "./exportModel.ts";
+import type { PptxBuilder } from "./pptxModel.ts";
 
 const APP = "https://plinth.example.com";
 
@@ -304,6 +306,61 @@ describe("print and the .pptx while editing", () => {
     appMessage(f, msg({ type: "print" }));
     expect(document.getElementById("__plinth-slides")?.getAttribute("data-print")).toBe("slides");
   });
+
+  it("makes no file from edit mode's slides when editing starts while an export waits", async () => {
+    mount("---\n# One\n---\n# Two");
+    const f = framed();
+    const build = vi.fn<PptxBuilder>(async () => ({ blob: new Blob(["pk"]), imagesSkipped: 0 }));
+    const save = vi.fn();
+    const geometry: Geometry = {
+      rect: (e) =>
+        e.localName === "section"
+          ? { left: 0, top: 0, width: 1280, height: 720 }
+          : { left: 80, top: 64, width: 400, height: 40 },
+      style: (e) => window.getComputedStyle(e),
+    };
+    stop = boot(f.win, {
+      measure: () => false,
+      loadWriter: async () => build,
+      save,
+      opaque: false,
+      geometry,
+    });
+    appMessage(f, msg({ type: "export", format: "pptx", nonce: NONCE }));
+    // Editing starts before the export measured the deck (it waits for images first): edit
+    // mode's raw slides (the empty first one, with its placeholder) are never the file's.
+    appMessage(f, msg({ type: "edit", on: true, base: 1 }));
+    expect(document.querySelectorAll(".plinth-slides__frame")).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(build).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(posts(f).filter((p) => p.type === "exported")).toEqual([
+      expect.objectContaining({ type: "exported", nonce: NONCE, ok: false }),
+    ]);
+  });
+});
+
+describe("presenting alone", () => {
+  it("shows the published deck and counts its slides, whatever the frame's own draft", () => {
+    const f = start("# One\n---\n# Two\n---\n# Three");
+    // The frame's own draft empties slide 3 (so it shows two slides), and edit mode ends.
+    appMessage(f, msg({ type: "goto", slide: 3 }));
+    (active().querySelector("h1") as HTMLElement).click();
+    typeText("");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    appMessage(f, msg({ type: "edit", on: false }));
+    const html = document.documentElement;
+    expect(html.getAttribute("data-count")).toBe("2");
+    // Full screen and presenter view show the version this frame is of.
+    appMessage(f, msg({ type: "presenting", on: true }));
+    expect(html.getAttribute("data-count")).toBe("3");
+    appMessage(f, msg({ type: "presenting", on: false }));
+    expect(html.getAttribute("data-count")).toBe("2");
+    appMessage(f, msg({ type: "view", mode: "presenter" }));
+    expect(html.getAttribute("data-count")).toBe("3");
+    appMessage(f, msg({ type: "view", mode: "deck" }));
+    expect(html.getAttribute("data-count")).toBe("2");
+  });
 });
 
 describe("what is left to an agent", () => {
@@ -441,37 +498,115 @@ describe("typing the deck cannot write as typed, alone", () => {
     await Promise.resolve();
     expect(lastStatus(f)?.unsavable).toBeUndefined();
   });
+});
 
-  it("keeps typing that would take the deck past its size limit", () => {
-    const deck = `# One\n---\n## Two\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
+describe("typing a deck at its size limit cannot take, alone", () => {
+  // A third slide fills the deck to 23 bytes under its size limit; the typing adds 104.
+  const deck = `# One\n---\n## Two\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
+  const typed = `Two ${"z".repeat(100)}`;
+  /** The deck with the typing in slide 2's title, as the app's kept copy holds it. */
+  const withTyping = deck.replace("## Two\n", `## ${typed}\n`);
+  /** The last draft the frame answered a `collect` with. */
+  const lastDraft = (f: Framed) =>
+    posts(f)
+      .filter((p) => p.type === "draft")
+      .at(-1);
+
+  /** Opens slide 2's title and types more than the deck can take, pausing when `paused`. */
+  const typeTooMuch = (paused = true) => {
     const f = start(deck);
     appMessage(f, msg({ type: "goto", slide: 2 }));
     (active().querySelector("h2") as HTMLElement).click();
-    const typed = `Two ${"z".repeat(100)}`;
     typeText(typed);
-    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
-    // Not sent, and not put back: the block still holds what was typed.
+    if (paused) vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    return f;
+  };
+
+  it("keeps it in its block and tells the app nothing can be published", async () => {
+    const f = typeTooMuch();
+    // Not written, and not put back: the block still holds what was typed.
     expect(editable().textContent).toBe(typed);
-    expect(collect(f)).toBe(deck);
+    await Promise.resolve();
+    // The app's Publish, Done and leave warning all read `unsavable` in solo mode.
+    expect(lastStatus(f)).toMatchObject({ unsavable: true, publishable: false });
+  });
+
+  it("answers the app's collect (Publish) as unsavable, with the typing in its copy", () => {
+    const f = typeTooMuch();
+    appMessage(f, msg({ type: "collect", nonce: NONCE }));
+    expect(lastDraft(f)).toEqual(
+      expect.objectContaining({ type: "draft", nonce: NONCE, text: withTyping, unsavable: true }),
+    );
+  });
+
+  it("answers a collect right after typing as unsavable too, before the pause ends", () => {
+    const f = typeTooMuch(false);
+    appMessage(f, msg({ type: "collect", nonce: NONCE }));
+    expect(lastDraft(f)).toMatchObject({ text: withTyping, unsavable: true });
+  });
+
+  it("sends no save from the frame's Cmd/Ctrl+S", () => {
+    const f = typeTooMuch();
+    f.target.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", metaKey: true, cancelable: true }),
+    );
+    expect(posts(f).some((p) => p.type === "save")).toBe(false);
+    expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
   });
 
   it.each([false, true])(
-    "keeps typing the deck cannot take to copy when its block closes (after the pause: %s)",
-    (paused) => {
-      const deck = `# One\n---\n## Two\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
-      const f = start(deck);
-      appMessage(f, msg({ type: "goto", slide: 2 }));
-      (active().querySelector("h2") as HTMLElement).click();
-      const typed = `Two ${"z".repeat(100)}`;
-      typeText(typed);
-      if (paused) vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    "keeps its block open, as typed, on Escape (after the pause: %s)",
+    async (paused) => {
+      const f = typeTooMuch(paused);
       editable().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      // The deck is as it was, and the typing is on the page with Copy rather than gone.
-      expect(document.querySelector(".plinth-slides__open")).toBeNull();
-      expect(collect(f)).toBe(deck);
-      const bar = document.querySelector(".plinth-slides__kept");
-      expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
-      expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+      expect(document.querySelector(".plinth-slides__open")).not.toBeNull();
+      expect(editable().textContent).toBe(typed);
+      expect(document.querySelector(".plinth-slides__live")?.textContent).toBe(DECK_WORDS.fullHere);
+      await Promise.resolve();
+      expect(lastStatus(f)?.unsavable).toBe(true);
     },
   );
+
+  it("keeps its block open when another block is clicked", () => {
+    typeTooMuch();
+    (document.querySelector('.plinth-slides__frame[data-n="1"] h1') as HTMLElement).click();
+    expect(editable().textContent).toBe(typed);
+    expect(document.querySelectorAll(".plinth-slides__open")).toHaveLength(1);
+  });
+
+  it("is written, and publishable again, once shortened", async () => {
+    const f = typeTooMuch();
+    typeText("Two, short");
+    const text = collect(f);
+    expect(text).toBe(deck.replace("## Two\n", "## Two, short\n"));
+    expect(lastDraft(f)?.unsavable).toBeUndefined();
+    await Promise.resolve();
+    expect(lastStatus(f)?.unsavable).toBeUndefined();
+    expect(lastStatus(f)?.publishable).toBe(true);
+  });
+
+  it("is kept with Copy when edit mode ends anyway, and opens again when it starts", async () => {
+    // The app's Done ends edit mode at once when nothing was written yet and no status said
+    // otherwise (typing inside the pause): the frame keeps the typing.
+    const f = typeTooMuch(false);
+    appMessage(f, msg({ type: "edit", on: false }));
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    const bar = document.querySelector(".plinth-slides__kept");
+    expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+    expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+    await Promise.resolve();
+    expect(lastStatus(f)).toMatchObject({ unsavable: true, publishable: false });
+    // The app's kept copy and Publish see it.
+    appMessage(f, msg({ type: "collect", nonce: NONCE }));
+    const kept = lastDraft(f);
+    expect(kept?.unsavable).toBe(true);
+    expect(kept?.text).toBe(deck.replace("---\n## Two\n", `---\n\n## ${typed}\n\n## Two\n`));
+    // Editing again opens it in a block of its own, to be shortened.
+    appMessage(f, msg({ type: "edit", on: true }));
+    expect(editable().textContent).toBe(typed);
+    expect(document.querySelector(".plinth-slides__kept")).toBeNull();
+    typeText("Two, again");
+    expect(collect(f)).toBe(deck.replace("## Two\n", "## Two\n\n## Two, again\n"));
+    expect(lastDraft(f)?.unsavable).toBeUndefined();
+  });
 });

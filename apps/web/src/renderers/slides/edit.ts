@@ -110,6 +110,7 @@ export const DECK_WORDS = {
   copy: "Copy",
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
+  fullHere: "The deck is at its size limit, so this text isn't in it. Shorten it to continue.",
   askBlock: "Ask an agent to change this",
   askImage: "Replace or add images: Ask an agent",
   askNotes: "Ask an agent to change these notes",
@@ -612,6 +613,36 @@ function plainText(models: readonly RichBlock[], env: MdEnv): string {
     .join("\n\n");
 }
 
+/**
+ * Kept typing's lines without its marks, as the place it was typed in would hold them (a slide's
+ * blocks, blank lines between, or the notes part), or null when they cannot be written.
+ */
+function keptLines(p: {
+  kind: "block" | "notes";
+  ctx: DeckPartContext;
+  env: MdEnv;
+  form: NotesForm;
+  models: readonly RichBlock[];
+}): string[] | null {
+  const models = p.models.map(withoutMarks);
+  if (p.kind === "notes") {
+    try {
+      return serializeNotes(models, p.form, p.ctx.settings);
+    } catch {
+      return null;
+    }
+  }
+  const lines: string[] = [];
+  for (const m of models) {
+    const part = deckBlockLines(m, p.ctx, p.env);
+    if (part === null) return null;
+    if (part.length === 0) continue;
+    if (lines.length > 0) lines.push("");
+    lines.push(...part);
+  }
+  return lines;
+}
+
 /** A rescued text read back as blocks to write (a reload's), or null when one cannot be. */
 function modelsOf(text: string): RichBlock[] | null {
   const env = docEnv(text);
@@ -721,6 +752,38 @@ export class SlidesEditor {
     return this.stuck;
   }
 
+  /** Solo: the frame's own copy is the draft, with no room to take typing again later. */
+  private get solo(): boolean {
+    return this.backend instanceof LocalDeck;
+  }
+
+  /**
+   * Typing on the page that the backend's text does not hold and that a flush cannot write: the
+   * open place's when it cannot be written as typed or was not sent (the deck at its size limit),
+   * and typing kept from a place that closed. In solo mode this is what the app hears as
+   * `unsavable`: the frame's text is the whole draft, so nothing is published, Done keeps editing
+   * on and the page asks before it is left, until it is written.
+   */
+  get unwritten(): boolean {
+    return (
+      this.stuck ||
+      this.open?.notSent === true ||
+      this.closing?.snap.unsent === true ||
+      this.keptWants().length > 0
+    );
+  }
+
+  /** Typing kept from places that closed, not in the backend's text yet. */
+  private keptWants(): Want[] {
+    return [
+      ...this.parked,
+      ...this.toRetry,
+      ...this.fromStore,
+      ...(this.retake?.want.resend ? [this.retake.want] : []),
+      ...(this.want?.resend ? [this.want] : []),
+    ];
+  }
+
   /** Typed text no place took yet: kept on the page with Copy, tried again after a reconnect. */
   private parked: Want[] = [];
   /** Parked texts to try again now (a reconnect), one at a time. */
@@ -753,17 +816,47 @@ export class SlidesEditor {
   }
 
   /**
-   * Solo: the deck's text with what is typed in the open place, without its marks, while it cannot
-   * be written as typed (the app's kept copy), else null.
+   * Solo: the deck's text with every typing it does not hold put in (`unwritten`), for the app's
+   * kept copy, else null. The open place's goes in its place (without its marks when it cannot be
+   * written with them), a closed place's over the lines its lease held, and kept typing where it
+   * was, with blank lines around it. The copy may be past the deck's size limit: it is kept, not
+   * published.
    */
   textWithTyping(): string | null {
+    if (!this.unwritten) return null;
+    const all = this.backend.lines;
+    const edits: { at: number; del: number; ins: string[] }[] = [];
     const o = this.open;
     const mine = this.backend.mine;
-    if (!this.stuck || !o || !mine) return null;
-    const lines = this.linesNow(o, undefined, true);
-    if (lines === null) return null;
-    const all = this.backend.lines;
-    return joinLines([...all.slice(0, mine.start), ...lines, ...all.slice(mine.end)]);
+    if (o && mine && (this.stuck || o.notSent)) {
+      const ins = this.linesNow(o) ?? this.linesNow(o, undefined, true);
+      if (ins !== null) edits.push({ at: mine.start, del: mine.end - mine.start, ins });
+    }
+    const c = this.closing;
+    if (c?.snap.unsent) {
+      const ins = c.snap.typed ?? keptLines(c.snap);
+      if (ins !== null) edits.push({ at: c.start, del: c.end - c.start, ins });
+    }
+    const edges = memo(() => blockEdges(all));
+    for (const w of this.keptWants()) {
+      const ins = w.raw !== undefined ? w.raw.split("\n") : keptLines(w.open);
+      if (ins === null || ins.length === 0) continue;
+      const found = markAt(all, w.mark, w.range.start, edges);
+      const at = found >= 0 ? found : Math.min(Math.max(0, w.range.start), all.length);
+      edits.push({ at, del: 0, ins: ["", ...ins, ""] });
+    }
+    // Kept typing never goes inside a place replaced here: above it instead.
+    for (const e of edits) {
+      if (e.del > 0) continue;
+      const inside = edits.find((r) => r.del > 0 && r.at < e.at && e.at < r.at + r.del);
+      if (inside) e.at = inside.at;
+    }
+    // From the bottom up, so each edit's lines are where they were; at the same line, a replaced
+    // place first and kept typing above it.
+    edits.sort((a, b) => b.at - a.at || b.del - a.del);
+    const out = [...all];
+    for (const e of edits) out.splice(e.at, e.del, ...e.ins);
+    return joinLines(out);
   }
 
   /** The range of the block open in the editor (its lines are not part of its slide's key). */
@@ -786,6 +879,13 @@ export class SlidesEditor {
     }
     this.editing = on;
     this.hooks.redraw();
+    if (on && this.solo && this.parked.length > 0) {
+      // Alone there is no reconnect to try kept typing again: edit mode starting again does, so
+      // it can be shortened in a block of its own.
+      this.toRetry.push(...this.parked);
+      this.parked = [];
+      this.nextKept();
+    }
     this.hooks.status();
   }
 
@@ -1160,6 +1260,7 @@ export class SlidesEditor {
       // The place open could not close (its typing cannot be written as typed): a new lease would
       // take its place from under it.
       if (this.stuck) this.notify(DECK_WORDS.unsavable);
+      else if (this.open.notSent) this.notify(DECK_WORDS.fullHere);
       return;
     }
     const w: Want = { ...ask, mark: markOf(this.backend.lines, ask.range), tries: 0 };
@@ -1410,7 +1511,8 @@ export class SlidesEditor {
       delete o.notSent;
       return true;
     }
-    if (new TextEncoder().encode(text).byteLength > LIMITS.liveDocFrameBytes - 512) {
+    // The room's frame limit; alone, only the deck's size limit counts.
+    if (!this.solo && new TextEncoder().encode(text).byteLength > LIMITS.liveDocFrameBytes - 512) {
       return this.notSentHere(o, mine.start, DECK_WORDS.tooLong);
     }
     // Checked here first, as the doc editor does: a deck at its size limit keeps the typing.
@@ -1656,6 +1758,13 @@ export class SlidesEditor {
     this.flush();
     if (this.stuck) {
       // The text cannot be written as typed: it stays open so it is not lost.
+      return;
+    }
+    if (this.solo && o.notSent) {
+      // Alone, nothing makes room in the deck meanwhile: the block stays open, as typed, until
+      // it is shortened.
+      this.notify(DECK_WORDS.fullHere);
+      this.hooks.status();
       return;
     }
     const mine = this.backend.mine;
@@ -2214,6 +2323,12 @@ export class SlidesEditor {
    */
   private salvage(): void {
     const o = this.open;
+    if (o && this.solo && o.notSent && !this.stuck) {
+      // Alone, at the deck's size limit: kept on the page with Copy, and opened again as a new
+      // block when edit mode starts again (setEditing), never dropped with the place.
+      this.parkOpen();
+      return;
+    }
     if (!o || !this.stuck) return;
     for (const r of o.editors) r.setModel(withoutMarks(r.model));
     if (this.send()) {

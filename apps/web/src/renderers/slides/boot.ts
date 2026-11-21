@@ -532,6 +532,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       const writer = loadWriter();
       writer.catch(() => undefined);
       await imagesReady(root);
+      // Edit mode began while the images decoded: its raw slides, with their labels and
+      // placeholders, are not the deck. No file is made from them.
+      if (editing) throw new Error("editing");
       const model = measureDeck();
       const [build, images] = await Promise.all([writer, collectImages(win, model, opaque)]);
       const { blob, imagesSkipped } = await build(model, images);
@@ -625,6 +628,13 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     /** Solo: the version shown, whose files the draft is drawn with. */
     let soloBase: number | null = null;
     const backend = (): DeckBackend | null => local ?? (client as DeckBackend | null);
+    /**
+     * Typing that keeps every publish back (the app's `unsavable`): in a room, typing that cannot
+     * be written as typed (the room holds the rest, or keeps it to write again); alone, any typing
+     * the frame's text does not hold, since that text is the whole draft (the deck at its size
+     * limit included).
+     */
+    const keptBack = () => (local ? (editor?.unwritten ?? false) : (editor?.unsavable ?? false));
     const poster = appPoster(win, appOrigin, key);
     const post = poster.post;
     const statusNow = () => {
@@ -646,21 +656,22 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           return { email: email.slice(0, 254), block: w !== undefined, ...(w ? { where: w } : {}) };
         });
       const text = local ? local.text : (c?.text ?? "");
+      const blocked = keptBack();
       const s: LiveFrameStatus = {
         connected: c?.connected ?? false,
         failed: client?.failed ?? false,
         editing: editor?.editing ?? false,
         holding: (editor?.editing ?? false) && b?.mine != null,
         dirty: local ? local.dirty : (c?.dirty ?? false),
-        unflushed: c ? c.unflushed || (editor?.pending ?? false) : (editor?.unsavable ?? false),
+        unflushed: c ? c.unflushed || (editor?.pending ?? false) : blocked,
         rev: c?.rev ?? 0,
         base_version: c?.baseVersion ?? 0,
         conflict_version: c?.conflictVersion ?? null,
         last_by_you: c?.lastByYou ?? false,
         last_edit_at: c?.lastEditAt ?? null,
         editors,
-        publishable: RULES?.unpublishable(text) === null && !(editor?.unsavable ?? false),
-        ...(editor?.unsavable ? { unsavable: true as const } : {}),
+        publishable: RULES?.unpublishable(text) === null && !blocked,
+        ...(blocked ? { unsavable: true as const } : {}),
       };
       post({ type: "live", ...s });
     };
@@ -824,11 +835,12 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
       } else if (m.type === "collect" && local) {
         editor?.flush();
-        // Typing that cannot be written as typed is not in the deck: the app publishes nothing, and
-        // keeps a copy with it, without its formatting.
-        const kept = editor?.unsavable ? editor.textWithTyping() : null;
-        if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
-        else post({ type: "draft", nonce: m.nonce, text: local.text });
+        // Typing the deck's text does not hold (it cannot be written as typed, or the deck is at
+        // its size limit): the app publishes nothing, and keeps a copy with it in.
+        if (keptBack()) {
+          const kept = editor?.textWithTyping() ?? local.text;
+          post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
+        } else post({ type: "draft", nonce: m.nonce, text: local.text });
       } else if (m.type === "review") {
         editor?.flush();
         void session.open(m);
@@ -842,8 +854,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       save: () => {
         editor?.flush();
         // Typing that cannot be written yet is not in the draft: no Publish goes out without it.
-        if (editor?.unsavable) {
-          editor.notify(DECK_WORDS.unsavable);
+        if (editor && keptBack()) {
+          editor.notify(editor.unsavable ? DECK_WORDS.unsavable : DECK_WORDS.fullHere);
           status();
           return;
         }
