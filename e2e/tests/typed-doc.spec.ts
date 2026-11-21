@@ -633,7 +633,9 @@ test.describe("editing a doc on its page as formatted text", () => {
       await askAgent.click();
       const dialog = page.getByRole("dialog", { name: "Ask an agent" });
       // It says which block it is about by the block's first words (quoted), never its number.
-      await expect(dialog.locator(".cm-anchor-chip")).toHaveText("Pointing at “An item fenced in a list”");
+      await expect(dialog.locator(".cm-anchor-chip")).toHaveText(
+        "Pointing at “An item fenced in a list”",
+      );
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await expect(dialog).toHaveCount(0);
 

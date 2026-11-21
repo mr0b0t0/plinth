@@ -7,6 +7,8 @@
 // and offers to post without publishing. It matches the request composer: the same "Pointing at"
 // chip, and the same agent choice ("Ask: Claude | Codex") under the description, so the footer
 // holds only Cancel and Send.
+
+import { MapPinIcon, XIcon } from "@phosphor-icons/react";
 import {
   API,
   type ClientType,
@@ -15,7 +17,6 @@ import {
   route,
   type ViewGate,
 } from "@plinth/shared";
-import { MapPinIcon, XIcon } from "@phosphor-icons/react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { askTargetInText } from "../comments/askTargets.ts";
