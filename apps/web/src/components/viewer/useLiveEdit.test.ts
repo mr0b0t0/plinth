@@ -154,6 +154,32 @@ describe("useLiveEdit", () => {
     expect(result.current.status?.rev).toBe(7);
   });
 
+  it("leaves edit mode and offers Ask an agent when the frame is too large to edit on the page", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const onAsk = vi.fn();
+    const { result } = renderHook(() =>
+      useLiveEdit({
+        gate: gate("room"),
+        frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        frameKey: KEY,
+        onReload: vi.fn(),
+        onAsk,
+      }),
+    );
+    act(() => result.current.start());
+    expect(result.current.editing).toBe(true);
+    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "too_large" });
+    expect(result.current.editing).toBe(false);
+    expect(toasts.at(-1)).toBe("This doc is too large to edit on the page");
+    expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ type: "edit", on: false });
+    // Not editing: the same status says nothing again.
+    const before = toasts.length;
+    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "too_large" });
+    expect(toasts).toHaveLength(before);
+  });
+
   it("has no on-page editing under opaque isolation", () => {
     stubApi();
     const { result } = renderHook(() =>

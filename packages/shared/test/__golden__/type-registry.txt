@@ -116,7 +116,7 @@
         "language": "json",
         "wordWrap": "off"
       },
-      "edit": "ask"
+      "edit": "live"
     }
   ],
   [

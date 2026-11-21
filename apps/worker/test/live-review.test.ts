@@ -8,9 +8,11 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { HTML_DOCUMENT_RE, liveRules, typeDef, updateArtifactInput } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
+import { designSystemHooks } from "../src/services/artifactTypes/design_system.ts";
 import { docHooks } from "../src/services/artifactTypes/doc.ts";
 import { sheetHooks } from "../src/services/artifactTypes/sheet.ts";
 import { parseManifest } from "../src/services/storage.ts";
+import acme from "./fixtures/design-systems/acme.json";
 import { APP, json, versionRow } from "./helpers.ts";
 import {
   type Client,
@@ -265,6 +267,33 @@ describe("stager parity", () => {
       const text = [header, ...rows].join("\n");
       if (sheet.valid(text)) expect(() => sheetHooks.validate?.(sheetDef, text)).not.toThrow();
     }
+  });
+
+  it("every design system draft the rules accept stores as a system.json the publish hook takes", () => {
+    const ds = liveRules("design_system");
+    const def = typeDef("design_system");
+    if (!ds || !def) throw new Error("no design system rules");
+    const base = ds.toLive(JSON.stringify(acme));
+    const lines = base.split("\n");
+    const end = lines.indexOf("}");
+    const variants = [
+      base,
+      `${base}\n<html> in the guidelines`,
+      lines.slice(0, end + 1).join("\n"),
+      base.replace('"#3355ff"', '"red; x"'),
+      base.replace('"guidelines": null', '"guidelines": "x"'),
+      base.replace('"name": "Acme UI"', '"name": ""'),
+      base.replace("{color.brand.500}", "{color.nope}"),
+    ];
+    let accepted = 0;
+    for (const text of variants) {
+      if (!ds.valid(text)) continue;
+      accepted++;
+      const stored = ds.fromLive(text);
+      expect(() => designSystemHooks.validate?.(def, stored), text.slice(-40)).not.toThrow();
+      expect(HTML_DOCUMENT_RE.test(stored)).toBe(false);
+    }
+    expect(accepted).toBe(3);
   });
 });
 

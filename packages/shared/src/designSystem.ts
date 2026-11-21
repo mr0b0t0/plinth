@@ -1199,7 +1199,6 @@ function parseComponents(c: Issues, v: unknown): DsComponent[] {
  * with its path, so an agent can fix them all in one go.
  */
 export function parseDesignSystem(source: string): DsParseResult {
-  const c = new Issues();
   let root: unknown;
   try {
     root = JSON.parse(source);
@@ -1214,8 +1213,43 @@ export function parseDesignSystem(source: string): DsParseResult {
       ],
     };
   }
+  return parseDesignSystemValue(root);
+}
+
+/**
+ * Whether `value` nests at most `max` objects and arrays (the value itself counts as one), walked
+ * without recursion, so a value too deep to write out with JSON.stringify is answered too.
+ */
+export function dsJsonDepthWithin(value: unknown, max: number = L.maxJsonDepth): boolean {
+  const stack: [unknown, number][] = [[value, 1]];
+  for (let top = stack.pop(); top; top = stack.pop()) {
+    const [v, depth] = top;
+    if (typeof v !== "object" || v === null) continue;
+    if (depth > max) return false;
+    for (const x of Array.isArray(v) ? v : Object.values(v)) {
+      if (typeof x === "object" && x !== null) stack.push([x, depth + 1]);
+    }
+  }
+  return true;
+}
+
+/**
+ * Check a design system that is already parsed JSON (parseDesignSystem without the parse): the
+ * room checks a page edit on the value it holds, without writing it out as text first.
+ */
+export function parseDesignSystemValue(root: unknown): DsParseResult {
+  const c = new Issues();
   if (!isObject(root)) {
     return { ok: false, errors: [{ path: "", message: "must be a JSON object" }] };
+  }
+  // Before anything walks it: every reader (and the page's draft) writes it out again.
+  if (!dsJsonDepthWithin(root)) {
+    return {
+      ok: false,
+      errors: [
+        { path: "", message: `nests objects and arrays deeper than ${L.maxJsonDepth} levels` },
+      ],
+    };
   }
   for (const k of Object.keys(root)) {
     if (!TOP_KEYS.has(k)) c.err(k, `is not a design system field (${[...TOP_KEYS].join(", ")})`);
@@ -1538,4 +1572,198 @@ export function parseDesignSystemRef(html: string): { id: string; version: numbe
     if (!ref) return null;
     return { id: ref[1] as string, version: ref[2] ? Number(ref[2]) : null };
   }
+}
+
+// ---------- editing on the page: the editable values ----------
+//
+// People change a design system on its page one JSON value at a time (designSystemLive.ts): a
+// token's light or dark $value, a token's $description, the system's name and description, and a
+// component's description, usage and status. Everything else (types, names, component HTML and
+// CSS, the root CSS, format, prefix and fonts) stays with agents. Each change is checked here
+// against the same rules as a publish, on the whole system, so a draft can always be published.
+
+/** A JSON path into system.json: object keys, and an array index for a component. */
+export type DsPath = readonly (string | number)[];
+
+/** What one editable value is. */
+export type DsNodeKind =
+  | "name"
+  | "description"
+  | "token_value"
+  | "dark_value"
+  | "token_description"
+  | "component_text"
+  | "component_status";
+
+/** A token or group name (one path segment), as the format takes it. */
+export function isDsName(s: string): boolean {
+  return NAME_RE.test(s) && !s.startsWith("$");
+}
+
+/** The token an alias value names ("{color.brand.500}" gives "color.brand.500"), or null. */
+export function dsAliasOf(v: unknown): string | null {
+  return isAlias(v) ? aliasTarget(v) : null;
+}
+
+/** The value at `path` in `root`, or undefined (own properties only). */
+export function dsGet(root: unknown, path: DsPath): unknown {
+  let at: unknown = root;
+  for (const seg of path) {
+    if (typeof seg === "number") {
+      if (!Array.isArray(at) || seg < 0 || seg >= at.length) return undefined;
+      at = at[seg];
+    } else {
+      if (!isObject(at) || !Object.hasOwn(at, seg)) return undefined;
+      at = at[seg];
+    }
+  }
+  return at;
+}
+
+/** Sets an object's own property as data, so a key like "__proto__" stays a key. */
+export function dsSetOwn(o: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(o, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/**
+ * `root` with `value` at `path` (undefined removes the key), copying only the objects and arrays on
+ * the way, so the input is unchanged. A new key goes last in its object. Null when a step of the
+ * path is missing (only the last key may be new).
+ */
+export function dsWith(root: unknown, path: DsPath, value: unknown): unknown {
+  if (path.length === 0) return value;
+  const [seg, ...rest] = path;
+  if (typeof seg === "number") {
+    if (!Array.isArray(root) || seg < 0 || seg >= root.length) return null;
+    const next = rest.length === 0 ? value : dsWith(root[seg], rest, value);
+    if (next === null && rest.length > 0) return null;
+    const copy = [...root];
+    copy[seg] = next;
+    return copy;
+  }
+  if (!isObject(root) || seg === undefined) return null;
+  if (rest.length > 0 && !Object.hasOwn(root, seg)) return null;
+  const copy: Record<string, unknown> = {};
+  for (const k of Object.keys(root)) {
+    if (k === seg && rest.length === 0) {
+      if (value !== undefined) dsSetOwn(copy, k, value);
+      continue;
+    }
+    dsSetOwn(copy, k, k === seg ? dsWith(root[k], rest, value) : root[k]);
+  }
+  if (rest.length > 0 && copy[seg] === null) return null;
+  if (rest.length === 0 && value !== undefined && !Object.hasOwn(root, seg)) {
+    dsSetOwn(copy, seg, value);
+  }
+  return copy;
+}
+
+/** A path as the parser's problems name it: "tokens.color.brand.500.$value", "components[1].usage". */
+export function dsPathText(path: DsPath): string {
+  let out = "";
+  for (const seg of path) {
+    if (typeof seg === "number") out += `[${seg}]`;
+    else out += out === "" ? seg : `.${seg}`;
+  }
+  return out;
+}
+
+/** Whether `segs` names a token in `group` (an object holding $value), every segment a name. */
+function isTokenAt(group: unknown, segs: readonly (string | number)[]): boolean {
+  if (segs.length === 0 || segs.length > L.maxDepth) return false;
+  if (!segs.every((s) => typeof s === "string" && isDsName(s))) return false;
+  const t = dsGet(group, segs);
+  return isObject(t) && Object.hasOwn(t, "$value");
+}
+
+/** Which editable value `path` is in `root`, or null: anything else stays with agents. */
+export function dsEditableKind(root: unknown, path: DsPath): DsNodeKind | null {
+  if (!isObject(root)) return null;
+  const last = path[path.length - 1];
+  if (path.length === 1) {
+    if (last === "name") return "name";
+    if (last === "description") return "description";
+    return null;
+  }
+  if (path[0] === "tokens") {
+    const segs = path.slice(1, -1);
+    if (last === "$value" && isTokenAt(root.tokens, segs)) return "token_value";
+    if (last === "$description" && isTokenAt(root.tokens, segs)) return "token_description";
+    return null;
+  }
+  if (path[0] === "themes" && path[1] === "dark" && last === "$value") {
+    const segs = path.slice(2, -1);
+    return isTokenAt(dsGet(root, ["themes", "dark"]), segs) && isTokenAt(root.tokens, segs)
+      ? "dark_value"
+      : null;
+  }
+  if (path[0] === "components" && path.length === 3 && typeof path[1] === "number") {
+    if (!isObject(dsGet(root, ["components", path[1]]))) return null;
+    if (last === "description" || last === "usage") return "component_text";
+    if (last === "status") return "component_status";
+  }
+  return null;
+}
+
+/** The first problem in `errors`, preferring one at or under `at`. */
+function firstAt(errors: readonly DsIssue[], at: string): DsIssue | null {
+  const under = (p: string) => p === at || p.startsWith(`${at}.`) || p.startsWith(`${at}[`);
+  return errors.find((e) => under(e.path)) ?? errors[0] ?? null;
+}
+
+/**
+ * Why `value` may not be put at `path` of the design system `root` (with its guidelines as a
+ * string, or absent), or null when it may. `path` must name an editable value (dsEditableKind)
+ * once it is set, so an optional text that is absent may be set too. The new system is checked
+ * whole, as a publish checks it: the value grammar for the token's type (which may come from its
+ * groups), aliases (the target exists, has the same type, makes no cycle), the length of every
+ * text, and the component statuses. Linear in the system.
+ */
+export function dsValueProblem(root: unknown, path: DsPath, value: unknown): DsIssue | null {
+  const at = dsPathText(path);
+  const next = dsWith(root, path, value);
+  const kind = next === null ? null : dsEditableKind(next, path);
+  if (next === null || kind === null) return { path: at, message: "can't be changed on the page" };
+  if (kind === "name") {
+    if (typeof value !== "string" || value.trim() === "") {
+      return { path: at, message: "may not be empty" };
+    }
+    if (value.length > L.maxNameLength) {
+      return { path: at, message: `is longer than ${L.maxNameLength} characters` };
+    }
+  } else if (kind === "description" || kind === "token_description" || kind === "component_text") {
+    const max = kind === "component_text" ? L.maxComponentTextBytes : L.maxDescriptionBytes;
+    if (typeof value !== "string") return { path: at, message: "must be a string" };
+    if (bytes(value) > max) {
+      return { path: at, message: `is larger than ${Math.round(max / 1024)} KB` };
+    }
+  } else if (kind === "component_status") {
+    if (
+      typeof value !== "string" ||
+      !(DS_COMPONENT_STATUSES as readonly string[]).includes(value)
+    ) {
+      return { path: at, message: "must be stable, beta or deprecated" };
+    }
+  }
+  const r = parseDesignSystemValue(next);
+  return r.ok ? null : firstAt(r.errors, at);
+}
+
+/**
+ * The type a token at `segs` (its path under tokens) declares, from its own $type or its groups',
+ * or null when none gives one (an alias then takes its target's).
+ */
+export function dsDeclaredType(root: unknown, segs: readonly string[]): DsTokenType | null {
+  let type: DsTokenType | null = null;
+  let at: unknown = isObject(root) ? root.tokens : undefined;
+  for (let i = 0; i <= segs.length; i++) {
+    if (!isObject(at)) return type;
+    const t = at.$type;
+    if (typeof t === "string" && (DS_TOKEN_TYPES as readonly string[]).includes(t)) {
+      type = t as DsTokenType;
+    }
+    const seg = segs[i];
+    if (seg !== undefined) at = Object.hasOwn(at, seg) ? at[seg] : undefined;
+  }
+  return type;
 }

@@ -1,7 +1,7 @@
 // The live draft socket client (#36): the renderer's side of the live draft in the artifact's room
-// (apps/worker/src/rooms/doc.ts), shared by the doc and sheet renderers. It lives inside the
-// renderer bundles, never in the page runtime: /__plinth/runtime.js is not loaded in typed frames,
-// where a heading id="plinth" would clobber it.
+// (apps/worker/src/rooms/doc.ts), shared by the doc, sheet and design system renderers. It lives
+// inside the renderer bundles, never in the page runtime: /__plinth/runtime.js is not loaded in
+// typed frames, where a heading id="plinth" would clobber it.
 //
 // Rules it keeps:
 // - An op applies only when its `gen` is the room's current one and its `rev` is exactly the next;
@@ -18,18 +18,21 @@
 //   against changed in the files (from `welcome` and `conflict`), for the review's files part.
 import {
   blockLines,
+  DS_TOKEN_TYPES,
   type FileChangeSummary,
   joinLines,
   LIMITS,
+  type LineMap,
   type LineRange,
   type LiveDocErrorCode,
   type LiveDocServerFrame,
+  type LiveStructOp,
+  mapRange,
   ROOM_CLOSE,
   ROOM_PATH_PREFIX,
   ROOM_PROTOCOL,
   SHEET_COLUMN_TYPES,
   SHEET_NUMBER_STYLES,
-  type SheetStructOp,
   shiftRange,
   splitLines,
 } from "@plinth/shared";
@@ -75,7 +78,7 @@ export interface LiveDocListener {
   /** This socket's struct frame was refused (a sheet's rows or columns). */
   structDenied?(reason: LeaseDenial, by?: string): void;
   /** This socket's struct frame was applied (just before `changed`), with its op. */
-  structLanded?(op: SheetStructOp): void;
+  structLanded?(op: LiveStructOp): void;
 }
 
 /** What an editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
@@ -122,8 +125,15 @@ export interface LiveDocOptions {
    * still to write): a hidden tab keeps its socket, as it does for unflushed text.
    */
   keepOpen?: () => boolean;
-  /** Applies a struct frame's op to the lines (a sheet's applySheetStruct); absent for a doc. */
-  applyStruct?: (lines: readonly string[], op: SheetStructOp) => string[] | null;
+  /**
+   * Applies a struct frame's op to the lines (a sheet's applySheetStruct); absent for a doc. With
+   * a line map (a design system's ops), the other leases move by it; without one (a sheet's), the
+   * room applied the op only while nobody else held a lease.
+   */
+  applyStruct?(
+    lines: readonly string[],
+    op: LiveStructOp,
+  ): string[] | { lines: string[]; map: LineMap } | null;
 }
 
 /** The doc socket's URL on this content origin. */
@@ -400,8 +410,11 @@ export class LiveDocClient implements LiveBackend {
     return true;
   }
 
-  /** A sheet's rows or columns: applied by the room only while nobody else holds a lease. */
-  struct(op: SheetStructOp): boolean {
+  /**
+   * A structural change: a sheet's rows or columns (applied by the room only while nobody else
+   * holds a lease), or a design system's keys (while no lease overlaps the lines it changes).
+   */
+  struct(op: LiveStructOp): boolean {
     if (this.you?.right !== "write" || this.conflictVersion !== null || !this.opts.applyStruct) {
       return false;
     }
@@ -665,15 +678,25 @@ export class LiveDocClient implements LiveBackend {
 
   private struct_(f: Extract<LiveDocServerFrame, { t: "struct" }>): void {
     const apply = this.opts.applyStruct;
-    // The room applies a struct only while no other lease is held, and ends the sender's first.
-    if (!apply || f.gen !== this.gen || f.rev !== this.rev + 1 || this.leases.size > 0) {
+    if (!apply || f.gen !== this.gen || f.rev !== this.rev + 1) {
       this.sync();
       return;
     }
-    const next = apply(this.lines, f.op);
-    if (!next) {
+    const out = apply(this.lines, f.op);
+    // A sheet's op is applied only while no other lease is held (the room ends the sender's
+    // first); a design system's moves the other leases by its line map.
+    if (!out || (Array.isArray(out) && this.leases.size > 0)) {
       this.sync();
       return;
+    }
+    const next = Array.isArray(out) ? out : out.lines;
+    if (!Array.isArray(out)) {
+      for (const [id, l] of this.leases) {
+        const moved = mapRange(l, out.map, next.length);
+        if (moved) this.leases.set(id, { ...l, ...moved });
+        else this.leases.delete(id);
+      }
+      if (this.mine) this.mine = this.leases.get(this.mine.id) ?? null;
     }
     this.lines = next;
     this.rev = f.rev;
@@ -753,7 +776,8 @@ export function locateBlock(lines: readonly string[], block: string, near: numbe
 // doc viewer loads, does not carry zod.
 
 const LEASE_RE = /^[A-Za-z0-9_-]{1,32}$/;
-const MAX_LINE = LIMITS.maxLiveDocLines;
+// A design system's projection may run past a doc's line limit.
+const MAX_LINE = Math.max(LIMITS.maxLiveDocLines, LIMITS.maxLiveProjectionLines);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const isInt = (v: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): v is number =>
   typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
@@ -803,7 +827,7 @@ function isColumnInput(c: unknown): boolean {
   return true;
 }
 
-/** A struct frame's op, as sheetStructOpSchema checks it. */
+/** A struct frame's op, as liveStructOpSchema checks it. */
 function isStructOp(op: unknown): boolean {
   if (!isObj(op)) return false;
   switch (op.op) {
@@ -843,10 +867,40 @@ function isStructOp(op: unknown): boolean {
         isRowCount(op.count) &&
         isSheetRow(op.to)
       );
+    // A design system's keys, as designSystemStructOpSchema checks them.
+    case "set_dark":
+      return (
+        onlyKeys(op, new Set(["op", "token", "value"])) && isTokenPath(op.token) && "value" in op
+      );
+    case "clear_dark":
+      return onlyKeys(op, new Set(["op", "token"])) && isTokenPath(op.token);
+    case "set_text":
+      return (
+        onlyKeys(op, new Set(["op", "path", "value"])) &&
+        isStr(op.path, 1200) &&
+        isStr(op.value, LIMITS.liveDocFrameBytes)
+      );
+    case "clear_text":
+      return onlyKeys(op, new Set(["op", "path"])) && isStr(op.path, 1200);
+    case "add_token":
+      return (
+        onlyKeys(op, new Set(["op", "group", "name", "value", "type"])) &&
+        (op.group === "" || isTokenPath(op.group)) &&
+        typeof op.name === "string" &&
+        TOKEN_NAME_RE.test(op.name) &&
+        "value" in op &&
+        (op.type === undefined || TOKEN_TYPES.has(op.type as string))
+      );
+    case "remove_token":
+      return onlyKeys(op, new Set(["op", "path"])) && isTokenPath(op.path);
     default:
       return false;
   }
 }
+const TOKEN_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const TOKEN_PATH_RE = /^[A-Za-z0-9_-]{1,64}(?:\.[A-Za-z0-9_-]{1,64}){0,15}$/;
+const TOKEN_TYPES: ReadonlySet<string> = new Set(DS_TOKEN_TYPES);
+const isTokenPath = (v: unknown): boolean => typeof v === "string" && TOKEN_PATH_RE.test(v);
 const LOST_REASONS = new Set(["takeover", "rebased", "closed"]);
 const FILE_KINDS = new Set(["added", "removed", "replaced", "same"]);
 

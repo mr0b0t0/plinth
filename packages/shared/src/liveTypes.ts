@@ -1,5 +1,6 @@
 // On-page editing (#36) per type: what the room, the renderers and the app check about a live
-// draft of each type whose registry row has `edit: "live"` (docs and sheets). The room enforces
+// draft of each type whose registry row has `edit: "live"` (docs, sheets and design systems, whose
+// draft is a line projection of its JSON: designSystemLive.ts). The room enforces
 // these on every edit, structural change and merge; the renderers use the same rules to check
 // before they send, so a refusal from the room means another socket changed the lines first, or
 // the edit was forged. No zod, so the renderer bundles can import it.
@@ -18,6 +19,14 @@
 // other type is never merged: it is frozen and reviewed whole beside that version.
 import { type ArtifactType, HTML_DOCUMENT_RE } from "./artifactTypes.ts";
 import { LIMITS } from "./constants.ts";
+import {
+  checkDesignSystemEdit,
+  designSystemFromLive,
+  designSystemToLive,
+  liveDesignSystemTooLarge,
+  validDesignSystemDraft,
+} from "./designSystemLive.ts";
+import { applyDesignSystemStruct, DS_STRUCT_KINDS, type DsStructOp } from "./designSystemStruct.ts";
 import type { LiveDocErrorCode } from "./liveDoc.ts";
 import type { LineRange } from "./liveLines.ts";
 import {
@@ -75,9 +84,12 @@ export function liveSheetTooLarge(text: string): boolean {
  */
 export type LineMap = readonly number[];
 
+/** Every live type's structural op, as a struct frame carries it (the room checks the kind). */
+export type LiveStructOp = SheetStructOp | DsStructOp;
+
 /**
- * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows), as the room
- * and the renderers apply them.
+ * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows; a design
+ * system's keys: dark values, optional texts, tokens), as the room and the renderers apply them.
  */
 export interface LiveStructRules {
   /** The op kinds this type takes. The room refuses an op of another kind with `invalid`. */
@@ -85,14 +97,34 @@ export interface LiveStructRules {
   /** Pure: the new lines (and, with real ranges, how untouched lines moved), or why not. */
   apply(
     lines: readonly string[],
-    op: SheetStructOp,
+    op: LiveStructOp,
   ): { lines: string[]; map?: LineMap } | { error: LiveDocErrorCode };
   /**
    * Every range the op removes or rewrites, and every point it inserts at as a zero-length range,
    * which no other socket's lease may overlap. "all": refused while any other socket holds a
    * lease (a sheet's rows and columns, which rewrite formulas that may sit in any row).
    */
-  touches(lines: readonly string[], op: SheetStructOp): readonly LineRange[] | "all";
+  touches(lines: readonly string[], op: LiveStructOp): readonly LineRange[] | "all";
+}
+
+/**
+ * Where the range `r` (a lease that an op left untouched) lies after the op, by its line map:
+ * a line lease from its first line's new place to just past its last line's; an insert point just
+ * after the line before it (or at its line's new place, or at the end). Null when a line it covers
+ * was removed or rewritten.
+ */
+export function mapRange(r: LineRange, map: LineMap, newLength: number): LineRange | null {
+  if (r.start === r.end) {
+    const before = r.start > 0 ? map[r.start - 1] : -2;
+    if (before !== undefined && before >= 0) return { start: before + 1, end: before + 1 };
+    if (r.start === 0) return { start: 0, end: 0 };
+    const at = r.start < map.length ? map[r.start] : newLength;
+    return at !== undefined && at >= 0 ? { start: at, end: at } : null;
+  }
+  const a = map[r.start];
+  const b = map[r.end - 1];
+  if (a === undefined || b === undefined || a < 0 || b < 0) return null;
+  return { start: a, end: b + 1 };
 }
 
 /** The rules of one live-editable type. */
@@ -239,7 +271,8 @@ const docRules: LiveTypeRules = {
 const sheetStruct: LiveStructRules = {
   kinds: SHEET_STRUCT_KINDS,
   apply(lines, op) {
-    const next = applySheetStruct(lines, op);
+    // The room checked the kind against `kinds` first.
+    const next = applySheetStruct(lines, op as SheetStructOp);
     return next ? { lines: next } : { error: "invalid" };
   },
   // A row or column insert, delete or move rewrites formulas that may sit in any row.
@@ -301,10 +334,40 @@ const sheetRules: LiveTypeRules = {
   struct: sheetStruct,
 };
 
+const designSystemStruct: LiveStructRules = {
+  kinds: DS_STRUCT_KINDS,
+  apply(lines, op) {
+    const r = applyDesignSystemStruct(lines, op as DsStructOp);
+    return typeof r === "string" ? { error: "invalid" } : { lines: r.lines, map: r.map };
+  },
+  // The one run of lines the op changes (designSystemStruct.ts): a lease outside it moves by the
+  // map; one inside it (a value whose comma the op adds or drops included) refuses the op.
+  touches(lines, op) {
+    const r = applyDesignSystemStruct(lines, op as DsStructOp);
+    return typeof r === "string" ? [] : r.touched;
+  },
+};
+
+// A design system's draft is its line projection (designSystemLive.ts): one JSON value per lease,
+// each edit a whole value written canonically and checked with the publish rules on the whole
+// system, the guidelines as Markdown lines after the JSON. Never merged: a version published
+// meanwhile is compared by projection, and reviewed whole unless it changed nothing the draft holds.
+const designSystemRules: LiveTypeRules = {
+  tooLarge: liveDesignSystemTooLarge,
+  checkEdit: checkDesignSystemEdit,
+  valid: validDesignSystemDraft,
+  merge: "review",
+  toLive: designSystemToLive,
+  fromLive: designSystemFromLive,
+  unpublishable: () => null,
+  struct: designSystemStruct,
+};
+
 /** Every live-editable type's rules. A type with `edit: "live"` has an entry (liveTypes test). */
 export const LIVE_TYPE_RULES: Readonly<Partial<Record<ArtifactType, LiveTypeRules>>> = {
   doc: docRules,
   sheet: sheetRules,
+  design_system: designSystemRules,
 };
 
 /** The rules of a type, or null for a type that is not edited on its page. */

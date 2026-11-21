@@ -168,6 +168,18 @@ export const LIMITS = {
   // On-page doc editing (#36, packages/shared/src/liveDoc.ts). A live draft keeps maxDocBytes.
   /** Lines in a live doc draft. */
   maxLiveDocLines: 50_000,
+  /**
+   * Lines in a design system's live draft (its line projection, designSystemLive.ts), which is
+   * pretty JSON and so runs longer than the file it projects: a system past it is not edited on
+   * its page (agents change it).
+   */
+  maxLiveProjectionLines: 200_000,
+  /**
+   * Characters in the JSON part of a design system's live draft. The room counts them before it
+   * writes the projection out, so a small file that nests or indents into a huge text is not
+   * edited on its page either.
+   */
+  maxLiveProjectionChars: 8 * MB,
   /** One doc-socket frame, either way (a page room uses ROOM_MAX_MESSAGE_BYTES). */
   liveDocFrameBytes: 64 * KB,
   /** A lease whose holder sent no edit for this long may be taken over. */
@@ -237,6 +249,8 @@ export const LIMITS = {
     maxTokens: 2000,
     /** Path segments of one token, its own name included. */
     maxDepth: 8,
+    /** Objects and arrays nested in system.json, the root included ($extensions too). */
+    maxJsonDepth: 32,
     maxAliasChain: 16,
     maxValueLength: 256,
     maxNameLength: 120,

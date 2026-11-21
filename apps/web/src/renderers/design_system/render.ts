@@ -8,11 +8,47 @@
 // The chrome is kept to what a reader needs: a variable name copies itself when clicked, previews
 // follow the reader's color scheme, and token tables have no visible column headings (a group with
 // light and dark samples labels them once, above the table). The site shows no source code: agents
-// read the examples' HTML and the CSS with get_design_system.
-import type { DesignSystem, DsComponent, DsExample, DsToken } from "@plinth/shared";
+// read the examples' HTML and the CSS with get_design_system. Each example shows only its rendered
+// preview.
+//
+// Edit mode (edit.ts) draws the same site from the live draft (SiteOptions): the formatted texts
+// (guidelines, the description, a component's description and usage) are elements the editor
+// keeps, each token group's tokens sit under a row naming the group, and every file (an example's
+// images, the fonts) comes from the draft's base version, the files a Publish keeps.
+import type { DesignSystem, DsComponent, DsExample, DsIssue, DsToken } from "@plinth/shared";
 import { renderMarkdown } from "../doc/markdown.ts";
 import { sanitizeHtml } from "../doc/sanitize.ts";
 import { mountPreview, type PreviewTheme } from "./preview.ts";
+
+/** How the site is drawn: as published (the defaults), or from a draft in edit mode. */
+export interface SiteOptions {
+  /** Edit mode: every formatted text has its place even when empty, and groups their rows. */
+  editing?: boolean;
+  /**
+   * The element that shows one formatted text (`key`: "guidelines", "description",
+   * "component:<id>:description", "component:<id>:usage"), or null to draw `md` as prose.
+   */
+  text?: (key: string, md: string) => HTMLElement | null;
+  /** The version whose files the examples load (/__plinth/v/<n>/), or null for the page's own. */
+  fileVersion?: number | null;
+}
+
+/** The formatted text at `key`: the editor's element for it, or the Markdown drawn as prose. */
+function textAt(
+  doc: Document,
+  opts: SiteOptions,
+  key: string,
+  md: string,
+  extra = "",
+): HTMLElement | null {
+  const own = opts.text?.(key, md) ?? null;
+  if (own) {
+    own.className = `plinth-doc ds-prose ${extra}`.trim();
+    own.dataset.text = key;
+    return own;
+  }
+  return md ? prose(doc, md, extra) : null;
+}
 
 type Attrs = Record<string, string>;
 
@@ -128,7 +164,7 @@ const GROUPS: { id: Group; hash: string; label: string }[] = [
 ];
 
 /** Which page of the site a token is shown on. */
-export function groupOf(t: DsToken): Group {
+export function groupOf(t: Pick<DsToken, "type" | "path">): Group {
   switch (t.type) {
     case "color":
       return "color";
@@ -146,6 +182,12 @@ export function groupOf(t: DsToken): Group {
     default:
       return "other";
   }
+}
+
+/** The hash of the page a token is on ("tokens/color"). */
+export function tokenPage(t: Pick<DsToken, "type" | "path">): string {
+  const g = groupOf(t);
+  return GROUPS.find((x) => x.id === g)?.hash ?? "tokens/other";
 }
 
 /**
@@ -234,7 +276,13 @@ function tokenRow(doc: Document, t: DsToken): HTMLElement {
  * are for screen readers only, as the section heading names the group. When a token in the group
  * has a light and a dark sample, a small "Light" and "Dark" above the samples says which is which.
  */
-function tokenTable(doc: Document, group: Group, tokens: DsToken[]): HTMLElement {
+/** The token group a token is in ("color.brand" for "color.brand.500"; "" at the top). */
+export function tokenGroup(path: string): string {
+  const at = path.lastIndexOf(".");
+  return at < 0 ? "" : path.slice(0, at);
+}
+
+function tokenTable(doc: Document, group: Group, tokens: DsToken[], editing = false): HTMLElement {
   const head = el(
     doc,
     "tr",
@@ -243,7 +291,37 @@ function tokenTable(doc: Document, group: Group, tokens: DsToken[]): HTMLElement
     el(doc, "th", { scope: "col" }, "Token"),
   );
   const body = el(doc, "tbody");
-  for (const t of tokens) body.append(tokenRow(doc, t));
+  let last: string | null = null;
+  // Edit mode keeps each group's tokens together, groups in the order they first appear.
+  const order = new Map<string, number>();
+  for (const t of tokens)
+    if (!order.has(tokenGroup(t.path))) order.set(tokenGroup(t.path), order.size);
+  const rows = editing
+    ? [...tokens].sort(
+        (a, b) => (order.get(tokenGroup(a.path)) ?? 0) - (order.get(tokenGroup(b.path)) ?? 0),
+      )
+    : tokens;
+  for (const t of rows) {
+    // Edit mode: a row names each token group, for adding a token to it.
+    const g = tokenGroup(t.path);
+    if (editing && g !== last) {
+      body.append(
+        el(
+          doc,
+          "tr",
+          { class: "ds-group", "data-group": g },
+          el(
+            doc,
+            "th",
+            { colspan: "2", scope: "rowgroup" },
+            el(doc, "span", { class: "ds-group__name" }, g || "Top level"),
+          ),
+        ),
+      );
+    }
+    last = g;
+    body.append(tokenRow(doc, t));
+  }
   const cols = el(doc, "colgroup", {}, el(doc, "col", { class: "ds-col-sample" }), el(doc, "col"));
   const box = el(doc, "div", { class: `ds-table ds-table--${group}` });
   if (tokens.some((t) => t.dark !== null)) {
@@ -274,13 +352,14 @@ function exampleBlock(
   comp: DsComponent,
   ex: DsExample,
   theme: PreviewTheme,
+  fileVersion: number | null,
 ): HTMLElement {
   const stage = el(doc, "div", { class: "ds-example__stage" });
   const draw = (t: PreviewTheme) => {
     // A design system without a dark theme is only ever shown light.
     const shown: PreviewTheme = ds.hasDarkTheme ? t : "light";
     if (stage.firstElementChild?.getAttribute("data-theme") === shown) return;
-    stage.replaceChildren(mountPreview(doc, ds, comp, ex, shown));
+    stage.replaceChildren(mountPreview(doc, ds, comp, ex, shown, fileVersion));
   };
   redraws.set(stage, draw);
   draw(theme);
@@ -305,8 +384,9 @@ function componentSection(
   ds: DesignSystem,
   comp: DsComponent,
   theme: PreviewTheme,
+  opts: SiteOptions,
 ): HTMLElement {
-  const s = el(doc, "section", { class: "ds-section ds-component" });
+  const s = el(doc, "section", { class: "ds-section ds-component", "data-component": comp.id });
   const title = el(doc, "h2", {}, comp.name, " ");
   if (comp.status !== "stable")
     title.append(
@@ -317,10 +397,14 @@ function componentSection(
       ),
     );
   s.append(title);
-  // Description, usage, then the examples.
-  if (comp.description) s.append(prose(doc, comp.description));
-  if (comp.usage) s.append(el(doc, "h3", {}, "Usage"), prose(doc, comp.usage));
-  for (const ex of comp.examples) s.append(exampleBlock(doc, ds, comp, ex, theme));
+  // Description, usage, then the examples. In edit mode both texts have their place, empty or not.
+  const description = textAt(doc, opts, `component:${comp.id}:description`, comp.description ?? "");
+  if (description) s.append(description);
+  const usage = textAt(doc, opts, `component:${comp.id}:usage`, comp.usage ?? "");
+  if (usage) s.append(el(doc, "h3", {}, "Usage"), usage);
+  for (const ex of comp.examples) {
+    s.append(exampleBlock(doc, ds, comp, ex, theme, opts.fileVersion ?? null));
+  }
   return s;
 }
 
@@ -328,17 +412,18 @@ function componentSection(
 
 /**
  * Every section of the site, in navigation order. The overview is there when the design system
- * has guidelines, right under the header and with no heading of its own (the guidelines bring
- * theirs), and empty token groups are left out.
+ * has guidelines (or in edit mode, to write them), right under the header and with no heading of
+ * its own (the guidelines bring theirs), and empty token groups are left out.
  */
 export function sections(
   doc: Document,
   ds: DesignSystem,
   theme: PreviewTheme = "light",
+  opts: SiteOptions = {},
 ): Section[] {
   const out: Section[] = [];
-  const guidelines = ds.guidelines;
-  if (guidelines) {
+  const guidelines = ds.guidelines ?? "";
+  if (guidelines || opts.editing) {
     out.push({
       hash: "overview",
       label: "Overview",
@@ -347,7 +432,7 @@ export function sections(
           doc,
           "section",
           { class: "ds-section ds-overview", "aria-label": "Overview" },
-          prose(doc, guidelines),
+          textAt(doc, opts, "guidelines", guidelines),
         ),
     });
   }
@@ -363,7 +448,7 @@ export function sections(
           "section",
           { class: "ds-section" },
           el(doc, "h2", {}, g.label),
-          tokenTable(doc, g.id, tokens),
+          tokenTable(doc, g.id, tokens, opts.editing === true),
         ),
     });
   }
@@ -372,7 +457,7 @@ export function sections(
       hash: `components/${c.id}`,
       label: c.name,
       child: true,
-      build: () => componentSection(doc, ds, c, theme),
+      build: () => componentSection(doc, ds, c, theme, opts),
     });
   }
   return out;
@@ -383,10 +468,12 @@ export function renderSite(
   doc: Document,
   ds: DesignSystem,
   theme: PreviewTheme = "light",
+  opts: SiteOptions = {},
 ): HTMLElement {
-  const all = sections(doc, ds, theme);
+  const all = sections(doc, ds, theme, opts);
   const header = el(doc, "header", { class: "ds-header" }, el(doc, "h1", {}, ds.name));
-  if (ds.description) header.append(prose(doc, ds.description, "ds-lede"));
+  const description = textAt(doc, opts, "description", ds.description ?? "", "ds-lede");
+  if (description) header.append(description);
   const nav = el(doc, "nav", { class: "ds-nav", "aria-label": "Design system" });
   const list = el(doc, "ul");
   let components: HTMLUListElement | null = null;
@@ -427,15 +514,46 @@ export function renderSite(
   );
 }
 
+/** Problems listed on the error page, at most. */
+export const MAX_PROBLEMS_SHOWN = 10;
+
 /**
- * The error state: the JSON does not parse. One short line, as the doc type's: the editor lists the
- * problems above the source, and the Worker returns them to the agent that tried to publish.
+ * The error state. Without the JSON's problems (no payload, no JSON object), one short line. With
+ * them (a system the format refuses), what an agent needs to fix: each problem's path and words as
+ * text, and, for the owner and editors (`ask`), "Ask an agent", which asks the app to open its
+ * request about the page. The Worker returns the same problems to the agent that tried to publish.
  */
-export function renderProblems(doc: Document): HTMLElement {
-  return el(
+export function renderProblems(
+  doc: Document,
+  problems: readonly DsIssue[] = [],
+  ask?: () => void,
+): HTMLElement {
+  if (problems.length === 0) {
+    return el(
+      doc,
+      "p",
+      { class: "ds-error", role: "alert" },
+      "This design system could not be shown.",
+    );
+  }
+  const box = el(
     doc,
-    "p",
+    "div",
     { class: "ds-error", role: "alert" },
-    "This design system could not be shown.",
+    el(doc, "p", {}, "This design system has problems an agent needs to fix:"),
   );
+  const list = el(doc, "ul", { class: "ds-error__list" });
+  for (const p of problems.slice(0, MAX_PROBLEMS_SHOWN)) {
+    list.append(el(doc, "li", {}, el(doc, "code", {}, p.path || "(root)"), ` ${p.message}`));
+  }
+  if (problems.length > MAX_PROBLEMS_SHOWN) {
+    list.append(el(doc, "li", {}, `and ${problems.length - MAX_PROBLEMS_SHOWN} more`));
+  }
+  box.append(list);
+  if (ask) {
+    const b = el(doc, "button", { type: "button", class: "ds-button" }, "Ask an agent");
+    b.addEventListener("click", ask);
+    box.append(b);
+  }
+  return box;
 }

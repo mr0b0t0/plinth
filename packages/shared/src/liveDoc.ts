@@ -17,6 +17,7 @@
 import { z } from "zod";
 import { FILE_SUMMARY_LIMITS } from "./changes/files.ts";
 import { LIMITS } from "./constants.ts";
+import { DS_TOKEN_TYPES, dsJsonDepthWithin } from "./designSystem.ts";
 import { sheetColumnInputSchema } from "./schemas.ts";
 
 // The line and lease helpers live in liveLines.ts, the per-type rules in liveTypes.ts (neither
@@ -98,7 +99,12 @@ export function chunkText(text: string, maxBytes: number = LIVE_DOC.textChunkByt
 export const LEASE_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const leaseId = z.string().regex(LEASE_ID_RE);
 const count = z.number().int().min(0);
-const line = z.number().int().min(0).max(LIMITS.maxLiveDocLines);
+// A design system's projection may run past a doc's line limit (LIMITS.maxLiveProjectionLines).
+const line = z
+  .number()
+  .int()
+  .min(0)
+  .max(Math.max(LIMITS.maxLiveDocLines, LIMITS.maxLiveProjectionLines));
 const version = z.number().int().min(1);
 const email = z.string().max(254);
 const gen = z.string().min(1).max(64);
@@ -132,11 +138,47 @@ export const sheetStructOpSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("move_rows"), from: sheetRow, count: rowCount, to: sheetRow }).strict(),
 ]);
 
+const dsTokenPath = z
+  .string()
+  .max(16 * 65)
+  .regex(/^[A-Za-z0-9_-]{1,64}(?:\.[A-Za-z0-9_-]{1,64}){0,15}$/);
+const dsText = z.string().max(LIMITS.liveDocFrameBytes);
 /**
- * Every live type's structural op, as a struct frame carries it (today a sheet's). The room checks
- * the op's kind against the artifact's type (LiveTypeRules.struct.kinds) before it applies it.
+ * A token's value: any JSON (the room checks it with the publish rules; the frame bounds its size)
+ * nested no deeper than a design system may be, so nothing has to write out a deeper one.
  */
-export const liveStructOpSchema = sheetStructOpSchema;
+const dsValue = z
+  .unknown()
+  .refine((v) => v !== undefined, { message: "required" })
+  .refine((v) => dsJsonDepthWithin(v), { message: "nests too deep" });
+
+/** A design system's structural change (DsStructOp, designSystemStruct.ts), as a struct frame carries it. */
+export const designSystemStructOpSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("set_dark"), token: dsTokenPath, value: dsValue }).strict(),
+  z.object({ op: z.literal("clear_dark"), token: dsTokenPath }).strict(),
+  z.object({ op: z.literal("set_text"), path: z.string().max(1200), value: dsText }).strict(),
+  z.object({ op: z.literal("clear_text"), path: z.string().max(1200) }).strict(),
+  z
+    .object({
+      op: z.literal("add_token"),
+      group: z.union([z.literal(""), dsTokenPath]),
+      name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+      value: dsValue,
+      type: z.enum(DS_TOKEN_TYPES).optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal("remove_token"), path: dsTokenPath }).strict(),
+]);
+
+/**
+ * Every live type's structural op, as a struct frame carries it (a sheet's or a design system's).
+ * The room checks the op's kind against the artifact's type (LiveTypeRules.struct.kinds) before it
+ * applies it.
+ */
+export const liveStructOpSchema = z.discriminatedUnion("op", [
+  ...sheetStructOpSchema.options,
+  ...designSystemStructOpSchema.options,
+]);
 
 /** What the renderer sends. The raw frame is checked against LIMITS.liveDocFrameBytes first. */
 export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
@@ -158,7 +200,10 @@ export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
    */
   z.object({ t: z.literal("keep"), lease: leaseId }),
   z.object({ t: z.literal("sync") }),
-  /** A sheet's rows or columns, at the draft's current rev, while nobody else holds a lease. */
+  /**
+   * A sheet's rows or columns (while nobody else holds a lease), or a design system's keys (while
+   * no lease overlaps what the op changes), at the draft's current rev.
+   */
   z.object({ t: z.literal("struct"), rev: count, op: liveStructOpSchema }),
 ]);
 export type LiveDocClientFrame = z.infer<typeof liveDocClientFrameSchema>;
@@ -246,12 +291,15 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     by: z.string().max(64),
     seq: count.optional(),
   }),
-  /** A sheet's structural change, applied: every socket applies `op` with applySheetStruct. */
+  /**
+   * A structural change, applied: every socket applies `op` with the type's own function
+   * (applySheetStruct, applyDesignSystemStruct).
+   */
   z.object({
     t: z.literal("struct"),
     gen,
     rev: z.number().int().min(1),
-    op: sheetStructOpSchema,
+    op: liveStructOpSchema,
     by: z.string().max(64),
   }),
   /** Sent only to the socket whose struct frame was refused. */
