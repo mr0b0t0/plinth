@@ -451,6 +451,15 @@ export const DEFAULTS = {
     maxDocBytes: 16 * 1024,
     writesPerViewerPerHour: 300,
     writesPerArtifactPerHour: 2000,
+    /**
+     * A whiteboard's own caps (DATA_BOARD_*), in place of the three above: its blocks, arrows,
+     * sections and tables are documents, so a board holds more and larger ones than a poll.
+     */
+    board: {
+      maxDocsPerArtifact: 2000,
+      maxBytesPerArtifact: 2 * MB,
+      maxDocBytes: 200 * 1024,
+    },
   },
   /** Formula steps one read_sheet call may spend (SHEET_EVAL_BUDGET, 10,000 to 20,000,000). */
   sheetEvalBudget: 200_000,

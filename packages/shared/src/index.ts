@@ -29,3 +29,4 @@ export * from "./slidesRoom.ts";
 export * from "./text.ts";
 export * from "./types.ts";
 export * from "./whiteboard.ts";
+export * from "./whiteboardDraw.ts";

@@ -13,8 +13,10 @@
 //      navigation;
 //   4. Origin, when sent, exactly this artifact's content origin ("null" refused);
 //   5. availability (opaque isolation or ALLOW_SHARED_DATA off);
-//   6. JSON bodies only, size-capped while reading, strict shapes (no author fields);
-//   7. the artifact, with its current version's declaration;
+//   6. the artifact, with its current version's declaration and type;
+//   7. JSON bodies only, size-capped while reading at that type's document cap plus 1 KiB (a
+//      whiteboard's DATA_BOARD_MAX_DOC_BYTES, else DATA_MAX_DOC_BYTES), strict shapes (no author
+//      fields);
 //   8. the content pass (cookie for this artifact at its current epoch); a JSON 401, never the
 //      gate redirect;
 //   9. the declaration (`data`);
@@ -36,7 +38,13 @@ import {
   type PageDoc,
 } from "@plinth/shared";
 import { z } from "zod";
-import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
+import {
+  type Bindings,
+  type Config,
+  contentOrigin,
+  dataLimitsFor,
+  sharedDataActive,
+} from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { type PageClaim, pageDataAccess } from "../policy.ts";
 import { notifyViewers } from "../rooms/notify.ts";
@@ -466,16 +474,16 @@ async function handle(
     throw new ApiError("feature_disabled", "Shared data is not available here", { reason: off });
   }
 
-  // 6. Body.
-  let body: unknown;
-  if (method === "POST" || method === "PUT") {
-    body = await readJsonBody(request, config.data.maxDocBytes + 1024);
-  }
-
-  // 7. Artifact.
+  // 6. Artifact.
   const loaded = await loadTarget(env, artifactId);
   if (!loaded) throw new ApiError("not_found", "Not found");
   const { target } = loaded;
+
+  // 7. Body, up to the artifact's document cap (a whiteboard's is larger) plus 1 KiB.
+  let body: unknown;
+  if (method === "POST" || method === "PUT") {
+    body = await readJsonBody(request, dataLimitsFor(config, target.type).maxDocBytes + 1024);
+  }
 
   // 8. Access.
   const pass = await readContentPass(request, config, loaded);

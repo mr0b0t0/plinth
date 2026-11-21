@@ -26,11 +26,12 @@ import {
   isPersonalDocId,
   LIMITS,
   ME_DOC_ID,
+  mergeDocData,
   type PageDoc,
   type PageDocAuthor,
   utf8Length,
 } from "@plinth/shared";
-import { type Config, sharedDataActive } from "../config.ts";
+import { type Config, dataLimitsFor, sharedDataActive } from "../config.ts";
 import { base64url, fromBase64url, newId, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
@@ -147,11 +148,13 @@ async function usageOf(
   return row ?? { docs: 0, bytes: 0, seq: 0 };
 }
 
-function limitsOf(config: Config) {
+/** The caps a page and an agent are told: a whiteboard's own, or the instance's (dataLimitsFor). */
+function limitsOf(config: Config, type: string) {
+  const l = dataLimitsFor(config, type);
   return {
-    max_doc_bytes: config.data.maxDocBytes,
-    max_docs: config.data.maxDocsPerArtifact,
-    max_bytes: config.data.maxBytesPerArtifact,
+    max_doc_bytes: l.maxDocBytes,
+    max_docs: l.maxDocsPerArtifact,
+    max_bytes: l.maxBytesPerArtifact,
   };
 }
 
@@ -183,7 +186,7 @@ export async function session(
     can_list_people: pagePeopleAccess(claim, target.caps, active, target.writers ?? null).list,
     capabilities: capabilityList(target.caps),
     shared: target.caps?.shared ?? [],
-    limits: limitsOf(config),
+    limits: limitsOf(config, target.type),
     usage: { docs: usage.docs, bytes: usage.bytes },
     seq: usage.seq,
   };
@@ -226,7 +229,7 @@ export async function summary(
     capabilities: capabilityList(target.caps),
     available: unavailableReason(config, target.caps) === null,
     usage: { docs: usage.docs, bytes: usage.bytes },
-    limits: limitsOf(config),
+    limits: limitsOf(config, target.type),
     collections: results,
     ...(people ? { people: people.map(toAgentPerson) } : {}),
   };
@@ -458,13 +461,15 @@ export async function toAgentDoc(
 /**
  * Validate a document and measure it: UTF-8 bytes of collection + doc id + data JSON. `json` is
  * exactly the text stored in artifact_docs.data, and `size` what counts toward the quotas. Every
- * write measures through this, a whiteboard's starting board included (services/board.ts).
+ * write measures through this, a whiteboard's starting board included (services/board.ts), against
+ * the cap for the artifact's `type` (dataLimitsFor).
  */
 export function measureDoc(
   config: Config,
   collection: string,
   docId: string,
   data: unknown,
+  type: string,
 ): { json: string; size: number } {
   checkCollection(collection);
   checkDocId(docId);
@@ -472,9 +477,10 @@ export function measureDoc(
   if (shape) throw invalid(shape);
   const json = JSON.stringify(data);
   const dataBytes = utf8Length(json);
-  if (dataBytes > config.data.maxDocBytes) {
-    throw new ApiError("payload_too_large", `Data is over ${config.data.maxDocBytes} bytes`, {
-      max_doc_bytes: config.data.maxDocBytes,
+  const max = dataLimitsFor(config, type).maxDocBytes;
+  if (dataBytes > max) {
+    throw new ApiError("payload_too_large", `Data is over ${max} bytes`, {
+      max_doc_bytes: max,
     });
   }
   return { json, size: utf8Length(collection) + utf8Length(docId) + dataBytes };
@@ -493,7 +499,7 @@ function prepareDoc(
   docId: string,
   data: unknown,
 ) {
-  const measured = measureDoc(config, collection, docId, data);
+  const measured = measureDoc(config, collection, docId, data, target.type);
   if (target.type === "whiteboard") {
     if (isPersonalDocId(docId)) throw invalid("A whiteboard has no personal documents");
     const problem = boardDocError(collection, data);
@@ -639,8 +645,8 @@ async function insertGuarded(
       writer.via,
       writer.label ?? null,
       now,
-      config.data.maxDocsPerArtifact,
-      config.data.maxBytesPerArtifact,
+      dataLimitsFor(config, target.type).maxDocsPerArtifact,
+      dataLimitsFor(config, target.type).maxBytesPerArtifact,
       LIMITS.maxDataCollections,
     )
     .first<StoredDoc>();
@@ -677,8 +683,9 @@ async function whyNotInserted(
   if (!r) return { retry: true };
   if (!r.live) throw artifactGone();
   if (r.rev !== null) return { taken: r.rev };
-  if (r.docs >= config.data.maxDocsPerArtifact) return { quota: "docs" };
-  if (r.bytes + size > config.data.maxBytesPerArtifact) return { quota: "bytes" };
+  const limits = dataLimitsFor(config, target.type);
+  if (r.docs >= limits.maxDocsPerArtifact) return { quota: "docs" };
+  if (r.bytes + size > limits.maxBytesPerArtifact) return { quota: "bytes" };
   if (!r.has && r.colls >= LIMITS.maxDataCollections) return { quota: "collections" };
   return { retry: true };
 }
@@ -720,7 +727,7 @@ async function updateGuarded(
       nowIso(),
       readRev,
       any ? 1 : 0,
-      config.data.maxBytesPerArtifact,
+      dataLimitsFor(config, target.type).maxBytesPerArtifact,
     )
     .first<StoredDoc>();
 }
@@ -889,6 +896,27 @@ export async function deleteDoc(
 export type OpResult = DataOpResult;
 
 /**
+ * A merge op: the stored document at `if_rev` with the op's fields put in place (null removes
+ * one), written as a whole at that rev, so a write that raced it is a conflict, never lost. The
+ * result is checked like any write (a whiteboard's block or arrow shape included).
+ */
+async function mergeDoc(
+  d1: D1Database,
+  config: Config,
+  target: DataTarget,
+  writer: DataWriter,
+  op: Extract<DataOp, { op: "merge" }>,
+): Promise<StoredDoc> {
+  const docId = resolveDocId(op.doc_id, writer.viewerId) as string;
+  const existing = await getDoc(d1, target.id, op.collection, docId);
+  if (!existing) throw docNotFound();
+  if (existing.rev !== op.if_rev) throw conflict(existing.rev);
+  const data = mergeDocData(parseData(existing), op.data);
+  const { doc } = await putDoc(d1, config, target, writer, op.collection, docId, data, op.if_rev);
+  return doc;
+}
+
+/**
  * write_artifact_data: ops apply in order and each succeeds or fails on its own. Every op names
  * its if_rev: 0 creates (a server id when doc_id is omitted), n changes only at rev n.
  */
@@ -903,7 +931,10 @@ export async function applyOps(
   for (const op of ops) {
     const base = { op: op.op, collection: op.collection, doc_id: op.doc_id ?? null };
     try {
-      if (op.op === "set") {
+      if (op.op === "merge") {
+        const doc = await mergeDoc(d1, config, target, writer, op);
+        results.push({ ...base, doc_id: doc.doc_id, ok: true, rev: doc.rev });
+      } else if (op.op === "set") {
         let doc: StoredDoc;
         if (op.doc_id === undefined) {
           if (op.if_rev !== 0) throw invalid("Without doc_id, if_rev must be 0 (create)");

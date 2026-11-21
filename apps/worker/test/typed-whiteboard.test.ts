@@ -195,7 +195,9 @@ describe("publishing a whiteboard", () => {
     for (const [collection, { id: docId, ...data }] of all) {
       const row = rows.find((d) => d.doc_id === docId);
       expect(row?.data).toBe(JSON.stringify(data));
-      expect(row?.size_bytes).toBe(measureDoc(parseConfig(), collection, docId, data).size);
+      expect(row?.size_bytes).toBe(
+        measureDoc(parseConfig(), collection, docId, data, "whiteboard").size,
+      );
       expect(row).toMatchObject({
         created_via: "agent",
         created_by_role: "owner",
@@ -332,7 +334,12 @@ describe("refusals", () => {
     const files = spy(env.FILES);
     const ctx = serviceCtxFor(agentPrincipal(a), {
       env: { FILES: files.proxy },
-      config: { data: { ...parseConfig().data, maxDocsPerArtifact: 3 } },
+      config: {
+        data: {
+          ...parseConfig().data,
+          board: { ...parseConfig().data.board, maxDocsPerArtifact: 3 },
+        },
+      },
     });
     const { publishArtifact } = await import("../src/services/artifacts.ts");
     await expect(
@@ -456,7 +463,7 @@ describe("updating and restoring a whiteboard", () => {
     const cfg = parseConfig();
     const measured = BLOCKS.map(({ id: docId, ...data }) => ({
       seed: { collection: "blocks" as const, id: docId, data: data as never },
-      ...measureDoc(cfg, "blocks", docId, data),
+      ...measureDoc(cfg, "blocks", docId, data, "whiteboard"),
     }));
     const base = { id, slug: id, type: "whiteboard", version: 2, warnings: [] } as never;
     const out = await seedBoard(ctx, base, measured);
@@ -473,7 +480,7 @@ describe("updating and restoring a whiteboard", () => {
     const measured = [
       {
         seed: { collection: "blocks" as const, id: "goal", data: block() as never },
-        ...measureDoc(cfg, "blocks", "goal", block()),
+        ...measureDoc(cfg, "blocks", "goal", block(), "whiteboard"),
       },
     ];
     const out = await seedBoard(ctx, { id, warnings: [] } as never, measured);
@@ -739,6 +746,90 @@ describe("the page's data API on a whiteboard", () => {
     expect(res[1]?.error).toMatchObject({ code: "invalid_input" });
     expect(res[2]?.error?.message).toMatch(/only blocks and arrows/);
     expect(res[3]?.error).toMatchObject({ code: "conflict" });
+  });
+
+  it("merges an agent's changed fields at a rev, checks the result, and removes a field set to null", async () => {
+    const { owner, id } = await board();
+    const client = await mcpClient(owner.token);
+    const risk = (await docRows(id)).find((r) => r.doc_id === "risk");
+    const r = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        // Turn the box into a diamond with an outline: nothing else is sent.
+        {
+          op: "merge",
+          collection: "blocks",
+          doc_id: "risk",
+          data: { kind: "diamond", stroke: "#336699", z: 4 },
+          if_rev: risk?.rev,
+        },
+        // At the rev it was read at, a second merge is a conflict.
+        { op: "merge", collection: "blocks", doc_id: "risk", data: { x: 1 }, if_rev: risk?.rev },
+        // A merge whose result is not a block is refused, with its reason.
+        { op: "merge", collection: "blocks", doc_id: "goal", data: { w: 1 }, if_rev: 1 },
+        { op: "merge", collection: "blocks", doc_id: "nope", data: { x: 1 }, if_rev: 1 },
+      ],
+    });
+    expect(r.isError, r.text).toBe(false);
+    const res = r.data.results as { ok: boolean; rev?: number; error?: { code: string } }[];
+    expect(res[0]).toMatchObject({ op: "merge", ok: true });
+    expect(res[1]?.error).toMatchObject({ code: "conflict" });
+    expect(res[2]?.ok).toBe(false);
+    expect(res[3]?.error).toMatchObject({ code: "not_found" });
+    const after = (await docRows(id)).find((row) => row.doc_id === "risk");
+    expect(JSON.parse(after?.data as string)).toEqual({
+      ...BLOCKS[1],
+      id: undefined,
+      kind: "diamond",
+      stroke: "#336699",
+      z: 4,
+    });
+    const goal = (await docRows(id)).find((row) => row.doc_id === "goal");
+    const bad = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        { op: "merge", collection: "blocks", doc_id: "goal", data: { w: 1 }, if_rev: goal?.rev },
+      ],
+    });
+    expect((bad.data.results as { error?: { message: string } }[])[0]?.error?.message).toMatch(
+      /w must be/,
+    );
+    // null removes a field: the note loses its colour.
+    const cleared = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        {
+          op: "merge",
+          collection: "blocks",
+          doc_id: "goal",
+          data: { color: null },
+          if_rev: goal?.rev,
+        },
+      ],
+    });
+    await client.close();
+    expect((cleared.data.results as { ok: boolean }[])[0]?.ok).toBe(true);
+    const goal2 = (await docRows(id)).find((row) => row.doc_id === "goal");
+    expect(JSON.parse(goal2?.data as string)).not.toHaveProperty("color");
+  });
+
+  it("holds larger documents than other pages: a table past DATA_MAX_DOC_BYTES fits a board", async () => {
+    const { cookie, id } = await board('{"v":1}');
+    const cols = { c1: { at: 1 }, c2: { at: 2 } };
+    const rows: Record<string, Record<string, string | number>> = {};
+    for (let i = 0; i < 40; i++)
+      rows[`r${i}`] = { at: i, c1: "x".repeat(500), c2: "y".repeat(500) };
+    const table = { kind: "table", x: 0, y: 0, w: 400, h: 400, cols, rows };
+    expect(JSON.stringify(table).length).toBeGreaterThan(parseConfig().data.maxDocBytes);
+    const res = await api(id, "/data/blocks", cookie, "POST", { data: table });
+    expect(res.status, JSON.stringify(await json(res.clone()))).toBe(201);
+    // The page is told the board's caps.
+    const session = await json(await api(id, "/session", cookie));
+    expect(session.limits).toEqual({
+      max_doc_bytes: parseConfig().data.board.maxDocBytes,
+      max_docs: parseConfig().data.board.maxDocsPerArtifact,
+      max_bytes: parseConfig().data.board.maxBytesPerArtifact,
+    });
   });
 });
 

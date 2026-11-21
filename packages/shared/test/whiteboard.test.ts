@@ -148,8 +148,8 @@ describe("parseBoardContent", () => {
     ["an unknown colour", withBlocks([block({ color: "red" })]), "blocks[0].color"],
     ["text that is not a string", withBlocks([block({ text: 3 })]), "blocks[0].text"],
     [
-      "text over 2,000 characters",
-      withBlocks([block({ text: "x".repeat(2001) })]),
+      "text over 4,000 characters",
+      withBlocks([block({ text: "x".repeat(4001) })]),
       "blocks[0].text",
     ],
     [
@@ -170,7 +170,7 @@ describe("parseBoardContent", () => {
   });
 
   it("counts characters, not UTF-16 units, against the text limit", () => {
-    const emoji = "😀".repeat(2000);
+    const emoji = "😀".repeat(4000);
     expect(() => parseBoardContent(withBlocks([block({ text: emoji })]))).not.toThrow();
   });
 
@@ -302,7 +302,7 @@ describe("the renderer's readers", () => {
     ).toEqual({ kind: "note", x: 1_000_000, y: -1_000_000, w: 24, h: 4000, text: "", z: 2 });
     expect(cleanBlock({ x: "1", y: 0 })).toBeNull();
     expect(cleanBlock(null)).toBeNull();
-    expect(cleanBlock({ x: 0, y: 0, text: "x".repeat(3000) })?.text).toHaveLength(2000);
+    expect(cleanBlock({ x: 0, y: 0, text: "x".repeat(5000) })?.text).toHaveLength(4000);
   });
 
   it("drops an arrow that does not join two blocks", () => {
