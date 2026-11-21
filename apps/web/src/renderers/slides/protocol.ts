@@ -18,13 +18,14 @@
 //                                            keys and controls too), and in answer to a view it
 //                                            did not take (review mode keeps the overview)
 //   frame -> app: fullscreen                 the person pressed f
-//   frame -> app: exported { nonce, ok, images_skipped, opaque }
+//   frame -> app: exported { nonce, ok, images_skipped, embeds_skipped?, opaque }
 //                                            the export's outcome: whether the file was made, how
 //                                            many distinct image files were left out (at most
-//                                            LIMITS.maxAssetsCeiling), and whether that was
-//                                            because the frame's origin is opaque. An export asked
-//                                            for while one runs is not started again: the running
-//                                            one answers with the newest nonce
+//                                            LIMITS.maxAssetsCeiling), how many of an HTML deck's
+//                                            live embeds (absent for none), and whether images
+//                                            were left out because the frame's origin is opaque.
+//                                            An export asked for while one runs is not started
+//                                            again: the running one answers with the newest nonce
 //   frame -> app: leading { on }             the person turned Lead viewers on or off, or the
 //                                            lead ended (another presenter took over, the right
 //                                            is gone); not sent when the socket closed for good,
@@ -80,7 +81,14 @@ export type SlidesFrameMessage =
   | { type: "position"; slide: number; count: number }
   | { type: "view"; mode: DeckMode }
   | { type: "fullscreen" }
-  | { type: "exported"; nonce: string; ok: boolean; images_skipped: number; opaque: boolean }
+  | {
+      type: "exported";
+      nonce: string;
+      ok: boolean;
+      images_skipped: number;
+      embeds_skipped?: number;
+      opaque: boolean;
+    }
   | { type: "leading"; on: boolean };
 
 /** Posts to the app page, at the exact app origin only. */

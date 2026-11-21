@@ -208,10 +208,13 @@ const discardEditsDialog: StageDialog = {
 /**
  * The source editor, for a type that has one (not a sheet or a design: agents change those) and
  * only where the page cannot be edited in place. Where it can (a doc), the Edit toggle is the one
- * way in, and no source is offered beside it.
+ * way in, and no source is offered beside it. An HTML deck has none either (`no_editor`).
  */
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor && !c.live.available
+  canEdit(c.gate.role) &&
+  typeDef(c.gate.artifact.type)?.editor &&
+  !c.live.available &&
+  !c.gate.no_editor
     ? [{ label: "Edit", icon: PencilSimpleIcon, href: c.hrefs.edit }]
     : [];
 
