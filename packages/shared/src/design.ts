@@ -372,6 +372,18 @@ function readPlace(
   return { x: px === 0 ? 0 : px, y: py === 0 ? 0 : py };
 }
 
+/**
+ * Whether a `<!-- note ... -->` line is a note marker: name="value" pairs of note attributes only,
+ * with kind="sticky" or kind="title". Anything else is an ordinary HTML comment.
+ */
+function isNoteMarker(
+  parsed: Map<string, string> | { error: string },
+): parsed is Map<string, string> {
+  if (!(parsed instanceof Map)) return false;
+  const kind = parsed.get("kind");
+  return kind === "sticky" || kind === "title";
+}
+
 /** A note's text: the lines after its marker, without blank lines round them. */
 function noteText(lines: readonly string[]): string {
   const clean = lines.map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l).trimEnd());
@@ -416,9 +428,12 @@ export function parseDesign(input: string): DesignParse {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     const found = markerBody(line);
     if (found === null) continue;
+    const parsed = tokenize(found.body, found.kind);
+    // A note marker is only one that is a note in full: designs from before notes may hold a
+    // whole-line comment such as <!-- note the padding -->, which stays part of its board.
+    if (found.kind === "note" && !isNoteMarker(parsed)) continue;
     if (found.kind === "artboard") boardMarkers++;
     else noteMarkers++;
-    const parsed = tokenize(found.body, found.kind);
     if ("error" in parsed) {
       if (issues.length < DESIGN_LIMITS.maxIssues) {
         add({ line: i + 1, message: `Line ${i + 1}: ${parsed.error}` });
@@ -651,10 +666,7 @@ function readNote(
     add({ line: m.line, message });
     return null;
   };
-  const kind = a("kind") ?? "sticky";
-  if (kind !== "title" && kind !== "sticky") {
-    return issue(`${at} a note's kind is "title" or "sticky".`);
-  }
+  const kind = a("kind") === "title" ? "title" : "sticky";
   const text = noteText(body);
   if (!text) {
     return issue(`${at} write the note's text on the lines after its marker.`);

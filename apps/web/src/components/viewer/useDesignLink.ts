@@ -9,6 +9,11 @@
 // nested opaque frames whose messages have another source window, so they are never read here.
 // Under opaque isolation and the path fallback the shell's origin is "null", and it is identified
 // by its window (frameGuard.ts acceptFrom). A forged message could at most change the fragment.
+//
+// Writes are spaced at least WRITE_GAP_MS apart (the last board wins), so a frame that reports
+// boards fast never floods history.replaceState, which Safari limits (about 100 calls in 10 s).
+// When a new frame says it is ready, the app sends it the board in the address; a frame without
+// that board answers with the board it shows, so a stale #board= leaves the address.
 import {
   type AppConfig,
   BOARD_LINK_PREFIX,
@@ -17,7 +22,7 @@ import {
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
 } from "@plinth/shared";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { acceptFrom } from "../comments/frameGuard.ts";
 import { rendererTargetOrigin } from "./rendererProtocol.ts";
 
@@ -67,6 +72,9 @@ function writeBoard(board: string | null): void {
   }
 }
 
+/** The least time between two writes of the fragment. */
+export const WRITE_GAP_MS = 250;
+
 export interface DesignLinkOptions {
   /** The artifact is a design. Everything else is inert when false. */
   available: boolean;
@@ -81,6 +89,32 @@ export function useDesignLink(o: DesignLinkOptions): void {
   const target = rendererTargetOrigin(config, contentOrigin);
   /** The board to show: from the address at first, then whatever the frame last showed. */
   const wanted = useRef<string | null>(readBoardFragment(window.location.hash));
+  const lastWrite = useRef(Number.NEGATIVE_INFINITY);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<string | null>(null);
+
+  /** Writes `board` now, or once WRITE_GAP_MS has passed since the last write. */
+  const write = useCallback((board: string | null) => {
+    pending.current = board;
+    if (timer.current !== null) return;
+    const wait = lastWrite.current + WRITE_GAP_MS - Date.now();
+    const flush = () => {
+      timer.current = null;
+      lastWrite.current = Date.now();
+      writeBoard(pending.current);
+    };
+    if (wait <= 0) flush();
+    else timer.current = setTimeout(flush, wait);
+  }, []);
+
+  // A write still waiting when the viewer goes is dropped: the address may be another page's.
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!available) return;
@@ -95,9 +129,9 @@ export function useDesignLink(o: DesignLinkOptions): void {
         return;
       }
       wanted.current = m.board;
-      writeBoard(m.board);
+      write(m.board);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, contentOrigin, opaque, target]);
+  }, [available, frame, contentOrigin, opaque, target, write]);
 }

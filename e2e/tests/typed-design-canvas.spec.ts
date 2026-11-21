@@ -29,7 +29,7 @@ const DESIGN = [
   '<main><h1>Cart</h1><a id="pay" href="#board=pay">Pay now</a></main>',
   '<!-- artboard id="pay" name="Pay" size="iphone" section="Flow" -->',
   '<main><h1>Pay</h1><a id="back" href="#board=cart">Back to cart</a></main>',
-  '<!-- note color="pink" -->',
+  '<!-- note kind="sticky" color="pink" -->',
   "Card errors still to design",
   '<!-- note kind="title" -->',
   "Marketing site",
@@ -143,6 +143,8 @@ test("a fluid board, notes, a flow between boards and a deep link to one board",
     await expect(cart.locator("h1")).toHaveText("Cart");
     await shot("flow");
     const pay = await boardFrame(shell, "pay");
+    // A flow moves at most once every 500 ms, whatever the boards post.
+    await page.waitForTimeout(600);
     await pay.locator("#back").click();
     await expect(page).toHaveURL(/#board=cart$/);
     await shell.locator(".plinth-design__done").click();

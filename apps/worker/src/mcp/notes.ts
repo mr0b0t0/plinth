@@ -126,7 +126,7 @@ export const DESIGN_PUBLISH_NOTE =
   "fetch of the artifact's files, no storage, and no font files from assets (use Google Fonts or " +
   "data: URLs). Assets: images, CSS, JS, mp4/webm by relative path. Up to 60 artboards, 2 MB. " +
   'height="auto" with a size or width makes a web page board as tall as its content; x and y ' +
-  "place a board on the canvas (rows by default); a line <!-- note --> or <!-- note " +
+  'place a board on the canvas (rows by default); a line <!-- note kind="sticky" --> or <!-- note ' +
   'kind="title" --> followed by plain text adds a sticky or a title; a link href="#board=<id>" ' +
   "moves the canvas to that board, and <app url>#board=<id> opens the design on it. ";
 

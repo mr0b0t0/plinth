@@ -166,7 +166,6 @@ export function setDesignExportLauncher(l: Launch | null): void {
 
 export { redactUrls };
 
-/** A render whose file would pass the job's byte cap (DESIGN_EXPORT.maxBytes): refused, not sent. */
 /** A fluid board rendered taller than a PNG at its scale may be. */
 export class ExportOverPixels extends Error {
   constructor(
@@ -178,6 +177,7 @@ export class ExportOverPixels extends Error {
   }
 }
 
+/** A render whose file would pass the job's byte cap (DESIGN_EXPORT.maxBytes): refused, not sent. */
 export class ExportTooLarge extends Error {
   constructor(readonly maxBytes: number) {
     super(`the file is over ${maxBytes} bytes`);
