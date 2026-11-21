@@ -374,6 +374,22 @@ that work and came later as one fixed service per artifact: see
 [Shared data and viewer identity](#shared-data-and-viewer-identity). Guide: `docs/agents.md`; design:
 `docs/superpowers/specs/2026-11-14-agent-experience-design.md`.
 
+**Craft guides (decided 2026-11-21).** The skill teaches craft as well as format, so what agents
+make reads and looks as good as Claude's own artifacts. Its "Making it good (craft)" section states
+the rules every type shares (the point first, every number from real data, no filler, change only
+what was asked, no AI tropes, 4.5:1 contrast in every theme, values copied from the real source)
+and points at one guide per artifact type, `integrations/skill/plinth-artifacts/craft/<type>.md`:
+chart and KPI craft for pages and dashboards, writing for docs, the story and slide rhythm for
+decks, column order and types for sheets, placeholders and accessibility for designs, brand book
+and contrast for design systems, and layout and teammate rules for whiteboards. The guides are in
+Plinth's own words and describe only what Plinth does: a Markdown deck has one theme, so the deck
+guide varies the kind of slide where Claude's decks vary their background tones. `pnpm
+integrations` ships the guides beside the skill in every skill folder and appends them to the
+single-file builds (the Cursor rule, the VS Code instructions). The MCP surface stays short:
+`publish_artifact` says the shared rules in a line and names the guides, `update_artifact` says to
+change only what was asked, and the server instructions add one sentence. Tests pin the numbers
+the guides quote (limits, renderer sizes, column types, board colors) to the code.
+
 **Shared data for agents (decided 2026-11-14).** `get_artifact` also returns `capabilities` (what
 the returned version declares) and `data_usage` (`{ docs, bytes }`, or null when there is none or
 the caller is below editor), so an agent sees there is data before it edits the page. Data

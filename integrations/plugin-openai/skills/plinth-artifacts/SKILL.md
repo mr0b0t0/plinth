@@ -80,6 +80,36 @@ Security Policy. Write pages that hold up there and look finished:
   result rather than assuming the defaults. A built site or anything over about 1 MB goes through
   "Built sites and big pages", not inline `assets`.
 
+## Making it good (craft)
+
+The sections on each type say what Plinth accepts; the craft guides say how to make the result
+read and look finished. Before you write an artifact, or redesign one, read the guide for its type:
+
+| Type | Craft guide |
+| --- | --- |
+| `html`: a page or a dashboard | `craft/html.md` |
+| `doc` | `craft/doc.md` |
+| `slides` | `craft/slides.md` |
+| `sheet` | `craft/sheet.md` |
+| `design` | `craft/design.md` |
+| `design_system` | `craft/design_system.md` |
+| `whiteboard` | `craft/whiteboard.md` |
+
+The guides are files in this skill's folder, next to this one. What every type shares:
+
+- **The point first.** Lead with the answer, the finding or the decision, then the detail that
+  supports it. Size the artifact to the ask.
+- **Only real content.** Every number comes from data the person gave you or a source you read;
+  never invent one, and say where it came from. No filler: no lorem ipsum, padding sections or
+  sample rows to fill space. Ask before adding what nobody asked for.
+- **Change only what was asked.** On an update, every other word, color, position and setting
+  stays as it is; suggest broader changes in your reply. Follow the look and wording already there.
+- **No AI tropes:** no gradient washes, emoji as decoration, or cards with a colored left border.
+- **Readable by everyone.** Text has 4.5:1 contrast against its background in every theme (3:1 for
+  large text, icons and control borders), and color is never the only signal.
+- **From the source.** When the brand's or product's real files are within reach, copy exact
+  values and assets from them, not from memory.
+
 ## Documents (type doc)
 
 For writing that is read from top to bottom, send Markdown instead of HTML and Plinth renders it as

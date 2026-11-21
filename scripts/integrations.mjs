@@ -4,6 +4,7 @@
 //
 //   packages/shared/src/harnesses.ts           the registry: harnesses, plugin metadata, commands
 //   integrations/skill/plinth-artifacts/SKILL.md the skill: the Plinth way, written once
+//   integrations/skill/plinth-artifacts/craft/  the craft guides beside it, one per artifact type
 //
 // Outputs: the Claude Code and portable (Codex, ChatGPT) plugin in integrations/plugin/, both
 // marketplace files, the Gemini CLI extension, the Cursor rule, the VS Code instructions file, the
@@ -20,7 +21,7 @@
 //   pnpm integrations --check   exit 1 if any output is missing or stale, or PLUGIN.skillHash or
 //                               PLUGIN.skillHashVersion does not match (CI)
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,8 +66,46 @@ const directoryManifest = json({ ...meta, ...listingFields });
 /** path (from the repo root) -> content */
 const outputs = new Map();
 
+// The craft guides (SKILL.md "Making it good"): Markdown files in craft/ beside the skill. Every
+// build that ships the skill as a folder ships them beside it; the single-file builds (the Cursor
+// rule, the VS Code instructions) carry them at the end, under "## Craft guides".
+const CRAFT_DIR = path.join(path.dirname(SKILL_SOURCE), "craft");
+/** [path inside the skill folder, text] for each guide, sorted. */
+const craftGuides = readdirSync(path.join(root, CRAFT_DIR))
+  .filter((f) => f.endsWith(".md"))
+  .sort()
+  .map((f) => [`craft/${f}`, readFileSync(path.join(root, CRAFT_DIR, f), "utf8")]);
+/** Put the skill and its craft guides in one build's skill folder. */
+function setSkillFolder(dir, skillText) {
+  outputs.set(`${dir}/SKILL.md`, skillText);
+  for (const [rel, text] of craftGuides) outputs.set(`${dir}/${rel}`, text);
+}
+const CRAFT_POINTER = "The guides are files in this skill's folder, next to this one.";
+if (!skillBody.includes(CRAFT_POINTER)) {
+  throw new Error(`${SKILL_SOURCE} no longer says where the craft guides are:\n${CRAFT_POINTER}`);
+}
+/**
+ * The skill body with its craft guides at the end, for a build that is one file: each guide's
+ * title becomes a `###` heading naming its file, and its other headings move down two levels.
+ */
+function withCraftInline(body) {
+  const guides = craftGuides.map(([rel, text]) => {
+    const lines = text.trimEnd().split("\n");
+    const title = /^# (.+)$/.exec(lines[0] ?? "")?.[1];
+    if (!title) throw new Error(`${rel} must start with a "# " title`);
+    let fenced = false;
+    const rest = lines.slice(1).map((line) => {
+      if (line.startsWith("```")) fenced = !fenced;
+      return !fenced && /^#{2,4} /.test(line) ? `##${line}` : line;
+    });
+    return `### ${rel}: ${title.replace(/^Craft: /, "")}\n${rest.join("\n")}\n`;
+  });
+  const pointed = body.replace(CRAFT_POINTER, "The guides are at the end of this file.");
+  return `${pointed.trimEnd()}\n\n## Craft guides\n\n${guides.join("\n")}`;
+}
+
 // ---------- Claude Code plugin + portable plugin (Codex, ChatGPT) ----------
-outputs.set(`integrations/plugin/skills/${SKILL_NAME}/SKILL.md`, skill);
+setSkillFolder(`integrations/plugin/skills/${SKILL_NAME}`, skill);
 outputs.set("integrations/plugin/.claude-plugin/plugin.json", claudeManifest);
 outputs.set(
   "integrations/plugin/.mcp.json",
@@ -229,7 +268,7 @@ for (const [from, to] of directorySkillEdits) {
   }
   directorySkill = directorySkill.replace(from, to);
 }
-outputs.set(`${DIRECTORY}/skills/${SKILL_NAME}/SKILL.md`, directorySkill);
+setSkillFolder(`${DIRECTORY}/skills/${SKILL_NAME}`, directorySkill);
 outputs.set(`${DIRECTORY}/.claude-plugin/plugin.json`, directoryManifest);
 outputs.set(
   `${DIRECTORY}/.mcp.json`,
@@ -280,6 +319,11 @@ const listingSkill = (build, instanceBullet) => {
     if (out.includes(claudeOnly)) {
       throw new Error(`${build}: the skill still mentions "${claudeOnly}"; add an edit above`);
     }
+    for (const [rel, text] of craftGuides) {
+      if (text.includes(claudeOnly)) {
+        throw new Error(`${build}: ${rel} mentions "${claudeOnly}", and listings ship it as it is`);
+      }
+    }
   }
   return out;
 };
@@ -289,8 +333,8 @@ const listingSkill = (build, instanceBullet) => {
 // has the portable manifest with the listing block, the hosted server, the icon and the listing
 // skill. The ZIP is this folder.
 const OPENAI = "integrations/plugin-openai";
-outputs.set(
-  `${OPENAI}/skills/${SKILL_NAME}/SKILL.md`,
+setSkillFolder(
+  `${OPENAI}/skills/${SKILL_NAME}`,
   listingSkill(
     OPENAI,
     "- ChatGPT: this plugin connects to the hosted instance. Add another instance as a custom\n  connector at its `/mcp` URL; ChatGPT reaches it from OpenAI's servers, so it must be public.\n",
@@ -335,8 +379,8 @@ outputs.set(
   `${CURSOR}/mcp.json`,
   json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
 );
-outputs.set(
-  `${CURSOR}/skills/${SKILL_NAME}/SKILL.md`,
+setSkillFolder(
+  `${CURSOR}/skills/${SKILL_NAME}`,
   listingSkill(
     CURSOR,
     "- Cursor: this plugin connects to the hosted instance. Add another instance as its own server\n  in `~/.cursor/mcp.json`, at its `/mcp` URL.\n",
@@ -359,18 +403,18 @@ outputs.set(
   "integrations/gemini/GEMINI.md",
   `<!-- ${GENERATED} -->\n# Plinth\n\nThe \`${SERVER_NAME}\` MCP server publishes HTML pages ("artifacts") for the user on Plinth.\nWhen you make a page, publish, update or share one, or address comments on one, follow the\n\`${SKILL_NAME}\` skill bundled with this extension.\n`,
 );
-outputs.set(`integrations/gemini/skills/${SKILL_NAME}/SKILL.md`, skill);
+setSkillFolder(`integrations/gemini/skills/${SKILL_NAME}`, skill);
 
 // ---------- Cursor rule (agent-requested) ----------
 outputs.set(
   `integrations/cursor/${SKILL_NAME}.mdc`,
-  `---\ndescription: ${skillDescription}\nalwaysApply: false\n---\n<!-- ${GENERATED} -->\n\n${skillBody}`,
+  `---\ndescription: ${skillDescription}\nalwaysApply: false\n---\n<!-- ${GENERATED} -->\n\n${withCraftInline(skillBody)}`,
 );
 
 // ---------- VS Code instructions file ----------
 outputs.set(
   `integrations/vscode/${SKILL_NAME}.instructions.md`,
-  `---\nname: ${SKILL_NAME}\ndescription: ${skillDescription}\n---\n<!-- ${GENERATED} -->\n\n${skillBody}`,
+  `---\nname: ${SKILL_NAME}\ndescription: ${skillDescription}\n---\n<!-- ${GENERATED} -->\n\n${withCraftInline(skillBody)}`,
 );
 
 // ---------- the harness table in docs/agents.md ----------

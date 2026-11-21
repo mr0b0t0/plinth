@@ -13,6 +13,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
   card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen
   instead of running past its edge.
+- **Craft guides for agents.** The plinth-artifacts skill now teaches how to make each type of
+  artifact read and look finished, not only what Plinth accepts: one guide per type, for pages and
+  dashboards (chart and KPI craft, summary before detail, every number from the data), docs (lead
+  with the answer, sized to the ask, sources and an as-of date), decks (one idea per slide, heading
+  levels and slide kinds used on purpose), sheets (important columns first, a build order, types,
+  widths and a notes column), designs (placeholders, no AI tropes, contrast, touch targets and real
+  controls), design systems (a brand-book guide, exact values, contrast in every theme) and
+  whiteboards (the idea's shape, a size budget, at most four colors, extending a board without
+  disturbing people's work). The MCP tool descriptions point agents without the skill at them.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no
