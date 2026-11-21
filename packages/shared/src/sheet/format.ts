@@ -14,6 +14,14 @@ import { parseFormula } from "./formula/parser.ts";
 import { isoDateSerial } from "./formula/values.ts";
 import { platform } from "./platform.ts";
 
+/**
+ * The formats a sheet's content is sent in: its own JSON lines, CSV, or an .xlsx (base64 on the
+ * wire), which import.ts converts. Here rather than in import.ts, so the API schemas name them
+ * without bundling the importer.
+ */
+export const SHEET_CONTENT_FORMATS = ["jsonl", "csv", "xlsx"] as const;
+export type SheetContentFormat = (typeof SHEET_CONTENT_FORMATS)[number];
+
 export const SHEET_COLUMN_TYPES = ["text", "number", "date", "checkbox", "select", "url"] as const;
 export type SheetColumnType = (typeof SHEET_COLUMN_TYPES)[number];
 

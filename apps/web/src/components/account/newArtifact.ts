@@ -5,8 +5,13 @@
 //   "Created in the app", then opens the page in edit mode (`?edit`). It is offered only where the
 //   page can be edited (AppConfig.inline_editing not null) and the type is available here.
 // - Import and Replace send the file as it is: CSV and TSV as text, an .xlsx as base64, with
-//   `content_format`. The Worker converts and checks it as it does for agents, so the app carries
-//   no spreadsheet reader of its own, and a refusal names cells ("B7: …"), never code.
+//   `content_format`. The Worker converts and checks it as it does for agents, and a refusal names
+//   cells ("B7: …"), never code. A CSV is read as UTF-8, or as Windows-1252 when it is not.
+// - What the import would leave out or change (other sheets, formulas kept as values, long column
+//   names, a CSV that is not UTF-8) is found in the app before the file is sent, by the shared
+//   importer the Worker runs (importCheck.ts, loaded on demand), and said in
+//   plain words: in Replace's confirmation, in Import's toast. The Worker's answer stays the one
+//   that counts: a file the check cannot read is sent anyway, and the Worker says why it refuses it.
 import {
   APP_ROUTES,
   type AppConfig,
@@ -15,6 +20,7 @@ import {
   creatableTypes,
   LIMITS,
   route,
+  type SheetImportWarning,
 } from "@plinth/shared";
 import { ApiRequestError } from "../../lib/api.ts";
 
@@ -101,6 +107,21 @@ export function pickSpreadsheetFile(onPick: (file: File) => void): void {
   input.click();
 }
 
+// C0 and C1 controls, and the bidi marks, embeddings, overrides and isolates (U+061C, U+200E/F,
+// U+202A to U+202E, U+2066 to U+2069), which could make a name read as something else.
+const UNSAFE_NAME_CHARS = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]+/gu;
+
+/**
+ * A picked file's name as the app shows it and writes it in a version note ("Imported from …",
+ * "Replaced from …"): without control and bidi characters, never empty.
+ */
+export function cleanFileName(name: string): string {
+  return name.replace(UNSAFE_NAME_CHARS, "").trim() || "the file";
+}
+
+/** v1's note for a sheet imported from a file. */
+export const importedNote = (file: string) => `Imported from ${cleanFileName(file)}`;
+
 /** The format a file name says, or null for a file Import does not take. */
 export function formatOf(name: string): SpreadsheetFormat | null {
   const n = name.toLowerCase();
@@ -127,24 +148,150 @@ export class SpreadsheetFileError extends Error {}
 
 const MB = 1024 * 1024;
 
+/** What a picked file sends: `content_format` and `content`, as the Worker takes them. */
+export interface SpreadsheetBody {
+  content_format: SpreadsheetFormat;
+  content: string;
+}
+
+/** A picked file, read: what it sends, and what the import would leave out or change. */
+export interface ReadSpreadsheet {
+  sent: SpreadsheetBody;
+  warnings: SheetImportWarning[];
+}
+
+// Windows-1252's 0x80 to 0x9F (WHATWG Encoding); every other byte is the code point it names. Kept
+// here rather than left to TextDecoder("windows-1252"), which some runtimes read as Latin-1.
+const CP1252_HIGH = [
+  0x20ac, 0x81, 0x201a, 0x192, 0x201e, 0x2026, 0x2020, 0x2021, 0x2c6, 0x2030, 0x160, 0x2039, 0x152,
+  0x8d, 0x17d, 0x8f, 0x90, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x2dc, 0x2122,
+  0x161, 0x203a, 0x153, 0x9d, 0x17e, 0x178,
+];
+
+/** Bytes as Windows-1252 text (every byte reads as one character). */
+export function decodeCp1252(bytes: Uint8Array): string {
+  const units = new Uint16Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i] as number;
+    units[i] = b >= 0x80 && b < 0xa0 ? (CP1252_HIGH[b - 0x80] as number) : b;
+  }
+  let text = "";
+  for (let i = 0; i < units.length; i += 0x8000) {
+    text += String.fromCharCode(...units.subarray(i, i + 0x8000));
+  }
+  return text;
+}
+
+/**
+ * A CSV or TSV file's text: UTF-8 (its BOM dropped, as File.text() does), UTF-16 when it starts
+ * with that BOM, and otherwise, when the bytes are not UTF-8, Windows-1252, the encoding Excel
+ * writes a "CSV" in on Windows, with the warning `not_utf8`. Windows-1252 reads every byte, so a
+ * file is never refused for its encoding.
+ */
+export function decodeCsv(bytes: Uint8Array): { text: string; warnings: SheetImportWarning[] } {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return { text: new TextDecoder("utf-16le").decode(bytes), warnings: [] };
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return { text: new TextDecoder("utf-16be").decode(bytes), warnings: [] };
+  }
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), warnings: [] };
+  } catch {
+    return {
+      text: decodeCp1252(bytes),
+      warnings: [{ code: "not_utf8", encoding: "windows-1252" }],
+    };
+  }
+}
+
+/**
+ * What the shared importer says the import of this file would leave out or change, or nothing
+ * when it cannot tell (the check failed to load, or the file is one the Worker will refuse and
+ * explain). Loaded on demand, so a sheet's page loads the importer only once a file is picked.
+ */
+async function importWarnings(
+  content: string | Uint8Array,
+  format: SpreadsheetFormat,
+): Promise<SheetImportWarning[]> {
+  try {
+    const { sheetImportWarnings } = await import("./importCheck.ts");
+    return sheetImportWarnings(content, format);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * A picked file as `content_format` and `content` for the Worker: CSV and TSV as text (the
- * Worker finds the delimiter), an .xlsx as base64. Throws SpreadsheetFileError.
+ * Worker finds the delimiter), an .xlsx as base64, with the import's warnings. Throws
+ * SpreadsheetFileError.
  */
-export async function readSpreadsheet(
-  file: File,
-): Promise<{ content_format: SpreadsheetFormat; content: string }> {
+export async function readSpreadsheet(file: File): Promise<ReadSpreadsheet> {
   const format = formatOf(file.name);
+  const name = cleanFileName(file.name);
   if (!format) throw new SpreadsheetFileError("Pick a .xlsx, .csv or .tsv file.");
   if (file.size > LIMITS.maxSheetImportBytes) {
     throw new SpreadsheetFileError(
-      `${file.name} is larger than ${Math.round(LIMITS.maxSheetImportBytes / MB)} MB, the most a spreadsheet import takes.`,
+      `${name} is larger than ${Math.round(LIMITS.maxSheetImportBytes / MB)} MB, the most a spreadsheet import takes.`,
     );
   }
-  if (file.size === 0) throw new SpreadsheetFileError(`${file.name} is empty.`);
-  if (format === "csv") return { content_format: "csv", content: await file.text() };
-  return { content_format: "xlsx", content: base64Of(new Uint8Array(await file.arrayBuffer())) };
+  if (file.size === 0) throw new SpreadsheetFileError(`${name} is empty.`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (format === "csv") {
+    const { text, warnings } = decodeCsv(bytes);
+    return {
+      sent: { content_format: "csv", content: text },
+      warnings: [...warnings, ...(await importWarnings(text, "csv"))],
+    };
+  }
+  return {
+    sent: { content_format: "xlsx", content: base64Of(bytes) },
+    warnings: await importWarnings(bytes, "xlsx"),
+  };
 }
+
+/** Sheet names a warning quotes, at most; the rest are counted ("and 4 more"). */
+const NAMES_SHOWN = 3;
+
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/** "“Q3”", "“Q3” and “Notes”", "“A”, “B”, “C” and 4 more". */
+function quotedList(names: string[], total: number): string {
+  const shown = names.slice(0, NAMES_SHOWN).map((n) => `“${n}”`);
+  const more = total - shown.length;
+  if (more > 0) return `${shown.join(", ")} and ${more} more`;
+  if (shown.length === 1) return shown[0] ?? "";
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+/**
+ * One import warning in plain words, the same before the file is sent (Replace's confirmation)
+ * and after (Import's toast).
+ */
+export function warningText(w: SheetImportWarning): string {
+  switch (w.code) {
+    case "not_utf8":
+      return "The file is not UTF-8, so it is read as Windows-1252. Check accented letters.";
+    case "other_sheets": {
+      const names = w.names.filter((n) => n !== "");
+      if (names.length === 0) {
+        return `Only the first sheet is used; ${w.count} other ${plural(w.count, "sheet is", "sheets are")} left out.`;
+      }
+      return `Only the first sheet is used; ${quotedList(names, w.count)} ${w.count === 1 ? "is" : "are"} left out.`;
+    }
+    case "formulas_as_values":
+      return w.count === 1
+        ? "1 formula becomes a plain value."
+        : `${w.count} formulas become plain values.`;
+    case "headers_truncated":
+      return `${w.count} column ${plural(w.count, "name is", "names are")} cut to ${w.max} characters.`;
+  }
+}
+
+/** Every warning in plain words, in the order the import gave them. */
+export const warningTexts = (warnings: readonly SheetImportWarning[]): string[] =>
+  warnings.map(warningText);
 
 /** Base64 of bytes, in chunks (a 2 MB file would overflow String.fromCharCode's arguments). */
 export function base64Of(bytes: Uint8Array): string {

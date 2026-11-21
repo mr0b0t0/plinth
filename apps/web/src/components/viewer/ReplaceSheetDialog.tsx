@@ -9,20 +9,30 @@
 // again. A person confirmed by code
 // without an account is told to sign in instead: a version needs an account. Replace waits while
 // unpublished page changes exist or someone edits on the page (`blocked`), checked again on the
-// press, and a draft started after the press meets the room's "published meanwhile" review.
+// press, and a draft started after the press meets the room's "published meanwhile" review. What
+// the import would leave out or change (other sheets, formulas kept as values, long column names, a
+// CSV that is not UTF-8) is listed under the confirmation, before anything is sent. "Choose a
+// file…" and "Choose another file…" open the same picker as the ⋯ item (pickSpreadsheetFile).
 import { FileArrowUpIcon } from "@phosphor-icons/react";
-import { API, type PublishResult, route, type VersionInfo } from "@plinth/shared";
+import {
+  API,
+  type PublishResult,
+  route,
+  type SheetImportWarning,
+  type VersionInfo,
+} from "@plinth/shared";
 import { useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { useSession } from "../../lib/session.ts";
-import { hasIssues, ImportIssues } from "../account/ImportIssues.tsx";
+import { hasIssues, ImportIssues, ImportWarnings } from "../account/ImportIssues.tsx";
 import {
   CHOOSE_ANOTHER_LABEL,
+  cleanFileName,
   type ImportProblem,
   importProblem,
+  pickSpreadsheetFile,
   readSpreadsheet,
-  SPREADSHEET_ACCEPT,
-  type SpreadsheetFormat,
+  type SpreadsheetBody,
 } from "../account/newArtifact.ts";
 import { Button, ButtonLink, Dialog, useToast } from "../ui/index.ts";
 
@@ -48,8 +58,10 @@ export interface ReplaceSheetDialogProps {
 }
 
 interface Picked {
+  /** The file's name as shown (cleanFileName). */
   file: string;
-  sent: { content_format: SpreadsheetFormat; content: string };
+  sent: SpreadsheetBody;
+  warnings: SheetImportWarning[];
 }
 
 type Step =
@@ -64,7 +76,7 @@ type Step =
 export const SIGN_IN_TEXT = "Sign in to replace this sheet.";
 
 /** The version note of a replacement. */
-export const replacedNote = (file: string) => `Replaced from ${file}`;
+export const replacedNote = (file: string) => `Replaced from ${cleanFileName(file)}`;
 
 /** What the confirmation says before anything is sent. */
 export function confirmText(file: string, base: number): string {
@@ -105,7 +117,6 @@ export function ReplaceSheetDialog({
   const session = useSession();
   // Confirmed by code (no account): the Worker refuses the save, so say so before a file is picked.
   const noAccount = mustSignIn || (!session.loading && session.me === null);
-  const input = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>(() => (file ? { kind: "reading" } : { kind: "pick" }));
   const [saving, setSaving] = useState(false);
   // The newest version known to be current: the one on screen, or a newer one a 409 named. A file
@@ -121,16 +132,25 @@ export function ReplaceSheetDialog({
     };
   }, []);
 
-  const choose = () => input.current?.click();
-
   const onFile = async (f: File) => {
+    const name = cleanFileName(f.name);
     try {
-      const sent = await readSpreadsheet(f);
-      if (alive.current) setStep({ kind: "confirm", base: known.current, file: f.name, sent });
+      const { sent, warnings } = await readSpreadsheet(f);
+      if (alive.current) {
+        setStep({ kind: "confirm", base: known.current, file: name, sent, warnings });
+      }
     } catch (e) {
-      if (alive.current) setStep({ kind: "problem", file: f.name, ...importProblem(e) });
+      if (alive.current) setStep({ kind: "problem", file: name, ...importProblem(e) });
     }
   };
+
+  // Inside the click, so the browser lets the picker open.
+  const choose = () =>
+    pickSpreadsheetFile((f) => {
+      if (!alive.current) return;
+      setStep({ kind: "reading" });
+      void onFile(f);
+    });
 
   // The file the ⋯ item's picker gave: read once, then confirmed. After `alive` is set above.
   const first = useRef(file);
@@ -178,23 +198,6 @@ export function ReplaceSheetDialog({
       if (alive.current) setSaving(false);
     }
   };
-
-  const picker = (
-    <input
-      ref={input}
-      type="file"
-      accept={SPREADSHEET_ACCEPT}
-      hidden
-      aria-hidden="true"
-      tabIndex={-1}
-      data-testid="replace-sheet-file"
-      onChange={(e) => {
-        const file = e.currentTarget.files?.[0];
-        e.currentTarget.value = "";
-        if (file) void onFile(file);
-      }}
-    />
-  );
 
   const cancel = (
     <Button variant="ghost" onClick={onClose} disabled={saving}>
@@ -245,8 +248,9 @@ export function ReplaceSheetDialog({
         : step.kind === "problem"
           ? step.message
           : "";
-  const waiting =
-    !signIn && blocked !== null && (step.kind === "confirm" || step.kind === "conflict");
+  const asking = !signIn && (step.kind === "confirm" || step.kind === "conflict");
+  const waiting = asking && blocked !== null;
+  const warnings = asking ? step.warnings : [];
 
   return (
     <Dialog
@@ -257,17 +261,15 @@ export function ReplaceSheetDialog({
       description={
         !signIn && step.kind === "pick" ? undefined : <span role="status">{sentence}</span>
       }
-      // The hidden picker sits in the footer, where it takes no room: the body renders only when
-      // it has something to show, so every step keeps the same title-to-text gap.
-      footer={
-        <>
-          {!signIn && picker}
-          {footer}
-        </>
-      }
+      // The body renders only when it has something to show, so every step keeps the same
+      // title-to-text gap.
+      footer={footer}
     >
-      {waiting ? (
-        <p role="status">{blocked}</p>
+      {waiting || warnings.length > 0 ? (
+        <>
+          {warnings.length > 0 && <ImportWarnings warnings={warnings} />}
+          {waiting && <p role="status">{blocked}</p>}
+        </>
       ) : !signIn && step.kind === "problem" && hasIssues(step) ? (
         <ImportIssues problem={step} />
       ) : null}

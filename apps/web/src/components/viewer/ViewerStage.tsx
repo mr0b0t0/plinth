@@ -361,6 +361,7 @@ export function ViewerStage({
 
   const stage: StageContext = {
     gate,
+    pinned,
     config,
     compact,
     frame,
