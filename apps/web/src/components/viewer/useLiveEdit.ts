@@ -183,6 +183,8 @@ const reasonOf = (e: unknown): string | null =>
     : null;
 
 const UNPUBLISHABLE = "These changes can't be published yet.";
+/** A block holds typing the page cannot save as typed (the frame's `unsavable`). */
+const UNSAVABLE = "Some text on the page can't be saved as typed. Change it to continue.";
 const NOT_CONNECTED = "Not connected, your changes are kept.";
 const conflictText = (n: number | null) =>
   n
@@ -242,7 +244,10 @@ export function useLiveEdit({
 
   const latest = useRef({ status, mode, saving, editing, gate, onReload, review, onLeave, onAsk });
   latest.current = { status, mode, saving, editing, gate, onReload, review, onLeave, onAsk };
-  const collecting = useRef<{ nonce: string; resolve: (t: string) => void } | null>(null);
+  const collecting = useRef<{
+    nonce: string;
+    resolve: (t: string, unsavable: boolean) => void;
+  } | null>(null);
   const savingRef = useRef(false);
   const reviewRef = useRef<LiveReview | null>(null);
   reviewRef.current = review;
@@ -401,11 +406,11 @@ export function useLiveEdit({
         save() {
           void publishRef.current();
         },
-        draft({ nonce, text }) {
+        draft({ nonce, text, unsavable }) {
           const c = collecting.current;
           if (c?.nonce !== nonce) return;
           collecting.current = null;
-          c.resolve(text);
+          c.resolve(text, unsavable === true);
         },
         resolved(r) {
           onResolvedRef.current(r);
@@ -442,27 +447,35 @@ export function useLiveEdit({
     return () => frame.removeEventListener("load", send);
   }, [available, frame, target, editing, soloBase]);
 
-  const collect = useCallback((): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const nonce = newNonce();
-      const timer = window.setTimeout(() => {
-        if (collecting.current?.nonce === nonce) collecting.current = null;
-        reject(new Error("The page did not answer."));
-      }, COLLECT_TIMEOUT_MS);
-      collecting.current = {
-        nonce,
-        resolve: (t) => {
+  /**
+   * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
+   * unless `keep` (the kept copy, which then has that typing without its formatting).
+   */
+  const collect = useCallback(
+    (opts: { keep?: boolean } = {}): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const nonce = newNonce();
+        const timer = window.setTimeout(() => {
+          if (collecting.current?.nonce === nonce) collecting.current = null;
+          reject(new Error("The page did not answer."));
+        }, COLLECT_TIMEOUT_MS);
+        collecting.current = {
+          nonce,
+          resolve: (t, unsavable) => {
+            window.clearTimeout(timer);
+            if (unsavable && !opts.keep) reject(new Error(UNSAVABLE));
+            else resolve(t);
+          },
+        };
+        if (!postToRenderer(frame, target, collectMessage(nonce))) {
           window.clearTimeout(timer);
-          resolve(t);
-        },
-      };
-      if (!postToRenderer(frame, target, collectMessage(nonce))) {
-        window.clearTimeout(timer);
-        collecting.current = null;
-        reject(new Error("The page is not ready."));
-      }
-    });
-  }, [frame, target]);
+          collecting.current = null;
+          reject(new Error("The page is not ready."));
+        }
+      });
+    },
+    [frame, target],
+  );
 
   // ---------- publishing ----------
 
@@ -569,6 +582,17 @@ export function useLiveEdit({
   const publishNow = useCallback(
     async (note: string | undefined, tell: Tell): Promise<PublishOutcome> => {
       const m = latest.current.mode;
+      const s = latest.current.status;
+      // Every way to publish (the strip, Cmd/Ctrl+S, Done, Ask's publish first) comes here: nothing
+      // goes out while a block holds typing the page cannot save, or the draft cannot be a version.
+      if (s?.unsavable) {
+        if (tell === "toast") toast(UNSAVABLE, "neutral");
+        return { error: UNSAVABLE };
+      }
+      if (s?.publishable === false) {
+        if (tell === "toast") toast(UNPUBLISHABLE, "neutral");
+        return { error: UNPUBLISHABLE };
+      }
       if (m === "room") return checkpoint("save", { note, tell });
       if (m !== "solo") return { error: "Editing on the page is not available." };
       if (savingRef.current) return { error: CHOOSING_BUSY };
@@ -773,16 +797,19 @@ export function useLiveEdit({
   }, [available, gate.live?.mode, id]);
 
   const soloDirty = mode === "solo" && editing && status?.dirty === true;
+  // Typing a block cannot save as typed is not in the frame's text, so it does not make it dirty:
+  // it is kept (without its formatting) and warned about all the same.
+  const soloStuck = mode === "solo" && editing && status?.unsavable === true;
   useEffect(() => {
-    if (!soloDirty) return;
+    if (!soloDirty && !soloStuck) return;
     const base = gate.artifact.version;
     const t = window.setInterval(() => {
-      collect()
+      collect({ keep: true })
         .then((text) => savePageDraft(id, base, text))
         .catch(() => undefined);
     }, SOLO_KEEP_MS);
     return () => window.clearInterval(t);
-  }, [soloDirty, collect, id, gate.artifact.version]);
+  }, [soloDirty, soloStuck, collect, id, gate.artifact.version]);
 
   const saveRestore = useCallback(async () => {
     if (!restore) return;
@@ -808,6 +835,7 @@ export function useLiveEdit({
     if (m === "room" || m === "solo") {
       if (savingRef.current) return { error: CHOOSING_BUSY };
       if (s?.conflict_version != null) return { error: conflictText(s.conflict_version) };
+      if (s?.unsavable) return { error: UNSAVABLE };
       if (s?.publishable === false) return { error: UNPUBLISHABLE };
       if (m === "room" && !s?.connected) return { error: NOT_CONNECTED };
     }
@@ -855,7 +883,10 @@ export function useLiveEdit({
 
   // ---------- leaving the page, the publish shortcut ----------
 
-  const unsaved = (mode === "room" && status?.unflushed === true) || (mode === "solo" && soloDirty);
+  const unsaved =
+    (mode === "room" && status?.unflushed === true) ||
+    (mode === "solo" && soloDirty) ||
+    status?.unsavable === true;
   useEffect(() => {
     if (!unsaved) return;
     const onLeavePage = (e: BeforeUnloadEvent) => {

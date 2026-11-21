@@ -2659,7 +2659,10 @@ CSP, sandbox flag or env var was added.
   same model, so the editor cannot turn a block into something that renders differently. A block
   that fails is read-only (Ask an agent, Move and Delete, byte for byte). Every text the editor
   sends is read back first and is not sent when it would not round trip; such typing stays in the
-  open block and counts as unsent, so it is never dropped without the page saying so. A character
+  open block and counts as unsent, so it is never dropped without the page saying so, and no
+  publish (any of its ways in) goes out without it. The room's `keep` frame only restarts the idle
+  clock of a lease the socket holds (`not_held` otherwise), so it cannot touch anyone else's; a
+  holder can keep a lease no longer than by typing. A character
   next to a mark may be written as a numeric character reference, never for ASCII punctuation
   (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
   blocks, and the reference definitions after a block, keep their bytes.

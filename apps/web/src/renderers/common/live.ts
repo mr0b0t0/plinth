@@ -95,6 +95,8 @@ export interface LiveBackend {
   edit(text: string): boolean;
   release(): void;
   takeover(leaseId: string): boolean;
+  /** Say the held lease is in use though no edit is sent (the room's `keep`); room only. */
+  keep?(): boolean;
 }
 
 type Socket = Pick<WebSocket, "send" | "close" | "readyState"> & {
@@ -364,6 +366,12 @@ export class LiveDocClient implements LiveBackend {
   takeover(leaseId: string): boolean {
     this.wantLease = true;
     return this.send({ t: "takeover", lease: leaseId });
+  }
+
+  keep(): boolean {
+    const l = this.mine;
+    if (!l || !this.connected) return false;
+    return this.send({ t: "keep", lease: l.id });
   }
 
   /** A sheet's rows or columns: applied by the room only while nobody else holds a lease. */

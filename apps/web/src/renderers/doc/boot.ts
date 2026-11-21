@@ -307,7 +307,11 @@ function live(
       status();
     } else if (m.type === "collect" && local) {
       editor?.flush();
-      post({ type: "draft", nonce: m.nonce, text: local.text });
+      // Typing that cannot be written as typed is not in the doc: the app publishes nothing, and
+      // keeps a copy with it, without its formatting.
+      const kept = editor?.unsavable ? editor.textWithTyping() : null;
+      if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
+      else post({ type: "draft", nonce: m.nonce, text: local.text });
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);

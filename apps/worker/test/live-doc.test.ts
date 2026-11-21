@@ -204,6 +204,50 @@ describe("doc socket: leases and edits", () => {
     b.ws.close(1000);
   });
 
+  it("a holder that says its lease is in use (keep) is not taken over as idle; a silent one is", async () => {
+    const { id, ownerP } = await docSetup();
+    const ed = await person(id, "editor");
+    const a = await connectDoc(id, ownerP.cookie);
+    const b = await connectDoc(id, ed.cookie);
+    const la = await lease(a, 0, 1);
+    const age = () =>
+      runInDurableObject(stubFor(id), async (room, state) => {
+        for (const ws of state.getWebSockets("k:doc")) {
+          const s = ws.deserializeAttachment() as { lease?: { at: number } | null };
+          if (s.lease) {
+            s.lease.at -= (LIMITS.liveLeaseIdleS + 1) * 1000;
+            ws.serializeAttachment(s);
+          }
+        }
+        (room as any).states = new WeakMap();
+      });
+    // A minute without edits, but the holder still has typing it cannot send: it says so.
+    await age();
+    a.send({ t: "keep", lease: la.lease });
+    // Frames are handled in order: once `sync` is answered, `keep` has been.
+    a.send({ t: "sync" });
+    await a.nextOf("welcome");
+    b.send({ t: "takeover", lease: la.lease });
+    expect(await b.nextOf("lease_denied")).toEqual({
+      t: "lease_denied",
+      reason: "held",
+      by: ownerP.email,
+    });
+    // A keep for a lease the socket does not hold changes nothing.
+    b.send({ t: "keep", lease: la.lease });
+    expect(await b.nextOf("error")).toEqual({ t: "error", code: "not_held" });
+    // Silent for another minute: idle, and taken over.
+    await age();
+    b.send({ t: "takeover", lease: la.lease });
+    expect(await a.nextOf("lease_lost")).toEqual({
+      t: "lease_lost",
+      lease: la.lease,
+      reason: "takeover",
+    });
+    a.ws.close(1000);
+    b.ws.close(1000);
+  });
+
   it("refuses an edit past 1 MB or 50,000 lines and keeps the draft as it was", async () => {
     // Lines: one frame cannot carry 50,000 newlines (JSON doubles them), so the doc has most.
     const tall = `# Tall\n${"a\n".repeat(LIMITS.maxLiveDocLines - 20_000)}`;

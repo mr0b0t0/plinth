@@ -537,6 +537,100 @@ describe("useLiveEdit", () => {
     expect(leave()).toBe(true);
   });
 
+  // A doc block holding typing the page cannot save as typed (`unsavable`, doc-blocks).
+  it("publishes nothing while a block holds typing it cannot save: room, by Publish and Cmd+S", async () => {
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.path.endsWith("/live")
+          ? json(INFO)
+          : c.path.endsWith("/live/checkpoint")
+            ? json({ saved: true, version: { version: 4 } })
+            : undefined,
+    });
+    const { result } = hook(gate("room"));
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, unflushed: true, publishable: false, unsavable: true });
+    await act(() => result.current.publish());
+    // The frame's Cmd/Ctrl+S reaches the app as `save`, and the app's own shortcut runs publish.
+    fromFrame({ type: "save" });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls.some((c) => c.path.endsWith("/live/checkpoint"))).toBe(false);
+    expect(toasts.at(-1)).toBe(
+      "Some text on the page can't be saved as typed. Change it to continue.",
+    );
+    // Ask's "Publish my changes first" is refused the same way, with the words returned.
+    await act(async () => {
+      expect(await result.current.publishFirst()).toEqual({
+        error: "Some text on the page can't be saved as typed. Change it to continue.",
+      });
+    });
+    expect(await act(() => result.current.done())).toBe(false);
+    // Once the text can be written, Publish goes out.
+    fromFrame({ type: "live", ...STATUS });
+    await act(() => result.current.publish());
+    expect(calls.some((c) => c.path.endsWith("/live/checkpoint"))).toBe(true);
+  });
+
+  it("publishes nothing while a block holds typing it cannot save: solo, even if the status lags", async () => {
+    const onReload = vi.fn();
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.method === "PUT"
+          ? json({ id: "art1", version: 4, type: "doc", warnings: [] })
+          : undefined,
+    });
+    const { result } = hook(gate("solo"), onReload);
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: false, unsavable: true });
+    await act(() => result.current.publish());
+    expect(sentToFrame("collect")).toHaveLength(0);
+    // A status that has not caught up yet: the frame's draft says so, and nothing is published.
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    let saving: Promise<void> = Promise.resolve();
+    act(() => {
+      saving = result.current.publish();
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "# Plan\n\nabc", unsavable: true });
+    await act(() => saving);
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    expect(onReload).not.toHaveBeenCalled();
+    expect(toasts.at(-1)).toBe(
+      "Some text on the page can't be saved as typed. Change it to continue.",
+    );
+  });
+
+  it("solo: typing a block cannot save asks before leaving, and is kept without its formatting", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    stubApi({ handle: () => undefined });
+    const { result, unmount } = hook(gate("solo"));
+    act(() => result.current.start());
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    // The text never reached the frame's doc, so it is not dirty: unsavable is what counts.
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: false, unflushed: false });
+    expect(leave()).toBe(false);
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: false, unsavable: true });
+    expect(leave()).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_100);
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "# Plan\n\nabc", unsavable: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    unmount();
+    const again = hook(gate("solo"));
+    expect(again.result.current.restore).toMatchObject({ text: "# Plan\n\nabc", base: 3 });
+  });
+
   it("an idle autosave refused as too soon is tried again when the server says", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let answers = 0;

@@ -369,7 +369,11 @@ export type ReviewChoice =
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
   | { type: "save" }
-  | { type: "draft"; nonce: string; text: string }
+  /**
+   * Solo: the frame's text for `collect`. `unsavable` when a block holds typing that cannot be
+   * written as typed: `text` then has that typing without its formatting (for the kept copy only).
+   */
+  | { type: "draft"; nonce: string; text: string; unsavable?: true }
   | ({ type: "resolved"; nonce: string } & ReviewChoice)
   | { type: "ask"; anchor: { key: string; text: string } | null; what?: AskWhat }
   | { type: "leave" }
@@ -625,7 +629,13 @@ const FRAME_READERS: {
     }
     const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
-    return { type: "draft", nonce: m.nonce, text: m.text };
+    if (m.unsavable !== undefined && m.unsavable !== true) return null;
+    return {
+      type: "draft",
+      nonce: m.nonce,
+      text: m.text,
+      ...(m.unsavable === true ? { unsavable: true as const } : {}),
+    };
   },
   resolved(m, opts) {
     if (!opts.review || m.nonce !== opts.review) return null;

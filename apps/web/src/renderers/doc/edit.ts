@@ -124,6 +124,11 @@ export const CLEAR_REFUSED = "Couldn't remove this block now. Try again.";
 export const UNSAVABLE = "This text can't be saved as typed. Change it to continue.";
 /** Edit mode ended with such a block open: its text was kept without its formatting. */
 export const FORMAT_DROPPED = "Formatting in the block you were typing in couldn't be kept.";
+/** Someone took over such a block: its text goes in below it, without its formatting. */
+export const TAKEN_KEPT =
+  "Someone else took over this block. What you typed is kept below it, without its formatting.";
+/** The draft changed under such a block: its text is kept, without its formatting. */
+export const CLOSED_KEPT = "The draft changed. What you typed is kept, without its formatting.";
 export const NOT_KEPT = "What you typed in the block you closed couldn't be added. Type it again.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
@@ -604,6 +609,8 @@ export class DocEditor {
    * in the doc, so it counts as pending, and the block does not close until the text changes.
    */
   private stuck = false;
+  /** While `stuck` in a room: says the lease is in use every LIMITS.liveLeaseKeepS (`keep`). */
+  private keepAlive: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -635,6 +642,48 @@ export class DocEditor {
   /** The open block holds text that cannot be written as typed (see `stuck`). */
   get unsavable(): boolean {
     return this.stuck;
+  }
+
+  /**
+   * Typing in the open block cannot be written as typed, or can again. While it cannot, nothing
+   * is sent, so a room would see the lease as idle and let it be taken over after
+   * LIMITS.liveLeaseIdleS: a connected holder says it is in use instead, until the text can be
+   * written, the block closes or the socket goes.
+   */
+  private setStuck(on: boolean): void {
+    if (this.stuck === on) return;
+    this.stuck = on;
+    if (this.keepAlive) clearInterval(this.keepAlive);
+    this.keepAlive = null;
+    if (!on || !this.backend.keep) return;
+    this.keepAlive = setInterval(() => {
+      const b = this.backend;
+      if (!this.stuck || !this.open) {
+        if (this.keepAlive) clearInterval(this.keepAlive);
+        this.keepAlive = null;
+        return;
+      }
+      if (b.connected && b.mine) b.keep?.();
+    }, LIMITS.liveLeaseKeepS * 1000);
+  }
+
+  /**
+   * Solo: the doc's text with what is typed in the open block, without its marks, while it cannot
+   * be written as typed (the app's kept copy), else null.
+   */
+  textWithTyping(): string | null {
+    const open = this.open;
+    const mine = this.backend.mine;
+    if (!this.stuck || !open || !mine) return null;
+    const core = verifyBlock(withoutMarks(open.rich.model), TOOLS, open.env);
+    if (core === null) return null;
+    const text = core === "" ? "" : padded(composeBlock(open.prefix, core, open.suffix), this.pad);
+    const lines = this.backend.lines;
+    return joinLines([
+      ...lines.slice(0, mine.start),
+      ...blockLines(text),
+      ...lines.slice(mine.end),
+    ]);
   }
 
   /** A block op or a cleared block's removal is on its way: other ops and opens wait for it. */
@@ -889,6 +938,11 @@ export class DocEditor {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       this.flush();
+      // Typing that cannot be written yet is not in the draft: no Publish goes out without it.
+      if (this.stuck) {
+        this.showNotice(UNSAVABLE);
+        return;
+      }
       this.hooks.save();
     }
   };
@@ -2022,6 +2076,14 @@ export class DocEditor {
       this.hooks.status();
       return;
     }
+    if (this.stuck && open && held && (reason === "takeover" || reason === "closed")) {
+      // Typing that could not be written yet is never dropped with the block.
+      if (this.keepPlain(reason === "takeover")) {
+        this.held = null;
+        this.showNotice(reason === "takeover" ? TAKEN_KEPT : CLOSED_KEPT);
+        return;
+      }
+    }
     if (!open || !held || !this.editing) {
       this.dropOpen();
       this.render();
@@ -2057,7 +2119,7 @@ export class DocEditor {
     const b = this.backend;
     if (
       w &&
-      (w.keep !== undefined || w.kept) &&
+      (w.keep !== undefined || (w.kept && b.conflictVersion === null)) &&
       !b.mine &&
       b.connected &&
       b.settled &&
@@ -2080,7 +2142,7 @@ export class DocEditor {
   // ---------- the open block ----------
 
   private dropOpen(): void {
-    this.stuck = false;
+    this.setStuck(false);
     const open = this.open;
     if (!open) return;
     open.menu.close(false);
@@ -2227,14 +2289,14 @@ export class DocEditor {
     if (block === null) {
       // Never dropped: the text stays in the block, the block stays open and counts as pending
       // (close() refuses), and the person changes it. The keystroke is not undone.
-      this.stuck = true;
+      this.setStuck(true);
       this.showNotice(UNSAVABLE);
       this.hooks.status();
       return false;
     }
     if (this.stuck) {
-      this.stuck = false;
-      if (this.notice?.textContent === UNSAVABLE) this.hideNotice();
+      this.setStuck(false);
+      if (this.notice?.textContent?.startsWith(UNSAVABLE)) this.hideNotice();
       this.hooks.status();
     }
     const text = padded(block, this.pad);
@@ -2478,7 +2540,7 @@ export class DocEditor {
     }
     if (m) b.release();
     this.want = w;
-    if (b.connected && b.settled) this.retake(w);
+    if (b.connected && b.settled && b.conflictVersion === null) this.retake(w);
     this.render();
     this.hooks.status();
   }
@@ -2527,11 +2589,48 @@ export class DocEditor {
    */
   private salvage(): void {
     const open = this.open;
-    if (!open || !this.backend.mine || this.clearing) return;
+    if (!open || this.clearing) return;
     this.flush();
     if (!this.stuck) return;
-    open.rich.setModel(withoutMarks(open.rich.model));
-    if (this.send()) this.showNotice(FORMAT_DROPPED);
+    if (this.backend.mine) {
+      open.rich.setModel(withoutMarks(open.rich.model));
+      if (this.send()) this.showNotice(FORMAT_DROPPED);
+      return;
+    }
+    // No lease (not connected, or it was lost): kept and written once a lease can be had.
+    this.keepPlain(false);
+  }
+
+  /**
+   * The open block's typing, which cannot be written as typed, is written without its marks once a
+   * lease can be had (keepTyped): in place of the block as the doc had it (`after` false), or as a
+   * new block right after it when someone else holds it now. While that waits the frame reports
+   * unsent changes, and it is asked for again once the draft is back (and no review waits).
+   */
+  private keepPlain(after: boolean): boolean {
+    const open = this.open;
+    const held = this.held;
+    if (!open || !held) return false;
+    const core = verifyBlock(withoutMarks(open.rich.model), TOOLS, open.env);
+    if (core === null || core === "") return false;
+    const own = joinLines(this.backend.lines.slice(held.start, held.end));
+    const c: Clearing = {
+      phase: "insert",
+      drop: true,
+      text: "",
+      lease: "",
+      at: 0,
+      from: after ? held.end : held.start,
+      own,
+      pad: this.pad,
+      prefix: open.prefix,
+      suffix: open.suffix,
+      keep: core,
+      point: after ? held.end : null,
+    };
+    this.setStuck(false);
+    this.keepTyped(c, core);
+    return true;
   }
 
   /**

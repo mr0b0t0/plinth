@@ -20,6 +20,7 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  TAKEN_KEPT,
   TOO_LONG,
   UNSAVABLE,
   unpadded,
@@ -2158,6 +2159,97 @@ describe("typing next to a mark", () => {
     editor.setEditing(false);
     expect(local.text).toBe("abc");
     expect(editor.pending).toBe(false);
+  });
+
+  /** Opens the first paragraph and leaves typing in it that cannot be written as typed. */
+  function stuckIn(editor: DocEditor) {
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    r.editable.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(editor.unsavable).toBe(true);
+    return r;
+  }
+
+  it("Cmd/Ctrl+S publishes nothing while such typing is not in the doc", () => {
+    const { editor } = setup("ab");
+    const r = stuckIn(editor);
+    key(r.editable, "s", { metaKey: true });
+    expect(save).not.toHaveBeenCalled();
+    expect(notice()).toContain(UNSAVABLE);
+    // Once it can be written, the shortcut publishes as usual.
+    r.editable.innerHTML = "<em>a</em>bc";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    key(r.editable, "s", { ctrlKey: true });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the lease in use while such typing waits, so it is not taken over as idle", () => {
+    class Room extends LocalDoc {
+      keep = vi.fn(() => true);
+    }
+    let editor: DocEditor;
+    const room = new Room("ab", {
+      granted: (l: ClientLease) => editor.granted(l),
+      changed: () => editor.changed(),
+    });
+    editor = new DocEditor(root, window, room, { save, status: () => undefined, ask });
+    editor.setEditing(true);
+    stuckIn(editor);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000 * 4);
+    expect(room.keep).toHaveBeenCalledTimes(4);
+    // Written again: the edits keep the lease in use, and the heartbeat stops.
+    const r = rich(editor);
+    r.editable.innerHTML = "<em>a</em>bc";
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000 * 3);
+    expect(room.keep).toHaveBeenCalledTimes(4);
+  });
+
+  it("taken over meanwhile: the typing goes in below the block, without its formatting", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    // Someone else takes the block over: the lease is gone.
+    local.mine = null;
+    editor.lost("takeover");
+    expect(local.text).toBe("ab\n\nabc\n\nnext");
+    expect(notice()).toContain(TAKEN_KEPT);
+    expect(editor.pending).toBe(false);
+  });
+
+  it("the draft closed meanwhile: the typing takes the block's place, without its formatting", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    local.mine = null;
+    editor.lost("closed");
+    expect(local.text).toBe("abc\n\nnext");
+    expect(editor.pending).toBe(false);
+  });
+
+  it("edit mode ending while not connected keeps the typing and writes it once the draft is back", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    // The socket drops: the lease is reported lost, and nothing can be sent.
+    Object.defineProperty(local, "connected", { value: false, configurable: true });
+    local.mine = null;
+    editor.lost("reconnect");
+    editor.setEditing(false);
+    expect(local.text).toBe("ab\n\nnext");
+    expect(editor.pending).toBe(true);
+    // Back: it is written in place of the block, without its formatting.
+    Object.defineProperty(local, "connected", { value: true, configurable: true });
+    editor.changed();
+    expect(local.text).toBe("abc\n\nnext");
+    expect(editor.pending).toBe(false);
+  });
+
+  it("solo: the kept copy has such typing, without its formatting", () => {
+    const { local, editor } = setup("ab\n\nnext");
+    stuckIn(editor);
+    expect(local.text).toBe("ab\n\nnext");
+    expect(editor.textWithTyping()).toBe("abc\n\nnext");
   });
 
   // Every single character typed in or at the edge of a formatted run, over a fixed corpus, is
