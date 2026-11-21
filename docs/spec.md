@@ -3159,7 +3159,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the tab's
   kept copy has it without its formatting, and in a room the holder sends `keep` every 20 s while
   connected. If edit mode ends anyway, it is written without its formatting. Typing the room does
-  not have yet when the lease ends (in the debounce, or not writable as typed) is kept: taken over,
+  not have yet when the lease ends (in the debounce, not writable as typed, or not sent because the
+  deck is at its size limit, the block is too long or the socket is down) is kept: taken over,
   it goes in as a new block below the block (kept notes, after the slide's notes once nobody holds
   them); closed by a review or a reset, in its place again once the review ends; a block taken
   again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
@@ -3168,7 +3169,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   couldn't be added to the deck yet. It is kept here.", with **Copy**), counts as unsent changes
   (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a
   reconnect; a discard drops it. A block closed, or split by Enter, whose last edit had no answer
-  when its lease went is written again (both halves of a split together) and closed. Kept text is
+  when its lease went, or whose typing since its last edit was never sent, is written again (both
+  halves of a split together) and closed. Kept text is
   in the app's rescue store too, as a doc's is, each item saying whether it was typed on a slide
   or in the speaker notes, the slide it was on and that slide's first line of text: after a reload
   it is written back into the same part (a slide's as a new block near where it was on that slide,

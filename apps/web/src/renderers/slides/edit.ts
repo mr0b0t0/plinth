@@ -302,6 +302,11 @@ interface Open {
   kept?: true;
   /** An edit was sent for it. */
   wrote?: true;
+  /**
+   * Its typing since the last edit sent was not sent (the deck was at its size limit, the block too
+   * long, the socket down): the room does not hold it, whatever it acknowledged.
+   */
+  notSent?: true;
   /** The rescue store item for typing in it the room does not hold yet (kept, or stuck). */
   rescue?: string;
 }
@@ -320,8 +325,10 @@ interface Snap {
   models: RichBlock[];
   /** Its lines as typed, or null when they cannot be written as typed. */
   typed: string[] | null;
-  /** In the debounce, not writable as typed, or sent with no acknowledgement yet. */
+  /** In the debounce, not writable as typed, not sent (Open's `notSent`), or not acknowledged yet. */
   unsent: boolean;
+  /** Its last typing was never sent (Open's `notSent`): no acknowledgement makes it written. */
+  notSent?: true;
   sent: string | null;
   start: number;
   around: Open["around"];
@@ -705,6 +712,7 @@ export class SlidesEditor {
       this.fromStore.length > 0 ||
       this.offered.length > 0 ||
       this.rescues.size > 0 ||
+      this.open?.notSent === true ||
       this.closing?.snap.unsent === true
     );
   }
@@ -1398,26 +1406,46 @@ export class SlidesEditor {
       return this.refusedHere(DECK_WORDS.refused);
     }
     const text = ins.join("\n");
-    if (text === o.sent) return true;
+    if (text === o.sent) {
+      delete o.notSent;
+      return true;
+    }
     if (new TextEncoder().encode(text).byteLength > LIMITS.liveDocFrameBytes - 512) {
-      this.notify(DECK_WORDS.tooLong);
-      return false;
+      return this.notSentHere(o, mine.start, DECK_WORDS.tooLong);
     }
     // Checked here first, as the doc editor does: a deck at its size limit keeps the typing.
     const all = this.backend.lines;
     if (RULES?.tooLarge(joinLines([...all.slice(0, mine.start), ...ins, ...all.slice(mine.end)]))) {
-      this.notify(DECK_WORDS.full);
-      return false;
+      return this.notSentHere(o, mine.start, DECK_WORDS.full);
     }
     if (!this.backend.edit(text)) {
-      this.notify(DECK_WORDS.notConnected);
-      return false;
+      return this.notSentHere(o, mine.start, DECK_WORDS.notConnected);
     }
     o.sent = text;
     o.wrote = true;
+    delete o.notSent;
     // Kept typing on its way: the store keeps what was sent until the room acknowledges it.
     if (o.rescue) o.rescue = this.keepRescue(o.rescue, blocks ?? o.editors.map((r) => r.model), o);
     return true;
+  }
+
+  /**
+   * Typing this frame would not send as it stands (the deck at its size limit, the block too long,
+   * the socket down): it stays in the place as typed and counts as unsent until an edit of it is
+   * sent, so closing the place or losing its lease writes it again rather than drops it (Snap's
+   * `notSent`). A room's copy goes into the rescue store too, which a reload offers back.
+   */
+  private notSentHere(o: Open, at: number, reason: string): false {
+    o.notSent = true;
+    o.rescue = this.keepRescue(
+      o.rescue,
+      o.editors.map((r) => r.model),
+      o,
+      at,
+    );
+    this.notify(reason);
+    this.hooks.status();
+    return false;
   }
 
   private trim(): boolean {
@@ -1452,6 +1480,7 @@ export class SlidesEditor {
     if (!o || !mine) return;
     const lines = this.backend.lines.slice(mine.start, mine.end);
     o.sent = joinLines(lines);
+    delete o.notSent;
     if (o.kind === "notes") {
       const text = notesText(lines);
       const models = editableNotes(text, o.form, o.ctx.settings) ?? [];
@@ -1530,7 +1559,12 @@ export class SlidesEditor {
       form,
       models: blocks ?? o.editors.map((r) => r.model),
       typed: this.linesNow(o, blocks),
-      unsent: this.timer !== null || this.stuck || (o.wrote === true && b.ackedText !== o.sent),
+      unsent:
+        this.timer !== null ||
+        this.stuck ||
+        o.notSent === true ||
+        (o.wrote === true && b.ackedText !== o.sent),
+      ...(o.notSent ? { notSent: true as const } : {}),
       sent: o.sent,
       start: mine?.start ?? o.start,
       around: mine ? this.aroundOf(mine) : o.around,
@@ -1630,8 +1664,9 @@ export class SlidesEditor {
     for (const r of o.editors) r.destroy();
     if (snap.rescue && !snap.unsent) this.dropRescue(snap.rescue);
     if (release && mine) {
-      // Its last edit has no answer yet: kept until the room's, which comes before the release's
-      // (Closing), so a lease that ends first writes it again.
+      // Its last edit has no answer yet, or its typing was never sent (the deck was full): kept
+      // until the room's answer, which comes before the release's (Closing), so a lease that ends
+      // first, or a release with nothing taken, writes it again.
       if (snap.unsent) this.closing = { lease: mine.id, snap, start: mine.start, end: mine.end };
       this.backend.release();
     }
@@ -1653,7 +1688,7 @@ export class SlidesEditor {
     // Kept typing the room acknowledged is in the draft: the place is an ordinary one again, and
     // its rescue item is written.
     const o = this.open;
-    if (o?.wrote && this.timer === null && !this.stuck && b.ackedText === o.sent) {
+    if (o?.wrote && this.timer === null && !this.stuck && !o.notSent && b.ackedText === o.sent) {
       if (o.kept) delete o.kept;
       if (o.rescue) {
         this.dropRescue(o.rescue);
@@ -1665,7 +1700,8 @@ export class SlidesEditor {
       // A closed place's lease moves with each op (its own edit's answer among them).
       c.start = b.mine.start;
       c.end = b.mine.end;
-      if (c.snap.unsent && b.ackedText === c.snap.sent) c.snap.unsent = false;
+      // Typing never sent stays unsent, whatever the room acknowledged of what was sent before it.
+      if (c.snap.unsent && !c.snap.notSent && b.ackedText === c.snap.sent) c.snap.unsent = false;
       if (!c.snap.unsent && c.snap.rescue) {
         this.dropRescue(c.snap.rescue);
         delete c.snap.rescue;
@@ -1690,7 +1726,8 @@ export class SlidesEditor {
 
   /**
    * A closed place (or one split by Enter) whose lease the room let go without taking its last
-   * edit, which it refused (the deck was full, the typing came too fast; the notice said so). The
+   * edit, which it refused (the deck was full, the typing came too fast; the notice said so) or
+   * this frame never sent (the deck at its size limit, the block too long, the socket down). The
    * typing is kept in the store and written again in its place, both halves of a split at once,
    * and the place closes again, since the person had left it; refused a second time, or when the
    * deck cannot take it now, it is kept on the page with Copy and tried again after a reconnect.

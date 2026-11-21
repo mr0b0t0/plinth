@@ -454,4 +454,24 @@ describe("typing the deck cannot write as typed, alone", () => {
     expect(editable().textContent).toBe(typed);
     expect(collect(f)).toBe(deck);
   });
+
+  it.each([false, true])(
+    "keeps typing the deck cannot take to copy when its block closes (after the pause: %s)",
+    (paused) => {
+      const deck = `# One\n---\n## Two\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
+      const f = start(deck);
+      appMessage(f, msg({ type: "goto", slide: 2 }));
+      (active().querySelector("h2") as HTMLElement).click();
+      const typed = `Two ${"z".repeat(100)}`;
+      typeText(typed);
+      if (paused) vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      editable().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      // The deck is as it was, and the typing is on the page with Copy rather than gone.
+      expect(document.querySelector(".plinth-slides__open")).toBeNull();
+      expect(collect(f)).toBe(deck);
+      const bar = document.querySelector(".plinth-slides__kept");
+      expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+      expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+    },
+  );
 });

@@ -1319,6 +1319,128 @@ describe("typing kept across a reload (the rescue store)", () => {
     expect(stored()).toHaveLength(1);
   });
 
+  describe("a block whose typing the deck at its size limit cannot take", () => {
+    const DECK = "# Intro\n\nabcd";
+    // A second slide fills the deck to 8 bytes under its size limit.
+    const filler = "x".repeat(LIMITS.maxSlidesBytes - DECK.length - "\n---\n".length - 8);
+    const FULL = `${DECK}\n---\n${filler}`;
+    const TYPED = "abcd typed a lot of words";
+    const KEPT = expect.objectContaining({ text: TYPED, part: "slide", slide: 1 });
+    const lastLive = () =>
+      parent.postMessage.mock.calls
+        .map((c) => c[0] as Record<string, unknown>)
+        .filter((m) => m.type === "live")
+        .at(-1);
+
+    /** Opens slide 1's paragraph, is granted its lease, and types more than the deck can take. */
+    const typeTooMuch = (s: FakeSocket) => {
+      (
+        document.querySelector('.plinth-slides__frame[data-n="1"] .plinth-slides__slide p') as
+          | HTMLElement
+          | undefined
+      )?.click();
+      expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+      s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+      const ed = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+      if (!(ed instanceof HTMLElement)) throw new Error("not open");
+      ed.textContent = TYPED;
+      ed.dispatchEvent(new Event("input", { bubbles: true }));
+      return ed;
+    };
+
+    const pressEscape = (ed: HTMLElement) =>
+      ed.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const ways: [string, (ed: HTMLElement) => void][] = [
+      ["Escape", pressEscape],
+      [
+        "Escape after the pause",
+        (ed) => {
+          vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+          // Refused here: the block stays open with the typing.
+          expect(ed.textContent).toBe(TYPED);
+          expect(document.querySelector(".plinth-slides__open")).not.toBeNull();
+          pressEscape(ed);
+        },
+      ],
+      ["Done", () => app({ type: "edit", on: false })],
+    ];
+
+    it.each(ways)("keeps it to copy, and in the store, when it closes by %s", async (_, end) => {
+      const s = startKept(FULL);
+      end(typeTooMuch(s));
+      // Nothing is sent and the lease is let go; once the room answers, the place is asked for
+      // again to write what was typed there, as for an edit the room refused.
+      expect(edits(s)).toEqual([]);
+      expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
+      expect(stored()).toEqual([KEPT]);
+      s.frame({ t: "released", lease: "l1" });
+      expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+      s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+      // Still too large: not sent, kept on the page with Copy and in the app's store.
+      expect(edits(s)).toEqual([]);
+      expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l2" });
+      s.frame({ t: "released", lease: "l2" });
+      const sent = s.sent.length;
+      vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      expect(s.sent).toHaveLength(sent);
+      expect(document.querySelector(".plinth-slides__open")).toBeNull();
+      const bar = document.querySelector(".plinth-slides__kept");
+      expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+      expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+      expect(stored()).toEqual([KEPT]);
+      await Promise.resolve();
+      expect(lastLive()?.unflushed).toBe(true);
+    });
+
+    it("counts it as unsent, and keeps it in the store, while the block stays open", async () => {
+      const s = startKept(FULL);
+      typeTooMuch(s);
+      vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      expect(edits(s)).toEqual([]);
+      await Promise.resolve();
+      expect(lastLive()?.unflushed).toBe(true);
+      expect(stored()).toEqual([KEPT]);
+    });
+
+    it("writes it again when the room takes the quiet lease over", () => {
+      const s = startKept(FULL);
+      typeTooMuch(s);
+      vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      // Nothing was sent, so the room saw the lease idle and gave it to someone else.
+      s.frame({ t: "lease_lost", lease: "l1", reason: "takeover" });
+      expect(document.querySelector(".plinth-slides__open")).toBeNull();
+      expect(stored()).toEqual([KEPT]);
+      // Asked for as a new block below the one taken over.
+      expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    });
+
+    it("drops nothing kept once the typing fits again and is sent", () => {
+      const s = startKept(FULL);
+      const ed = typeTooMuch(s);
+      vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      ed.textContent = "abcd ok";
+      ed.dispatchEvent(new Event("input", { bubbles: true }));
+      pressEscape(ed);
+      expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "abcd ok" }]);
+      s.frame({
+        t: "op",
+        gen: "g1",
+        rev: 4,
+        lease: "l1",
+        seq: 1,
+        start: 2,
+        del: 1,
+        ins: "abcd ok",
+        by: YOU.id,
+      });
+      s.frame({ t: "released", lease: "l1" });
+      // Written: nothing is asked for again, kept on the page or in the store.
+      expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
+      expect(document.querySelector(".plinth-slides__kept")).toBeNull();
+      expect(stored()).toEqual([]);
+    });
+  });
+
   it("drops what it kept from the store when the unpublished changes are discarded", () => {
     const DECK = "# One\n---\n## Two";
     const s = startKept(DECK);
