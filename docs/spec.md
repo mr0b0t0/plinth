@@ -3109,9 +3109,13 @@ deleting slides, and a slide's columns, stay with agents for now.
   following the presenter wait until editing ends (Present is not offered while editing; Done
   publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
   Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
-  neither prints nor makes a file from edit mode's slides. A block open when the connection drops
-  is taken again once the draft is back, where the draft holds its text nearest to where it was
-  (two slides may share a title), and what was typed since is sent there.
+  neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
+  or when the room merges a version into the draft, is taken again once the draft (after a merge,
+  the merged draft) is back, where the draft holds its text nearest to where it was (two slides
+  may share a title), and what was typed since is sent there. A place clicked whose lines move
+  before the room reads its lease is looked for again the same way (an insert point by the lines
+  before and at it), at most three times, and nothing opens on lines that no longer hold what was
+  clicked.
 - **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
   change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;

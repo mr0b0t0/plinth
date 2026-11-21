@@ -25,6 +25,7 @@
 import {
   applySlidesStruct,
   blockFromSource,
+  blockLines,
   type DeckLayout,
   type DeckPartContext,
   type DeckSettings,
@@ -85,6 +86,7 @@ export const DECK_WORDS = {
   held: (who: string, n: number) => `${who} is editing slide ${n}. Try again when they finish.`,
   heldHere: (who: string) => `${who} is editing this. Try again when they finish.`,
   notConnected: "Not connected. Try again in a moment.",
+  changed: "The deck changed meanwhile. Try again.",
   notKept: "The deck changed while you were offline, so the block you were typing in was closed.",
   unsavable: "This text can't be saved as typed. Change it to continue.",
   tooLong: "This block is too long to send. Split it into smaller blocks.",
@@ -108,6 +110,8 @@ export const DECK_WORDS = {
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
 export interface DeckBackend extends LiveBackend {
+  /** The draft's revision: a rebase's merged text comes with a higher one. */
+  readonly rev: number;
   struct(op: SlidesStructOp): boolean;
 }
 
@@ -123,6 +127,7 @@ export class LocalDeck implements DeckBackend {
   readonly conflictVersion = null;
   ackedText: string | null = null;
   readonly durableText = null;
+  rev = 0;
   private n = 0;
 
   constructor(
@@ -167,6 +172,7 @@ export class LocalDeck implements DeckBackend {
       return false;
     }
     this.lines = next;
+    this.rev++;
     this.mine = { ...l, end: l.start + ins.length, at: Date.now() };
     this.ackedText = text;
     this.events.changed();
@@ -190,6 +196,7 @@ export class LocalDeck implements DeckBackend {
     }
     const before = this.lines.length;
     this.lines = r.lines;
+    this.rev++;
     if (this.mine) {
       const moved = mapRange(this.mine, r.map, before, r.lines.length);
       this.mine = moved ? { ...this.mine, ...moved } : null;
@@ -249,6 +256,14 @@ interface Open {
 /** A lease asked for and not answered yet, with what to open once it is granted. */
 interface Want {
   range: LineRange;
+  /**
+   * What the range held when asked for: its lines, and for an insert point the line before it and
+   * the line at it (null at the deck's edges). The models open only on lines that still read so;
+   * when the lines moved meanwhile, the place is looked for again by them.
+   */
+  mark: Mark;
+  /** How many times it was looked for again after the lines moved. */
+  tries: number;
   open: Omit<Open, "host" | "editors" | "sent" | "start" | "caret" | "focused"> & {
     models: RichBlock[];
   };
@@ -259,6 +274,38 @@ interface Want {
   select?: true;
   /** Taken again after a reconnect: what was typed is sent once it is open. */
   resend?: true;
+}
+
+interface Mark {
+  text: string;
+  above: string | null;
+  below: string | null;
+}
+
+/** A place asked for is looked for again at most this many times when its lines keep moving. */
+const RETAKE_TRIES = 3;
+
+/** What `range` of `lines` holds, to find it again (markAt) or check it is still there (markIs). */
+function markOf(lines: readonly string[], range: LineRange): Mark {
+  const text = joinLines(lines.slice(range.start, range.end));
+  if (text !== "") return { text, above: null, below: null };
+  return { text, above: lines[range.start - 1] ?? null, below: lines[range.start] ?? null };
+}
+
+function markIs(lines: readonly string[], range: LineRange, mark: Mark): boolean {
+  const now = markOf(lines, range);
+  return now.text === mark.text && now.above === mark.above && now.below === mark.below;
+}
+
+/** Where the place `mark` describes starts in `lines`, nearest to line `near`, or -1. */
+function markAt(lines: readonly string[], mark: Mark, near: number): number {
+  if (mark.text !== "") return locateBlock(lines, mark.text, near);
+  let best = -1;
+  for (let p = 0; p <= lines.length; p++) {
+    if ((lines[p - 1] ?? null) !== mark.above || (lines[p] ?? null) !== mark.below) continue;
+    if (best < 0 || Math.abs(p - near) < Math.abs(best - near)) best = p;
+  }
+  return best;
 }
 
 const para = (): RichBlock => ({ t: "paragraph", c: [] });
@@ -785,8 +832,9 @@ export class SlidesEditor {
     return true;
   }
 
-  private request(w: Want): void {
+  private request(ask: Omit<Want, "mark" | "tries">): void {
     if (this.want) return;
+    const w: Want = { ...ask, mark: markOf(this.backend.lines, ask.range), tries: 0 };
     this.want = w;
     if (!this.backend.lease(w.range)) {
       this.want = null;
@@ -799,6 +847,13 @@ export class SlidesEditor {
     this.want = null;
     if (!w || !this.editing) {
       this.backend.release();
+      return;
+    }
+    if (!markIs(this.backend.lines, lease, w.mark)) {
+      // The lines granted are not the place asked for (they moved meanwhile): nothing opens on
+      // them. The place is looked for again once the lease is released.
+      this.backend.release();
+      this.again(w);
       return;
     }
     const doc = this.doc;
@@ -1172,9 +1227,9 @@ export class SlidesEditor {
         w.open.kind === "notes" ? DECK_WORDS.heldHere(by) : DECK_WORDS.held(by, w.open.n),
       );
     } else if (reason === "stale") {
-      // The lines moved meanwhile: try once more, at the room's rev.
-      this.want = w;
-      if (!this.backend.lease(w.range)) this.want = null;
+      // The lines moved before the room read the lease: the place is looked for again, by what
+      // it held, in the room's lines (which came before this answer), never at the same numbers.
+      this.again(w);
     }
   }
 
@@ -1184,17 +1239,23 @@ export class SlidesEditor {
     this.open = null;
     const models = o.editors.map((r) => r.model);
     for (const r of o.editors) r.destroy();
-    if ((reason === "reconnect" || reason === "rebased") && o.sent) {
-      // The room reloaded or the socket dropped: take the same lines again once the draft is
-      // back, and send what was typed since.
+    // The room's text of the block as it ended: after a merge, what the room acked of it.
+    const text = reason === "rebased" ? (this.backend.ackedText ?? o.sent) : o.sent;
+    if ((reason === "reconnect" || reason === "rebased") && text) {
+      // The room merged a version or the socket dropped: take the block again once the draft is
+      // back, and send what was typed since. A merge's text comes after the lease's end (with a
+      // higher rev), so the block is looked for in it, not in the lines from before it.
       const { kind, n, ctx, env, pad, form } = o;
       this.retake = {
-        sent: o.sent,
         near: o.start,
+        after: reason === "rebased" ? this.backend.rev : null,
         want: {
-          range: { start: 0, end: 0 },
+          range: { start: o.start, end: o.start },
+          mark: { text, above: null, below: null },
+          tries: 0,
           focus: "end",
           open: { kind, n, ctx, env, pad, form, models },
+          resend: true,
         },
       };
       this.tryRetake();
@@ -1204,41 +1265,63 @@ export class SlidesEditor {
   }
 
   /**
-   * A block to take again after a reconnect: the room's text it had, where it started, and how to
-   * open it.
+   * A place to ask for again: after a reconnect or a merge (a block with what was typed in it), or
+   * after its lines moved meanwhile. It is looked for by what it held, nearest where it was, and
+   * only in the room's lines: once connected, with no text on its way, no lease held and, after a
+   * merge, once the draft is past the rev `after`.
    */
-  private retake: { sent: string; near: number; want: Want } | null = null;
+  private retake: { near: number; after: number | null; want: Want } | null = null;
+
+  /** Asks again for a place whose lines moved, unless it was looked for too often already. */
+  private again(w: Want): void {
+    if (w.tries >= RETAKE_TRIES) {
+      this.notify(w.resend ? DECK_WORDS.notKept : DECK_WORDS.changed);
+      return;
+    }
+    this.retake = { near: w.range.start, after: null, want: { ...w, tries: w.tries + 1 } };
+    this.tryRetake();
+  }
 
   private tryRetake(): void {
     const r = this.retake;
-    if (!r || this.want || this.open || !this.backend.connected || !this.backend.ready) return;
+    const b = this.backend;
+    if (!r || this.want || this.open || b.mine || !b.connected || !b.ready || !b.settled) return;
+    if (r.after !== null && b.rev <= r.after) return;
     this.retake = null;
     // The same lines may sit on another slide too (two slides titled "Agenda"): the place
     // nearest where the block was is the one taken.
-    const lines = this.backend.lines;
-    const at = locateBlock(lines, r.sent, r.near);
+    const lines = b.lines;
+    const w = r.want;
+    const at = markAt(lines, w.mark, r.near);
     if (at < 0) {
-      this.notify(DECK_WORDS.notKept);
+      this.notify(w.resend ? DECK_WORDS.notKept : DECK_WORDS.changed);
       return;
     }
     const slide = deckLayout(lines).slides.find((x) => x.start <= at && at < x.end);
-    const n = slide?.n ?? r.want.open.n;
+    const n = slide?.n ?? w.open.n;
     const want: Want = {
-      ...r.want,
-      open: { ...r.want.open, n, ctx: { ...r.want.open.ctx, settings: afterBareOpen(lines, n) } },
-      range: { start: at, end: at + r.sent.split("\n").length },
-      resend: true,
+      ...w,
+      open: { ...w.open, n, ctx: { ...w.open.ctx, settings: afterBareOpen(lines, n) } },
+      range: { start: at, end: at + blockLines(w.mark.text).length },
     };
     this.want = want;
-    if (!this.backend.lease(want.range)) {
+    if (!b.lease(want.range)) {
       this.want = null;
-      this.retake = r;
+      // What was typed is asked for again once connected; a place clicked is not.
+      if (w.resend) this.retake = { ...r, after: null };
+      else this.notify(DECK_WORDS.notConnected);
     }
   }
 
-  /** The socket closed: an asked-for lease is never answered. */
+  /**
+   * The socket closed: an asked-for lease is never answered. A block with what was typed in it is
+   * asked for again once the draft is back (the welcome brings the room's whole text).
+   */
   disconnected(): void {
+    const w = this.want;
     this.want = null;
+    if (w?.resend) this.retake = { near: w.range.start, after: null, want: w };
+    else if (this.retake) this.retake = { ...this.retake, after: null };
   }
 
   /** The room refused this editor's edit or op (`invalid`): put it back, say why. */
@@ -1279,7 +1362,7 @@ export class SlidesEditor {
     this.settingsPending = false;
     this.syncSettingsButtons();
     if (reason === "held" && by) this.notify(DECK_WORDS.held(by, n));
-    else if (reason === "stale") this.notify("The deck changed meanwhile. Try again.");
+    else if (reason === "stale") this.notify(DECK_WORDS.changed);
   }
 
   notify(text: string): void {

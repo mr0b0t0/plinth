@@ -1,5 +1,7 @@
 // A deck in room mode (the draft socket, modelled with a fake socket): a block open when the socket
-// drops is taken again where it was, not on another slide that holds the same lines; and outside
+// drops is taken again where it was, not on another slide that holds the same lines; a block whose
+// lines move before the room reads its lease (a stale answer, a merge) is found again by its text,
+// and nothing opens on lines that no longer hold what was clicked; and outside
 // edit mode the deck follows the live draft only while nobody presents or leads, showing the
 // published deck while the app has it full screen, in presenter view and while a presenter leads
 // the room.
@@ -168,6 +170,154 @@ describe("taking a block again after a reconnect", () => {
     again.frame({ t: "leased", lease: "l2", start: 6, end: 7, holder: YOU.id, by: YOU.email });
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
     expect(again.sent.at(-1)).toEqual({ t: "edit", lease: "l2", seq: 1, text: "## Agenda (Q4)" });
+  });
+
+  it("asks again when the socket drops before the lease taking it again is answered", () => {
+    const deck = "# Intro\n---\n## Agenda";
+    start(deck);
+    welcomeDoc(sock("doc"), deck, false);
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__slide h2') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    const first = sock("doc");
+    first.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    const ed = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    ed.textContent = "Agenda (Q4)";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    first.drop();
+    vi.advanceTimersByTime(2000);
+    const second = sock("doc");
+    welcomeDoc(second, deck, true, "g2");
+    expect(second.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    // No answer: the socket drops again, and the next welcome asks once more.
+    second.drop();
+    vi.advanceTimersByTime(5000);
+    const third = sock("doc");
+    expect(third).not.toBe(second);
+    welcomeDoc(third, deck, true, "g3");
+    expect(third.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    third.frame({ t: "leased", lease: "l3", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(third.sent.at(-1)).toEqual({ t: "edit", lease: "l3", seq: 1, text: "## Agenda (Q4)" });
+  });
+});
+
+describe("asking for a block whose lines moved meanwhile", () => {
+  const DECK = "# One\n---\n## Two";
+
+  /** Clicks slide 2's title in edit mode: a lease for its line at rev 3. */
+  const clickTwo = (s: FakeSocket) => {
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: 2 });
+    const h2 = document.querySelector(
+      '.plinth-slides__frame[data-n="2"] .plinth-slides__slide h2',
+    ) as HTMLElement;
+    h2.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+  };
+
+  /** A co-editor turns slide 1's title line into three lines: "## Two" moves from line 2 to 4. */
+  const coEdit = (s: FakeSocket) =>
+    s.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l9",
+      start: 0,
+      del: 1,
+      ins: "# One\n\nMore",
+      by: "s2",
+    });
+
+  const type = (text: string) => {
+    const ed = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    ed.textContent = text;
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("finds the block again by its text after a stale answer", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    clickTwo(s);
+    // The co-editor's op reaches the room before the lease does.
+    coEdit(s);
+    s.frame({ t: "lease_denied", reason: "stale" });
+    // Line 2 is now the co-editor's "More": the lease asked for is the title's new line.
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 4, end: 5 });
+    s.frame({ t: "leased", lease: "l1", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    type("Two typed");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(s.sent.at(-1)).toEqual({ t: "edit", lease: "l1", seq: 1, text: "## Two typed" });
+  });
+
+  it("finds an insert point again by the lines around it", () => {
+    const deck = "# One\n---\n---\n## Three";
+    start(deck);
+    const s = sock("doc");
+    welcomeDoc(s, deck, false);
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: 2 });
+    // The empty slide's "Click to add a title": an insert point between its two separators.
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__placeholder') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 2 });
+    coEdit(s);
+    s.frame({ t: "lease_denied", reason: "stale" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 4, end: 4 });
+  });
+
+  it("never edits granted lines that are not the block asked for", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    clickTwo(s);
+    coEdit(s);
+    // A grant of the old line numbers, which now hold the co-editor's line.
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    // Once it is released, the block is asked for where its text is now.
+    s.frame({ t: "released", lease: "l1" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 4, end: 5 });
+    s.frame({ t: "leased", lease: "l2", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    type("Two typed");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(s.sent.filter((f) => f.t === "edit")).toEqual([
+      { t: "edit", lease: "l2", seq: 1, text: "## Two typed" },
+    ]);
+  });
+
+  it("takes a block again after a rebase in the merged text, not the lines before it", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, true);
+    clickTwo(s);
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    type("Two typed");
+    // An agent publishes a version with a slide at the start, and the room merges it cleanly.
+    const before = s.sent.length;
+    s.frame({ t: "lease_lost", lease: "l1", reason: "rebased" });
+    // Nothing is asked for on the lines from before the rebase.
+    expect(s.sent.slice(before).some((f) => f.t === "lease")).toBe(false);
+    s.frame({ t: "rebased", version: 2, gen: "g1", rev: 4 });
+    expect(s.sent.slice(before).some((f) => f.t === "lease")).toBe(false);
+    s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: "# Zero\n---\n# One\n---\n## Two" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 4, end: 5 });
+    s.frame({ t: "leased", lease: "l2", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(s.sent.filter((f) => f.t === "edit")).toEqual([
+      { t: "edit", lease: "l2", seq: 1, text: "## Two typed" },
+    ]);
   });
 });
 
