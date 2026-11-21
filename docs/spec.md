@@ -330,11 +330,11 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
-| `update_artifact(id, html \| content, content_format?, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
-| `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
+| `publish_artifact(title, html \| type+content, assets?, copy_files?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given; `copied_from` when `copy_files` copied files from other artifacts, see [Copying files from another artifact](#copying-files-from-another-artifact-decided-2026-11-21)). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
+| `update_artifact(id, html \| content, content_format?, assets?, copy_files?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version; `copy_files` copies files from other artifacts the user can view. `category` is owner only. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?, category?, copy_files?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page or a design that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)), and a version holding copied files gets `copied_from` |
+| `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system`; the owner's default design system has `default: true` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
@@ -346,7 +346,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
-| `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
+| `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples, the `files` `copy_files` can take and the `install` entries that copy them. Read-only; every text field is untrusted |
 | `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
@@ -1133,17 +1133,54 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   font files, which another artifact cannot load), `tokens` with resolved light and dark values,
   `guidelines`, `component_css` and `components`; `include` and `components` trim it. A stored
   version that no longer parses returns its `problems`. Every result says `untrusted: true`.
-- **Building on one.** Pages cannot load another artifact's files: the agent copies the CSS it uses
-  into the page it publishes, and names the design system in the page's head with
-  `<meta name="plinth-design-system" content="<id>@<version>">`. On publish the server checks that
-  reference once, as the publisher: `design_system_outdated` when a newer version exists, and one
+- **Building on one.** Pages never load another artifact's files at runtime. The agent installs
+  the design system instead: it passes `get_design_system`'s `install.copy_files` as `copy_files`
+  to the publish or update, and the server copies the files into the page's version once, as the
+  caller ([Copying files from another artifact](#copying-files-from-another-artifact-decided-2026-11-21));
+  the page links `install.stylesheets`. It may still paste the CSS it uses instead. Either way it
+  names the design system in the page's head with
+  `<meta name="plinth-design-system" content="<id>@<version>">` (a design: in its shared section).
+  On publish the server checks that reference once, as the publisher: `design_system_outdated` when a newer version exists, and one
   `design_system_unavailable` message for every other case (missing, deleted, not viewable, taken
-  down, another type). `get_artifact` on such a page returns
+  down, another type). `get_artifact` on such a page or design returns
   `design_system: { id, title, version, current_version }` when the caller may view the design
   system, or `null`; pages without the meta get no field. The meta is read from the first 256 KB
   before `<body>` in one forward pass, as a browser would read the tag: comments are skipped (an
   unclosed comment or tag runs to the end, so nothing after it counts), and a page that never
   mentions `plinth-design-system` is not scanned at all.
+- **Installing one (decided 2026-11-21).** Every version of a design system serves, besides
+  `system.json` and its images and fonts, four files generated from `system.json` that
+  `copy_files` copies like stored ones (`packages/shared/src/designSystemFiles.ts`): `tokens.css`
+  (the tokens as custom properties, light and dark, as `get_design_system`'s `css`), `fonts.css`
+  (`@font-face` rules for the design system's own font files, by relative path), `components.css`
+  (the shared and component CSS) and `tokens.json` (the resolved tokens in format
+  `plinth.design-system-tokens/1`, with the design system's id and version). Its assets are images
+  and fonts only, so no stored file can take these names. `get_design_system` returns `files`
+  (every path it can copy) and `install`: `folder` (`ds/<prefix>`), `copy_files` (each entry with
+  the design system's id, the path, `to` under the folder and the version read: `fonts.css` with
+  the font files when it has its own, `tokens.css`, `components.css` when it has CSS, `tokens.json`,
+  and every stored file a CSS block names) and `stylesheets` to link in that order. Every file
+  lands at the same relative path under the folder, so the `url()`s in the CSS still resolve. This
+  is Claude's `project/ds/<folder>/` layout in Plinth's flat file model: a version's files sit at
+  its root, so the folder is `ds/<prefix>/`, named by the design system's own `prefix` (already
+  `[a-z][a-z0-9]{0,15}`), never by text from the system. A design takes the CSS and images only
+  (its artboards cannot load font or JSON files, so those entries are refused by its asset rule
+  and the agent leaves them out); a deck takes what its type's assets allow. An update installs a
+  newer version by copying again: each copy replaces the file at its path.
+- **The default design system (decided 2026-11-21).** A person marks one of their own design
+  systems as the default from its ⋯ menu on the dashboard (Set as default, Remove as default), and
+  its badge reads "Default design system". One per person (`users.default_design_system`), so
+  choosing another replaces it; deleting the design system clears it. `PUT
+  /api/v1/artifacts/:ref/default-design-system` with `{ default: true | false }` sets it: the
+  signed-in owner only (`policy.ts mayChooseDefaultDesignSystem`, then the `manage` action), never
+  an agent or bearer token (403 `app_only`), and only a design system that is not taken down (400
+  `not_design_system` for another type). `list_artifacts` and `get_artifact` mark it
+  `default: true` for its owner only (never for a collaborator or a token limited to one
+  artifact). Agents read it from `list_artifacts` with `type: "design_system"` and build slides,
+  designs and pages with it without asking, as Claude does with a default. With none, they use the
+  one the person names, ask when there are several and someone can answer, and otherwise use their
+  own look. An organization default and an explicit "no default" choice are not offered (Plinth has
+  no organizations).
 - **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
   JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
   keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
@@ -1154,8 +1191,10 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   `content` (`--id`), sends one with `plinth upload`, and checks `system.json` against the fixed
   1 MB limit before sending. A folder with `index.html` at its top is a page, whatever else it holds.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
-  origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
-  no themes other than `dark`, and no copying of font or image files between artifacts.
+  origins and a content pass for two artifacts; files are copied at publish instead), no script in
+  previews, no on-page or live editing, no themes other than `dark`, no organization default, and
+  no reading of Claude's design-system folder layout (`tokens.json` in list form, `README.md`,
+  `components/*/`), which would need a converter to `system.json`.
 
 ### Slides (decided 2026-11-19)
 
@@ -1851,6 +1890,14 @@ is a new version, which owners and editors can revert by restoring an older one.
   without the binding or with `DESIGN_EXPORT` off answers 403 `feature_disabled` and its menu has
   Print instead. Agents have no export tool; the endpoint takes their bearer tokens like the
   thumbnail's. Each export spends Browser Rendering time, which Cloudflare bills per browser hour.
+- **Design systems (decided 2026-11-21).** A design names the design system it was built on as a
+  page does, with `<meta name="plinth-design-system" content="<id>@<version>">` in its shared
+  section (a meta inside an artboard's fragment names nothing): the same publish warnings
+  (`design_system_outdated`, `design_system_unavailable`) and the same `design_system` field in
+  `get_artifact`. It installs one with `copy_files` (`tokens.css`, `components.css` and images
+  under `ds/<prefix>/`, linked from the shared section; never font files, which artboards cannot
+  load). Agents use the person's default design system without asking
+  ([Design systems](#design-systems-decided-2026-11-19)).
 - **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
   (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
   stays the same.
@@ -3332,6 +3379,52 @@ files) and big pages without merging chunks, and an update stores only what chan
   `next` the caller can act on.
 - **Forward-only.** Migration 0006 and the new key layout cannot be rolled back past 0.4.0 without
   breaking artifacts updated since (`docs/deploy-checklist.md#6-upgrading-and-rolling-back`).
+
+### Copying files from another artifact (decided 2026-11-21)
+
+A publish, an update or an upload can copy files from other artifacts the caller can view into the
+version it writes, on the server. It is how a deck, a design or a page installs a design system's
+tokens, fonts and images, and it is generic: any file of any artifact type the target type takes.
+It mirrors Claude's `files: {"<path>": {artifact, path}}`. This replaces the earlier rule that no
+files are copied between artifacts.
+
+- **Input.** `copy_files` on `publish_artifact`, `update_artifact`, `start_upload` and their REST
+  mirrors (`POST` and `PUT /api/v1/artifacts`, `POST /api/v1/uploads`): up to 64 entries
+  `{artifact, path, to?, version?}`, from at most 4 source versions and 32 MB in one call.
+  `artifact` is an id, a slug or this instance's app link (`<APP_ORIGIN>/a/<slug>`; a query or
+  fragment is ignored, any other address is 400 `copy_bad_address`); `path` is a file of that
+  version (its source file too) or a file its type generates (a design system's `tokens.css` and
+  the rest); `to` is where the copy lands (default `path`); `version` defaults to the source's
+  current one. Not with `files_from_version`.
+- **The rule.** Each source is read as the caller through the policy module, with the `view`
+  action (`requireArtifact`), once, when the publish runs: before the publish rate and any write,
+  and for an upload when the ticket is minted and again, as the ticket's principal, when the
+  bundle commits. A source the caller cannot view is the same 404 as a missing id. A token limited
+  to one artifact cannot copy at all (403 `token_bound`, before any lookup; `mayCopyFiles`). The
+  target needs `edit`, or is a new artifact, as for any publish. The address comes only from the
+  caller's request: the server never copies because a page, a comment or a design system names
+  another artifact.
+- **Paths and types.** `to` is an asset path (no `..`, no `__plinth/`, no reserved path of the
+  target type), the target type's asset rules apply (a design refuses font files with its own
+  message), and the copy keeps its source's content type: a `to` whose ending would serve another
+  type is 400 `copy_type_mismatch`. A `to` given twice is `copy_twice`; one that is also among
+  `assets` is listed twice. A missing source file is 400 `copy_missing_file`.
+- **What the version holds.** The bytes are written under the target's own prefix, so they count
+  toward its size, its file count and its owner's storage, and they are scanned for publish
+  warnings like any file (they are never reported as sent by the request). An update that sends no
+  `assets` keeps the current files and the copy replaces one at the same path. A bundle's prefix
+  strip never moves a copy. Each copied file's manifest entry records `copied_from`
+  `{artifact, version, path, copied_at}`, kept as the file is carried into later versions and by
+  restores. The publish result has `copied_from` (one record per source version: `artifact`,
+  `version`, `copied_at`, `files` with `path` and `from`), and `get_artifact` returns the same
+  records with the source's `title` and `current_version` when the caller may view it now (null
+  otherwise, and for every source after the first 16, which are not looked up).
+- **Why it is safe.** Nothing loads across artifacts when a page is served: the copy is the
+  target's own file, served from the target's origin under the target's CSP, exactly as if the
+  caller had downloaded the file and sent it with `assets`, which the caller could always do since
+  it may view the source. Deleting the source or losing access to it later changes nothing already
+  published. The content host gains no route, no CORS and no pass that spans two artifacts. See
+  `docs/security.md#copies-between-artifacts`.
 
 ## Security and abuse
 

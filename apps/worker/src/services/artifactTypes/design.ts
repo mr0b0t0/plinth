@@ -1,13 +1,24 @@
 // The design type's Worker hooks: its source is design.html, shared <head> tags then artboards
 // (packages/shared/src/design.ts), refused with the first problem (and how many more) and every
 // problem with its line in details.issues. Its title is the shared section's <title>, else the
-// first artboard's name; it declares no capabilities. Assets are images, CSS, JS and mp4/webm
+// first artboard's name; it declares no capabilities. Its shared section may name the design system
+// it was built on, as an HTML page's head does. Assets are images, CSS, JS and mp4/webm
 // video: artboards have an opaque origin, so font files and data files, which they could only
 // load with CORS (never sent by the content host), are refused with what to do instead.
 import { designIssueSummary, parseDesign } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
+import { designSystemReference, designSystemRefWarnings } from "../designSystems.ts";
 import { htmlTitle } from "./html.ts";
+
+/**
+ * The shared <head> tags of a design, where it names its design system as a page does. Only that
+ * section: a meta inside an artboard's fragment names nothing. "" when the source does not parse.
+ */
+function designShared(text: string): string {
+  const r = parseDesign(text);
+  return r.ok ? r.design.shared : "";
+}
 
 /** The shared section's <title>, else the first artboard's name, or null. */
 export function designTitle(text: string): string | null {
@@ -44,4 +55,8 @@ export const designHooks: TypeHooks = {
     if (DATA_RE.test(t)) return DESIGN_DATA_RULE;
     return null;
   },
+  // A design built on a design system names it in its shared section, as an HTML page does in its
+  // head (<meta name="plinth-design-system">): checked once per publish as the publisher.
+  publishWarnings: (ctx, v) => designSystemRefWarnings(ctx, designShared(v.text), v.def.sourcePath),
+  detail: (ctx, text) => designSystemReference(ctx, designShared(text)),
 };

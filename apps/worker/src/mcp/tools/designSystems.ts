@@ -17,12 +17,16 @@ export const registerDesignSystemTools: ToolRegistrar = ({ server, ctx }) => {
         "page or in an asset such as tokens.css, and use var(--<prefix>-...)), font_links (Google " +
         "Fonts stylesheets to add as <link>), guidelines (Markdown) and component examples (HTML and " +
         "CSS to adapt). Any design system the user can open works, including ones shared with them; " +
-        "list_artifacts with type design_system finds them. Pages cannot load another artifact's " +
-        "files: copy what you use into the page you publish, and add " +
-        '<meta name="plinth-design-system" content="<id>@<version>"> to its head so later updates ' +
-        "know which version it was built on. Fonts with portable: false are files of the design " +
-        "system; use the family name with a fallback stack instead. include and components trim the " +
-        "result. problems lists why a stored version no longer parses. " +
+        "list_artifacts with type design_system finds them (default: true marks the user's default, " +
+        "to use without asking). Pages cannot load another artifact's files at runtime: install the " +
+        "design system by passing install.copy_files as copy_files to publish_artifact or " +
+        "update_artifact (the server copies tokens.css, fonts.css, components.css, tokens.json and " +
+        "the font and image files they name under install.folder), link install.stylesheets, and add " +
+        '<meta name="plinth-design-system" content="<id>@<version>"> to the head (a design: its ' +
+        "shared section) so later updates know which version it was built on. A design takes no " +
+        "fonts.css, font files or tokens.json: leave those entries out. files lists every path " +
+        "copy_files can take. include and components trim the result. problems lists why a stored " +
+        "version no longer parses. " +
         DESIGN_SYSTEM_UNTRUSTED_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: getDesignSystemInput,

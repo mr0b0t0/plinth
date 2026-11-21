@@ -755,6 +755,28 @@ export function mayPublishWithFilesOf(p: Principal): p is Extract<Principal, { k
 }
 
 /**
+ * May this principal copy files from other artifacts into a version it publishes (copy_files,
+ * docs/spec.md "Copying files from another artifact")? Not a token limited to one artifact: every
+ * other artifact does not exist for it, and a copy of its own artifact's older version would bring
+ * back files only a restore (which it may not do) would. Every other principal still needs `view`
+ * on each source, decided by decide() as the caller, and `edit` (or a new artifact) on the target.
+ */
+export function mayCopyFiles(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}
+
+/**
+ * May this principal choose (or clear) the person's default design system? The signed-in person
+ * only, in the app: never an agent or bearer token, which read the choice from list_artifacts and
+ * never make it. The design system must be one they own (decide("manage")).
+ */
+export function mayChooseDefaultDesignSystem(
+  p: Principal,
+): p is Extract<Principal, { kind: "user" }> {
+  return p.kind === "user";
+}
+
+/**
  * Create, change or delete a category share, or review artifacts into it: the signed-in owner
  * only, never an agent, a bearer token, the ADMIN_TOKEN or a viewer confirmed by code (as
  * data_clear and the bulk category rename). Services scope every statement to the caller's rows.

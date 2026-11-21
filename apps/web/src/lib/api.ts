@@ -5,6 +5,7 @@ import {
   API_PREFIX,
   type ArtifactStats,
   type ArtifactStatsSummary,
+  type ArtifactSummary,
   COOKIES,
   CSRF_HEADER,
   type DataSummary,
@@ -96,6 +97,16 @@ export async function api<T>(
     );
   }
   return data as T;
+}
+
+// ---------- the default design system (dashboard menu) ----------
+
+/** Make one of your design systems your default, or stop it being it (signed in; CSRF header). */
+export function setDefaultDesignSystem(ref: string, on: boolean): Promise<ArtifactSummary> {
+  return api<ArtifactSummary>(route(API.defaultDesignSystem, { ref }), {
+    method: "PUT",
+    body: { default: on },
+  });
 }
 
 // ---------- shared data (owner view in the share dialog) ----------

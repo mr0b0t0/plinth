@@ -9,6 +9,7 @@ import {
   GearIcon,
   LinkSimpleIcon,
   PencilSimpleIcon,
+  StarIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
 import { useState } from "react";
@@ -41,6 +42,8 @@ export function artifactMenu(
   onCopy: (url: string) => void,
   /** Files an artifact shared with you under your own category (the dashboard opens a dialog). */
   onFile?: (a: ArtifactSummary) => void,
+  /** Makes your own design system your default, or stops it being it. */
+  onDefault?: (a: ArtifactSummary, on: boolean) => void,
 ): MenuEntry[] {
   const slug = { slug: a.slug };
   const items: MenuEntry[] = [
@@ -69,6 +72,15 @@ export function artifactMenu(
     });
   } else if (onFile) {
     items.push({ label: "Move to category…", icon: FolderSimpleIcon, onSelect: () => onFile(a) });
+  }
+  // One default design system per person, chosen here (docs/spec.md "Design systems").
+  if (a.role === "owner" && a.type === "design_system" && onDefault && !a.taken_down) {
+    const on = a.default !== true;
+    items.push({
+      label: on ? "Set as default" : "Remove as default",
+      icon: StarIcon,
+      onSelect: () => onDefault(a, on),
+    });
   }
   items.push({ type: "separator" });
   items.push({ label: "Copy link", icon: LinkSimpleIcon, onSelect: () => onCopy(a.url) });
@@ -190,7 +202,8 @@ function Tags({
   // The category (the owner's own, or the person's own on a shared artifact) and the type badge
   // ("Doc"); plain HTML pages have no type badge.
   const def = typeDef(a.type);
-  const badge = def?.badge ?? null;
+  // The person's default design system says so in its badge.
+  const badge = a.default ? "Default design system" : (def?.badge ?? null);
   const category = withCategory ? shownCategory(a) : null;
   if (!category && !badge && !a.taken_down && a.role === "owner") return null;
   return (
@@ -211,9 +224,11 @@ function Tags({
 function RowMenu({
   artifact: a,
   onFile,
+  onDefault,
 }: {
   artifact: ArtifactSummary;
   onFile?: (a: ArtifactSummary) => void;
+  onDefault?: (a: ArtifactSummary, on: boolean) => void;
 }) {
   const toast = useToast();
   const onCopy = async (url: string) => {
@@ -229,7 +244,7 @@ function RowMenu({
       variant="ghost"
       align="end"
       className="pl-dash__menu"
-      items={artifactMenu(a, onCopy, onFile)}
+      items={artifactMenu(a, onCopy, onFile, onDefault)}
     />
   );
 }
@@ -320,9 +335,11 @@ export interface ArtifactRowProps {
   you?: string;
   /** Opens "Move to category…" for an artifact shared with the person. */
   onFile?: (a: ArtifactSummary) => void;
+  /** Sets or removes the person's own design system as their default. */
+  onDefault?: (a: ArtifactSummary, on: boolean) => void;
 }
 
-export function ArtifactRow({ artifact: a, now, you, onFile }: ArtifactRowProps) {
+export function ArtifactRow({ artifact: a, now, you, onFile, onDefault }: ArtifactRowProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   return (
     <li className="pl-dash__row" data-role={a.role}>
@@ -346,7 +363,7 @@ export function ArtifactRow({ artifact: a, now, you, onFile }: ArtifactRowProps)
         />
       )}
       <Updated iso={a.updated_at} now={now} />
-      <RowMenu artifact={a} onFile={onFile} />
+      <RowMenu artifact={a} onFile={onFile} onDefault={onDefault} />
     </li>
   );
 }
@@ -393,7 +410,7 @@ export function CardThumb({ title, url }: { title: string; url: string | null })
   );
 }
 
-export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProps) {
+export function ArtifactCard({ artifact: a, now, you, onFile, onDefault }: ArtifactCardProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   const AccessIcon = VISIBILITY_META[a.visibility].icon;
   return (
@@ -433,7 +450,7 @@ export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProp
           <Updated iso={a.updated_at} now={now} />
         </span>
       </div>
-      <RowMenu artifact={a} onFile={onFile} />
+      <RowMenu artifact={a} onFile={onFile} onDefault={onDefault} />
     </li>
   );
 }

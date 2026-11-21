@@ -54,6 +54,7 @@ import { scanPublish } from "./publishCheck.ts";
 import {
   assetContentType,
   attemptPrefix,
+  type CopiedFromEntry,
   deletePrefix,
   type FileEntry,
   type ManifestEntry,
@@ -120,6 +121,16 @@ export interface Stager {
   add(path: string, bytes: Uint8Array): Promise<void>;
   /** An inline `{path, sha256}`: reuse that file from the current version. */
   addRef(path: string, sha256: string): void;
+  /**
+   * A file copied from another artifact (copy_files, services/copies.ts), at its final path: a
+   * prefix strip never moves it, and it is never reported as sent by this request.
+   */
+  addCopy(
+    path: string,
+    bytes: Uint8Array,
+    contentType: string,
+    from: CopiedFromEntry,
+  ): Promise<void>;
   /**
    * Settle every put, apply the prefix strip, write the source under its own prefix, and check
    * the count, size, references and paths.
@@ -310,6 +321,8 @@ interface Entry extends ManifestEntry {
   own: boolean;
   /** Bytes kept until finish: source candidates only. */
   pending?: Uint8Array;
+  /** A copy from another artifact (addCopy): at its final path, never moved by a prefix strip. */
+  fixed?: boolean;
 }
 
 interface Reusable {
@@ -553,7 +566,12 @@ export class VersionStager implements Stager {
   async addFile(
     path: string,
     bytes: Uint8Array,
-    opts: { sourceAllowed?: boolean; contentType?: string; expectedSha256?: string } = {},
+    opts: {
+      sourceAllowed?: boolean;
+      contentType?: string;
+      expectedSha256?: string;
+      copiedFrom?: CopiedFromEntry;
+    } = {},
   ): Promise<void> {
     this.throwIfFailed();
     const isSource = !!opts.sourceAllowed && path === this.def.sourcePath;
@@ -588,9 +606,11 @@ export class VersionStager implements Stager {
       content_type: contentType,
       sha256,
       own: false,
+      ...(opts.copiedFrom ? { copied_from: opts.copiedFrom, fixed: true } : {}),
     };
     this.entries.set(path, entry);
-    if (this.scan) this.sentPaths.add(path);
+    // A copy was not sent by this request: the server makes no claim about who chose its path.
+    if (this.scan && !opts.copiedFrom) this.sentPaths.add(path);
     this.checkCount();
     this.countBytes(bytes.byteLength);
     this.keepForScan(path, contentType, bytes);
@@ -640,6 +660,15 @@ export class VersionStager implements Stager {
     this.addRefTyped(path, sha256);
   }
 
+  addCopy(
+    path: string,
+    bytes: Uint8Array,
+    contentType: string,
+    from: CopiedFromEntry,
+  ): Promise<void> {
+    return this.addFile(path, bytes, { contentType, copiedFrom: from });
+  }
+
   /** `{path, sha256}`, with the content type the caller named for an unknown extension. */
   addRefTyped(path: string, sha256: string, namedType?: string): void {
     this.throwIfFailed();
@@ -686,6 +715,8 @@ export class VersionStager implements Stager {
       content_type: e.content_type,
       ...(e.sha256 ? { sha256: e.sha256 } : {}),
       stored_at: storedAt,
+      // A copied file keeps the record of where it came from.
+      ...(e.copied_from ? { copied_from: e.copied_from } : {}),
       own: false,
     });
     this.checkCount();
@@ -693,11 +724,15 @@ export class VersionStager implements Stager {
     this.reused++;
   }
 
-  /** Carry every non-reserved file of the current version (an update that sends no assets). */
-  carryCurrent(): void {
+  /**
+   * Carry every non-reserved file of the current version (an update that sends no assets), except
+   * the paths in `except` (copies this update makes in their place).
+   */
+  carryCurrent(except?: ReadonlySet<string>): void {
     if (!this.current) return;
     for (const e of parseManifest(this.current.manifest)) {
-      if (!this.def.reservedPaths.includes(e.path)) this.carry(this.current, e);
+      if (this.def.reservedPaths.includes(e.path) || except?.has(e.path)) continue;
+      this.carry(this.current, e);
     }
   }
 
@@ -768,8 +803,10 @@ export class VersionStager implements Stager {
       if (!strip.endsWith("/") || pathProblem(strip.slice(0, -1)) !== null) {
         throw new ApiError("internal", "Bad prefix to strip");
       }
-      if (list.some((e) => !e.path.startsWith(strip))) throw noEntryFile(def);
+      // Copies (addCopy) arrive at their final path: a strip applies to the bundle's files only.
+      if (list.some((e) => !e.fixed && !e.path.startsWith(strip))) throw noEntryFile(def);
       for (const e of list) {
+        if (e.fixed) continue;
         e.path = e.path.slice(strip.length);
         // Already written under its raw path: point at that object, never rename it.
         if (e.own && !e.pending && e.stored_at === undefined) e.stored_at = this.rel + e.rawPath;
@@ -848,6 +885,7 @@ export class VersionStager implements Stager {
       content_type: e.content_type,
       ...(e.sha256 ? { sha256: e.sha256 } : {}),
       ...(e.stored_at !== undefined ? { stored_at: e.stored_at } : {}),
+      ...(e.copied_from ? { copied_from: e.copied_from } : {}),
     }));
     // Source first, then the files in the order they arrived.
     entries.sort((a, b) => (a.path === def.sourcePath ? -1 : b.path === def.sourcePath ? 1 : 0));

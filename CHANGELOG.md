@@ -22,6 +22,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   controls), design systems (a brand-book guide, exact values, contrast in every theme) and
   whiteboards (the idea's shape, a size budget, at most four colors, extending a board without
   disturbing people's work). The MCP tool descriptions point agents without the skill at them.
+- **Design systems that other artifacts use.** Mark one of your design systems as your default
+  from its menu on the dashboard (**Set as default**); agents then use it for pages, decks and
+  designs without asking. A publish or update can now copy files from another artifact you can
+  view, on the server (`copy_files`), so an agent installs a design system's `tokens.css`,
+  `fonts.css`, `components.css`, `tokens.json`, fonts and images into a page under `ds/<prefix>/`
+  in the same call (`get_design_system` lists the entries to send). The copies become the page's
+  own files and record where they came from. Designs name the design system they were built on,
+  like pages, and get the same outdated warning. Apply migration `0022_design_system_reuse.sql`.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
