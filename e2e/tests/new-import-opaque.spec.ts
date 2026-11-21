@@ -18,9 +18,9 @@ test("New offers only Import; an imported sheet opens on its page and can be rep
   await page.getByRole("button", { name: "New", exact: true }).click();
   const menu = page.getByRole("menu", { name: "New" });
   await expect(menu.getByRole("menuitem")).toHaveText(["Import a spreadsheet…"]);
-  await page.keyboard.press("Escape");
-
-  await page.getByTestId("new-import-file").setInputFiles({
+  const picker = page.waitForEvent("filechooser");
+  await menu.getByRole("menuitem", { name: "Import a spreadsheet…" }).click();
+  await (await picker).setFiles({
     name: "fruit.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("Item,Qty\nApples,3\n"),

@@ -9,7 +9,9 @@
 // file and 1.500 in a semicolon file stay text. From an .xlsx, a formula is kept when it parses
 // as a sheet formula (the function allowlist, one sheet), otherwise its cached value is used;
 // number formats become the column's format where they map. The result is checked by parseSheet
-// like any published sheet.
+// like any published sheet. What an import leaves out or changes (other sheets, formulas kept as
+// values, column names cut to 100 characters) is reported by sheetImportWarnings, for the app to
+// say before or after it sends the file.
 import { LIMITS } from "../constants.ts";
 import { utf8Length } from "../utf8.ts";
 import { colLetter } from "./address.ts";
@@ -22,6 +24,7 @@ import {
   type Sheet,
   type SheetColumn,
   type SheetColumnType,
+  type SheetContentFormat,
   type SheetNumberFormat,
   serializeSheet,
 } from "./format.ts";
@@ -35,11 +38,25 @@ import {
   SheetImportError,
 } from "./xlsxRead.ts";
 
-export { COLUMN_NAME_SOURCE_CHARS, SheetImportError } from "./xlsxRead.ts";
+export { COLUMN_NAME_SOURCE_CHARS, MAX_OTHER_SHEET_NAMES, SheetImportError } from "./xlsxRead.ts";
 
-/** The formats an import reads: the sheet's own JSON lines, CSV, or an .xlsx (base64 on the wire). */
-export const SHEET_CONTENT_FORMATS = ["jsonl", "csv", "xlsx"] as const;
-export type SheetContentFormat = (typeof SHEET_CONTENT_FORMATS)[number];
+/** The longest column name an import keeps; a longer header is cut to it. */
+export const MAX_IMPORT_COLUMN_NAME = 100;
+
+/**
+ * What an import changed or left out of the file, for the person who sent it. Advisory: the sheet
+ * is still made. `not_utf8` is the app's own, from reading a CSV file's bytes (the import itself
+ * takes text).
+ */
+export type SheetImportWarning =
+  /** An .xlsx with more than one sheet: only the first is imported. */
+  | { code: "other_sheets"; count: number; names: string[] }
+  /** Data cells whose formula is not kept (outside the allowlist, another sheet, shared): their values are. */
+  | { code: "formulas_as_values"; count: number }
+  /** Header cells longer than `max` (MAX_IMPORT_COLUMN_NAME) characters, cut to it. */
+  | { code: "headers_truncated"; count: number; max: number }
+  /** A CSV file that is not UTF-8, read as Windows-1252. */
+  | { code: "not_utf8"; encoding: "windows-1252" };
 
 /** A value before its column's type is known. */
 type In =
@@ -59,7 +76,8 @@ function cut(s: string, n: number): string {
   return s.slice(0, last >= 0xd800 && last <= 0xdbff ? n - 1 : n);
 }
 
-function columnName(raw: string, i: number): string {
+/** A column's name from its header cell, and whether it was cut to MAX_IMPORT_COLUMN_NAME. */
+function columnName(raw: string, i: number): { name: string; truncated: boolean } {
   // Cut before the replaces and normalize: header cells are not counted toward the sheet's size,
   // and one shared string of megabytes can stand behind all 100 of them.
   const name = cut(raw, COLUMN_NAME_SOURCE_CHARS)
@@ -67,7 +85,11 @@ function columnName(raw: string, i: number): string {
     .replace(/\s+/g, " ")
     .trim()
     .normalize("NFC");
-  return cut(name || colLetter(i), 100).trimEnd();
+  const full = name || colLetter(i);
+  return {
+    name: cut(full, MAX_IMPORT_COLUMN_NAME).trimEnd(),
+    truncated: full.length > MAX_IMPORT_COLUMN_NAME,
+  };
 }
 
 /** Text as a literal cell: a leading = or ' would change its meaning, so it is kept with a '. */
@@ -115,8 +137,17 @@ function cellFor(v: In, type: SheetColumnType): Cell {
   }
 }
 
-/** A sheet from a header row and data rows of typed values. Throws SheetImportError. */
-function build(names: string[], data: In[][], widths?: Map<number, number>, freezeCols = 0): Sheet {
+/**
+ * A sheet from a header row and data rows of typed values, adding `headers_truncated` to
+ * `warnings`. Throws SheetImportError.
+ */
+function build(
+  names: string[],
+  data: In[][],
+  warnings: SheetImportWarning[],
+  widths?: Map<number, number>,
+  freezeCols = 0,
+): Sheet {
   // The row count is checked first, and the width found with a loop: spreading every row into
   // Math.max throws RangeError on a long file.
   if (data.length > LIMITS.maxSheetRows) {
@@ -132,9 +163,12 @@ function build(names: string[], data: In[][], widths?: Map<number, number>, free
     );
   }
   const columns: SheetColumn[] = [];
+  let truncated = 0;
   for (let c = 0; c < width; c++) {
     const { type, format } = inferType(data.map((r) => r[c] ?? null));
-    const col: SheetColumn = { name: columnName(names[c] ?? "", c), type };
+    const named = columnName(names[c] ?? "", c);
+    if (named.truncated) truncated++;
+    const col: SheetColumn = { name: named.name, type };
     if (format) col.format = format;
     const w = widths?.get(c);
     if (w !== undefined) col.width = Math.min(800, Math.max(40, w));
@@ -162,6 +196,9 @@ function build(names: string[], data: In[][], widths?: Map<number, number>, free
         .map((e) => e.message)
         .join("; ")}`,
     );
+  }
+  if (truncated > 0) {
+    warnings.push({ code: "headers_truncated", count: truncated, max: MAX_IMPORT_COLUMN_NAME });
   }
   return checked.sheet;
 }
@@ -226,8 +263,11 @@ function csvValue(s: string, mark: DecimalMark): In {
   return { t: "s", v: GUARDED.test(s) ? s.slice(1) : s };
 }
 
-/** A sheet from CSV text. Throws SheetImportError. */
-export function sheetFromCsv(text: string): Sheet {
+/**
+ * A sheet from CSV text. What the import changed is added to `warnings` when given. Throws
+ * SheetImportError.
+ */
+export function sheetFromCsv(text: string, warnings: SheetImportWarning[] = []): Sheet {
   if (utf8Length(text) > LIMITS.maxSheetImportBytes) {
     throw new SheetImportError(
       `A CSV import is at most ${Math.round(LIMITS.maxSheetImportBytes / (1024 * 1024))} MB`,
@@ -253,7 +293,7 @@ export function sheetFromCsv(text: string): Sheet {
     while (out.length > 0 && out[out.length - 1] === null) out.pop();
     return out;
   });
-  return build(head, data);
+  return build(head, data, warnings);
 }
 
 // ---------- .xlsx ----------
@@ -346,9 +386,23 @@ function xlsxValue(c: RawCell, formatOf: FormatOf): In {
   }
 }
 
-/** A sheet from the first worksheet of an .xlsx file. Throws SheetImportError. */
-export function sheetFromXlsx(bytes: Uint8Array): Sheet {
+/**
+ * A sheet from the first worksheet of an .xlsx file. What the import changed or left out is added
+ * to `warnings` when given. Throws SheetImportError.
+ */
+export function sheetFromXlsx(bytes: Uint8Array, warnings: SheetImportWarning[] = []): Sheet {
   const raw = readXlsx(bytes);
+  const found: SheetImportWarning[] = [];
+  if (raw.otherSheets.count > 0) {
+    found.push({
+      code: "other_sheets",
+      count: raw.otherSheets.count,
+      names: raw.otherSheets.names,
+    });
+  }
+  if (raw.formulasAsValues > 0) {
+    found.push({ code: "formulas_as_values", count: raw.formulasAsValues });
+  }
   const header = raw.rows[0] ?? [];
   // raw.rows is sparse where the worksheet leaves out a blank row: a plain loop reads a hole as
   // an empty row (map and a spread would keep it as undefined, and Math.max would give NaN).
@@ -384,7 +438,9 @@ export function sheetFromXlsx(bytes: Uint8Array): Sheet {
     raw.rows[r] = [];
   }
   while (data.length > 0 && (data[data.length - 1] as In[]).length === 0) data.pop();
-  return build(names, data, raw.widths, raw.freezeCols);
+  const sheet = build(names, data, found, raw.widths, raw.freezeCols);
+  warnings.push(...found);
+  return sheet;
 }
 
 /** Bytes of base64 text (an .xlsx on the wire). Throws SheetImportError for bad base64. */
@@ -408,4 +464,23 @@ export function base64Bytes(b64: string): Uint8Array {
 export function importSheet(content: string, format: Exclude<SheetContentFormat, "jsonl">): string {
   const sheet = format === "csv" ? sheetFromCsv(content) : sheetFromXlsx(base64Bytes(content));
   return serializeSheet(sheet);
+}
+
+/**
+ * What importing content in `format` would change or leave out (other sheets, formulas kept as
+ * values, long column names), in that order; [] when nothing. The import runs in full, so a file
+ * the import refuses throws SheetImportError here too.
+ */
+export function sheetImportWarnings(
+  content: string | Uint8Array,
+  format: Exclude<SheetContentFormat, "jsonl">,
+): SheetImportWarning[] {
+  const warnings: SheetImportWarning[] = [];
+  if (format === "csv") {
+    if (typeof content !== "string") throw new SheetImportError("A CSV import is sent as text");
+    sheetFromCsv(content, warnings);
+  } else {
+    sheetFromXlsx(typeof content === "string" ? base64Bytes(content) : content, warnings);
+  }
+  return warnings;
 }

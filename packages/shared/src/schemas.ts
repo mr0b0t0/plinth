@@ -23,8 +23,7 @@ import {
   PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENT_LIMITS,
 } from "./pageComments.ts";
-import { SHEET_COLUMN_TYPES, SHEET_NUMBER_STYLES } from "./sheet/format.ts";
-import { SHEET_CONTENT_FORMATS } from "./sheet/import.ts";
+import { SHEET_COLUMN_TYPES, SHEET_CONTENT_FORMATS, SHEET_NUMBER_STYLES } from "./sheet/format.ts";
 import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */

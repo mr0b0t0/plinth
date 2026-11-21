@@ -70,6 +70,8 @@ export const canEdit = (role: OkGate["role"]) => role === "owner" || role === "e
 /** Everything an item may read or do. Built by ViewerStage on each render. */
 export interface StageContext {
   gate: OkGate;
+  /** Opened through a permanent version link (/a/:slug/v/:n), which keeps showing that version. */
+  pinned: boolean;
   config: AppConfig | null;
   /** Phone width: History and Share fold into the ⋯ menu. */
   compact: boolean;

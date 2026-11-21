@@ -6,10 +6,11 @@
 // app") over the ordinary REST publish with the signed-in session, private like every publish;
 // the page then opens with `?edit`. Import sends the file as it is and the Worker converts it.
 // Blank items are offered only where editing on the page works here (AppConfig.inline_editing);
-// Import always, where the instance takes sheets.
+// Import always, where the instance takes sheets. With neither, there is no New at all. What an
+// import left out or changed (warningText) is said in one toast once the sheet is open.
 import { FileArrowUpIcon, FileTextIcon, PlusIcon, TableIcon } from "@phosphor-icons/react";
 import { API, type AppConfig, type ArtifactType, type PublishResult } from "@plinth/shared";
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import { Button, Dialog, type Icon, Menu, type MenuEntry, useToast } from "../ui/index.ts";
@@ -18,13 +19,16 @@ import {
   blankBody,
   blankItems,
   CHOOSE_ANOTHER_LABEL,
+  cleanFileName,
   type ImportProblem,
+  importedNote,
   importProblem,
   openHref,
+  pickSpreadsheetFile,
   readSpreadsheet,
-  SPREADSHEET_ACCEPT,
   sheetsAvailable,
   titleFromFileName,
+  warningTexts,
 } from "./newArtifact.ts";
 
 const TYPE_ICON: Partial<Record<ArtifactType, Icon>> = {
@@ -33,6 +37,9 @@ const TYPE_ICON: Partial<Record<ArtifactType, Icon>> = {
 };
 
 export const IMPORT_LABEL = "Import a spreadsheet…";
+
+/** How long the toast saying what an import left out stays: long enough to read two sentences. */
+export const IMPORT_WARNING_TOAST_MS = 12_000;
 
 export interface NewMenuProps {
   config: AppConfig | null;
@@ -44,7 +51,6 @@ export interface NewMenuProps {
 
 export function NewMenu({ config, variant = "primary", className }: NewMenuProps) {
   const toast = useToast();
-  const input = useRef<HTMLInputElement>(null);
   const statusId = useId();
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<(ImportProblem & { file: string }) | null>(null);
@@ -62,6 +68,8 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
     }
   };
 
+  const choose = () => pickSpreadsheetFile((file) => void onFile(file));
+
   const newBlank = (item: (typeof blank)[number]) => {
     if (busy) return;
     create(blankBody(item), item.create.title).catch((e: unknown) => {
@@ -75,19 +83,25 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
   const onFile = async (file: File) => {
     if (busy) return;
     setProblem(null);
+    const name = cleanFileName(file.name);
+    setBusy(`Reading ${name}…`);
     try {
-      const sent = await readSpreadsheet(file);
+      const { sent, warnings } = await readSpreadsheet(file);
       await create(
-        {
-          title: titleFromFileName(file.name),
-          type: "sheet",
-          ...sent,
-          note: `Imported from ${file.name}`,
-        },
-        file.name,
+        { title: titleFromFileName(file.name), type: "sheet", ...sent, note: importedNote(name) },
+        name,
       );
+      if (warnings.length > 0) {
+        toast.toast({
+          title: `Imported ${name}`,
+          description: warningTexts(warnings).join(" "),
+          tone: "warning",
+          duration: IMPORT_WARNING_TOAST_MS,
+        });
+      }
     } catch (e) {
-      setProblem({ ...importProblem(e), file: file.name });
+      setBusy(null);
+      setProblem({ ...importProblem(e), file: name });
     }
   };
 
@@ -108,11 +122,13 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
             icon: FileArrowUpIcon,
             disabled: busy !== null,
             // Called inside the click, so the browser lets the file picker open.
-            onSelect: () => input.current?.click(),
+            onSelect: choose,
           },
         ]
       : []),
   ];
+  // Nothing to offer here (no blank type, no sheets): no New, rather than an empty menu.
+  if (items.length === 0) return null;
 
   return (
     <>
@@ -124,20 +140,6 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
         className={`pl-dash-new${className ? ` ${className}` : ""}`}
         triggerContent={<span className="pl-dash-new__label">New</span>}
         items={items}
-      />
-      <input
-        ref={input}
-        type="file"
-        accept={SPREADSHEET_ACCEPT}
-        hidden
-        aria-hidden="true"
-        tabIndex={-1}
-        data-testid="new-import-file"
-        onChange={(e) => {
-          const file = e.currentTarget.files?.[0];
-          e.currentTarget.value = "";
-          if (file) void onFile(file);
-        }}
       />
       <span id={statusId} className="visually-hidden" role="status">
         {busy ?? ""}
@@ -158,7 +160,7 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
               icon={FileArrowUpIcon}
               onClick={() => {
                 // Inside the click, so the file picker may open.
-                input.current?.click();
+                choose();
                 setProblem(null);
               }}
             >

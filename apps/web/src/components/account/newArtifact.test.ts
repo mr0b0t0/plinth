@@ -1,6 +1,7 @@
 // The helpers behind New, Import and Replace with a file: which blank artifacts this instance
 // offers, where a new one opens, how a picked file is sent (as it is, for the Worker to convert),
-// and how a refusal reads.
+// how a CSV's bytes are read, what the import would leave out in plain words, and how a refusal
+// reads.
 import { LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { ApiRequestError } from "../../lib/api.ts";
@@ -10,7 +11,10 @@ import {
   blankBody,
   blankItems,
   CREATED_NOTE,
+  cleanFileName,
+  decodeCsv,
   formatOf,
+  importedNote,
   importProblem,
   openHref,
   plainCause,
@@ -18,6 +22,7 @@ import {
   SpreadsheetFileError,
   sheetsAvailable,
   titleFromFileName,
+  warningText,
 } from "./newArtifact.ts";
 
 describe("blank items", () => {
@@ -84,18 +89,104 @@ describe("spreadsheet files", () => {
 
   it("sends CSV and TSV as text and an .xlsx as base64", async () => {
     expect(await readSpreadsheet(new File(["Item,Qty\nApples,3\n"], "fruit.csv"))).toEqual({
-      content_format: "csv",
-      content: "Item,Qty\nApples,3\n",
+      sent: { content_format: "csv", content: "Item,Qty\nApples,3\n" },
+      warnings: [],
     });
     expect(await readSpreadsheet(new File(["Item\tQty\n"], "fruit.tsv"))).toEqual({
-      content_format: "csv",
-      content: "Item\tQty\n",
+      sent: { content_format: "csv", content: "Item\tQty\n" },
+      warnings: [],
     });
+    // A file the check cannot read goes as it is, with no warnings: the Worker explains a refusal.
     const bytes = new Uint8Array([0x50, 0x4b, 3, 4, 0, 255]);
     expect(await readSpreadsheet(new File([bytes], "book.xlsx"))).toEqual({
-      content_format: "xlsx",
-      content: btoa(String.fromCharCode(...bytes)),
+      sent: { content_format: "xlsx", content: btoa(String.fromCharCode(...bytes)) },
+      warnings: [],
     });
+  });
+
+  it("gives the import's warnings with the file, the encoding's first", async () => {
+    const long = "h".repeat(120);
+    const bytes = new Uint8Array([
+      ...new TextEncoder().encode(`${long},Qty\nCaf`),
+      0xe9,
+      ...new TextEncoder().encode(",3\n"),
+    ]);
+    const read = await readSpreadsheet(new File([bytes], "menu.csv"));
+    expect(read.sent.content).toBe(`${long},Qty\nCafé,3\n`);
+    expect(read.warnings).toEqual([
+      { code: "not_utf8", encoding: "windows-1252" },
+      { code: "headers_truncated", count: 1, max: 100 },
+    ]);
+  });
+
+  it("reads a CSV as UTF-8, UTF-16 by its BOM, or else Windows-1252 with a warning", () => {
+    const utf8 = new TextEncoder().encode("\uFEFFItem\nCafé — 5 €\n");
+    expect(decodeCsv(utf8)).toEqual({ text: "Item\nCafé — 5 €\n", warnings: [] });
+    const le = new Uint8Array([0xff, 0xfe, ...[..."Item\né"].flatMap((c) => [c.charCodeAt(0), 0])]);
+    expect(decodeCsv(le)).toEqual({ text: "Item\né", warnings: [] });
+    const be = new Uint8Array([0xfe, 0xff, ...[..."Item"].flatMap((c) => [0, c.charCodeAt(0)])]);
+    expect(decodeCsv(be)).toEqual({ text: "Item", warnings: [] });
+    // cp1252: é is 0xE9, € is 0x80, — is 0x97, ’ is 0x92, Ÿ is 0x9F; never U+FFFD.
+    const cp1252 = new Uint8Array([
+      0x43, 0x61, 0x66, 0xe9, 0x20, 0x97, 0x20, 0x35, 0x80, 0x92, 0x9f, 0x81,
+    ]);
+    expect(decodeCsv(cp1252)).toEqual({
+      text: "Café — 5€’Ÿ\u0081",
+      warnings: [{ code: "not_utf8", encoding: "windows-1252" }],
+    });
+  });
+
+  it("drops control and bidi characters from a file name it shows or notes", () => {
+    expect(cleanFileName("sales.csv")).toBe("sales.csv");
+    // C0, C1, LRM/RLM, the embeddings and overrides, the isolates, and the Arabic letter mark.
+    const bad =
+      "\u0001\u001F\u007F\u0080\u009F\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069\u061C";
+    expect(cleanFileName(`in${bad}voice.csv`)).toBe("invoice.csv");
+    // "invoice" + U+202E + "vsc.xlsx" reads as "invoicexslx.csv" without the cleaning.
+    expect(cleanFileName("invoice\u202Evsc.xlsx")).toBe("invoicevsc.xlsx");
+    expect(importedNote("\u202Bq4\u0007.xlsx")).toBe("Imported from q4.xlsx");
+    // Letters, accents and other scripts stay.
+    expect(cleanFileName("Résumé — 東京.csv")).toBe("Résumé — 東京.csv");
+    expect(cleanFileName("\u202E")).toBe("the file");
+  });
+});
+
+describe("warningText", () => {
+  it("says each warning in plain words, singular and plural", () => {
+    expect(warningText({ code: "not_utf8", encoding: "windows-1252" })).toBe(
+      "The file is not UTF-8, so it is read as Windows-1252. Check accented letters.",
+    );
+    expect(warningText({ code: "other_sheets", count: 1, names: ["Q3"] })).toBe(
+      "Only the first sheet is used; “Q3” is left out.",
+    );
+    expect(warningText({ code: "other_sheets", count: 2, names: ["Q3", "Notes"] })).toBe(
+      "Only the first sheet is used; “Q3” and “Notes” are left out.",
+    );
+    expect(warningText({ code: "other_sheets", count: 3, names: ["A", "B", "C"] })).toBe(
+      "Only the first sheet is used; “A”, “B” and “C” are left out.",
+    );
+    expect(warningText({ code: "other_sheets", count: 30, names: ["A", "B", "C", "D", "E"] })).toBe(
+      "Only the first sheet is used; “A”, “B”, “C” and 27 more are left out.",
+    );
+    // Names the file left blank are counted, never shown as “”.
+    expect(warningText({ code: "other_sheets", count: 2, names: ["", ""] })).toBe(
+      "Only the first sheet is used; 2 other sheets are left out.",
+    );
+    expect(warningText({ code: "other_sheets", count: 1, names: [""] })).toBe(
+      "Only the first sheet is used; 1 other sheet is left out.",
+    );
+    expect(warningText({ code: "formulas_as_values", count: 1 })).toBe(
+      "1 formula becomes a plain value.",
+    );
+    expect(warningText({ code: "formulas_as_values", count: 12 })).toBe(
+      "12 formulas become plain values.",
+    );
+    expect(warningText({ code: "headers_truncated", count: 1, max: 100 })).toBe(
+      "1 column name is cut to 100 characters.",
+    );
+    expect(warningText({ code: "headers_truncated", count: 3, max: 100 })).toBe(
+      "3 column names are cut to 100 characters.",
+    );
   });
 
   it("refuses other files, empty ones and ones past the import limit, before sending", async () => {

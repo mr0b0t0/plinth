@@ -472,11 +472,13 @@ export default function Dashboard() {
       onSignOut={signOut}
       title="Artifacts"
       actions={
-        // With nothing yet, New stands in the empty state, beside Connect an agent.
+        // With nothing yet, New stands in the empty state, beside Connect an agent. Which of the
+        // two it is is known only once the list has loaded, so New waits for it there rather than
+        // showing in the top bar and then moving.
         nothingYet ? undefined : (
           <>
             {searchField}
-            {me && <NewMenu config={config} />}
+            {me && list.status !== "loading" && <NewMenu config={config} />}
           </>
         )
       }
