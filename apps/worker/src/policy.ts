@@ -766,6 +766,19 @@ export function mayCopyFiles(p: Principal): boolean {
 }
 
 /**
+ * May this principal copy files out of this artifact (a copy_files source)? The `view` decision
+ * without the instance admin's review access: an admin may look at a reported or taken-down
+ * artifact to review it, never take its files into their own. Everyone else gets exactly view.
+ */
+export function decideCopySource(
+  p: Principal,
+  artifact: ArtifactFacts,
+  access: AccessFacts,
+): Decision {
+  return decide(p, "view", artifact, { ...access, isAdmin: false });
+}
+
+/**
  * May this principal choose (or clear) the person's default design system? The signed-in person
  * only, in the app: never an agent or bearer token, which read the choice from list_artifacts and
  * never make it. The design system must be one they own (decide("manage")).

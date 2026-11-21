@@ -6,6 +6,7 @@ import {
   DS_GENERATED_FILES,
   designSystemCss,
   designSystemFilePaths,
+  designSystemFolder,
   designSystemGeneratedFile,
   designSystemInstall,
   isDsGeneratedFile,
@@ -63,6 +64,13 @@ describe("generated files", () => {
     expect(f?.text).not.toContain("Acme");
   });
 
+  it("fonts.css declares only the font files the version stores", () => {
+    const text =
+      designSystemGeneratedFile(FULL, "fonts.css", REF, new Set(["fonts/mono.woff2"]))?.text ?? "";
+    expect(text).toContain('"Acme Mono"');
+    expect(text).not.toContain("Acme Gone");
+  });
+
   it("fonts.css declares the system's own font files by relative path", () => {
     const text = designSystemGeneratedFile(FULL, "fonts.css", REF)?.text ?? "";
     expect(text).toContain(
@@ -110,7 +118,10 @@ describe("generated files", () => {
 describe("installing", () => {
   it("lists the generated files, the font files it has, and the files its CSS names", () => {
     const stored = new Set(["fonts/mono.woff2", "img/bg.png", "img/unused.png"]);
-    const install = designSystemInstall(FULL, REF, stored);
+    const install = designSystemInstall(FULL, REF, stored, {
+      title: "Acme UI",
+      now: "2026-11-21T00:00:00.000Z",
+    });
     expect(install.folder).toBe("ds/acme");
     expect(install.copy_files.map((c) => c.path)).toEqual([
       "fonts.css",
@@ -135,10 +146,54 @@ describe("installing", () => {
       name: "Plain",
       tokens: { size: { $type: "dimension", s: { $value: "4px" } } },
     });
-    const install = designSystemInstall(plain, REF, new Set());
-    expect(install.folder).toBe("ds/ds");
+    const install = designSystemInstall(plain, REF, new Set(), {
+      title: "Brand 2.0",
+      now: "2026-11-21T00:00:00.000Z",
+    });
+    // The default prefix would give ds/ds/: the folder is a name made from the title instead.
+    expect(install.folder).toBe("ds/brand-2-0");
     expect(install.copy_files.map((c) => c.path)).toEqual(["tokens.css", "tokens.json"]);
-    expect(install.stylesheets).toEqual(["ds/ds/tokens.css"]);
+    expect(install.stylesheets).toEqual(["ds/brand-2-0/tokens.css"]);
+    expect(designSystemFolder(plain, "!!!")).toBe("design-system");
+    expect(designSystemFolder(plain, "DS")).toBe("design-system");
+    expect(designSystemFolder(FULL, "Anything")).toBe("acme");
+  });
+
+  it("lists only what the target takes, and the faces and record a deck keeps", () => {
+    const stored = new Set(["fonts/mono.woff2", "img/bg.png"]);
+    const noFonts = (p: string) => !/\.(woff2|json)$/.test(p);
+    const install = designSystemInstall(FULL, REF, stored, {
+      title: "Acme */ UI",
+      folder: "acme-2",
+      accepts: noFonts,
+      now: "2026-11-21T00:00:00.000Z",
+    });
+    expect(install.copy_files.map((c) => c.to)).toEqual([
+      "ds/acme-2/tokens.css",
+      "ds/acme-2/components.css",
+      "ds/acme-2/img/bg.png",
+    ]);
+    expect(install.faces).toEqual({
+      inter: {
+        family: "Inter",
+        href: "https://fonts.googleapis.com/css2?family=Inter&display=swap",
+      },
+    });
+    expect(install.record).toEqual({
+      title: "Acme */ UI",
+      namespace: "acme-2",
+      artifact: REF.id,
+      version: 3,
+      copiedAt: "2026-11-21T00:00:00.000Z",
+    });
+    const all = designSystemInstall(FULL, REF, stored, { title: "Acme", now: "x" });
+    expect(all.faces["acme-mono"]).toEqual({
+      family: "Acme Mono",
+      src: "ds/acme/fonts/mono.woff2",
+      weight: "400",
+    });
+    // A font whose file the version lacks gets no face.
+    expect(all.faces["acme-gone"]).toBeUndefined();
   });
 
   it("lists every path copy_files can take: the source, generated, then stored", () => {

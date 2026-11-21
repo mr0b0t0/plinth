@@ -334,6 +334,21 @@ export const getDesignSystemInput = z.object({
     .max(50)
     .optional()
     .describe("Only these component ids (default all)."),
+  install_for: z
+    .enum(ARTIFACT_TYPES)
+    .optional()
+    .describe(
+      "The type of the artifact you will install it into (default html): install lists only the " +
+        "files that type takes (a design gets no fonts or tokens.json).",
+    ),
+  folder: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
+    .optional()
+    .describe(
+      "Install under ds/<folder>/ instead of the default (its prefix): for a second design " +
+        "system whose prefix another one in the same artifact already uses.",
+    ),
 });
 export type GetDesignSystemInput = z.input<typeof getDesignSystemInput>;
 

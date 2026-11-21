@@ -339,7 +339,9 @@ export function toSummary(
 ): ArtifactSummary {
   const ownerView = seesOwnerMetadata(ctx.principal, role);
   // The owner's default design system is owner-only metadata, like the category.
-  const isDefault = ownerView && a.type === "design_system" && owner.defaultDesignSystem === a.id;
+  // A taken-down design system is never reported as the default: an agent could not read it.
+  const isDefault =
+    ownerView && a.type === "design_system" && !a.takenDownAt && owner.defaultDesignSystem === a.id;
   return {
     id: a.id,
     slug: a.slug,
@@ -636,8 +638,6 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
   checkSourceSize(def, text);
   precheckAssets(ctx, def, input.assets);
   if (target.mode !== "publish") throw new ApiError("internal", "Not a publish");
-  // Every source is authorized as the caller (view) before any rate hit or R2 write.
-  const copies = await resolveCopies(ctx, input.copy_files, def);
   // Per-type preparation before any rate hit or R2 operation (a whiteboard's starting board).
   const prepared = await typeHooks(def).prepare?.(ctx, {
     def,
@@ -651,6 +651,9 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     },
   });
   await enforcePublishRate(ctx);
+  // Every source is authorized as the caller (view) after the rate hit, so refused copies still
+  // count, and before any R2 write.
+  const copies = await resolveCopies(ctx, input.copy_files, def);
   const passwordHash =
     input.visibility === "password" && input.password ? await hashPassword(input.password) : null;
   const staged = prepared?.text ?? text;
@@ -755,8 +758,6 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
       target.artifact.id,
     );
   }
-  // Every source is authorized as the caller (view) before any rate hit or R2 write.
-  const copies = await resolveCopies(ctx, input.copy_files, def);
   // Per-type preparation before any rate hit or R2 operation (a whiteboard's starting board).
   const prepared = await typeHooks(def).prepare?.(ctx, {
     def,
@@ -764,6 +765,9 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     target: { mode: "update", artifact: target.artifact },
   });
   await enforcePublishRate(ctx);
+  // Every source is authorized as the caller (view) after the rate hit, so refused copies still
+  // count, and before any R2 write.
+  const copies = await resolveCopies(ctx, input.copy_files, def);
   // No assets given: the current version's assets (or those of files_from_version) are carried
   // forward as references.
   const staged = prepared?.text ?? text;

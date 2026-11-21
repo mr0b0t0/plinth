@@ -27,10 +27,17 @@ import {
   SLUG_RE,
 } from "@plinth/shared";
 import type { ArtifactRow, VersionRow } from "../db/schema.ts";
-import { ApiError } from "../lib/errors.ts";
+import { ApiError, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
-import { mayCopyFiles } from "../policy.ts";
-import { decideFor, findArtifact, requireArtifact, requireVersion } from "./artifacts.ts";
+import { decideCopySource, mayCopyFiles } from "../policy.ts";
+import {
+  accessFactsFor,
+  decideFor,
+  denialError,
+  factsOf,
+  findArtifact,
+  requireVersion,
+} from "./artifacts.ts";
 import { checkAsset, requireTypeDef, typeHooks } from "./artifactTypes.ts";
 import type { Ctx } from "./context.ts";
 import type { Stager } from "./stage.ts";
@@ -146,8 +153,16 @@ export async function resolveCopies(
     const asked = `${ref}@${c.version ?? "current"}`;
     let src = byAddress.get(asked);
     if (!src) {
-      // As the caller, through policy.ts: a source they cannot view is a 404 like a missing one.
-      const { artifact } = await requireArtifact(ctx, ref, "view");
+      // As the caller, through policy.ts: a source they cannot view is a 404 like a missing one,
+      // and an admin's review access to it does not count (decideCopySource).
+      const artifact = await findArtifact(ctx, ref);
+      if (!artifact) throw notFound();
+      const d = decideCopySource(
+        ctx.principal,
+        factsOf(artifact),
+        await accessFactsFor(ctx, artifact),
+      );
+      if (!d.allow) throw denialError(ctx, d, "view");
       const version = await requireVersion(ctx, artifact, c.version ?? artifact.currentVersion);
       const key = `${artifact.id}@${version.number}`;
       src = sources.get(key);
@@ -212,7 +227,12 @@ async function locate(
     const text = await src.text;
     const made =
       hook && text !== null
-        ? hook(text, from, { id: src.row.id, version: src.version.number })
+        ? hook(
+            text,
+            from,
+            { id: src.row.id, version: src.version.number },
+            new Set(src.manifest.keys()),
+          )
         : null;
     if (!made) {
       throw copyError(`${from} is not a file of v${src.version.number} of that artifact`, {
@@ -262,6 +282,46 @@ export async function stageCopies(
     };
     await stager.addCopy(c.to, bytes, c.contentType, from);
   }
+}
+
+/** The `ds/<folder>` a path sits in, or null. */
+function dsFolderOf(path: string): string | null {
+  const m = /^ds\/([^/]+)\//.exec(path);
+  return m ? `ds/${m[1]}` : null;
+}
+
+/**
+ * A `ds/<folder>/` that would hold files copied from two different artifacts, where at least one
+ * of them is copied by this call (`fresh`), or null. Two design systems with the same prefix in one
+ * artifact would otherwise overwrite or mix each other's tokens.
+ */
+export function copyFolderClash(
+  entries: readonly { path: string; copied_from?: CopiedFromEntry; fresh?: boolean }[],
+): { folder: string; artifacts: string[] } | null {
+  const byFolder = new Map<string, { artifacts: Set<string>; fresh: boolean }>();
+  for (const e of entries) {
+    const folder = e.copied_from ? dsFolderOf(e.path) : null;
+    if (!folder || !e.copied_from) continue;
+    const f = byFolder.get(folder) ?? { artifacts: new Set<string>(), fresh: false };
+    f.artifacts.add(e.copied_from.artifact);
+    f.fresh ||= !!e.fresh;
+    byFolder.set(folder, f);
+  }
+  for (const [folder, f] of byFolder) {
+    if (f.fresh && f.artifacts.size > 1) return { folder, artifacts: [...f.artifacts] };
+  }
+  return null;
+}
+
+/** The refusal for a copyFolderClash. */
+export function copyFolderError(folder: string): ApiError {
+  return copyError(`${folder}/ already holds files copied from another artifact`, {
+    reason: "copy_folder_taken",
+    folder,
+    next:
+      "Install this one in another folder (get_design_system's folder option gives the entries), " +
+      "or send assets that leave out the other artifact's files there",
+  });
 }
 
 /** The paths a plan writes (an update that carries the current files leaves these out). */
@@ -322,7 +382,19 @@ export async function copiedFromOf(
       seen.set(r.artifact, row && ok ? { title: row.title, current: row.currentVersion } : null);
     }
     const shown = seen.get(r.artifact) ?? null;
-    out.push({ ...r, title: shown?.title ?? null, current_version: shown?.current ?? null });
+    // A source the reader may not view now is named by nothing: no id, no path in it.
+    out.push(
+      shown
+        ? { ...r, title: shown.title, current_version: shown.current }
+        : {
+            artifact: null,
+            version: r.version,
+            copied_at: r.copied_at,
+            files: r.files.map((f) => ({ path: f.path })),
+            title: null,
+            current_version: null,
+          },
+    );
   }
   return out;
 }

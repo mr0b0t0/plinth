@@ -1422,8 +1422,9 @@ const FONT_FORMATS: Record<string, string> = {
 };
 
 /**
- * @font-face rules for the fonts stored as the design system's own files. Only for the design
- * system's own pages: another artifact cannot load these files.
+ * @font-face rules for the fonts stored as the design system's own files, by their relative path.
+ * The design system's site uses them, and its generated fonts.css (designSystemFiles.ts) holds
+ * them, so another artifact that installs the files at the same relative paths can load them.
  */
 export function designSystemFontFaces(ds: Pick<DesignSystem, "fonts">): string {
   return ds.fonts

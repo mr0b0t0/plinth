@@ -13,9 +13,13 @@ import { tar } from "./fixtures/bundles/tar.ts";
 import acme from "./fixtures/design-systems/acme.json";
 import {
   agent,
+  browserSession,
   call,
+  contentOrigin,
   createToken,
+  createUser,
   db,
+  fetchWith,
   json,
   manifestOf,
   mcpClient,
@@ -23,6 +27,7 @@ import {
   r2Keys,
   storedFile,
   tool,
+  uniqueEmail,
 } from "./helpers.ts";
 
 type Json = Record<string, any>;
@@ -281,9 +286,164 @@ describe("copy_files on update", () => {
     const got = await json(
       await call(`/api/v1/artifacts/${page.body.id}`, { headers: stranger.auth }),
     );
+    // No id and no source path: only where the copy is here.
     expect(got.copied_from).toEqual([
-      expect.objectContaining({ artifact: src.id, title: null, current_version: null }),
+      {
+        artifact: null,
+        version: 1,
+        copied_at: expect.any(String),
+        files: [{ path: "img/logo.svg" }],
+        title: null,
+        current_version: null,
+      },
     ]);
+  });
+
+  it("keeps copied_from on a copied file sent back as {path, sha256}", async () => {
+    const a = await agent();
+    const src = await sourcePage(a);
+    const page = await post(a, { copy_files: [{ artifact: src.id, path: "img/logo.svg" }] });
+    const m = (await manifestOf(page.body.id, 1)).find((e) => e.path === "img/logo.svg");
+    const r = await put(a, page.body.id, {
+      html: PAGE,
+      base_version: 1,
+      assets: [{ path: "img/logo.svg", sha256: m?.sha256 }],
+    });
+    expect(r.res.status, JSON.stringify(r.body)).toBe(200);
+    const m2 = (await manifestOf(page.body.id, 2)).find((e) => e.path === "img/logo.svg");
+    expect(m2?.copied_from).toEqual(m?.copied_from);
+  });
+});
+
+describe("which sources may be copied", () => {
+  it("refuses a password-protected source to an agent, which never passes a password", async () => {
+    const owner = await agent();
+    const { body: src } = await publish(owner.auth, {
+      title: "Locked",
+      visibility: "password",
+      password: "hunter22",
+      assets: [{ path: "img/logo.svg", content: LOGO }],
+    });
+    const other = await agent();
+    const r = await post(other, { copy_files: [{ artifact: src.id, path: "img/logo.svg" }] });
+    expect(r.res.status).toBe(403);
+    expect(r.body.error.details.reason).toBe("password_required");
+  });
+
+  it("refuses a taken-down source, and a deleted one like a missing one", async () => {
+    const a = await agent();
+    const down = await sourcePage(a);
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = ?2 WHERE id = ?1")
+      .bind(down.id, nowIso())
+      .run();
+    const r1 = await post(a, { copy_files: [{ artifact: down.id, path: "img/logo.svg" }] });
+    expect(r1.res.status).toBe(403);
+    expect(r1.body.error.details.reason).toBe("taken_down");
+    const gone = await sourcePage(a);
+    await call(`/api/v1/artifacts/${gone.id}`, { method: "DELETE", headers: a.auth });
+    const r2 = await post(a, { copy_files: [{ artifact: gone.id, path: "img/logo.svg" }] });
+    const r3 = await post(a, { copy_files: [{ artifact: "z".repeat(20), path: "img/logo.svg" }] });
+    expect(r2.res.status).toBe(404);
+    expect(r2.body).toEqual(r3.body);
+  });
+
+  it("refuses an app link on another origin, the content host's included", async () => {
+    const a = await agent();
+    const src = await sourcePage(a);
+    for (const address of [
+      src.url.replace("http://", "https://"),
+      src.url.replace("app.localhost", "evil.localhost"),
+      `${contentOrigin(src.id)}/a/${src.slug}`,
+      `${src.url.replace(`/a/${src.slug}`, "")}/x/a/${src.slug}`,
+    ]) {
+      const r = await post(a, { copy_files: [{ artifact: address, path: "img/logo.svg" }] });
+      expect(r.res.status, address).toBe(400);
+      expect(r.body.error.details.reason).toBe("copy_bad_address");
+    }
+  });
+
+  it("does not count an admin's review access: only what the admin could view anyway", async () => {
+    const owner = await agent();
+    const src = await sourcePage(owner, "allowlist");
+    await env.DB.prepare(
+      "INSERT INTO reports (id, artifact_id, reason, state, created_at) VALUES (?1, ?2, 'x', 'open', ?3)",
+    )
+      .bind(`r${src.id}`, src.id, nowIso())
+      .run();
+    const email = uniqueEmail("admin");
+    const vars = { ADMIN_EMAIL: email };
+    const admin = await createUser(email);
+    await env.DB.prepare("UPDATE users SET is_admin = 1 WHERE id = ?1").bind(admin.id).run();
+    const s = await browserSession(admin.id);
+    // The admin may look at it to review the report...
+    const look = await fetchWith(vars, `/api/v1/artifacts/${src.id}`, { headers: s.headers });
+    expect(look.status).toBe(200);
+    // ...but not copy its files into their own.
+    const r = await fetchWith(vars, "/api/v1/artifacts", {
+      method: "POST",
+      headers: { ...s.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Admin's",
+        html: PAGE,
+        copy_files: [{ artifact: src.id, path: "img/logo.svg" }],
+      }),
+    });
+    expect(r.status).toBe(404);
+  });
+
+  it("counts a refused copy toward the publish rate: the rate is checked first", async () => {
+    const a = await agent();
+    const vars = { MAX_PUBLISHES_PER_HOUR: "1" };
+    const send = (body: Json) =>
+      fetchWith(vars, "/api/v1/artifacts", {
+        method: "POST",
+        headers: { ...a.auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "T", html: PAGE, ...body }),
+      });
+    const first = await send({ copy_files: [{ artifact: "z".repeat(20), path: "a.svg" }] });
+    expect(first.status).toBe(404);
+    const second = await send({ copy_files: [{ artifact: "z".repeat(20), path: "a.svg" }] });
+    expect(second.status).toBe(429);
+  });
+});
+
+describe("folders under ds/", () => {
+  it("refuses a second artifact's copies into a folder another one's copies hold", async () => {
+    const a = await agent();
+    const one = await sourcePage(a);
+    const two = await sourcePage(a);
+    const page = await post(a, {
+      copy_files: [{ artifact: one.id, path: "css/brand.css", to: "ds/brand/tokens.css" }],
+    });
+    expect(page.res.status).toBe(201);
+    const clash = await put(a, page.body.id, {
+      html: PAGE,
+      base_version: 1,
+      copy_files: [{ artifact: two.id, path: "img/logo.svg", to: "ds/brand/logo.svg" }],
+    });
+    expect(clash.res.status).toBe(400);
+    expect(clash.body.error.details).toMatchObject({
+      reason: "copy_folder_taken",
+      folder: "ds/brand",
+    });
+    // In one call too.
+    const both = await post(a, {
+      copy_files: [
+        { artifact: one.id, path: "css/brand.css", to: "ds/brand/a.css" },
+        { artifact: two.id, path: "css/brand.css", to: "ds/brand/b.css" },
+      ],
+    });
+    expect(both.res.status).toBe(400);
+    // The same artifact again (a newer version, say) and another folder are fine.
+    const again = await put(a, page.body.id, {
+      html: PAGE,
+      base_version: 1,
+      copy_files: [
+        { artifact: one.id, path: "img/logo.svg", to: "ds/brand/logo.svg" },
+        { artifact: two.id, path: "img/logo.svg", to: "ds/brand-2/logo.svg" },
+      ],
+    });
+    expect(again.res.status, JSON.stringify(again.body)).toBe(200);
   });
 });
 
@@ -312,7 +472,77 @@ describe("installing a design system", () => {
         "fonts/acme-mono.woff2",
       ].map((path) => ({ artifact: ds.id, path, to: `ds/acme/${path}`, version: 1 })),
       stylesheets: ["ds/acme/fonts.css", "ds/acme/tokens.css", "ds/acme/components.css"],
+      faces: {
+        inter: { family: "Inter", href: acme.fonts[0]?.google },
+        "acme-mono": {
+          family: "Acme Mono",
+          src: "ds/acme/fonts/acme-mono.woff2",
+          weight: "400",
+          style: "normal",
+        },
+      },
+      record: {
+        title: "Acme UI",
+        namespace: "acme",
+        artifact: ds.id,
+        version: 1,
+        copiedAt: expect.any(String),
+      },
     });
+    expect(read.fonts.map((f: Json) => f.portable)).toEqual([true, true]);
+  });
+
+  it("lists only what the target type takes, and another folder when asked", async () => {
+    const a = await agent();
+    const ds = await designSystem(a);
+    const read = await json(
+      await call(`/api/v1/artifacts/${ds.id}/design-system?install_for=design&folder=acme-2`, {
+        headers: a.auth,
+      }),
+    );
+    expect(read.install.copy_files.map((c: Json) => c.to)).toEqual([
+      "ds/acme-2/tokens.css",
+      "ds/acme-2/components.css",
+    ]);
+    expect(read.install.stylesheets).toEqual(["ds/acme-2/tokens.css", "ds/acme-2/components.css"]);
+    expect(Object.keys(read.install.faces)).toEqual(["inter"]);
+    expect(read.install.record.namespace).toBe("acme-2");
+    // The list works as given on a design.
+    const design = await publish(a.auth, {
+      html: undefined,
+      type: "design",
+      content: '<!-- artboard id="home" name="Home" size="iphone" -->\n<div>Home</div>\n',
+      copy_files: read.install.copy_files,
+    });
+    expect(design.res.status, JSON.stringify(design.body)).toBe(201);
+  });
+
+  it("names the folder after the title for a system that kept the default prefix", async () => {
+    const a = await agent();
+    const plain = { ...acme, prefix: undefined };
+    const { body: ds } = await publish(a.auth, {
+      html: undefined,
+      title: "Brand 2.0",
+      type: "design_system",
+      content: JSON.stringify(plain),
+    });
+    const read = await json(
+      await call(`/api/v1/artifacts/${ds.id}/design-system`, { headers: a.auth }),
+    );
+    expect(read.install.folder).toBe("ds/brand-2-0");
+  });
+
+  it("fonts.css declares only the font files the version stores", async () => {
+    const a = await agent();
+    const { body: ds } = await publish(a.auth, {
+      html: undefined,
+      title: "No font file",
+      type: "design_system",
+      content: ACME,
+    });
+    const page = await post(a, { copy_files: [{ artifact: ds.id, path: "fonts.css" }] });
+    const css = await text(page.body.id, 1, "fonts.css");
+    expect(css).not.toContain("@font-face");
   });
 
   it("a page installs it with install.copy_files: generated CSS and JSON, and the font file", async () => {
@@ -444,6 +674,34 @@ describe("copy_files on start_upload", () => {
         files: [{ path: "brand/logo.svg", from: "img/logo.svg" }],
       }),
     ]);
+  });
+
+  it("refuses at the commit a source the caller lost access to after start_upload", async () => {
+    const owner = await agent();
+    const src = await sourcePage(owner, "allowlist");
+    const other = await agent();
+    await db()
+      .insert(accessGrants)
+      .values({ artifactId: src.id, email: other.user.email, role: "viewer", createdAt: nowIso() })
+      .run();
+    const start = await call("/api/v1/uploads", {
+      method: "POST",
+      headers: { ...other.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ copy_files: [{ artifact: src.id, path: "img/logo.svg" }] }),
+    });
+    expect(start.status).toBe(201);
+    const t = await json(start);
+    await env.DB.prepare("DELETE FROM access_grants WHERE artifact_id = ?1").bind(src.id).run();
+    const req = new Request(t.upload_url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${t.upload_token}` },
+      body: tar([{ name: "index.html", data: PAGE }]),
+    });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req, env as never, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(404);
+    expect(await r2Keys(`artifacts/${t.target.id}/`)).toEqual([]);
   });
 
   it("refuses a ticket whose source the caller cannot view, before minting", async () => {

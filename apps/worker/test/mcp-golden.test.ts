@@ -33,6 +33,7 @@
 // start_upload, and their copy note), the default design system (list_artifacts, get_artifact and
 // the instructions' design system sentence), get_design_system's install, and get_artifact's
 // sentence on a design's design_system and copied_from.
+// get_design_system's install_for and folder inputs and its install sentence changed them again.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -91,7 +92,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "d8416d5e0889139da6ba16829e113a56a074b3daa4c8241de41585c1863eee57",
+      tools: "632a48754b50024791b5d527e82654e0fe4f519613f778b906ff868419e91a9b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -101,7 +102,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "ece8dee23b99860830a93303e3cc0e6083cc0c422d79b9b0f34d1dcedcf7a2ff",
+      tools: "f44981567a39b327572534ea47ed5dd9120694b4c40c0a0e5d5553e15d5e66c4",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -113,7 +114,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "70dca812282b862be80461a449469d3d7300d5247c5b169f3c3497304f598f4c",
+      tools: "779e3b8cfb9b712eb0c03e85a7fa4268de172ff23cd049a775d5219349c28b8f",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -123,7 +124,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "9b7f3f32a550ba4570285ecb86aa3bb046d198e34934b67922d17ddea7c27e61",
+      tools: "3493509955f4241cf55db75b126ae82e63d3e164e9bccd17b24ca9e6647902cd",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "d8268c9a89b929368d3fff8f674899075da782af5e68a15e47b8f9fbd34ffb20",

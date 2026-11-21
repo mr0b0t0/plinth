@@ -202,10 +202,6 @@ export async function startUpload(
       next: "Send board JSON inline in publish_artifact or update_artifact",
     });
   }
-  // Copies are authorized now, so a ticket that cannot copy is refused before it is minted, and
-  // again as the ticket's principal when the bundle commits (redeemBundle).
-  if (input.copy_files !== undefined && def) await resolveCopies(ctx, input.copy_files, def);
-
   const limit = uploadTicketsPerHour(ctx.config);
   const rate = await hit(ctx.env.DB, `upload:${p.userId}`, limit, 3600);
   if (!rate.allowed) {
@@ -214,6 +210,9 @@ export async function startUpload(
       next: "Wait for the limit to reset, then call start_upload again",
     });
   }
+  // Copies are authorized after the mint rate hit and before the ticket exists, so a ticket that
+  // cannot copy is never minted; the bundle authorizes them again as the ticket's principal.
+  if (input.copy_files !== undefined && def) await resolveCopies(ctx, input.copy_files, def);
 
   let credential: "connection" | "admin";
   let adminTokenHash: string | null = null;
@@ -517,9 +516,10 @@ export async function redeemBundle(
       });
     }
     const target = await ticketTarget(ctx, ticket, deps);
-    // The ticket's copies, authorized again as the ticket's principal, before the rate hit.
-    const copies = await ticketCopies(ctx, ticket, def);
     await deps.enforcePublishRate(ctx);
+    // The ticket's copies, authorized again as the ticket's principal, after the rate hits and
+    // before the stager opens.
+    const copies = await ticketCopies(ctx, ticket, def);
     // An account already at its quota stages nothing; below it, the stager refuses puts past the
     // room left, so an abandoned attempt cannot leave more than that behind.
     const ownerId = target.mode === "update" ? target.artifact.ownerId : ticket.user_id;

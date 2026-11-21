@@ -23,6 +23,7 @@ import {
 import { appUrl } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
+import { nowIso } from "../lib/time.ts";
 import { mayChooseDefaultDesignSystem } from "../policy.ts";
 import {
   decideFor,
@@ -32,7 +33,7 @@ import {
   summaryFor,
 } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
-import { parseManifest, readText } from "./storage.ts";
+import { assetContentType, parseManifest, readText } from "./storage.ts";
 
 const DEF = TYPE_REGISTRY.design_system;
 
@@ -76,7 +77,13 @@ export async function getDesignSystem(
   }
   const ds = parsed.value;
   const stored = parseManifest(v.manifest).map((e) => e.path);
+  const storedSet = new Set(stored);
   const ref = { id: artifact.id, version: v.number };
+  // Only the files the target type takes, by its asset rules (a design: no fonts, no JSON).
+  const target = TYPE_REGISTRY[input.install_for ?? "html"];
+  const accepts = (path: string) =>
+    target.assets !== false &&
+    (!target.assetTypes || target.assetTypes.test(assetContentType(path)));
   const wants = (part: NonNullable<GetDesignSystemInput["include"]>[number]) =>
     !input.include || input.include.includes(part);
   const components = input.components
@@ -95,8 +102,9 @@ export async function getDesignSystem(
           fonts: ds.fonts.map((f) => ({
             family: f.family,
             source: f.source,
-            // A font stored as the design system's own file cannot load in another artifact.
-            portable: f.source === "google",
+            // Usable in another artifact: a Google font, or a font file this version stores, which
+            // install copies (a design's artboards still cannot load font files).
+            portable: f.source === "google" || (!!f.src && storedSet.has(f.src)),
           })),
         }
       : {}),
@@ -131,7 +139,12 @@ export async function getDesignSystem(
       : {}),
     // What copy_files can take from this version, and the entries that install it.
     files: designSystemFilePaths(DEF.sourcePath, stored),
-    install: designSystemInstall(ds, ref, new Set(stored)),
+    install: designSystemInstall(ds, ref, storedSet, {
+      title: artifact.title,
+      ...(input.folder ? { folder: input.folder } : {}),
+      accepts,
+      now: nowIso(),
+    }),
     problems: [],
   };
 }

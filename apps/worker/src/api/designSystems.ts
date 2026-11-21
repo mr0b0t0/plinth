@@ -24,6 +24,8 @@ designSystemsApi.get(API.designSystem, async (c) => {
     version: v === undefined || v === "" ? undefined : Number(v),
     include: list(c.req.query("include")),
     components: list(c.req.query("components")),
+    install_for: c.req.query("install_for") || undefined,
+    folder: c.req.query("folder") || undefined,
   });
   return c.json(await getDesignSystem(serviceCtx(c), input));
 });

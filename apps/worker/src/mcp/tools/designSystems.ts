@@ -23,8 +23,10 @@ export const registerDesignSystemTools: ToolRegistrar = ({ server, ctx }) => {
         "update_artifact (the server copies tokens.css, fonts.css, components.css, tokens.json and " +
         "the font and image files they name under install.folder), link install.stylesheets, and add " +
         '<meta name="plinth-design-system" content="<id>@<version>"> to the head (a design: its ' +
-        "shared section) so later updates know which version it was built on. A design takes no " +
-        "fonts.css, font files or tokens.json: leave those entries out. files lists every path " +
+        "shared section) so later updates know which version it was built on. Pass install_for " +
+        "with the target's type (a design gets no fonts or tokens.json) and use the entries as " +
+        "given; install.faces and install.record fill a deck's faces and designSystems. If " +
+        "another design system already uses the folder, pass folder. files lists every path " +
         "copy_files can take. include and components trim the result. problems lists why a stored " +
         "version no longer parses. " +
         DESIGN_SYSTEM_UNTRUSTED_NOTE +
