@@ -28,6 +28,7 @@ import {
   type RescueReport,
   TAKEN_KEPT,
   TOO_LONG,
+  TURN_DROPS,
   UNSAVABLE,
   unpadded,
 } from "./edit.ts";
@@ -272,6 +273,28 @@ describe("DocEditor: formatted text", () => {
     expect(local.text).toBe("one \\<b>two\\</b> \\*\\*three\\*\\*");
   });
 
+  it("pastes several paragraphs as blocks of their own, with the caret after the paste", () => {
+    const { local, editor } = setup("Startend\n\nlast");
+    click(root.querySelector("p") as Element);
+    const el = rich(editor).editable;
+    select(el, 5);
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { getData: (t: string) => (t === "text/plain" ? " one\n\ntwo\n\nthree " : "") },
+    });
+    el.dispatchEvent(paste);
+    expect(local.text).toBe("Start one\n\ntwo\n\nthree end\n\nlast");
+    // The last pasted paragraph is open, the caret after it.
+    const r = rich(editor);
+    expect(r.editable.textContent).toBe("three end");
+    expect(r.selection()?.from).toEqual({ leaf: 0, offset: "three ".length });
+    // Undo there takes the paste back whole, as one block, the caret where it was.
+    key(r.editable, "z", { metaKey: true });
+    expect(local.text).toBe("Startend\n\nlast");
+    expect(rich(editor).editable.textContent).toBe("Startend");
+    expect(rich(editor).selection()?.from).toEqual({ leaf: 0, offset: 5 });
+  });
+
   it("keeps a typed URL as text, so it becomes a link when the block renders again", () => {
     const { local, editor } = setup("one");
     click(root.querySelector("p") as Element);
@@ -343,6 +366,61 @@ describe("DocEditor: formatted text", () => {
     typeText(fresh.editable, "three");
     key(fresh.editable, "Escape");
     expect(local.text).toBe("one\n\ntwo\n\nthree\n\nlast");
+  });
+
+  it("Undo right after an Enter takes it back, in the middle, at the end and at the start", () => {
+    const { local, editor } = setup("onetwo\n\nlast");
+    click(root.querySelector("p") as Element);
+    select(rich(editor).editable, 3);
+    key(rich(editor).editable, "Enter");
+    expect(local.text).toBe("one\n\ntwo\n\nlast");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("onetwo\n\nlast");
+    expect(rich(editor).editable.textContent).toBe("onetwo");
+    expect(rich(editor).selection()?.from).toEqual({ leaf: 0, offset: 3 });
+    // At the end: the empty block below closes, and the caret is back at the end.
+    select(rich(editor).editable, 6);
+    key(rich(editor).editable, "Enter");
+    expect(rich(editor).editable.textContent).toBe("");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("onetwo\n\nlast");
+    expect(rich(editor).editable.textContent).toBe("onetwo");
+    expect(rich(editor).selection()?.from).toEqual({ leaf: 0, offset: 6 });
+    // At the start: the empty block above closes.
+    select(rich(editor).editable, 0);
+    key(rich(editor).editable, "Enter");
+    expect(rich(editor).editable.textContent).toBe("");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(rich(editor).editable.textContent).toBe("onetwo");
+    expect(local.text).toBe("onetwo\n\nlast");
+    // Typed into after the Enter, Undo takes the typing back first, then the Enter.
+    select(rich(editor).editable, 3);
+    key(rich(editor).editable, "Enter");
+    const next = rich(editor);
+    next.editable.dispatchEvent(
+      new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true }),
+    );
+    typeText(next.editable, "Xtwo");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("one\n\nXtwo\n\nlast");
+    key(next.editable, "z", { metaKey: true });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("one\n\ntwo\n\nlast");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("onetwo\n\nlast");
+  });
+
+  it("Undo after an Enter does nothing once the blocks changed meanwhile", () => {
+    const { local, editor } = setup("onetwo\n\nlast");
+    click(root.querySelector("p") as Element);
+    select(rich(editor).editable, 3);
+    key(rich(editor).editable, "Enter");
+    // Someone else's edit changes the block above (solo has no one else: change the lines).
+    local.lines.splice(0, 1, "ONE");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("ONE\n\ntwo\n\nlast");
+    // The block stays open.
+    expect(rich(editor).editable.textContent).toBe("two");
   });
 
   it("Shift+Enter is a line break inside the block", () => {
@@ -730,6 +808,39 @@ describe("DocEditor: the block menu", () => {
     expect(rich(editor).kind).toBe("code");
     menu("Paragraph", "Turn into");
     expect(local.text).toBe("one two\n\nnext");
+  });
+
+  it("refuses a Turn into that would drop a divider or a table in a quote, and says so", () => {
+    for (const quote of ["> quoted\n>\n> ***", "> quoted\n>\n> | a |\n> | --- |\n> | b |"]) {
+      root.innerHTML = "";
+      const { local, editor } = setup(`${quote}\n\nnext`);
+      click(root.querySelector("blockquote") as Element);
+      menu("Paragraph", "Turn into");
+      expect(document.body.textContent).toContain(TURN_DROPS);
+      expect(local.text).toBe(`${quote}\n\nnext`);
+      expect(rich(editor).kind).toBe("quote");
+      editor.setEditing(false);
+    }
+  });
+
+  it("refuses a Turn into a code block of a paragraph with an image", () => {
+    const { local, editor } = setup("see ![i](a.png)\n\nnext");
+    click(root.querySelector("p") as Element);
+    menu("Code block", "Turn into");
+    expect(document.body.textContent).toContain(TURN_DROPS);
+    expect(local.text).toBe("see ![i](a.png)\n\nnext");
+    expect(rich(editor).kind).toBe("paragraph");
+  });
+
+  it("undoes a Turn into that changed only white space (a code block's indentation)", () => {
+    const { local, editor } = setup("```\nif x:\n    go()\n```\n\nnext");
+    click(root.querySelector("pre") as Element);
+    menu("Paragraph", "Turn into");
+    expect(local.text).toBe("if x:\ngo()\n\nnext");
+    key(rich(editor).editable, "z", { metaKey: true });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("```\nif x:\n    go()\n```\n\nnext");
+    expect(rich(editor).kind).toBe("code");
   });
 
   it("inserts a block of a kind below, a divider, and a table of a chosen size", () => {

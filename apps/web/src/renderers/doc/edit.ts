@@ -63,7 +63,9 @@ import {
   kindName,
   RichBlockEditor,
   type RichHost,
+  type RichPoint,
   reveal,
+  type SplitMore,
 } from "../common/richblock.ts";
 import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./blocks.ts";
 import {
@@ -100,6 +102,8 @@ export const JOINED_BLOCKS =
   "That would run the blocks around it together into one, so nothing was changed.";
 /** Why a block op was not made: the doc has no room for it. */
 export const DOC_FULL = "The doc is at its size limit, so that change wasn't made.";
+/** Turn into that would drop text, a table, a divider or an image (see turnDrops). */
+export const TURN_DROPS = "That would drop part of this block, so it wasn't changed.";
 /** Why an edit was not sent: the room is out of reach (or this frame has no lease). */
 export const NOT_SENT = "Not connected. Try again in a moment.";
 /** Why a block was not sent: it is over one frame. */
@@ -385,7 +389,7 @@ interface Want extends LineRange {
   /** Where the person clicked, to put the caret there. */
   at?: { x: number; y: number };
   /** Where the caret goes otherwise. */
-  caret?: "start" | "end";
+  caret?: Caret;
   /** Select the block's text once open (a new doc's title, from `?edit`), not place a caret. */
   select?: true;
   /**
@@ -468,6 +472,21 @@ interface Open {
   /** Lines of the lease after it (reference definitions), kept byte for byte. */
   suffix: string[];
   env: MdEnv;
+  /** The Enter (or paste) that made this block, which Undo in it takes back (undoSplit). */
+  split?: Split;
+}
+
+type Caret = "start" | "end" | RichPoint;
+
+/**
+ * An Enter or a multi-paragraph paste that split a block: the blocks it left (their cores, in
+ * order, from about line `near`) and the block as it was, which Undo writes back over them.
+ */
+interface Split {
+  cores: string[];
+  near: number;
+  before: string;
+  caret: RichPoint;
 }
 
 const isBlank = (s: string | undefined) => s === undefined || s.trim() === "";
@@ -605,6 +624,41 @@ export function turnInto(b: RichBlock, kind: BlockKind, near: (string | undefine
   }
 }
 
+/**
+ * What Turn into must keep of a block: its text without white space, and what has no text as a
+ * mark of its own (an image or other atom, a table, a divider). Formatting and white space may
+ * change (a code block's indentation, a list's items as lines), and Undo puts them back.
+ */
+function keptText(b: RichBlock): string {
+  const inline = (c: RichInline) =>
+    c.map((s) => (s.k === "text" ? s.text : s.k === "atom" ? `\uFFFC${s.md}` : "")).join("");
+  switch (b.t) {
+    case "paragraph":
+    case "heading":
+      return inline(b.c);
+    case "quote":
+      return b.blocks.map(keptText).join("");
+    case "bullet":
+    case "ordered":
+      return b.items.flatMap((it) => it.blocks.map(keptText)).join("");
+    case "code":
+    case "indented":
+      return b.text;
+    case "table":
+      return `\uFFFCtable${[b.head, ...b.rows].flat().map(inline).join("")}`;
+    case "divider":
+      return "\uFFFCdivider";
+    case "image":
+      return `\uFFFCimage${b.alt}${b.rest}`;
+  }
+}
+
+/** Whether turning `from` into `to` loses text, or a table, divider or image in it. */
+export function turnDrops(from: RichBlock, to: RichBlock): boolean {
+  const squeeze = (b: RichBlock) => keptText(b).replace(/\s+/g, "");
+  return squeeze(from) !== squeeze(to);
+}
+
 /** Text standing in for what will be typed into an empty block, to check where it would go. */
 const PROBE: RichInline = [{ k: "text", text: "x", m: {} }];
 
@@ -660,7 +714,9 @@ export class DocEditor {
   private barHost: HTMLElement | null = null;
   /** After an op: the line of the block to focus (and open, or select) once it is drawn. */
   private after: { line: number; open: boolean; insert?: RichBlock } | null = null;
-  private afterCaret: "start" | "end" = "end";
+  private afterCaret: Caret = "end";
+  /** A split just sent, for the block it opens next (see Open.split). */
+  private splitting: Split | null = null;
   /** What the person asked for while a block op waited for its lease, run once it is done. */
   private queued: (() => void) | null = null;
   /** A cleared block being removed (removeCleared), until the block is open where it was. */
@@ -1155,12 +1211,7 @@ export class DocEditor {
     this.open_(found.block, "end", at);
   }
 
-  private open_(
-    block: Block,
-    caret: "start" | "end",
-    at?: { x: number; y: number },
-    select = false,
-  ): void {
+  private open_(block: Block, caret: Caret, at?: { x: number; y: number }, select = false): void {
     const b = this.backend;
     if (!this.editing || !b.ready) return;
     const text = joinLines(b.lines.slice(block.start, block.end));
@@ -1452,6 +1503,10 @@ export class DocEditor {
     }
     const near = this.neighbours(mine);
     const next = turnInto(open.rich.model, kind, near);
+    if (turnDrops(open.rich.model, next)) {
+      this.showNotice(TURN_DROPS);
+      return;
+    }
     if (verifyBlock(next, TOOLS, open.env) === null) {
       this.showNotice(FORMAT_LOST);
       return;
@@ -1467,7 +1522,8 @@ export class DocEditor {
       this.showNotice(JOINED_BLOCKS);
       return;
     }
-    open.rich.setModel(next);
+    // Undo in the block puts it back as it was (a code block's indentation, say).
+    open.rich.setModel(next, null, true);
     open.rich.focus("end");
     this.cancelTimer();
     this.send();
@@ -1814,6 +1870,10 @@ export class DocEditor {
       return;
     }
     const open = keep ?? this.makeOpen(lease.start, model as RichBlock, env);
+    // The block an Enter just opened: Undo in it takes the Enter back.
+    const split = this.splitting;
+    this.splitting = null;
+    if (!keep && split) open.split = split;
     open.prefix = prefix;
     open.suffix = suffix;
     open.env = env;
@@ -1910,7 +1970,8 @@ export class DocEditor {
         return Array.from(frag.childNodes);
       },
       changed: () => this.edited(),
-      split: (keep, next) => this.split(keep, next),
+      split: (keep, next, more) => this.split(keep, next, more),
+      undo: () => this.undoSplit(holder.open),
       tab: (back) => this.tabOut(back),
       escape: () => this.close(true, true),
       announce: (text) => (text ? this.showNotice(text) : this.hideNotice()),
@@ -2280,13 +2341,14 @@ export class DocEditor {
    * Enter that ends the block: this one keeps `keep`, and `next` goes into a new block below it,
    * in one edit (or, for an empty `next`, an insert right after it once this lease is released).
    */
-  private split(keep: RichBlock, next: RichBlock | null): void {
+  private split(keep: RichBlock, next: RichBlock | null, more: SplitMore = {}): void {
     const open = this.open;
     const mine = this.backend.mine;
     if (!open || !mine || this.clearing) return;
     const keepCore = verifyBlock(keep, TOOLS, open.env);
     const nextCore = next ? verifyBlock(next, TOOLS, open.env) : "";
-    if (keepCore === null || nextCore === null) {
+    const between = (more.between ?? []).map((b) => verifyBlock(b, TOOLS, open.env));
+    if (keepCore === null || nextCore === null || between.some((c) => c === null)) {
       // Nothing is split, and the text stays as typed.
       this.showNotice(UNSAVABLE);
       return;
@@ -2299,20 +2361,34 @@ export class DocEditor {
       this.removeCleared();
       return;
     }
+    const middle = between.filter((c): c is string => c !== null && c !== "");
+    // What Undo in the block this opens writes back: the block as it was before the Enter.
+    const beforeCore = more.before ? verifyBlock(more.before.model, TOOLS, open.env) : null;
+    const undo = (cores: string[]): Split | null =>
+      beforeCore && more.before
+        ? {
+            cores: cores.filter((c) => c !== ""),
+            near: mine.start,
+            before: beforeCore,
+            caret: more.before.from,
+          }
+        : null;
     // Typing not sent yet goes with the split (at the start, before the paragraph above opens).
     const pending = this.timer !== null;
     this.cancelTimer();
-    if (keepCore === "" && nextCore !== "") {
+    if (keepCore === "" && nextCore !== "" && middle.length === 0) {
       // Enter at the very start: a new paragraph above, once this block's typing is in.
       if (pending && !this.send()) {
         this.schedule(EDIT_DEBOUNCE_MS);
         return;
       }
       if (!this.close(true)) return;
+      this.splitting = undo([nextCore]);
       this.openInsert(mine.start + (this.pad.before ? 1 : 0), para());
       return;
     }
-    const core = nextCore === "" ? keepCore : `${keepCore}\n\n${nextCore}`;
+    const parts = [keepCore, ...middle, nextCore].filter((c) => c !== "");
+    const core = parts.join("\n\n");
     const block = composeBlock(open.prefix, core, open.suffix);
     const text = padded(block, this.pad);
     const lines = this.backend.lines;
@@ -2325,7 +2401,6 @@ export class DocEditor {
       (this.pad.before && text !== "" ? 1 : 0) +
       open.prefix.length +
       (open.prefix.length > 0 && !isBlank(open.prefix.at(-1)) ? 1 : 0);
-    const keepLines = keepCore === "" ? 0 : keepCore.split("\n").length;
     const end = mine.start + (text === "" ? 0 : text.split("\n").length) - (this.pad.after ? 1 : 0);
     if (joinLines(lines.slice(mine.start, mine.end)) !== text) {
       const refusal =
@@ -2340,13 +2415,64 @@ export class DocEditor {
     this.backend.release();
     this.dropOpen();
     this.held = null;
+    // The last block starts after the ones before it, each with a blank line after it.
+    let nextAt = keepAt;
+    for (const c of parts.slice(0, -1)) nextAt += c.split("\n").length + 1;
     this.after =
       nextCore === ""
         ? { line: Math.max(mine.start, end), open: false, insert: next ?? para() }
-        : { line: keepAt + keepLines + 1, open: true };
-    if (nextCore !== "") this.afterCaret = "start";
+        : { line: nextAt, open: true };
+    if (nextCore !== "") {
+      this.afterCaret = more.caret !== undefined ? { leaf: 0, offset: more.caret } : "start";
+    }
+    this.splitting = undo(parts);
     this.render();
     this.hooks.status();
+  }
+
+  /**
+   * Undo in a block an Enter (or a multi-paragraph paste) opened, with nothing left to undo in
+   * it: the blocks the split left are written back as the one block it was, which opens with the
+   * caret where the Enter was. Not once the block or the ones before it changed.
+   */
+  private undoSplit(open: Open | null): boolean {
+    const split = open?.split;
+    if (!split || open !== this.open || this.busy) return false;
+    open.split = undefined;
+    // The blocks the split wrote (the open one among them), or, when it opened an empty block not
+    // typed into, the one block it left: that one is written back, and the empty one closes.
+    const cores = split.cores;
+    if (cores.length < 2 && !isEmptyBlock(open.rich.model)) return false;
+    const find = (): { start: number; end: number } | null => {
+      const lines = this.backend.lines;
+      const blocks = this.blocks();
+      const coreOf = (b: Block) => joinLines(lines.slice(b.core.start, b.core.end));
+      let best: { start: number; end: number } | null = null;
+      for (let i = 0; i + cores.length <= blocks.length; i++) {
+        if (!cores.every((c, k) => coreOf(blocks[i + k] as Block) === c)) continue;
+        const range = {
+          start: (blocks[i] as Block).core.start,
+          end: (blocks[i + cores.length - 1] as Block).core.end,
+        };
+        if (!best || Math.abs(range.start - split.near) < Math.abs(best.start - split.near)) {
+          best = range;
+        }
+      }
+      return best;
+    };
+    const plan = () => {
+      const r = find();
+      return r && { ...r, text: joinLines(this.backend.lines.slice(r.start, r.end)) };
+    };
+    if (!plan()) return false;
+    this.afterCaret = split.caret;
+    this.runOp(plan, (lines, lease) => ({
+      text: split.before,
+      focus: lease.start,
+      open: true,
+      blocks: parseBlocks(joinLines(lines)).length - (cores.length - 1),
+    }));
+    return true;
   }
 
   private tabOut(back: boolean): void {
