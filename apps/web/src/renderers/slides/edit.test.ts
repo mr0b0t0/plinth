@@ -270,6 +270,41 @@ describe("speaker notes", () => {
   });
 });
 
+describe("speaker notes after the deck's start moves", () => {
+  it("opens the new notes on their own slide when the op drops a bare opening ---", () => {
+    // Adding notes ends with the line-0 step, which removes the bare `---` and so the empty
+    // slide before Intro: Intro becomes raw slide 1, and the notes opened are Intro's.
+    const f = start("---\n# Intro\n---\n# Next\n\nNote: x");
+    expect(active().dataset.n).toBe("2");
+    (active().querySelector(".plinth-slides__notepad-add") as HTMLButtonElement).click();
+    vi.advanceTimersByTime(1);
+    const ed = document.querySelector(
+      '.plinth-slides__notepad-edit [contenteditable="true"]',
+    ) as HTMLElement;
+    expect(ed).not.toBeNull();
+    ed.textContent = "Say hello.";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    const slides = parseDeck(collect(f)).slides;
+    expect(slides.map((x) => x.notes)).toEqual(["Say hello.", "x"]);
+  });
+});
+
+describe("print and the .pptx while editing", () => {
+  it("wait until editing ends: no print, and the export answers that no file was made", () => {
+    const f = start(SKILL);
+    appMessage(f, msg({ type: "print" }));
+    expect(document.getElementById("__plinth-slides")?.hasAttribute("data-print")).toBe(false);
+    appMessage(f, msg({ type: "export", format: "pptx", nonce: NONCE }));
+    expect(posts(f).filter((p) => p.type === "exported")).toEqual([
+      expect.objectContaining({ type: "exported", nonce: NONCE, ok: false, images_skipped: 0 }),
+    ]);
+    // Out of edit mode, Print runs again.
+    appMessage(f, msg({ type: "edit", on: false }));
+    appMessage(f, msg({ type: "print" }));
+    expect(document.getElementById("__plinth-slides")?.getAttribute("data-print")).toBe("slides");
+  });
+});
+
 describe("what is left to an agent", () => {
   it("offers Ask an agent and Delete on an image, with a structural anchor", () => {
     const f = start(SKILL);

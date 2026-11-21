@@ -29,6 +29,15 @@ export const deckSettings: MenuItem = (c) =>
       ]
     : [];
 
+/**
+ * A deck's item that waits until editing ends, as Present does: Print and Download .pptx would
+ * take edit mode's slides, empty ones the deck never shows included.
+ */
+export const notWhileEditing =
+  (item: MenuItem): MenuItem =>
+  (c) =>
+    c.editing ? [] : item(c);
+
 /** Why a draft of the type cannot be published yet (its rules' `unpublishable`), in its words. */
 const UNPUBLISHABLE: Partial<Record<ArtifactType, string>> = {
   slides: "Write something on a slide to publish",

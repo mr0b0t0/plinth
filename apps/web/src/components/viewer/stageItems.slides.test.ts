@@ -79,7 +79,7 @@ describe("the Present control", () => {
 });
 
 describe("a deck being edited on the page", () => {
-  it("offers Deck settings…, which asks the frame at its exact origin to open them", () => {
+  it("offers Deck settings… alone, which asks the frame at its exact origin to open them", () => {
     const post = vi.fn();
     const c = {
       ...context("off"),
@@ -90,12 +90,10 @@ describe("a deck being edited on the page", () => {
       contentOrigin: "http://art.content.localhost:8787",
     } as unknown as StageContext;
     const entries = deckMenu(c);
-    expect(labels(entries)).toEqual([
-      "Print or save as PDF",
-      "Download .pptx",
-      DECK_SETTINGS_LABEL,
-    ]);
-    const item = entries[2];
+    // Print and Download .pptx wait until editing ends, as Present does: edit mode's slides
+    // include empty ones the deck never shows.
+    expect(labels(entries)).toEqual([DECK_SETTINGS_LABEL]);
+    const item = entries[0];
     if (item && "onSelect" in item) item.onSelect?.();
     expect(post).toHaveBeenCalledWith(
       expect.objectContaining({ type: "deck_settings" }),
@@ -107,7 +105,7 @@ describe("a deck being edited on the page", () => {
       ...c,
       config: { content_isolation: "opaque", content_path_fallback: false },
     } as unknown as StageContext;
-    const again = deckMenu(opaque)[2];
+    const again = deckMenu(opaque)[0];
     if (again && "onSelect" in again) again.onSelect?.();
     expect(post).not.toHaveBeenCalled();
   });

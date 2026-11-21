@@ -212,6 +212,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   let fitted = new WeakSet<SlideView>();
   /** On-page editing is on (edit.ts draws and edits the raw slides). */
   let editing = false;
+  /** The app shows this frame full screen (its `presenting` message). */
+  let appPresenting = false;
 
   const counter = el(doc, "span", "plinth-slides__counter");
   const controls = el(doc, "nav", "plinth-slides__controls");
@@ -241,6 +243,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           right: payload.follow,
           // The app remembers the lead, so a frame that replaces this one leads again (`lead`).
           onLead: (on) => postToApp(win, appOrigin, { type: "leading", on }),
+          // Someone started or stopped leading: the deck shown may switch to or from the draft.
+          changed: () => followChanged(),
           ...(opts.connect ? { connect: opts.connect } : {}),
         })
       : null;
@@ -410,9 +414,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (editing && next === "presenter") return;
     const was = mode;
     mode = next;
+    // Into presenter view the published deck, out of it the draft that waited (redraw).
+    if (!editing && (was === "presenter" || next === "presenter")) redraw();
     render();
-    // Leaving presenter view: the draft that waited is shown now.
-    if (was === "presenter") redraw();
     if (mode === "overview") revealSlide(doc, deck.current);
     root?.focus({ preventScroll: true });
     reportView();
@@ -429,7 +433,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!editing) postToApp(win, appOrigin, { type: "position", slide: n, count: views.length });
   });
 
-  const print = (notes: boolean) =>
+  // Print and the .pptx wait until editing ends, as presenting does: edit mode's slides include
+  // empty ones the deck never shows, with their labels and placeholders.
+  const print = (notes: boolean) => {
+    if (editing) return;
     void printDeck(win, root, {
       notes,
       canvas,
@@ -438,6 +445,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       },
       restore: render,
     });
+  };
 
   const unbindInput = bindInput(win, root, deck, {
     mode: () => mode,
@@ -496,9 +504,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   };
 
   const runExport = async (nonce: string) => {
-    const busy = answerTo !== null;
-    answerTo = nonce;
-    if (busy) return;
+    if (editing && answerTo === null) {
+      // Not from edit mode's raw slides (the app offers no download while editing).
+      postToApp(win, appOrigin, { type: "exported", nonce, ok: false, images_skipped: 0, opaque });
+      return;
+    }
     const report = (ok: boolean, skipped: number) =>
       postToApp(win, appOrigin, {
         type: "exported",
@@ -508,6 +518,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         images_skipped: Math.min(skipped, LIMITS.maxAssetsCeiling),
         opaque,
       });
+    const busy = answerTo !== null;
+    answerTo = nonce;
+    if (busy) return;
     try {
       // The writer loads while the images decode. Its failure is handled below, after the decode.
       const writer = loadWriter();
@@ -528,9 +541,40 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   // ---------- on-page editing (edit.ts) ----------
 
   let live: ReturnType<typeof startLive> | null = null;
+  /**
+   * The deck as last published that this frame knows: its own version's text, or the room's draft
+   * while the room says it has no edits since its base version (a page Publish, a reset).
+   */
+  let published = payload.text;
+  /**
+   * The published deck shown while the deck holds it (holdsPublished), as it was when that began:
+   * a version published meanwhile waits until it ends (the app holds the version too while it
+   * presents). Null otherwise.
+   */
+  let held: string | null = null;
+
+  /**
+   * The deck shows the published deck, not the live draft: while it is presented (presenter view,
+   * full screen, an audience window) and while a presenter leads the room (this one included), so
+   * a co-editor's typing never reaches a presented screen and every follower counts the slides
+   * the leader counts.
+   */
+  const holdsPublished = () =>
+    mode === "presenter" || appPresenting || (follow?.detached ?? false) || (follow?.led ?? false);
+
+  function followChanged() {
+    if (live && !editing) redraw();
+  }
+
+  /** Takes the room's draft as the published deck while it has no edits (see `published`). */
+  function notePublished() {
+    const state = live?.state();
+    if (state?.clean && state.lines) published = joinLines(state.lines);
+  }
 
   /** Draws the deck again: edit mode's raw slides from the editor's lines, else the draft's. */
   const redraw = () => {
+    notePublished();
     const state = live?.state();
     if (editing && state?.editor && state.lines) {
       const lines = state.lines;
@@ -555,13 +599,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       return;
     }
     // Outside edit mode, in room mode, the deck follows the draft's visible slides, as a doc's
-    // frame follows its draft (the published deck while the draft shows none), except in
-    // presenter view: a version published while presenting waits until it ends (the app holds
-    // the version too), and then the deck catches up.
-    // An audience window shows what its presenter window shows, never the draft.
-    if ((mode === "presenter" || follow?.detached) && !drawn.raw) return;
+    // frame follows its draft (the published deck while the draft shows none), except while it
+    // holds the published deck (holdsPublished), and then the deck catches up.
+    held = holdsPublished() ? (held ?? published) : null;
     const draft = state?.lines ? joinLines(state.lines) : null;
-    const text = draft !== null && parseDeck(draft).slides.length > 0 ? draft : payload.text;
+    const text = held ?? (draft !== null && parseDeck(draft).slides.length > 0 ? draft : published);
     if (!drawn.raw && text === drawn.text) return;
     const shown = parseDeck(text);
     const current = drawn.raw ? Math.max(1, deck.current - rawOffset) : deck.current;
@@ -692,6 +734,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
             editor?.changed();
           },
           status: () => {
+            // A page Publish ends with a status frame (no edits since the new version).
+            if (!local) notePublished();
             if (client && !client.connected && !local) editor?.disconnected();
             if (client?.failed && !local && editor?.editing) {
               // The room never answered: keep editing alone.
@@ -774,7 +818,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       },
       state: () => {
         const b = backend();
-        return { editor, lines: b?.ready ? b.lines : null };
+        // The room's draft is the published deck while it has no edits since its base version.
+        const c = local ? null : client;
+        const clean =
+          c !== null && c.ready && c.dirtyKnown && !c.dirty && c.conflictVersion === null;
+        return { editor, lines: b?.ready ? b.lines : null, clean };
       },
       stop: () => {
         client?.stop();
@@ -792,9 +840,14 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       // While the deck follows a presenter, the presenter's slide wins over the app's; while
       // editing, the app's number is a shown slide's.
       if (!follow?.holding) deck.go(editing ? m.slide + rawOffset : m.slide);
-    } else if (m.type === "paired") follow?.detach();
-    else if (m.type === "lead") follow?.resumeLead();
-    else if (m.type === "view") {
+    } else if (m.type === "paired") {
+      follow?.detach();
+      followChanged();
+    } else if (m.type === "lead") follow?.resumeLead();
+    else if (m.type === "presenting") {
+      appPresenting = m.on;
+      followChanged();
+    } else if (m.type === "view") {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.
       if (mode !== m.mode) reportView();

@@ -20,7 +20,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   blocks the editor cannot show as they are, offer **Ask an agent**. A deck whose every slide was
   emptied cannot be published until it has text again, and a version published while people edit
   a deck is reviewed beside their changes, never merged. **New** on the dashboard offers a blank
-  slide deck.
+  slide deck. Outside edit mode the deck shows the live draft, but while it is presented (full
+  screen, presenter view) or someone leads viewers, it shows the published deck, so nobody's
+  half-typed text reaches the audience and every follower is on the presenter's slide. Print and
+  Download .pptx wait until editing ends, as Present does.
 
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode

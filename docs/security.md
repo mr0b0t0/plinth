@@ -467,8 +467,10 @@ What is new:
   no ids at all.
 - **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`,
   `print`, `paired` (no data: an audience window's frame stops following the presenter over the
-  room, so it can only turn following off) and `lead` (no data: the frame it replaced was leading
-  viewers, so it leads again; the room still lets only owners' and editors' sockets lead); the
+  room, so it can only turn following off), `lead` (no data: the frame it replaced was leading
+  viewers, so it leads again; the room still lets only owners' and editors' sockets lead) and
+  `presenting { on }` (a boolean: the app has the frame full screen, so a deck that follows the
+  room's live draft shows the published deck meanwhile); the
   frame sends `ready` and `position` (a slide and a count), `view { mode }` (the view it switched
   to), `fullscreen` and `leading { on }` (a boolean). Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
   renderer acts only on messages whose `event.source` is its parent and whose origin is the exact

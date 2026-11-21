@@ -30,6 +30,9 @@
 //   app -> frame: deck_settings            a deck being edited on the page opens its settings
 //                                          popover (aspect, theme, page numbers, footer); exact
 //                                          origin only
+//   app -> frame: presenting { on }        a deck's frame is full screen (Present) or no longer:
+//                                          meanwhile it shows the published deck, not the room's
+//                                          live draft (presenter view it knows by itself)
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -192,14 +195,36 @@ export function deckSettingsMessage(): DeckSettingsMessage {
 }
 
 /**
- * Post a deck message (a slide number, a view name, or an export request with the app's own
- * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
- * opaque frames. False when it cannot.
+ * The app shows the deck's frame full screen (Present), or no longer: the frame cannot tell by
+ * itself, and a frame that follows the room's live draft shows the published deck meanwhile, as
+ * in presenter view. A boolean, nothing else.
+ */
+export interface PresentingMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "presenting";
+  on: boolean;
+}
+
+export function presentingMessage(on: boolean): PresentingMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "presenting", on };
+}
+
+/**
+ * Post a deck message (a slide number, a view name, a boolean, or an export request with the
+ * app's own nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*"
+ * included for opaque frames. False when it cannot.
  */
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage | LeadMessage,
+  message:
+    | GotoMessage
+    | ViewMessage
+    | DeckExportMessage
+    | PairedMessage
+    | LeadMessage
+    | PresentingMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -512,6 +537,7 @@ export const APP_MESSAGE_KINDS = [
   "review",
   "reviewed",
   "deck_settings",
+  "presenting",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -528,7 +554,8 @@ export type AppToFrameMessage =
   | LeadMessage
   | ReviewMessage
   | ReviewedMessage
-  | DeckSettingsMessage;
+  | DeckSettingsMessage
+  | PresentingMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False

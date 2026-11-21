@@ -419,6 +419,8 @@ export interface FollowOptions {
   right: "present" | "watch";
   /** The person's lead changed (FollowClientOptions.leadChanged): the deck tells the app. */
   onLead?: (on: boolean) => void;
+  /** Something the client heard or did changed (before the deck, pill and toggles catch up). */
+  changed?: () => void;
   /** For tests: makes the socket. */
   connect?: FollowClientOptions["connect"];
   random?: () => number;
@@ -461,7 +463,17 @@ export class Follow {
     this.pill.append(this.pillText, this.pillButton);
     this.client = new FollowClient({
       win: o.win,
-      changed: () => this.sync(),
+      changed: () => {
+        // The deck may draw other slides first (boot.ts shows the published deck while a presenter
+        // leads); a slide that drawing moves is not the person paging. Then it goes to the leader's.
+        this.applying = true;
+        try {
+          o.changed?.();
+        } finally {
+          this.applying = false;
+        }
+        this.sync();
+      },
       leadChanged: (on) => {
         if (!this.detached) o.onLead?.(on);
       },
@@ -490,6 +502,14 @@ export class Follow {
       !this.client.wantLead &&
       this.client.leader !== null
     );
+  }
+
+  /**
+   * A presenter leads the room, this one included (or this one asked to): the deck then shows the
+   * published deck, the one followers see, never the live draft. False in an audience window.
+   */
+  get led(): boolean {
+    return !this.detached && (this.client.wantLead || this.client.at !== null);
   }
 
   /**

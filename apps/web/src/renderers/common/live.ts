@@ -167,6 +167,11 @@ export class LiveDocClient implements LiveBackend {
   /** Why the room closed the socket for good (access changed, the artifact is gone). */
   ended: "unauthorized" | "gone" | null = null;
   dirty = false;
+  /**
+   * `dirty` is the room's word since this socket's welcome (a status frame, a reset or a rebase):
+   * until then it is not known whether the draft holds edits.
+   */
+  dirtyKnown = false;
   editors: string[] = [];
   lastByYou = false;
   lastEditAt: string | null = null;
@@ -529,6 +534,7 @@ export class LiveDocClient implements LiveBackend {
             this.conflictVersion = null;
             this.conflictFiles = null;
             this.dirty = kind === "rebased";
+            this.dirtyKnown = true;
             L.changed();
             L.version(kind, f.version, {
               was,
@@ -551,6 +557,7 @@ export class LiveDocClient implements LiveBackend {
       }
       case "status":
         this.dirty = f.dirty;
+        this.dirtyKnown = true;
         this.editors = f.editors;
         this.lastEditAt = f.last_edit_at;
         this.lastByYou = f.last_by_you;
@@ -586,6 +593,7 @@ export class LiveDocClient implements LiveBackend {
         this.rev = f.rev;
         this.lines = splitLines(text);
         this.baseVersion = f.base_version;
+        this.dirtyKnown = false;
         this.flushedRev = f.flushed_rev;
         this.conflictVersion = f.conflict_version;
         this.conflictFiles = f.conflict_version !== null ? (f.files ?? null) : null;

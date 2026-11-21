@@ -1303,8 +1303,8 @@ on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
-  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }` and
-  `paired` and `lead` from the app; `ready`, `position`, `view`, `fullscreen`,
+  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }`, `paired`,
+  `lead` and `presenting { on }` from the app; `ready`, `position`, `view`, `fullscreen`,
   `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
@@ -3108,6 +3108,19 @@ deleting slides, and a slide's columns, stay with agents for now.
   a new paragraph below it. The slide fits again as text changes. Presenting, full screen and
   following the presenter wait until editing ends (Present is not offered while editing; Done
   publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
+  Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
+  neither prints nor makes a file from edit mode's slides. A block open when the connection drops
+  is taken again once the draft is back, where the draft holds its text nearest to where it was
+  (two slides may share a title), and what was typed since is sent there.
+- **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
+  change, as a doc's frame shows its draft (the published deck while the draft shows none). While
+  the deck is presented (full screen, which the app tells the frame with `presenting { on }`;
+  presenter view; an audience window) and while a presenter leads the room (this one, or one it
+  follows), it shows the deck as last published instead: its own version, or the room's draft
+  while the room says it holds no edits since its base version (after a page Publish). That deck
+  is fixed when presenting or the lead begins, so a co-editor's typing never reaches a presented
+  screen, a version published meanwhile waits until it ends, and the leader and every follower
+  count the same slides.
 - **Writing it back without changing the deck's structure.** The slides serializer
   (`packages/shared/src/slidesSerialize.ts`, on the doc's) escapes what a deck would read as
   structure, part by part as the deck reads it: in a head or a column a line `---` (a heading's

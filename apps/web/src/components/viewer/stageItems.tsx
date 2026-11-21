@@ -48,7 +48,7 @@ import {
 import { type AskAgent, askAgentButton, askAgentDialog, askAgentMenu } from "./askAgent.tsx";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
-import { deckSettings, unpublishableReason } from "./deckItems.ts";
+import { deckSettings, notWhileEditing, unpublishableReason } from "./deckItems.ts";
 import { designExportDialog, downloadDesign, unlessExports } from "./designItems.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
@@ -286,7 +286,7 @@ const downloadBoard: MenuItem = (c) => [
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [printTyped, downloadPptx, deckSettings],
+  slides: [notWhileEditing(printTyped), notWhileEditing(downloadPptx), deckSettings],
   design: [unlessExports(printTyped), downloadDesign],
   sheet: [printTyped, downloadSheet],
   whiteboard: [boardSettings, downloadBoard],

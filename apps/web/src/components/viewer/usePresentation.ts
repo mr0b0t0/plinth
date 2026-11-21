@@ -48,6 +48,7 @@ import {
   newNonce,
   pairedMessage,
   postToDeck,
+  presentingMessage,
   rendererTargetOrigin,
   viewMessage,
 } from "./rendererProtocol.ts";
@@ -178,6 +179,10 @@ export function usePresentation(o: PresentationOptions): Presentation {
     available && initial.pair ? "audience" : "off",
   );
   const [fullscreen, setFullscreen] = useState(false);
+  const fullscreenRef = useRef(fullscreen);
+  fullscreenRef.current = fullscreen;
+  /** What the frame was last told about full screen (`presenting`). */
+  const toldFullscreen = useRef(false);
   const [paired, setPaired] = useState(false);
   const [exporting, setExporting] = useState(false);
   /** The export the app is waiting for: its nonce, its timeout and the frame it was sent to. */
@@ -333,6 +338,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
         if (modeRef.current === "presenter") {
           postToDeck(frame, targetRef.current, viewMessage("presenter"));
         }
+        if (fullscreenRef.current) postToDeck(frame, targetRef.current, presentingMessage(true));
         return;
       }
       // An audience window stays on the presenter's slide, whatever paged its frame.
@@ -377,6 +383,15 @@ export function usePresentation(o: PresentationOptions): Presentation {
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [available]);
+
+  // The frame cannot tell that the app put it full screen: it hears it (`presenting`), so a deck
+  // that follows the room's live draft shows the published deck while it is presented. Presenter
+  // view it knows by itself.
+  useEffect(() => {
+    if (!available || fullscreen === toldFullscreen.current) return;
+    toldFullscreen.current = fullscreen;
+    postToDeck(frameRef.current, targetRef.current, presentingMessage(fullscreen));
+  }, [available, fullscreen]);
 
   // An audience window follows its presenter window: the same version, the same slide, deck view.
   useEffect(() => {

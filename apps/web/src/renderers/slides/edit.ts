@@ -55,7 +55,13 @@ import {
 } from "@plinth/shared";
 import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
-import type { ClientLease, LeaseDenial, LeaseLoss, LiveBackend } from "../common/live.ts";
+import {
+  type ClientLease,
+  type LeaseDenial,
+  type LeaseLoss,
+  type LiveBackend,
+  locateBlock,
+} from "../common/live.ts";
 import { kindName, RichBlockEditor, type RichHost, type RichPoint } from "../common/richblock.ts";
 import { parseBlocks } from "../doc/blocks.ts";
 import {
@@ -230,6 +236,8 @@ interface Open {
   form: NotesForm;
   /** The text last sent for the lease. */
   sent: string | null;
+  /** Where its lease started when last seen: a block taken again is looked for nearest here. */
+  start: number;
   /**
    * Where the caret was last seen in it (which editor, and where), while it has the focus: a
    * slide drawn again around it takes the focus away, and it is put back there.
@@ -241,7 +249,9 @@ interface Open {
 /** A lease asked for and not answered yet, with what to open once it is granted. */
 interface Want {
   range: LineRange;
-  open: Omit<Open, "host" | "editors" | "sent" | "caret" | "focused"> & { models: RichBlock[] };
+  open: Omit<Open, "host" | "editors" | "sent" | "start" | "caret" | "focused"> & {
+    models: RichBlock[];
+  };
   focus: "start" | "end";
   /** The block is emptied as soon as the lease is granted (an image's Delete). */
   emptyNow?: true;
@@ -357,6 +367,8 @@ export class SlidesEditor {
   private readonly decorated = new WeakSet<Element>();
   /** What each slide's notes panel was last drawn from (drawNotes). */
   private readonly notesDrawn = new WeakMap<EditSlideView, string>();
+  /** How many raw slides the deck had when last drawn (decorate). */
+  private rawCount: number | null = null;
 
   private fileBase(): number | null {
     return this.hooks.fileVersion();
@@ -426,6 +438,18 @@ export class SlidesEditor {
     this.layout = layout;
     const base = this.hooks.fileVersion();
     const mine = this.backend.mine;
+    // Between resets only the line-0 step removes raw slides, each one an empty slide at the
+    // deck's start: the slide open, or asked for, moves down by as many.
+    const gone = this.rawCount === null ? 0 : this.rawCount - layout.slides.length;
+    this.rawCount = layout.slides.length;
+    if (gone > 0) {
+      for (const o of [this.open, this.want?.open]) {
+        if (!o) continue;
+        o.n = Math.max(1, o.n - gone);
+        o.ctx = { ...o.ctx, settings: afterBareOpen(this.backend.lines, o.n) };
+      }
+    }
+    if (this.open && mine) this.open.start = mine.start;
     for (const v of views) {
       pinFiles(v.frame, base);
       if (!this.decorated.has(v.frame)) {
@@ -619,9 +643,13 @@ export class SlidesEditor {
     if (!this.writable()) return;
     this.close(true);
     const n = v.n;
+    const count = deckLayout(this.backend.lines).slides.length;
     this.afterStruct = (op) => {
       if (op.op !== "add_notes") return;
-      const view = this.views.find((x) => x.n === n);
+      // The op's line-0 step may have removed empty slides at the deck's start, each of which
+      // moves this one down.
+      const at = n - Math.max(0, count - deckLayout(this.backend.lines).slides.length);
+      const view = this.views.find((x) => x.n === at);
       if (view) this.openNotes(view, []);
     };
     if (!this.backend.struct({ op: "add_notes", n })) {
@@ -787,6 +815,7 @@ export class SlidesEditor {
       host,
       editors: [],
       sent: joinLines(this.backend.lines.slice(lease.start, lease.end)),
+      start: lease.start,
     };
     for (const m of w.open.models) o.editors.push(this.makeEditor(o, m));
     host.append(...o.editors.map((r) => r.el));
@@ -1161,6 +1190,7 @@ export class SlidesEditor {
       const { kind, n, ctx, env, pad, form } = o;
       this.retake = {
         sent: o.sent,
+        near: o.start,
         want: {
           range: { start: 0, end: 0 },
           focus: "end",
@@ -1173,20 +1203,29 @@ export class SlidesEditor {
     this.hooks.status();
   }
 
-  /** A block to take again after a reconnect: the room's text it had, and how to open it. */
-  private retake: { sent: string; want: Want } | null = null;
+  /**
+   * A block to take again after a reconnect: the room's text it had, where it started, and how to
+   * open it.
+   */
+  private retake: { sent: string; near: number; want: Want } | null = null;
 
   private tryRetake(): void {
     const r = this.retake;
     if (!r || this.want || this.open || !this.backend.connected || !this.backend.ready) return;
     this.retake = null;
-    const at = locate(this.backend.lines, r.sent);
+    // The same lines may sit on another slide too (two slides titled "Agenda"): the place
+    // nearest where the block was is the one taken.
+    const lines = this.backend.lines;
+    const at = locateBlock(lines, r.sent, r.near);
     if (at < 0) {
       this.notify(DECK_WORDS.notKept);
       return;
     }
+    const slide = deckLayout(lines).slides.find((x) => x.start <= at && at < x.end);
+    const n = slide?.n ?? r.want.open.n;
     const want: Want = {
       ...r.want,
+      open: { ...r.want.open, n, ctx: { ...r.want.open.ctx, settings: afterBareOpen(lines, n) } },
       range: { start: at, end: at + r.sent.split("\n").length },
       resend: true,
     };
@@ -1416,18 +1455,6 @@ function renderInlineFree(text: string): string {
   return parseBlocks(text)
     .map((b) => b.html)
     .join("");
-}
-
-/** Where `text` (lines of a block) sits in `lines`, or -1. */
-function locate(lines: readonly string[], text: string): number {
-  if (text === "") return -1;
-  const want = text.split("\n");
-  for (let i = 0; i + want.length <= lines.length; i++) {
-    let ok = true;
-    for (let k = 0; k < want.length && ok; k++) ok = lines[i + k] === want[k];
-    if (ok) return i;
-  }
-  return -1;
 }
 
 /** The deck settings popover: aspect, theme, page numbers and footer, applied as one set_deck. */
