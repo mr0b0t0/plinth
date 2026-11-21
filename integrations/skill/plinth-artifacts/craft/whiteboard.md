@@ -23,9 +23,10 @@ see is all a board adds.
 
 ## A size budget
 
-- All board text is one size (14 px), and the board opens zoomed to fit, at most 100%. Keep a new
-  board within about 1,400 by 800 so it opens near full size and its text stays readable. On a phone
-  Fit stops at 75% and starts at the top left, so the title and the start of the story go there.
+- Block text is 14 px unless a block names a `size`, and the board opens zoomed to fit, at most
+  100%. Keep a new board within about 1,400 by 800 so it opens near full size and its text stays
+  readable. On a phone Fit stops at 75% and starts at the top left, so the title and the start of
+  the story go there.
 - A note (200 by 140) holds about 20 words and a box (200 by 100) about 12; text past a block's edge
   is cut. Count about 7 units per character and 18 per line, plus 16 for the padding, and make the
   block bigger rather than cut a word.
@@ -46,8 +47,9 @@ see is all a board adds.
   where you say, lets them overlap, and you don't see them land.
 - On the 240 grid, 200-wide blocks leave 40 between neighbours. Between blocks joined by a labelled
   arrow, leave a grid column (or row) empty so the label has room.
-- Arrows are straight lines between block centres. Line up the centres of what they join (the same
-  `y` along a row, the same `x` down a column), and place blocks so no arrow crosses another block.
+- An arrow without sides is a straight line between block centres (`fromSide` and `toSide` give
+  right-angle legs). Line up the centres of what they join (the same `y` along a row, the same `x`
+  down a column), and place blocks so no arrow crosses another block.
 - A gap says the subject changes: leave an empty grid row or column between groups.
 
 ## Extending a board without disturbing people's work

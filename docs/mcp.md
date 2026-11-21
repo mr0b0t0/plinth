@@ -348,15 +348,28 @@ written (`{ "blocks": 2, "arrows": 1 }`), or the warning `board_not_seeded` says
 
 | Item | Fields |
 | --- | --- |
-| A block | `id`, `kind` (`note`, `text`, `rect`, `ellipse`), `x`, `y` (whole numbers within ±1,000,000), `w`, `h` (24 to 4,000), `text` (up to 2,000 characters, `""` for none), `color?` (`yellow`, `green`, `blue`, `pink`, `purple`, `gray`), `z?` (draw order) |
-| An arrow | `id`, `from`, `to` (two different block ids in the same input), `label?` (up to 120 characters), `style?` (`solid`, `dashed`), `head?` (`end`, `both`, `none`) |
+| A block | `id`, `kind`, `x`, `y` (whole numbers within ±1,000,000), `w`, `h` (24 to 4,000), `text` (up to 4,000 characters, `""` for none; a table has none), `color?`, `z?` (draw order) |
+| `kind` | `note`, `text`, a shape (`rect`, `rounded`, `ellipse`, `diamond`, `pill`, `hexagon`, `parallelogram`, `database`, `queue`, `document`, `cloud`, `person`), `container` (a section: drawn behind every other block, its `text` the title above it, and the blocks inside it move with it) or `table` |
+| Colours | `color`: `yellow`, `green`, `blue`, `pink`, `purple`, `gray` (they follow the theme) or any `#rrggbb` (drawn as written); on a `text` it colours the words. `stroke` and an arrow's `color`: those, or `ink` |
+| Style | A note, shape or section: `stroke?`, `hollow?` (`true`: no fill). Those and `text`: `size?` (`small` 14, `body` 16, `large` 28, `title` 48, `huge` 96; left out, 14), `textAlign?` (`left`, `center`, `right`), `wrap?` (`false`: lines do not wrap) |
+| Text | Plain, with the inline marks `**bold**`, `*italic*`, `***both***`, `` `code` `` and `[label](https://...)` (http and https only), never nested; a line starting `- ` is a bullet, `1. ` keeps its number. Never parsed as HTML |
+| A table | `cols` (`{ "c1": { "at": 1, "w": 160 } }`: `at` orders them, `w` (10 or more) is a share of the table's `w`), `rows` (`{ "r1": { "at": 1, "c1": "Plan" } }`: the lowest `at` is the bold header; cells up to 1,000 characters), `fills?` (by row then column: a colour, or `""`), `heat?` (`{ "cols": { "c2": "blue" } }` or `rows`: shades numbers by value), `color?` (the header's), `size?`, `textAlign?`. At most 40 columns and 500 rows; ids of `A-Z a-z 0-9 _ -`, never `at` |
+| An arrow | `id`, `from`, `to` (two different block ids in the same input), `label?` (up to 120 characters), `style?` (`solid`, `dashed`), `head?` (`end`, `both`, `none`), `heads?` (`[from, to]`, each `none`, `arrow`, `circle`; wins over `head`), `fromSide?`, `toSide?` (`top`, `right`, `bottom`, `left`: right-angle legs from those sides), `bends?` (`["h" or "v", ...up to 12 whole numbers]`: a planned route, below), `color?` |
+
+An arrow with no side and no `bends` is a straight line between the blocks. `bends` reads as Claude's
+whiteboard does: the arrow leaves `from` level (`"h"`) or upright (`"v"`) through its centre, the
+legs then take turns, each number placing one middle leg (the first half, rounded up, measured from
+the centre of `from`, the rest from `to`), and the last leg drops into `to` through its centre. A
+plan whose first or last corner would fall inside its block is drawn as a right-angle route
+instead.
 
 Ids are shared-data ids (a letter or digit, then up to 63 of `A-Z a-z 0-9 _ -`), unique across
 blocks and arrows, never starting `u_`; at most 500 items together. Unknown keys anywhere are
 refused with `invalid_input` and `details.path` (`blocks[2].w`). An update with blocks on a board
 that has some is refused with `details.reason: "board_not_empty"`: change those with
 [`write_artifact_data`](#write_artifact_data) instead. Place new blocks on a 240-unit grid to the
-right of the existing ones.
+right of the existing ones. A board's shared data has its own caps (`DATA_BOARD_MAX_DOCS`, 2,000
+blocks and arrows; `DATA_BOARD_MAX_BYTES`, 2 MiB; `DATA_BOARD_MAX_DOC_BYTES`, 200 KiB a block).
 
 ```json
 {
@@ -368,7 +381,8 @@ right of the existing ones.
 
 The board then lives in shared data: read it with `list_artifact_data(id, collection: "blocks")`
 (and `"arrows"`), add a block with a `set` op without `doc_id` (or with a new one) and `if_rev: 0`,
-move one with a `set` of the whole block at its current `rev`, and delete a block's arrows with it.
+change one with a `merge` of only the fields that change at its current `rev` (`z` for the draw
+order), and delete a block's arrows with it.
 Every write is checked against the shapes above. Publishing a whiteboard needs shared data and
 origin isolation: elsewhere it is refused with `feature_disabled`, and `GET /api/v1/config` lists
 `{ "id": "whiteboard", "available": false }` in `artifact_types`. `start_upload` refuses whiteboards.
@@ -874,13 +888,16 @@ Change a page's shared data. Owner or editor. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string | Artifact id or slug |
-| `ops` | array, 1-50 | `{ op: "set", collection, doc_id?, data, if_rev }` or `{ op: "delete", collection, doc_id, if_rev }` |
+| `ops` | array, 1-50 | `{ op: "set", collection, doc_id?, data, if_rev }`, `{ op: "merge", collection, doc_id, data, if_rev }` or `{ op: "delete", collection, doc_id, if_rev }` |
 
 `if_rev` is required on every op: `0` creates the document (with a server id when `doc_id` is
-omitted) and fails if it exists; `n` changes or deletes it only while its `rev` is `n`. Revs grow
+omitted) and fails if it exists; `n` changes or deletes it only while its `rev` is `n`. A `merge`
+changes an existing document: each top-level field of `data` replaces that field (a nested value
+is replaced whole) and a field set to `null` is removed; the result is checked like a `set`. Revs grow
 across the whole artifact (not by one per document), so a document deleted and created again never
 matches a rev you read before. `data` is a
-JSON object of at most `DATA_MAX_DOC_BYTES` (16 KiB by default), nested at most 16 deep. Ops apply
+JSON object of at most `DATA_MAX_DOC_BYTES` (16 KiB by default; on a whiteboard
+`DATA_BOARD_MAX_DOC_BYTES`, 200 KiB), nested at most 16 deep. Ops apply
 in order and each succeeds or fails on its own.
 
 ```json

@@ -145,6 +145,9 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `DATA_MAX_DOC_BYTES` | `16384` (16 KiB) | Size of one shared-data document, `1024` to `65536` |
 | `DATA_WRITES_PER_VIEWER_PER_HOUR` | `300` | Shared-data writes per writer per artifact (page, agent and app writes, deletes included). At least 1 |
 | `DATA_WRITES_PER_ARTIFACT_PER_HOUR` | `2000` | Shared-data writes per artifact by all writers together. At least 1 |
+| `DATA_BOARD_MAX_DOCS` | `2000` | A whiteboard's blocks and arrows, in place of `DATA_MAX_DOCS_PER_ARTIFACT` on a board. At least 1 |
+| `DATA_BOARD_MAX_BYTES` | `2097152` (2 MiB) | A whiteboard's shared-data bytes, in place of `DATA_MAX_BYTES_PER_ARTIFACT` on a board. At least `DATA_BOARD_MAX_DOC_BYTES`; it still counts toward `DATA_MAX_BYTES_PER_USER` |
+| `DATA_BOARD_MAX_DOC_BYTES` | `204800` (200 KiB) | Size of one block or arrow on a whiteboard (a table can be large), `1024` to `1048576` |
 | `ALLOW_ROOMS` | `true` | Live rooms: pages that declare `room` show who is here and share moments live among invited people (`plinth.room`), and doc editors see each other's page edits as they type. Needs the `ROOMS` Durable Object binding, which every config Plinth generates carries ([deploy-checklist.md](deploy-checklist.md#live-rooms)), and `CONTENT_ISOLATION=origin`. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off: pages then get `room.ready` with `available: false` and work alone, and doc editors edit on their own and save from the page. Whiteboards keep saving without it; only their live cursors and drags stop |
 | `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` | `50` | Open sockets on one artifact's room, `2` to `1000` |
 | `ROOM_MAX_MESSAGE_BYTES` | `8192` | One message a page sends to its room, `512` to `65536` |

@@ -38,7 +38,7 @@ with its thread.
 | `list_comments`, `reply_comment`, `resolve_comment` | Read the feedback on an artifact, answer it, close threads |
 | `list_mentions`, `claim_mention` | Pick up requests addressed to you in comments (`@claude`, `@codex` or your connection's name) |
 | `list_artifact_data` | Read a page's shared data (poll votes, sign-ups, tracker rows): a summary, a collection, or one document |
-| `write_artifact_data` | Change shared data when asked: up to 50 `set`/`delete` ops, each with `if_rev` |
+| `write_artifact_data` | Change shared data when asked: up to 50 `set`/`merge`/`delete` ops, each with `if_rev` |
 | `get_design_system` | Read a design system's tokens, CSS, guidelines and components, and the `copy_files` that install it, to build a page, deck or design with it (see "Design systems") |
 | `get_artifact_stats` | Answer who opened the person's own artifacts, when, how often and which version: with `id` (and `days`: 7, 30, 90 or 365) one artifact, without it every artifact they own. Owner only. The people list is the owner's private data: never put it in a page, comment or reply unless they ask for exactly that |
 | `read_sheet`, `edit_sheet` | Read a sheet's cells with computed values; change its cells, rows and columns as one version (see "Sheets") |
@@ -1034,7 +1034,8 @@ dashboard and can come back without a new code. Nobody has to sign up first.
 ## Whiteboards (type whiteboard)
 
 For a board people edit together, send board JSON and Plinth renders a live board: notes, text,
-boxes, ellipses and arrows on a canvas they pan and zoom, with live cursors, export to PNG and SVG.
+shapes, sections, tables and arrows on a canvas they pan and zoom, with live cursors, export to PNG
+and SVG.
 
 - **Pick a whiteboard** for a brainstorm, a retro, an affinity map, a sketch of a system or a plan
   people will move things around on. **Pick html** for a page you lay out yourself, **design** for
@@ -1048,12 +1049,49 @@ boxes, ellipses and arrows on a canvas they pan and zoom, with live cursors, exp
   editors by default, so commenters only view and comment; send `"edit": "commenters"` for a
   board everyone it is shared with should move things on (a retro, a brainstorm). Viewers never
   may. Unknown keys are refused, with the path of the problem (`blocks[2].w`).
-- **A block:** `{ "id", "kind": "note" | "text" | "rect" | "ellipse", "x", "y", "w", "h", "text",
-  "color"?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", "z"? }`. Whole numbers: `x`
-  and `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` the draw order. `text` up to 2,000
-  characters (`""` for none). A note is 200x140, a box 200x100.
+- **A block:** `{ "id", "kind", "x", "y", "w", "h", "text", "color"?, "z"? }`. Whole numbers: `x`
+  and `y` within ±1,000,000, `w` and `h` 24 to 4,000 (every block has a box, text and tables too),
+  `z` the draw order. `text` up to 4,000 characters (`""` for none). A note is 200x140, a box
+  200x100. `kind` is one of:
+  - `note` (a sticky, yellow unless coloured) or `text` (words with no box);
+  - a shape: `rect` (a box), `rounded`, `ellipse`, `diamond`, `pill`, `hexagon`, `parallelogram`,
+    `database`, `queue`, `document`, `cloud` or `person`, its words centred inside it (shapes that
+    curve in fit fewer words: make them larger);
+  - `container`: a section, drawn behind every other block, its `text` the title shown just above
+    its top edge. Blocks lying inside it move with it;
+  - `table` (below).
+- **Colour.** `color` is `yellow`, `green`, `blue`, `pink`, `purple`, `gray` (they follow the
+  viewer's light or dark theme) or any `#rrggbb` (drawn as written, with words in white or black,
+  whichever reads). On a `text` it colours the words.
+- **Style.** A note, shape or section also takes `stroke` (an outline: `ink`, a colour name or
+  `#rrggbb`) and `hollow: true` (no fill, only the outline). Those and `text` take `size` (`small`
+  14, `body` 16, `large` 28, `title` 48, `huge` 96; left out, 14), `textAlign` (`left`, `center`,
+  `right`) and `wrap: false` (each line stays on one line).
+- **Inline marks** in `text`: `**bold**`, `*italic*`, `***both***`, `` `code` `` and
+  `[label](https://...)` (http and https only; it opens in a new tab), never nested; a line that
+  starts `- ` is a bullet, `1. ` keeps its number. Headings and HTML show as typed.
+- **A table:** `{ "id", "kind": "table", "x", "y", "w", "h", "cols", "rows", "fills"?, "heat"?,
+  "color"?, "size"?, "textAlign"? }`, no `text`. `cols` is `{ "c1": { "at": 1, "w": 160 }, ... }`
+  (`at` orders them; `w`, 10 or more, is a column's share of the table's `w`), `rows` is
+  `{ "r1": { "at": 1, "c1": "Plan", "c2": "Price" }, ... }` (the lowest `at` is the header, drawn
+  bold on `color`, gray by default; cells are plain text up to 1,000 characters), at most 40
+  columns and 500 rows, ids of `A-Z a-z 0-9 _ -` but never `at`. `fills` colours cells, by row then
+  column (`{ "r2": { "c2": "green" } }`, `""` clears one); `heat` shades the numbers of some
+  columns, or of some rows, by value: `{ "cols": { "c2": "blue" } }`. Rows share `h` equally, so
+  give a table about 32 of `h` per row. Use one for anything compared point by point, never a grid
+  of blocks.
 - **An arrow:** `{ "id", "from", "to", "label"?, "style"?: "solid" | "dashed", "head"?: "end" |
-  "both" | "none" }`, joining two different blocks; a label up to 120 characters.
+  "both" | "none", "heads"?, "fromSide"?, "toSide"?, "bends"?, "color"? }`, joining two different
+  blocks; a label up to 120 characters. With no side and no `bends` it is a straight line between
+  the blocks. `fromSide` and `toSide` (`top`, `right`, `bottom`, `left`) make it run in right
+  angles from the middle of those sides (give one and the other end faces it). `heads` is
+  `[from, to]`, each `none`, `arrow` or `circle`, and wins over `head`. `color` takes what
+  `stroke` takes. `bends` plans the route: `["v", 65, -160, -75]` leaves `from` upright (`"h"`:
+  level) through its centre, runs level 65 below the centre of `from`, upright 160 left of it,
+  level 75 above the centre of `to`, then drops into `to`: the legs take turns, the first half of
+  the numbers (rounded up) are measured from the centre of `from` and the rest from `to`, at most
+  12. A plan whose first or last corner falls inside its block is drawn as a right-angle route
+  instead.
 - **Ids:** a letter or digit, then up to 63 of `A-Z a-z 0-9 _ -`, unique across blocks and arrows,
   never starting `u_`. At most 500 blocks and arrows in a starting board.
 - **Place blocks on a 240 grid** (`x` and `y` multiples of 240), left to right then down, so they
@@ -1079,8 +1117,12 @@ what is missing with `write_artifact_data`.
   and `rev`.
 - **Add** a block or arrow with a `write_artifact_data` `set` op, `if_rev: 0` (omit `doc_id` for a
   server id, or choose one).
-- **Move or edit** a block with a `set` of the whole block (every field, not only the changed
-  ones) at the `rev` you read. On `conflict`, read it again and redo the change.
+- **Move or edit** a block with a `merge` op of only the fields that change, at the `rev` you read:
+  `{ "op": "merge", "collection": "blocks", "doc_id": "b1", "data": { "x": 480, "kind":
+  "diamond" }, "if_rev": 12 }`. A field set to `null` is removed; a nested value (a table's `rows`)
+  is replaced whole, so send all of it. The result must still be a valid block. On `conflict`, read
+  it again and redo the change. To put a block in front or behind, merge its `z`; sections always
+  draw behind every other block.
 - **Delete** a block with a `delete` op at its `rev`, and its arrows with it.
 - **Settings** (`edit`, `background`) change with `update_artifact`, `content` and `base_version`.
   Send both: one you leave out takes its default (`edit` editors, `background` dots). It takes
