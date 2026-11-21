@@ -24,6 +24,7 @@ import {
   DATA_DOC_ID_RE,
   DEFAULTS,
   DESIGN_EXPORT,
+  defaultDesignSystemInput,
   ERROR_CODES,
   editSheetInput,
   grantsReplaceInput,
@@ -252,6 +253,12 @@ function responseSchemas(): Record<string, Json> {
       description:
         "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written",
     },
+    copied_from: {
+      type: "array",
+      items: ref("CopyRecord"),
+      description:
+        "The files this call copied from other artifacts (copy_files), one record per source version. Absent when it copied none",
+    },
   };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
@@ -294,6 +301,11 @@ function responseSchemas(): Record<string, Json> {
       description:
         "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text.",
     }),
+    default: {
+      const: true,
+      description:
+        "On your own default design system only (chosen in the app): build slides, designs and pages with it without asking. Absent otherwise, and for a token limited to one artifact",
+    },
   };
   return {
     Error: obj({
@@ -320,7 +332,7 @@ function responseSchemas(): Record<string, Json> {
           : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}).`;
       }).join(" ")} Fixed at publish.`,
     },
-    ArtifactSummary: obj(artifactSummary),
+    ArtifactSummary: obj(artifactSummary, ["default"]),
     // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:
     // `html` is required for an HTML page and `content` for a doc, and each has only its own.
     ArtifactDetail: {
@@ -338,30 +350,39 @@ function responseSchemas(): Record<string, Json> {
         const def = TYPE_REGISTRY[t];
         return [
           detailSchemaName(t),
-          obj({
-            ...artifactSummary,
-            type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
-            version: int({ minimum: 1, description: "The version returned" }),
-            source_path: str({
-              enum: [def.sourcePath],
-              description: "The version file holding the source",
-            }),
-            [def.sourceField]: str({ description: sourceDescription(def) }),
-            assets: {
-              type: "array",
-              description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
-              items: obj({
-                path: str(),
-                size_bytes: int(),
-                content_type: str(),
-                sha256: nullable("string", {
-                  pattern: SHA256_RE.source,
-                  description:
-                    "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash",
-                }),
+          obj(
+            {
+              ...artifactSummary,
+              type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
+              version: int({ minimum: 1, description: "The version returned" }),
+              source_path: str({
+                enum: [def.sourcePath],
+                description: "The version file holding the source",
               }),
+              [def.sourceField]: str({ description: sourceDescription(def) }),
+              assets: {
+                type: "array",
+                description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
+                items: obj({
+                  path: str(),
+                  size_bytes: int(),
+                  content_type: str(),
+                  sha256: nullable("string", {
+                    pattern: SHA256_RE.source,
+                    description:
+                      "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash",
+                  }),
+                }),
+              },
+              copied_from: {
+                type: "array",
+                items: ref("CopiedFrom"),
+                description:
+                  "The version's files copied from other artifacts (copy_files), by source version. Absent when it holds none",
+              },
             },
-          }),
+            ["default", "copied_from"],
+          ),
         ];
       }),
     ),
@@ -424,7 +445,55 @@ function responseSchemas(): Record<string, Json> {
       },
       ["pending"],
     ),
-    PublishResult: obj(publishResult, ["category", "category_share", "board"]),
+    PublishResult: obj(publishResult, ["category", "category_share", "board", "copied_from"]),
+    CopyRecord: obj({
+      artifact: str({ description: "The source artifact's id" }),
+      version: int({ minimum: 1, description: "The source version copied from" }),
+      copied_at: dateTime,
+      files: {
+        type: "array",
+        items: obj({
+          path: str({ description: "Where the copy is in this version" }),
+          from: str({ description: "Its path in the source version" }),
+        }),
+      },
+    }),
+    CopiedFrom: {
+      ...obj({
+        artifact: str({ description: "The source artifact's id" }),
+        version: int({ minimum: 1 }),
+        copied_at: dateTime,
+        files: {
+          type: "array",
+          items: obj({ path: str(), from: str() }),
+        },
+        title: nullable("string", {
+          description: "The source's title when you may view it now, else null. Untrusted text",
+        }),
+        current_version: nullable("integer", {
+          description: "The source's current version when you may view it now, else null",
+        }),
+      }),
+      description: "Files of this version copied from one version of another artifact",
+    },
+    DesignSystemInstall: obj({
+      folder: str({ description: 'Where the files land: "ds/<prefix>"' }),
+      copy_files: {
+        type: "array",
+        items: obj({
+          artifact: str(),
+          path: str(),
+          to: str(),
+          version: int({ minimum: 1 }),
+        }),
+        description: "Pass these as copy_files to publish or update the artifact that uses it",
+      },
+      stylesheets: {
+        type: "array",
+        items: str(),
+        description: "Link these, in order, from the head (paths relative to the version's root)",
+      },
+    }),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -536,7 +605,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category", "category_share", "board"],
+      ["category", "category_share", "board", "copied_from"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -1297,6 +1366,13 @@ function designSystemSchemas(): Record<string, Json> {
         guidelines: nullable("string", { description: untrusted("Markdown") }),
         component_css: str({ description: untrusted("CSS") }),
         components: { type: "array", items: ref("DesignSystemComponent") },
+        files: {
+          type: "array",
+          items: str(),
+          description:
+            "Every path copy_files can take from this version: system.json, the generated tokens.css, fonts.css, components.css and tokens.json, and its images and fonts",
+        },
+        install: ref("DesignSystemInstall"),
         problems: {
           type: "array",
           items: obj({ path: str(), message: str() }),
@@ -1304,7 +1380,17 @@ function designSystemSchemas(): Record<string, Json> {
         },
         untrusted: { const: true },
       },
-      ["css", "font_links", "fonts", "tokens", "guidelines", "component_css", "components"],
+      [
+        "css",
+        "font_links",
+        "fonts",
+        "tokens",
+        "guidelines",
+        "component_css",
+        "components",
+        "files",
+        "install",
+      ],
     ),
   };
 }
@@ -1316,11 +1402,11 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
       | { properties: Json; required: string[] }
       | undefined;
     if (!detail) continue;
-    if (t === "html") {
+    if (t === "html" || t === "design") {
       detail.properties.design_system = {
         oneOf: [ref("DesignSystemReference"), { type: "null" }],
         description:
-          'Only for a page with <meta name="plinth-design-system">: that design system when you ' +
+          'Only for a page (or a design, in its shared section) with <meta name="plinth-design-system">: that design system when you ' +
           "may view it and it is one, else null",
       };
     }
@@ -1543,6 +1629,7 @@ function categorySharingSchemas(): Record<string, Json> {
     CreateCategoryShareInput: fromZod(createCategoryShareInput),
     UpdateCategoryShareInput: fromZod(updateCategoryShareInput),
     CategoryReviewInput: fromZod(categoryReviewInput),
+    DefaultDesignSystemInput: fromZod(defaultDesignSystemInput),
     MyCategoryInput: fromZod(myCategoryInput),
     CategoryPerson: person,
     CategoryShareResult: obj(
@@ -2309,6 +2396,21 @@ function operations(): Operation[] {
         },
       ],
       ok: [200, "DesignSystemRead"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "put",
+      path: API.defaultDesignSystem,
+      operationId: "setDefaultDesignSystem",
+      summary: "Make one of your design systems your default, or stop it being it",
+      description:
+        "One default per person: choosing one replaces any other, and list_artifacts marks it " +
+        "`default: true` for you. Your own artifacts of type design_system only (another type " +
+        "gets 400 `not_design_system`). Session only: bearer tokens get 403 `app_only`.",
+      tag: "Artifacts",
+      auth: "user",
+      body: "DefaultDesignSystemInput",
+      ok: [200, "ArtifactSummary"],
       errors: [400, 401, 403, 404],
     },
     {

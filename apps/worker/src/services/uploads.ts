@@ -10,6 +10,7 @@ import {
   ARTIFACT_ID_RE,
   type ArtifactType,
   type BundleResult,
+  copyFilesSchema,
   LIMITS,
   type PublishResult,
   RATE_LIMITS,
@@ -43,6 +44,7 @@ import { readBundle } from "./bundle.ts";
 import { requireCategoryRight, resolveCategory } from "./categories.ts";
 import { categoryShareResult, filingShareResult } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
+import { type CopyPlan, copyRecords, resolveCopies, stageCopies } from "./copies.ts";
 import {
   commitStaged,
   DB_NOW,
@@ -90,6 +92,8 @@ export interface TicketRow {
   note: string | null;
   /** The category start_upload was given (migrations/0009_categories.sql); NULL = none given. */
   category: string | null;
+  /** The copy_files start_upload was given, as JSON (migrations/0022); NULL = none. */
+  copy_files: string | null;
   base_version: number | null;
   state: "open" | "used" | "dead";
   /** Why a dead ticket ended: a version conflict, or a takedown of its artifact. */
@@ -198,6 +202,9 @@ export async function startUpload(
       next: "Send board JSON inline in publish_artifact or update_artifact",
     });
   }
+  // Copies are authorized now, so a ticket that cannot copy is refused before it is minted, and
+  // again as the ticket's principal when the bundle commits (redeemBundle).
+  if (input.copy_files !== undefined && def) await resolveCopies(ctx, input.copy_files, def);
 
   const limit = uploadTicketsPerHour(ctx.config);
   const rate = await hit(ctx.env.DB, `upload:${p.userId}`, limit, 3600);
@@ -232,8 +239,8 @@ export async function startUpload(
   await ctx.env.DB.prepare(
     `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, admin_token_hash,
        scopes, mode, artifact_id, artifact_type, title, note, base_version, state, attempts,
-       created_at, expires_at, reserved_artifact_id, category)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17)`,
+       created_at, expires_at, reserved_artifact_id, category, copy_files)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17, ?18)`,
   )
     .bind(
       id,
@@ -253,6 +260,7 @@ export async function startUpload(
       expiresAt,
       fresh ? fresh.artifactId : null,
       target.category ?? null,
+      input.copy_files !== undefined ? JSON.stringify(input.copy_files) : null,
     )
     .run();
   // No cron under `wrangler dev`: clear abandoned attempts and old tickets here too (capped,
@@ -509,6 +517,8 @@ export async function redeemBundle(
       });
     }
     const target = await ticketTarget(ctx, ticket, deps);
+    // The ticket's copies, authorized again as the ticket's principal, before the rate hit.
+    const copies = await ticketCopies(ctx, ticket, def);
     await deps.enforcePublishRate(ctx);
     // An account already at its quota stages nothing; below it, the stager refuses puts past the
     // room left, so an abandoned attempt cannot leave more than that behind.
@@ -537,6 +547,9 @@ export async function redeemBundle(
       await stager.add(entry.path, entry.bytes);
     }
     stopClock();
+    // Beside the bundle's files, at their own paths (a prefix strip never moves them).
+    await stageCopies(stager, copies);
+    inTime();
     const staged = await stager.finish(
       reader.summary.strippedPrefix ? { stripPrefix: reader.summary.strippedPrefix } : undefined,
     );
@@ -569,10 +582,12 @@ export async function redeemBundle(
         target.mode === "publish" ? "owner" : (target.role ?? null),
       ),
     );
+    const copied = copyRecords(copies);
     return {
       status: ticket.mode === "publish" ? 201 : 200,
       body: {
         ...result,
+        ...(copied ? { copied_from: copied } : {}),
         ...(share ? { category_share: share } : {}),
         // Only the uploader that minted the ticket reads this, and only an owner can set it.
         ...(target.category !== undefined ? { category: target.category } : {}),
@@ -590,6 +605,24 @@ export async function redeemBundle(
     stopClock();
     req.signal?.removeEventListener("abort", onDisconnect);
   }
+}
+
+/** A ticket's copy_files, authorized as `ctx` (the ticket's principal now), or null. */
+async function ticketCopies(
+  ctx: Ctx,
+  t: TicketRow,
+  def: NonNullable<ReturnType<typeof typeDef>>,
+): Promise<CopyPlan | null> {
+  if (t.copy_files === null) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(t.copy_files);
+  } catch {
+    raw = null;
+  }
+  const parsed = copyFilesSchema.safeParse(raw);
+  if (!parsed.success) throw new ApiError("internal", "The upload's copy_files cannot be read");
+  return resolveCopies(ctx, parsed.data, def);
 }
 
 const tooSlow = uploadTooSlow;

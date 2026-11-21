@@ -4,6 +4,7 @@ import { startUpload } from "../../services/uploads.ts";
 import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
 import {
   CATEGORY_NOTE,
+  COPY_FILES_NOTE,
   categoryShareNote,
   PROJECT_FILES_NOTE,
   UNTRUSTED_NOTE,
@@ -39,6 +40,7 @@ export const registerUploadTools: ToolRegistrar = ({ server, ctx, opaque }) => {
         "files with what you sent before you call it yours (a collaborator may have published it). " +
         "Call start_upload again (with the same base_version) only when nothing was published. An " +
         "upload never commits twice: sending it again answers upload_used. " +
+        COPY_FILES_NOTE +
         CATEGORY_NOTE +
         categoryShareNote(ctx.config) +
         UPLOAD_NOTE +

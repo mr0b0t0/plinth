@@ -76,6 +76,12 @@ export interface ArtifactSummary {
    * artifacts). Seen by that person only, in the app: null for everyone else and for agents.
    */
   my_category?: string | null;
+  /**
+   * `true` on the design system its owner chose as their default (docs/spec.md "Design systems",
+   * The default design system): agents build slides, designs and pages with it without asking.
+   * Sent only to the owner (never to a token limited to one artifact), and only when true.
+   */
+  default?: true;
 }
 
 export interface AssetInfo {
@@ -104,6 +110,29 @@ export interface ArtifactDetailBase extends ArtifactSummary {
    * none, and for other types.
    */
   design_system?: DesignSystemReference | null;
+  /**
+   * The files this version holds that were copied from other artifacts (copy_files), one record
+   * per source version and copy time. `title` and `current_version` only when the caller may view
+   * that source now (null otherwise). Absent when the version holds no copies.
+   */
+  copied_from?: CopiedFrom[];
+}
+
+/**
+ * Files copied from one version of another artifact by one publish (copy_files), as the version
+ * records them: the source's id and version, when, and each file's path here and in the source.
+ */
+export interface CopyRecord {
+  artifact: string;
+  version: number;
+  copied_at: string;
+  files: { path: string; from: string }[];
+}
+
+/** A CopyRecord as get_artifact returns it, with the source as the caller may see it now. */
+export interface CopiedFrom extends CopyRecord {
+  title: string | null;
+  current_version: number | null;
 }
 
 /** The design system an HTML page says it was built on, as get_artifact returns it. */
@@ -167,6 +196,8 @@ export interface PublishResult {
    * then has the warning board_not_seeded).
    */
   board?: { blocks: number; arrows: number };
+  /** The files this call copied from other artifacts (copy_files). Absent when it copied none. */
+  copied_from?: CopyRecord[];
 }
 
 /** Where an artifact stands in its shared category, for its owner's own results. */
@@ -1037,6 +1068,16 @@ export interface DesignSystemComponentRead {
  * get_design_system and GET /artifacts/:ref/design-system. Every text field is untrusted data
  * written by the design system's authors. Parts left out by `include` are absent.
  */
+/** How get_design_system says to install a design system's files into another artifact. */
+export interface DesignSystemInstall {
+  /** The folder the files land in: `ds/<prefix>`. */
+  folder: string;
+  /** Pass these as copy_files (artifact, path, to, version) to publish or update the artifact. */
+  copy_files: { artifact: string; path: string; to: string; version: number }[];
+  /** Link these, in order, from the page's head (relative to the version's root). */
+  stylesheets: string[];
+}
+
 export interface DesignSystemRead {
   id: string;
   slug: string;
@@ -1055,6 +1096,16 @@ export interface DesignSystemRead {
   guidelines?: string | null;
   component_css?: string;
   components?: DesignSystemComponentRead[];
+  /**
+   * Every path copy_files can take from this version: system.json, the generated tokens.css,
+   * fonts.css, components.css and tokens.json, and its images and fonts. Absent with problems.
+   */
+  files?: string[];
+  /**
+   * The copy_files entries that install this version into another artifact under
+   * `ds/<prefix>/`, and the stylesheets to link from there. Absent with problems.
+   */
+  install?: DesignSystemInstall;
   /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
   problems: { path: string; message: string }[];
   untrusted: true;

@@ -4,12 +4,16 @@
 // type is checked after the access decision, so nobody learns whether an artifact they cannot
 // view exists or what type it is.
 import {
+  type ArtifactSummary,
   DESIGN_SYSTEM_FORMAT,
   type DesignSystemRead,
   type DesignSystemReference,
+  defaultDesignSystemInput,
   designSystemComponentCss,
   designSystemCss,
+  designSystemFilePaths,
   designSystemFontLinks,
+  designSystemInstall,
   type GetDesignSystemInput,
   type PublishWarning,
   parseDesignSystem,
@@ -18,10 +22,17 @@ import {
 } from "@plinth/shared";
 import { appUrl } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
-import { ApiError } from "../lib/errors.ts";
-import { decideFor, findArtifact, requireArtifact, requireVersion } from "./artifacts.ts";
+import { ApiError, unauthorized } from "../lib/errors.ts";
+import { mayChooseDefaultDesignSystem } from "../policy.ts";
+import {
+  decideFor,
+  findArtifact,
+  requireArtifact,
+  requireVersion,
+  summaryFor,
+} from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
-import { readText } from "./storage.ts";
+import { parseManifest, readText } from "./storage.ts";
 
 const DEF = TYPE_REGISTRY.design_system;
 
@@ -64,6 +75,8 @@ export async function getDesignSystem(
     };
   }
   const ds = parsed.value;
+  const stored = parseManifest(v.manifest).map((e) => e.path);
+  const ref = { id: artifact.id, version: v.number };
   const wants = (part: NonNullable<GetDesignSystemInput["include"]>[number]) =>
     !input.include || input.include.includes(part);
   const components = input.components
@@ -116,8 +129,57 @@ export async function getDesignSystem(
           })),
         }
       : {}),
+    // What copy_files can take from this version, and the entries that install it.
+    files: designSystemFilePaths(DEF.sourcePath, stored),
+    install: designSystemInstall(ds, ref, new Set(stored)),
     problems: [],
   };
+}
+
+/**
+ * Make one of the signed-in person's own design systems their default, or stop it being the default
+ * (docs/spec.md "Design systems", The default design system). One column per person, so choosing
+ * one replaces any other. People only, in the app (policy.ts mayChooseDefaultDesignSystem); the
+ * design system must be theirs (`manage`), live and of the type, checked after the access decision.
+ */
+export async function setDefaultDesignSystem(
+  ctx: Ctx,
+  ref: string,
+  body: unknown,
+): Promise<ArtifactSummary> {
+  const p = ctx.principal;
+  if (!mayChooseDefaultDesignSystem(p)) {
+    if (p.kind === "agent") {
+      throw new ApiError("forbidden", "The default design system is chosen in the app", {
+        reason: "app_only",
+        next: "Ask the person to choose it in the app (the design system's menu on the dashboard)",
+      });
+    }
+    throw unauthorized("Sign in to do this");
+  }
+  const { artifact, role } = await requireArtifact(ctx, ref, "manage");
+  const input = defaultDesignSystemInput.safeParse(body);
+  if (!input.success) {
+    throw new ApiError("invalid_input", "Invalid input", { issues: input.error.issues });
+  }
+  const on = input.data.default;
+  if (artifact.type !== DEF.id) {
+    throw new ApiError("invalid_input", "Only a design system can be the default", {
+      type: artifact.type,
+      reason: "not_design_system",
+    });
+  }
+  if (on && artifact.takenDownAt) {
+    throw new ApiError("forbidden", "This artifact was taken down", { reason: "taken_down" });
+  }
+  await ctx.env.DB.prepare(
+    on
+      ? "UPDATE users SET default_design_system = ?2 WHERE id = ?1"
+      : "UPDATE users SET default_design_system = NULL WHERE id = ?1 AND default_design_system = ?2",
+  )
+    .bind(p.userId, artifact.id)
+    .run();
+  return summaryFor(ctx, artifact, role);
 }
 
 /**

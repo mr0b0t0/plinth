@@ -230,6 +230,14 @@ export const LIMITS = {
   maxDataShared: 20,
   /** Bytes of design HTML (design.html) per version of a design artifact. */
   maxDesignBytes: 2 * MB,
+  /**
+   * Files one publish, update or upload copies from other artifacts (copy_files; docs/spec.md
+   * "Copying files from another artifact"), the distinct source versions they come from, and their
+   * bytes in total.
+   */
+  maxCopyFiles: 64,
+  maxCopySources: 4,
+  maxCopyBytes: 32 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
   maxDesignSystemBytes: 1 * MB,
   /** The design system format's limits (packages/shared/src/designSystem.ts). */
