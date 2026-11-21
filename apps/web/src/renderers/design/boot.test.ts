@@ -7,6 +7,7 @@ import {
   BOARD_MESSAGE_SOURCE,
   BOARD_PROTOCOL_VERSION,
   DESIGN_EXPORT_LAYOUT_SCRIPT,
+  DESIGN_LIMITS,
   designExportKeepOnlyScript,
   designExportLoadedScript,
   RENDERER_MESSAGE_SOURCE,
@@ -646,5 +647,175 @@ describe("the export layout (the server's PNG and PDF)", () => {
     handle = start(topLevel("", "/__plinth/v/2/"), { matchMedia: () => false });
     expect(root().getAttribute("data-mode")).toBe("canvas");
     expect(html().hasAttribute("data-export")).toBe(false);
+  });
+});
+
+describe("fluid boards, placement, notes, flows and deep links", () => {
+  const labelOf = (id: string) =>
+    document.querySelector(`.plinth-design__label[data-board="${id}"]`) as HTMLElement;
+  const slotOf = (id: string) =>
+    document.querySelector(`.plinth-design__board[data-board="${id}"]`) as HTMLElement;
+  const interactWith = (id: string) =>
+    (labelOf(id).querySelector(".plinth-design__label-interact") as HTMLButtonElement).click();
+  const sizeMsg = (height: unknown) => ({ ...boardMsg("size"), height });
+  const gotoMsg = (board: unknown) => ({ ...boardMsg("goto"), board });
+  const fromApp = (f: Framed, data: unknown) =>
+    f.target.dispatchEvent(
+      new MessageEvent("message", { data, origin: APP, source: f.parent as unknown as Window }),
+    );
+  const appMsg = (type: string, extra: Record<string, unknown> = {}) => ({
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type,
+    ...extra,
+  });
+  const toApp = (f: Framed) =>
+    f.parent.postMessage.mock.calls.map(([m, target]) => ({ m, target }));
+
+  const FLUID = [
+    '<!-- note kind="title" -->',
+    "Web <b>pages</b>",
+    '<!-- artboard id="site" name="Site" size="desktop" height="auto" -->',
+    '<main><a href="#board=pricing">Pricing</a></main>',
+    '<!-- artboard id="pricing" name="Pricing" width="1440" height="auto" -->',
+    "<main>Plans</main>",
+    '<!-- note x="0" y="-400" color="blue" -->',
+    "Ask legal\nabout the copy",
+    '<!-- artboard id="ad" name="Ad" size="ad-medium-rectangle" x="2000" y="0" -->',
+    "<p>Ad</p>",
+  ].join("\n");
+
+  it("tells a fluid board's loader to measure it, and grows the board to what it reports", () => {
+    mount(FLUID);
+    const f = framed();
+    handle = start(f);
+    const site = winOf(f, "site");
+    const ad = winOf(f, "ad");
+    fromWindow(f, site, boardMsg("ready"));
+    fromWindow(f, ad, boardMsg("ready"));
+    expect(site.postMessage.mock.calls[0]?.[0]).toMatchObject({ type: "render", fluid: true });
+    expect(ad.postMessage.mock.calls[0]?.[0]).not.toHaveProperty("fluid");
+    expect(site.postMessage.mock.calls[0]?.[0].html).toContain(
+      "html{width:1440px;overflow:hidden;background:#ffffff}body{margin:0}",
+    );
+    // Starts at its size's height, its least.
+    expect(slotOf("site").style.height).toBe("900px");
+    const below = () => Number.parseFloat(slotOf("pricing").style.getPropertyValue("--pd-y"));
+    const before = below();
+    fromWindow(f, site, sizeMsg(2400.4));
+    expect(slotOf("site").style.height).toBe("2401px");
+    expect(frameFor("site")?.getAttribute("height")).toBe("2401");
+    expect(slotOf("site").dataset.size).toBe("s1440x2401");
+    // Never under its least height, never over the cap; a fixed board ignores sizes.
+    fromWindow(f, site, sizeMsg(10));
+    expect(slotOf("site").style.height).toBe("900px");
+    fromWindow(f, site, sizeMsg(1e9));
+    expect(slotOf("site").style.height).toBe(`${DESIGN_LIMITS.maxAutoHeight}px`);
+    fromWindow(f, site, sizeMsg("tall"));
+    expect(slotOf("site").style.height).toBe(`${DESIGN_LIMITS.maxAutoHeight}px`);
+    fromWindow(f, ad, sizeMsg(1000));
+    expect(slotOf("ad").style.height).toBe("250px");
+    // The rows were laid out again round the taller board: the next one moved.
+    expect(below()).not.toBe(before);
+  });
+
+  it("places boards and notes that give x and y, and packs the rest under them", () => {
+    mount(FLUID);
+    handle = start(framed());
+    const x = (id: string) => Number.parseFloat(slotOf(id).style.getPropertyValue("--pd-x"));
+    const y = (id: string) => Number.parseFloat(slotOf(id).style.getPropertyValue("--pd-y"));
+    expect([x("ad"), y("ad")]).toEqual([2000, 0]);
+    // The packed rows start under the placed board and note.
+    expect(y("site")).toBeGreaterThan(250);
+    expect(y("pricing")).toBe(y("site"));
+    const notes = [...document.querySelectorAll<HTMLElement>(".plinth-design__note")];
+    expect(notes.map((n) => [n.dataset.kind, n.textContent])).toEqual([
+      ["title", "Web <b>pages</b>"],
+      ["sticky", "Ask legal\nabout the copy"],
+    ]);
+    // Text only: the markup in a note is never parsed.
+    expect(document.querySelector(".plinth-design__note b")).toBeNull();
+    expect(notes[1]?.dataset.color).toBe("blue");
+    expect(notes[1]?.style.width).toBe(`calc(${DESIGN_LIMITS.stickyWidth}px * var(--pd-unit, 1))`);
+    expect(notes[1]?.style.getPropertyValue("--pd-x")).toBe("0px");
+    expect(notes[1]?.style.getPropertyValue("--pd-y")).toBe("-400px");
+    // The title heads the row of boards after it.
+    expect(Number.parseFloat(notes[0]?.style.getPropertyValue("--pd-y") ?? "")).toBeLessThan(
+      y("site"),
+    );
+  });
+
+  it("follows a #board= link from the board in use only, and puts the next board in use", () => {
+    mount(FLUID);
+    const f = framed();
+    handle = start(f);
+    fromWindow(f, winOf(f, "site"), boardMsg("ready"));
+    // Not in use: a board's script cannot move the canvas by itself.
+    fromWindow(f, winOf(f, "site"), gotoMsg("pricing"));
+    expect(cover("pricing").hidden).toBe(false);
+    expect(labelOf("pricing").hasAttribute("data-active")).toBe(false);
+    interactWith("site");
+    expect(cover("site").hidden).toBe(true);
+    // Before render, a malformed id and an unknown board do nothing.
+    fromWindow(f, winOf(f, "site"), gotoMsg("Pricing"));
+    fromWindow(f, winOf(f, "site"), gotoMsg("nowhere"));
+    expect(cover("site").hidden).toBe(true);
+    fromWindow(f, winOf(f, "site"), gotoMsg("pricing"));
+    expect(cover("site").hidden).toBe(false);
+    expect(cover("pricing").hidden).toBe(true);
+    expect(labelOf("pricing").hasAttribute("data-active")).toBe(true);
+    expect(labelOf("pricing").hasAttribute("data-interacting")).toBe(true);
+  });
+
+  it("tells the app which board it shows, and goes to the one the app asks for", () => {
+    mount(FLUID);
+    const f = framed();
+    handle = start(f);
+    expect(toApp(f)).toEqual([{ m: appMsg("ready", { board: null }), target: APP }]);
+    f.parent.postMessage.mockClear();
+    (labelOf("ad").querySelector(".plinth-design__label-name") as HTMLButtonElement).click();
+    expect(toApp(f)).toEqual([{ m: appMsg("board", { board: "ad" }), target: APP }]);
+    f.parent.postMessage.mockClear();
+    (
+      document.querySelector('.plinth-design__btn[aria-label="Fit all boards"]') as HTMLElement
+    ).click();
+    expect(toApp(f)).toEqual([{ m: appMsg("board", { board: null }), target: APP }]);
+    f.parent.postMessage.mockClear();
+    // The app's goto: only from the app window at the app origin, only for a board it has.
+    f.target.dispatchEvent(
+      new MessageEvent("message", {
+        data: appMsg("goto", { board: "site" }),
+        origin: "https://evil.example",
+        source: f.parent as unknown as Window,
+      }),
+    );
+    fromApp(f, appMsg("goto", { board: "nowhere" }));
+    fromApp(f, appMsg("goto", { board: "<b>" }));
+    expect(toApp(f)).toEqual([]);
+    fromApp(f, appMsg("goto", { board: "site" }));
+    expect(labelOf("site").hasAttribute("data-active")).toBe(true);
+    expect(toApp(f)).toEqual([{ m: appMsg("board", { board: "site" }), target: APP }]);
+    // A fluid board too tall to read whole is shown at its width, from its top.
+    fromWindow(f, winOf(f, "site"), boardMsg("ready"));
+    fromWindow(f, winOf(f, "site"), sizeMsg(6000));
+    fromApp(f, appMsg("goto", { board: "site" }));
+    expect(Number(html().getAttribute("data-zoom"))).toBeGreaterThan(
+      Math.floor((800 / 6000) * 100),
+    );
+  });
+
+  it("gives a fluid board's export page its measured height", () => {
+    mount(FLUID);
+    const f = topLevel("", "/__plinth/v/2/");
+    handle = start(f, { matchMedia: (q) => q === "print" });
+    const css = () => document.getElementById(PRINT_STYLE_ID)?.textContent ?? "";
+    expect(css()).toContain("@page s1440x900 { size: 1440px 900px; margin: 0; }");
+    const site = winOf(f, "site");
+    fromWindow(f, site, boardMsg("ready"));
+    fromWindow(f, site, sizeMsg(3000));
+    expect(css()).toContain("@page s1440x3000 { size: 1440px 3000px; margin: 0; }");
+    expect(slotOf("site").dataset.size).toBe("s1440x3000");
+    // No notes in an export: only boards.
+    expect(document.querySelector(".plinth-design__note")).toBeNull();
   });
 });

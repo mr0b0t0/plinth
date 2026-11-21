@@ -1,9 +1,10 @@
 // Plinth's own elements on the design canvas, all built with createElement and textContent: the
 // board labels (the name, which zooms to the board, and Interact), the cover over each board frame
-// (the comment anchor, `__plinth-board-<id>`) and the toolbar (zoom and Fit, or Done while a board
-// is in use).
-// Author markup never reaches this document: boards exist here only as frames.
-import type { DesignBoard } from "@plinth/shared";
+// (the comment anchor, `__plinth-board-<id>`), the canvas notes and the toolbar (zoom and Fit, or
+// Done while a board is in use).
+// Author markup never reaches this document: boards exist here only as frames, and a note's text
+// only as textContent.
+import { DESIGN_LIMITS, type DesignBoard, type DesignNote } from "@plinth/shared";
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   doc: Document,
@@ -84,6 +85,25 @@ export function boardSlot(
   cover.setAttribute("aria-hidden", "true");
   slot.append(cover);
   return { slot, cover };
+}
+
+/**
+ * A note on the canvas: a title over the boards after it, or a sticky. Its text is set as
+ * textContent (line breaks kept by CSS), so markup in it shows as written.
+ */
+export function noteEl(doc: Document, note: DesignNote, key: string): HTMLElement {
+  const n = el(doc, "div", "plinth-design__note", note.text);
+  n.dataset.note = key;
+  n.dataset.kind = note.kind;
+  if (note.kind === "sticky") {
+    n.dataset.color = note.color;
+    n.style.width = `calc(${note.width ?? DESIGN_LIMITS.stickyWidth}px * var(--pd-unit, 1))`;
+  } else if (note.width !== null) {
+    n.style.width = `calc(${note.width}px * var(--pd-unit, 1))`;
+    n.dataset.wrap = "";
+  }
+  n.setAttribute("role", "note");
+  return n;
 }
 
 export interface ToolbarActions {

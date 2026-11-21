@@ -664,8 +664,21 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   then writes itself over (`document.open`, `write`, `close`) and says `loaded` when the board has
   loaded. It checks no origin, by design: whatever its parent writes runs with no origin, as it
   would in an opaque frame of the parent's own making. Board script can post anything to its
-  parent afterwards; the renderer ignores it except `loaded`, which only counts towards print
-  readiness.
+  parent afterwards; the renderer reads only three kinds from that frame's window, none of which
+  reaches beyond the canvas's own view: `loaded`, which only counts towards print readiness;
+  `size`, for a fluid board (`height="auto"`) only, which sets that board's height between its
+  least height and 8,000 px; and `goto` with a board id, which the canvas follows (zooming to the
+  board and putting it in use) only from the board in use. The loader itself posts `size` from
+  its own measurement and turns a click on a link whose `href` attribute is exactly
+  `#board=<id>` into `goto`, without following it (the `<base>` would resolve it to the version's
+  root).
+- **Notes are text in the shell.** A canvas note's text (`<!-- note -->`) is set with
+  `textContent`, so markup in it shows as written and never runs.
+- **Deep links carry ids only.** The shell tells the app which board it shows (`ready`, `board`)
+  with a board id or null, posted to the exact app origin, and takes `goto` from the app window at
+  that origin. The app accepts them only from the shell's window (its origin, or `"null"` under
+  opaque isolation), never from a board, whose window is another, and keeps the id in its own
+  address's fragment, which never reaches the server.
 - **Who may frame the loader.** Under origin isolation, for a view or capture pass, the shell has
   the artifact's own origin (inside the app, or at the top for a capture), so the loader keeps
   `frame-ancestors 'self' <app>` like every other content document, and no other site can frame it

@@ -1794,10 +1794,23 @@ is a new version, which owners and editors can revert by restoring an older one.
   `transparent` or a color name; white by default) and `section` (a section's boards stay
   together on one row when they fit). Presets cover phones and desktops, social posts, IAB ads,
   print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
+  `height="auto"` with a `size` or a `width` makes a fluid page board (Claude's PAGE frames): its
+  document gets no height, the board loader measures its content once it loads and on every
+  change, and the board is that tall, from its least height (the size's height, or 10/16 of the
+  width) up to 8,000 px. `x` and `y` (both or neither, whole CSS px from -100,000 to 100,000)
+  place a board's top-left corner on the canvas (decided 2026-11-21).
   At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
   bad marker is refused with a fix-it message for the first problem and every problem with its
   line in `details.issues`. The title is the shared section's `<title>`, else the first board's
   name. One parser for the Worker and the renderer.
+- **Canvas notes** (decided 2026-11-21). A whole line `<!-- note -->` (a sticky) or
+  `<!-- note kind="title" -->` starts a note, and the lines up to the next marker are its plain
+  text (blank lines round it dropped, at most 1,000 characters, at most 60 notes). Attributes are
+  `kind`, `x` and `y` (as for a board), `width` (80 to 4,096 px: a sticky's width, 240 by default,
+  or where a title wraps) and a sticky's `color` (`yellow` by default, `gray`, `red`, `orange`,
+  `green`, `teal`, `blue`, `purple`, `pink`). The shell shows the text with `textContent`, so markup
+  in it is never parsed. Notes are not boards: they are not exported, printed, commented on or
+  counted in the 60 boards, and their lines belong to no board.
 - **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
   relative path. Font files and data files (JSON, text) are refused with what to do instead
   (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
@@ -1811,7 +1824,15 @@ is a new version, which owners and editors can revert by restoring an older one.
   out in rows with the board's name over each; the name zooms to its board. Rows are packed for
   the screen: consecutive sections share a row, a wider gap between sections than between boards,
   and the row width is the one at which every board shows at the largest scale, so the first view
-  fills the screen. Fit keeps every board clear of the toolbar at the bottom. Drag, the
+  fills the screen. Boards and notes with `x` and `y` sit exactly there, and the packed rows start
+  under them; a design with neither lays out as before. A title note without them starts a row and
+  heads the boards after it; a sticky without them takes a place in its row like a board. Notes
+  move and zoom with the boards, and their type grows with the design's gaps (a design of tall
+  boards has larger notes). A fluid board that grows or shrinks lays the rows out again; the view
+  stays where it is unless it is fitting, or still on the board last zoomed to, which it zooms to
+  again. Zooming to a fluid board too tall to read whole shows it at its width from its top. A
+  fluid board not yet mounted shows at its least height, and keeps its measured height while its
+  frame is away. Fit keeps every board clear of the toolbar at the bottom. Drag, the
   wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
   toolbar (Zoom out, the zoom level, which goes to 100%, Zoom in and Fit) and `+`, `-`, `0` (Fit)
   and `1` (100%) zoom between 5% and 400%. After Fit
@@ -1820,8 +1841,19 @@ is a new version, which owners and editors can revert by restoring an older one.
   covered so the canvas can be dragged; Interact, on the label of the board last zoomed to (and on
   a label that is hovered or focused), takes that board's cover off so its links, buttons and
   scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
-  Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  Done; Done, Escape or a click outside puts the cover back. **Prototype flows** (decided
+  2026-11-21): in the board in use, a click on a link whose `href` is exactly `#board=<id>` is not
+  followed; the canvas zooms to that board and puts it in use instead, so people click through a
+  flow. A board not in use cannot move the canvas, and an unknown id does nothing. At most 24 board frames are alive at once; boards far off screen are placeholders until
   they come back (a board's own state starts again then).
+- **Deep links** (decided 2026-11-21). The app keeps the board on view in its address's fragment,
+  `#board=<id>`, as a deck keeps `#slide=N`: written with `history.replaceState`, never sent to
+  the server, set when the canvas zooms to a board (its name, a flow, the app's `goto`) and taken
+  out after Fit. A reload, a shared link or a new frame (a newer version, review mode) opens on
+  that board. The shell says `ready` and `board` with only a board id (or null), to the exact app
+  origin, and the app answers `goto` with one. The app accepts them from the shell's window alone
+  (its origin, or `"null"` under opaque isolation, as for a deck), never from a board, whose window
+  is another.
 - **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
   at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
   document over itself when the renderer posts it: Plinth's base URL (the shown version's own
@@ -1834,7 +1866,9 @@ is a new version, which owners and editors can revert by restoring an older one.
   in-chat preview pass, whose shell no source can name), and the renderer
   frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
   no storage and no access to the shell, the app or another board, and it cannot navigate any of
-  them (links may open a new tab, as on every artifact).
+  them (links may open a new tab, as on every artifact). Besides `ready` and `loaded`, the loader
+  reports a fluid board's content height (`size`) and turns a click on a `#board=<id>` link into
+  `goto`; the renderer reads each only from that board's frame (docs/security.md, Designs).
   The shell's own DOM never holds author markup. A design's files are served with
   `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
   never run script; its `design.html`, which no board loads, is served as text with
@@ -1859,7 +1893,8 @@ is a new version, which owners and editors can revert by restoring an older one.
   `payload_too_large` (with `max_bytes`) once it passes that, and otherwise sends the pieces one
   after the other without joining them; the pixel cap keeps even a PNG that does not compress
   (about 4 bytes a pixel) under it. REST: `GET /api/v1/artifacts/:ref/export/options?version=`
-  lists the version's boards and the pixel cap (`max_pixels`), and
+  lists the version's boards (a fluid board with `auto_height: true` and its least height) and the
+  pixel cap (`max_pixels`), and
   `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=` returns the file as an
   attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view the artifact may export
   it, through the thumbnail's check (the `enter` action: strangers get 404, and a token limited to
@@ -1907,9 +1942,14 @@ is a new version, which owners and editors can revert by restoring an older one.
 - **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
   sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
   artboard can and cannot load. Design content is untrusted like artifact HTML.
-- **Not yet.** Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode,
-  deep links to one board from the app and an MCP tool that returns a board's picture to the agent
-  are not offered.
+- **Fluid boards in exports and print.** A fluid board prints and exports at its measured height:
+  its page is named for that size once its loader reports it (before it counts as loaded). The
+  app offers a fluid board's PNG at 1x only, since only the render knows its height, and a PNG of
+  one that rendered past the pixel cap is refused after the render with 400 `invalid_input`
+  ("use format=pdf"), the export counted as any other.
+- **Not yet.** Dragging boards on the canvas, hand editing, component props, pages (Claude's
+  several canvases in one design), linking a design system, per-board dark mode and an MCP tool
+  that returns a board's picture to the agent are not offered.
 - **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
   loads the version top level, and a board's requests (an opaque document) fall in another cookie
   partition than the enter's, so for a design the Worker also gives that browser the same capture

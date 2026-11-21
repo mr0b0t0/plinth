@@ -307,7 +307,15 @@ stylesheet) come first; then each artboard starts with a whole line
 preset (`iphone`, `desktop`, `instagram-post`, `story`, `og-image`, `ad-medium-rectangle`, `a4`,
 `slide-16x9` and others; [spec.md](spec.md#designs-decided-2026-11-19)), `size="1080x1080"`, or
 `width` and `height`, 16 to 4096 px a side; `section` keeps a group of boards together on one row
-when they fit, and `background` sets the board's color. Plinth lays the boards out on a canvas
+when they fit, and `background` sets the board's color. `height="auto"` with a `size` or a `width`
+makes a fluid page board: it is as tall as its content once it loads (at least the size's height,
+or 10/16 of the width, and at most 8000 px), for a responsive web page. `x` and `y` (both, whole
+CSS px) place a board on the canvas; boards without them are packed in rows under the placed ones.
+A whole line `<!-- note -->` or `<!-- note kind="title" -->` followed by lines of plain text adds a
+sticky note or a title to the canvas (`width`, a sticky's `color`, and `x`, `y`; a title without
+them heads the boards after it). A link inside a board whose `href` is exactly `#board=<id>` moves
+the canvas to that board and puts it in use, for a clickable prototype, and the design's app link
+with `#board=<id>` opens it on that board. Plinth lays the boards out on a canvas
 people pan and zoom, and renders each one alone at its exact size with an opaque origin: inline
 scripts and allowlisted CDN scripts run, but a board cannot fetch the artifact's files or use storage, and font files cannot be assets
 (use Google Fonts or a `data:` URL). Assets are images, CSS, JS and mp4/webm video by relative

@@ -567,8 +567,12 @@ export interface AppConfig {
 export interface DesignExportOptions {
   id: string;
   version: number;
-  /** The version's artboards, in source order. Names are untrusted text. */
-  boards: { id: string; name: string; width: number; height: number }[];
+  /**
+   * The version's artboards, in source order. Names are untrusted text. A board with
+   * `auto_height` (height="auto") is as tall as its content when it renders; `height` is then its
+   * least height.
+   */
+  boards: { id: string; name: string; width: number; height: number; auto_height?: boolean }[];
   /** The largest PNG, in device pixels (width x height x scale^2). */
   max_pixels: number;
 }

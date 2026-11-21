@@ -872,7 +872,27 @@ pan, zoom and print, each board alone at its exact size.
   (Google Fonts' own embed and CDN scripts with `crossorigin` work). Images, CSS, JS and
   mp4/webm video go in `assets` and are referenced by relative path; font and JSON assets are
   refused.
-- **Set `id` on every artboard** so comments pinned to a board stay on it when its name changes.
+- **Web pages are fluid.** For a responsive web page, dashboard or web app screen, give the board
+  `height="auto"` with a `size` (`size="desktop" height="auto"`) or a `width`: it is as tall as
+  its content once it loads, from the size's height (or 10/16 of the width) up to 8000 px, so the
+  whole page shows. Size its content with `px` or `rem`, not `vh` or `%` heights. Keep fixed sizes
+  for phone screens, posters, social posts, ads and print.
+- **Placement.** Boards are packed in rows in source order by default. To lay the canvas out
+  yourself, give a board `x` and `y` (whole CSS px, its top-left corner; both or neither), and
+  leave room for its name above it and for a fluid board to grow. Boards without them go in rows
+  under the placed ones.
+- **Notes on the canvas.** A whole line `<!-- note kind="title" -->` followed by plain text adds a
+  title; without `x` and `y` it heads the boards after it, so use one per group of boards, never
+  for a single board (its name is already over it). `<!-- note -->` adds a sticky (`color`
+  `yellow`, `gray`, `red`, `orange`, `green`, `teal`, `blue`, `purple` or `pink`; `width` in px)
+  for a comment or an open question. Note text is plain text, up to 1,000 characters; HTML in it
+  shows as written.
+- **Prototype flows.** A link inside a board whose `href` is exactly `#board=<id>` moves the canvas
+  to that board and puts it in use, so people click through a flow (cart, then pay, then done).
+  It works only while the board is in use. To point someone at one board, give them the design's
+  link with `#board=<id>` added.
+- **Set `id` on every artboard** so comments pinned to a board stay on it when its name changes,
+  and so `#board=` links keep working.
 - **Limits:** 60 artboards and 2 MB of design HTML, plus the instance's per-version total and file
   count.
 

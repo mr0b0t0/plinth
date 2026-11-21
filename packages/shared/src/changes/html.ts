@@ -2,7 +2,7 @@
 // the title, the visible text (located by the nearest heading), links, images and forms added or
 // removed (counted), and whether styles or scripts changed. A page whose markup changed in a way
 // none of these name gets one item, CHANGES_LAYOUT. Markup and code are never quoted.
-import { type DesignBoard, type DesignSource, parseDesign } from "../design.ts";
+import { type DesignBoard, type DesignNote, type DesignSource, parseDesign } from "../design.ts";
 import { alignRegion } from "./align.ts";
 import { diffSequence } from "./diff.ts";
 import { type HtmlScan, type HtmlTextRun, markupSignature, scanHtml } from "./htmlScan.ts";
@@ -11,9 +11,13 @@ import { changeExcerpt, count, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
 
 /** A board's size as the list says it: "1080 × 1080". */
-function sizeLabel(b: Pick<DesignBoard, "width" | "height">): string {
-  return `${b.width} × ${b.height}`;
+function sizeLabel(b: Pick<DesignBoard, "width" | "height" | "autoHeight">): string {
+  return `${b.width} × ${b.autoHeight ? "auto" : b.height}`;
 }
+
+/** A note as Compare sees it: everything but the line it is on. */
+const noteKey = (n: DesignNote) =>
+  JSON.stringify([n.kind, n.text, n.width, n.color, n.x, n.y, n.after]);
 
 function join(prefix: string, rest: string): string {
   if (prefix === "") return rest;
@@ -175,6 +179,9 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
   if (a.shared !== b.shared) {
     out.add({ kind: "changed", where: "", what: "Styles or fonts shared by every board changed" });
   }
+  if (a.notes.map(noteKey).join("\n") !== b.notes.map(noteKey).join("\n")) {
+    out.add({ kind: "changed", where: "", what: "Notes on the canvas changed" });
+  }
   // Boards in order by id: one taken out of one place and put into another moved; boards that
   // replace each other in one place are the same board renamed (a board's id comes from its name).
   const { hunks, exact } = diffSequence(
@@ -256,6 +263,9 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
       x.name === y.name &&
       x.width === y.width &&
       x.height === y.height &&
+      x.autoHeight === y.autoHeight &&
+      x.x === y.x &&
+      x.y === y.y &&
       x.background === y.background &&
       (x.section ?? "") === (y.section ?? "") &&
       x.html === y.html;
@@ -281,7 +291,7 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
         after: y.name,
       });
     }
-    if (x.width !== y.width || x.height !== y.height) {
+    if (x.width !== y.width || x.height !== y.height || x.autoHeight !== y.autoHeight) {
       out.add({
         kind: "changed",
         where,
@@ -289,6 +299,9 @@ function describeBoards(out: ChangeCollector, a: DesignSource, b: DesignSource):
         before: sizeLabel(x),
         after: sizeLabel(y),
       });
+    }
+    if (x.x !== y.x || x.y !== y.y) {
+      out.add({ kind: "moved", where, what: "Moved on the canvas" });
     }
     if (x.background !== y.background) {
       out.add({
