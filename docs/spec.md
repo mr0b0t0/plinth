@@ -1382,7 +1382,8 @@ differs from Claude only where noted.
   - Plinth draws shapes (CSS), icons (inline SVG paths) and connectors (an SVG it computes from
     the laid-out boxes, in the element's `color`, `border-width` and `border-style`).
   - An embed runs in a nested frame of the fixed loader `/__plinth/frames/slides/embed.html`
-    (allow-scripts only, no network), mounted only while its slide is on stage.
+    (allow-scripts only, no network), mounted only while its slide is on stage and for print
+    (which waits up to 3 seconds for each to draw).
   - The fixed canvas is scaled to fit like a Markdown deck's. A slide never shrinks its text; one
     whose flow runs past its canvas is marked in presenter view and the overview.
 - **Motion.**
@@ -1434,7 +1435,7 @@ differs from Claude only where noted.
   - Fragment steps in an audience window and for followers (they show every step).
   - Video (`data-video`).
   - Claude's inline decks (no `format`, `data-build-in`).
-  - Embeds in print and the `.pptx` (Claude flattens them to a picture).
+  - Embeds in the `.pptx` (Claude flattens them to a picture).
   - A rendered still of an embed in thumbnails and the overview.
 
 ### Comments from the page (decided 2026-11-19)

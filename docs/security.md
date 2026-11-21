@@ -615,9 +615,9 @@ allows inline script and styles, and `data:` and `blob:` images, fonts and media
 `default-src 'none'`, with `connect-src`, `frame-src`, `child-src`, `worker-src`, `object-src`,
 `base-uri` and `form-action` all `'none'`. So an embed reaches no network, opens no popup, submits
 nothing and cannot navigate the deck. The frame has `pointer-events: none`, so a viewer cannot
-click or type into it. The renderer mounts an embed only while its slide is on stage: never in the
-overview, in print, in a `.pptx` (where it is left out and counted) or in a still such as a
-thumbnail.
+click or type into it. The renderer mounts an embed only while its slide is on stage, and for
+print (which waits up to 3 seconds for each to draw): never in the overview, in a `.pptx` (where it
+is left out and counted) or in a still such as a thumbnail.
 
 The loader works like a design's board loader:
 
