@@ -2774,10 +2774,14 @@ flag, env var or MCP tool was added.
 - **An account publishes.** A version is stamped with the account that made it, so an editor
   confirmed by code without an account cannot publish one: the Worker refuses the save (401), and
   the item opens the dialog's sign-in step instead of a file picker.
-- **The Worker's reading is the one that counts.** The app sends a picked file as it is (CSV and
-  TSV as text, an .xlsx as base64): the bounded importer of [Sheets](#sheets) converts and checks
-  it, and its refusal reaches the app as a sentence and cell messages, rendered as React text
-  nodes. The app checks the name and the 2 MB limit before sending; the Worker checks both again.
+- **The Worker's reading is the one that counts.** The app sends a picked .xlsx as it is, as
+  base64, and a CSV or TSV as text: one that is not UTF-8 is re-encoded to UTF-8 first (read as
+  UTF-16 by its byte order mark or by where its NUL bytes fall, else as Windows-1252; NUL bytes
+  that fall as no UTF-16 does are refused, never read as cells). The bounded importer of
+  [Sheets](#sheets) converts and checks it, and its refusal reaches the app as a sentence and cell
+  messages, rendered as React text nodes. The app checks the name and the 2 MB limit before
+  sending, a CSV's again as converted to UTF-8 (a Windows-1252 file can grow past it); the Worker
+  checks both again.
 - **The app's own reading only says what is left out.** To warn before a replace (and in Import's
   toast), the app runs the same shared importer on the file, in the person's own tab, on a file
   they picked themselves: the 2 MB cap, the 24 MB inflate cap, the linear XML scanner and the row,
@@ -2787,10 +2791,11 @@ flag, env var or MCP tool was added.
   result never decides anything: when it throws, the file is sent and the Worker answers. The worst
   a crafted file can do there is keep that tab busy for the bounded work. A CSV that is not UTF-8
   is decoded as Windows-1252 by a fixed table, which reads every byte as one character.
-- **File names are shown and noted without control or bidi characters.** "Imported from …",
-  "Replaced from …", the dialogs and the toasts drop C0 and C1 controls and U+061C, U+200E, U+200F,
-  U+202A to U+202E and U+2066 to U+2069, so a name like `invoice<U+202E>vsc.xlsx` cannot read as another
-  in History or in the app.
+- **File names are shown and noted without control or format characters.** "Imported from …",
+  "Replaced from …", the dialogs and the toasts drop control (Cc) and format (Cf: bidi marks,
+  embeddings, overrides and isolates, zero-width characters) characters and the line and
+  paragraph separators (`UNSAFE_TEXT_RE`, the set Ask anchors, titles and sheet names use too), so
+  a name like `invoice<U+202E>vsc.xlsx` cannot read as another in History or in the app.
 - **v1's note.** `POST /api/v1/artifacts` takes `note` for v1 (the zod note schema, at most 500
   characters), which History shows as text. MCP's `publish_artifact` does not list it.
 - **`?edit` starts editing only where the gate allows it.** The page starts edit mode from `?edit`

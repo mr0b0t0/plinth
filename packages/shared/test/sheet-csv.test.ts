@@ -781,6 +781,16 @@ describe("import warnings", () => {
       { code: "headers_truncated", count: 2, max: 100 },
     ]);
     expect(sheetFromCsv(csv).header.columns.map((c) => c.name.length)).toEqual([100, 100, 100]);
+    // A name whose white space collapses under 100 characters, but whose text runs past the
+    // characters a name is read from: what comes after is dropped, so it counts as cut too.
+    // White space alone past that point drops nothing anyone would see.
+    const spaced = `Total ${" ".repeat(COLUMN_NAME_SOURCE_CHARS)}hidden tail`;
+    const blank = `Total${" ".repeat(COLUMN_NAME_SOURCE_CHARS + 50)}`;
+    const csv2 = `"${spaced}","${blank}",ok\n1,2,3\n`;
+    expect(sheetImportWarnings(csv2, "csv")).toEqual([
+      { code: "headers_truncated", count: 1, max: 100 },
+    ]);
+    expect(sheetFromCsv(csv2).header.columns.map((c) => c.name)).toEqual(["Total", "Total", "ok"]);
     const bytes = xlsx({
       ...WORKBOOK,
       "xl/workbook.xml":

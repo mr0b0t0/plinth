@@ -4,9 +4,11 @@
 // - New publishes a registry `create` row (artifactTypes.ts) as a placeholder v1 with the note
 //   "Created in the app", then opens the page in edit mode (`?edit`). It is offered only where the
 //   page can be edited (AppConfig.inline_editing not null) and the type is available here.
-// - Import and Replace send the file as it is: CSV and TSV as text, an .xlsx as base64, with
-//   `content_format`. The Worker converts and checks it as it does for agents, and a refusal names
-//   cells ("B7: …"), never code. A CSV is read as UTF-8, or as Windows-1252 when it is not.
+// - Import and Replace send an .xlsx as it is, as base64, and a CSV or TSV as text, with
+//   `content_format`: a CSV that is not UTF-8 is re-encoded to UTF-8 first (read as UTF-16 by its
+//   byte order mark or its NUL bytes, else as Windows-1252), and checked against the size limit
+//   as converted. The Worker converts and checks it as it does for agents, and a refusal names
+//   cells ("B7: …"), never code.
 // - What the import would leave out or change (other sheets, formulas kept as values, long column
 //   names, a CSV that is not UTF-8) is found in the app before the file is sent, by the shared
 //   importer the Worker runs (importCheck.ts, loaded on demand), and said in
@@ -181,18 +183,60 @@ export function decodeCp1252(bytes: Uint8Array): string {
   return text;
 }
 
+/** A CSV whose bytes hold NULs that are no UTF-16 text we can tell (see decodeCsv). */
+export const NOT_TEXT =
+  "isn't a text file Plinth can read. Save it as CSV UTF-8 and import it again.";
+
+/**
+ * UTF-16 without a byte order mark, told by where its NUL bytes fall: text in a Latin script is
+ * mostly characters below U+0100, whose high byte is 0, so nearly every second byte is NUL (the
+ * odd ones in little-endian, the even ones in big-endian) and the others almost never are. Null
+ * when the NULs follow neither pattern, or the bytes do not decode.
+ */
+function utf16WithoutBom(bytes: Uint8Array): string | null {
+  const n = Math.min(bytes.length, 64 * 1024) & ~1;
+  if (n < 2 || bytes.length % 2 !== 0) return null;
+  let even = 0;
+  let odd = 0;
+  for (let i = 0; i < n; i++) {
+    if (bytes[i] !== 0) continue;
+    if (i % 2 === 0) even++;
+    else odd++;
+  }
+  const pairs = n / 2;
+  const enc = odd >= pairs * 0.3 && even <= pairs * 0.02 ? "utf-16le" : null;
+  const be = even >= pairs * 0.3 && odd <= pairs * 0.02 ? "utf-16be" : null;
+  const label = enc ?? be;
+  if (!label) return null;
+  try {
+    return new TextDecoder(label, { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A CSV or TSV file's text: UTF-8 (its BOM dropped, as File.text() does), UTF-16 when it starts
  * with that BOM, and otherwise, when the bytes are not UTF-8, Windows-1252, the encoding Excel
- * writes a "CSV" in on Windows, with the warning `not_utf8`. Windows-1252 reads every byte, so a
- * file is never refused for its encoding.
+ * writes a "CSV" in on Windows, with the warning `not_utf8`. A NUL byte is never read as UTF-8
+ * text: a file with NULs is UTF-16 without its BOM when they fall as that has them, and is refused
+ * otherwise (SpreadsheetFileError, `NOT_TEXT` after the file's name). Windows-1252 reads every
+ * other byte, so a file without NULs is never refused for its encoding.
  */
-export function decodeCsv(bytes: Uint8Array): { text: string; warnings: SheetImportWarning[] } {
+export function decodeCsv(
+  bytes: Uint8Array,
+  name = "The file",
+): { text: string; warnings: SheetImportWarning[] } {
   if (bytes[0] === 0xff && bytes[1] === 0xfe) {
     return { text: new TextDecoder("utf-16le").decode(bytes), warnings: [] };
   }
   if (bytes[0] === 0xfe && bytes[1] === 0xff) {
     return { text: new TextDecoder("utf-16be").decode(bytes), warnings: [] };
+  }
+  if (bytes.includes(0)) {
+    const text = utf16WithoutBom(bytes);
+    if (text === null) throw new SpreadsheetFileError(`${name} ${NOT_TEXT}`);
+    return { text, warnings: [] };
   }
   try {
     return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), warnings: [] };
@@ -238,7 +282,14 @@ export async function readSpreadsheet(file: File): Promise<ReadSpreadsheet> {
   if (file.size === 0) throw new SpreadsheetFileError(`${name} is empty.`);
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (format === "csv") {
-    const { text, warnings } = decodeCsv(bytes);
+    const { text, warnings } = decodeCsv(bytes, name);
+    // The Worker takes the text as UTF-8: a file read in another encoding can grow past the limit
+    // once converted (each accented letter of a Windows-1252 file takes two bytes).
+    if (new TextEncoder().encode(text).byteLength > LIMITS.maxSheetImportBytes) {
+      throw new SpreadsheetFileError(
+        `${name} is larger than ${Math.round(LIMITS.maxSheetImportBytes / MB)} MB once converted to UTF-8, the most a spreadsheet import takes.`,
+      );
+    }
     return {
       sent: { content_format: "csv", content: text },
       warnings: [...warnings, ...(await importWarnings(text, "csv"))],
