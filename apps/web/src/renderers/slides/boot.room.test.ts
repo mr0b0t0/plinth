@@ -1187,6 +1187,161 @@ describe("a split, and a block taken again after a reconnect", () => {
   });
 });
 
+describe("typing goes back only into the kind of part it was typed in", () => {
+  const edits = (s: FakeSocket) => s.sent.filter((f) => f.t === "edit");
+  const leases = (s: FakeSocket) => s.sent.filter((f) => f.t === "lease");
+  /** Sets the text of the first editor in `host` (".plinth-slides__open" or the notes'). */
+  const type = (host: string, text: string) => {
+    const ed = document.querySelector(`${host} [contenteditable="true"]`);
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    ed.textContent = text;
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const SLIDE = ".plinth-slides__open";
+  const NOTES = ".plinth-slides__notepad-edit";
+  /** The socket drops and the next one is welcomed with `text`. */
+  const reconnect = (text: string) => {
+    sock("doc").drop();
+    vi.advanceTimersByTime(5000);
+    const s = sock("doc");
+    welcomeDoc(s, text, true, `g${FakeSocket.all.length}`);
+    return s;
+  };
+  /** Opens raw slide `n`'s speaker notes, granted as l1 on `start`..`end`. */
+  const openNotes = (s: FakeSocket, n: number, start: number, end: number) => {
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: n });
+    (
+      document.querySelector(
+        `.plinth-slides__frame[data-n="${n}"] .plinth-slides__notepad-body`,
+      ) as HTMLElement | null
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start, end });
+    s.frame({ t: "leased", lease: "l1", start, end, holder: YOU.id, by: YOU.email });
+  };
+
+  // Slide 1's paragraph "Hello" (line 2), and its speaker notes repeat it (line 6).
+  const DECK = "# One\n\nHello\n\nNote: intro\n\nHello";
+
+  const openHello = (s: FakeSocket) => {
+    app({ type: "edit", on: true });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="1"] .plinth-slides__slide p') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+  };
+
+  it("never takes a slide's block again on speaker notes that repeat its text", () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openHello(first);
+    type(SLIDE, "Goodbye");
+    // The socket drops before the debounce, and meanwhile a co-editor deletes the slide's "Hello".
+    const s = reconnect("# One\n\nNote: intro\n\nHello");
+    // Not the notes' "Hello" (now line 4): a new block on the slide, after its title.
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 1, end: 1 }]);
+    s.frame({ t: "leased", lease: "l2", start: 1, end: 1, holder: YOU.id, by: YOU.email });
+    // The editor is on the slide, where the person sees it.
+    expect(
+      document.querySelector(`.plinth-slides__frame[data-n="1"] .plinth-slides__slide ${SLIDE}`),
+    ).not.toBeNull();
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "\nGoodbye" }]);
+  });
+
+  it("takes the block again on its slide, not a nearer copy in another slide's notes", () => {
+    const deck = "# Zero\n\nNote:\nHello\n---\n# One\n\nHello";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__slide p') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(first.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 7, end: 8 });
+    first.frame({ t: "leased", lease: "l1", start: 7, end: 8, holder: YOU.id, by: YOU.email });
+    type(SLIDE, "Goodbye");
+    // Slide 1's notes grew meanwhile: their "Hello" is on line 7 now, the slide's on line 11.
+    const s = reconnect("# Zero\n\nNote:\nA\n\nB\n\nHello\n---\n# One\n\nHello");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 11, end: 12 }]);
+    s.frame({ t: "leased", lease: "l2", start: 11, end: 12, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "Goodbye" }]);
+  });
+
+  it("never opens a slide's block on speaker notes lines granted for it", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    app({ type: "edit", on: true });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="1"] .plinth-slides__slide p') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    // A co-editor deletes the slide's "Hello", and the grant names the notes' "Hello".
+    s.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l9",
+      start: 0,
+      del: 4,
+      ins: "# One\n",
+      by: "s2",
+    });
+    s.frame({ t: "leased", lease: "l1", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    expect(s.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
+    expect(document.querySelector(SLIDE)).toBeNull();
+    expect(document.querySelector(NOTES)).toBeNull();
+    expect(edits(s)).toEqual([]);
+  });
+
+  it("writes speaker notes that repeat the slide's text back into the notes, never the slide", () => {
+    const deck = "# One\n\nHello\n\nNote:\nHello";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openNotes(first, 1, 4, 6);
+    type(NOTES, "Goodbye");
+    // A co-editor rewrote the notes meanwhile: they are not found as they were.
+    const s = reconnect("# One\n\nHello\n\nNote: Hello");
+    // Never the slide's "Hello" (line 2): the slide's notes, with the kept text after them.
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 4, end: 5 }]);
+    s.frame({ t: "leased", lease: "l2", start: 4, end: 5, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([
+      expect.objectContaining({ lease: "l2", text: "Note: Hello\n\nGoodbye" }),
+    ]);
+  });
+
+  it("writes kept speaker notes after their own slide's notes when the lines moved", () => {
+    const deck = "# One\n\nNote:\nFirst\n---\n## Two\n\nNote:\nSay hi";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openNotes(first, 2, 7, 9);
+    type(NOTES, "abc");
+    // Meanwhile slide 1's notes grew past line 7, where slide 2's notes were, and slide 2's notes
+    // were rewritten.
+    const s = reconnect("# One\n\nNote:\nFirst\n\nSecond\n\nThird\n---\n## Two\n\nNote: Say hi");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 11, end: 12 }]);
+    s.frame({ t: "leased", lease: "l2", start: 11, end: 12, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([
+      expect.objectContaining({ lease: "l2", text: "Note: Say hi\n\nabc" }),
+    ]);
+  });
+});
+
 describe("typing kept across a reload (the rescue store)", () => {
   // The app's copy, as the app keeps it: merge-only, in its own session storage
   // (components/editor/draft.ts), fed by the frame's `rescue` reports.

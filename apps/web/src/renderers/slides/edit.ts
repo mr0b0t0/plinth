@@ -52,6 +52,7 @@ import {
   notesFormOf,
   notesText,
   parseLaidOut,
+  type RawSlideLayout,
   type RichBlock,
   rangesOverlap,
   type SlidesStructOp,
@@ -373,7 +374,8 @@ interface Want {
   mark: Mark;
   /**
    * Taken again after its lease ended: each text the room may hold of it (what was sent last, what
-   * the room acked, what it last wrote to D1). The one found nearest where it was is asked for.
+   * the room acked, what it last wrote to D1). Of those found in its own kind of part (partSlide),
+   * the one on its slide (slideRank), then the one nearest where it was, is asked for.
    */
   alts?: Mark[];
   /** How many times it was looked for again after the lines moved. */
@@ -402,6 +404,12 @@ interface Want {
   closeAfter?: true;
   /** Its text as kept, when it could not be read back as blocks (a reload's): copied as it is. */
   raw?: string;
+  /**
+   * Its slide's first line of text when it was asked for (slideRef): taken again, a place on that
+   * slide is preferred to a nearer one on another (slideRank), and kept notes go after that
+   * slide's notes.
+   */
+  ref?: string;
 }
 
 interface Mark {
@@ -466,17 +474,12 @@ function blockEdges(lines: readonly string[]): Set<number> {
 }
 
 /**
- * Where the text `text` sits in `lines` as whole blocks (it starts and ends at a block's edge, or
- * at a blank line it holds itself), nearest to line `near`, or -1.
+ * Every line where the text `text` sits in `lines` as whole blocks (it starts and ends at a
+ * block's edge, or at a blank line it holds itself).
  */
-function wholeBlockAt(
-  lines: readonly string[],
-  text: string,
-  near: number,
-  edges: () => Set<number>,
-): number {
+function wholeBlocksAt(lines: readonly string[], text: string, edges: () => Set<number>): number[] {
   const want = blockLines(text);
-  let best = -1;
+  const out: number[] = [];
   for (let i = locateBlock(lines, text, 0); i >= 0 && i + want.length <= lines.length; i++) {
     let ok = true;
     for (let k = 0; k < want.length; k++) {
@@ -489,26 +492,60 @@ function wholeBlockAt(
     const end = i + want.length;
     const head = isBlank(want[0]) || isBlank(lines[i - 1]) || edges().has(i);
     const tail = isBlank(want.at(-1)) || isBlank(lines[end]) || edges().has(end);
-    if (!head || !tail) continue;
-    if (best === -1 || Math.abs(i - near) < Math.abs(best - near)) best = i;
+    if (head && tail) out.push(i);
   }
-  return best;
+  return out;
 }
 
-/** Where the place `mark` describes starts in `lines`, nearest to line `near`, or -1. */
-function markAt(
-  lines: readonly string[],
-  mark: Mark,
-  near: number,
-  edges: () => Set<number> = memo(() => blockEdges(lines)),
-): number {
-  if (mark.text !== "") return wholeBlockAt(lines, mark.text, near, edges);
-  let best = -1;
+/** Every line where the place `mark` describes starts in `lines`. */
+function marksAt(lines: readonly string[], mark: Mark, edges: () => Set<number>): number[] {
+  if (mark.text !== "") return wholeBlocksAt(lines, mark.text, edges);
+  const out: number[] = [];
   for (let p = 0; p <= lines.length; p++) {
-    if ((lines[p - 1] ?? null) !== mark.above || (lines[p] ?? null) !== mark.below) continue;
-    if (best < 0 || Math.abs(p - near) < Math.abs(best - near)) best = p;
+    if ((lines[p - 1] ?? null) === mark.above && (lines[p] ?? null) === mark.below) out.push(p);
   }
-  return best;
+  return out;
+}
+
+/**
+ * The raw slide whose part of kind `kind` holds `range` whole, or null: a block's range lies in
+ * the slide's head or one of its columns (an insert point at their start or end too), a notes
+ * range starts at the slide's notes marker and ends inside its notes. Typing is only ever written
+ * back into the kind of part it was typed in: a slide's text never lands in speaker notes that
+ * repeat it, nor notes on a slide.
+ */
+function partSlide(
+  layout: DeckLayout,
+  range: LineRange,
+  kind: "block" | "notes",
+): RawSlideLayout | null {
+  for (const s of layout.slides) {
+    if (kind === "notes") {
+      const notes = s.notes;
+      if (notes && range.start === notes.start && range.start < range.end) {
+        if (range.end <= notes.end) return s;
+      }
+      continue;
+    }
+    for (const p of [s.head, ...s.columns]) {
+      if (p.start <= range.start && range.end <= p.end) return s;
+    }
+  }
+  return null;
+}
+
+/**
+ * How surely raw slide `slide` is the one a place was on: its first line of text is the one the
+ * place's slide had (`ref`, 2), and it has the same number (1). Of the places found, the one on
+ * the same slide is taken before a nearer one on another slide.
+ */
+function slideRank(
+  lines: readonly string[],
+  slide: RawSlideLayout,
+  was: { n: number; ref?: string | undefined },
+): number {
+  const byRef = was.ref !== undefined && was.ref !== "" && slideRef(lines, slide) === was.ref;
+  return (byRef ? 2 : 0) + (slide.n === was.n ? 1 : 0);
 }
 
 const para = (): RichBlock => ({ t: "paragraph", c: [] });
@@ -640,6 +677,15 @@ function slideRef(lines: readonly string[], slide: { start: number; end: number 
     if (t !== "") return t.slice(0, MAX_RESCUE_REF);
   }
   return "";
+}
+
+/** Of `slides`, the one starting nearest line `near`, or undefined. */
+function nearestSlide(slides: readonly RawSlideLayout[], near: number): RawSlideLayout | undefined {
+  let best: RawSlideLayout | undefined;
+  for (const s of slides) {
+    if (!best || Math.abs(s.start - near) < Math.abs(best.start - near)) best = s;
+  }
+  return best;
 }
 
 const ATTR_EDIT = "data-plinth-edit";
@@ -1220,12 +1266,24 @@ export class SlidesEditor {
     return true;
   }
 
+  /** Raw slide n's first line of text in the backend's lines now (a Want's `ref`), if it has one. */
+  private refOf(n: number): { ref?: string } {
+    const lines = this.backend.lines;
+    const slide = deckLayout(lines).slides.find((s) => s.n === n);
+    return slide ? { ref: slideRef(lines, slide) } : {};
+  }
+
   private request(ask: Omit<Want, "mark" | "tries">): void {
     if (this.want) return;
     // The place open could not close (its typing cannot be written as typed, or alone the deck is
     // at its size limit): a new lease would take its place from under it.
     if (this.heldOpen()) return;
-    const w: Want = { ...ask, mark: markOf(this.backend.lines, ask.range), tries: 0 };
+    const w: Want = {
+      ...this.refOf(ask.open.n),
+      ...ask,
+      mark: markOf(this.backend.lines, ask.range),
+      tries: 0,
+    };
     this.want = w;
     if (!this.backend.lease(w.range)) {
       this.want = null;
@@ -1245,6 +1303,15 @@ export class SlidesEditor {
       // them. The place is looked for again once the lease is released.
       this.backend.release();
       this.again(w);
+      return;
+    }
+    if (!partSlide(deckLayout(this.backend.lines), lease, w.open.kind)) {
+      // Not in the kind of part the place is (a slide's block granted on notes lines, or notes on
+      // a slide's): nothing is written or opened there. Typing goes in as a new block in its own
+      // kind of part (anew), or is kept with Copy.
+      this.backend.release();
+      if (w.resend) this.anew(w);
+      else this.notify(DECK_WORDS.changed);
       return;
     }
     const doc = this.doc;
@@ -1825,7 +1892,11 @@ export class SlidesEditor {
     const { kind, n, ctx, env, pad, form } = s;
     const rescue = this.keepRescue(s.rescue, models, s, s.start);
     const open = { kind, n, ctx, env, pad, form, models };
-    const extra = { closeAfter: true as const, ...(rescue ? { rescue } : {}) };
+    const extra = {
+      closeAfter: true as const,
+      ...this.refOf(n),
+      ...(rescue ? { rescue } : {}),
+    };
     if (s.kept) {
       // Already typing written again: kept to copy rather than sent over and over.
       this.park({
@@ -1966,6 +2037,7 @@ export class SlidesEditor {
             focus: "end",
             open: { kind, n, ctx, env, pad, form, models },
             resend: true,
+            ...this.refOf(n),
             ...after,
             ...(rescue ? { rescue } : {}),
           },
@@ -1982,7 +2054,7 @@ export class SlidesEditor {
       const { kind, n, ctx, env, pad, form } = o;
       const open = { kind, n, ctx, env, pad, form, models: keptModels };
       const rescue = this.keepRescue(o.rescue, keptModels, o, o.start);
-      const extra = { ...after, ...(rescue ? { rescue } : {}) };
+      const extra = { ...after, ...this.refOf(n), ...(rescue ? { rescue } : {}) };
       // What the room holds of the block: its last acknowledged text (the text at the grant when
       // none was).
       const held = b.ackedText ?? o.sent ?? "";
@@ -2064,32 +2136,46 @@ export class SlidesEditor {
       return;
     }
     this.retake = null;
-    // The same lines may sit on another slide too (two slides titled "Agenda"): the place
-    // nearest where the block was is the one taken. Each text is found only as whole blocks, and
-    // of two found as near, the longer is taken: the text sent last can be the first lines of
-    // the block the room still holds (its last lines deleted, the edit never landed), which is
-    // then leased whole and written again, never leased short.
-    let at = -1;
-    let mark = w.mark;
+    // Only places in the kind of part it was typed in count: a slide's text is never looked for
+    // in speaker notes that repeat it word for word (nor notes on a slide), since writing there
+    // would overwrite someone's notes with slide text and open nothing on the slide. The same
+    // lines may sit on another slide too (two slides titled "Agenda"): a place on the slide it
+    // was on (by its first line, then its number) is taken first, then the nearest. Each text is
+    // found only as whole blocks, and of two found as near, the longer is taken: the text sent
+    // last can be the first lines of the block the room still holds (its last lines deleted, the
+    // edit never landed), which is then leased whole and written again, never leased short.
+    const layout = deckLayout(lines);
+    const was = { n: w.open.n, ref: w.ref };
+    type Found = { at: number; mark: Mark; slide: RawSlideLayout; rank: number };
+    let found = null as Found | null;
     const edges = memo(() => blockEdges(lines));
     for (const m of w.alts ?? [w.mark]) {
-      const p = markAt(lines, m, r.near, edges);
-      if (p < 0) continue;
-      const d = Math.abs(p - r.near);
-      const was = Math.abs(at - r.near);
-      if (at < 0 || d < was || (d === was && m.text.length > mark.text.length)) {
-        at = p;
-        mark = m;
+      const len = blockLines(m.text).length;
+      for (const p of marksAt(lines, m, edges)) {
+        const slide = partSlide(layout, { start: p, end: p + len }, w.open.kind);
+        if (!slide) continue;
+        const rank = slideRank(lines, slide, was);
+        const d = Math.abs(p - r.near);
+        const best = found;
+        const bd = best ? Math.abs(best.at - r.near) : 0;
+        if (
+          !best ||
+          rank > best.rank ||
+          (rank === best.rank && (d < bd || (d === bd && m.text.length > best.mark.text.length)))
+        ) {
+          found = { at: p, mark: m, slide, rank };
+        }
       }
     }
-    if (at < 0) {
-      // Typed text whose place is gone goes in as a new block nearby; a place clicked is not.
+    if (!found) {
+      // Typed text whose place is gone goes in as a new block nearby, in the same kind of part
+      // (kept notes after its slide's notes); a place clicked is not.
       if (w.resend) this.anew({ ...w, range: { start: r.near, end: r.near } });
       else this.notify(DECK_WORDS.changed);
       return;
     }
-    const slide = deckLayout(lines).slides.find((x) => x.start <= at && at < x.end);
-    const n = slide?.n ?? w.open.n;
+    const { at, mark } = found;
+    const n = found.slide.n;
     const want: Want = {
       ...w,
       open: { ...w.open, n, ctx: { ...w.open.ctx, settings: afterBareOpen(lines, n) } },
@@ -2114,9 +2200,16 @@ export class SlidesEditor {
     const b = this.backend;
     const lines = b.lines;
     const w = r.want;
+    // The slide the notes were typed on: by its first line of text, then by its number, and only
+    // then by where they were (lines shift as people type, so the line can be a neighbour's now).
+    const slides = deckLayout(lines).slides;
     const slide =
-      deckLayout(lines).slides.find((x) => x.start <= r.near && r.near < x.end) ??
-      deckLayout(lines).slides.find((x) => x.n === w.open.n);
+      nearestSlide(
+        slides.filter((x) => w.ref !== undefined && w.ref !== "" && slideRef(lines, x) === w.ref),
+        r.near,
+      ) ??
+      slides.find((x) => x.n === w.open.n) ??
+      slides.find((x) => x.start <= r.near && r.near < x.end);
     const notes = slide?.notes;
     if (!slide || !notes) {
       this.retake = null;
@@ -2155,6 +2248,7 @@ export class SlidesEditor {
       ...(w.fallbacks !== undefined ? { fallbacks: w.fallbacks } : {}),
       ...(w.rescue ? { rescue: w.rescue } : {}),
       ...(w.closeAfter ? { closeAfter: true as const } : {}),
+      ...(w.ref !== undefined ? { ref: w.ref } : {}),
     };
     this.want = want;
     if (!b.lease(range)) {
@@ -2184,7 +2278,7 @@ export class SlidesEditor {
       this.tryRetake();
       return;
     }
-    const at = this.freePoint(near);
+    const at = this.freePoint(near, { n: w.open.n, ref: w.ref });
     if (at === null) {
       this.park(w);
       return;
@@ -2214,28 +2308,39 @@ export class SlidesEditor {
   }
 
   /**
-   * The insert point nearest `near` at a block's end in a slide's head or a column (or an empty
-   * part's start) that no other lease touches.
+   * The insert point at a block's end in a slide's head or a column (or an empty part's start)
+   * that no other lease touches: on the slide `was` describes when it has one (slideRank), else
+   * nearest `near`. Never in speaker notes.
    */
-  private freePoint(near: number): { at: number; n: number } | null {
+  private freePoint(
+    near: number,
+    was: { n: number; ref?: string | undefined },
+  ): { at: number; n: number } | null {
     const b = this.backend;
     const lines = b.lines;
     const others = [...b.leases.values()].filter((l) => l.id !== b.mine?.id);
-    let best: { at: number; n: number } | null = null;
+    let best: { at: number; n: number; rank: number } | null = null;
     for (const slide of deckLayout(lines).slides) {
+      const rank = slideRank(lines, slide, was);
       for (const part of [slide.head, ...slide.columns]) {
         const shown = deckPartShown(lines.slice(part.start, part.end), false).join("\n");
         const ends = parseBlocks(shown).map((x) => part.start + x.core.end);
         for (const p of ends.length > 0 ? ends : [part.start]) {
           if (others.some((l) => l.start <= p && p <= l.end)) continue;
           const d = Math.abs(p - near);
-          const was = best ? Math.abs(best.at - near) : Number.POSITIVE_INFINITY;
-          // Nearest; of two as near, the one below.
-          if (d < was || (d === was && best && p > best.at)) best = { at: p, n: slide.n };
+          const bd = best ? Math.abs(best.at - near) : Number.POSITIVE_INFINITY;
+          // Its own slide first; then nearest; of two as near, the one below.
+          if (
+            !best ||
+            rank > best.rank ||
+            (rank === best.rank && (d < bd || (d === bd && p > best.at)))
+          ) {
+            best = { at: p, n: slide.n, rank };
+          }
         }
       }
     }
-    return best;
+    return best ? { at: best.at, n: best.n } : null;
   }
 
   /**
@@ -2268,6 +2373,7 @@ export class SlidesEditor {
       focus: "end",
       open: { kind, n, ctx, env, pad, form, models },
       resend: true,
+      ...this.refOf(n),
       ...(rescue ? { rescue } : {}),
     };
     this.discardOpen();
@@ -2493,6 +2599,7 @@ export class SlidesEditor {
         resend: true,
         rescue: it.id,
         closeAfter: true,
+        ...(it.ref !== undefined ? { ref: it.ref } : {}),
         ...(models ? {} : { raw: it.text }),
       };
       if (!slide && (notes || !models)) {
@@ -2615,6 +2722,7 @@ export class SlidesEditor {
         open: { kind: s.kind, n: s.n, ctx: s.ctx, env: s.env, pad: s.pad, form: s.form, models },
         resend: true,
         closeAfter: true,
+        ...this.refOf(s.n),
         ...(rescue ? { rescue } : {}),
       });
       this.notify(reason);

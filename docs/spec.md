@@ -3147,9 +3147,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
   neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
   or when the room merges a version into the draft, is taken again once the draft (after a merge,
-  the merged draft) is back, where the draft holds a text the room may have of it as whole blocks
-  nearest to where it was (two slides may share a title; of two texts found there, the longer),
-  and what was typed since is sent there unless the room's block already reads exactly so. After a drop that
+  the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
+  only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
+  that repeat it, nor notes on a slide, and a lease granted on the other kind of part is let go
+  unused), on the slide it was on first (by that slide's first line of text, then its number),
+  then nearest to where it was (two slides may share a title; of two texts found there, the
+  longer), and what was typed since is sent there unless the room's block already reads exactly so. After a drop that
   is the text sent last (it may have arrived without its answer), the text the room acknowledged
   or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.
   An empty one (an insert point, or a block emptied) is found by the lines around it, and an
@@ -3168,10 +3171,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   not have yet when the lease ends (in the debounce, not writable as typed, or not sent because the
   deck is at its size limit, the block is too long or the socket is down) is kept: taken over,
   it goes in as a new block below the block (kept notes, after the slide's notes once nobody holds
-  them); closed by a review or a reset, in its place again once the review ends; a block taken
+  them, the slide found by its first line of text, then its number, then where the notes were);
+  closed by a review or a reset, in its place again once the review ends; a block taken
   again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
-  block at the nearest block end nobody's lease touches, three places at most. A room's refusal
-  never replaces it with the room's text. What no place takes stays on the page ("Couldn't add
+  block at the block end nobody's lease touches on its own slide, else the nearest one, three
+  places at most, and never in speaker notes. A room's refusal never replaces it with the room's
+  text. What no place takes stays on the page ("Couldn't add
   your text yet", with **Copy**; "Couldn't add your text yet. Copy it before you reload" when the
   app's rescue store could not take it), counts as unsent changes
   (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a
