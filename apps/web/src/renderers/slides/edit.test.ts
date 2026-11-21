@@ -6,6 +6,7 @@
 // panel; images and blocks the model cannot hold offer Ask an agent; deck settings are one
 // set_deck; and the review's deck pane draws each side with its own version's files.
 import {
+  LIMITS,
   parseDeck,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -381,5 +382,76 @@ describe("the review's deck pane", () => {
     const frames = Array.from(host.querySelectorAll(".plinth-slides__frame"));
     expect(frames.map((x) => x.hasAttribute("data-review-changed"))).toEqual([false, true]);
     expect(goto?.({ kind: "changed", where: "Slide 2", what: "Title changed" })).toBe(true);
+  });
+});
+
+describe("typing the deck cannot write as typed, alone", () => {
+  /** Leaves typing in the open block that cannot be written as Markdown as it stands. */
+  const stick = () => {
+    const el = editable();
+    // Emphasis and strong that overlap without nesting, as a browser can leave them.
+    el.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+  };
+
+  it("is in the app's kept copy, without its marks, and marked unsavable", async () => {
+    const f = start("# One\n---\n## Two");
+    appMessage(f, msg({ type: "goto", slide: 2 }));
+    (active().querySelector("h2") as HTMLElement).click();
+    stick();
+    await Promise.resolve();
+    expect(lastStatus(f)).toMatchObject({ unsavable: true, publishable: false });
+    appMessage(f, msg({ type: "collect", nonce: NONCE }));
+    const d = posts(f)
+      .filter((p) => p.type === "draft")
+      .at(-1);
+    expect(d).toMatchObject({ text: "# One\n---\n## abc", unsavable: true });
+    // The keystroke is not undone.
+    expect(editable().textContent).toBe("abc");
+  });
+
+  it("sends no save from the frame's Cmd/Ctrl+S while it cannot be written", () => {
+    const f = start("# One\n---\n## Two");
+    appMessage(f, msg({ type: "goto", slide: 2 }));
+    (active().querySelector("h2") as HTMLElement).click();
+    stick();
+    f.target.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", metaKey: true, cancelable: true }),
+    );
+    expect(posts(f).some((p) => p.type === "save")).toBe(false);
+    // Once it can be written, the shortcut publishes again.
+    typeText("Two again");
+    f.target.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", metaKey: true, cancelable: true }),
+    );
+    expect(posts(f).some((p) => p.type === "save")).toBe(true);
+    expect(collect(f)).toBe("# One\n---\n## Two again");
+  });
+
+  it("is written without its marks when edit mode ends, not lost with the block", async () => {
+    const f = start("# One\n---\n## Two");
+    appMessage(f, msg({ type: "goto", slide: 2 }));
+    (active().querySelector("h2") as HTMLElement).click();
+    stick();
+    appMessage(f, msg({ type: "edit", on: false }));
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+    appMessage(f, msg({ type: "edit", on: true }));
+    expect(collect(f)).toBe("# One\n---\n## abc");
+    await Promise.resolve();
+    expect(lastStatus(f)?.unsavable).toBeUndefined();
+  });
+
+  it("keeps typing that would take the deck past its size limit", () => {
+    const deck = `# One\n---\n## Two\n---\n${"y".repeat(LIMITS.maxSlidesBytes - 40)}`;
+    const f = start(deck);
+    appMessage(f, msg({ type: "goto", slide: 2 }));
+    (active().querySelector("h2") as HTMLElement).click();
+    const typed = `Two ${"z".repeat(100)}`;
+    typeText(typed);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    // Not sent, and not put back: the block still holds what was typed.
+    expect(editable().textContent).toBe(typed);
+    expect(collect(f)).toBe(deck);
   });
 });

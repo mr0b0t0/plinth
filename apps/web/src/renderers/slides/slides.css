@@ -1196,6 +1196,49 @@ body {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
 }
 
+/* Typing kept on the page because no place in the deck would take it yet, with Copy. */
+.plinth-slides__kept {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 10px;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+  font: 14px / 1.4 var(--slides-font);
+  transform: translateX(-50%);
+}
+
+.plinth-slides__kept-copy {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid var(--slides-rule);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plinth-slides__kept-copy:focus-visible {
+  outline: 2px solid var(--slides-live);
+  outline-offset: 2px;
+}
+
+@media print {
+  .plinth-slides__kept {
+    display: none;
+  }
+}
+
 .plinth-slides__settings {
   position: absolute;
   top: 12px;

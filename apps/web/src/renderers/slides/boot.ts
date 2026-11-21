@@ -696,7 +696,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         status();
       },
       structLanded: (op: SlidesStructOp) => editor?.structLanded(op),
-      error: (code: "invalid" | "too_large") => editor?.refused(ERRORS[code] ?? DECK_WORDS.refused),
+      // A deck at its size limit keeps the typing (the editor checks first); only `invalid` puts
+      // a block back.
+      error: (code: "invalid" | "too_large") =>
+        code === "invalid" ? editor?.refused(DECK_WORDS.refused) : editor?.notify(DECK_WORDS.full),
     };
 
     const review = new DraftReview({
@@ -726,6 +729,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       client = new LiveDocClient({
         win,
         applyStruct: (lines, op) => applySlidesStruct(lines, op as SlidesStructOp),
+        // Typed text not in the draft yet keeps a hidden tab's socket, as unflushed text does.
+        keepOpen: () => editor?.pending ?? false,
         ...(opts.connectDoc ? { connect: opts.connectDoc } : {}),
         listener: {
           changed: () => {
@@ -737,6 +742,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
             // A page Publish ends with a status frame (no edits since the new version).
             if (!local) notePublished();
             if (client && !client.connected && !local) editor?.disconnected();
+            if (!local) editor?.roomStatus();
             if (client?.failed && !local && editor?.editing) {
               // The room never answered: keep editing alone.
               goSolo();
@@ -754,11 +760,16 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
             if (!local) editor?.lost(r);
           },
           version: (kind, n, info) => {
+            // The unpublished changes were discarded: so is typing kept to go back in.
+            if (kind === "reset" && info.why === "discarded") editor?.clearKept();
             if (!local) session.version(kind, n, info);
             status();
           },
           error: (code) => {
             if (code === "invalid") editor?.refused(DECK_WORDS.refused);
+            // A lease that went before its last frame was answered (a takeover): the editor says
+            // what happened already.
+            else if (code === "not_held") return;
             else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
           },
           structDenied: (r, by) => {
@@ -801,7 +812,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         status();
       } else if (m.type === "collect" && local) {
         editor?.flush();
-        post({ type: "draft", nonce: m.nonce, text: local.text });
+        // Typing that cannot be written as typed is not in the deck: the app publishes nothing, and
+        // keeps a copy with it, without its formatting.
+        const kept = editor?.unsavable ? editor.textWithTyping() : null;
+        if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
+        else post({ type: "draft", nonce: m.nonce, text: local.text });
       } else if (m.type === "review") {
         editor?.flush();
         void session.open(m);
@@ -814,6 +829,12 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       settings: () => editor?.openSettings(),
       save: () => {
         editor?.flush();
+        // Typing that cannot be written yet is not in the draft: no Publish goes out without it.
+        if (editor?.unsavable) {
+          editor.notify(DECK_WORDS.unsavable);
+          status();
+          return;
+        }
         post({ type: "save" });
       },
       state: () => {

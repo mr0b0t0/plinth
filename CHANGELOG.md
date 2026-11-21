@@ -416,7 +416,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   slide deck. Outside edit mode the deck shows the live draft, but while it is presented (full
   screen, presenter view) or someone leads viewers, it shows the published deck, so nobody's
   half-typed text reaches the audience and every follower is on the presenter's slide. Print and
-  Download .pptx wait until editing ends, as Present does.
+  Download .pptx wait until editing ends, as Present does. Nothing typed in a deck is lost when a
+  lease ends: text the room does not have yet goes back in (below the block when someone took it
+  over, in its place after a review), and what cannot go in yet stays on the page with **Copy**.
 
 ## 0.6.0 (2026-11-20)
 

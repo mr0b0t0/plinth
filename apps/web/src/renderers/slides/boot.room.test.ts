@@ -8,14 +8,16 @@
 // published deck while the app has it full screen, in presenter view and while a presenter leads
 // the room.
 import {
+  LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
   TYPE_REGISTRY,
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HIDDEN_CLOSE_MS } from "../common/live.ts";
 import { boot } from "./boot.ts";
-import { EDIT_DEBOUNCE_MS } from "./edit.ts";
+import { DECK_WORDS, EDIT_DEBOUNCE_MS } from "./edit.ts";
 import type { FollowSocket } from "./follow.ts";
 
 const APP = "https://plinth.example.com";
@@ -653,5 +655,276 @@ describe("keeping what was typed when the lease ends", () => {
     type("More");
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
     expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "\nMore" }]);
+  });
+});
+
+describe("never dropping typing the room does not hold yet", () => {
+  const DECK = "# One\n---\n## Two";
+  const editable = () => {
+    const ed = document.querySelector('.plinth-slides__open [contenteditable="true"]');
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    return ed;
+  };
+  const type = (text: string) => {
+    const ed = editable();
+    ed.textContent = text;
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const edits = (s: FakeSocket) => s.sent.filter((f) => f.t === "edit");
+  /** What the frame posted to the app. */
+  const posts = () => parent.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>);
+  const lastStatus = () =>
+    posts()
+      .filter((p) => p.type === "live")
+      .at(-1);
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await Promise.resolve();
+  };
+
+  /** Opens slide 2's title (line 2), granted as `lease`. */
+  const openTwo = (s: FakeSocket, lease = "l1") => {
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector('.plinth-slides__frame[data-n="2"] .plinth-slides__slide h2') as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toMatchObject({ t: "lease", start: 2, end: 3 });
+    s.frame({ t: "leased", lease, start: 2, end: 3, holder: YOU.id, by: YOU.email });
+  };
+
+  /** Leaves typing in the open block that cannot be written as Markdown as it stands. */
+  const stick = () => {
+    const ed = editable();
+    ed.innerHTML = "<em>a<strong>b</strong></em><strong>c</strong>";
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+  };
+
+  /** The socket drops and the next one is welcomed with `text`. */
+  const reconnect = (text: string, dirty = true) => {
+    sock("doc").drop();
+    vi.advanceTimersByTime(5000);
+    const s = sock("doc");
+    welcomeDoc(s, text, dirty, `g${FakeSocket.all.length}`);
+    return s;
+  };
+
+  it("keeps a lease holding typing it cannot write in use, so it is not taken over as idle", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    stick();
+    expect(edits(s)).toEqual([]);
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000);
+    expect(s.sent.at(-1)).toEqual({ t: "keep", lease: "l1" });
+    s.frame({ t: "kept", lease: "l1" });
+    vi.advanceTimersByTime(LIMITS.liveLeaseKeepS * 1000);
+    expect(s.sent.filter((f) => f.t === "keep")).toHaveLength(2);
+  });
+
+  it("keeps a hidden tab's socket open while such typing waits", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    stick();
+    const close = vi.spyOn(s, "close");
+    const was = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      vi.advanceTimersByTime(HIDDEN_CLOSE_MS + 1);
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      if (was) Object.defineProperty(document, "visibilityState", was);
+      else delete (document as unknown as Record<string, unknown>).visibilityState;
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+  });
+
+  it("leaves such typing as typed when the room refuses an earlier edit", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    type("Two typed");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    stick();
+    s.frame({ t: "error", code: "invalid" });
+    expect(editable().textContent).toBe("abc");
+    expect(editable().querySelector("strong")).not.toBeNull();
+  });
+
+  it("writes such typing below the block, without its marks, when someone takes it over", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    stick();
+    s.frame({ t: "lease_lost", lease: "l1", reason: "takeover" });
+    s.frame({ t: "leased", lease: "l9", start: 2, end: 3, holder: "s2", by: "bo@example.org" });
+    // An insert point right after the block the other person holds now.
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 3, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "\n## abc" }]);
+  });
+
+  it("writes an edit the room never acknowledged below the block when it is taken over", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    type("Two typed");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "## Two typed" }]);
+    // The lease goes before the room took the edit: it may never have landed.
+    s.frame({ t: "lease_lost", lease: "l1", reason: "takeover" });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 3, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s).at(-1)).toEqual({ t: "edit", lease: "l2", seq: 2, text: "\n## Two typed" });
+  });
+
+  it("says nothing of its own for a lease that went before its last frame was answered", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, false);
+    openTwo(s);
+    const live = document.querySelector(".plinth-slides__live") as HTMLElement;
+    live.textContent = "";
+    s.frame({ t: "error", code: "not_held" });
+    expect(live.textContent).toBe("");
+  });
+
+  it("puts typing back in its place after a review the draft froze for", () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, true);
+    openTwo(s);
+    type("Two typed");
+    // The draft freezes before the debounce sends it.
+    s.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    s.frame({ t: "conflict", version: 2 });
+    // Asked for at once, and refused while the review waits: nothing is asked again meanwhile.
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "lease_denied", reason: "frozen" });
+    const asked = s.sent.length;
+    s.frame({ t: "status", dirty: true, editors: [], last_edit_at: null, last_by_you: false });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([]);
+    expect(s.sent.length).toBe(asked);
+    // The review ends with the draft kept: the block is asked for where its text is.
+    s.frame({ t: "rebased", version: 2, gen: "g1", rev: 4 });
+    s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: DECK });
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "## Two typed" }]);
+  });
+
+  it("writes typing as a new block nearby when its block is held after a reconnect", async () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openTwo(first);
+    type("Two typed");
+    first.drop();
+    await settle();
+    // Not in the draft yet: the page asks before it is left.
+    expect(lastStatus()?.unflushed).toBe(true);
+    vi.advanceTimersByTime(5000);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, true, "g2");
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l9", start: 2, end: 3, holder: "s2", by: "bo@example.org" });
+    s.frame({ t: "lease_denied", reason: "held", by: "bo@example.org" });
+    // The nearest block end nobody's lease touches: after slide 1's title.
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 1, end: 1 });
+    s.frame({ t: "leased", lease: "l2", start: 1, end: 1, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "\n## Two typed" }]);
+  });
+
+  it("writes typing as a new block nearby when its text is gone after a reconnect", () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openTwo(first);
+    type("Two typed");
+    // Someone retitled slide 2 while this socket was away.
+    const s = reconnect("# One\n---\n## Second");
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 3, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "\n## Two typed" }]);
+  });
+
+  it("writes typing taken again after edit mode ended, and opens nothing", () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openTwo(first);
+    type("Two typed");
+    first.drop();
+    app({ type: "edit", on: false });
+    vi.advanceTimersByTime(5000);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, true, "g2");
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    expect(s.sent.slice(-2)).toEqual([
+      { t: "edit", lease: "l2", seq: 1, text: "## Two typed" },
+      { t: "release", lease: "l2" },
+    ]);
+    expect(document.querySelector(".plinth-slides__open")).toBeNull();
+  });
+
+  it("keeps typing the room refuses to write with Copy, and tries it again after a reconnect", async () => {
+    start(DECK);
+    const first = sock("doc");
+    welcomeDoc(first, DECK, false);
+    openTwo(first);
+    type("Two typed");
+    const s = reconnect(DECK);
+    s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toHaveLength(1);
+    s.frame({ t: "error", code: "invalid" });
+    // Not put back as the room has it: kept on the page, with Copy, and still unsent.
+    const bar = document.querySelector(".plinth-slides__kept");
+    expect(bar?.textContent).toContain(DECK_WORDS.stuckKept);
+    expect(bar?.querySelector("button")?.textContent).toBe(DECK_WORDS.copy);
+    await settle();
+    expect(lastStatus()?.unflushed).toBe(true);
+    const again = reconnect(DECK);
+    // Back in as a new block at the nearest free place.
+    expect(again.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 3, end: 3 });
+    again.frame({ t: "leased", lease: "l3", start: 3, end: 3, holder: YOU.id, by: YOU.email });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(again)).toMatchObject([{ t: "edit", lease: "l3", text: "\n## Two typed" }]);
+    expect(document.querySelector(".plinth-slides__kept")).toBeNull();
+  });
+
+  it("drops what it kept when the unpublished changes are discarded", async () => {
+    start(DECK);
+    const s = sock("doc");
+    welcomeDoc(s, DECK, true);
+    openTwo(s);
+    type("Two typed");
+    s.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    s.frame({ t: "reset", version: 1, gen: "g1", rev: 4, why: "discarded" });
+    s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: DECK });
+    const asked = s.sent.at(-1);
+    if (asked?.t === "lease") {
+      s.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: YOU.id, by: YOU.email });
+    }
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    expect(edits(s)).toEqual([]);
+    await settle();
+    expect(lastStatus()?.unflushed).toBe(false);
   });
 });

@@ -639,8 +639,8 @@ page shows the strip and makes the REST calls, and renders no content.
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
   client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
-  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block
-  holding typing it cannot write yet), starts that minute again.
+  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc or deck
+  block holding typing it cannot write yet), starts that minute again.
 - **Per-type rules.** The room checks every edit with the type's rules
   (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
   a refused edit means someone else changed the lines first or the edit was forged; the renderer
@@ -3145,6 +3145,23 @@ deleting slides, and a slide's columns, stay with agents for now.
   before the room reads its lease is looked for again the same way (an insert point by the lines
   before and at it), at most three times, and nothing opens on lines that no longer hold what was
   clicked.
+- **Nothing typed is lost**, by the doc editor's rules
+  ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)). Typing a slide block or
+  the notes cannot write as typed stays as typed, the place stays open, the frame reports unsent
+  changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
+  Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the tab's
+  kept copy has it without its formatting, and in a room the holder sends `keep` every 20 s while
+  connected. If edit mode ends anyway, it is written without its formatting. Typing the room does
+  not have yet when the lease ends (in the debounce, or not writable as typed) is kept: taken over,
+  it goes in as a new block below the block (kept notes, after the slide's notes once nobody holds
+  them); closed by a review or a reset, in its place again once the review ends; a block taken
+  again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
+  block at the nearest block end nobody's lease touches, three places at most. A room's refusal
+  never replaces it with the room's text. What no place takes stays on the page ("What you typed
+  couldn't be added to the deck yet. It is kept here.", with **Copy**), counts as unsent changes
+  (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a
+  reconnect; a discard drops it. The app's rescue store, which offers kept text back after a
+  reload, is the doc editor's alone for now: a deck's kept text lives in the frame.
 - **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
   change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;
@@ -3173,7 +3190,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   inserted line may hold a carriage return, and a deck's lines are read with CRLF as LF, as
   `parseDeck` does. The HTML-document rule applies as for docs. An edit that breaks any of these
   is refused (`invalid`), and the page puts the block back and says "That change would change the
-  deck's layout, so it wasn't kept."
+  deck's layout, so it wasn't kept." A block holding typing it cannot write as typed keeps it as
+  typed, and typing kept from a lease that ended (below) is kept on the page instead.
 - **Emptying a block.** Deleting all of a block's text removes its lines. Where that would run two
   text lines together, or bring a `---` to line 0 (which would turn the next slide's
   `key: value` lines into settings), one blank line takes its place. A deck that opens with a bare

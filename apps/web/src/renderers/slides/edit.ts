@@ -48,6 +48,7 @@ import {
   notesText,
   parseLaidOut,
   type RichBlock,
+  rangesOverlap,
   type SlidesStructOp,
   sameBlock,
   serializeNotes,
@@ -89,6 +90,13 @@ export const DECK_WORDS = {
   changed: "The deck changed meanwhile. Try again.",
   notKept: "The deck changed while you were offline, so the block you were typing in was closed.",
   unsavable: "This text can't be saved as typed. Change it to continue.",
+  formatDropped: "Formatting in the block you were typing in couldn't be kept.",
+  takenKept: "Someone else took over this block. What you typed is kept below it.",
+  closedKept: "The draft changed. What you typed is kept and goes back in.",
+  waitsKept:
+    "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.",
+  stuckKept: "What you typed couldn't be added to the deck yet. It is kept here.",
+  copy: "Copy",
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
   askBlock: "Ask an agent to change this",
@@ -256,6 +264,10 @@ interface Open {
    */
   caret: { i: number; at: RichPoint } | null;
   focused: boolean;
+  /** Opened to write typing kept from a lease that ended: a refusal keeps it, never puts back. */
+  kept?: true;
+  /** An edit was sent for it. */
+  wrote?: true;
 }
 
 /** A lease asked for and not answered yet, with what to open once it is granted. */
@@ -282,8 +294,16 @@ interface Want {
   emptyNow?: true;
   /** Its text starts selected, so typing replaces it (New's first title). */
   select?: true;
-  /** Taken again after a reconnect: what was typed is sent once it is open. */
+  /**
+   * What was typed, to send once it is open (taken again after its lease ended, or kept from one
+   * that cannot be taken again): never dropped. When its place cannot be had it goes in as a new
+   * block nearby (`anew`); when nothing takes it, it is kept on the page with Copy (`park`).
+   */
   resend?: true;
+  /** How many new places the kept text was tried at (anew), RETAKE_TRIES at most. */
+  fallbacks?: number;
+  /** Speaker notes kept: added after the slide's notes as they are once nobody else holds them. */
+  append?: true;
 }
 
 interface Mark {
@@ -319,6 +339,24 @@ function markAt(lines: readonly string[], mark: Mark, near: number): number {
 }
 
 const para = (): RichBlock => ({ t: "paragraph", c: [] });
+
+/** `b` with every mark taken off its text (links and code too), which can always be written. */
+function withoutMarks(b: RichBlock): RichBlock {
+  const strip = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(strip);
+    if (v === null || typeof v !== "object") return v;
+    const o = v as Record<string, unknown>;
+    if (o.k === "text" || o.k === "atom") return { ...o, m: {} };
+    return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, strip(x)]));
+  };
+  return strip(b) as RichBlock;
+}
+
+/** Whether a model holds any text (an empty paragraph or heading has nothing to keep). */
+function hasText(m: RichBlock, env: MdEnv): boolean {
+  const md = verifyBlock(withoutMarks(m), TOOLS, env);
+  return md === null || md.trim() !== "";
+}
 
 /** Whether a node is an element (frames have their own Element class, so no instanceof). */
 const isEl = (n: Node): n is HTMLElement => n.nodeType === 1;
@@ -453,13 +491,69 @@ export class SlidesEditor {
     this.backend = b;
   }
 
-  /** Text waits in the debounce, or cannot be written as typed. */
+  /**
+   * Text waits in the debounce, cannot be written as typed, or was typed in a place whose lease
+   * ended and is not in the draft yet (asked for again, or kept on the page).
+   */
   get pending(): boolean {
-    return this.timer !== null || this.stuck || this.trimming;
+    return (
+      this.timer !== null ||
+      this.stuck ||
+      this.trimming ||
+      this.want?.resend === true ||
+      this.retake?.want.resend === true ||
+      this.parked.length > 0 ||
+      this.toRetry.length > 0
+    );
   }
 
   get unsavable(): boolean {
     return this.stuck;
+  }
+
+  /** Typed text no place took yet: kept on the page with Copy, tried again after a reconnect. */
+  private parked: Want[] = [];
+  /** Parked texts to try again now (a reconnect), one at a time. */
+  private toRetry: Want[] = [];
+  private keepAlive: ReturnType<typeof setInterval> | null = null;
+  /** The notice for parked text, with Copy. */
+  private keptBar: HTMLElement | null = null;
+
+  /**
+   * Typing in the open place cannot be written as typed, or can again. While it cannot, nothing
+   * is sent, so a room would see the lease as idle and let it be taken over after
+   * LIMITS.liveLeaseIdleS: a connected holder says it is in use (`keep`) instead, until the text
+   * can be written, the place closes or the socket goes.
+   */
+  private setStuck(on: boolean): void {
+    if (this.stuck === on) return;
+    this.stuck = on;
+    if (this.keepAlive) clearInterval(this.keepAlive);
+    this.keepAlive = null;
+    if (!on || !this.backend.keep) return;
+    this.keepAlive = setInterval(() => {
+      const b = this.backend;
+      if (!this.stuck || !this.open) {
+        if (this.keepAlive) clearInterval(this.keepAlive);
+        this.keepAlive = null;
+        return;
+      }
+      if (b.connected && b.mine) b.keep?.();
+    }, LIMITS.liveLeaseKeepS * 1000);
+  }
+
+  /**
+   * Solo: the deck's text with what is typed in the open place, without its marks, while it cannot
+   * be written as typed (the app's kept copy), else null.
+   */
+  textWithTyping(): string | null {
+    const o = this.open;
+    const mine = this.backend.mine;
+    if (!this.stuck || !o || !mine) return null;
+    const lines = this.linesNow(o, undefined, true);
+    if (lines === null) return null;
+    const all = this.backend.lines;
+    return joinLines([...all.slice(0, mine.start), ...lines, ...all.slice(mine.end)]);
   }
 
   /** The range of the block open in the editor (its lines are not part of its slide's key). */
@@ -475,6 +569,7 @@ export class SlidesEditor {
     if (on === this.editing) return;
     if (!on) {
       this.flush();
+      this.salvage();
       this.close(true);
       this.closeSettings();
       this.hideBar();
@@ -858,7 +953,7 @@ export class SlidesEditor {
   granted(lease: ClientLease): void {
     const w = this.want;
     this.want = null;
-    if (!w || !this.editing) {
+    if (!w || (!this.editing && !w.resend)) {
       this.backend.release();
       return;
     }
@@ -885,6 +980,7 @@ export class SlidesEditor {
       sent: joinLines(this.backend.lines.slice(lease.start, lease.end)),
       start: lease.start,
       around: this.aroundOf(lease),
+      ...(w.resend ? { kept: true as const } : {}),
     };
     for (const m of w.open.models) o.editors.push(this.makeEditor(o, m));
     host.append(...o.editors.map((r) => r.el));
@@ -893,7 +989,13 @@ export class SlidesEditor {
     });
     host.addEventListener("focusout", (e) => this.onFocusOut(e));
     this.open = o;
-    this.stuck = false;
+    this.setStuck(false);
+    if (!this.editing) {
+      // Edit mode ended while typing kept from a lease that ended was asked for: it is written
+      // as it is (without its marks when it cannot be written with them), and nothing opens.
+      this.writeKept(o);
+      return;
+    }
     if (w.emptyNow) {
       o.sent = null;
       this.send();
@@ -993,7 +1095,7 @@ export class SlidesEditor {
   // ---------- typing ----------
 
   private edited(): void {
-    this.stuck = false;
+    // Typing that cannot be written stays unsavable until a send can write it (send()).
     this.schedule();
     this.hooks.refit();
     this.hooks.status();
@@ -1013,9 +1115,10 @@ export class SlidesEditor {
    * split by Enter is sent as `blocks`: the text before the caret and the text after it, as two
    * blocks of the same lease (an empty one is left out).
    */
-  private linesNow(o: Open, blocks?: RichBlock[]): string[] | null {
+  private linesNow(o: Open, blocks?: RichBlock[], plain = false): string[] | null {
+    const strip = (m: RichBlock) => (plain ? withoutMarks(m) : m);
     if (o.kind === "notes") {
-      const models = o.editors.map((r) => r.model);
+      const models = o.editors.map((r) => strip(r.model));
       for (const m of models) if (verifyBlock(m, TOOLS, o.env) === null) return null;
       try {
         return serializeNotes(models, o.form, o.ctx.settings);
@@ -1027,7 +1130,7 @@ export class SlidesEditor {
     if (!model) return null;
     const lines: string[] = [];
     for (const m of blocks ?? [model]) {
-      const part = deckBlockLines(m, o.ctx, o.env);
+      const part = deckBlockLines(strip(m), o.ctx, o.env);
       if (part === null) return null;
       if (part.length === 0) continue;
       if (lines.length > 0) lines.push("");
@@ -1044,10 +1147,16 @@ export class SlidesEditor {
     if (!o || !mine || this.trimming) return false;
     const lines = this.linesNow(o, blocks);
     if (lines === null) {
-      this.stuck = true;
+      // Never dropped: the text stays in the place as typed, which stays open and pending
+      // (close() keeps it), and nothing is published until it changes.
+      this.setStuck(true);
       this.notify(DECK_WORDS.unsavable);
       this.hooks.status();
       return false;
+    }
+    if (this.stuck) {
+      this.setStuck(false);
+      this.hooks.status();
     }
     const del = mine.end - mine.start;
     let ins = lines;
@@ -1071,11 +1180,18 @@ export class SlidesEditor {
       this.notify(DECK_WORDS.tooLong);
       return false;
     }
+    // Checked here first, as the doc editor does: a deck at its size limit keeps the typing.
+    const all = this.backend.lines;
+    if (RULES?.tooLarge(joinLines([...all.slice(0, mine.start), ...ins, ...all.slice(mine.end)]))) {
+      this.notify(DECK_WORDS.full);
+      return false;
+    }
     if (!this.backend.edit(text)) {
       this.notify(DECK_WORDS.notConnected);
       return false;
     }
     o.sent = text;
+    o.wrote = true;
     return true;
   }
 
@@ -1090,8 +1206,15 @@ export class SlidesEditor {
     return true;
   }
 
-  /** A change this editor would not send: the block goes back to the room's lines. */
+  /**
+   * A change this editor would not send: the block goes back to the room's lines. Typing kept from
+   * a lease that ended is never put back: it is kept on the page instead (park).
+   */
   private refusedHere(reason: string): boolean {
+    if (this.open?.kept) {
+      this.parkOpen();
+      return false;
+    }
     this.putBack();
     this.notify(reason);
     return false;
@@ -1254,6 +1377,12 @@ export class SlidesEditor {
   // ---------- the room's answers ----------
 
   changed(): void {
+    // Kept typing the room acknowledged is in the draft: the place is an ordinary one again.
+    const o = this.open;
+    if (o?.kept && o.wrote && this.timer === null && this.backend.ackedText === o.sent) {
+      delete o.kept;
+    }
+    if (!this.retake) this.nextKept();
     if (this.retake) this.tryRetake();
     if (this.afterAck && this.backend.ackedText === this.open?.sent) {
       const run = this.afterAck;
@@ -1262,10 +1391,28 @@ export class SlidesEditor {
     }
   }
 
+  /** The room's status changed (a review froze or ended): kept typing that waited goes in. */
+  roomStatus(): void {
+    if (this.retake) this.tryRetake();
+  }
+
   denied(reason: LeaseDenial, by?: string): void {
     const w = this.want;
     this.want = null;
     if (!w) return;
+    if (w.resend) {
+      // Typing kept from a lease that ended is never dropped with the answer: the lines moved, so
+      // it is looked for again; someone else holds its place, so it goes in as a new block next to
+      // it; a review waits, so it goes in after; nothing can be written, so it is kept to copy.
+      if (reason === "stale") this.again(w);
+      else if (reason === "held") this.anew(w);
+      else if (reason === "frozen") {
+        this.retake = { near: w.range.start, after: null, want: w };
+        this.notify(DECK_WORDS.waitsKept);
+      } else this.park(w);
+      this.hooks.status();
+      return;
+    }
     if (reason === "held" && by) {
       this.notify(
         w.open.kind === "notes" ? DECK_WORDS.heldHere(by) : DECK_WORDS.held(by, w.open.n),
@@ -1282,9 +1429,13 @@ export class SlidesEditor {
     if (!o) return;
     // What was typed, read while the editors are there: null when it cannot be written as typed.
     const typed = this.linesNow(o);
-    this.open = null;
+    // In the debounce, not writable as typed, or sent with no acknowledgement before the lease
+    // went (the room may never have taken it): a copy at worst, never a loss.
+    const unsent =
+      this.timer !== null || this.stuck || (o.wrote === true && this.backend.ackedText !== o.sent);
     const models = o.editors.map((r) => r.model);
-    for (const r of o.editors) r.destroy();
+    this.discardOpen();
+    const b = this.backend;
     if (reason === "reconnect" || reason === "rebased") {
       // The room merged a version or the socket dropped: take the block again once the draft is
       // back, and send what was typed since. It is looked for by each text the room may hold of
@@ -1293,7 +1444,6 @@ export class SlidesEditor {
       // text last written to D1 (the room was evicted meanwhile). An empty one is an insert point,
       // found by the lines around it. A merge's text comes after the lease's end (with a higher
       // rev), so the block is looked for in it, not in the lines from before it.
-      const b = this.backend;
       const texts =
         reason === "rebased"
           ? [b.ackedText, o.sent, b.durableText]
@@ -1323,6 +1473,55 @@ export class SlidesEditor {
         };
         this.tryRetake();
       }
+    } else if (unsent && models.some((m) => hasText(m, o.env))) {
+      // Taken over, or the draft closed under it (a review, a reset), with typing the room does
+      // not have yet (in the debounce, or not writable as typed): never dropped with the block.
+      // Written without its marks when it cannot be written with them. Taken over: as a new block
+      // below it (the notes: after them, once free). Closed: in its place again, once a lease can
+      // be had and no review waits.
+      const keptModels = typed === null ? models.map(withoutMarks) : models;
+      const { kind, n, ctx, env, pad, form } = o;
+      const open = { kind, n, ctx, env, pad, form, models: keptModels };
+      // What the room holds of the block: its last acknowledged text (the text at the grant when
+      // none was).
+      const held = b.ackedText ?? o.sent ?? "";
+      const heldLines = blockLines(held).length;
+      if (reason === "takeover") {
+        const at = Math.min(o.start + heldLines, b.lines.length);
+        const w: Want = {
+          range: { start: at, end: at },
+          mark: markOf(b.lines, { start: at, end: at }),
+          tries: 0,
+          focus: "end",
+          open:
+            kind === "notes"
+              ? open
+              : { ...open, pad: this.padAt(at), models: keptModels.slice(0, 1) },
+          resend: true,
+          ...(kind === "notes" ? { append: true as const } : {}),
+        };
+        this.retake = { near: at, after: null, want: w };
+        this.notify(DECK_WORDS.takenKept);
+      } else {
+        const mark = (text: string): Mark =>
+          text === "" ? { text, ...o.around } : { text, above: null, below: null };
+        const alts = [held, ...(o.sent !== null && o.sent !== held ? [o.sent] : [])].map(mark);
+        this.retake = {
+          near: o.start,
+          after: null,
+          want: {
+            range: { start: o.start, end: o.start + heldLines },
+            mark: mark(held),
+            alts,
+            tries: 0,
+            focus: "end",
+            open,
+            resend: true,
+          },
+        };
+        this.notify(DECK_WORDS.closedKept);
+      }
+      this.tryRetake();
     }
     this.hooks.redraw();
     this.hooks.status();
@@ -1331,15 +1530,16 @@ export class SlidesEditor {
   /**
    * A place to ask for again: after a reconnect or a merge (a block with what was typed in it), or
    * after its lines moved meanwhile. It is looked for by what it held, nearest where it was, and
-   * only in the room's lines: once connected, with no text on its way, no lease held and, after a
-   * merge, once the draft is past the rev `after`.
+   * only in the room's lines: once connected, with no text on its way, no lease held, no review
+   * waiting and, after a merge, once the draft is past the rev `after`.
    */
   private retake: { near: number; after: number | null; want: Want } | null = null;
 
   /** Asks again for a place whose lines moved, unless it was looked for too often already. */
   private again(w: Want): void {
     if (w.tries >= RETAKE_TRIES) {
-      this.notify(w.resend ? DECK_WORDS.notKept : DECK_WORDS.changed);
+      if (w.resend) this.anew(w);
+      else this.notify(DECK_WORDS.changed);
       return;
     }
     this.retake = { near: w.range.start, after: null, want: { ...w, tries: w.tries + 1 } };
@@ -1351,11 +1551,17 @@ export class SlidesEditor {
     const b = this.backend;
     if (!r || this.want || this.open || b.mine || !b.connected || !b.ready || !b.settled) return;
     if (r.after !== null && b.rev <= r.after) return;
+    // Typed text waits for a review to end; a place clicked is asked for, and answered `frozen`.
+    if (r.want.resend && b.conflictVersion !== null) return;
+    const lines = b.lines;
+    const w = r.want;
+    if (w.append) {
+      this.retakeNotes(r);
+      return;
+    }
     this.retake = null;
     // The same lines may sit on another slide too (two slides titled "Agenda"): the place
     // nearest where the block was is the one taken.
-    const lines = b.lines;
-    const w = r.want;
     let at = -1;
     let mark = w.mark;
     for (const m of w.alts ?? [w.mark]) {
@@ -1366,7 +1572,9 @@ export class SlidesEditor {
       }
     }
     if (at < 0) {
-      this.notify(w.resend ? DECK_WORDS.notKept : DECK_WORDS.changed);
+      // Typed text whose place is gone goes in as a new block nearby; a place clicked is not.
+      if (w.resend) this.anew({ ...w, range: { start: r.near, end: r.near } });
+      else this.notify(DECK_WORDS.changed);
       return;
     }
     const slide = deckLayout(lines).slides.find((x) => x.start <= at && at < x.end);
@@ -1387,20 +1595,313 @@ export class SlidesEditor {
   }
 
   /**
+   * Kept speaker notes: the slide's notes as they are now, with the kept ones after them, once no
+   * one else holds them. Kept on the page when the slide has no notes any more, or they cannot be
+   * edited in place.
+   */
+  private retakeNotes(r: { near: number; after: number | null; want: Want }): void {
+    const b = this.backend;
+    const lines = b.lines;
+    const w = r.want;
+    const slide =
+      deckLayout(lines).slides.find((x) => x.start <= r.near && r.near < x.end) ??
+      deckLayout(lines).slides.find((x) => x.n === w.open.n);
+    const notes = slide?.notes;
+    if (!slide || !notes) {
+      this.retake = null;
+      this.park(w);
+      return;
+    }
+    let end = notes.end;
+    while (end > notes.start + 1 && (lines[end - 1] ?? "").trim() === "") end--;
+    const range = { start: notes.start, end };
+    // Someone else holds them: asked for once they are free (changed()).
+    if ([...b.leases.values()].some((l) => l.id !== b.mine?.id && rangesOverlap(l, range))) return;
+    this.retake = null;
+    const part = lines.slice(range.start, range.end);
+    const form = notesFormOf(part[0]);
+    const settings = afterBareOpen(lines, slide.n);
+    const now = editableNotes(notesText(part), form, settings);
+    if (now === null) {
+      this.park(w);
+      return;
+    }
+    const want: Want = {
+      range,
+      mark: markOf(lines, range),
+      tries: 0,
+      focus: "end",
+      open: {
+        ...w.open,
+        kind: "notes",
+        n: slide.n,
+        ctx: { notes: true, settings },
+        env: docEnv(notesText(part)),
+        form,
+        models: [...now, ...w.open.models],
+      },
+      resend: true,
+      ...(w.fallbacks !== undefined ? { fallbacks: w.fallbacks } : {}),
+    };
+    this.want = want;
+    if (!b.lease(range)) {
+      this.want = null;
+      this.retake = r;
+    }
+  }
+
+  /**
+   * Typed text whose place cannot be had: a new block at the free place nearest where it was (the
+   * end of a block in a slide's head or a column that no one else's lease touches), RETAKE_TRIES
+   * places at most; then it is kept on the page. Kept notes go after the slide's notes instead.
+   */
+  private anew(w: Want): void {
+    const fallbacks = (w.fallbacks ?? 0) + 1;
+    if (fallbacks > RETAKE_TRIES) {
+      this.park(w);
+      return;
+    }
+    const near = w.range.start;
+    if (w.open.kind === "notes") {
+      this.retake = {
+        near,
+        after: null,
+        want: { ...w, append: true, fallbacks, tries: 0 },
+      };
+      this.tryRetake();
+      return;
+    }
+    const at = this.freePoint(near);
+    if (at === null) {
+      this.park(w);
+      return;
+    }
+    const lines = this.backend.lines;
+    this.retake = {
+      near: at.at,
+      after: null,
+      want: {
+        ...w,
+        range: { start: at.at, end: at.at },
+        mark: markOf(lines, { start: at.at, end: at.at }),
+        alts: undefined,
+        tries: RETAKE_TRIES,
+        fallbacks,
+        open: {
+          ...w.open,
+          n: at.n,
+          ctx: { notes: false, settings: afterBareOpen(lines, at.n) },
+          pad: this.padAt(at.at),
+          models: w.open.models.slice(0, 1),
+        },
+      },
+    };
+    this.tryRetake();
+  }
+
+  /**
+   * The insert point nearest `near` at a block's end in a slide's head or a column (or an empty
+   * part's start) that no other lease touches.
+   */
+  private freePoint(near: number): { at: number; n: number } | null {
+    const b = this.backend;
+    const lines = b.lines;
+    const others = [...b.leases.values()].filter((l) => l.id !== b.mine?.id);
+    let best: { at: number; n: number } | null = null;
+    for (const slide of deckLayout(lines).slides) {
+      for (const part of [slide.head, ...slide.columns]) {
+        const shown = deckPartShown(lines.slice(part.start, part.end), false).join("\n");
+        const ends = parseBlocks(shown).map((x) => part.start + x.core.end);
+        for (const p of ends.length > 0 ? ends : [part.start]) {
+          if (others.some((l) => l.start <= p && p <= l.end)) continue;
+          const d = Math.abs(p - near);
+          const was = best ? Math.abs(best.at - near) : Number.POSITIVE_INFINITY;
+          // Nearest; of two as near, the one below.
+          if (d < was || (d === was && best && p > best.at)) best = { at: p, n: slide.n };
+        }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Typed text no place takes for now: kept on the page, which says so with Copy, and counted as
+   * unsent changes (the page asks before it is left). Tried again after a reconnect.
+   */
+  private park(w: Want): void {
+    if (!w.open.models.some((m) => hasText(m, w.open.env))) return;
+    this.parked.push({ ...w, tries: 0, fallbacks: 0, alts: undefined, append: undefined });
+    this.showKept();
+    this.hooks.status();
+  }
+
+  /** The open place is typing kept from a lease that ended and cannot be written: kept to copy. */
+  private parkOpen(): void {
+    const o = this.open;
+    if (!o) return;
+    const mine = this.backend.mine;
+    const at = mine?.start ?? o.start;
+    const { kind, n, ctx, env, pad, form } = o;
+    const w: Want = {
+      range: { start: at, end: at },
+      mark: markOf(this.backend.lines, { start: at, end: at }),
+      tries: 0,
+      focus: "end",
+      open: { kind, n, ctx, env, pad, form, models: o.editors.map((r) => r.model) },
+      resend: true,
+    };
+    this.discardOpen();
+    if (mine) this.backend.release();
+    this.park(w);
+    this.hooks.redraw();
+  }
+
+  /** After a reconnect, the next parked text is tried again (as a new block nearby). */
+  private nextKept(): void {
+    const b = this.backend;
+    if (this.toRetry.length === 0 || this.want || this.open || b.mine) return;
+    if (!b.connected || !b.ready || !b.settled) return;
+    const w = this.toRetry.shift() as Want;
+    this.updateKept();
+    this.anew({ ...w, fallbacks: 0 });
+  }
+
+  /**
+   * Edit mode ends: the open place's typing that cannot be written as typed is written without its
+   * marks rather than lost with the place.
+   */
+  private salvage(): void {
+    const o = this.open;
+    if (!o || !this.stuck) return;
+    for (const r of o.editors) r.setModel(withoutMarks(r.model));
+    if (this.send()) {
+      this.notify(DECK_WORDS.formatDropped);
+      return;
+    }
+    if (this.open === o) this.parkOpen();
+  }
+
+  /** Writes a kept place granted after edit mode ended, then releases it; kept when it cannot be. */
+  private writeKept(o: Open): void {
+    if (this.linesNow(o) === null) {
+      for (const r of o.editors) r.setModel(withoutMarks(r.model));
+    }
+    if (this.send()) {
+      this.close(true);
+      return;
+    }
+    if (this.open === o) this.parkOpen();
+  }
+
+  /** Takes the open place off the page without sending or releasing (its lease ended, or is kept). */
+  private discardOpen(): void {
+    const o = this.open;
+    if (!o) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.setStuck(false);
+    this.open = null;
+    this.afterAck = null;
+    for (const r of o.editors) r.destroy();
+  }
+
+  /** Everything kept is dropped: the unpublished changes were discarded. */
+  clearKept(): void {
+    this.parked = [];
+    this.toRetry = [];
+    if (this.retake?.want.resend) this.retake = null;
+    if (this.want?.resend) this.want = null;
+    this.updateKept();
+    this.hooks.status();
+  }
+
+  private showKept(): void {
+    if (!this.keptBar) {
+      const bar = el(this.doc, "div", "plinth-slides__kept");
+      bar.setAttribute("role", "status");
+      bar.dataset.plinthControl = "";
+      const text = el(this.doc, "span", "plinth-slides__kept-text", DECK_WORDS.stuckKept);
+      const copy = el(this.doc, "button", "plinth-slides__kept-copy", DECK_WORDS.copy);
+      copy.type = "button";
+      copy.addEventListener("click", () => this.copyKept());
+      bar.append(text, copy);
+      this.keptBar = bar;
+    }
+    const root = this.doc.getElementById("__plinth-slides") ?? this.doc.body;
+    if (!root.contains(this.keptBar)) root.append(this.keptBar);
+  }
+
+  /** Shows the notice while anything is kept on the page, and takes it away once nothing is. */
+  private updateKept(): void {
+    if (this.parked.length + this.toRetry.length > 0) this.showKept();
+    else this.keptBar?.remove();
+  }
+
+  /** The kept texts, as Markdown without marks, one block per paragraph. */
+  keptText(): string {
+    return [...this.parked, ...this.toRetry]
+      .flatMap((w) => w.open.models.map((m) => verifyBlock(withoutMarks(m), TOOLS, w.open.env)))
+      .filter((t): t is string => t !== null && t.trim() !== "")
+      .join("\n\n");
+  }
+
+  /** Puts every kept text on the clipboard, for the person to paste where they want it. */
+  private copyKept(): void {
+    const text = this.keptText();
+    const fallback = () => {
+      const area = this.doc.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      this.doc.body.append(area);
+      area.select();
+      try {
+        this.doc.execCommand("copy");
+      } catch {
+        // No clipboard here either: the text stays kept, and the notice stays.
+      }
+      area.remove();
+    };
+    const clip = this.win.navigator?.clipboard;
+    if (clip?.writeText) void clip.writeText(text).catch(fallback);
+    else fallback();
+  }
+
+  /**
    * The socket closed: an asked-for lease is never answered. A block with what was typed in it is
-   * asked for again once the draft is back (the welcome brings the room's whole text).
+   * asked for again once the draft is back (the welcome brings the room's whole text), and so is
+   * typing kept on the page.
    */
   disconnected(): void {
     const w = this.want;
     this.want = null;
     if (w?.resend) this.retake = { near: w.range.start, after: null, want: w };
     else if (this.retake) this.retake = { ...this.retake, after: null };
+    if (this.parked.length > 0) {
+      this.toRetry.push(...this.parked);
+      this.parked = [];
+    }
   }
 
-  /** The room refused this editor's edit or op (`invalid`): put it back, say why. */
+  /**
+   * The room refused this editor's edit or op (`invalid`): put it back, say why. Typing that cannot
+   * be written as typed stays as typed, and typing kept from a lease that ended is kept on the
+   * page: the room's text never replaces either.
+   */
   refused(reason: string): void {
     this.trimming = false;
     this.settingsPending = false;
+    if (this.stuck) {
+      this.notify(reason);
+      this.hooks.status();
+      return;
+    }
+    if (this.open?.kept) {
+      this.parkOpen();
+      this.notify(reason);
+      return;
+    }
     this.putBack();
     this.notify(reason);
   }

@@ -2737,7 +2737,13 @@ reachable from a page: no endpoint, cookie, CSP, sandbox flag or env var was add
 - **What is written.** The slides serializer escapes deck structure per part, on top of the doc's
   escaping, so a person can type `---`, `Note:`, `|||` or `Date: 3 March` and the deck shows
   exactly that text; it reads its own output back before it sends, and sends nothing that would
-  not read back into the same model.
+  not read back into the same model. Such typing stays in the open place and counts as unsent and
+  `unsavable`, as in the doc editor, so no publish (any of its ways in) goes out without it; the
+  holder's `keep` frame only restarts the idle clock of a lease its socket holds. Typing kept from
+  a lease that ended is written again only through a lease of this socket's own, as a new block
+  where no other lease is, and through the structure rule like any edit; what no place takes is
+  kept in the frame's memory (never the content origin's storage) and offered to the person to
+  copy.
 - **Ask an agent from a slide.** The renderer's `ask` carries a structural anchor
   (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`) and structural words ("Slide 3, image
   1"), never the deck's text, so no draft text reaches the app page.
