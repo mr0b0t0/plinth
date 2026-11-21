@@ -113,6 +113,11 @@ export interface LiveDocOptions {
   connect?: (url: string, protocols: string[]) => Socket;
   /** For tests: the random part of the backoff (0 to 1). */
   random?: () => number;
+  /**
+   * The editor holds text not in the draft yet (typing it cannot write as typed, or text it is
+   * still to write): a hidden tab keeps its socket, as it does for unflushed text.
+   */
+  keepOpen?: () => boolean;
   /** Applies a struct frame's op to the lines (a sheet's applySheetStruct); absent for a doc. */
   applyStruct?: (lines: readonly string[], op: SheetStructOp) => string[] | null;
 }
@@ -179,6 +184,10 @@ export class LiveDocClient implements LiveBackend {
   private wantLease = false;
   /** A struct frame sent and not answered yet. */
   private structPending = false;
+  /** `keep` frames sent and not answered yet (`kept`, or an error from a room that has none). */
+  private keepsAwaiting = 0;
+  /** The room answered a `keep` with `invalid` (deployed before it knew it): none is sent again. */
+  private keepUnsupported = false;
   /** The latest rev made by this socket's own struct frame. */
   private ownStructRev = 0;
 
@@ -273,6 +282,7 @@ export class LiveDocClient implements LiveBackend {
     }
     this.unacked = null;
     this.structPending = false;
+    this.keepsAwaiting = 0;
     if (code === ROOM_CLOSE.unauthorized || code === ROOM_CLOSE.gone) {
       this.ended = code === ROOM_CLOSE.gone ? "gone" : "unauthorized";
       this.stopped = true;
@@ -301,7 +311,7 @@ export class LiveDocClient implements LiveBackend {
       if (this.hiddenTimer) return;
       this.hiddenTimer = setTimeout(() => {
         this.hiddenTimer = null;
-        if (this.unflushed || !this.ws) return;
+        if (this.unflushed || this.opts.keepOpen?.() || !this.ws) return;
         this.pausedHidden = true;
         const ws = this.ws;
         this.ws = null;
@@ -370,8 +380,10 @@ export class LiveDocClient implements LiveBackend {
 
   keep(): boolean {
     const l = this.mine;
-    if (!l || !this.connected) return false;
-    return this.send({ t: "keep", lease: l.id });
+    if (!l || !this.connected || this.keepUnsupported) return false;
+    if (!this.send({ t: "keep", lease: l.id })) return false;
+    this.keepsAwaiting += 1;
+    return true;
   }
 
   /** A sheet's rows or columns: applied by the room only while nobody else holds a lease. */
@@ -475,6 +487,9 @@ export class LiveDocClient implements LiveBackend {
         L.structDenied?.(f.reason, f.by);
         L.status();
         return;
+      case "kept":
+        if (this.keepsAwaiting > 0) this.keepsAwaiting -= 1;
+        return;
       case "released":
         this.leases.delete(f.lease);
         if (this.mine?.id === f.lease) this.mine = null;
@@ -554,6 +569,20 @@ export class LiveDocClient implements LiveBackend {
           return;
         }
       case "error": {
+        // The answer to a `keep` (only ever sent while nothing else waits for an answer): a room
+        // deployed before `keep` refuses it as invalid, and one whose lease went meanwhile (a
+        // takeover racing it) as not held. Neither concerns the editor: no more `keep` to the
+        // first, and nothing to say about the second.
+        if (
+          this.keepsAwaiting > 0 &&
+          (f.code === "invalid" || f.code === "not_held") &&
+          this.unacked === null &&
+          !this.structPending
+        ) {
+          this.keepsAwaiting -= 1;
+          if (f.code === "invalid") this.keepUnsupported = true;
+          return;
+        }
         // A refused struct frame is answered with an error too (invalid, too_large).
         this.structPending = false;
         L.error(f.code);
@@ -878,6 +907,7 @@ export function readServerFrame(raw: unknown): LiveDocServerFrame | null {
       case "struct_denied":
         return LEASE_REASONS.has(f.reason as string) && (f.by === undefined || isEmail(f.by));
       case "released":
+      case "kept":
         return isLease(f.lease);
       case "lease_lost":
         return isLease(f.lease) && LOST_REASONS.has(f.reason as string);

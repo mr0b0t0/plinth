@@ -261,6 +261,8 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     by: email.optional(),
   }),
   z.object({ t: z.literal("released"), lease: leaseId }),
+  /** The answer to a `keep` for a lease the socket holds (an older room answers `invalid`). */
+  z.object({ t: z.literal("kept"), lease: leaseId }),
   z.object({
     t: z.literal("lease_lost"),
     lease: leaseId,

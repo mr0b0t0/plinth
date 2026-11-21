@@ -224,9 +224,7 @@ describe("doc socket: leases and edits", () => {
     // A minute without edits, but the holder still has typing it cannot send: it says so.
     await age();
     a.send({ t: "keep", lease: la.lease });
-    // Frames are handled in order: once `sync` is answered, `keep` has been.
-    a.send({ t: "sync" });
-    await a.nextOf("welcome");
+    expect(await a.nextOf("kept")).toEqual({ t: "kept", lease: la.lease });
     b.send({ t: "takeover", lease: la.lease });
     expect(await b.nextOf("lease_denied")).toEqual({
       t: "lease_denied",
