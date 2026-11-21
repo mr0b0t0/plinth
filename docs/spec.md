@@ -2372,8 +2372,8 @@ its page without a new version each time, and agents add and move blocks with
     `details.reason: "stale_page"`. So tabs open at a deploy keep working on what they can read,
     and an Undo of a delete re-creates only what they read whole. A 401 is what the older pages
     already handle by turning read-only with "Your access changed. Reload the page.", so they
-    stop taking edits that could not be saved; the current page shows "Out of date. Reload the
-    page to edit." for it (the runtime passes the reason on the error and on `plinth:expired`).
+    stop taking edits that could not be saved; the current page shows "Out of date. Reload." for
+    it (the runtime passes the reason on the error and on `plinth:expired`).
     The format is raised whenever a newer board holds something an older page's reader drops,
     and `legacyBoardLoss` is then taught what the previous format read. The page's reader
     (`cleanBlock`, `cleanArrow`) keeps every value a valid block or arrow may hold, so the current
