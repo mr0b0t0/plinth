@@ -12,8 +12,16 @@
 //   other is dropped, so no rule ever depends on the viewer's window.
 //
 // The text has passed the shared deck CSS check (no backslash, no `<`, no @import, url() only for
-// the deck's own files), so a quoted string never holds an escape and a forward scan reads it.
+// the deck's own files, no line break inside a string), so a quoted string never holds an escape
+// and a forward scan reads it; a string still ends at a line break here, as a browser ends it.
 // `@font-face` and `@page` are dropped: faces come from deck.json, and pages from the renderer.
+//
+// Nothing here can reach past the slide: a selector that names the shadow host or its tree from
+// inside (`:host(…)`, `:host-context(…)`, `::slotted(…)`, `::part(…)`) is dropped, and the host,
+// the shadow `html` and every embed frame carry their critical styles inline with !important
+// (build.ts, embeds.ts), which no rule in a shadow root outranks. The only text that leaves the
+// shadow root is an `@property` rule, rebuilt from its checked descriptors (propertyRule).
+// A url() that names a Claude deck's `project/` path is read as the version's own (deckPath).
 
 interface Block {
   /** The prelude, trimmed: a selector list or an at-rule's name and condition. */
@@ -29,10 +37,15 @@ export function splitBlocks(css: string): Block[] {
   let start = 0;
   let prelude = "";
   const n = css.length;
+  // A string ends at its closing quote, or (unclosed, as a browser reads it) at a line break.
   const skipString = (k: number): number => {
     const q = css[k];
-    const end = css.indexOf(q as string, k + 1);
-    return end < 0 ? n : end + 1;
+    for (let j = k + 1; j < n; j++) {
+      const d = css[j];
+      if (d === q) return j + 1;
+      if (d === "\n" || d === "\r" || d === "\f") return j;
+    }
+    return n;
   };
   while (i < n) {
     const c = css[i];
@@ -93,12 +106,68 @@ export function splitBlocks(css: string): Block[] {
   return out;
 }
 
-const ROOT_RE = /^:(?:root|host)(?![\w-])/i;
+const ROOT_RE = /^:(?:root|host)(?![\w(-])/i;
+/** What reaches the shadow host or past the shadow tree from inside it. */
+const HOST_RE = /:host|::?slotted|::?part/i;
 
-/** One selector with a leading :root or :host turned into the slide's own `html`. */
-export function scopeSelector(sel: string): string {
+/**
+ * One selector with a leading :root or :host turned into the slide's own `html`, or null for one
+ * that would select the shadow host or its tree from inside (dropped).
+ */
+export function scopeSelector(sel: string): string | null {
   const s = sel.trim();
-  return ROOT_RE.test(s) ? `html${s.replace(ROOT_RE, "")}` : s;
+  const out = ROOT_RE.test(s) ? `html${s.replace(ROOT_RE, "")}` : s;
+  return HOST_RE.test(out) ? null : out;
+}
+
+/** deck.css or a style attribute with each url() of a Claude deck's `project/` path mapped. */
+export function mapProjectUrls(css: string): string {
+  return css.replace(/url\(\s*(["']?)project\//gi, "url($1");
+}
+
+const PROPERTY_NAME_RE = /^--[A-Za-z0-9_-]{1,64}$/;
+const SYNTAX_RE = /^(["'])([A-Za-z0-9<>|+# *-]{1,64})\1$/;
+const INITIAL_RE = /^[A-Za-z0-9#.%+ ()-]{1,64}$/;
+
+/**
+ * An `@property` rule rebuilt from its descriptors, or null when one is missing or not plainly
+ * safe: a name of letters, digits, _ and -, a syntax string of type names and combinators, true or
+ * false for inherits, and an initial value of plain tokens with balanced parentheses. It goes in
+ * the document's own head, outside every shadow root, so none of the author's text is copied.
+ */
+export function propertyRule(name: string, body: string): string | null {
+  if (!PROPERTY_NAME_RE.test(name)) return null;
+  let syntax: string | null = null;
+  let inherits: string | null = null;
+  let initial: string | null = null;
+  for (const decl of body.split(";")) {
+    if (decl.trim() === "") continue;
+    const colon = decl.indexOf(":");
+    if (colon < 0) return null;
+    const key = decl.slice(0, colon).trim().toLowerCase();
+    const value = decl.slice(colon + 1).trim();
+    if (key === "syntax" && syntax === null) {
+      const m = SYNTAX_RE.exec(value);
+      if (!m) return null;
+      syntax = (m[2] as string).trim();
+    } else if (key === "inherits" && inherits === null) {
+      if (!/^(?:true|false)$/i.test(value)) return null;
+      inherits = value.toLowerCase();
+    } else if (key === "initial-value" && initial === null) {
+      if (!INITIAL_RE.test(value)) return null;
+      let depth = 0;
+      for (const c of value) {
+        if (c === "(") depth++;
+        else if (c === ")" && --depth < 0) return null;
+      }
+      if (depth !== 0) return null;
+      initial = value;
+    } else return null;
+  }
+  if (syntax === null || inherits === null) return null;
+  if (initial === null && syntax !== "*") return null;
+  const init = initial === null ? "" : ` initial-value: ${initial};`;
+  return `@property ${name} { syntax: "${syntax}"; inherits: ${inherits};${init} }`;
 }
 
 /** Splits a selector list at its top-level commas (not inside parentheses or strings). */
@@ -187,7 +256,7 @@ export function scopeDeckCss(
   canvas: { width: number; height: number },
 ): { css: string; properties: string[] } {
   const properties: string[] = [];
-  const scoped = scopeInto(css, canvas, properties);
+  const scoped = scopeInto(mapProjectUrls(css), canvas, properties);
   return { css: scoped, properties };
 }
 
@@ -202,8 +271,10 @@ function scopeInto(
     const at = /^@([a-z-]+)\s*/i.exec(b.prelude);
     if (!at) {
       if (b.prelude === "") continue;
-      const sels = splitSelectors(b.prelude).map(scopeSelector).join(", ");
-      out.push(`${sels} {${b.body}}`);
+      const sels = splitSelectors(b.prelude)
+        .map(scopeSelector)
+        .filter((x): x is string => x !== null && x !== "");
+      if (sels.length > 0) out.push(`${sels.join(", ")} {${b.body}}`);
       continue;
     }
     const name = (at[1] ?? "").toLowerCase();
@@ -214,8 +285,9 @@ function scopeInto(
       out.push(`${b.prelude} {${scopeInto(b.body, canvas, properties)}}`);
     } else if (name === "keyframes" || name === "-webkit-keyframes") {
       out.push(`${b.prelude} {${b.body}}`);
-    } else if (name === "property" && /^--[A-Za-z0-9_-]{1,64}$/.test(cond.trim())) {
-      properties.push(`${b.prelude} {${b.body}}`);
+    } else if (name === "property") {
+      const rule = propertyRule(cond.trim(), b.body);
+      if (rule) properties.push(rule);
     }
     // @font-face, @page, @container, @import (refused at publish) and anything else: dropped.
   }

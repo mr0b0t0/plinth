@@ -3,9 +3,11 @@
 // version stores and get_artifact returns, every refusal with its file and line, the warnings,
 // updates that reuse slides by sha256 or carry them, restore, switching formats, the content
 // host's shell and files, the embed loader, and the view gate's no_editor.
+import { env } from "cloudflare:workers";
 import { HTML_DECK_LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { embedLoaderCsp } from "../src/content/embedLoader.ts";
+import { fileKey } from "../src/services/storage.ts";
 import { tar } from "./fixtures/bundles/tar.ts";
 import {
   agent,
@@ -19,6 +21,7 @@ import {
   publish,
   storedFile,
   tool,
+  versionRow,
 } from "./helpers.ts";
 
 const PNG = "iVBORw0KGgo=";
@@ -240,6 +243,161 @@ describe("an HTML deck over REST", () => {
     expect(
       restored.files.find((f: { path: string }) => f.path === "slides/plan.html").content,
     ).toBe(PLAN);
+  });
+
+  it("carries the slides, deck.css and named files an update's asset list leaves out", async () => {
+    const a = await agent();
+    const { body: p } = await publishHtmlDeck(a.auth, {
+      assets: [...files(), { path: "images/unused.png", content: PNG, encoding: "base64" }],
+    });
+    const plan2 = PLAN.replace("<h2>Plan</h2>", "<h2>Plan, v2</h2>");
+    // Only the changed slide, as Claude sends it: the rest of the deck stays.
+    const up = await put(a.auth, p.id, {
+      content: INDEX,
+      base_version: 1,
+      assets: [{ path: "slides/plan.html", content: plan2 }],
+    });
+    expect(up.status, JSON.stringify(await up.clone().json())).toBe(200);
+    expect((await manifestOf(p.id, 2)).map((m) => m.path).sort()).toEqual([
+      "deck.css",
+      "deck.json",
+      "images/hero.png",
+      "slides/cover.html",
+      "slides/plan.html",
+    ]);
+    const d = await detail(a.auth, p.id);
+    expect(d.files).toEqual([
+      { path: "deck.css", content: CSS },
+      { path: "slides/cover.html", content: COVER },
+      { path: "slides/plan.html", content: plan2 },
+    ]);
+    // A slide the new order drops, sent nowhere, leaves the deck; so does a file nothing names.
+    const drop = await put(a.auth, p.id, {
+      content: JSON.stringify({ title: "Launch deck", order: ["cover"] }),
+      base_version: 2,
+      assets: [{ path: "slides/cover.html", sha256: await sha(COVER) }],
+    });
+    expect(drop.status).toBe(200);
+    expect((await manifestOf(p.id, 3)).map((m) => m.path).sort()).toEqual([
+      "deck.css",
+      "deck.json",
+      "images/hero.png",
+      "slides/cover.html",
+    ]);
+    // A new slide arrives with the index that places it; the others carry.
+    const add = await put(a.auth, p.id, {
+      content: JSON.stringify({ title: "Launch deck", order: ["cover", "end"] }),
+      base_version: 3,
+      assets: [{ path: "slides/end.html", content: '<section id="end"><h2>End</h2></section>' }],
+    });
+    expect(add.status).toBe(200);
+    expect((await detail(a.auth, p.id)).files.map((f: { path: string }) => f.path)).toEqual([
+      "deck.css",
+      "slides/cover.html",
+      "slides/end.html",
+    ]);
+  });
+
+  it("switches an HTML deck to Markdown with assets omitted, keeping only its images", async () => {
+    const a = await agent();
+    const { body: p } = await publishHtmlDeck(a.auth);
+    const md = await put(a.auth, p.id, {
+      content: "# Talk\n\n![](images/hero.png)\n",
+      base_version: 1,
+    });
+    expect(md.status, JSON.stringify(await md.clone().json())).toBe(200);
+    expect((await manifestOf(p.id, 2)).map((m) => m.path)).toEqual([
+      "slides.md",
+      "images/hero.png",
+    ]);
+    expect(await detail(a.auth, p.id)).toMatchObject({ source_path: "slides.md" });
+  });
+
+  it("restores a Markdown deck whose text starts with { as Markdown, by its stored file", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, {
+      html: undefined,
+      type: "slides",
+      content: "# Talk\n",
+    });
+    // A version stored before deck.json existed, whose slides.md happens to start with "{".
+    const legacy = "{.lead} opening line\n\n# Talk\n";
+    const v1 = await versionRow(p.id, 1);
+    const entry = (await manifestOf(p.id, 1)).find((m) => m.path === "slides.md");
+    if (!v1 || !entry) throw new Error("no version 1");
+    await env.FILES.put(fileKey(p.id, v1, entry), legacy);
+    await put(a.auth, p.id, { content: "# Other\n", base_version: 1 });
+    const r = await call(`/api/v1/artifacts/${p.id}/versions/1/restore`, {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ base_version: 2 }),
+    });
+    expect(r.status, await r.clone().text()).toBe(201);
+    expect(await detail(a.auth, p.id)).toMatchObject({
+      version: 3,
+      source_path: "slides.md",
+      content: legacy,
+    });
+  });
+
+  it("refuses a deck text file past its byte cap from its size, before reading it", async () => {
+    const a = await agent();
+    const big = `<section id="plan"><p>${"x".repeat(HTML_DECK_LIMITS.maxSlideBytes)}</p></section>`;
+    const r = refusal(
+      await publishHtmlDeck(a.auth, { assets: files({ "slides/plan.html": big }) }),
+    );
+    expect(r.message).toBe("slides/plan.html is over 256 KB: split the slide");
+    expect(r.details.issues).toEqual([
+      { file: "slides/plan.html", message: "is over 256 KB: split the slide" },
+    ]);
+  });
+
+  it("publishes a whole Claude-shaped deck: project/ paths, a design system's copy, format keys", async () => {
+    const a = await agent();
+    const index = JSON.stringify({
+      v: 5,
+      createdOnFiles: { v: 1, at: "2026-11-21T10:00:00Z" },
+      lists: "css",
+      format: { v: 1, shared: ["project/deck.css"] },
+      title: "Q3",
+      cover: "cover",
+      order: ["cover", "plan"],
+      sections: { s1: { description: "Numbers", start: "cover" } },
+      faces: { brand: { family: "Brand Sans", src: "project/ds/brand/fonts/Brand.woff2" } },
+      designSystems: [
+        {
+          title: "Brand",
+          namespace: "brand",
+          artifact: "https://claude.ai/artifact/x",
+          version: null,
+          copiedAt: "2026-11-21T10:00:00Z",
+        },
+      ],
+    });
+    const { res, body } = await publish(a.auth, {
+      html: undefined,
+      type: "slides",
+      content: index,
+      assets: [
+        {
+          path: "deck.css",
+          content:
+            ":root { --brand: #123456 } .hero { background: url(project/ds/brand/assets/bg.png) }",
+        },
+        {
+          path: "slides/cover.html",
+          content:
+            '<section id="cover" class="hero"><img src="project/ds/brand/assets/logo.png" alt="Logo"><h1 style="font-family: \'Brand Sans\'">Q3</h1><aside>Hello.</aside></section>',
+        },
+        { path: "slides/plan.html", content: '<section id="plan"><h2>Plan</h2></section>' },
+        { path: "ds/brand/tokens.json", content: "{}" },
+        { path: "ds/brand/fonts/Brand.woff2", content: "d09GMgABAAA=", encoding: "base64" },
+        { path: "ds/brand/assets/logo.png", content: PNG, encoding: "base64" },
+        { path: "ds/brand/assets/bg.png", content: PNG, encoding: "base64" },
+      ],
+    });
+    expect(res.status, JSON.stringify(body)).toBe(201);
+    expect(body.warnings.filter((w: { code: string }) => w.code === "missing_file")).toEqual([]);
   });
 
   it("switches a Markdown deck to an HTML deck and back, the format following the source", async () => {

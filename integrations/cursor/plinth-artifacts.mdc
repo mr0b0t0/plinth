@@ -740,7 +740,8 @@ design:
    `publish_artifact` or `update_artifact` (or `start_upload`), as given. The server copies
    `tokens.css`, `fonts.css`, `components.css`, `tokens.json` and the font and image files they
    name into your artifact under `install.folder` (`ds/<folder>/`), keeping only what that type
-   takes (a design gets no fonts or `tokens.json`). Link `install.stylesheets` in that order, add
+   takes (a design gets no fonts or `tokens.json`; a Markdown deck only images; an HTML deck,
+   with `deck_format: "html"`, its `tokens.json`, fonts and images, and no stylesheets). Link `install.stylesheets` in that order, add
    each `font_links` entry as `<link rel="stylesheet">`, and style with `var(--<prefix>-...)`; a
    design's links go in its shared section. `install.faces` and `install.record` fill a deck's
    `faces` and `designSystems`. Follow its guidelines and adapt its component examples. A
@@ -833,7 +834,8 @@ default for quick decks.
   for Google Fonts (no `%` escapes) or `{"family": "Brand", "src": "fonts/Brand.woff2"}` for a font
   file of the version; `designSystems`, the design systems installed under `ds/<folder>/` (a face's
   `src` or an image there is `ds/<folder>/...`). Claude's keys `v`, `lists` and `format` are read
-  and kept.
+  and kept, and a Claude deck's `project/` paths (`project/ds/<folder>/fonts/A.woff2`) name the
+  same file without `project/`.
 - **A slide file** is exactly one `<section id="<id>">`, the id its file name (`[A-Za-z0-9_-]`, at
   most 64), on a 1920x1080 canvas with a 128px margin by default. Its last child may be one
   `<aside>` of plain-text speaker notes (at most 4,000 characters; anyone who can open the deck
@@ -854,11 +856,13 @@ default for quick decks.
   sandboxed frame with no network, no fonts of the deck and no clicks. Everywhere else nothing runs.
 - **Caps (a publish over them is refused, with the file and line):** 200 boxes a slide (phrases,
   rows and cells do not count), 15 nested `div`s, 24 pinned (`position:absolute`) children of one
-  box, tables of 100 rows by 24 columns, 20,000 characters of text a slide, 256 KB a slide file,
-  4 MB of deck text, 500 slides.
+  box, tables of 100 rows by 24 columns and 4,000 cells a slide, 100 inline marks (`b`, `i`, `u`,
+  `a`, `span`) in one text box, elements nested 64 deep, 20,000 characters of text a slide, 256 KB
+  a slide file, 4 MB of deck text, 500 slides.
 - **CSS:** shared rules in `deck.css`, one box's in its `style`. A `body` rule sets the deck's
-  defaults and `:root` its variables. No `@import`, no backslash, no `<`, and `url()` only for the
-  version's own files (no `data:` and no other host). `@media` is read at the slide's size, not
+  defaults and `:root` its variables. No `@import`, no backslash, no `<`, a quoted string closes on
+  its own line, `url()` only for the version's own files (no `data:` and no other host), and no
+  `:host(...)`, `:host-context`, `::slotted` or `::part` (dropped). `@media` is read at the slide's size, not
   the window's. `@font-face` does not load: name faces in `deck.json`.
 - **Images** are the version's own files, by plain relative path from the deck's root
   (`images/cover.jpg`, also from a slide in `slides/`), never `data:`, a URL or Claude's
@@ -871,10 +875,11 @@ default for quick decks.
   slides).
 - **Changing an HTML deck.** `get_artifact` returns `source_path: "deck.json"`, the index in
   `content` and every slide and `deck.css` in `files`. Call `update_artifact` with `content` (the
-  index) and `assets` listing every file the deck keeps: the slides you changed with `content`,
-  the rest as `{path, sha256}` from `assets`. Omitting `assets` keeps every file as it is; a file
-  you leave out of a list is removed. People see the deck, never its source, and ask an agent for
-  changes.
+  index) and `assets` holding only what you changed, as on Claude: the files the new deck needs
+  that you leave out (the slides its `order` names, `deck.css`, and the images and fonts they
+  name) are kept from the current version. To add a slide, send its file and the index with its id
+  in `order`; to remove one, send the index without it. Omitting `assets` keeps every file. People
+  see the deck, never its source, and ask an agent for changes.
 - Fix `slide_markup`, `missing_file` and `slides_setting` warnings before you hand over the link.
 
 ```json
@@ -1829,9 +1834,11 @@ about.
 
 ### craft/slides.md: decks (type slides)
 
-How to make a Markdown deck that presents well. Plinth chooses each slide's layout, type sizes and
-colors from what the slide holds, so what you control is the story, what goes on each slide and
-which kind of slide it is.
+How to make a deck that presents well. Most of this guide is about Markdown decks, where Plinth
+chooses each slide's layout, type sizes and colors from what the slide holds, so what you control
+is the story, what goes on each slide and which kind of slide it is. An HTML deck (`deck.json`),
+where you lay out every slide yourself, has its own section at the end; the outline, one idea per
+slide, numbers and notes apply to both.
 
 #### Outline first
 
@@ -1911,6 +1918,82 @@ not fit shrinks in steps down to 55%, and past that it is cut. Plan so nothing s
 
 - Change only what was asked: the other slides, their order and their wording stay as they are.
   Suggest broader changes in your reply.
+
+#### HTML decks (deck.json)
+
+In an HTML deck you are the designer: every slide is a fixed 1920 by 1080 page (1440 by 1080 at
+4:3), laid out like a poster, and nothing chooses sizes or colors for you. Think of a consultant's
+boardroom deck: clear, in order, readable from the back of the room, each slide making sense alone.
+
+##### Commit to a system first
+
+- Say the system before you write slides: one layout per kind of slide (title, section, content,
+  image, statement), the palette as a few hex colors (a dark, a light, one accent), and the faces
+  in `deck.json` (at most 4 families).
+- Pick four or five font sizes and reuse them everywhere. Eyebrow labels at 24 to 28 px in
+  capitals with letter spacing and the accent color; headings that make statements; 40 to 48 px
+  for agenda-level points; 28 to 32 px for sentences. Nothing under 24 px: if the text only fits
+  smaller, there is too much of it.
+- A size the person gives in points is twice that in pixels (36 pt is 72 px), as the .pptx reads it.
+- Put the shared rules in `deck.css` (the faces, the palette as `:root` variables, one class per
+  kind of slide) and keep each slide's own markup small.
+
+##### Margins, width and height
+
+- The standard margin is 128 px on every side, which is the section's default padding. Pinned
+  boxes start 128 px from an edge unless there is a reason not to.
+- Inside the margins the flow is 1664 px wide, too wide for sentences: keep body text in a column
+  of about 800 to 1000 px, and display lines to about 1400 px.
+- The height inside the margins is 824 px, and a slide never shrinks to fit: what holds too much
+  runs off the canvas and is cut, so do the arithmetic. A two-line 96 px heading takes about 210
+  px, a gap 48 px, a table row about twice its font size per line of text (about 70 px at 32 px).
+  Nine such rows do not fit under that heading: use 24 to 28 px for the table, or split the slide.
+- Never give a text box a fixed height smaller than its text; leave the height out.
+- A footer (a source line, a logo, a page number) is one pinned 24 px row 64 px above the bottom
+  edge, in the same place on every slide that has one; give those slides 160 px of bottom padding
+  so the flow stops above it.
+
+##### Flow first, pin on purpose
+
+- Most boxes flow: the section is a flex column with a gap, cards are flex rows of equal columns,
+  a matrix is one grid so its rows line up. Pin (absolute position) only what flow cannot do: a
+  source line on the bottom edge, a badge over a corner, a full-bleed picture behind everything
+  (listed first, so the rest paints over it), a box that moves between slides with the magic
+  transition.
+- Labels over a picture are real text pinned inside a positioned box that holds the image, never
+  words drawn inside the image: images do not use the deck's fonts, and the .pptx cannot edit them.
+- A chart's bars stand on one baseline: a track of fixed height with the bars bottom-aligned in it,
+  one scale for the whole slide, values above and labels below.
+- Keep nesting shallow: a plain grouping box costs nothing, but past three levels the slide wants
+  splitting. The format allows at most 15 nested boxes, 200 boxes and 24 pinned children of one box
+  a slide.
+
+##### Compose each slide
+
+- Set the background of every slide on purpose: the dark color to open and close, the light one for
+  the content, the accent for the one statement slide people should remember.
+- Vary the slides: full-bleed pictures, big numbers (160 to 200 px, with a 28 to 32 px caption),
+  quotes, tables, card rows, diagrams. Turn text into structure wherever it can be.
+- Slides of one kind are built the same way: the heading at the top margin, at the same height on
+  every content slide, so it stays put as people page. Spread a content slide's body down the
+  slide (space between its blocks, or a spacer before the last row) rather than centering the
+  column, which moves the heading. Center only a slide with no heading over its body (a statement,
+  a quote, a closing line).
+- A statement slide with open space below it is finished; a content slide whose column stops at
+  60% of the height is not.
+- Fragments (steps that wait for a click) and animations are for a point that lands in steps, not
+  for every slide. The plain rule is the finished look: it is what print, the overview, thumbnails
+  and the .pptx show.
+
+##### Notes and size
+
+- Speaker notes are one plain-text aside, the last thing in the slide, at most 4,000 characters.
+  When the person asks for notes, the notes carry the script in full sentences and the slides carry
+  pictures, figures and one-line headlines.
+- Keep a deck to about 50 slides. Its weight is its images: name each by its path, and reuse one
+  file instead of several crops of it.
+- To change one slide, send only that slide's file (and the index when the order changes); the
+  rest of the deck stays as it is.
 
 ### craft/whiteboard.md: whiteboards (type whiteboard)
 

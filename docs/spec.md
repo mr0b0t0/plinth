@@ -1161,7 +1161,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   under the folder and the version read: `fonts.css` with the font files when it stores its own,
   `tokens.css`, `components.css` when it has CSS, `tokens.json`, and every stored file a CSS block
   names, keeping only what that type's asset rules take, so a design gets no font files,
-  `fonts.css` or `tokens.json` and the list works as given), `stylesheets` to link in that order,
+  `fonts.css` or `tokens.json` and the list works as given; a deck by its `deck_format`: a
+  Markdown deck, the default, its images, and an HTML deck its `tokens.json`, font files and
+  images, as Claude copies them, never the generated CSS), `stylesheets` to link in that order,
   `faces` (a deck's `faces` map, keyed by family lowercased with spaces as `-`: a Google face by
   `href`, an installed font file by `src` under the folder) and `record` (`title`, `namespace`,
   `artifact`, `version`, `copiedAt`), what a deck's or canvas's `designSystems` list keeps. Every
@@ -1387,14 +1389,18 @@ differs from Claude only where noted.
   deck); the registry row names the second as the type's `altSource`. A sent source whose first
   character is `{` is `deck.json`; a Markdown deck cannot start with `{`. A folder has one or the
   other at its top, never both. The stored version says which by the file it holds
-  (`versionSourcePath`). An update may switch formats. Restore copies the old version's source
-  and files as they were.
+  (`versionSourcePath`), and every check of a stored source reads its format from that file, not
+  its text. An update may switch formats; one from HTML to Markdown with `assets` left out keeps
+  only the images. Restore copies the old version's source, at the old version's path, and its
+  files as they were.
 - **Files.** `content` is `deck.json`: `title`, `order` (slide ids), `sections` (key ->
   `{description, start}`), `cover`, `size` (`"4:3"`, else 16:9), `faces` and `designSystems`.
   Claude's `v`, `createdOnFiles`, `lists` and `format` are read and kept. The version's files are
   `deck.css`, one `slides/<id>.html` per slide (the id is its file name, `[A-Za-z0-9_-]{1,64}`),
-  images and font files anywhere, and a design system's files under `ds/<folder>/`. Plinth drops
-  Claude's `project/` prefix: paths are from the deck's root. An image is the version's own file
+  images and font files anywhere, and a design system's files under `ds/<folder>/`. Paths are
+  from the deck's root, and a Claude deck's leading `project/` (`project/ds/<folder>/fonts/A.woff2`
+  in a face's `src`, an image or a `url()`) is dropped, so a deck written for Claude publishes and
+  looks the same. An image is the version's own file
   by plain relative path, never Claude's `/_blob/<id>`, `data:` or a URL. A Markdown deck still
   holds only images.
 - **A slide.** One `<section id>` on a 1920x1080 canvas (1440x1080 at 4:3) with a 128px margin by
@@ -1424,20 +1430,26 @@ differs from Claude only where noted.
   - an `svg` of 52 KB, with no script, handlers, `foreignObject`, images, links, `href` other than
     `#id`, `url()` other than `url(#id)`, or animated `href`, and only numeric or the XML five
     entities;
-  - tables of 100 rows by 24 columns;
+  - tables of 100 rows by 24 columns, and 4,000 table cells a slide;
+  - 100 inline marks (`b`, `i`, `u`, `a`, `span`, and the phrases read as them) in one text box,
+    counted down to the next box;
   - 8 embeds a slide, each 16 KB and a direct child of the section;
   - 20,000 characters of text a slide;
   - 500 slides.
 
   Plinth adds byte limits: 256 KB for a slide file, `deck.css` and `deck.json`, and 4 MB for all
-  of the deck's text.
+  of the deck's text, checked from the stored sizes before any file is read; and elements nested
+  at most 64 deep. Every refused slide names its file: none is dropped quietly.
 - **CSS.** `deck.css` and every `style` attribute pass the design-system CSS check (no `@import`,
-  `<`, backslash, string URL functions, `expression()`, `behavior` or `-moz-binding`), and their
-  `url()`s may name only the version's own files (no `data:`). In each slide, `:root` and `:host`
+  `<`, backslash, string URL functions, `expression()`, `behavior` or `-moz-binding`), a quoted
+  string closes on its own line (a browser ends it at a line break), and their `url()`s may name
+  only the version's own files (no `data:`). `:host(...)`, `:host-context`, `::slotted` and
+  `::part` selectors are dropped. In each slide, `:root` and `:host`
   name its `html`, and `html` and `body` rules apply as in a page. `@media` is read at the slide's
   size: `all`, `screen`, orientation and px widths and heights apply, `prefers-reduced-motion:
   no-preference` holds and `reduce` does not. `@font-face` does not load (a warning), and
-  `@property` registers for the whole deck. Unlike Claude, Plinth does not drop the CSS that
+  `@property` registers for the whole deck, rebuilt from its checked name, `syntax`, `inherits`
+  and `initial-value` (any other is dropped). Unlike Claude, Plinth does not drop the CSS that
   Claude's renderer drops (`z-index`, `float`, `clip-path` and so on): it is a browser, so those
   rules work.
 - **Fonts.** `faces` are Google Fonts `css2` links or font files of the version (a design system's
@@ -1450,8 +1462,9 @@ differs from Claude only where noted.
   - An embed runs in a nested frame of the fixed loader `/__plinth/frames/slides/embed.html`
     (allow-scripts only, no network), mounted only while its slide is on stage and for print
     (which waits up to 3 seconds for each to draw).
-  - The fixed canvas is scaled to fit like a Markdown deck's. A slide never shrinks its text; one
-    whose flow runs past its canvas is marked in presenter view and the overview.
+  - The fixed canvas is scaled to fit like a Markdown deck's, and clipped like Claude's. A slide
+    never shrinks its text, and is never marked as overflowing: a box past the edge is the
+    author's choice (a full-bleed picture). Markdown decks keep their overflow mark.
 - **Motion.**
   - CSS animations play when a slide arrives in the deck view or presenter view's current pane.
   - `class="fragment"` waits for a click, in `data-fragment-index` order then file order, with
@@ -1485,17 +1498,24 @@ differs from Claude only where noted.
 - **Agents.**
   - `get_artifact` returns `source_path: "deck.json"`, the index in `content` and the text of
     `deck.css` and every slide in `files`, all untrusted.
-  - An update sends the index in `content` and every file it keeps in `assets`, unchanged ones as
-    `{path, sha256}`; omitting `assets` keeps them all, as for every type. The version is checked
-    again (carried and reused files read from storage).
+  - An update sends the index in `content` and, in `assets`, only what changed, as on Claude:
+    every file the new deck needs that the list leaves out (the slides `order` names, or every
+    slide file without an `order`; `deck.css`; the images, fonts and CSS files they name) is
+    carried from the current version as if sent as `{path, sha256}`. A slide the new `order`
+    drops and a file nothing names are left out (on Claude a slide file stays until deleted; a
+    Plinth asset list has no delete, so leaving it out of `order` is the delete). Omitting
+    `assets` keeps every file, as for every type. The version is checked again (carried and
+    reused files read from storage).
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
     `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
   - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
     they ask an agent for changes. Compare lists the index's changes (title, size, fonts, slides
     added, removed or moved) beside the slide files that changed.
 - **Design systems.** `designSystems` is kept as written (its `namespace`s checked, at most 4), and
-  a face's `src` or an image may name `ds/<folder>/...`. The copy that installs a system's files
-  there is a separate server-side feature; nothing in a deck loads another artifact.
+  a face's `src` or an image may name `ds/<folder>/...`. `get_design_system` with `install_for:
+  "slides"` and `deck_format: "html"` lists the system's `tokens.json`, font files and images, as
+  Claude copies them into a deck (no generated CSS); a Markdown deck, the default, gets its
+  images. Nothing in a deck loads another artifact.
 - **Not yet.**
   - Editing an HTML deck on its page.
   - Fragment steps in an audience window and for followers (they show every step).

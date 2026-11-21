@@ -343,6 +343,13 @@ export const getDesignSystemInput = z.object({
       "The type of the artifact you will install it into (default html): install lists only the " +
         "files that type takes (a design gets no fonts or tokens.json).",
     ),
+  deck_format: z
+    .enum(["markdown", "html"])
+    .optional()
+    .describe(
+      "With install_for slides: the deck's format (default markdown). A Markdown deck takes the " +
+        "system's images; an HTML deck (deck.json) its tokens.json, font files and images.",
+    ),
   folder: z
     .string()
     .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)

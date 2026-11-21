@@ -741,7 +741,8 @@ design:
    `publish_artifact` or `update_artifact` (or `start_upload`), as given. The server copies
    `tokens.css`, `fonts.css`, `components.css`, `tokens.json` and the font and image files they
    name into your artifact under `install.folder` (`ds/<folder>/`), keeping only what that type
-   takes (a design gets no fonts or `tokens.json`). Link `install.stylesheets` in that order, add
+   takes (a design gets no fonts or `tokens.json`; a Markdown deck only images; an HTML deck,
+   with `deck_format: "html"`, its `tokens.json`, fonts and images, and no stylesheets). Link `install.stylesheets` in that order, add
    each `font_links` entry as `<link rel="stylesheet">`, and style with `var(--<prefix>-...)`; a
    design's links go in its shared section. `install.faces` and `install.record` fill a deck's
    `faces` and `designSystems`. Follow its guidelines and adapt its component examples. A
@@ -834,7 +835,8 @@ default for quick decks.
   for Google Fonts (no `%` escapes) or `{"family": "Brand", "src": "fonts/Brand.woff2"}` for a font
   file of the version; `designSystems`, the design systems installed under `ds/<folder>/` (a face's
   `src` or an image there is `ds/<folder>/...`). Claude's keys `v`, `lists` and `format` are read
-  and kept.
+  and kept, and a Claude deck's `project/` paths (`project/ds/<folder>/fonts/A.woff2`) name the
+  same file without `project/`.
 - **A slide file** is exactly one `<section id="<id>">`, the id its file name (`[A-Za-z0-9_-]`, at
   most 64), on a 1920x1080 canvas with a 128px margin by default. Its last child may be one
   `<aside>` of plain-text speaker notes (at most 4,000 characters; anyone who can open the deck
@@ -855,11 +857,13 @@ default for quick decks.
   sandboxed frame with no network, no fonts of the deck and no clicks. Everywhere else nothing runs.
 - **Caps (a publish over them is refused, with the file and line):** 200 boxes a slide (phrases,
   rows and cells do not count), 15 nested `div`s, 24 pinned (`position:absolute`) children of one
-  box, tables of 100 rows by 24 columns, 20,000 characters of text a slide, 256 KB a slide file,
-  4 MB of deck text, 500 slides.
+  box, tables of 100 rows by 24 columns and 4,000 cells a slide, 100 inline marks (`b`, `i`, `u`,
+  `a`, `span`) in one text box, elements nested 64 deep, 20,000 characters of text a slide, 256 KB
+  a slide file, 4 MB of deck text, 500 slides.
 - **CSS:** shared rules in `deck.css`, one box's in its `style`. A `body` rule sets the deck's
-  defaults and `:root` its variables. No `@import`, no backslash, no `<`, and `url()` only for the
-  version's own files (no `data:` and no other host). `@media` is read at the slide's size, not
+  defaults and `:root` its variables. No `@import`, no backslash, no `<`, a quoted string closes on
+  its own line, `url()` only for the version's own files (no `data:` and no other host), and no
+  `:host(...)`, `:host-context`, `::slotted` or `::part` (dropped). `@media` is read at the slide's size, not
   the window's. `@font-face` does not load: name faces in `deck.json`.
 - **Images** are the version's own files, by plain relative path from the deck's root
   (`images/cover.jpg`, also from a slide in `slides/`), never `data:`, a URL or Claude's
@@ -872,10 +876,11 @@ default for quick decks.
   slides).
 - **Changing an HTML deck.** `get_artifact` returns `source_path: "deck.json"`, the index in
   `content` and every slide and `deck.css` in `files`. Call `update_artifact` with `content` (the
-  index) and `assets` listing every file the deck keeps: the slides you changed with `content`,
-  the rest as `{path, sha256}` from `assets`. Omitting `assets` keeps every file as it is; a file
-  you leave out of a list is removed. People see the deck, never its source, and ask an agent for
-  changes.
+  index) and `assets` holding only what you changed, as on Claude: the files the new deck needs
+  that you leave out (the slides its `order` names, `deck.css`, and the images and fonts they
+  name) are kept from the current version. To add a slide, send its file and the index with its id
+  in `order`; to remove one, send the index without it. Omitting `assets` keeps every file. People
+  see the deck, never its source, and ask an agent for changes.
 - Fix `slide_markup`, `missing_file` and `slides_setting` warnings before you hand over the link.
 
 ```json

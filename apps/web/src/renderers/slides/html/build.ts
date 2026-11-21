@@ -14,7 +14,7 @@ import type { DeckElement, DeckNode, HtmlDeck, HtmlSlide } from "@plinth/shared"
 import type { SlideView } from "../deck.ts";
 import { el } from "../dom.ts";
 import { baseCss, STILL_ATTR, STILL_CSS } from "./base.ts";
-import { scopeDeckCss } from "./css.ts";
+import { mapProjectUrls, scopeDeckCss } from "./css.ts";
 import { X_ICONS } from "./icons.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -72,6 +72,43 @@ export function svgSource(svg: NonNullable<DeckElement["svg"]>, still: boolean):
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(still ? svg.still : svg.xml)}`;
 }
 
+/**
+ * Sets each declaration inline with !important. Author CSS lives in the slide's shadow root, and no
+ * rule there (not even `:host { … !important }`) outranks an inline !important declaration, so the
+ * boxes Plinth builds around and at the top of a slide keep these whatever deck.css says.
+ */
+export function pin(e: HTMLElement, decls: Record<string, string>): void {
+  for (const [k, v] of Object.entries(decls)) e.style.setProperty(k, v, "important");
+}
+
+/** What keeps a slide on its canvas: the host's place and size, as slides.css has them. */
+export const HOST_PINNED = {
+  position: "absolute",
+  top: "0px",
+  left: "0px",
+  display: "block",
+  width: "var(--w)",
+  height: "var(--h)",
+  overflow: "hidden",
+  "z-index": "auto",
+  contain: "strict",
+} as const;
+
+/** The canvas around a host clips and contains everything the slide draws, fixed boxes included. */
+export const CANVAS_PINNED = { contain: "strict", overflow: "hidden" } as const;
+
+/** The shadow root's own `html`, the slide's canvas. */
+function htmlPinned(canvas: { width: number; height: number }): Record<string, string> {
+  return {
+    position: "absolute",
+    inset: "0",
+    width: `${canvas.width}px`,
+    height: `${canvas.height}px`,
+    overflow: "hidden",
+    contain: "strict",
+  };
+}
+
 /** Each inline drawing's two pictures, live and still. */
 const drawings = new WeakMap<HTMLImageElement, { live: string; still: string }>();
 
@@ -82,7 +119,9 @@ function iconSvg(doc: Document, name: string): SVGSVGElement {
   svg.setAttribute("fill", "currentColor");
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("focusable", "false");
-  for (const d of X_ICONS[name as keyof typeof X_ICONS] ?? []) {
+  // Own keys only: a name such as "constructor" is no icon.
+  const paths = Object.hasOwn(X_ICONS, name) ? X_ICONS[name as keyof typeof X_ICONS] : [];
+  for (const d of paths) {
     const path = doc.createElementNS(SVG_NS, "path");
     path.setAttribute("d", d);
     svg.append(path);
@@ -114,7 +153,7 @@ function build(s: BuildState, n: DeckNode): Node {
   if (n.kind === "text") return doc.createTextNode(n.text);
   if (n.svg) {
     const img = doc.createElement("img");
-    for (const [k, v] of n.attrs) img.setAttribute(k, v);
+    for (const [k, v] of n.attrs) img.setAttribute(k, k === "style" ? mapProjectUrls(v) : v);
     const live = svgSource(n.svg, false);
     img.setAttribute("src", live);
     img.setAttribute("alt", n.svg.alt);
@@ -125,7 +164,7 @@ function build(s: BuildState, n: DeckNode): Node {
   const e = doc.createElement(n.tag);
   for (const [k, v] of n.attrs) {
     if (n.tag === "a" && k === "href") linkHref(s.ctx, e, v);
-    else e.setAttribute(k, v);
+    else e.setAttribute(k, k === "style" ? mapProjectUrls(v) : v);
   }
   if (n.tag === "img") {
     e.setAttribute("loading", "lazy");
@@ -199,6 +238,8 @@ export function buildHtmlSlide(
   const style = doc.createElement("style");
   style.textContent = ctx.css;
   const html = doc.createElement("html");
+  pin(html, htmlPinned(ctx.deck.canvas));
+  pin(host, HOST_PINNED);
   const body = doc.createElement("body");
   if (ctx.counters.length > 0) {
     html.style.setProperty("counter-reset", ctx.counters.map((c) => `${c} ${n - 1}`).join(" "));
@@ -211,6 +252,7 @@ export function buildHtmlSlide(
   html.append(body);
   root.append(style, html);
   const canvas = el(doc, "div", "plinth-slides__canvas");
+  pin(canvas, CANVAS_PINNED);
   canvas.append(host);
   const notes = doc.createDocumentFragment();
   for (const para of slide.notes.split(/\n{2,}/)) {

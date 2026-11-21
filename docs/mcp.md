@@ -303,7 +303,8 @@ images and font files. Plinth stores the index as `deck.json` (`source_path: "de
 - **`deck.json`** holds `title`, `order` (the slide ids), `sections`, `cover` and `size` (`"4:3"`
   for 1440x1080, else 1920x1080). It also holds `faces`, at most 4 families, each a Google Fonts
   `css2` `href` or a `src` path to a font file of the version, and `designSystems`, the systems
-  installed under `ds/<folder>/`.
+  installed under `ds/<folder>/`. A Claude deck's `project/` prefix on a path
+  (`project/ds/<folder>/fonts/A.woff2`) is dropped: it names the same file of the version.
 - **A slide file** is one `<section id="<id>">`, the id its file name, with an `<aside>` of speaker
   notes as its last child. It is written in the element allowlist: `h1` to `h3`, `p`, lists, `br`,
   `b`, `i`, `u`, `a`, `span`, `div`, `img`, tables, inline `svg`, `hr`, and Plinth's `x-shape`,
@@ -314,15 +315,21 @@ images and font files. Plinth stores the index as `deck.json` (`source_path: "de
 A publish is refused with each problem's file and line in `details.issues` when a slide holds
 script, a handler, a frame, a `javascript:` URL, an outside image, markup the parser cannot read,
 or a slide over Claude's caps. The caps are 200 boxes, 15 nested `div`s, 24 pinned children of
-one box, an `svg` of 52 KB, tables of 100 by 24, 8 embeds of 16 KB, 20,000 characters, a 256 KB
-file, 4 MB of deck text and 500 slides. `deck.css` passes the same CSS check as a design system's
-blocks. Markup that shows differently (another HTML tag shown as a plain box, an unknown icon, a
+one box, an `svg` of 52 KB, tables of 100 by 24 and 4,000 cells a slide, 100 inline marks in one
+text box, 8 embeds of 16 KB, 20,000 characters, a 256 KB file, 4 MB of deck text and 500 slides
+(and, Plinth's own guard, elements nested 64 deep). A slide or `deck.css` over its byte cap is
+refused from its size, before it is read. `deck.css` passes the same CSS check as a design
+system's blocks, and a quoted string in it must close on its own line. Markup that shows differently (another HTML tag shown as a plain box, an unknown icon, a
 second `<aside>`, notes over 4,000 characters) is a `slide_markup` warning, and an image, font or
 `url()` the version lacks is a `missing_file` warning.
 
 `get_artifact` returns the slide files too, in `files`. To change one slide, call
-`update_artifact` with `content` (the index) and `assets` listing every file the deck keeps: the
-changed slide with `content`, the rest as `{path, sha256}`. Leaving out `assets` keeps every file.
+`update_artifact` with `content` (the index) and `assets` holding only what changed, as on Claude.
+Every file the new deck needs that the list leaves out is kept from the current version, as if
+sent as `{path, sha256}`: the slides `order` names (every slide file when there is no `order`),
+`deck.css`, and the images, fonts and CSS files those name. A slide the new `order` drops, or a
+file nothing names, is removed. Leaving out `assets` keeps every file. An update that switches an
+HTML deck to Markdown with `assets` left out keeps only its images.
 
 ```json
 {
@@ -981,6 +988,7 @@ shared with and link viewers of an unlisted one. Read-only. REST:
 | `include` | array of `tokens` \| `css` \| `guidelines` \| `components`, optional | Only these parts (default all). `css` also returns `font_links` and `fonts`; `components` returns `component_css` too |
 | `components` | array of component ids, up to 50, optional | Only these components |
 | `install_for` | artifact type, optional | The type of the artifact you will install it into (default `html`): `install` lists only the files that type takes. A `design` gets no font files, `fonts.css` or `tokens.json` |
+| `deck_format` | `markdown` \| `html`, optional | With `install_for: "slides"`, the deck's format (default `markdown`). A Markdown deck gets the system's images; an HTML deck its `tokens.json`, font files and images, as Claude copies them, and no stylesheets (its `deck.css` declares the tokens it uses) |
 | `folder` | string, optional | Install under `ds/<folder>/` (`[a-z0-9][a-z0-9_-]{0,63}`) instead of the default, for a second design system whose folder another already uses in that artifact |
 
 Returns `{ id, slug, title, url, version, current_version, format, name, description, prefix,

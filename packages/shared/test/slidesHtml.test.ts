@@ -315,7 +315,32 @@ describe("Claude's caps", () => {
     okDeck(one(section("<p>x</p>".repeat(L.maxBoxes))));
     refused(one(section("<p>x</p>".repeat(L.maxBoxes + 1))), /more than 200 boxes/);
     // Phrases and breaks are not boxes.
-    okDeck(one(section(`<p>${"<b>a</b><br>".repeat(300)}</p>`)));
+    okDeck(one(section(`<p>${"<b>a</b><br>".repeat(100)}</p>`)));
+  });
+
+  it("allows 100 inline marks in one text box and refuses 101 (nested ones count)", () => {
+    okDeck(one(section(`<p>${"<b>a</b>".repeat(L.maxInlineMarks)}</p>`)));
+    refused(
+      one(section(`<p>${"<b>a</b>".repeat(L.maxInlineMarks + 1)}</p>`)),
+      /holds 101 inline marks/,
+    );
+    refused(one(section(`<p>${"<span><i>a</i></span>".repeat(51)}</p>`)), /holds 102 inline marks/);
+    // Each box counts its own: 100 in each of two paragraphs is fine.
+    okDeck(one(section(`<p>${"<b>a</b>".repeat(100)}</p><p>${"<i>a</i>".repeat(100)}</p>`)));
+  });
+
+  it("allows 4000 table cells on a slide and refuses 4001", () => {
+    const table = (rows: number, cols: number) =>
+      `<table>${`<tr>${"<td>x</td>".repeat(cols)}</tr>`.repeat(rows)}</table>`;
+    // 4 tables of 100 rows x 10 columns: 4000 cells.
+    okDeck(one(section(table(100, 10).repeat(4))));
+    refused(one(section(table(100, 10).repeat(4) + table(1, 1))), /more than 4000 table cells/);
+  });
+
+  it("refuses elements nested more than 64 deep, before any walk could run out of stack", () => {
+    const nest = (n: number) => `${"<b>".repeat(n)}x${"</b>".repeat(n)}`;
+    refused(one(section(`<p>${nest(70)}</p>`)), /more than 64 deep/);
+    refused(one(section(`<p>${nest(30_000)}</p>`)), /more than 64 deep/);
   });
 
   it("allows 15 nested divs and refuses 16", () => {
@@ -560,5 +585,77 @@ describe("Markdown decks, unchanged", () => {
     expect(html).toContain('"path":"deck.json"');
     expect(html).toContain('"files":{"slides/a.html":"\\u003csection');
     expect(html).not.toContain("</section></script>");
+  });
+});
+
+describe("review regressions", () => {
+  it("refuses a CSS string that runs past its line or is never closed (deck.css, style, svg)", () => {
+    const breakout =
+      '@property --x { syntax: "<integer>\n}.plinth-slides__controls{display:none}"; inherits: false; initial-value: 0 }';
+    expect(deckCssProblem(breakout)).toMatch(/runs past the end of its line/);
+    expect(deckCssProblem("a { content: 'x\r' }")).toMatch(/runs past/);
+    expect(deckCssProblem('a { content: "x }')).toMatch(/not closed/);
+    // Quotes inside a comment are not strings; a closed string on its line is fine.
+    expect(deckCssProblem('/* it\'s "fine\n */ a { content: "x" }')).toBeNull();
+    refused(one(section("<p>x</p>"), breakout), /deck\.css|runs past/);
+    refused(one(section(`<p style="font-family: 'A\nB'">x</p>`)), /runs past/);
+  });
+
+  it("reads adversarial input near the caps in linear time", () => {
+    const cases = [
+      // An & with no ; for the whole file, repeated: each must be a bounded look.
+      section(`<p>${"&a".repeat(120_000)}</p>`),
+      section(`<p title="${"&b".repeat(120_000)}">x</p>`),
+      // A <style> in an svg whose end tag never comes, after many "</" that are not it.
+      section(`<svg><style>${"</s".repeat(80_000)}`),
+    ];
+    for (const html of cases) {
+      const t0 = Date.now();
+      deck({ a: html });
+      expect(Date.now() - t0).toBeLessThan(1500);
+    }
+    // Unclosed comments in deck.css, near its 256 KB cap.
+    const t0 = Date.now();
+    pinnedClasses("/*".repeat(120_000));
+    deck({ a: section("<p>x</p>") }, {}, `.a{position:absolute}${"/*x".repeat(80_000)}`);
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
+
+  it("never drops a slide without an error", () => {
+    // U+0130 lowercases to two characters: offsets must stay the file's own.
+    const embed = deck({ a: section("<p>İ</p><x-embed><b>live</b></x-embed>") });
+    const d = okDeck(embed);
+    expect(d.slides).toHaveLength(1);
+    expect(
+      d.slides[0]?.section.children.find((c) => c.kind === "el" && c.tag === "x-embed"),
+    ).toMatchObject({ embed: "<b>live</b>" });
+    // </stylex> does not end an svg's <style>.
+    refused(
+      deck({ a: section("<svg><style>a{}</stylex></svg>") }),
+      /<style> in an <svg> is not closed/,
+    );
+    // Every refused slide names itself.
+    for (const html of [
+      section("<svg><style>a{}</stylex></svg>"),
+      section("<p>İ</p><x-embed>x</x-embedded>"),
+      section("<x-embed>x</x-embed foo>"),
+    ]) {
+      const r = deck({ a: html, b: section("<p>ok</p>").replace('id="a"', 'id="b"') });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors.some((e) => e.file === "slides/a.html")).toBe(true);
+    }
+  });
+
+  it("maps a Claude deck's project/ paths to the version's own (images, faces, deck.css)", () => {
+    const r = deck(
+      { a: section('<img src="project/ds/brand/assets/logo.png" alt="">') },
+      { faces: { a: { family: "Brand", src: "project/ds/brand/fonts/A.woff2" } } },
+      ".x { background: url(project/ds/brand/assets/bg.png) }",
+      ["ds/brand/assets/logo.png", "ds/brand/fonts/A.woff2", "ds/brand/assets/bg.png"],
+    );
+    const d = okDeck(r);
+    expect(r.warnings.filter((w) => w.code === "missing_file")).toEqual([]);
+    expect(d.faces[0]?.src).toBe("ds/brand/fonts/A.woff2");
+    expect(d.slides[0]?.images).toEqual(["ds/brand/assets/logo.png"]);
   });
 });

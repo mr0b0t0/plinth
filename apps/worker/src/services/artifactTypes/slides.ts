@@ -14,10 +14,12 @@
 //
 // Neither format declares capabilities or has a room, so nothing happens after a commit.
 import {
+  deckCssFiles,
   deckFileProblem,
   deckImagePaths,
   HTML_DECK_CSS,
   HTML_DECK_INDEX,
+  HTML_DECK_LIMITS,
   htmlDeckIssueSummary,
   htmlDeckTitle,
   isHtmlDeckIndex,
@@ -25,10 +27,12 @@ import {
   type PublishWarning,
   parseDeck,
   parseHtmlDeck,
+  SLIDE_ID_RE,
   slideIdOfPath,
+  utf8Bytes,
 } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
-import type { TypeHooks } from "../artifactTypes.ts";
+import type { TypeHooks, VersionCheck } from "../artifactTypes.ts";
 import { echo } from "../publishCheck.ts";
 import { docHooks, markdownTitle } from "./doc.ts";
 
@@ -57,16 +61,71 @@ export function deckWarnings(
   return out;
 }
 
+/** deck.json's order, or null when it has none (or is not a JSON object with a list there). */
+function indexOrder(text: string): string[] | null {
+  try {
+    const raw: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
+    if (typeof raw !== "object" || raw === null || !("order" in raw)) return null;
+    const order = (raw as { order: unknown }).order;
+    if (!Array.isArray(order)) return null;
+    return order.filter((id): id is string => typeof id === "string" && SLIDE_ID_RE.test(id));
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a version path is one of an HTML deck's text files the version check reads. */
 export function isDeckTextFile(path: string): boolean {
   return path === HTML_DECK_CSS || slideIdOfPath(path) !== null;
 }
 
+/**
+ * Whether a source is an HTML deck's deck.json: the file it is stored as when known (a stored
+ * version's format is its file, so a Markdown deck that starts with "{" stays one), else its text.
+ */
+function isHtmlSource(text: string, sourcePath?: string): boolean {
+  return sourcePath !== undefined ? sourcePath === HTML_DECK_INDEX : isHtmlDeckIndex(text);
+}
+
+/** Refuses an HTML deck whose text files break the byte caps, from their sizes alone. */
+function checkDeckSizes(v: VersionCheck): void {
+  const L = HTML_DECK_LIMITS;
+  let total = utf8Bytes(v.text);
+  const refuse = (file: string, message: string) => {
+    throw new ApiError("invalid_input", `${file} ${message}`, {
+      type: "slides",
+      field: "content",
+      issues: [{ file, message }],
+    });
+  };
+  for (const f of v.files) {
+    if (!isDeckTextFile(f.path)) continue;
+    const cap = f.path === HTML_DECK_CSS ? L.maxCssBytes : L.maxSlideBytes;
+    if (f.size > cap) {
+      refuse(
+        f.path,
+        `is over ${cap / 1024} KB${f.path === HTML_DECK_CSS ? "" : ": split the slide"}`,
+      );
+    }
+    total += f.size;
+  }
+  if (total > L.maxDeckBytes) {
+    refuse(
+      HTML_DECK_INDEX,
+      `the deck's files hold ${Math.ceil(total / 1024 / 1024)} MB of text; a deck may hold at most ${L.maxDeckBytes / 1024 / 1024} MB: split it`,
+    );
+  }
+}
+
+/** At most this many R2 reads at once while working out what an update carries. */
+const PARALLEL_READS = 6;
+
 export const slidesHooks: TypeHooks = {
-  title: (text) => (isHtmlDeckIndex(text) ? htmlDeckTitle(text) : markdownTitle(text)),
+  title: (text, sourcePath) =>
+    isHtmlSource(text, sourcePath) ? htmlDeckTitle(text) : markdownTitle(text),
   capabilities: () => null,
-  validate(def, text) {
-    if (isHtmlDeckIndex(text)) {
+  validate(def, text, sourcePath) {
+    if (isHtmlSource(text, sourcePath)) {
       // The index alone here; its slides are files of the version, read by validateVersion.
       const r = parseHtmlDeck({ index: text, css: null, slides: new Map() });
       const bad = r.ok
@@ -101,9 +160,59 @@ export const slidesHooks: TypeHooks = {
   },
   assetRule:
     "A deck's assets are images (png, jpg, gif, webp, avif, svg); an HTML deck's also slides/<id>.html, deck.css and fonts (woff2, woff, ttf, otf)",
-  sourceWarnings: (def, text, manifestPaths) =>
-    isHtmlDeckIndex(text) ? [] : deckWarnings(def.sourcePath, text, manifestPaths),
+  sourceWarnings: (def, text, manifestPaths, sourcePath) =>
+    isHtmlSource(text, sourcePath) ? [] : deckWarnings(def.sourcePath, text, manifestPaths),
   keepsText: isDeckTextFile,
+  /**
+   * An HTML deck's update that sends assets carries, from the current version, every file the new
+   * deck needs that the list leaves out, as if sent as {path, sha256}: the slides its order names
+   * (every slide file when it has no order), deck.css, and the images, fonts and CSS files those
+   * name. So an agent sends only what changed, as on Claude; a slide the new order drops, or a file
+   * nothing names, is left out. A Markdown deck: nothing (its assets are the list sent).
+   */
+  carries: (sourcePath, path, contentType) =>
+    deckFileProblem(sourcePath === HTML_DECK_INDEX ? "html" : "markdown", path, contentType) ===
+    null,
+  async impliedFiles(u) {
+    if (u.sourcePath !== HTML_DECK_INDEX) return [];
+    const order = indexOrder(u.text);
+    const has = (p: string) => u.sent.has(p) || u.current.has(p);
+    const want = new Set<string>();
+    if (has(HTML_DECK_CSS)) want.add(HTML_DECK_CSS);
+    const slidePaths =
+      order === null
+        ? [...new Set([...u.sent.keys(), ...u.current.keys()])].filter(
+            (p) => slideIdOfPath(p) !== null,
+          )
+        : order.map((id) => `slides/${id}.html`).filter(has);
+    for (const p of slidePaths) want.add(p);
+    // The texts, to find what they name; a file past its cap is not read (the check refuses it).
+    const texts = new Map<string, string>();
+    const toRead = [...want].filter((p) => {
+      const size = u.sent.get(p)?.size ?? u.current.get(p)?.size ?? 0;
+      return (
+        size <=
+        (p === HTML_DECK_CSS ? HTML_DECK_LIMITS.maxCssBytes : HTML_DECK_LIMITS.maxSlideBytes)
+      );
+    });
+    let next = 0;
+    const worker = async () => {
+      while (next < toRead.length) {
+        const p = toRead[next++] as string;
+        const t = await u.read(p);
+        if (t !== null) texts.set(p, t);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL_READS, toRead.length) }, worker));
+    const slides = new Map([...texts].filter(([p]) => p !== HTML_DECK_CSS));
+    const r = parseHtmlDeck({ index: u.text, css: texts.get(HTML_DECK_CSS) ?? null, slides });
+    if (r.ok) {
+      for (const f of r.deck.faces) if (f.src) want.add(f.src);
+      for (const ref of deckCssFiles(r.deck.css)) want.add(ref);
+      for (const s of r.deck.slides) for (const p of [...s.images, ...s.cssRefs]) want.add(p);
+    }
+    return [...want].filter((p) => !u.sent.has(p) && u.current.has(p));
+  },
   async validateVersion(v) {
     const html = v.sourcePath === HTML_DECK_INDEX;
     // Which files each format may hold where (a Markdown deck: images only, as before).
@@ -121,6 +230,8 @@ export const slidesHooks: TypeHooks = {
       });
     }
     if (!html) return [];
+    // Sizes first: a file past its cap is refused before any is read.
+    checkDeckSizes(v);
     const slides = new Map<string, string>();
     let css: string | null = null;
     for (const f of v.files) {

@@ -57,15 +57,18 @@ export interface CommittedVersion {
 
 /** What one type does differently on the Worker. Every type has an entry in TYPE_HOOKS. */
 export interface TypeHooks {
-  /** The title the source names for itself, or null (the version is then "Untitled"). */
-  title(text: string): string | null;
+  /**
+   * The title the source names for itself, or null (the version is then "Untitled"). `sourcePath`:
+   * the file the source is stored as, when known (a deck's format is its file, not its text).
+   */
+  title(text: string, sourcePath?: string): string | null;
   /** What the source declares, as versions.capabilities stores it, or null. */
   capabilities(text: string): string | null;
   /**
    * Refuse a source the type cannot hold, after the wire-field checks (throws invalid_input).
    * Runs for inline publishes and updates and for bundle uploads.
    */
-  validate?(def: ArtifactTypeDef, text: string): void;
+  validate?(def: ArtifactTypeDef, text: string, sourcePath?: string): void;
   /** Said to the agent when an asset is of a content type the type does not take. */
   assetRule?: string;
   /**
@@ -82,6 +85,7 @@ export interface TypeHooks {
     def: ArtifactTypeDef,
     text: string,
     manifestPaths: ReadonlySet<string>,
+    sourcePath?: string,
   ): PublishWarning[];
   /**
    * Paths of text files the version check reads (an HTML deck's deck.css and slide files): the
@@ -89,6 +93,18 @@ export interface TypeHooks {
    * files from R2. Absent: none.
    */
   keepsText?(path: string): boolean;
+  /**
+   * On an update that sends assets: paths of the current version the new version needs although
+   * the list leaves them out, which are carried as if sent as {path, sha256} (an HTML deck's other
+   * slides, deck.css and the files they name). Absent: the list sent is the version's files.
+   */
+  impliedFiles?(u: ImpliedFilesInput): Promise<string[]>;
+  /**
+   * On an update that sends no assets: whether a current file is carried into a version whose
+   * source is stored as `sourcePath` (a deck switched from deck.json to slides.md keeps its images
+   * and leaves its slide files, deck.css and fonts, which a Markdown deck cannot hold). Absent: all.
+   */
+  carries?(sourcePath: string, path: string, contentType: string): boolean;
   /**
    * Refuse a version whose files the type cannot hold together (throws invalid_input), after every
    * file is staged and the source passed validate, and return publish warnings about those files.
@@ -146,9 +162,22 @@ export interface VersionCheck {
   text: string;
   /** Where the source is stored (the type's sourcePath or altSource). */
   sourcePath: string;
-  /** Every file of the version, the source included, with its stored Content-Type. */
-  files: readonly { path: string; contentType: string }[];
+  /** Every file of the version, the source included, with its stored Content-Type and size. */
+  files: readonly { path: string; contentType: string; size: number }[];
   /** A file's text (the bytes this request sent, else the stored object), or null when gone. */
+  read(path: string): Promise<string | null>;
+}
+
+/** What a type's impliedFiles hook gets. */
+export interface ImpliedFilesInput {
+  /** The new source's text, and the file it is stored as. */
+  text: string;
+  sourcePath: string;
+  /** The files this update sends (contents and references), by path, the source included. */
+  sent: ReadonlyMap<string, { size: number }>;
+  /** The current version's files, by path. */
+  current: ReadonlyMap<string, { size: number }>;
+  /** A file's text: the bytes sent for it, else the current version's, or null. */
   read(path: string): Promise<string | null>;
 }
 
@@ -180,6 +209,8 @@ export interface StagedSource {
   def: ArtifactTypeDef;
   text: string;
   paths: ReadonlySet<string>;
+  /** The file the source is stored as. */
+  sourcePath?: string;
 }
 
 /** Every type's hooks, keyed by its id. One type per line, in ARTIFACT_TYPES order. */
@@ -242,7 +273,7 @@ export function typeSourceWarnings(v: StagedSource): PublishWarning[] {
   const hook = typeHooks(v.def).sourceWarnings;
   if (!hook) return [];
   try {
-    return hook(v.def, v.text, v.paths);
+    return hook(v.def, v.text, v.paths, v.sourcePath);
   } catch (e) {
     console.error(
       "source warnings hook failed:",
@@ -280,6 +311,8 @@ export function requireTypeDef(type: string): ArtifactTypeDef {
 export function resolveSource(
   input: SourceInput,
   currentType: ArtifactType | null,
+  /** The file the source is stored as, when known (a stored version's, or a staged one's). */
+  sourcePath?: string,
 ): { def: ArtifactTypeDef; text: string } {
   const publishing = currentType === null;
   const requested = publishing ? (input.type ?? "html") : currentType;
@@ -334,7 +367,7 @@ export function resolveSource(
     input.content_format !== undefined && hooks.importSource
       ? hooks.importSource(def, input.content, input.content_format)
       : input.content;
-  hooks.validate?.(def, text);
+  hooks.validate?.(def, text, sourcePath);
   return { def, text: hooks.canonical?.(def, text) ?? text };
 }
 

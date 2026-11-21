@@ -10,6 +10,13 @@ import type { Cell, DeckModel, Item, Para, PptxBuilder, Run } from "./pptxModel.
 
 const SANS = "Arial";
 const MONO = "Courier New";
+/**
+ * A face name PptxGenJS may write: it puts fontFace into typeface="…" unescaped, so only a plain
+ * name (the shared DECK_FAMILY_RE, repeated here to keep the writer bundle free of the parser) is
+ * passed; any other falls back to Arial.
+ */
+const FACE_RE = /^[A-Za-z][A-Za-z0-9 _-]{0,39}$/;
+const face = (f: string | undefined): string => (f !== undefined && FACE_RE.test(f) ? f : SANS);
 
 type TextProps = PptxGenJS.TextProps;
 type Slide = PptxGenJS.Slide;
@@ -31,7 +38,7 @@ export function xmlText(s: string): string {
 
 function runOptions(r: Run, p: Pick<Para, "size" | "color" | "bold" | "mono" | "font">) {
   return {
-    fontFace: r.code || p.mono ? MONO : (p.font ?? SANS),
+    fontFace: r.code || p.mono ? MONO : face(p.font),
     fontSize: p.size,
     color: r.color ?? p.color,
     bold: p.bold || r.bold === true,

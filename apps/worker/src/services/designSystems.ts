@@ -8,6 +8,7 @@ import {
   DESIGN_SYSTEM_FORMAT,
   type DesignSystemRead,
   type DesignSystemReference,
+  deckInstallTakes,
   defaultDesignSystemInput,
   designSystemComponentCss,
   designSystemCss,
@@ -81,9 +82,14 @@ export async function getDesignSystem(
   const ref = { id: artifact.id, version: v.number };
   // Only the files the target type takes, by its asset rules (a design: no fonts, no JSON).
   const target = TYPE_REGISTRY[input.install_for ?? "html"];
-  const accepts = (path: string) =>
-    target.assets !== false &&
-    (!target.assetTypes || target.assetTypes.test(assetContentType(path)));
+  // A deck's two formats take different files (slidesHtml.ts deckInstallTakes).
+  const accepts =
+    target.id === "slides"
+      ? (path: string) =>
+          deckInstallTakes(input.deck_format ?? "markdown", path, assetContentType(path))
+      : (path: string) =>
+          target.assets !== false &&
+          (!target.assetTypes || target.assetTypes.test(assetContentType(path)));
   const wants = (part: NonNullable<GetDesignSystemInput["include"]>[number]) =>
     !input.include || input.include.includes(part);
   const components = input.components

@@ -235,6 +235,9 @@ test.describe("an HTML deck", () => {
       await page.keyboard.press("o");
       await expect(frame.locator(".plinth-slides[data-mode='overview']")).toHaveCount(1);
       await page.waitForTimeout(800);
+      // A fixed canvas clipped like Claude's: a picture that bleeds off the edge on purpose (the
+      // gallery slide) is never marked as overflowing.
+      await expect(frame.locator(".plinth-slides__slide[data-overflow]")).toHaveCount(0);
       if (shots) {
         await page.screenshot({ path: path.join(shots, `overview-${info.project.name}.png`) });
       }

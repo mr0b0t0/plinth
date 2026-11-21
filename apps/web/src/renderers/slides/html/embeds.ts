@@ -34,6 +34,16 @@ export function isEmbedReady(data: unknown): boolean {
   );
 }
 
+/** An embed frame's styles that author CSS may not change (base.ts draws the rest). */
+export const EMBED_FRAME_PINNED = {
+  display: "block",
+  position: "static",
+  width: "100%",
+  height: "100%",
+  "border-style": "none",
+  "pointer-events": "none",
+} as const;
+
 export class EmbedFrames {
   /** Each mounted frame's window and the page it is waiting for (answered once). */
   private readonly waiting = new Map<Window, string>();
@@ -84,6 +94,10 @@ export class EmbedFrames {
       frame.setAttribute("tabindex", "-1");
       frame.setAttribute("referrerpolicy", "no-referrer");
       frame.setAttribute("loading", "eager");
+      // Inline and !important: no deck.css rule in the slide's shadow root can make the frame take
+      // clicks or leave its box.
+      for (const [k, v] of Object.entries(EMBED_FRAME_PINNED))
+        frame.style.setProperty(k, v, "important");
       frame.src = this.loaderUrl;
       box.append(frame);
       this.frames.add(frame);

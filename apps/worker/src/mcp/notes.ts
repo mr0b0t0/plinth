@@ -286,7 +286,9 @@ export const CATEGORY_INSTRUCTION =
 export const TYPE_UPDATE_NOTE =
   "Send the source field that matches the artifact's type (get_artifact says which): html for an " +
   "HTML page, content (Markdown) for a doc or a deck (slides), or deck.json for an HTML deck (send " +
-  "every slide again in assets, those you did not change as {path, sha256}), content (JSON) for a design_system, " +
+  "in assets only the slides you changed: the slides its order names, deck.css and the files they " +
+  "name are kept from the current version; a slide the new order drops is removed), content (JSON) " +
+  "for a design_system, " +
   "content (artboard HTML) for a design, " +
   "content (JSON lines, or content_format csv or xlsx) for a sheet, " +
   "content (board JSON: settings) for a whiteboard; prefer edit_sheet to change a sheet's cells. " +

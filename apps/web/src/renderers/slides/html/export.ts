@@ -7,7 +7,7 @@
 // copy), an <x-icon> and an <x-connector>, drawn in the colour on screen. An <x-embed> runs code,
 // so it is left out and counted. The file is 13.333 x 7.5 in at 16:9 (10 x 7.5 at 4:3): 144
 // canvas pixels to the inch.
-import type { HtmlDeck } from "@plinth/shared";
+import { DECK_FAMILY_RE, type HtmlDeck } from "@plinth/shared";
 import type { SlideView } from "../deck.ts";
 import {
   boxOf,
@@ -346,7 +346,10 @@ function withFont(c: SlideCtx, e: Element, p: Para): Para {
     /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|-apple-system|ui-[a-z-]+)$/i.test(
       family,
     );
-  return { ...p, runs, ...(generic ? {} : { font: family.slice(0, 64) }) };
+  // The .pptx writes the name into its XML as is (typeface="…"), so only a name deck.json could
+  // give a face is passed on; any other keeps the slide's default face.
+  const named = !generic && family !== undefined && DECK_FAMILY_RE.test(family);
+  return { ...p, runs, ...(named ? { font: family } : {}) };
 }
 
 /** One HTML slide's model, its embeds counted. The slide must be laid out, at its final look. */

@@ -569,12 +569,21 @@ CSP, as a Markdown deck. Three things keep it inert:
     URL, no `..`);
   - a link other than https, http, mailto or `#N`;
   - markup the tokenizer cannot read plainly (an unclosed or crossed tag, an unknown entity);
-  - any of Claude's caps.
+  - any of Claude's caps, or elements nested more than 64 deep.
+
+  A slide the parser cannot keep is always refused with its file named, never dropped quietly.
+  The tokenizer is linear in its input: an entity's `;` is looked for at most 33 characters on,
+  a raw-text end tag (`</x-embed`, an svg's `</style`) is found in the text as written (its name in
+  ASCII case only, then a space, `/` or `>`, as a browser ends raw text, so no case mapping can
+  move an offset), and comments are stripped with one forward scan. The Worker checks each slide
+  file's and `deck.css`'s stored size against the byte caps before it reads any of them.
 
   An attribute the allowlist does not name is dropped. `deck.css` and every `style` attribute pass
   the design-system CSS check (no `@import`, `<`, backslash, string URL functions,
   `expression()`, `behavior` or `-moz-binding`), and their `url()`s may name only the version's
-  own files.
+  own files. A quoted string must close on its own line: a browser ends a string at a line break
+  and reads what follows as rules, so a string that ran past one could carry rules the scoping
+  never saw.
 - **No author script runs in the shell.** Even a tree that slipped past the parser could not run
   anything there: the shell's CSP is `script-src 'self'` (Plinth's renderer only), which also
   blocks inline handlers and `javascript:` URLs. The CSP's other sources are unchanged: images,
@@ -584,12 +593,19 @@ CSP, as a Markdown deck. Three things keep it inert:
   URL, which runs no script and loads nothing. It refuses script, handlers, `foreignObject`,
   `<image>`, `<a>`, any `href` other than `#id`, any `url()` other than `url(#id)` and an animated
   `href`.
-- **Each slide is in its own shadow root.** `deck.css` (with `:root` and `:host` read as the
-  slide's own `html`, and `@media` read at the slide's size) styles only that slide, never the
-  renderer's controls, presenter view or another slide. The host has `contain: strict` and
-  `overflow: hidden`, and is scaled with a transform, so nothing a slide draws paints outside its
-  canvas, including a `position: fixed` box. The shell's DOM holds nothing secret: it holds the
-  deck itself, which the viewer can read anyway.
+- **Each slide is in its own shadow root.** `deck.css` (with a leading `:root` or `:host` read as
+  the slide's own `html`, and `@media` read at the slide's size) styles only that slide, never the
+  renderer's controls, presenter view or another slide. A selector that would reach the shadow
+  host or past the tree from inside (`:host(…)`, `:host-context(…)`, `::slotted(…)`, `::part(…)`)
+  is dropped. The host, its canvas, the shadow root's `html` and each embed frame carry their
+  critical styles inline with `!important`, which no rule in the shadow root outranks: the host
+  stays absolutely placed at its canvas size with `overflow: hidden` and `contain: strict`, the
+  canvas has `contain: strict` and `overflow: hidden`, the shadow `html` has `contain: strict`, and
+  an embed frame keeps `pointer-events: none`. So nothing a slide draws paints outside its canvas,
+  including a `position: fixed` box. The only deck text that leaves a shadow root is an
+  `@property` rule, which is rebuilt from its checked descriptors (name, `syntax`, `inherits`,
+  `initial-value`) rather than copied. The shell's DOM holds nothing secret: it holds the deck
+  itself, which the viewer can read anyway.
 
 **Why not frames, as for designs.** A design's artboards run author script, so they need opaque
 frames. An HTML deck runs none outside its embeds, and a frame per slide would break what a deck
@@ -597,8 +613,7 @@ needs:
 
 - An opaque frame cannot load the deck's own font files: they need CORS, which the content host
   never sends.
-- The `.pptx` export and the overflow mark measure the rendered slide, which a cross-origin frame
-  hides from the shell.
+- The `.pptx` export measures the rendered slide, which a cross-origin frame hides from the shell.
 - Fragments, transitions and presenter view's copies change a slide's DOM.
 - The overview would need a frame per slide.
 
@@ -634,7 +649,8 @@ more than that the deck is open, since the embed holds no data of the viewer's.
 **Fonts.** A face is a Google Fonts `css2` link (`style-src` already allows
 `fonts.googleapis.com`) or a font file of the version, declared by the renderer in an
 `@font-face` it writes itself. The family name and path have passed the parser's character rules,
-so neither can end the rule. At most 4 families. Under opaque isolation a font file of the
+so neither can end the rule. The `.pptx` names a face only when its family passes the same rule
+(`DECK_FAMILY_RE`), since PptxGenJS writes it into the XML unescaped; any other is Arial. At most 4 families. Under opaque isolation a font file of the
 version does not load (it would need CORS), and the deck falls back to its stack.
 
 **Other files and readers.**

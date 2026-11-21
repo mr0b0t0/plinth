@@ -10,9 +10,9 @@
 //   view's current pane, and are off (the plain rule, the finished look) everywhere else, under
 //   reduced motion, in print and in a still such as a thumbnail. Transitions play only between
 //   slides of the deck view.
-// - Embeds run only on stage (embeds.ts), connectors are drawn once a slide is laid out
-//   (connectors.ts), and a slide whose content runs past its canvas is marked as a Markdown
-//   slide that does not fit is.
+// - Embeds run only on stage (embeds.ts), and connectors are drawn once a slide is laid out
+//   (connectors.ts). An HTML slide is a fixed canvas that clips what runs past it, as Claude's
+//   does, so it is never marked as overflowing (a Markdown slide that does not fit still is).
 import type { HtmlDeck } from "@plinth/shared";
 import type { SlideView } from "../deck.ts";
 import type { Geometry } from "../exportModel.ts";
@@ -33,22 +33,6 @@ import { buildHtmlExportModel } from "./export.ts";
 import { playTransition, type Running } from "./transitions.ts";
 
 const FACES_ID = "__plinth-slides-faces";
-
-/**
- * Whether a slide's flow runs past its canvas, where it is cut. A pinned box past the edge (a
- * full-bleed picture, a card that bleeds off on purpose) is the author's choice, never marked.
- */
-export function flowOverflows(section: HTMLElement): boolean {
-  const win = section.ownerDocument.defaultView;
-  if (!win) return false;
-  for (const child of Array.from(section.children) as HTMLElement[]) {
-    const pos = win.getComputedStyle(child).position;
-    if (pos === "absolute" || pos === "fixed") continue;
-    if (child.offsetTop + child.offsetHeight > section.clientHeight + 1) return true;
-    if (child.offsetLeft + child.offsetWidth > section.clientWidth + 1) return true;
-  }
-  return false;
-}
 
 /** The deck's faces: its Google Fonts links, and its own font files as @font-face rules. */
 export function loadFaces(
@@ -129,7 +113,7 @@ export class HtmlDeckRuntime {
     this.embeds = new EmbedFrames(win, embedLoaderUrl(win.location ?? doc.location));
     // Layout reads go to the document's own window (the frame's, in tests a model of it).
     this.view = doc.defaultView ?? win;
-    // Web fonts change what fits: draw again and mark again once they are in.
+    // Web fonts change where boxes land: connectors are drawn again once they are in.
     void doc.fonts?.ready.then(() => {
       for (const v of this.views) if (this.drawn.has(v.el)) this.layout(v);
     });
@@ -167,13 +151,13 @@ export class HtmlDeckRuntime {
     }
   }
 
-  /** Connectors and the overflow mark, for a slide that is laid out. */
+  /** Connectors, for a slide that is laid out. An HTML slide is never marked as overflowing. */
   layout(v: SlideView): void {
     const p = this.parts.get(v);
     if (!p) return;
     drawConnectors(p.section, this.view);
     this.drawn.add(v.el);
-    v.el.toggleAttribute("data-overflow", flowOverflows(p.section));
+    v.el.removeAttribute("data-overflow");
   }
 
   /**

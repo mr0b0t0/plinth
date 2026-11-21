@@ -43,6 +43,12 @@ export const HTML_DECK_LIMITS = {
   maxSvgBytes: 52 * KB,
   maxTableRows: 100,
   maxTableColumns: 24,
+  /** Table cells (`<td>` and `<th>`) across one slide. */
+  maxTableCells: 4000,
+  /** Inline marks (`<b>`, `<i>`, `<u>`, `<a>`, `<span>` and the phrases read as them) in one text box. */
+  maxInlineMarks: 100,
+  /** Elements open inside one another (a guard Plinth adds: the tree is walked recursively). */
+  maxDepth: 64,
   /** Characters of speaker notes on one slide; the rest is cut. */
   maxNotes: 4000,
   /** Characters of slide text (notes excluded). */
@@ -81,7 +87,9 @@ export const SLIDE_EMBED_PROTOCOL_VERSION = 1;
 /** A slide id, which is also its file name: `slides/<id>.html`. */
 export const SLIDE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const SLIDE_PATH_RE = /^slides\/([A-Za-z0-9_-]{1,64})\.html$/;
-const FAMILY_RE = /^[A-Za-z][A-Za-z0-9 _-]{0,39}$/;
+/** A face's family name in deck.json, and the only family a .pptx export writes by name. */
+export const DECK_FAMILY_RE = /^[A-Za-z][A-Za-z0-9 _-]{0,39}$/;
+const FAMILY_RE = DECK_FAMILY_RE;
 const GOOGLE_CSS2 = "https://fonts.googleapis.com/css2?";
 const GOOGLE_QUERY_RE = /^[A-Za-z0-9+:@;,.&=_-]{1,1000}$/;
 const FONT_FILE_RE = /\.(woff2|woff|ttf|otf)$/i;
@@ -474,6 +482,8 @@ const NOT_BOXES = new Set([
   "td",
   "th",
 ]);
+/** Inline marks: the phrases a text box holds (Claude's 100-mark cap). */
+const PHRASES = new Set(["b", "i", "u", "a", "span"]);
 const GLOBAL_ATTRS = new Set([
   "id",
   "class",
@@ -667,8 +677,16 @@ class Reader {
         break;
       }
       out += raw.slice(k, amp);
-      const semi = raw.indexOf(";", amp + 1);
-      const body = semi > amp && semi - amp <= 33 ? raw.slice(amp + 1, semi) : null;
+      // An entity's name is at most 32 characters: look that far for its ";" and no further, so a
+      // run of "&" costs a bounded step each.
+      let semi = -1;
+      for (let j = amp + 1; j < raw.length && j <= amp + 33; j++) {
+        if (raw[j] === ";") {
+          semi = j;
+          break;
+        }
+      }
+      const body = semi > amp ? raw.slice(amp + 1, semi) : null;
       if (body === null) {
         if (xml) {
           this.p.err(this.file, "an & in an <svg> must be written &amp;", this.lineOf(at + amp));
@@ -839,12 +857,26 @@ class Reader {
     return true;
   }
 
-  /** Everything up to `</name` (case-insensitive), or null when it is never closed. */
+  /**
+   * Everything up to the end tag `</name` (its name in any ASCII case, then a space, `/` or `>`, as
+   * a browser ends raw text), or null when it is never closed. Searches the text as written, so an
+   * offset is always one of the file's own, whatever characters come before; linear from `i`.
+   */
   rawUntil(name: string): { text: string; start: number } | null {
-    const lower = this.s.toLowerCase();
-    const at = lower.indexOf(`</${name}`, this.i);
+    const s = this.s;
+    let at = s.indexOf("</", this.i);
+    while (at >= 0) {
+      const after = s[at + 2 + name.length];
+      if (
+        s.slice(at + 2, at + 2 + name.length).toLowerCase() === name &&
+        (after === undefined || after === ">" || after === "/" || /\s/.test(after))
+      ) {
+        break;
+      }
+      at = s.indexOf("</", at + 2);
+    }
     if (at < 0) return null;
-    const text = this.s.slice(this.i, at);
+    const text = s.slice(this.i, at);
     const start = this.i;
     this.i = at;
     return { text, start };
@@ -860,6 +892,8 @@ class Reader {
  * are its own files. `localOnly`: an <svg>'s CSS, whose url() may only name #ids.
  */
 export function deckCssProblem(css: string, localOnly = false): string | null {
+  const strings = cssStringProblem(css);
+  if (strings) return strings;
   if (/@import/i.test(css)) return "may not use @import: fonts go in deck.json faces";
   if (/-moz-binding|behavior\s*:/i.test(css)) return "may not use -moz-binding or behavior";
   const base = cssBlockProblem(css);
@@ -875,6 +909,41 @@ export function deckCssProblem(css: string, localOnly = false): string | null {
   return null;
 }
 
+/**
+ * Why a quoted string of deck CSS is refused, or null: a browser ends a string at a line break (and
+ * reads what follows as rules), so a string must close on its own line, and before the text ends.
+ * One forward pass, comments skipped (a backslash is refused elsewhere, so no string holds an escape).
+ */
+function cssStringProblem(css: string): string | null {
+  const n = css.length;
+  let i = 0;
+  while (i < n) {
+    const c = css[i];
+    if (c === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      if (end < 0) return null;
+      i = end + 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let k = i + 1;
+      while (k < n) {
+        const d = css[k];
+        if (d === c) break;
+        if (d === "\n" || d === "\r" || d === "\f") {
+          return "has a quoted string that runs past the end of its line: close it on the same line";
+        }
+        k++;
+      }
+      if (k >= n) return "has a quoted string that is not closed";
+      i = k + 1;
+      continue;
+    }
+    i++;
+  }
+  return null;
+}
+
 /** The url() paths of deck CSS that name the version's own files, once each, without query. */
 export function deckCssFiles(css: string): string[] {
   const out = new Set<string>();
@@ -886,10 +955,19 @@ export function deckCssFiles(css: string): string[] {
   return [...out];
 }
 
-/** A plain relative path with "." segments dropped, or "" when it climbs or is empty. */
+/**
+ * A path as a deck names it, mapped to the version's own path: a Claude deck keeps its files under
+ * `project/` (`project/ds/<folder>/fonts/A.woff2`), which is the version's root here, so one leading
+ * `project/` is dropped. Every other path is unchanged.
+ */
+export function deckPath(p: string): string {
+  return p.startsWith("project/") ? p.slice(8) : p;
+}
+
+/** A plain relative path with "." segments dropped, `project/` mapped, or "" when it climbs or is empty. */
 function normalizePath(p: string): string {
   const parts: string[] = [];
-  for (const seg of p.split("/")) {
+  for (const seg of deckPath(p).split("/")) {
     if (seg === "" || seg === ".") continue;
     if (seg === "..") return "";
     parts.push(seg);
@@ -910,7 +988,19 @@ export function stylePins(style: string): boolean {
  */
 export function pinnedClasses(css: string): Set<string> {
   const out = new Set<string>();
-  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  // Comments out, with one indexOf scan (an unclosed one runs to the end, as in a browser).
+  let noComments = "";
+  for (let k = 0; k < css.length; ) {
+    const open = css.indexOf("/*", k);
+    if (open < 0) {
+      noComments += css.slice(k);
+      break;
+    }
+    noComments += css.slice(k, open);
+    const end = css.indexOf("*/", open + 2);
+    if (end < 0) break;
+    k = end + 2;
+  }
   let k = 0;
   while (k < noComments.length) {
     const open = noComments.indexOf("{", k);
@@ -1209,7 +1299,11 @@ function readSvg(c: SlideCtx, open: RawTag, line: number): DeckElement | null {
         }
         el.children.push(css);
         const close = r.tag(true);
-        if (!close?.close || close.name !== "style") return null;
+        if (!close) return null;
+        if (!close.close || close.name !== "style") {
+          c.p.err(c.file, "a <style> in an <svg> is not closed with </style>", r.lineOf(t.start));
+          return null;
+        }
         continue;
       }
       if (!t.selfClosing) stack.push(el);
@@ -1499,7 +1593,11 @@ function parseSlide(
         }
         page = raw.text;
         const close = r.tag(false);
-        if (!close?.close) return null;
+        if (!close) return null;
+        if (!close.close || close.name !== "x-embed") {
+          p.err(file, "has an <x-embed> that is not closed with </x-embed>", line);
+          return null;
+        }
       }
       const bytes = utf8Bytes(page);
       if (bytes > L.maxEmbedBytes) {
@@ -1578,8 +1676,13 @@ function parseSlide(
       );
       return null;
     }
-    if (!VOID_TAGS.has(tag) && !t.selfClosing) stack.push({ el, name: t.name, divDepth });
-    else if (t.selfClosing && !VOID_TAGS.has(tag) && !X_TAGS.has(tag)) {
+    if (!VOID_TAGS.has(tag) && !t.selfClosing) {
+      if (stack.length > L.maxDepth) {
+        p.err(file, `nests elements more than ${L.maxDepth} deep: flatten its boxes`, line);
+        return null;
+      }
+      stack.push({ el, name: t.name, divDepth });
+    } else if (t.selfClosing && !VOID_TAGS.has(tag) && !X_TAGS.has(tag)) {
       p.err(file, `<${clip(t.name, 20)}/> must be written <${t.name}></${t.name}>`, line);
       return null;
     }
@@ -1653,8 +1756,40 @@ function parseSlide(
     noteText = [...noteText].slice(0, L.maxNotes).join("");
   }
 
+  let cells = 0;
+  /** The inline marks of one text box: its phrases, and theirs, down to the next box. */
+  const marksIn = (el: DeckElement): number => {
+    let n = 0;
+    for (const ch of el.children) {
+      if (ch.kind !== "el" || !PHRASES.has(ch.tag)) continue;
+      n += 1 + marksIn(ch);
+    }
+    return n;
+  };
   const walk = (el: DeckElement, inAside: boolean): boolean => {
     let pinned = 0;
+    if (!PHRASES.has(el.tag)) {
+      const marks = marksIn(el);
+      if (marks > L.maxInlineMarks) {
+        p.err(
+          file,
+          `<${el.tag}> on line ${el.line} holds ${marks} inline marks (b, i, u, a, span); a text box may hold at most ${L.maxInlineMarks}: split it`,
+          el.line,
+        );
+        return false;
+      }
+    }
+    if (el.tag === "td" || el.tag === "th") {
+      cells++;
+      if (cells > L.maxTableCells) {
+        p.err(
+          file,
+          `has more than ${L.maxTableCells} table cells; a slide may hold at most ${L.maxTableCells}: split the tables`,
+          el.line,
+        );
+        return false;
+      }
+    }
     if (el.tag === "table") {
       let rows = 0;
       const countRows = (e: DeckElement): boolean => {
@@ -2076,8 +2211,11 @@ export function parseHtmlDeck(input: HtmlDeckInput): HtmlDeckResult {
   if (p.errors.length === 0) {
     for (const id of ids) {
       const path = byId.get(id) as string;
+      const before: number = p.errors.length;
       const s = parseSlide(path, id, input.slides.get(path) ?? "", p, pinnedByClass);
       if (s) slides.push(s);
+      // A slide is never dropped quietly: a refusal always names it.
+      else if (p.errors.length === before) p.err(path, "could not be read: check its markup");
     }
   }
   if (index && p.errors.length === 0) {
@@ -2143,6 +2281,24 @@ export function htmlDeckIssueSummary(errors: readonly DeckIssue[]): string {
       ? ` (and ${errors.length - 1} more problem${errors.length === 2 ? "" : "s"} in details.issues)`
       : "";
   return `${where} ${first.message}${more}`;
+}
+
+/**
+ * Whether a design system's file (its path in the system) goes into a deck of this format when
+ * installed (get_design_system with install_for slides): a Markdown deck takes its images, as
+ * before; an HTML deck its tokens.json, font files and images, which is what Claude copies into a
+ * deck (never the generated CSS: deck.css declares the tokens it uses).
+ */
+export function deckInstallTakes(
+  format: "markdown" | "html",
+  path: string,
+  contentType: string,
+): boolean {
+  const type = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (/^image\/(png|jpeg|gif|webp|avif|svg\+xml)$/.test(type)) return true;
+  if (format === "markdown") return false;
+  if (path === "tokens.json") return true;
+  return /^font\/(woff2|woff|ttf|otf)$/.test(type);
 }
 
 /**

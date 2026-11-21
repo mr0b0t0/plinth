@@ -577,6 +577,8 @@ async function stageInline(
     }
   }
   await stageCopies(stager, copies);
+  // Files the new source needs that the list left out (an HTML deck's other slides) carry over.
+  if (assets !== undefined) await stager.carryImplied(text);
   return stager.finish();
 }
 
@@ -1095,7 +1097,8 @@ export async function restoreVersion(
       };
       const obj = await ctx.env.FILES.get(fileKey(artifact.id, old, entry));
       if (!obj) throw new ApiError("internal", `Stored ${def.sourceLabel} is missing`);
-      await stager.addSource(new Uint8Array(await obj.arrayBuffer()));
+      // Stored where the old version stored it: its file, not its text, says which format it is.
+      await stager.addSource(new Uint8Array(await obj.arrayBuffer()), sourcePath);
       for (const m of manifest) if (!def.reservedPaths.includes(m.path)) stager.carry(old, m);
       return stager.finish();
     },

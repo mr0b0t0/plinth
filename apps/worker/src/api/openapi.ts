@@ -2469,6 +2469,12 @@ function operations(): Operation[] {
             "The type of the artifact it will be installed into (default html): install lists only the files that type takes",
         },
         {
+          name: "deck_format",
+          schema: enumOf(["markdown", "html"]),
+          description:
+            "With install_for slides: the deck's format (default markdown). A Markdown deck takes the system's images; an HTML deck its tokens.json, font files and images",
+        },
+        {
           name: "folder",
           schema: str({ pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" }),
           description: "Install under ds/<folder>/ instead of the default",

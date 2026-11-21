@@ -61,6 +61,7 @@ import {
   type CopiedFromEntry,
   deletePrefix,
   type FileEntry,
+  fileKey,
   type ManifestEntry,
   parseManifest,
   relativePrefix,
@@ -393,8 +394,12 @@ function noEntryFile(def: ArtifactTypeDef): ApiError {
 const MAX_KEPT_TEXT_BYTES = 4 * 1024 * 1024;
 
 /** The title a page or doc names for itself: <title> of HTML, the first "# " line of Markdown. */
-export function titleFromSource(def: ArtifactTypeDef, text: string): string | null {
-  return typeHooks(def).title(text);
+export function titleFromSource(
+  def: ArtifactTypeDef,
+  text: string,
+  sourcePath?: string,
+): string | null {
+  return typeHooks(def).title(text, sourcePath);
 }
 
 /**
@@ -702,15 +707,20 @@ export class VersionStager implements Stager {
     e.pending = bytes;
   }
 
-  /** The type's source text (inline publish, update and restore). */
-  async addSource(text: string | Uint8Array): Promise<void> {
+  /**
+   * The type's source text (inline publish, update and restore). `path`: where it is stored, for a
+   * restore, which keeps the old version's file (a deck's format is its file); else the text says.
+   */
+  async addSource(text: string | Uint8Array, path?: string): Promise<void> {
     const bytes = typeof text === "string" ? encoder.encode(text) : text;
     if (bytes.byteLength > this.def.maxSourceBytes) {
       throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
     }
     // A type with a second source format stores the text where its format says (an HTML deck's
     // index is deck.json, a Markdown deck slides.md).
-    await this.addFile(sourcePathForText(this.def, bytes), bytes, { sourceAllowed: true });
+    const at =
+      path !== undefined && this.isSourcePath(path) ? path : sourcePathForText(this.def, bytes);
+    await this.addFile(at, bytes, { sourceAllowed: true });
   }
 
   addRef(path: string, sha256: string): void {
@@ -789,9 +799,52 @@ export class VersionStager implements Stager {
    */
   carryCurrent(except?: ReadonlySet<string>): void {
     if (!this.current) return;
+    // A type whose source changed format keeps only the files the new one holds (TypeHooks.carries).
+    const carries = typeHooks(this.def).carries;
+    const source = [...this.entries.values()].find((e) => this.isSourcePath(e.path));
     for (const e of parseManifest(this.current.manifest)) {
       if (this.def.reservedPaths.includes(e.path) || except?.has(e.path)) continue;
+      if (carries && source && !carries(source.path, e.path, e.content_type)) continue;
       this.carry(this.current, e);
+    }
+  }
+
+  /**
+   * An update that sent assets: carry the current version's files the new source needs but the
+   * list left out (TypeHooks.impliedFiles: an HTML deck's other slides). Called once the sent files
+   * and copies are staged, before finish. Their bytes, once read here, are kept for the version
+   * check, so each is read from R2 at most once.
+   */
+  async carryImplied(sourceText: string): Promise<void> {
+    const hook = typeHooks(this.def).impliedFiles;
+    const current = this.current;
+    if (!hook || !current) return;
+    const stored = new Map<string, ManifestEntry>();
+    for (const e of parseManifest(current.manifest)) {
+      if (!this.def.reservedPaths.includes(e.path) && !unservableLegacy(e)) stored.set(e.path, e);
+    }
+    const sent = new Map<string, { size: number }>();
+    for (const e of this.entries.values()) sent.set(e.path, { size: e.size_bytes });
+    const paths = await hook({
+      text: sourceText,
+      sourcePath: sourcePathForText(this.def, sourceText),
+      sent,
+      current: new Map([...stored].map(([p, e]) => [p, { size: e.size_bytes }])),
+      read: async (path) => {
+        const e = this.entries.get(path);
+        if (e) return this.stagedText(e);
+        const m = stored.get(path);
+        if (!m) return null;
+        const obj = await this.ctx.env.FILES.get(fileKey(this.artifactId, current, m));
+        if (!obj) return null;
+        const bytes = new Uint8Array(await obj.arrayBuffer());
+        this.keepText(path, bytes);
+        return decoder.decode(bytes);
+      },
+    });
+    for (const p of paths) {
+      const m = stored.get(p);
+      if (m && !this.entries.has(p)) this.carry(current, m);
     }
   }
 
@@ -924,7 +977,11 @@ export class VersionStager implements Stager {
     const sentText = decoder.decode(source.pending);
     // A doc's source must be Markdown, never a whole HTML document (the bundle path included). A
     // type that stores one canonical spelling (a sheet) stores that, here as inline.
-    const sourceText = resolveSource({ type: def.id, [def.sourceField]: sentText }, null).text;
+    const sourceText = resolveSource(
+      { type: def.id, [def.sourceField]: sentText },
+      null,
+      source.path,
+    ).text;
     if (sourceText !== sentText) await this.replacePending(source, sourceText);
     source.content_type = sourceFileOf(def, source.path).contentType;
 
@@ -938,7 +995,11 @@ export class VersionStager implements Stager {
         def,
         text: sourceText,
         sourcePath: source.path,
-        files: list.map((e) => ({ path: e.path, contentType: e.content_type })),
+        files: list.map((e) => ({
+          path: e.path,
+          contentType: e.content_type,
+          size: e.size_bytes,
+        })),
         read: (path) => {
           const e = byPath.get(path);
           if (!e) return Promise.resolve(null);
@@ -1017,7 +1078,7 @@ export class VersionStager implements Stager {
       // reference warnings: the type's own source checks first (sourceWarnings), the ones that
       // read other artifacts after the reference warnings (publishWarnings).
       // Both are advisory: a hook that throws becomes a not_scanned note, never a failed publish.
-      const typedSource = { def, text: sourceText, paths: manifestPaths };
+      const typedSource = { def, text: sourceText, paths: manifestPaths, sourcePath: source.path };
       const extra = await typePublishWarnings(this.ctx, typedSource);
       warnings = scanPublish({
         files,
@@ -1048,7 +1109,7 @@ export class VersionStager implements Stager {
     stagedExtras.set(staged, {
       stager: this,
       capabilities,
-      title: named || titleFromSource(def, sourceText) || "Untitled",
+      title: named || titleFromSource(def, sourceText, source.path) || "Untitled",
       warnings,
     });
     return staged;

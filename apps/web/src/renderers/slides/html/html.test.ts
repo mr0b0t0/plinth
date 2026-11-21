@@ -14,10 +14,25 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../boot.ts";
 import { STILL_ATTR } from "./base.ts";
-import { buildHtmlSlide, fragmentSteps, htmlDeckContext, showSteps } from "./build.ts";
+import {
+  buildHtmlSlide,
+  CANVAS_PINNED,
+  fragmentSteps,
+  HOST_PINNED,
+  htmlDeckContext,
+  showSteps,
+} from "./build.ts";
 import { connectorSvg, coord, routePoints } from "./connectors.ts";
-import { mediaHolds, scopeDeckCss, scopeSelector, splitBlocks } from "./css.ts";
-import { EmbedFrames, embedLoaderUrl, isEmbedReady } from "./embeds.ts";
+import {
+  mapProjectUrls,
+  mediaHolds,
+  propertyRule,
+  scopeDeckCss,
+  scopeSelector,
+  splitBlocks,
+} from "./css.ts";
+import { EMBED_FRAME_PINNED, EmbedFrames, embedLoaderUrl, isEmbedReady } from "./embeds.ts";
+import { HtmlDeckRuntime } from "./runtime.ts";
 
 const APP = "https://plinth.example.com";
 const CANVAS = { width: 1920, height: 1080 };
@@ -129,10 +144,167 @@ describe("deck.css in a slide", () => {
     expect(out).not.toContain("@page");
     expect(out).not.toContain("@property");
     expect(properties).toHaveLength(1);
-    expect(properties[0]).toMatch(
-      /^@property --n \{\s*syntax: '<integer>'; inherits: false; initial-value: 0\s*\}$/,
+    expect(properties[0]).toBe(
+      '@property --n { syntax: "<integer>"; inherits: false; initial-value: 0; }',
     );
     expect(splitBlocks("a { } } b { }").map((b) => b.prelude)).toEqual(["a", "b"]);
+  });
+});
+
+describe("deck.css cannot reach past its slide", () => {
+  it("rebuilds @property from its descriptors, so no text of it reaches the document as written", () => {
+    const payload =
+      '@property --x { syntax: "<integer>\n}.plinth-slides__controls{display:none}"; inherits: false; initial-value: 0 }';
+    const { properties } = scopeDeckCss(payload, CANVAS);
+    expect(properties).toEqual([]);
+    expect(properties.join("")).not.toContain("plinth-slides__controls");
+    // The same payload without the line break still fails the descriptor checks.
+    expect(
+      propertyRule(
+        "--x",
+        ' syntax: "<integer>}.plinth-slides__controls{display:none}"; inherits: false; initial-value: 0 ',
+      ),
+    ).toBeNull();
+    expect(propertyRule("--x", "syntax: '*'; inherits: true")).toBe(
+      '@property --x { syntax: "*"; inherits: true; }',
+    );
+    expect(
+      propertyRule("--x", "syntax: '<color>'; inherits: false; initial-value: rgb(0 0 0)"),
+    ).toBe('@property --x { syntax: "<color>"; inherits: false; initial-value: rgb(0 0 0); }');
+    expect(
+      propertyRule("--x", "syntax: '<length>'; inherits: false; initial-value: 0}a{b"),
+    ).toBeNull();
+    expect(
+      propertyRule("--x", "syntax: '<length>'; inherits: false; initial-value: calc(1px"),
+    ).toBeNull();
+    expect(propertyRule("--x", "syntax: '<length>'; inherits: false")).toBeNull();
+    expect(propertyRule("--x", "syntax: '<length>'; inherits: maybe; initial-value: 0")).toBeNull();
+    expect(
+      propertyRule("--x", "syntax: '<length>'; inherits: false; initial-value: 0; color: red"),
+    ).toBeNull();
+    expect(propertyRule("x", "syntax: '*'; inherits: true")).toBeNull();
+  });
+
+  it("ends a string at a line break, as a browser does", () => {
+    const blocks = splitBlocks('.a { content: "x\n} .b { color: red }');
+    expect(blocks.map((b) => b.prelude)).toEqual([".a", ".b"]);
+  });
+
+  it("drops selectors that name the shadow host or its tree from inside", () => {
+    expect(scopeSelector(":host-context(*)")).toBeNull();
+    expect(scopeSelector(":host(.x)")).toBeNull();
+    expect(scopeSelector("html :HOST")).toBeNull();
+    expect(scopeSelector("::slotted(p)")).toBeNull();
+    expect(scopeSelector("x::part(a)")).toBeNull();
+    const { css } = scopeDeckCss(
+      ":host-context(*) { position: fixed !important } :host(.a), .ok { color: red } ::slotted(*) { color: blue }",
+      CANVAS,
+    );
+    expect(css).not.toMatch(/:host|slotted/);
+    expect(css).toContain(".ok { color: red }");
+    expect(css).not.toContain("blue");
+  });
+
+  it("keeps the host, the canvas, the shadow html and an embed frame's critical styles inline and !important", () => {
+    const deck = parsed(
+      {
+        a: '<section id="a"><x-embed style="position:absolute; left:0; top:0; width:10px; height:10px"></x-embed></section>',
+      },
+      [
+        ":host { position: fixed !important; inset: 0 !important; z-index: 2147483647 !important }",
+        ":host-context(*) { position: fixed !important }",
+        ":root { contain: none !important; overflow: visible !important }",
+        "x-embed > iframe { pointer-events: auto !important }",
+        "section { counter-increment: page }",
+      ].join("\n"),
+    );
+    const { ctx } = htmlDeckContext(document, deck);
+    expect(ctx.css).not.toContain(":host-context");
+    const { view, parts } = buildHtmlSlide(ctx, deck.slides[0] as never, 1);
+    const host = view.el;
+    for (const [k, v] of Object.entries(HOST_PINNED)) {
+      expect(host.style.getPropertyValue(k)).toBe(v);
+      expect(host.style.getPropertyPriority(k)).toBe("important");
+    }
+    const canvas = view.frame.querySelector(".plinth-slides__canvas") as HTMLElement;
+    for (const k of Object.keys(CANVAS_PINNED)) {
+      expect(canvas.style.getPropertyPriority(k)).toBe("important");
+    }
+    const html = parts.root.querySelector("html") as HTMLElement;
+    expect(html.style.getPropertyValue("contain")).toBe("strict");
+    expect(html.style.getPropertyPriority("contain")).toBe("important");
+    expect(html.style.getPropertyPriority("overflow")).toBe("important");
+    // The counter still starts at the slide's place, beside the pinned styles.
+    expect(html.style.getPropertyValue("counter-reset")).toBe("page 0");
+    const target = new EventTarget();
+    const win = {
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+    } as unknown as Window;
+    const frames = new EmbedFrames(
+      win,
+      "https://a1.content.example/__plinth/frames/slides/embed.html",
+    );
+    document.body.append(view.frame);
+    frames.set(parts.embeds, true);
+    const iframe = parts.root.querySelector("x-embed > iframe") as HTMLIFrameElement;
+    for (const [k, v] of Object.entries(EMBED_FRAME_PINNED)) {
+      expect(iframe.style.getPropertyValue(k)).toBe(v);
+      expect(iframe.style.getPropertyPriority(k)).toBe("important");
+    }
+    frames.stop();
+    view.frame.remove();
+  });
+
+  it("reads a Claude deck's project/ paths in url() as the version's own", () => {
+    expect(mapProjectUrls("a { background: url(project/ds/b/bg.png) }")).toBe(
+      "a { background: url(ds/b/bg.png) }",
+    );
+    expect(mapProjectUrls("a{background:url( 'project/x.png')}")).toBe(
+      "a{background:url('x.png')}",
+    );
+    expect(mapProjectUrls("a{background:url(images/project/x.png)}")).toBe(
+      "a{background:url(images/project/x.png)}",
+    );
+    const deck = parsed(
+      {
+        a: '<section id="a"><div id="d" style="background-image: url(project/ds/b/hero.png)"></div></section>',
+      },
+      ".x { background: url(project/ds/b/bg.png) }",
+    );
+    const { ctx } = htmlDeckContext(document, deck);
+    expect(ctx.css).toContain("url(ds/b/bg.png)");
+    const { parts } = buildHtmlSlide(ctx, deck.slides[0] as never, 1);
+    expect(parts.root.querySelector("#d")?.getAttribute("style")).toBe(
+      "background-image: url(ds/b/hero.png)",
+    );
+  });
+
+  it("draws nothing for an icon name that is only an object key", () => {
+    const deck = parsed({
+      a: '<section id="a"><x-icon name="constructor"></x-icon><x-icon name="__proto__"></x-icon></section>',
+    });
+    const { ctx } = htmlDeckContext(document, deck);
+    const { parts } = buildHtmlSlide(ctx, deck.slides[0] as never, 1);
+    expect(parts.root.querySelectorAll("x-icon svg")).toHaveLength(2);
+    expect(parts.root.querySelectorAll("x-icon svg path")).toHaveLength(0);
+  });
+
+  it("never marks an HTML slide as overflowing: it is a fixed canvas that clips", () => {
+    const deck = parsed({
+      a: '<section id="a"><div style="width: 4000px; height: 3000px">big</div><img src="images/p.png" style="position:absolute; left:1500px; top:0; width:1000px"></section>',
+    });
+    const rt = new HtmlDeckRuntime(window, deck, { motionOff: true, noEmbeds: true });
+    const v = rt.views[0];
+    if (!v) throw new Error("no view");
+    document.body.append(v.frame);
+    v.el.setAttribute("data-overflow", "true");
+    rt.layout(v);
+    expect(v.el.hasAttribute("data-overflow")).toBe(false);
+    rt.still();
+    expect(v.el.hasAttribute("data-overflow")).toBe(false);
+    rt.stop();
+    v.frame.remove();
   });
 });
 

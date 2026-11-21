@@ -125,6 +125,37 @@ describe("an HTML slide's .pptx model", () => {
     view.frame.remove();
   });
 
+  it("names a face only when it is a plain family name (the .pptx writes it into its XML)", () => {
+    const r = parseHtmlDeck({
+      index: JSON.stringify({ order: ["a"] }),
+      css: null,
+      slides: new Map([
+        ["slides/a.html", '<section id="a"><p id="ok">Plain</p><p id="bad">Hostile</p></section>'],
+      ]),
+    });
+    if (!r.ok) throw new Error("refused");
+    const { ctx } = htmlDeckContext(document, r.deck);
+    const { view } = buildHtmlSlide(ctx, r.deck.slides[0] as never, 1);
+    document.body.append(view.frame);
+    const g = geometry(
+      {
+        a: { left: 0, top: 0, width: 1920, height: 1080 },
+        ok: { left: 0, top: 0, width: 600, height: 40 },
+        bad: { left: 0, top: 100, width: 600, height: 40 },
+      },
+      {
+        ok: { fontFamily: '"Inter Tight", sans-serif' },
+        bad: { fontFamily: "'a\"/><a:evil x=\"', sans-serif" },
+      },
+    );
+    const { model } = buildHtmlExportModel([view], r.deck, { title: "T", geometry: g });
+    const fonts = model.slides[0]?.items.flatMap((i) =>
+      i.kind === "text" ? i.paras.map((p) => p.font) : [],
+    );
+    expect(fonts).toEqual(["Inter Tight", undefined]);
+    view.frame.remove();
+  });
+
   it("draws a connector as a picture that bounds its line and heads", () => {
     const svg = connectorSvg(
       document,
