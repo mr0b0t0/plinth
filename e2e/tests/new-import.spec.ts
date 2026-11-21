@@ -1,8 +1,10 @@
 // New, Import and Replace with a file (docs/spec.md "New and Import"), under origin isolation with
 // live rooms: New on the dashboard makes a blank document or sheet that opens in edit mode with
 // the focus on its title or first cell, and Publish makes v2; Import sends an .xlsx that the Worker
-// converts and opens the sheet in edit mode; a sheet's "Replace with a file…" confirms, asks again
-// when an agent published meanwhile, keeps the artifact, and is hidden while the page is edited.
+// converts and opens the sheet in edit mode, saying in a toast which sheets it left out; a sheet's
+// "Replace with a file…" confirms (with what the import would change), asks again when an agent
+// published meanwhile, keeps the artifact, is hidden while the page is edited, and on a pinned
+// version link moves to the artifact's own link once replaced.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
@@ -18,6 +20,14 @@ async function openNew(page: Page) {
   // While there is nothing yet, New stands in the empty state; otherwise in the top bar.
   await page.getByRole("button", { name: "New", exact: true }).click();
   return page.getByRole("menu", { name: "New" });
+}
+
+/** New, then "Import a spreadsheet…", then this file in the picker it opens. */
+async function importFile(page: Page, file: { name: string; mimeType: string; buffer: Buffer }) {
+  const menu = await openNew(page);
+  const chooser = page.waitForEvent("filechooser");
+  await menu.getByRole("menuitem", { name: "Import a spreadsheet…" }).click();
+  await (await chooser).setFiles(file);
 }
 
 /** The artifact this page shows, from its address. */
@@ -81,7 +91,8 @@ test("New sheet opens in edit mode on A2, and typing fills it", async ({ page })
   await expect(cell(page, "A1")).toHaveText(/Column 1/, { timeout: 15_000 });
   await expect(cell(page, "A2")).toBeFocused();
   await page.keyboard.press("A");
-  const input = frameOf(page).locator("#__plinth-cell-A2 .plinth-sheet__input");
+  // The open cell's field: in the cell, or docked at the bottom of the page at phone width.
+  const input = frameOf(page).locator(".plinth-sheet__input");
   await expect(input).toHaveValue("A");
   await input.fill("Apples");
   await input.press("Enter");
@@ -92,22 +103,31 @@ test("New sheet opens in edit mode on A2, and typing fills it", async ({ page })
   expect((detail.body.content as string).split("\n")[1]).toBe('["Apples"]');
 });
 
-test("Import an .xlsx: converted by the Worker, opened in edit mode", async ({ page }) => {
+test("Import an .xlsx: converted by the Worker, opened in edit mode, other sheets named", async ({
+  page,
+}) => {
   test.setTimeout(60_000);
   const email = uniqueEmail("import");
   await seedSession(page.context(), email);
   await page.goto("/dashboard");
   await expect(page.getByText("Nothing on display yet")).toBeVisible();
-  await page.getByTestId("new-import-file").setInputFiles({
+  await importFile(page, {
     name: "Q4_sales.xlsx",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    buffer: xlsxOf([
-      ["Region", "Sales"],
-      ["North", 120],
-      ["South", 80],
-    ]),
+    buffer: xlsxOf(
+      [
+        ["Region", "Sales"],
+        ["North", 120],
+        ["South", 80],
+      ],
+      ["Q3", "Notes"],
+    ),
   });
   await expect(page).toHaveURL(/\/a\/[^/?]+$/, { timeout: 15_000 });
+  // What the import left out, in one toast with no button.
+  const toast = page.locator(".pl-toast", { hasText: "Imported Q4_sales.xlsx" });
+  await expect(toast).toContainText("Only the first sheet is used; “Q3” and “Notes” are left out.");
+  await expect(toast.locator(".pl-toast__action")).toHaveCount(0);
   await expect(bar(page)).toBeVisible();
   await expect(cell(page, "B3")).toHaveText("80", { timeout: 15_000 });
   await expect(cell(page, "A2")).toBeFocused();
@@ -128,7 +148,7 @@ test("Import refuses a file it cannot read and says why, creating nothing", asyn
   await seedSession(page.context(), email);
   await page.goto("/dashboard");
   await expect(page.getByText("Nothing on display yet")).toBeVisible();
-  await page.getByTestId("new-import-file").setInputFiles({
+  await importFile(page, {
     name: "broken.xlsx",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from("not a zip"),
@@ -213,4 +233,54 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and h
   menu = await openActions(page);
   await expect(menu.getByRole("menuitem").first()).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "Replace with a file…" })).toHaveCount(0);
+});
+
+test("Replace on a pinned version link: says what the file changes, then shows the new version on the artifact's link", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const email = uniqueEmail("replace-pinned");
+  const { token } = await seedToken(email, { label: "Work agent" });
+  const art = await publishArtifact(page.request, token, {
+    title: "Menu",
+    type: "sheet",
+    html: undefined,
+    content: '{"plinth":"sheet","v":1,"columns":[{"name":"Item","type":"text"}]}\n["Tea"]',
+    visibility: "allowlist",
+  });
+  await seedSession(page.context(), email);
+  // v1 is current, so its permanent link offers Replace.
+  await page.goto(`/a/${art.slug}/v/1`);
+  await expect(cell(page, "A2")).toHaveText("Tea", { timeout: 15_000 });
+  const menu = await openActions(page);
+  const chooser = page.waitForEvent("filechooser");
+  await menu.getByRole("menuitem", { name: "Replace with a file…" }).click();
+  // "Item,Price / Café,3" saved by Excel on Windows: é is the byte 0xE9.
+  await (await chooser).setFiles({
+    name: "menu.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.concat([
+      Buffer.from("Item,Price\nCaf"),
+      Buffer.from([0xe9]),
+      Buffer.from(",3\n"),
+    ]),
+  });
+  const dialog = page.getByRole("dialog", { name: "Replace with a file" });
+  await expect(dialog).toContainText("menu.csv becomes v2. v1 stays in history.");
+  await expect(dialog.getByRole("listitem")).toHaveText([
+    "The file is not UTF-8, so it is read as Windows-1252. Check accented letters.",
+  ]);
+  // No button of its own: Cancel and Replace stay the choice.
+  await expect(dialog.locator(".pl-dialog__footer").getByRole("button")).toHaveText([
+    "Cancel",
+    "Replace",
+  ]);
+  await dialog.getByRole("button", { name: "Replace", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  // The pinned link would show v1 again: the page moves to the artifact's own link, on v2.
+  await expect(page).toHaveURL(new RegExp(`/a/${art.slug}$`));
+  await expect(cell(page, "A2")).toHaveText("Café", { timeout: 15_000 });
+  const detail = await apiGet(page.request, `/artifacts/${art.id}`);
+  expect(detail.body).toMatchObject({ current_version: 2 });
+  expect(detail.body.content).toContain('["Café",3]');
 });

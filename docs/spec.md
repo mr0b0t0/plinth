@@ -1971,7 +1971,10 @@ edits one.
   100 `<col>` ranges and only for columns A to CV, a number format code longer than Excel's 255
   characters reads as General, and XML whose tag, comment, CDATA section or processing
   instruction never ends is refused as damaged.
-  The import is checked like any sheet and stored as JSON lines. The CLI publishes one `.csv` or
+  The import is checked like any sheet and stored as JSON lines. What it leaves out or changes is
+  reported by the shared `sheetImportWarnings` (other sheets, formulas kept as values, column names
+  cut), which the app shows ([New and Import](#new-and-import-decided-2026-11-19)); publish
+  results do not list them yet. The CLI publishes one `.csv` or
   `.xlsx` file as a new sheet, or the next version of `--id`. In the app, the dashboard's "Import a
   spreadsheet" and a sheet's "Replace with a file…" send the file to the Worker, which converts it
   the same way ([New and Import](#new-and-import-decided-2026-11-19)).
@@ -2873,10 +2876,13 @@ pages and designs come only from agents.
 
 - **New.** The dashboard's **New** button (in the top bar; while there is nothing yet, in the empty
   state beside "Connect an agent") opens a menu built from the type registry's `create` rows:
-  "Document" and "Sheet", then "Import a spreadsheet…", and nothing else. The blank items are
+  "Document" and "Sheet", then "Import a spreadsheet…", and nothing else. Which of the two places
+  it takes is known once the artifact list has loaded, so New appears only then and never moves
+  from one to the other. The blank items are
   offered only where editing on the page works here (`inline_editing` in `GET /api/v1/config` is not
   null) and for types the instance publishes now (`artifact_types`); Import is offered wherever
-  sheets are. Only types edited on the page have a `create` row (docs and sheets).
+  sheets are. With neither, there is no New button at all. Only types edited on the page have a
+  `create` row (docs and sheets).
 - **A blank artifact is a placeholder v1.** New publishes the type's `create` row with the signed-in
   session over `POST /api/v1/artifacts`, the route agents use: a doc titled "Untitled document"
   whose Markdown is `# Untitled document`, or a sheet titled "Untitled sheet" with three text
@@ -2885,17 +2891,35 @@ pages and designs come only from agents.
   current version, so the starter content is v1. It is private, like every publish, and counts
   toward `MAX_PUBLISHES_PER_HOUR`, the artifact quota and the storage quota. A token limited to one
   artifact cannot create one (`mayCreateArtifacts`), as everywhere.
-- **Import.** A file input for `.xlsx`, `.csv` and `.tsv`, at most 2 MB. The app sends the file as
+- **Import.** A file picker for `.xlsx`, `.csv` and `.tsv`, at most 2 MB (the same picker as
+  Replace's). The app sends the file as
   it is: CSV and TSV as text and an .xlsx as base64, with `content_format` `csv` or `xlsx`, the file
-  name without its extension as the title, and the note "Imported from <file name>". The Worker
+  name without its extension as the title, and the note "Imported from <file name>". The file name
+  in the note, and wherever the app shows it, drops control characters (C0 and C1) and bidi marks,
+  embeddings, overrides and isolates (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069).
+  A CSV or TSV is read as UTF-8 (UTF-16 when it starts with that byte order mark); bytes that are
+  not UTF-8 are read as Windows-1252, which Excel on Windows saves a "CSV" in, so "Café" stays
+  "Café" and is never U+FFFD, and the person is told. The Worker
   converts and checks it exactly as it does for agents (see Imports under
-  [Sheets](#sheets-decided-2026-11-19)), so the app carries no spreadsheet reader of its own. A
-  refusal is a dialog titled "Could not import <file name>" with the plain cause as its one line
-  and the cells it names ("B7: …") under it, then Cancel and "Choose another file…". The cause is
-  never code: the Worker's sentence without its "The xlsx file could not be imported:" lead and
-  without a closing parenthetical of parser detail ("This is not an .xlsx file."). Agents get the
-  whole sentence. The sheet then opens in edit mode where editing on the page works, and on its
-  page otherwise.
+  [Sheets](#sheets-decided-2026-11-19)), and its answer is the one that counts. The sheet then
+  opens in edit mode where editing on the page works, and on its page otherwise.
+- **What an import leaves out is said.** Before sending, the app runs the same shared importer on
+  the file, loaded only once a file is picked, for its warnings alone: `other_sheets` (an .xlsx
+  has more sheets than the first, which is the one imported; up to 20 names and the count),
+  `formulas_as_values` (data cells whose formula is outside the function list, names another sheet
+  or is a shared formula, kept as their cached values), `headers_truncated` (column names cut to
+  100 characters), and the app's own `not_utf8`. Each is one plain sentence: "Only the first sheet
+  is used; “Q3” and “Notes” are left out." (three names at most, then "and N more"), "3 formulas
+  become plain values.", "1 column name is cut to 100 characters.", "The file is not UTF-8, so it
+  is read as Windows-1252. Check accented letters." Import says them in one warning toast,
+  "Imported <file name>", once the sheet is open; Replace lists them under its confirmation. They
+  add no button and never block: a file the check cannot read is sent as it is, and the Worker's
+  refusal is shown.
+- **A refusal** of Import is a dialog titled "Could not import <file name>" with the plain cause as
+  its one line and the cells it names ("B7: …") under it, then Cancel and "Choose another file…".
+  The cause is never code: the Worker's sentence without its "The xlsx file could not be imported:"
+  lead and without a closing parenthetical of parser detail ("This is not an .xlsx file."). Agents
+  get the whole sentence.
 - **`?edit` starts editing.** On the artifact page, `?edit` for an owner or editor who may edit
   there (the gate's `live`, without `sign_in`) is dropped from the address and the page opens in
   edit mode. The app focuses the frame and posts `edit { on: true, focus: "first" }` (again on the
@@ -2906,9 +2930,10 @@ pages and designs come only from agents.
   or the person cannot write, it only takes the focus and nothing is asked of the room. Every
   other case of `?edit` is described under [Ask an agent](#ask-an-agent-decided-2026-11-19).
 - **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on
-  the current version. It is the one way to bring a file into an existing sheet. It opens the file picker at once, takes the
-  same files and limits as Import, and confirms the chosen file first ("sales.xlsx becomes v6. v5
-  stays in history."), then sends `PUT /api/v1/artifacts/:ref` with `content_format`, `content`,
+  the current version. It is the one way in the app to bring a file into an existing sheet. It opens
+  the file picker at once, takes the same files and limits as Import, and confirms the chosen file
+  first ("sales.xlsx becomes v6. v5 stays in history.", with what the import leaves out listed
+  under it), then sends `PUT /api/v1/artifacts/:ref` with `content_format`, `content`,
   `base_version` (the version on screen) and the note "Replaced from <file name>". The new version
   keeps the link, the sharing and the comments, and the page says "Replaced with <file name>". When
   a newer version was published since, the save is refused (409) and the dialog asks again against
@@ -2922,7 +2947,9 @@ pages and designs come only from agents.
   elsewhere" under Sheets), and one without moves to it. A person without an account (an editor
   confirmed by code) gets the dialog's "Sign in to replace this sheet." without a picker, since
   publishing a version needs an account, and the dialog says the same if the save is refused for
-  that reason. After a replace the page shows the new version.
+  that reason. After a replace the page shows the new version: on a permanent version link
+  (`/a/<slug>/v/<n>`, where the item is offered while n is the current version) it moves to the
+  artifact's own link, since reloading the pinned one would show the old version again.
 - **Where editing on the page is off** (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path
   fallback): New offers only Import, and an imported sheet opens on its page. Import and "Replace
   with a file…" are ordinary app requests and work in every isolation mode.

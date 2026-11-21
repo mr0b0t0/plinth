@@ -1,5 +1,6 @@
 // A small .xlsx for import tests: a ZIP of stored (uncompressed) parts, enough for Plinth's reader
-// (it checks no CRC), with one worksheet of inline strings and numbers.
+// (it checks no CRC), with one worksheet of inline strings and numbers (and, if asked, the names of
+// more sheets).
 
 /** A ZIP of stored files. */
 export function storedZip(files: Record<string, string>): Buffer {
@@ -48,8 +49,11 @@ const cellXml = (ref: string, v: string | number) =>
     ? `<c r="${ref}"><v>${v}</v></c>`
     : `<c r="${ref}" t="inlineStr"><is><t>${v}</t></is></c>`;
 
-/** An .xlsx whose first worksheet holds these rows (the first row names the columns). */
-export function xlsxOf(rows: (string | number)[][]): Buffer {
+/**
+ * An .xlsx whose first worksheet holds these rows (the first row names the columns). `others`
+ * names more sheets in the workbook, which an import leaves out.
+ */
+export function xlsxOf(rows: (string | number)[][], others: string[] = []): Buffer {
   const cols = "ABCDEFGHIJ";
   const data = rows
     .map(
@@ -58,7 +62,9 @@ export function xlsxOf(rows: (string | number)[][]): Buffer {
     )
     .join("");
   return storedZip({
-    "xl/workbook.xml": '<workbook><sheets><sheet name="Sheet1" r:id="rId1"/></sheets></workbook>',
+    "xl/workbook.xml": `<workbook><sheets><sheet name="Sheet1" r:id="rId1"/>${others
+      .map((n, i) => `<sheet name="${n}" r:id="rId${i + 2}"/>`)
+      .join("")}</sheets></workbook>`,
     "xl/_rels/workbook.xml.rels":
       '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
     "xl/worksheets/sheet1.xml": `<worksheet><sheetData>${data}</sheetData></worksheet>`,

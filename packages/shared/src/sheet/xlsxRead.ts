@@ -355,21 +355,59 @@ export interface RawSheet {
   freezeCols: number;
   /** cellXfs index to number format code (or a built-in id as "#<id>"). */
   styles: string[];
+  /** The workbook's other sheets, which are not imported: their names (at most 20) and count. */
+  otherSheets: { names: string[]; count: number };
+  /** Data cells (below row 1) whose formula was dropped for its cached value. */
+  formulasAsValues: number;
 }
 
-function firstSheetPath(r: Reader): string {
+/** The sheet names RawSheet.otherSheets lists, at most; the rest are only counted. */
+export const MAX_OTHER_SHEET_NAMES = 20;
+
+/** Excel's longest sheet name: a name read from a file is cut to it. */
+const MAX_SHEET_NAME_CHARS = 31;
+
+/** A sheet name as it may be shown: no control or format (bidi) characters, at most 31 long. */
+function sheetName(raw: string): string {
+  return [
+    ...raw
+      .slice(0, MAX_SHEET_NAME_CHARS * 4)
+      .replace(/[\p{Cc}\p{Cf}]+/gu, "")
+      .trim(),
+  ]
+    .slice(0, MAX_SHEET_NAME_CHARS)
+    .join("");
+}
+
+interface WorkbookSheets {
+  /** The first worksheet's part. */
+  path: string;
+  others: { names: string[]; count: number };
+}
+
+/**
+ * The first worksheet's part, and the workbook's other sheets (the import reads only the first),
+ * named in workbook order.
+ */
+function workbookSheets(r: Reader): WorkbookSheets {
   const wb = r.text("xl/workbook.xml");
   const rels = r.text("xl/_rels/workbook.xml.rels");
   let rid: string | null = null;
+  let seen = 0;
+  const names: string[] = [];
   if (wb) {
     scanXml(wb, {
       open(name, a) {
-        if (name === "sheet" && rid === null) rid = a.id ?? null;
+        if (name !== "sheet") return;
+        seen++;
+        if (seen === 1) rid = a.id ?? null;
+        else if (names.length < MAX_OTHER_SHEET_NAMES) names.push(sheetName(a.name ?? ""));
       },
       close() {},
       text() {},
     });
   }
+  const others = { names, count: Math.max(0, seen - 1) };
   let target: string | null = null;
   if (rels && rid) {
     scanXml(rels, {
@@ -391,9 +429,9 @@ function firstSheetPath(r: Reader): string {
         return acc;
       }, [])
       .join("/");
-    if (r.has(clean)) return clean;
+    if (r.has(clean)) return { path: clean, others };
   }
-  if (r.has("xl/worksheets/sheet1.xml")) return "xl/worksheets/sheet1.xml";
+  if (r.has("xl/worksheets/sheet1.xml")) return { path: "xl/worksheets/sheet1.xml", others };
   throw new SheetImportError("The .xlsx file has no worksheet");
 }
 
@@ -572,7 +610,7 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
     );
   }
   const r = new Reader(bytes);
-  const path = firstSheetPath(r);
+  const { path, others } = workbookSheets(r);
   const strings = sharedStrings(r);
   const styles = styleFormats(r);
   const xml = r.text(path) ?? "";
@@ -590,6 +628,7 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
   let nextCol = 0;
   let colRanges = 0;
   let jsonBytes = 0;
+  let formulasAsValues = 0;
   scanXml(xml, {
     open(name, a) {
       switch (name) {
@@ -671,6 +710,9 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
       // to (one long shared string can stand behind every cell of a small file).
       const src = f?.text() ?? "";
       const kept = src && !fShared ? keptFormula(src) : null;
+      // A formula that falls back to its cached value (outside the allowlist, another sheet, or a
+      // shared one) is counted for the import's warning; the header row's become names anyway.
+      if (kept === null && (src !== "" || fShared) && rowNum > 1) formulasAsValues++;
       const out: RawCell = kept !== null ? { t: "f", f: kept, cached: value } : value;
       if (out !== null) {
         jsonBytes += 2 + (rowNum > 1 ? textLength(out) : 0);
@@ -690,7 +732,7 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
       else if (field === "t" && inline !== null) inline.add(s);
     },
   });
-  return { rows, widths, freezeCols, styles };
+  return { rows, widths, freezeCols, styles, otherSheets: others, formulasAsValues };
 }
 
 function rawValue(

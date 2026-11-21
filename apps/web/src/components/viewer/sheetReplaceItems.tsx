@@ -6,8 +6,11 @@
 // item is hidden; the dialog checks the same again when Replace is pressed. A draft someone starts
 // after that press meets the room's review of a version published meanwhile, as for an agent's
 // version. A person confirmed by code without an account may not publish a version: the item opens
-// the dialog's sign-in step, with no picker.
+// the dialog's sign-in step, with no picker. After a replace the page shows the new version: on a
+// permanent version link (/a/:slug/v/:n, offered while n is current) it moves to the artifact's
+// own link, since reloading the pinned one would show the old version again.
 import { FileArrowUpIcon } from "@phosphor-icons/react";
+import { navigate } from "../../lib/router.tsx";
 import { currentSession } from "../../lib/session.ts";
 import { pickSpreadsheetFile } from "../account/newArtifact.ts";
 import { noticeKind } from "./LiveDraftNotice.tsx";
@@ -83,6 +86,11 @@ export const replaceSheetDialog: StageDialog = {
         onClose={done}
         onReplaced={() => {
           done();
+          // A pinned link would reload the version it names: go to the current one instead.
+          if (c.pinned) {
+            navigate(c.hrefs.current);
+            return;
+          }
           // The frame reloads on the new version; other open pages follow it on their own.
           c.actions.reload();
         }}

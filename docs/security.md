@@ -82,7 +82,7 @@ make a test pass.
 | A request looks sent to an agent that cannot take it | Ask an agent names Claude while the owner's only Claude token was revoked, is limited to one artifact or lacks `mentions`, so the person waits on a request no agent will ever see | `request_to` is checked against the owner's connections that could claim it (`takesRequests`), and refused with `no_agent` before anything is written; the gate lists only those client types ([Ask an agent](#ask-an-agent)) |
 | A forged `ask` from the frame | A document the frame navigated to, or another window, posts `ask` to open the Ask dialog with an anchor of its choosing | In edit mode `ask` is an editing message: the frame window, the exact content origin and the frame key are checked, and the anchor must be a structural key (`PAGE_ANCHOR_KEY_RE`) and short plain text; at worst it prefills a dialog the person must still write and post ([Ask an agent](#ask-an-agent)) |
 | A request carries the owner's authority it does not have | A commenter's Ask an agent request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Ask an agent](#ask-an-agent)) |
-| A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The app sends the file as it is and never parses it: the Worker's bounded importer converts and checks it, and its refusal comes back as text; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is hidden while page changes exist or someone edits on the page, checked again on Replace; a draft started later is frozen for review against the new version ([New and Import](#new-and-import)) |
+| A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The Worker's bounded importer converts and checks the file as it is sent, and its refusal comes back as text; the app runs the same bounded importer on the person's own pick only to list what it would leave out, as text, and never blocks on it; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is hidden while page changes exist or someone edits on the page, checked again on Replace; a draft started later is frozen for review against the new version ([New and Import](#new-and-import)) |
 | A viewer steers the audience's decks | Someone with view access to a deck (or a page script elsewhere) sends `goto` frames on the deck's `slides` socket to move everyone's slide, or reads the socket to learn who is watching | Only owners' and editors' sockets carry `present`, stamped by the gate from policy; a `watch` socket may send nothing but `ping` (anything else is `forbidden` and a rate drop); the handshake has the room's hijacking checks; frames carry only slide numbers, the leading socket's random id and, to the leader alone, a count of viewers ([Live rooms](#live-rooms)) |
 
 | A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
@@ -2699,12 +2699,23 @@ flag, env var or MCP tool was added.
 - **An account publishes.** A version is stamped with the account that made it, so an editor
   confirmed by code without an account cannot publish one: the Worker refuses the save (401), and
   the item opens the dialog's sign-in step instead of a file picker.
-- **Files are read on the server only.** The app sends a picked file as it is (CSV and TSV as
-  text, an .xlsx as base64) and never parses it: the bounded importer of
-  [Sheets](#sheets) converts and checks it, and its refusal reaches the app as a sentence and cell
-  messages, rendered as React text nodes. The app bundle carries no spreadsheet reader, so a
-  crafted file cannot run or exhaust anything on the app origin. The app checks only the name and
-  the 2 MB limit before sending; the Worker checks both again.
+- **The Worker's reading is the one that counts.** The app sends a picked file as it is (CSV and
+  TSV as text, an .xlsx as base64): the bounded importer of [Sheets](#sheets) converts and checks
+  it, and its refusal reaches the app as a sentence and cell messages, rendered as React text
+  nodes. The app checks the name and the 2 MB limit before sending; the Worker checks both again.
+- **The app's own reading only says what is left out.** To warn before a replace (and in Import's
+  toast), the app runs the same shared importer on the file, in the person's own tab, on a file
+  they picked themselves: the 2 MB cap, the 24 MB inflate cap, the linear XML scanner and the row,
+  column and cell bounds all apply, nothing in the file is evaluated, and its chunk loads only once
+  a file is picked. Only counts and sheet names come out of it, the names without control or
+  format (bidi) characters and cut to 31 characters, three at most shown, as React text. Its
+  result never decides anything: when it throws, the file is sent and the Worker answers. The worst
+  a crafted file can do there is keep that tab busy for the bounded work. A CSV that is not UTF-8
+  is decoded as Windows-1252 by a fixed table, which reads every byte as one character.
+- **File names are shown and noted without control or bidi characters.** "Imported from …",
+  "Replaced from …", the dialogs and the toasts drop C0 and C1 controls and U+061C, U+200E, U+200F,
+  U+202A to U+202E and U+2066 to U+2069, so a name like `invoice<U+202E>vsc.xlsx` cannot read as another
+  in History or in the app.
 - **v1's note.** `POST /api/v1/artifacts` takes `note` for v1 (the zod note schema, at most 500
   characters), which History shows as text. MCP's `publish_artifact` does not list it.
 - **`?edit` starts editing only where the gate allows it.** The page starts edit mode from `?edit`

@@ -13,6 +13,7 @@ import {
   serializeSheet,
   sheetFromCsv,
   sheetFromXlsx,
+  sheetImportWarnings,
   toCsv,
 } from "../src/index.ts";
 import { COLUMN_NAME_SOURCE_CHARS } from "../src/sheet/import.ts";
@@ -703,5 +704,99 @@ describe(".xlsx import", () => {
       '{"plinth":"sheet","v":1,"columns":[{"name":"Item","type":"number"}]}\n[4]',
     );
     expect(() => importSheet("not base64!", "xlsx")).toThrow(/base64/);
+  });
+});
+
+describe("import warnings", () => {
+  const sheetXml =
+    '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+    '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>3</v></c></row></sheetData></worksheet>';
+
+  it("says nothing for a file imported whole", () => {
+    expect(sheetImportWarnings("Item,Qty\nApples,3\n", "csv")).toEqual([]);
+    expect(
+      sheetImportWarnings(xlsx({ ...WORKBOOK, "xl/worksheets/sheet1.xml": sheetXml }), "xlsx"),
+    ).toEqual([]);
+  });
+
+  it("other_sheets names the sheets after the first, without control or bidi characters", () => {
+    const names = [
+      "Budget",
+      "Q3",
+      "No\u202Ets\u0007",
+      ...Array.from({ length: 25 }, (_, i) => `S${i}`),
+    ];
+    const workbook = `<?xml version="1.0"?><workbook xmlns:r="r"><sheets>${names
+      .map((n, i) => `<sheet name="${n}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`)
+      .join("")}</sheets></workbook>`;
+    const bytes = xlsx({
+      ...WORKBOOK,
+      "xl/workbook.xml": workbook,
+      "xl/worksheets/sheet1.xml": sheetXml,
+    });
+    const [w] = sheetImportWarnings(bytes, "xlsx");
+    expect(w).toEqual({
+      code: "other_sheets",
+      count: 27,
+      names: ["Q3", "Nots", ...Array.from({ length: 18 }, (_, i) => `S${i}`)],
+    });
+    // The first sheet is still the one imported.
+    expect(sheetFromXlsx(bytes).header.columns.map((c) => c.name)).toEqual(["Item", "Price"]);
+    // A long name is cut to Excel's 31 characters.
+    const long = xlsx({
+      ...WORKBOOK,
+      "xl/workbook.xml": `<workbook xmlns:r="r"><sheets><sheet name="A" r:id="rId1"/><sheet name="${"x".repeat(40)}" r:id="rId2"/></sheets></workbook>`,
+      "xl/worksheets/sheet1.xml": sheetXml,
+    });
+    expect(sheetImportWarnings(long, "xlsx")).toEqual([
+      { code: "other_sheets", count: 1, names: ["x".repeat(31)] },
+    ]);
+  });
+
+  it("formulas_as_values counts data cells whose formula fell back to its value", () => {
+    const bytes = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        "<worksheet><sheetData>" +
+        // A header formula becomes the column's name either way: not counted.
+        '<row r="1"><c r="A1" t="str"><f>WEBSERVICE("h")</f><v>Item</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+        // Kept: SUM is on the allowlist.
+        '<row r="2"><c r="A2"><f>SUM(B2:B3)</f><v>5</v></c><c r="B2"><v>2</v></c></row>' +
+        // Not kept: outside the allowlist, another sheet, and a shared formula with its follower.
+        '<row r="3"><c r="A3" t="str"><f>WEBSERVICE("https://x")</f><v>7</v></c><c r="B3"><f>Other!A1</f><v>3</v></c></row>' +
+        '<row r="4"><c r="A4"><f t="shared" ref="A4:A5" si="0">B4*2</f><v>2</v></c><c r="B4"><v>1</v></c></row>' +
+        '<row r="5"><c r="A5"><f t="shared" si="0"/><v>4</v></c><c r="B5"><v>2</v></c></row>' +
+        "</sheetData></worksheet>",
+    });
+    expect(sheetImportWarnings(base64(bytes), "xlsx")).toEqual([
+      { code: "formulas_as_values", count: 4 },
+    ]);
+    const s = sheetFromXlsx(bytes);
+    expect(s.rows.map((r) => r[0])).toEqual(["=SUM(B2:B3)", "7", 2, 4]);
+  });
+
+  it("headers_truncated counts column names cut to 100 characters, in CSV and .xlsx", () => {
+    const csv = `${"a".repeat(101)},${"b".repeat(100)},${"c".repeat(COLUMN_NAME_SOURCE_CHARS + 5)}\n1,2,3\n`;
+    expect(sheetImportWarnings(csv, "csv")).toEqual([
+      { code: "headers_truncated", count: 2, max: 100 },
+    ]);
+    expect(sheetFromCsv(csv).header.columns.map((c) => c.name.length)).toEqual([100, 100, 100]);
+    const bytes = xlsx({
+      ...WORKBOOK,
+      "xl/workbook.xml":
+        '<workbook xmlns:r="r"><sheets><sheet name="A" r:id="rId1"/><sheet name="B" r:id="rId2"/></sheets></workbook>',
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${"h".repeat(150)}</t></is></c></row><row r="2"><c r="A2" t="str"><f>NOW()</f><v>x</v></c></row></sheetData></worksheet>`,
+    });
+    // In the order the person reads them: what was left out, then what changed.
+    expect(sheetImportWarnings(bytes, "xlsx").map((w) => w.code)).toEqual([
+      "other_sheets",
+      "formulas_as_values",
+      "headers_truncated",
+    ]);
+  });
+
+  it("throws what the import refuses", () => {
+    expect(() => sheetImportWarnings(new Uint8Array([1, 2, 3]), "xlsx")).toThrow(SheetImportError);
+    expect(() => sheetImportWarnings("", "csv")).toThrow(/empty/);
   });
 });

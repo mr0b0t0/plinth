@@ -368,6 +368,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
   by email code without an account to sign in first. HTML pages and designs still come only from
   agents. `POST /api/v1/artifacts` takes `note` for the first version.
+- **Import and Replace say what a file loses.** Before a sheet is replaced, and in a toast after an
+  import, the app says when only the first sheet of an .xlsx is used (naming the others), how many
+  formulas become plain values, how many column names are cut to 100 characters, and when a CSV
+  was not UTF-8. Such a CSV is now read as Windows-1252, as Excel on Windows saves it, so "Café"
+  no longer arrives as "Caf�"; UTF-16 files with a byte order mark are read too. Replacing a sheet
+  from its permanent version link now shows the new version on the sheet's own link. New appears
+  once the list has loaded, so it no longer jumps from the top bar to the empty state, and file
+  names in version notes drop control and bidi characters.
 
 ## 0.6.0 (2026-11-20)
 

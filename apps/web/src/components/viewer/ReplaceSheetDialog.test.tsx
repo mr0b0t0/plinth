@@ -5,10 +5,12 @@
 // published meanwhile (naming who published it and the file), and shows a refusal with the cells
 // it names. A file picked after that conflict is confirmed against the newer version;
 // Replace waits while a draft started after the dialog opened; a person without an account is told
-// to sign in instead.
+// to sign in instead. What the import would leave out or change is listed under the confirmation;
+// on a permanent version link, the page moves to the artifact's own link after the replace.
 import type { ViewGate } from "@plinth/shared";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { refreshSession } from "../../lib/session.ts";
 import { CHOOSE_ANOTHER_LABEL, PICKER_ATTR } from "../account/newArtifact.ts";
@@ -61,6 +63,7 @@ const STATUS: LiveFrameStatus = {
 };
 
 function context(over: {
+  pinned?: boolean;
   role?: OkGate["role"];
   version?: number;
   current?: number;
@@ -98,12 +101,21 @@ function context(over: {
           : null,
       },
     },
+    pinned: over.pinned ?? false,
     editing: over.editing ?? false,
     live: { status: over.status ?? null, restore: null },
-    hrefs: { signIn: "/login?next=%2Fa%2Fsales" },
+    hrefs: { signIn: "/login?next=%2Fa%2Fsales", current: "/a/sales" },
     actions: { openDialog, reload: vi.fn() },
   } as unknown as StageContext;
   return { c, openDialog };
+}
+
+/** The file the picker pickSpreadsheetFile opened gives back, as a browser does on a pick. */
+function pick(file: File) {
+  const input = document.querySelector(`input[${PICKER_ATTR}]`);
+  if (!(input instanceof HTMLInputElement)) throw new Error("no file picker open");
+  Object.defineProperty(input, "files", { value: [file] });
+  input.dispatchEvent(new Event("change"));
 }
 
 describe("the ⋯ item", () => {
@@ -145,6 +157,23 @@ describe("the ⋯ item", () => {
     expect(replaceSheet(context({ role: "commenter" }).c)).toEqual([]);
     expect(replaceSheet(context({ role: "viewer" }).c)).toEqual([]);
     expect(replaceSheet(context({ version: 4, current: 5 }).c)).toEqual([]);
+  });
+
+  it("after a replace, reloads the page, or leaves a pinned link for the artifact's own", () => {
+    const dialog = STAGE_DIALOGS.find((d) => d.id === REPLACE_SHEET_DIALOG);
+    if (!dialog) throw new Error("no Replace dialog in STAGE_DIALOGS");
+    window.history.replaceState(null, "", "/a/sales");
+    const plain = context({});
+    (dialog.render(plain.c, vi.fn()) as { props: ReplaceSheetDialogProps }).props.onReplaced(6);
+    expect(plain.c.actions.reload).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe("/a/sales");
+
+    // /a/sales/v/5 while v5 is current: reloading it would show v5 again, so the page moves on.
+    window.history.replaceState(null, "", "/a/sales/v/5");
+    const pinned = context({ pinned: true });
+    (dialog.render(pinned.c, vi.fn()) as { props: ReplaceSheetDialogProps }).props.onReplaced(6);
+    expect(pinned.c.actions.reload).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/a/sales");
   });
 
   it("is hidden while page changes exist or someone edits on the page", () => {
@@ -338,9 +367,12 @@ describe("the dialog", () => {
     expect(await within(dialog).findByText(conflictText(6, "Ana", "a.csv"))).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Replace" }));
     await within(dialog).findByRole("heading", { name: problemTitle("a.csv") });
-    expect(within(dialog).getByRole("button", { name: CHOOSE_ANOTHER_LABEL })).toBeTruthy();
-    const input = screen.getByTestId("replace-sheet-file") as HTMLInputElement;
-    await user.upload(input, new File(["b\n2\n"], "b.csv"));
+    // "Choose another file…" opens the ⋯ item's picker, from its click.
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    await user.click(within(dialog).getByRole("button", { name: CHOOSE_ANOTHER_LABEL }));
+    expect(click).toHaveBeenCalledTimes(1);
+    pick(new File(["b\n2\n"], "b.csv"));
+    expect(document.querySelector(`input[${PICKER_ATTR}]`)).toBeNull();
     expect(await within(dialog).findByText(confirmText("b.csv", 6))).toBeTruthy();
     expect(confirmText("b.csv", 6)).toBe("b.csv becomes v7. v6 stays in history.");
     await user.click(within(dialog).getByRole("button", { name: "Replace" }));
@@ -379,7 +411,7 @@ describe("the dialog", () => {
     expect(within(dialog).getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe(
       "/login?next=%2Fa%2Fsales",
     );
-    expect(screen.queryByTestId("replace-sheet-file")).toBeNull();
+    expect(document.querySelector(`input[${PICKER_ATTR}]`)).toBeNull();
     expect(within(dialog).queryByRole("button", { name: /Choose/ })).toBeNull();
     expect(puts(calls)).toHaveLength(0);
     expect(SIGN_IN_TEXT).toBe("Sign in to replace this sheet.");
@@ -437,5 +469,67 @@ describe("the dialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalled();
     expect(puts(calls)).toHaveLength(1);
+  });
+
+  it("lists what the import would leave out or change under the confirmation, before sending", async () => {
+    const { calls } = backend([ok(6)]);
+    const user = userEvent.setup();
+    const parts: Record<string, string> = {
+      "xl/workbook.xml":
+        '<workbook><sheets><sheet name="Q4" r:id="rId1"/><sheet name="Q3" r:id="rId2"/><sheet name="Q2" r:id="rId3"/><sheet name="Q1" r:id="rId4"/><sheet name="Plan" r:id="rId5"/></sheets></workbook>',
+      "xl/_rels/workbook.xml.rels":
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${"Long name ".repeat(12)}</t></is></c><c r="B1" t="inlineStr"><is><t>Qty</t></is></c></row><row r="2"><c r="A2" t="str"><f>WEBSERVICE("x")</f><v>a</v></c><c r="B2"><f t="shared" ref="B2:B3" si="0">1+1</f><v>2</v></c></row><row r="3"><c r="B3"><f t="shared" si="0"/><v>2</v></c></row></sheetData></worksheet>`,
+    };
+    const zip = zipSync(Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, strToU8(v)])));
+    const { dialog } = await open(vi.fn(), vi.fn(), { file: new File([zip], "sales.xlsx") });
+    const sentence = await within(dialog).findByText(confirmText("sales.xlsx", 5));
+    expect(sentence.closest(".pl-dialog__description")).toBeTruthy();
+    expect(
+      within(dialog)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      "Only the first sheet is used; “Q3”, “Q2”, “Q1” and 1 more are left out.",
+      "3 formulas become plain values.",
+      "1 column name is cut to 100 characters.",
+    ]);
+    // Said in a live region, with no button of its own: Cancel and Replace stay the choice.
+    expect(within(dialog).getByRole("list").closest("[role=status]")).toBeTruthy();
+    expect(
+      within(dialog)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([expect.anything(), "Cancel", "Replace"]);
+    expect(puts(calls)).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+  });
+
+  it("reads a CSV that is not UTF-8 as Windows-1252 and says so before sending", async () => {
+    const { calls } = backend([ok(6)]);
+    const user = userEvent.setup();
+    const bytes = new Uint8Array([...strToU8("Item\nCaf"), 0xe9, ...strToU8("\n")]);
+    const { dialog } = await open(vi.fn(), vi.fn(), { file: new File([bytes], "menu.csv") });
+    await within(dialog).findByText(confirmText("menu.csv", 5));
+    expect(within(dialog).getByRole("listitem").textContent).toBe(
+      "The file is not UTF-8, so it is read as Windows-1252. Check accented letters.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    expect(puts(calls)[0]?.body).toMatchObject({ content: "Item\nCafé\n" });
+  });
+
+  it("names the file without control or bidi characters, in the dialog and the note", async () => {
+    const { calls } = backend([ok(6)]);
+    const user = userEvent.setup();
+    const { dialog } = await open(vi.fn(), vi.fn(), {
+      file: new File(["a\n1\n"], "\u202Esales\u200E\u0000\u009B\u2069.csv"),
+    });
+    await within(dialog).findByText(confirmText("sales.csv", 5));
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    expect(puts(calls)[0]?.body).toMatchObject({ note: "Replaced from sales.csv" });
+    expect(await screen.findByText("Replaced with sales.csv")).toBeTruthy();
   });
 });
