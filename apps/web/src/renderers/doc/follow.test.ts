@@ -4,7 +4,7 @@
 import { RENDERER_MESSAGE_SOURCE, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
-import { readingPlace, restorePlace, showVersion } from "./follow.ts";
+import { readingPlace, restorePlace, showVersion, versionImageSrc } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
@@ -144,6 +144,44 @@ describe("showVersion", () => {
   });
 });
 
+describe("images of a version shown in place", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("are the version's own files, wherever the frame is", () => {
+    const at = (doc: string, src: string) => versionImageSrc(src, `https://a1.example${doc}`, 2);
+    expect(at("/", "chart.png")).toBe("/__plinth/v/2/chart.png");
+    expect(at("/", "./img/chart.png?w=2#x")).toBe("/__plinth/v/2/img/chart.png?w=2");
+    expect(at("/", "/img/chart.png")).toBe("/__plinth/v/2/img/chart.png");
+    expect(at("/index.html", "../chart.png")).toBe("/__plinth/v/2/chart.png");
+    expect(at("/notes/", "chart.png")).toBe("/__plinth/v/2/notes/chart.png");
+    // A frame on an older version's path resolved its images inside that version.
+    expect(at("/__plinth/v/1/", "chart.png")).toBe("/__plinth/v/2/chart.png");
+    expect(at("/__plinth/v/1/", "/chart.png")).toBe("/__plinth/v/2/chart.png");
+  });
+
+  it("leave inline images, other origins and Plinth's own paths as they are", () => {
+    const at = (src: string) => versionImageSrc(src, "https://a1.example/", 2);
+    expect(at(PNG)).toBeNull();
+    expect(at("https://b2.example/chart.png")).toBeNull();
+    expect(at("//b2.example/chart.png")).toBeNull();
+    expect(at("/__plinth/v/1/chart.png")).toBeNull();
+    expect(at("/__plinth/runtime.js")).toBeNull();
+    expect(versionImageSrc("chart.png", "about:blank", 2)).toBeNull();
+  });
+
+  it("load from the version's path, so a changed image under the same name is not the old one", async () => {
+    mountRendered("# One\n\n![Chart](chart.png)");
+    expect(root().querySelector("img")?.getAttribute("src")).toBe("chart.png");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(`# Two\n\n![Chart](chart.png)\n\n![Dot](${PNG})`)),
+    );
+    expect(await showVersion(window, root(), 2, "content.md")).not.toBeNull();
+    const srcs = Array.from(root().querySelectorAll("img")).map((i) => i.getAttribute("src"));
+    expect(srcs).toEqual(["/__plinth/v/2/chart.png", PNG]);
+  });
+});
+
 describe("boot: version messages from the app", () => {
   let stop: (() => void) | undefined;
   let toApp: { mock: { calls: unknown[][] }; mockRestore: () => void };
@@ -260,5 +298,24 @@ describe("boot: version messages from the app", () => {
     await settle();
     post({ ...base, type: "collect", nonce: NONCE });
     expect(answers("draft").at(-1)).toEqual({ ...base, type: "draft", nonce: NONCE, text: "two" });
+  });
+
+  it("edits a version shown in place with that version's images, and keeps the source as written", async () => {
+    mountShell("![Chart](chart.png)");
+    stop = boot(window);
+    expect(root().querySelector("img")?.getAttribute("src")).toBe("chart.png");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("![Chart](chart.png)\n\ntwo")),
+    );
+    post({ ...base, type: "version", n: 2, nonce: NONCE });
+    await settle();
+    expect(answers("shown").at(-1)).toMatchObject({ ok: true });
+    post({ ...base, type: "edit", on: true });
+    await settle();
+    expect(root().classList.contains("plinth-doc--editing")).toBe(true);
+    expect(root().querySelector("img")?.getAttribute("src")).toBe("/__plinth/v/2/chart.png");
+    post({ ...base, type: "collect", nonce: NONCE });
+    expect(answers("draft").at(-1)).toMatchObject({ text: "![Chart](chart.png)\n\ntwo" });
   });
 });

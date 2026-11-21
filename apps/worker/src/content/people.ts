@@ -7,22 +7,28 @@
 //   11. an identity claim (a preview never gets here; capture passes and link viewers carry none):
 //       403 feature_disabled, reason not_identified;
 //   12. the `viewer people` declaration: 403 feature_disabled, reason not_declared;
-//   13. policy (policy.ts pagePeopleAccess): owners and editors only, 403 forbidden otherwise;
+//   13. policy (policy.ts pagePeopleAccess): owners and editors only, on an artifact whose every
+//       served version was written by someone who may read the list (never a token limited to one
+//       artifact), 403 forbidden otherwise;
 //   14. a rate limit per reader per artifact (RATE_LIMITS.peopleReadsPerViewerPerHour), 429.
 // The list is who has access (the owner and every grant), never who opened the page. Search runs
 // over that list only. Names, emails and queries are never logged.
-import { LIMITS, type PagePeopleList, type PagePerson, RATE_LIMITS } from "@plinth/shared";
+import { LIMITS, MAX_PEOPLE_LISTED, type PagePeopleList, type PagePerson } from "@plinth/shared";
 import { sharedDataActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
-import { hit } from "../lib/ratelimit.ts";
 import { type PageClaim, pagePeopleAccess } from "../policy.ts";
-import { matchPeople, type Person, peopleWithAccess, personById } from "../services/people.ts";
+import {
+  countPeopleRead,
+  matchPeople,
+  PEOPLE_WRITER_REFUSED,
+  type Person,
+  peopleWithAccess,
+  personById,
+} from "../services/people.ts";
 import type { DataRouteCtx } from "./data-api.ts";
 
 /** A person id as the page names it: `u_` and 24 hex characters (crypto.ts viewerIdFor). */
 export const PERSON_ID_RE = /^u_[0-9a-f]{24}$/;
-
-const HOUR_S = 3600;
 
 /** Steps 11 to 14; the reader's claim when every one passes. */
 async function allowed(c: DataRouteCtx): Promise<PageClaim> {
@@ -41,20 +47,17 @@ async function allowed(c: DataRouteCtx): Promise<PageClaim> {
       reason: "not_declared",
     });
   }
-  if (!pagePeopleAccess(claim, c.target.caps, sharedDataActive(c.config)).list) {
-    throw new ApiError("forbidden", "Only the owner and editors can see who has access");
+  if (
+    !pagePeopleAccess(claim, c.target.caps, sharedDataActive(c.config), c.target.writers ?? null)
+      .list
+  ) {
+    const editor = claim.role === "owner" || claim.role === "editor";
+    throw new ApiError(
+      "forbidden",
+      editor ? PEOPLE_WRITER_REFUSED : "Only the owner and editors can see who has access",
+    );
   }
-  const r = await hit(
-    c.env.DB,
-    `people:${c.target.id}:${claim.email}`,
-    RATE_LIMITS.peopleReadsPerViewerPerHour,
-    HOUR_S,
-  );
-  if (!r.allowed) {
-    throw new ApiError("rate_limited", "Too many requests, try again later", {
-      retry_after: r.retryAfter,
-    });
-  }
+  await countPeopleRead(c.env.DB, c.target.id, claim.email);
   return claim;
 }
 
@@ -63,7 +66,7 @@ function toPagePerson(p: Person, reader: PageClaim): PagePerson {
 }
 
 /** The most a list returns: the owner and every grant. */
-const MAX_PEOPLE = LIMITS.maxAllowlistEmails + 1;
+const MAX_PEOPLE = MAX_PEOPLE_LISTED;
 
 function limitParam(v: string | null): number {
   if (v === null) return MAX_PEOPLE;
@@ -83,7 +86,13 @@ export async function listPeopleRoute(c: DataRouteCtx): Promise<PagePeopleList> 
   const limit = limitParam(c.url.searchParams.get("limit"));
   const reader = await allowed(c);
   const matched = matchPeople(
-    await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id, reader.email),
+    await peopleWithAccess(
+      c.env.DB,
+      c.config.tokenSigningKey,
+      c.target.id,
+      reader.email,
+      c.config.allowCategorySharing,
+    ),
     q,
   );
   return {
@@ -98,7 +107,13 @@ export async function getPersonRoute(c: DataRouteCtx): Promise<PagePerson> {
   const reader = await allowed(c);
   const person = PERSON_ID_RE.test(id)
     ? personById(
-        await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id, reader.email),
+        await peopleWithAccess(
+          c.env.DB,
+          c.config.tokenSigningKey,
+          c.target.id,
+          reader.email,
+          c.config.allowCategorySharing,
+        ),
         id,
       )
     : null;

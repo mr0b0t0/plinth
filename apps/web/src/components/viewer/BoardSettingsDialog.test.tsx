@@ -1,8 +1,8 @@
 // Board settings: the dialog reads the current version's settings, saves the two choices as
-// board.json against that version, and after a 409 shows the newer version's settings and says so,
-// saving nothing until the person saves again.
-import { boardSettingsText } from "@plinth/shared";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+// board.json against that version, and after a 409 shows the newer version's settings, says so and
+// tells the page (onNewer), saving nothing until the person saves again.
+import { boardSettingsText, type ErrorCode } from "@plinth/shared";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,14 +28,15 @@ function setup(handle: (c: Call) => Response | undefined, { strict = false } = {
   const api = stubApi({ handle });
   const onClose = vi.fn();
   const onSaved = vi.fn();
+  const onNewer = vi.fn();
   const tree = (
     <>
-      <BoardSettingsDialog artifactId="wb1" onClose={onClose} onSaved={onSaved} />
+      <BoardSettingsDialog artifactId="wb1" onClose={onClose} onSaved={onSaved} onNewer={onNewer} />
       <Toaster />
     </>
   );
   render(strict ? <StrictMode>{tree}</StrictMode> : tree);
-  return { ...api, onClose, onSaved };
+  return { ...api, onClose, onSaved, onNewer };
 }
 
 const puts = (calls: Call[]) => calls.filter((c) => c.method === "PUT");
@@ -71,15 +72,27 @@ describe("board settings helpers", () => {
       "Board settings: commenters and editors",
     );
     expect(settingsNote(after, after)).toBe("Board settings");
-    expect(conflictNotice(5)).toBe("v5 changed the board settings. Here they are now.");
+    expect(conflictNotice(5)).toBe("v5 was published meanwhile. These are its settings.");
   });
 
-  it("counts a 409 as a version conflict only when it names a newer version", () => {
-    expect(newerVersion({ current_version: 5 }, 3)).toBe(5);
-    expect(newerVersion({ current_version: 3 }, 3)).toBeNull();
-    expect(newerVersion({ current_version: "5" }, 3)).toBeNull();
-    expect(newerVersion({ reason: "attempt_expired" }, 3)).toBeNull();
-    expect(newerVersion(undefined, 3)).toBeNull();
+  it("counts only the stale-version 409 as a conflict: code conflict, no reason, a newer version", () => {
+    const refusal = (details: unknown, code: ErrorCode = "conflict", status = 409) => ({
+      status,
+      code,
+      details,
+    });
+    expect(newerVersion(refusal({ current_version: 5 }), 3)).toBe(5);
+    expect(newerVersion(refusal({ current_version: 3 }), 3)).toBeNull();
+    expect(newerVersion(refusal({ current_version: "5" }), 3)).toBeNull();
+    expect(newerVersion(refusal({ reason: "attempt_expired" }), 3)).toBeNull();
+    expect(newerVersion(refusal(undefined), 3)).toBeNull();
+    // A 409 of another kind names its reason, even when it also carries a version.
+    expect(newerVersion(refusal({ current_version: 5, reason: "live_busy" }), 3)).toBeNull();
+    expect(newerVersion(refusal({ current_version: 5, reason: "already_shared" }), 3)).toBeNull();
+    // Another error code is never a version conflict, whatever its status or details.
+    expect(newerVersion(refusal({ current_version: 5 }, "quota_exceeded"), 3)).toBeNull();
+    expect(newerVersion(refusal({ current_version: 5 }, "rate_limited", 429), 3)).toBeNull();
+    expect(newerVersion(refusal({ current_version: 5 }, "conflict", 400), 3)).toBeNull();
   });
 });
 
@@ -98,10 +111,25 @@ describe("BoardSettingsDialog", () => {
     expect(
       (screen.getByRole("radio", { name: /^Commenters and editors/ }) as HTMLInputElement).checked,
     ).toBe(true);
-    screen.getByRole("group", { name: "Background" });
-    screen.getByRole("group", { name: "Who can change the board" });
+    // Each group is one row of short labels.
+    expect(
+      within(screen.getByRole("group", { name: "Background" }))
+        .getAllByRole("radio")
+        .map((r) => r.closest("label")?.textContent),
+    ).toEqual(["Dots", "Grid", "Plain"]);
+    expect(
+      within(screen.getByRole("group", { name: "Who can change the board" }))
+        .getAllByRole("radio")
+        .map((r) => r.closest("label")?.textContent),
+    ).toEqual(["Editors only", "Commenters and editors"]);
     // No text field: only the two groups of choices.
     expect(screen.queryByRole("textbox")).toBeNull();
+    // Short labels only: no sentence under a choice or under the title.
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio.hasAttribute("aria-describedby")).toBe(false);
+    }
+    expect(document.querySelector(".pl-acct-choice__description")).toBeNull();
+    expect(screen.getByRole("dialog").hasAttribute("aria-describedby")).toBe(false);
     const save = screen.getByRole("button", { name: "Save" });
     expect((save as HTMLButtonElement).disabled).toBe(true);
 
@@ -148,7 +176,7 @@ describe("BoardSettingsDialog", () => {
   it("on a conflict shows the newer version's settings, says so, and saves nothing more", async () => {
     const user = userEvent.setup();
     let reads = 0;
-    const { calls, onSaved } = setup((c) => {
+    const { calls, onSaved, onNewer } = setup((c) => {
       if (c.method === "GET" && c.path === "/artifacts/wb1") {
         reads += 1;
         return json(reads === 1 ? detail(3, DOTS_COMMENTERS) : detail(5, GRID_EDITORS));
@@ -172,7 +200,7 @@ describe("BoardSettingsDialog", () => {
     await user.click(await screen.findByRole("radio", { name: /^Plain/ }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await screen.findByText("v5 changed the board settings. Here they are now.");
+    await screen.findByText("v5 was published meanwhile. These are its settings.");
     // The dialog now holds v5's values, and the person's choice is not saved behind their back.
     expect((screen.getByRole("radio", { name: /^Grid/ }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole("radio", { name: /^Editors only/ }) as HTMLInputElement).checked).toBe(
@@ -181,6 +209,8 @@ describe("BoardSettingsDialog", () => {
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     expect(puts(calls)).toHaveLength(1);
     expect(onSaved).not.toHaveBeenCalled();
+    // The page behind the dialog loads v5 too, so its version and board match the dialog.
+    expect(onNewer).toHaveBeenCalledExactlyOnceWith(5);
 
     // Saving again goes against v5.
     await user.click(screen.getByRole("radio", { name: /^Plain/ }));
@@ -192,7 +222,7 @@ describe("BoardSettingsDialog", () => {
   it("treats a 409 that names no newer version as a failed save, not a conflict", async () => {
     const user = userEvent.setup();
     let reads = 0;
-    const { calls, onSaved } = setup((c) => {
+    const { calls, onSaved, onNewer } = setup((c) => {
       if (c.method === "GET" && c.path === "/artifacts/wb1") {
         reads += 1;
         return json(detail(2, DOTS_COMMENTERS));
@@ -216,17 +246,62 @@ describe("BoardSettingsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText("Another version is being written; try again shortly");
-    expect(screen.queryByText(/changed the board settings/)).toBeNull();
+    expect(screen.queryByText(/was published meanwhile/)).toBeNull();
     // The choice stays, and Save stays on so the person can try again against the same version.
     expect((screen.getByRole("radio", { name: /^Grid/ }) as HTMLInputElement).checked).toBe(true);
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
     await waitFor(() => expect(save.disabled).toBe(false));
     expect(reads).toBe(1);
     expect(onSaved).not.toHaveBeenCalled();
+    expect(onNewer).not.toHaveBeenCalled();
 
     await user.click(save);
     await waitFor(() => expect(puts(calls)).toHaveLength(2));
     expect(puts(calls)[1]?.body).toMatchObject({ base_version: 2 });
+  });
+
+  it("shows a non-conflict 409's own message and offers no newer settings, even with a version", async () => {
+    // A 409 of another kind (here `live_busy`) that also names a newer version: not a conflict.
+    const user = userEvent.setup();
+    let reads = 0;
+    const { calls, onSaved } = setup((c) => {
+      if (c.method === "GET" && c.path === "/artifacts/wb1") {
+        reads += 1;
+        return json(reads === 1 ? detail(3, DOTS_COMMENTERS) : detail(5, GRID_EDITORS));
+      }
+      if (c.method === "PUT") {
+        return json(
+          {
+            error: {
+              code: "conflict",
+              message: "Someone is editing this page right now; try again when they finish",
+              details: { reason: "live_busy", current_version: 5 },
+            },
+          },
+          409,
+        );
+      }
+      return undefined;
+    });
+    await user.click(await screen.findByRole("radio", { name: /^Plain/ }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Someone is editing this page right now; try again when they finish");
+    // No conflict notice, no second read, and the person's choice stays as they left it.
+    expect(screen.queryByText(/was published meanwhile/)).toBeNull();
+    expect(document.querySelector(".pl-board-settings__notice")).toBeNull();
+    expect(reads).toBe(1);
+    expect((screen.getByRole("radio", { name: /^Plain/ }) as HTMLInputElement).checked).toBe(true);
+    expect(
+      (screen.getByRole("radio", { name: /^Commenters and editors/ }) as HTMLInputElement).checked,
+    ).toBe(true);
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    expect(onSaved).not.toHaveBeenCalled();
+    // Trying again still saves against the version the dialog read, never over v5.
+    await user.click(save);
+    await waitFor(() => expect(puts(calls)).toHaveLength(2));
+    expect(puts(calls)[1]?.body).toMatchObject({ base_version: 3 });
   });
 
   it("says why a save failed and keeps the choice", async () => {
@@ -254,12 +329,12 @@ describe("BoardSettingsDialog", () => {
     await screen.findByText("Something went wrong");
     fail = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    // Defaults for the keys board.json leaves out.
+    // Defaults for the keys board.json leaves out: dots, and editors only.
     expect(
       ((await screen.findByRole("radio", { name: /^Dots/ })) as HTMLInputElement).checked,
     ).toBe(true);
-    expect(
-      (screen.getByRole("radio", { name: /^Commenters and editors/ }) as HTMLInputElement).checked,
-    ).toBe(true);
+    expect((screen.getByRole("radio", { name: /^Editors only/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 });

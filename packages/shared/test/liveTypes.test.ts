@@ -19,6 +19,8 @@ import {
   liveRules,
   liveSheetTooLarge,
   parseSheet,
+  type SheetHeader,
+  sameRowRules,
   serializeSheet,
   sheetHeaderLine,
   sheetRowLine,
@@ -189,6 +191,44 @@ describe("sheet edits", () => {
       JSON.parse(HEADER).columns,
     )}}`;
     expect(sheet.checkEdit(LINES, 0, 1, [reordered])).toBe("invalid");
+  });
+
+  it("re-checks the rows only when a column's type or options change", () => {
+    const head = (columns: Record<string, unknown>[]) =>
+      sheetHeaderLine(JSON.stringify({ plinth: "sheet", v: 1, columns })) as SheetHeader;
+    const base = head([
+      { name: "Item", type: "text" },
+      { name: "Stage", type: "select", options: ["new", "done"] },
+    ]);
+    const same = [
+      head([
+        { name: "Fruit", type: "text", width: 200 },
+        { name: "Stage", type: "select", options: ["new", "done"] },
+      ]),
+      head([
+        { name: "Item", type: "text" },
+        { name: "Step", type: "select", options: ["new", "done"] },
+      ]),
+    ];
+    for (const h of same) expect(sameRowRules(base, h)).toBe(true);
+    const other = [
+      head([
+        { name: "Item", type: "number" },
+        { name: "Stage", type: "select", options: ["new", "done"] },
+      ]),
+      head([
+        { name: "Item", type: "text" },
+        { name: "Stage", type: "select", options: ["new"] },
+      ]),
+      head([{ name: "Item", type: "text" }]),
+    ];
+    for (const h of other) expect(sameRowRules(base, h)).toBe(false);
+    // A select that drops an option a row holds is refused; one that keeps it is applied.
+    const lines = [serializeSheet({ header: base, rows: [] }), '["Apples","done"]'];
+    const fewer = serializeSheet({ header: other[1] as SheetHeader, rows: [] });
+    expect(sheet.checkEdit(lines, 0, 1, [fewer])).toBe("invalid");
+    const renamed = serializeSheet({ header: same[1] as SheetHeader, rows: [] });
+    expect(sheet.checkEdit(lines, 0, 1, [renamed])).toBeNull();
   });
 
   it("refuses past the row and size limits", () => {

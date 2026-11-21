@@ -73,13 +73,14 @@ async function openAs(browser: Browser, email: string, slug: string, base?: Page
   return page;
 }
 
-/** Choose an item of a row's menu, opened from its number. */
+/** Choose an item of the bar's Row menu, for a cell of `row` (selected first). */
 async function rowMenu(page: Page, row: number, item: string) {
-  await frameOf(page).locator(`tr[data-row="${row}"] th`).click();
-  const menu = frameOf(page).getByRole("menu", { name: `Row ${row}` });
+  await cell(page, `A${row}`).click();
+  await frameOf(page).getByRole("button", { name: "Row", exact: true }).click();
+  const menu = frameOf(page).getByRole("menu", { name: "Row" });
   await expect(menu).toBeVisible();
   await menu.getByRole("menuitem", { name: item }).click();
-  await expect(menu).toHaveCount(0);
+  await expect(menu).toBeHidden();
 }
 
 async function startEditing(page: Page) {
@@ -94,6 +95,25 @@ async function startEditing(page: Page) {
   await expect(frameOf(page).locator(".plinth-sheet__page--editing")).toBeVisible();
   await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
   await expect(bar).not.toContainText("Not connected");
+}
+
+/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
+async function stopEditing(page: Page) {
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) {
+    // On a wide screen the toggle is the one way in and out: the strip has no Done.
+    await expect(
+      page
+        .getByRole("region", { name: "Editing on the page" })
+        .getByRole("button", { name: "Done" }),
+    ).toHaveCount(0);
+    await toggle.click();
+  } else {
+    await page
+      .getByRole("region", { name: "Editing on the page" })
+      .getByRole("button", { name: "Done" })
+      .click();
+  }
 }
 
 test("two editors on one sheet: a held row, typing that arrives live, a row both see, Publish makes v2", async ({
@@ -114,19 +134,21 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(field).toHaveValue("3");
   await field.fill("30");
 
-  // The editor sees the row held, with the owner's email, and the value as it arrives.
-  await expect(
-    frameOf(other).locator("tr.plinth-sheet__row--held .plinth-sheet__holder"),
-  ).toHaveText(`${s.owner} is editing`);
+  // The editor sees the row held (tinted, the owner named on its number), and the value as it
+  // arrives.
+  const held = frameOf(other).locator("tr.plinth-sheet__row--held th.plinth-sheet__rownum");
+  await expect(held).toHaveAttribute("title", "Sheet is editing");
+  await expect(held.locator(".plinth-sheet__holder")).toHaveText("Sheet is editing");
   await expect(cell(other, "B2")).toHaveText("30");
   await expect(cell(other, "B5")).toHaveText("37");
   await expect(other.getByRole("region", { name: "Editing on the page" })).toContainText(s.owner);
-  // Opening a cell of that row does not open it.
+  // Opening a cell of that row does not open it; a screen reader is told why, and nothing pops up.
   await cell(other, "A2").dblclick();
   await expect(frameOf(other).locator(".plinth-sheet__input")).toHaveCount(0);
-  await expect(frameOf(other).locator(".plinth-sheet__notice")).toContainText(
-    `${s.owner} is editing this row.`,
+  await expect(frameOf(other).locator(".plinth-sheet__sr[role=status]")).toHaveText(
+    "Sheet is editing this row.",
   );
+  await expect(frameOf(other).locator(".plinth-sheet__notice")).toHaveCount(0);
 
   // The editor edits another row at the same time, by typing into a selected cell.
   await cell(other, "A3").click();
@@ -148,7 +170,9 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(cell(page, "B3")).toBeFocused();
 
   // A row inserted above Plums: both pages show it, and the totals' ranges grow.
-  await rowMenu(page, 4, "Insert row above");
+  await cell(page, "A4").click();
+  await frameOf(page).getByRole("button", { name: "Row", exact: true }).click();
+  await frameOf(page).getByRole("menuitem", { name: "Insert above" }).click();
   await expect(frameOf(page).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(frameOf(other).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(cell(other, "A6")).toHaveText("Total");
@@ -168,12 +192,12 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
     '["Plums",2,2]',
     '["Total","=SUM(B2:B5)","=SUM(C2:C5)"]',
   ]);
-  await page.getByRole("button", { name: "Done" }).click();
+  await stopEditing(page);
   await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
   await other.context().close();
 });
 
-test("an agent's edit_sheet during the page edits is never merged: the review publishes mine or discards it", async ({
+test("an agent's edit_sheet during the page edits is never merged: the review publishes your changes or discards them", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -214,37 +238,47 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   // The agent changes the row right below the page's edit: still never merged.
   await type("B2", "4");
   await agentSets("B3", 6, 1);
-  await expect(bar).toContainText("v2 was published while you edited. Review it to go on.", {
+  await expect(bar).toContainText("v2 was published while you edited", {
     timeout: 10_000,
   });
+  // No toast repeats it, and nothing in the menus works while the draft waits for the review, so
+  // they are not shown.
+  await expect(page.getByText(/^Updated to v/)).toHaveCount(0);
+  await expect(frameOf(page).getByRole("toolbar", { name: "Rows and columns" })).toBeHidden();
   await bar.getByRole("button", { name: "Review changes" }).click();
   // The review is in the page itself: both grids, and what each side changed.
-  const review = frameOf(page).getByRole("region", { name: "Review v2 and the page changes" });
-  await expect(review.getByRole("heading", { level: 2 })).toHaveText(
-    "v2 was published while you were editing",
-  );
-  const mine = review.getByRole("region", { name: "Your page changes" });
-  await expect(mine).toContainText("B2 changed");
+  const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
+  await expect(review).toBeVisible();
+  const mine = review.getByRole("region", { name: "Your changes" });
+  await expect(mine).toContainText("Qty, row 2");
   await expect(mine).toContainText("3 → 4");
   await expect(mine.locator("table")).toBeVisible();
+  // The cell it changed is marked, and in view.
+  const marked = mine.locator("td[data-review-changed]");
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toHaveText("4");
+  await expect(marked).toBeInViewport();
   // At phone width one sheet shows at a time, with a switch between them.
   const toV2 = review.getByRole("radio", { name: "v2" });
   if (await toV2.isVisible()) {
     await toV2.click();
     await expect(mine).toBeHidden();
   }
-  await expect(review.getByRole("region", { name: "v2" })).toContainText("B3 changed");
-  await expect(review.getByRole("region", { name: "v2" })).toContainText("No files changed");
-  // Cancel keeps the draft frozen, and the review opens again.
-  await review.getByRole("button", { name: "Cancel" }).click();
+  await expect(review.getByRole("region", { name: "v2" })).toContainText("Qty, row 3");
+  // Neither side changed a file, so neither lists any.
+  await expect(review.locator(".plinth-review__files")).toHaveCount(0);
+  // Back keeps the draft frozen, and the review opens again.
+  await review.getByRole("button", { name: "Back" }).click();
   await expect(review).toHaveCount(0);
-  await expect(bar).toContainText("Review it to go on.");
+  await expect(bar.getByRole("button", { name: "Review changes" })).toBeVisible();
   await bar.getByRole("button", { name: "Review changes" }).click();
 
-  // Publish mine: the page edits become v3 as they are; v2 stays in the history.
-  await review.getByRole("button", { name: "Publish mine", exact: true }).click();
+  // Publish your changes: the page edits become v3 as they are; v2 stays in the history.
+  await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
   await expect(review).toHaveCount(0);
   await expect(bar).toContainText("Published as v3", { timeout: 10_000 });
+  await expect(page.locator(".hx-picker__shown")).toHaveText("v3");
+  await expect(page.getByText(/^Updated to v/)).toHaveCount(0);
   const v3 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
   expect(v3.split("\n").slice(1, 3)).toEqual(['["Apples",4,1.5,true]', '["Pears",5,0.5,false]']);
   const versions = await apiGet(page.request, `/artifacts/${s.id}/versions`);
@@ -254,24 +288,25 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   });
   expect(versions.body.items[1]).toMatchObject({ number: 2 });
 
-  // Editing resumes on v3. Discard mine asks first, naming what would be lost.
+  // Editing resumes on v3. Discard your changes asks first, in the app's own dialog.
   await type("B2", "7");
   await agentSets("B4", 9, 3);
-  await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
+  await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const second = frameOf(page).getByRole("region", { name: "Review v4 and the page changes" });
-  await second.getByRole("button", { name: "Discard mine" }).click();
-  const confirm = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
-  await expect(confirm).toContainText("This change will be lost:");
-  await expect(confirm).toContainText("B2 changed");
-  await expect(confirm).toContainText("The page will show v4.");
+  const second = frameOf(page).getByRole("region", { name: "Review v4 and your changes" });
+  await second.getByRole("button", { name: "Discard your changes" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+  await expect(confirm).toContainText("The page goes back to v4 for everyone editing it.");
+  // The strip carries the news of v4: no "Updated to v4" notification repeats it while editing.
+  await expect(page.getByText("Updated to v4")).toHaveCount(0);
   // Clicked with the pointer left resting on any notification first: no toast covers the
   // review's choices, at phone width either, and a resting pointer does not keep one for good.
-  const toast = await page.locator(".pl-toast").first().boundingBox();
+  const shown = page.locator(".pl-toast").first();
+  const toast = (await shown.count()) > 0 ? await shown.boundingBox() : null;
   if (toast) await page.mouse.move(toast.x + toast.width / 2, toast.y + toast.height / 2);
-  await confirm.getByRole("button", { name: "Discard the page changes" }).click();
+  await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
   await expect(frameOf(page).locator(".plinth-review__announce")).toHaveText(
-    "The page changes were discarded. The page shows v4.",
+    "Your changes were discarded. The page shows v4.",
     { timeout: 10_000 },
   );
   await expect(cell(page, "B2")).toHaveText("4");
@@ -280,18 +315,18 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   expect(after.body.current_version).toBe(4);
 });
 
-/**
- * Choose an item of a column's menu, opened from its header's button, which shows once the
- * header has the focus (or the pointer, or the selected cell is in its column).
- */
-async function columnMenu(page: Page, a: string, item: string) {
-  await cell(page, a).locator(".plinth-sheet__sort").focus();
-  await cell(page, a).locator(".plinth-sheet__colmenu").click();
-  const menu = frameOf(page).getByRole("menu");
+/** Choose an item of the bar's Column menu, for column `letter` (a cell of it selected first). */
+async function columnMenu(page: Page, letter: string, item: string) {
+  await cell(page, `${letter}2`).click();
+  await frameOf(page).getByRole("button", { name: "Column", exact: true }).click();
+  const menu = frameOf(page).getByRole("menu", { name: "Column" });
   await expect(menu).toBeVisible();
   await menu.getByRole("menuitem", { name: item }).click();
-  await expect(menu).toHaveCount(0);
+  await expect(menu).toBeHidden();
 }
+
+/** What the sheet last told a screen reader. */
+const announced = (page: Page) => frameOf(page).locator("div.plinth-sheet__sr[role=status]");
 
 test("column settings, widths, freezing, options and row moves on the page publish as one version", async ({
   page,
@@ -321,7 +356,7 @@ test("column settings, widths, freezing, options and row moves on the page publi
   const saved = async () => expect(bar).toContainText(/Draft saved|Saving draft/);
 
   // Price: no thousands separators.
-  await columnMenu(page, "C1", "Column settings…");
+  await columnMenu(page, "C", "Column settings…");
   await expect(settings).toBeVisible();
   await settings.getByLabel("Thousands separators").uncheck();
   await settings.getByRole("button", { name: "Apply" }).click();
@@ -341,11 +376,11 @@ test("column settings, widths, freezing, options and row moves on the page publi
   await page.mouse.move(x + 30, y);
   await page.mouse.move(x + 60, y);
   await page.mouse.up();
-  await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Price: 180 pixels wide.");
+  await expect(announced(page)).toHaveText("Price: 180 pixels wide.");
   await saved();
 
   // Stage: "done" renamed "shipped" (in its cell too), and a third option added.
-  await columnMenu(page, "D1", "Column settings…");
+  await columnMenu(page, "D", "Column settings…");
   await settings.getByLabel("Option 2").fill("shipped");
   await settings.getByLabel("New option").fill("later");
   await settings.getByLabel("New option").press("Enter");
@@ -354,17 +389,17 @@ test("column settings, widths, freezing, options and row moves on the page publi
   await expect(cell(page, "D3")).toHaveText("shipped");
 
   // Item stays in view; Qty two steps wider with the keyboard.
-  await columnMenu(page, "A1", "Freeze up to this column");
+  await columnMenu(page, "A", "Freeze up to this column");
   await expect(cell(page, "A2")).toHaveClass(/plinth-sheet__frozen/);
-  // Item keeps its stored 120 px at every width: at phone width the frozen columns may take 40% of
-  // the frame (144 px of 360), the row numbers not counted, and its header shows its whole name.
+  // Item keeps its stored 120 px at every width: with the row numbers it takes less than half of
+  // a 360 px phone, so it stays in view there too.
   const frozenBox = await cell(page, "A2").boundingBox();
   expect(frozenBox?.width).toBeGreaterThanOrEqual(119);
   expect(frozenBox?.width).toBeLessThanOrEqual(121);
   await cell(page, "B1").locator(".plinth-sheet__sort").focus();
   await page.keyboard.press("Alt+ArrowRight");
   await page.keyboard.press("Alt+ArrowRight");
-  await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Qty: 136 pixels wide.", {
+  await expect(announced(page)).toHaveText("Qty: 136 pixels wide.", {
     timeout: 10_000,
   });
   // The width is sent once the keys rest (WIDTH_DEBOUNCE_MS).
@@ -373,7 +408,7 @@ test("column settings, widths, freezing, options and row moves on the page publi
   // Pears above Apples: the total still adds both.
   await rowMenu(page, 3, "Move row up");
   await expect(cell(page, "A2")).toHaveText("Pears");
-  await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Row 3 moved to row 2.");
+  await expect(announced(page)).toHaveText("Row 3 moved to row 2.");
   await expect(cell(page, "B4")).toHaveText("8");
   await saved();
 
@@ -440,13 +475,15 @@ test("a cell opens in a docked editor at phone width, and in the cell otherwise"
   }
   await expect(cell(page, "B3")).toHaveText("12");
   await expect(cell(page, "B5")).toHaveText("17");
-  // A row's menu, from its number: a sheet across the bottom at phone width.
-  await frame.locator('tr[data-row="4"] th').click();
-  const menu = frame.getByRole("menu", { name: "Row 4" });
+  // The bar's Row menu opens beside the filter at every width, and Escape closes it.
+  await cell(page, "A4").click();
+  await frame.getByRole("button", { name: "Row", exact: true }).click();
+  const menu = frame.getByRole("menu", { name: "Row" });
   await expect(menu).toBeVisible();
-  if (phone) await expect(menu).toHaveClass(/plinth-sheet__menu--sheet/);
+  const box = await menu.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= (page.viewportSize()?.width ?? 1024)).toBe(true);
   await page.keyboard.press("Escape");
-  await expect(menu).toHaveCount(0);
+  await expect(menu).toBeHidden();
 });
 
 test("an agent's version during a row move or a width change is never merged: the review shows both", async ({
@@ -472,18 +509,18 @@ test("an agent's version during a row move or a width change is never merged: th
     }
   }
 
-  // A row swap on the page, an agent's cell meanwhile: Publish mine keeps the swap.
+  // A row swap on the page, an agent's cell meanwhile: Publish your changes keeps the swap.
   await rowMenu(page, 3, "Move row up");
   await expect(cell(page, "A2")).toHaveText("Pears");
   await expect(bar).toContainText(/Draft saved|Saving draft/);
   await agentSets("B4", 9, 1);
   await expect(bar).toContainText("v2 was published while you edited.", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const review = frameOf(page).getByRole("region", { name: "Review v2 and the page changes" });
-  const mine = review.getByRole("region", { name: "Your page changes" });
-  await expect(mine).toContainText("Row 2 removed");
-  await expect(mine).toContainText("Row 3 added");
-  await review.getByRole("button", { name: "Publish mine", exact: true }).click();
+  const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
+  const mine = review.getByRole("region", { name: "Your changes" });
+  await expect(mine).toContainText("removed");
+  await expect(mine).toContainText("added");
+  await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
   await expect(bar).toContainText("Published as v3", { timeout: 10_000 });
   const v3 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
   expect(v3.split("\n").slice(1)).toEqual([
@@ -493,7 +530,7 @@ test("an agent's version during a row move or a width change is never merged: th
     '["Total","=SUM(B2:B4)","=SUM(C2:C4)"]',
   ]);
 
-  // A width on the page, an agent's cell meanwhile: Discard mine goes back to the agent's.
+  // A width on the page, an agent's cell meanwhile: Discard your changes goes back to the agent's.
   await cell(page, "B1").locator(".plinth-sheet__sort").focus();
   await page.keyboard.press("Alt+ArrowRight");
   // The width is sent once the keys rest (WIDTH_DEBOUNCE_MS).
@@ -502,15 +539,13 @@ test("an agent's version during a row move or a width change is never merged: th
   await agentSets("B4", 4, 3);
   await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const second = frameOf(page).getByRole("region", { name: "Review v4 and the page changes" });
-  await expect(second.getByRole("region", { name: "Your page changes" })).toContainText(
-    "width changed",
-  );
-  await second.getByRole("button", { name: "Discard mine" }).click();
-  const confirm = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
-  await confirm.getByRole("button", { name: "Discard the page changes" }).click();
+  const second = frameOf(page).getByRole("region", { name: "Review v4 and your changes" });
+  await expect(second.getByRole("region", { name: "Your changes" })).toContainText("width changed");
+  await second.getByRole("button", { name: "Discard your changes" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+  await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
   await expect(frameOf(page).locator(".plinth-review__announce")).toHaveText(
-    "The page changes were discarded. The page shows v4.",
+    "Your changes were discarded. The page shows v4.",
     { timeout: 10_000 },
   );
   const v4 = (await apiGet(page.request, `/artifacts/${s.id}`)).body;

@@ -1,10 +1,11 @@
 // The board's DOM: the toolbar, the notices, and the viewport with a transformed world layer that
 // holds the arrows (one <svg>), the blocks and peers' cursors. Text from documents and peers only
-// ever goes in through textContent, and attributes only take numbers and fixed values: no
-// innerHTML, and no id or name is ever set from data, so nothing a collaborator writes can clobber
-// a global or inject markup.
+// ever goes in through textContent or an inert text attribute (aria-label, title), and every
+// other attribute takes only numbers and fixed values: no innerHTML, and no id or name is ever set
+// from data, so nothing a collaborator writes can clobber a global or inject markup.
 import {
   arrowEndpoints,
+  arrowLabelAt,
   BOARD_COLORS,
   type BoardBackground,
   type BoardBlock,
@@ -19,18 +20,26 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 export const KIND_LABELS = { note: "Note", text: "Text", rect: "Box", ellipse: "Ellipse" } as const;
 export type ToolKind = keyof typeof KIND_LABELS;
 
-/** The toolbar's controls, kept to enable, disable and label them. */
+/**
+ * The toolbar's controls, kept to show, enable and label them. The add buttons show only to
+ * people who may edit, and the selection's controls (colour, connect, delete) only while
+ * something is selected. Zoom is the wheel, a pinch or the keys; export is in the app's menu.
+ */
 export interface Toolbar {
   el: HTMLElement;
+  /** The add buttons' group. */
+  adds: HTMLElement;
   add: Record<ToolKind, HTMLButtonElement>;
+  /** The colour control: the swatches, and at phone width the one swatch that opens them. */
+  colour: HTMLElement;
+  /** The swatches' group. */
+  palette: HTMLElement;
   colors: Record<BoardColor, HTMLButtonElement>;
+  /** At phone width, one swatch in the current colour, which opens the others. */
+  pick: HTMLButtonElement;
   connect: HTMLButtonElement;
   remove: HTMLButtonElement;
-  zoomOut: HTMLButtonElement;
-  zoomIn: HTMLButtonElement;
   fit: HTMLButtonElement;
-  png: HTMLButtonElement;
-  svg: HTMLButtonElement;
   status: HTMLElement;
   people: HTMLUListElement;
 }
@@ -38,6 +47,7 @@ export interface Toolbar {
 export interface ViewEls {
   root: HTMLElement;
   toolbar: Toolbar;
+  /** A short standing line in the toolbar ("View only", or why the board is unavailable). */
   banner: HTMLElement;
   msg: HTMLElement;
   viewport: HTMLElement;
@@ -66,7 +76,7 @@ function group(doc: Document, label: string, ...items: HTMLElement[]): HTMLEleme
   return g;
 }
 
-function buildToolbar(doc: Document): Toolbar {
+function buildToolbar(doc: Document, banner: HTMLElement): Toolbar {
   const el = doc.createElement("div");
   el.className = "wb-toolbar";
   el.setAttribute("role", "toolbar");
@@ -81,41 +91,47 @@ function buildToolbar(doc: Document): Toolbar {
     const b = button(doc, "", `${c[0]?.toUpperCase()}${c.slice(1)}`);
     b.className = "wb-swatch";
     b.dataset.color = c;
-    b.setAttribute("aria-pressed", String(c === "yellow"));
+    b.setAttribute("aria-pressed", "false");
     colors[c] = b;
   }
   const connect = button(doc, "Connect");
   connect.setAttribute("aria-pressed", "false");
   const remove = button(doc, "Delete");
-  const zoomOut = button(doc, "−", "Zoom out");
-  const zoomIn = button(doc, "+", "Zoom in");
   const fit = button(doc, "Fit", "Fit the board");
-  const png = button(doc, "PNG", "Export as PNG");
-  const svg = button(doc, "SVG", "Export as SVG");
   const status = doc.createElement("span");
   status.className = "wb-status";
   status.setAttribute("role", "status");
   const people = doc.createElement("ul");
   people.className = "wb-people";
   people.setAttribute("aria-label", "People here");
-  el.append(
-    group(doc, "Add", ...Object.values(add)),
-    group(doc, "Colour", ...Object.values(colors)),
-    group(doc, "Edit", connect, remove),
-    group(doc, "Zoom", zoomOut, zoomIn, fit),
-    group(doc, "Export", png, svg),
-    status,
-    people,
-  );
-  return { el, add, colors, connect, remove, zoomOut, zoomIn, fit, png, svg, status, people };
+  const adds = group(doc, "Add", ...Object.values(add));
+  adds.classList.add("wb-adds");
+  const palette = group(doc, "Colour", ...Object.values(colors));
+  palette.classList.add("wb-palette");
+  const pick = button(doc, "", "Colour");
+  pick.className = "wb-swatch wb-pick";
+  pick.dataset.color = "yellow";
+  pick.setAttribute("aria-expanded", "false");
+  const colour = doc.createElement("div");
+  colour.className = "wb-colour";
+  colour.append(pick, palette);
+  // One row: the tools (which scroll sideways at phone width), then who is here and Fit.
+  const tools = doc.createElement("div");
+  tools.className = "wb-tools";
+  tools.append(banner, adds, connect, remove, colour);
+  const end = doc.createElement("div");
+  end.className = "wb-end";
+  end.append(people, status, fit);
+  el.append(tools, end);
+  return { el, adds, add, colour, palette, colors, pick, connect, remove, fit, status, people };
 }
 
 /** Build the board's DOM into `root`, replacing what it held. */
 export function buildView(doc: Document, root: HTMLElement, background: BoardBackground): ViewEls {
-  const toolbar = buildToolbar(doc);
   const banner = doc.createElement("p");
   banner.className = "wb-banner";
   banner.setAttribute("role", "status");
+  const toolbar = buildToolbar(doc, banner);
   const msg = doc.createElement("p");
   msg.className = "wb-msg";
   msg.setAttribute("role", "alert");
@@ -155,7 +171,7 @@ export function buildView(doc: Document, root: HTMLElement, background: BoardBac
   viewport.append(world);
   // Named, so the frame's main landmark differs from the app's around it.
   root.setAttribute("aria-label", "Whiteboard");
-  root.replaceChildren(toolbar.el, banner, msg, viewport);
+  root.replaceChildren(toolbar.el, msg, viewport);
   return {
     root,
     toolbar,
@@ -177,6 +193,7 @@ export function applyCamera(v: ViewEls, c: Camera): void {
   v.viewport.style.backgroundSize = `${step}px ${step}px`;
   v.viewport.style.backgroundPosition = `${-c.x * c.zoom}px ${-c.y * c.zoom}px`;
   for (const el of v.cursors.values()) el.style.setProperty("--wb-unzoom", String(1 / c.zoom));
+  placeCursorTags(v, c);
 }
 
 /** What the view needs to know about the board's state to draw it. */
@@ -274,7 +291,7 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
       line.setAttribute("class", "wb-arrow");
       const label = doc.createElementNS(SVG_NS, "text");
       label.setAttribute("class", "wb-arrow-label");
-      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("dominant-baseline", "central");
       v.arrows.append(hit, line, label);
       els = { hit, line, label };
       v.arrowEls.set(id, els);
@@ -294,8 +311,10 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
     else els.line.removeAttribute("marker-start");
     els.line.classList.toggle("dashed", a.style === "dashed");
     els.line.classList.toggle("selected", s.selected === id);
-    els.label.setAttribute("x", String((p.x1 + p.x2) / 2));
-    els.label.setAttribute("y", String((p.y1 + p.y2) / 2 - 6));
+    const at = arrowLabelAt(p);
+    els.label.setAttribute("x", String(at.x));
+    els.label.setAttribute("y", String(at.y));
+    els.label.setAttribute("text-anchor", at.anchor);
     if (els.label.textContent !== (a.label ?? "")) els.label.textContent = a.label ?? "";
   }
   for (const [id, els] of [...v.arrowEls]) {
@@ -321,19 +340,48 @@ export function personName(p: RuntimePeer): string {
   return name || (typeof p.email === "string" ? p.email : "") || "Someone";
 }
 
+/** The short form shown on a cursor and in the people list: the name, or the email's local part. */
+export function shortName(p: RuntimePeer): string {
+  const full = personName(p);
+  return typeof p.name === "string" && p.name ? full : full.replace(/@.*$/, "") || full;
+}
+
+/** How close to the viewport's right edge a cursor's name tag moves to the pointer's left. */
+const TAG_ROOM = 140;
+
+/** Flip each cursor's name tag to the pointer's left near the viewport's right edge. */
+export function placeCursorTags(v: ViewEls, c: Camera): void {
+  const right = v.viewport.clientWidth || 0;
+  for (const el of v.cursors.values()) {
+    const x = Number.parseFloat(el.style.left);
+    const sx = Number.isFinite(x) ? (x - c.x) * c.zoom : 0;
+    el.classList.toggle("flip", right > 0 && sx > right - TAG_ROOM);
+  }
+}
+
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
-/** The people list and peers' cursors (presence { x, y } in board units). */
-export function drawPeers(doc: Document, v: ViewEls, peers: readonly RuntimePeer[], zoom: number) {
-  // One person with two tabs is two peers with the same viewer id: list them once.
+/**
+ * The people list (everyone else here; empty, and so hidden, when the viewer is alone) and peers'
+ * cursors (presence { x, y } in board units).
+ */
+export function drawPeers(doc: Document, v: ViewEls, peers: readonly RuntimePeer[], cam: Camera) {
+  // One person with two tabs is two peers with the same viewer id: list them once, and never list
+  // the viewer, whose other tabs share their id.
+  const mine = new Set(peers.filter((p) => p.you).map((p) => p.viewer));
   const byViewer = new Map<string, RuntimePeer>();
-  for (const p of peers) if (!byViewer.has(p.viewer) || p.you) byViewer.set(p.viewer, p);
+  for (const p of peers)
+    if (!mine.has(p.viewer) && !byViewer.has(p.viewer)) byViewer.set(p.viewer, p);
   v.toolbar.people.replaceChildren(
     ...[...byViewer.values()].map((p) => {
+      // The short name beside a dot (only the dot at phone width); the full name on hover.
       const li = doc.createElement("li");
+      li.title = personName(p);
       const dot = doc.createElement("i");
       dot.style.background = `hsl(${hueOf(p.viewer)} 65% 45%)`;
-      li.append(dot, doc.createTextNode(personName(p)));
+      const name = doc.createElement("span");
+      name.textContent = shortName(p);
+      li.append(dot, name);
       return li;
     }),
   );
@@ -365,12 +413,12 @@ export function drawPeers(doc: Document, v: ViewEls, peers: readonly RuntimePeer
     const label = el.querySelector("span");
     if (label) {
       label.style.background = color;
-      label.textContent = personName(p);
+      label.textContent = shortName(p);
     }
     const clampC = (n: number) => Math.min(1_000_000, Math.max(-1_000_000, n));
     el.style.left = `${clampC(pr.x)}px`;
     el.style.top = `${clampC(pr.y)}px`;
-    el.style.setProperty("--wb-unzoom", String(1 / zoom));
+    el.style.setProperty("--wb-unzoom", String(1 / cam.zoom));
   }
   for (const [id, el] of [...v.cursors]) {
     if (!live.has(id)) {
@@ -378,4 +426,5 @@ export function drawPeers(doc: Document, v: ViewEls, peers: readonly RuntimePeer
       v.cursors.delete(id);
     }
   }
+  placeCursorTags(v, cam);
 }

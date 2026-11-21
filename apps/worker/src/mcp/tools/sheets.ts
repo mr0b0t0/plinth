@@ -38,7 +38,8 @@ export const registerSheetTools: ToolRegistrar = ({ server, ctx }) => {
         "in order to base_version (required; a stale one is a conflict: read_sheet again and " +
         "re-apply) and publish one new version anyone can revert, or nothing if any op or the " +
         'result is invalid. Ops: set {at: "B2", values: [[...]]} writes a block of raw cells ' +
-        '("=..." a formula, "\'..." literal text) and grows the sheet past its end; append_rows ' +
+        '("=..." a formula, "\'..." literal text) and grows the sheet past its end (at most ' +
+        `${LIMITS.maxSheetSetGapRows} empty rows before the block); append_rows ` +
         "{values}; insert_rows {before, count?, values?} and delete_rows {from, count?} move " +
         "formula references as Excel does (references into deleted rows become #REF!); set_column " +
         '{column: "C", name?, type?, format?, options?, width?} (null clears format, options or ' +

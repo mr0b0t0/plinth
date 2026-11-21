@@ -21,7 +21,6 @@ import {
   type DataSummary,
   type DataUnavailableReason,
   type DataVia,
-  type DocSourceStamp,
   dataShapeError,
   type EffectiveRole,
   isPersonalDocId,
@@ -42,10 +41,10 @@ import {
   pageDataAccess,
   pagePeopleAccess,
   peopleListOffered,
-  sourcedWrite,
+  type VersionWriter,
 } from "../policy.ts";
 import { type Person, peopleWithAccess } from "./people.ts";
-import { namesByEmail } from "./users.ts";
+import { nameByEmail, namesByEmail } from "./users.ts";
 
 /** Who is writing, as the server knows it. Stamps come only from here, never from the request. */
 export interface DataWriter {
@@ -56,24 +55,6 @@ export interface DataWriter {
   via: DataVia;
   /** Agent connection label at write time. */
   label?: string | null;
-  /**
-   * The provenance this write stamps (an owner's agent's set with `source`, checked against the
-   * artifact's data sources by services/dataSources.ts docStampFor). Absent: the write clears any
-   * stamp the document had. policy.ts sourcedWrite refuses it from anyone but the owner's agent.
-   */
-  source?: DocStamp;
-}
-
-/** A document's provenance as the server stores it (artifact_docs.source_*, 0015). */
-export interface DocStamp {
-  id: string;
-  label: string;
-  connector: string;
-  ref: string | null;
-  /** ISO 8601, normalised by the server. */
-  fetchedAt: string;
-  /** The stamping connection: an audit value, never sent to pages. */
-  connectionId: string | null;
 }
 
 /** The artifact whose data is used, with its current version's declaration. */
@@ -81,6 +62,12 @@ export interface DataTarget {
   id: string;
   ownerId: string;
   caps: Capabilities | null;
+  /**
+   * Who wrote the versions the content host serves (policy.ts peopleListOffered), loaded only on a
+   * page that declares `people`. Absent or null offers no people list, so a caller that does not
+   * load it never opens the list.
+   */
+  writers?: readonly VersionWriter[] | null;
   /**
    * The artifact's stored type (artifacts.type): policy's write floor depends on it, and a
    * whiteboard's documents are checked against the board's shapes.
@@ -106,13 +93,6 @@ export interface StoredDoc {
   updated_via: DataVia;
   updated_by_label: string | null;
   updated_at: string;
-  /** Provenance (0015): all null unless the last write was an owner's agent's with `source`. */
-  source_id?: string | null;
-  source_label?: string | null;
-  source_connector?: string | null;
-  source_ref?: string | null;
-  fetched_at?: string | null;
-  source_connection?: string | null;
 }
 
 export type QuotaLimit = "docs" | "bytes" | "user_bytes" | "collections";
@@ -188,10 +168,7 @@ export async function session(
   const access = pageDataAccess(claim, target.caps, active, target.type);
   const usage = await usageOf(d1, target.id);
   // The name is read only when the page may see who this is (a link viewer triggers no read).
-  const name =
-    claim && access.seeIdentity
-      ? ((await namesByEmail(d1, [claim.email])).get(claim.email) ?? null)
-      : null;
+  const name = claim && access.seeIdentity ? await nameByEmail(d1, claim.email) : null;
   return {
     available: true,
     viewer: claim
@@ -203,7 +180,7 @@ export async function session(
         }
       : null,
     can_write: access.write,
-    can_list_people: pagePeopleAccess(claim, target.caps, active).list,
+    can_list_people: pagePeopleAccess(claim, target.caps, active, target.writers ?? null).list,
     capabilities: capabilityList(target.caps),
     shared: target.caps?.shared ?? [],
     limits: limitsOf(config),
@@ -236,8 +213,14 @@ export async function summary(
     )
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
-  const people = peopleListOffered(target.caps, sharedDataActive(config))
-    ? await peopleWithAccess(d1, config.tokenSigningKey, target.id, readerEmail)
+  const people = peopleListOffered(target.caps, sharedDataActive(config), target.writers ?? null)
+    ? await peopleWithAccess(
+        d1,
+        config.tokenSigningKey,
+        target.id,
+        readerEmail,
+        config.allowCategorySharing,
+      )
     : null;
   return {
     capabilities: capabilityList(target.caps),
@@ -411,25 +394,7 @@ export function toPageDoc(
     doc.created_by = pageAuthor(row.created_by_email, row.created_by_role, row.created_via, names);
     doc.updated_by = pageAuthor(row.updated_by_email, row.updated_by_role, row.updated_via, names);
   }
-  // Provenance is not identity: every reader sees it, anonymous ones too; the connection's label
-  // only with `viewer`, as authors.
-  const stamp = stampOf(row);
-  if (stamp) {
-    doc.source = seeIdentity && reader ? { ...stamp, agent: row.updated_by_label } : stamp;
-  }
   return doc;
-}
-
-/** A row's provenance stamp, or null when it has none (every document not written with `source`). */
-export function stampOf(row: StoredDoc): DocSourceStamp | null {
-  if (!row.source_id) return null;
-  return {
-    id: row.source_id,
-    label: row.source_label ?? "",
-    connector: row.source_connector ?? "",
-    ref: row.source_ref ?? null,
-    fetched_at: row.fetched_at ?? row.updated_at,
-  };
 }
 
 /**
@@ -465,7 +430,6 @@ export async function toAgentDoc(
     connection_label: label,
     viewer_id: await idOf(email),
   });
-  const stamp = stampOf(row);
   return {
     collection: row.collection,
     id: row.doc_id,
@@ -486,7 +450,6 @@ export async function toAgentDoc(
       row.updated_via,
       row.updated_by_label,
     ),
-    ...(stamp ? { source: { ...stamp, connection_label: row.updated_by_label } } : {}),
   };
 }
 
@@ -574,32 +537,10 @@ function authorize(
 ): void {
   const d = canModifyDoc(writer, doc, op, isShared(target, collection));
   if (!d.allow) throw denied(d.reason);
-  const s = sourcedWrite({
-    via: writer.via,
-    role: writer.role,
-    hasSource: op !== "delete" && writer.source !== undefined,
-    collectionSourced: isSourced(target, collection),
-  });
-  if (!s.allow) {
-    throw s.reason === "sourced"
-      ? new ApiError(
-          "forbidden",
-          "Only the owner and editors change this collection: its figures come from the owner's systems",
-          { reason: "sourced" },
-        )
-      : new ApiError("forbidden", "Only the owner's agent can stamp a document with a source", {
-          reason: "source_owner_only",
-        });
-  }
 }
 
 function isShared(target: DataTarget, collection: string): boolean {
   return target.caps?.shared.includes(collection) ?? false;
-}
-
-/** The page declares this collection in plinth-data-sourced (policy.ts sourcedWrite). */
-function isSourced(target: DataTarget, collection: string): boolean {
-  return target.caps?.sourced?.includes(collection) ?? false;
 }
 
 /**
@@ -677,9 +618,8 @@ async function insertGuarded(
   // The SELECT needs its WHERE for SQLite to parse ON CONFLICT after INSERT ... SELECT.
   return d1
     .prepare(
-      `INSERT INTO artifact_docs (${DOC_INSERT_COLUMNS}, ${DOC_SOURCE_COLUMNS})
-       SELECT ?1, ?2, ?3, ?4, ?5, ${NEXT_REV_SQL}, ?6, ?7, ?8, ?9, ?10, ?6, ?7, ?8, ?9, ?10,
-              ?14, ?15, ?16, ?17, ?18, ?19
+      `INSERT INTO artifact_docs (${DOC_INSERT_COLUMNS})
+       SELECT ?1, ?2, ?3, ?4, ?5, ${NEXT_REV_SQL}, ?6, ?7, ?8, ?9, ?10, ?6, ?7, ?8, ?9, ?10
         WHERE ${ARTIFACT_LIVE_SQL}
           AND coalesce((SELECT docs FROM artifact_data_usage WHERE artifact_id = ?1), 0) < ?11
           AND coalesce((SELECT bytes FROM artifact_data_usage WHERE artifact_id = ?1), 0) + ?5 <= ?12
@@ -702,24 +642,8 @@ async function insertGuarded(
       config.data.maxDocsPerArtifact,
       config.data.maxBytesPerArtifact,
       LIMITS.maxDataCollections,
-      ...stampValues(writer),
     )
     .first<StoredDoc>();
-}
-
-/** The provenance columns, in the order stampValues binds them. */
-const DOC_SOURCE_COLUMNS =
-  "source_id, source_label, source_connector, source_ref, fetched_at, source_connection";
-
-/**
- * The values of DOC_SOURCE_COLUMNS for a write: the writer's stamp, or six NULLs, so a write
- * without a source clears an earlier stamp in the same statement.
- */
-function stampValues(writer: DataWriter): (string | null)[] {
-  const s = writer.source;
-  return s
-    ? [s.id, s.label, s.connector, s.ref, s.fetchedAt, s.connectionId]
-    : [null, null, null, null, null, null];
 }
 
 /** Why a guarded insert changed nothing: the id is taken, or which quota stopped it. */
@@ -775,8 +699,7 @@ async function updateGuarded(
     .prepare(
       `UPDATE artifact_docs SET data = ?4, size_bytes = ?5, rev = ${NEXT_REV_SQL},
          updated_by_email = ?6, updated_by_role = ?7, updated_via = ?8, updated_by_label = ?9,
-         updated_at = ?10, source_id = ?14, source_label = ?15, source_connector = ?16,
-         source_ref = ?17, fetched_at = ?18, source_connection = ?19
+         updated_at = ?10
        WHERE artifact_id = ?1 AND collection = ?2 AND doc_id = ?3 AND rev = ?11
          AND (?12 = 1 OR created_by_email = ?6)
          AND ${ARTIFACT_LIVE_SQL}
@@ -798,7 +721,6 @@ async function updateGuarded(
       readRev,
       any ? 1 : 0,
       config.data.maxBytesPerArtifact,
-      ...stampValues(writer),
     )
     .first<StoredDoc>();
 }
@@ -976,11 +898,6 @@ export async function applyOps(
   target: DataTarget,
   writer: DataWriter,
   ops: DataOp[],
-  /**
-   * The checked stamp for a set that carries `source` (services/dataSources.ts docStampFor); it
-   * throws for a source the writer may not stamp. Without it, a set with `source` fails.
-   */
-  stampFor?: (op: Extract<DataOp, { op: "set" }>) => Promise<DocStamp>,
 ): Promise<{ results: OpResult[] }> {
   const results: OpResult[] = [];
   for (const op of ops) {
@@ -988,20 +905,15 @@ export async function applyOps(
     try {
       if (op.op === "set") {
         let doc: StoredDoc;
-        let w = writer;
-        if (op.source !== undefined) {
-          if (!stampFor) throw invalid("source is not accepted here");
-          w = { ...writer, source: await stampFor(op) };
-        }
         if (op.doc_id === undefined) {
           if (op.if_rev !== 0) throw invalid("Without doc_id, if_rev must be 0 (create)");
-          doc = await createDoc(d1, config, target, w, op.collection, op.data);
+          doc = await createDoc(d1, config, target, writer, op.collection, op.data);
         } else {
           ({ doc } = await putDoc(
             d1,
             config,
             target,
-            w,
+            writer,
             op.collection,
             op.doc_id,
             op.data,

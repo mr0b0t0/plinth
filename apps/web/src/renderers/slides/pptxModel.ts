@@ -55,13 +55,21 @@ export interface Cell {
 }
 
 export type Item =
-  | { kind: "text"; box: Box; paras: Para[] }
+  | {
+      kind: "text";
+      box: Box;
+      paras: Para[];
+      /** One line that never wraps, as on screen (the footer and the slide number). */
+      oneLine?: true;
+    }
   | {
       kind: "table";
       box: Box;
       rows: Cell[][];
       /** Column widths in inches, from the first row. */
       colW: number[];
+      /** The cells' top and bottom margin in inches, from the screen's cell padding. */
+      padY?: number;
       size: number;
       color: string;
       headColor: string;

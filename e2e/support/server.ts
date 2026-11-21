@@ -42,23 +42,18 @@ export const DEV_VARS: Record<string, string> = {
   // origin isolation.
   ALLOW_ROOMS: "true",
   ALLOW_LIVE_EDITING: "true",
-  // Dictation run by the app (docs/spec.md "Voice: dictation and text to speech"), off by default
-  // on real instances. On the opaque server it has no effect: dictation needs origin isolation.
-  ALLOW_DICTATION: "true",
-  // Category sharing (docs/spec.md "Category sharing and personal categories"), on by default too.
-  ALLOW_CATEGORY_SHARING: "true",
   // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
   // socket, on both servers (it needs only the ROOMS binding, not origin isolation).
   ALLOW_LIVE_VIEWS: "true",
+  // Category sharing (docs/spec.md "Category sharing and personal categories"), on by default.
+  ALLOW_CATEGORY_SHARING: "true",
   // Following the presenter in a deck (docs/spec.md "Slides"), on by default. On the opaque server
   // it has no effect: it runs over live rooms, which need origin isolation.
   ALLOW_SLIDES_FOLLOW: "true",
-  // Files people add to a page (docs/spec.md "Files people add to a page"), off by default on real
-  // instances. On the opaque server it has no effect: files need origin isolation.
-  ALLOW_FILES: "true",
-  // Pages that hand work to the owner's agent (docs/spec.md "Page requests"), off by default on
-  // real instances. On the opaque server it has no effect: page requests need origin isolation.
-  ALLOW_PAGE_REQUESTS: "true",
+  // Design export's instance and per-artifact hourly caps, at their defaults. The local Worker has
+  // no Browser Rendering binding, so exports stay off (typed-design-export.spec.ts).
+  DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "120",
+  DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "20",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

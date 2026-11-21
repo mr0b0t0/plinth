@@ -1,8 +1,8 @@
 // Column settings, row moves and the phone cell editor on a sheet's page (sheet-columns): widths
 // by the settings, Alt+arrows and the header's edge; thousands separators; a select column's
-// options as a list; freezing as a header lease; rows moved with every formula following them;
-// row and column menus; the cell editor docked at phone width; and the grid's keyboard and screen
-// reader behaviour.
+// options as a list; freezing as a header lease; rows moved with every formula following them,
+// from the bar's Row and Column menus; the cell editor docked at phone width; and the grid's
+// keyboard and screen reader behaviour.
 import {
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -12,7 +12,6 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type BootOptions, boot } from "./boot.ts";
 import { headerFrozen, readOptions } from "./edit.ts";
-import { shownWidths } from "./grid.ts";
 
 const APP = "https://plinth.example.com";
 const COLUMNS = [
@@ -95,24 +94,28 @@ const text = (a: string) => cell(a).textContent;
 const sortOf = (a: string) => cell(a).querySelector(".plinth-sheet__sort") as HTMLButtonElement;
 const field = () => document.querySelector(".plinth-sheet__input") as HTMLInputElement | null;
 const notice = () => document.querySelector(".plinth-sheet__notice")?.textContent ?? "";
-const said = () => document.querySelector(".plinth-sheet__announce")?.textContent ?? "";
+const said = () => document.querySelector('div.plinth-sheet__sr[role="status"]')?.textContent ?? "";
 const key = (el: Element, k: string, extra: KeyboardEventInit = {}) =>
   el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, ...extra }));
-const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
+/** The open menu of the bar (Row or Column), or null. */
+const menu = () => document.querySelector<HTMLElement>('[role="menu"]:not([hidden])');
 const item = (name: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
     (b) => b.textContent === name,
   ) as HTMLButtonElement;
 const selectedCell = () => document.querySelector(".plinth-sheet__selected") as HTMLElement;
-/** An item of the selected cell's row menu, opened from the row's number. */
+const menuButton = (name: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>(".plinth-sheet__menu-btn")].find(
+    (b) => b.textContent === name,
+  ) as HTMLButtonElement;
+/** An item of the bar's Row menu (acting on the selected cell's row), with the menu open. */
 const rowItem = (name: string) => {
-  ((selectedCell().closest("tr") as HTMLTableRowElement).cells[0] as HTMLElement).click();
+  menuButton("Row").click();
   return item(name);
 };
-/** An item of the selected cell's column menu, opened from its header's button. */
+/** An item of the bar's Column menu (acting on the selected cell's column), with the menu open. */
 const columnItem = (name: string) => {
-  const letters = /^__plinth-cell-([A-Z]+)\d+$/.exec(selectedCell().id)?.[1];
-  (cell(`${letters}1`).querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
+  menuButton("Column").click();
   return item(name);
 };
 const panel = () => document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
@@ -308,9 +311,7 @@ describe("the grid for keyboards and screen readers", () => {
     await tick();
     const id = cell("B3").getAttribute("aria-describedby");
     expect(id).toBe("__plinth-held-3");
-    expect(document.getElementById(id as string)?.textContent).toBe(
-      "Being edited by bo@example.org",
-    );
+    expect(document.getElementById(id as string)?.textContent).toBe("Bo is editing");
     ws.frame({ t: "released", lease: "l9" });
     await tick();
     expect(cell("B3").hasAttribute("aria-describedby")).toBe(false);
@@ -319,11 +320,11 @@ describe("the grid for keyboards and screen readers", () => {
 });
 
 describe("rows move", () => {
-  it("up and down from the row's menu and with Alt+Shift+arrows; formulas follow; it is said", async () => {
+  it("up and down from the Row menu and with Alt+Shift+arrows; formulas follow; it is said", async () => {
     const f = solo();
     cell("A3").focus();
     const up = rowItem("Move row up");
-    expect(up.hasAttribute("aria-disabled")).toBe(false);
+    expect(up.disabled).toBe(false);
     up.click();
     const draft = await collected(f);
     expect(draft.slice(1)).toEqual([
@@ -334,8 +335,8 @@ describe("rows move", () => {
     expect(text("A2")).toBe("Pears");
     expect(said()).toBe("Row 3 moved to row 2.");
     // The moved row stays selected: row 2 cannot move up.
-    expect(rowItem("Move row up").getAttribute("aria-disabled")).toBe("true");
-    key(item("Move row up"), "Escape");
+    expect(rowItem("Move row up").disabled).toBe(true);
+    key(item("Move row down"), "Escape");
     expect(menu()).toBeNull();
     // Pears back down with the keyboard: the total's references are as they were.
     cell("B2").focus();
@@ -398,27 +399,26 @@ describe("rows move", () => {
     expect(await collected(f)).toEqual(LINES);
   });
 
-  it("from the row's menu: its number opens it, or Alt+Down in a cell", async () => {
+  it("from the Row menu: the first row cannot move up nor the last one down", async () => {
     const f = solo();
-    const num = (cell("A2").parentElement as HTMLTableRowElement).cells[0] as HTMLElement;
-    num.click();
-    expect(menu()?.getAttribute("aria-label")).toBe("Row 2");
-    expect(item("Move row up").getAttribute("aria-disabled")).toBe("true");
-    expect(
-      document.getElementById(item("Move row up").getAttribute("aria-describedby") ?? ""),
-    ).toBeTruthy();
-    expect(document.activeElement).toBe(item("Insert row above"));
-    key(item("Insert row above"), "ArrowUp");
-    expect(document.activeElement).toBe(item("Delete row"));
-    key(item("Delete row"), "Escape");
-    expect(menu()).toBeNull();
     cell("C2").focus();
-    key(cell("C2"), "ArrowDown", { altKey: true });
-    expect(menu()?.getAttribute("aria-label")).toBe("Row 2");
-    item("Move row down").click();
+    expect(rowItem("Move row up").disabled).toBe(true);
+    expect(item("Move row down").disabled).toBe(false);
+    key(item("Insert above"), "Escape");
+    cell("C4").focus();
+    expect(rowItem("Move row down").disabled).toBe(true);
+    key(item("Insert above"), "Escape");
+    cell("C2").focus();
+    rowItem("Move row down").click();
     expect(menu()).toBeNull();
     expect((await collected(f))[2]).toBe('["Apples",3,1.5,true,"new"]');
-    expect(document.activeElement).toBe(cell("C3"));
+    // The moved row stays selected where it went; the focus is back on the menu's button.
+    expect(selectedCell()).toBe(cell("C3"));
+    expect(document.activeElement).toBe(menuButton("Row"));
+    // Nothing to move in the header.
+    sortOf("C1").focus();
+    expect(rowItem("Move row up").disabled).toBe(true);
+    expect(item("Move row down").disabled).toBe(true);
   });
 
   it("with the room: a move_rows struct, aimed again at its row when stale", async () => {
@@ -847,54 +847,6 @@ describe("select options as a list", () => {
 });
 
 describe("while someone else changes the sheet", () => {
-  it("a row's menu closes when another row comes above it, rather than act on that one", async () => {
-    const { ws } = roomed();
-    const num = (a: string) =>
-      (cell(a).parentElement as HTMLTableRowElement).cells[0] as HTMLElement;
-    num("A3").click();
-    expect(menu()?.getAttribute("aria-label")).toBe("Row 3");
-    // A row added below it changes nothing the menu names: it stays.
-    ws.frame({
-      t: "struct",
-      gen: "g1",
-      rev: 4,
-      op: { op: "insert_rows", before: 5, count: 1 },
-      by: "s2",
-    });
-    await tick();
-    expect(menu()?.getAttribute("aria-label")).toBe("Row 3");
-    // One above it: row 3 is Apples now, so "Delete row" would delete the wrong row.
-    ws.frame({
-      t: "struct",
-      gen: "g1",
-      rev: 5,
-      op: { op: "insert_rows", before: 2, count: 1 },
-      by: "s2",
-    });
-    await tick();
-    expect(menu()).toBeNull();
-    expect(notice()).toContain("The sheet changed while the menu was open");
-    expect(ws.sent.filter((m) => m.t === "struct")).toEqual([]);
-    expect(text("A4")).toBe("Pears");
-  });
-
-  it("a column's menu closes when another column comes before it", async () => {
-    const { ws } = roomed();
-    (cell("C1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
-    expect(menu()?.getAttribute("aria-label")).toBe("Column C, Price");
-    ws.frame({
-      t: "struct",
-      gen: "g1",
-      rev: 4,
-      op: { op: "insert_columns", before: "A", columns: [{ name: "Note", type: "text" }] },
-      by: "s2",
-    });
-    await tick();
-    expect(menu()).toBeNull();
-    expect(notice()).toContain("The sheet changed while the menu was open");
-    expect(text("D1")).toContain("Price");
-  });
-
   /** Someone else appends a row: the shape changes, so the grid is built again. */
   const appended = (ws: FakeSocket, rev: number) =>
     ws.frame({
@@ -953,8 +905,7 @@ describe("while someone else changes the sheet", () => {
   it("a rebuild while elsewhere in the page leaves the focus off the cells", async () => {
     const { ws } = roomed();
     cell("B2").focus();
-    const csv = document.querySelector('[data-format="csv"]') as HTMLButtonElement;
-    csv.focus();
+    menuButton("Row").focus();
     appended(ws, 4);
     await tick();
     expect(document.activeElement).not.toBe(cell("B2"));
@@ -985,23 +936,17 @@ describe("while someone else changes the sheet", () => {
 });
 
 describe("freezing", () => {
-  it("from the column's menu: up to a column, at most five, and unfrozen again", async () => {
+  it("from the Column menu: up to the selected column, and unfrozen again", async () => {
     const f = solo();
-    const open = (a: string) =>
-      (cell(a).querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
-    open("B1");
-    expect(menu()?.getAttribute("aria-label")).toBe("Column B, Qty");
-    expect(cell("B1").querySelector(".plinth-sheet__colmenu")?.getAttribute("aria-expanded")).toBe(
-      "true",
-    );
+    cell("B2").focus();
+    expect(columnItem("Unfreeze columns").disabled).toBe(true);
     item("Freeze up to this column").click();
     expect((await header(f)).freeze).toEqual({ cols: 2 });
     expect(said()).toBe("Columns A to B stay in view.");
     expect(cell("A2").classList.contains("plinth-sheet__frozen")).toBe(true);
-    // From the header, by keyboard.
-    sortOf("A1").focus();
-    key(sortOf("A1"), "ArrowDown", { altKey: true });
-    expect(menu()?.getAttribute("aria-label")).toBe("Column A, Item");
+    // Frozen up to B already: only Unfreeze does something there.
+    cell("B2").focus();
+    expect(columnItem("Freeze up to this column").disabled).toBe(true);
     item("Unfreeze columns").click();
     expect((await header(f)).freeze).toBeUndefined();
     expect(cell("A2").classList.contains("plinth-sheet__frozen")).toBe(false);
@@ -1010,11 +955,11 @@ describe("freezing", () => {
   it("offers no freeze past the fifth column", () => {
     const cols = Array.from({ length: 7 }, (_, i) => ({ name: `C${i}`, type: "text" }));
     solo({}, [JSON.stringify({ plinth: "sheet", v: 1, columns: cols }), '["a"]']);
-    (cell("F1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
-    expect(item("Freeze up to this column").getAttribute("aria-disabled")).toBe("true");
-    item("Freeze up to this column").click();
-    expect(said()).toBe("At most 5 columns stay in view.");
-    expect(menu()).not.toBeNull();
+    cell("E2").focus();
+    expect(columnItem("Freeze up to this column").disabled).toBe(false);
+    key(item("Insert left"), "Escape");
+    cell("F2").focus();
+    expect(columnItem("Freeze up to this column").disabled).toBe(true);
   });
 
   it("has no header controls outside edit mode", () => {
@@ -1023,23 +968,12 @@ describe("freezing", () => {
     stop = boot(f.win);
     expect(document.querySelector(".plinth-sheet__tool")).toBeNull();
     send(f, { type: "edit", on: true });
-    expect(cell("A1").querySelectorAll(".plinth-sheet__tool")).toHaveLength(2);
-    // The column's name is the header's text: the menu button's mark is drawn by CSS.
+    // The width handle on the header's edge, and no menu button: the bar's menus are the way in.
+    const tools = cell("A1").querySelectorAll(".plinth-sheet__tool");
+    expect([...tools].map((t) => t.className)).toEqual(["plinth-sheet__tool plinth-sheet__resize"]);
     expect(text("A1")).toBe("Item");
     send(f, { type: "edit", on: false });
     expect(document.querySelector(".plinth-sheet__tool")).toBeNull();
-  });
-});
-
-describe("a sheet with no rows", () => {
-  it("adds its first row from a column's menu, which has no row number to open", async () => {
-    const f = solo({}, [HEADER]);
-    (cell("B1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
-    item("Insert row").click();
-    expect(await collected(f)).toEqual([HEADER, "[]"]);
-    // Once a row exists, rows come from their own menus.
-    (cell("B1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
-    expect(item("Insert row")).toBeUndefined();
   });
 });
 
@@ -1088,28 +1022,9 @@ describe("the docked cell editor (phone width)", () => {
     expect(document.querySelector(".plinth-sheet__dock")).toBeNull();
     expect(await collected(f)).toEqual(LINES);
   });
-
-  it("narrows frozen columns at phone width to 40% of the frame, the row numbers not counted", () => {
-    // 360 px: 144 px for the frozen columns, beside the row numbers.
-    expect(shownWidths([220, 120, 120], 1, 360)).toEqual([144, 120, 120]);
-    // Narrowed together, each keeping at least 40 px.
-    expect(shownWidths([200, 100, 120], 2, 360)).toEqual([96, 48, 120]);
-    expect(shownWidths([300, 40, 120], 2, 360)).toEqual([127, 40, 120]);
-    // Columns that fit, a wider frame, an unknown one, or nothing frozen: as stored.
-    expect(shownWidths([80, 120], 1, 360)).toEqual([80, 120]);
-    expect(shownWidths([220, 120], 1, 1280)).toEqual([220, 120]);
-    expect(shownWidths([220, 120], 1, 0)).toEqual([220, 120]);
-    expect(shownWidths([220, 120], 0, 360)).toEqual([220, 120]);
-  });
-
-  it("shows the menus as full-width sheets", () => {
-    solo({ dock: true });
-    (cell("A2").parentElement as HTMLTableRowElement).cells[0]?.click();
-    expect(menu()?.classList.contains("plinth-sheet__menu--sheet")).toBe(true);
-  });
 });
 
-describe("the settings and menus open where they are for", () => {
+describe("the settings open where they are for", () => {
   it("opens the column settings under their header, outside the grid, with the actions last", () => {
     solo();
     cell("C2").focus();
@@ -1126,8 +1041,8 @@ describe("the settings and menus open where they are for", () => {
       "Number",
       "Date",
       "Checkbox",
-      "Dropdown",
-      "Link",
+      "Select",
+      "URL",
     ]);
     expect(types.value).toBe("number");
   });
@@ -1140,34 +1055,11 @@ describe("the settings and menus open where they are for", () => {
     expect([...panel().querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Add");
   });
 
-  it("marks the row a row's menu is for, and selects it, while the menu is open", () => {
-    solo();
-    cell("B3").focus();
-    const tr = cell("A2").parentElement as HTMLTableRowElement;
-    (tr.cells[0] as HTMLElement).click();
-    expect(tr.classList.contains("plinth-sheet__row--target")).toBe(true);
-    expect(selectedCell()).toBe(cell("B2"));
-    key(item("Insert row above"), "Escape");
-    expect(menu()).toBeNull();
-    expect(tr.classList.contains("plinth-sheet__row--target")).toBe(false);
-  });
-
-  it("names the row or the column on the sheets at phone width", () => {
+  it("names the column on the settings' sheet at phone width", () => {
     solo({ dock: true });
-    (cell("A3").parentElement as HTMLTableRowElement).cells[0]?.click();
-    expect(menu()?.querySelector(".plinth-sheet__sheet-title")?.textContent).toBe("Row 3");
-    key(item("Insert row above"), "Escape");
+    cell("A3").focus();
     columnItem("Column settings…").click();
     expect(panel().classList.contains("plinth-sheet__panel--sheet")).toBe(true);
     expect(panel().querySelector(".plinth-sheet__sheet-title")?.textContent).toBe("Column A");
-  });
-
-  it("shows a header's menu button for the selected cell's column", () => {
-    solo();
-    cell("B2").focus();
-    expect(cell("B1").classList.contains("plinth-sheet__name--current")).toBe(true);
-    cell("C3").focus();
-    expect(cell("B1").classList.contains("plinth-sheet__name--current")).toBe(false);
-    expect(cell("C1").classList.contains("plinth-sheet__name--current")).toBe(true);
   });
 });

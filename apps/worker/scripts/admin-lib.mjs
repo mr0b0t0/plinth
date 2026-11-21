@@ -49,7 +49,8 @@ Commands:
   erase-user <email>              Erase a person for good (a privacy request): their account,
                                   every artifact they own with all versions and stored files,
                                   their comments, connections and sessions, sharing entries for
-                                  their address, and their address on reports.
+                                  their address, their address on reports, and who they
+                                  were on their opens of other people's artifacts.
   erase-artifact <id|slug>        Erase one artifact for good: all versions, stored files,
                                   comments, sharing and reports. Works on deleted artifacts too.
   bump-epochs --category-shared   End every content pass and room socket opened through a
@@ -334,10 +335,11 @@ export function versionPrefixesSql(ref) {
  * and sessions. Before that: comments they wrote on other people's artifacts, grants to their
  * address, codes and viewer sessions for it, rate-limit counters naming it, their address on
  * reports, shared-data documents they created (personal ones included) and their name, role and
- * agent connection label on documents they last changed. Their artifacts' staging attempt rows (no
- * foreign key) become tombstones: the files go with each artifact's root, and the Worker's sweep
- * deletes what an attempt still running puts after that, then the rows. The last statement
- * returns the erased user, so the CLI can tell whether one matched.
+ * agent connection label on documents they last changed, and who they were on their opens of
+ * other people's artifacts (each stays counted as an unknown open). Their artifacts' staging
+ * attempt rows (no foreign key) become tombstones: the files go with each artifact's root, and
+ * the Worker's sweep deletes what an attempt still running puts after that, then the rows. The
+ * last statement returns the erased user, so the CLI can tell whether one matched.
  */
 export function eraseUserSql(email) {
   return ERASE_USER_STEPS.map((s) => s.sql(email)).join("; ");
@@ -358,15 +360,6 @@ export const ERASE_USER_STEPS = [
     table: "comments",
     sql: (email) =>
       `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
-  },
-  // Requests their sessions filed from pages (0016_page_requests), on anyone's artifact: a person
-  // confirmed by code has no author_user_id, so the step above misses them. Their tasks and
-  // replies cascade. `name` tells this step apart from the one above.
-  {
-    table: "comments",
-    name: "page_requests",
-    sql: (email) =>
-      `DELETE FROM comments WHERE kind = 'page_request' AND author_email = '${email}'`,
   },
   { table: "access_grants", sql: (email) => `DELETE FROM access_grants WHERE email = '${email}'` },
   // Category shares of other people's that hold this address (0013_category_sharing); the
@@ -395,26 +388,17 @@ export const ERASE_USER_STEPS = [
     sql: (email) =>
       `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
   },
-  // Files they added to other people's pages (0014_artifact_files): tombstones without their name
-  // or address, whose objects the Worker's hourly sweep deletes. Their own artifacts' files go
-  // with each artifact's root and rows.
-  {
-    table: "artifact_files",
-    sql: (email) =>
-      `UPDATE artifact_files SET state = 'deleting', claimed_at = NULL, name = '', created_by_email = NULL, created_by_role = NULL WHERE created_by_email = '${email}'`,
-  },
-  // Refreshes they asked for on other people's pages (0015_data_sources) keep the task, not who
-  // asked. Their own artifacts' sources and tasks cascade with the users row.
-  {
-    table: "data_refresh_tasks",
-    sql: (email) =>
-      `UPDATE data_refresh_tasks SET requested_by_email = NULL, requested_by_role = NULL WHERE requested_by_email = '${email}'`,
-  },
   // Unsaved page edits on other people's docs keep their text, not who made them.
   {
     table: "live_drafts",
     sql: (email) =>
       `UPDATE live_drafts SET updated_by_user = NULL WHERE updated_by_user IN (SELECT id FROM users WHERE email = '${email}')`,
+  },
+  // Their opens of other people's artifacts stay counted, as nobody (their own go by cascade).
+  {
+    table: "artifact_opens",
+    sql: (email) =>
+      `UPDATE artifact_opens SET viewer_kind = 'unknown', user_id = NULL, email = NULL, visitor = NULL, role = NULL WHERE email = '${email}' OR user_id IN (SELECT id FROM users WHERE email = '${email}')`,
   },
   { table: "users", sql: (email) => `DELETE FROM users WHERE email = '${email}' RETURNING id` },
 ];
@@ -425,6 +409,8 @@ export const ERASE_USER_STEPS = [
  */
 export const ERASE_USER_KEPT = {
   dev_outbox: "development only: the console email provider's outbox, never written in production",
+  invitation_opt_outs:
+    "an address's own opt-out of invitation emails, by hash only: erasing it would let invitations reach that inbox again",
 };
 
 /**

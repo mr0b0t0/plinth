@@ -38,7 +38,21 @@ describe("readSlidesFrameMessage", () => {
       "view",
       "fullscreen",
       "exported",
+      "leading",
     ]);
+  });
+
+  it("accepts leading with a boolean only", () => {
+    const e = { source: win, origin: ORIGIN, data: data({ type: "leading", on: true }) };
+    expect(read(e)).toEqual({ type: "leading", on: true });
+    expect(read({ ...e, data: data({ type: "leading", on: false }) })).toEqual({
+      type: "leading",
+      on: false,
+    });
+    for (const on of ["true", 1, null, undefined]) {
+      expect(read({ ...e, data: data({ type: "leading", on }) })).toBeNull();
+    }
+    expect(read({ ...e, source: {} })).toBeNull();
   });
 
   it("accepts ready, position, view and fullscreen from the frame at the exact content origin", () => {
@@ -100,10 +114,11 @@ describe("readSlidesFrameMessage", () => {
 
 describe("the audience channel", () => {
   it("validates messages: integers in range and known types only", () => {
-    expect(readPresentMessage({ v: 1, type: "slide", slide: 3 })).toEqual({
+    expect(readPresentMessage({ v: 1, type: "slide", slide: 3, version: 2 })).toEqual({
       v: 1,
       type: "slide",
       slide: 3,
+      version: 2,
     });
     expect(readPresentMessage({ v: 1, type: "hello" })).toEqual({ v: 1, type: "hello" });
     for (const bad of [
@@ -112,6 +127,9 @@ describe("the audience channel", () => {
       { v: 1, type: "slide", slide: 0 },
       { v: 1, type: "slide", slide: 2.5 },
       { v: 1, type: "slide", slide: "2" },
+      { v: 1, type: "slide", slide: 2 },
+      { v: 1, type: "slide", slide: 2, version: 0 },
+      { v: 1, type: "slide", slide: 2, version: "1" },
       { v: 1, type: "text", text: "x" },
     ]) {
       expect(readPresentMessage(bad)).toBeNull();
@@ -141,17 +159,18 @@ describe("the audience channel", () => {
       "art",
       pair,
       (m) => {
-        if (m.type === "hello") presenter?.post({ v: 1, type: "slide", slide: current });
+        if (m.type === "hello")
+          presenter?.post({ v: 1, type: "slide", slide: current, version: 1 });
       },
       Channel,
     );
     const got = vi.fn();
     const audience = openPresentChannel("art", pair, got, Channel);
     audience?.post({ v: 1, type: "hello" });
-    expect(got).toHaveBeenCalledWith({ v: 1, type: "slide", slide: 4 });
+    expect(got).toHaveBeenCalledWith({ v: 1, type: "slide", slide: 4, version: 1 });
     current = 5;
-    presenter?.post({ v: 1, type: "slide", slide: current });
-    expect(got).toHaveBeenLastCalledWith({ v: 1, type: "slide", slide: 5 });
+    presenter?.post({ v: 1, type: "slide", slide: current, version: 1 });
+    expect(got).toHaveBeenLastCalledWith({ v: 1, type: "slide", slide: 5, version: 1 });
     expect(channels.map((c) => c.name)).toEqual([
       channelName("art", pair),
       channelName("art", pair),

@@ -3,7 +3,9 @@
 // only the board's settings in board.json (packages/shared/src/whiteboard.ts). Plinth's whiteboard
 // renderer (apps/web/src/renderers/whiteboard/) draws it with the page runtime, so live cursors and
 // drags go through the artifact's page room. Its capabilities are fixed by the server from the
-// settings, never declared by a page. It has no assets and no bundle upload.
+// settings, never declared by a page. It has no assets and no bundle upload. People never see its
+// source: they edit the board on its page and its settings from Settings in its ⋯ menu, and
+// agents change the settings with update_artifact.
 import type { TypeModule } from "../artifactTypes.ts";
 import { LIMITS } from "../constants.ts";
 
@@ -19,9 +21,10 @@ export const whiteboard: TypeModule<"whiteboard"> = {
   reservedPaths: ["index.html", "board.json"],
   assetTypes: null,
   renderer: { script: "whiteboard.js", style: "whiteboard.css", runtime: true },
-  editor: { language: "json", wordWrap: "on" },
+  editor: null,
   edit: "board",
   pageData: "fixed",
   assets: false,
   upload: false,
+  versions: "settings",
 };

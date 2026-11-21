@@ -47,6 +47,9 @@ const NEW_SIZE: Record<ToolKind, { w: number; h: number }> = {
   ellipse: { w: 180, h: 120 },
 };
 const GRID = 240;
+/** Below this viewport width (px) Fit keeps text readable: it zooms out no further than this. */
+const NARROW = 560;
+const NARROW_MIN_FIT = 0.75;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const coord = (v: number) => clamp(Math.round(v), -BOARD_LIMITS.maxCoord, BOARD_LIMITS.maxCoord);
 const size = (v: number) => clamp(Math.round(v), BOARD_LIMITS.minSize, BOARD_LIMITS.maxSize);
@@ -158,16 +161,68 @@ export class Board {
     this.redraw();
   }
 
+  /**
+   * Only what the viewer can use now shows: the add buttons to people who may edit, the colours
+   * for a selected note or shape, Connect for a selected block (or while connecting), Delete for
+   * anything selected.
+   */
   private updateButtons(): void {
     const t = this.view.toolbar;
     for (const b of Object.values(t.add)) b.disabled = this.readOnly;
-    for (const b of Object.values(t.colors)) b.disabled = this.readOnly;
-    t.connect.disabled = this.readOnly || this.model.blocks.size < 2;
-    t.remove.disabled = this.readOnly || this.selected === null;
+    t.adds.hidden = this.readOnly;
+    const id = this.selected;
+    const block = id ? this.model.blocks.get(id)?.data : undefined;
+    const edit = !this.readOnly;
+    t.colour.hidden = !edit || !block || block.kind === "text";
+    for (const [c, b] of Object.entries(t.colors) as [BoardColor, HTMLButtonElement][]) {
+      b.setAttribute("aria-pressed", String(block?.color === c));
+    }
+    // At phone width one swatch shows the colour and opens the others; they close on a pick, on
+    // Escape and when the selection goes.
+    t.pick.dataset.color = block ? (block.color ?? "") : this.color;
+    if (t.colour.hidden) this.openPalette(false);
+    t.connect.hidden = !edit || (!block && !this.connecting);
+    t.connect.disabled = this.model.blocks.size < 2;
+    t.remove.hidden = !edit || id === null;
+    // At phone width the selection's controls take the add buttons' place, so the bar stays one row.
+    t.el.dataset.selection = String(edit && (id !== null || this.connecting));
   }
 
-  banner(text: string): void {
-    this.view.banner.textContent = text;
+  private openPalette(on: boolean): void {
+    const t = this.view.toolbar;
+    t.colour.dataset.open = String(on);
+    t.pick.setAttribute("aria-expanded", String(on));
+    if (!on) return;
+    // Under the swatch that opened it, kept inside the bar's 16 px gutters.
+    const bar = t.el.getBoundingClientRect();
+    const at = t.pick.getBoundingClientRect().left - bar.left;
+    const room = bar.width - t.palette.offsetWidth - 16;
+    t.palette.style.left = `${Math.round(Math.max(16, Math.min(at, room)))}px`;
+  }
+
+  /**
+   * The toolbar's standing line. `why`, when given, is the reason, left to screen readers so the
+   * line stays short.
+   */
+  banner(text: string, why = ""): void {
+    const b = this.view.banner;
+    // Empty when there is nothing to say, so the line collapses (:empty).
+    if (text) b.replaceChildren(this.doc.createTextNode(text));
+    else b.replaceChildren();
+    if (text && why) {
+      const span = this.doc.createElement("span");
+      span.className = "wb-why";
+      span.textContent = why;
+      b.append(span);
+    }
+  }
+
+  /**
+   * No toolbar at all: for a viewer the board cannot identify (a thumbnail capture, a link viewer
+   * who is not signed in), who could use only Fit, which `0` also does.
+   */
+  hideToolbar(): void {
+    this.view.toolbar.el.hidden = true;
   }
 
   say(text: string, action?: { label: string; run: () => void }): void {
@@ -189,7 +244,7 @@ export class Board {
 
   setPeers(list: RuntimePeer[]): void {
     this.peers = list;
-    drawPeers(this.doc, this.view, list, this.camera.zoom);
+    drawPeers(this.doc, this.view, list, this.camera);
     this.redraw();
   }
 
@@ -205,10 +260,23 @@ export class Board {
     this.cameraTimer = setTimeout(() => saveCamera(this.win, this.camera), 300);
   }
 
-  /** Show every block, at most at 100%. */
+  /**
+   * Show every block, at most at 100%. At phone width, never below a zoom whose text stays
+   * readable: the board then starts at its top-left and pans.
+   */
   fitBoard(): void {
     const vp = this.view.viewport;
-    this.setCamera(fitCamera(this.model.bounds(), vp.clientWidth || 800, vp.clientHeight || 600));
+    const w = vp.clientWidth || 800;
+    const narrow = w < NARROW;
+    this.setCamera(
+      fitCamera(
+        this.model.bounds(),
+        w,
+        vp.clientHeight || 600,
+        narrow ? 24 : 48,
+        narrow ? NARROW_MIN_FIT : undefined,
+      ),
+    );
   }
 
   private select(id: string | null): void {
@@ -217,12 +285,14 @@ export class Board {
     this.redraw();
   }
 
+  /** Connect starts from the selected block, so the viewer then picks the other end. */
   private setConnecting(on: boolean): void {
     this.connecting = on;
-    this.connectFrom = null;
+    this.connectFrom =
+      on && this.selected && this.model.blocks.has(this.selected) ? this.selected : null;
     const b = this.view.toolbar.connect;
     b.setAttribute("aria-pressed", String(on));
-    b.textContent = on ? "Pick two blocks…" : "Connect";
+    b.textContent = on ? (this.connectFrom ? "Pick a block…" : "Pick two blocks…") : "Connect";
   }
 
   // ---------- edits ----------
@@ -419,36 +489,52 @@ export class Board {
     }
     for (const [c, b] of Object.entries(t.colors) as [BoardColor, HTMLButtonElement][]) {
       b.addEventListener("click", () => {
+        // The colour of the selected block, and of the next block this viewer adds.
         this.color = c;
-        for (const o of Object.values(t.colors)) o.setAttribute("aria-pressed", String(o === b));
         const id = this.selected;
         const blk = id ? this.model.blocks.get(id)?.data : undefined;
         if (id && blk && blk.kind !== "text") this.save(id, { color: c });
+        if (t.colour.dataset.open === "true") {
+          this.openPalette(false);
+          t.pick.focus();
+        }
+        this.redraw();
       });
     }
+    t.pick.addEventListener("click", () => this.openPalette(t.colour.dataset.open !== "true"));
+    t.colour.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || t.colour.dataset.open !== "true") return;
+      e.stopPropagation();
+      this.openPalette(false);
+      t.pick.focus();
+    });
     t.connect.addEventListener("click", () => {
       if (!this.readOnly) this.setConnecting(!this.connecting);
       this.redraw();
     });
-    t.remove.addEventListener("click", () => void this.deleteSelected());
-    const zoomBy = (f: number) => {
-      const vp = v.viewport;
-      this.setCamera(zoomAt(this.camera, vp.clientWidth / 2, vp.clientHeight / 2, f));
-    };
-    t.zoomIn.addEventListener("click", () => zoomBy(1.25));
-    t.zoomOut.addEventListener("click", () => zoomBy(0.8));
+    // Delete hides itself with the selection: keep the keyboard's place on the board.
+    t.remove.addEventListener("click", () => {
+      void this.deleteSelected().then(() => {
+        if (t.remove.hidden) v.viewport.focus();
+      });
+    });
     t.fit.addEventListener("click", () => this.fitBoard());
-    t.png.addEventListener("click", () => void this.exportAs("png"));
-    t.svg.addEventListener("click", () => void this.exportAs("svg"));
 
     const vp = v.viewport;
-    vp.addEventListener("pointerdown", (e) => this.onPointerDown(e));
+    vp.addEventListener("pointerdown", (e) => {
+      this.openPalette(false);
+      this.onPointerDown(e);
+    });
     vp.addEventListener("pointermove", (e) => this.onPointerMove(e));
     vp.addEventListener("pointerup", (e) => this.onPointerUp(e));
     vp.addEventListener("pointercancel", (e) => this.onPointerUp(e));
     vp.addEventListener("pointerleave", () => this.live?.pointer(null, null));
     vp.addEventListener("dblclick", (e) => {
-      const id = this.blockIdOf(e.target);
+      // The viewport captures the pointer on a block's pointerdown, so the double click is aimed
+      // at the viewport: find the block under the pointer.
+      const id =
+        this.blockIdOf(e.target) ??
+        this.blockIdOf(this.doc.elementFromPoint?.(e.clientX, e.clientY) ?? null);
       if (id) this.startEditing(id);
     });
     vp.addEventListener(

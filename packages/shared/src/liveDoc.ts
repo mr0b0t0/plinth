@@ -32,6 +32,8 @@ export const LIVE_DOC = {
   editDebounceMs: 250,
   /** A checkpoint snapshot holds the draft this long at most. */
   checkpointLockS: 30,
+  /** Checkpoint snapshots a room keeps for recognizing their versions (the oldest goes first). */
+  maxPendingCheckpoints: 8,
   /** A diff with more edits than this is a conflict rather than a merge. */
   maxMergeEdits: 5000,
   /** Co-editors a status lists. */
@@ -300,7 +302,7 @@ export const liveCheckpointInput = z
     conflict_version: version
       .optional()
       .describe(
-        "Publish mine: the version the frozen draft was reviewed against. The room's own frozen draft is published over it, with the files of the draft's base version. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it, live_moved when rev is not current",
+        "Publish your changes: the version the frozen draft was reviewed against. The room's own frozen draft is published over it, with the files of the draft's base version. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it, live_moved when rev is not current",
       ),
   })
   // No draft text comes from the app (the room publishes its own), so an unknown field is refused.
@@ -316,7 +318,7 @@ export const liveDiscardQuery = z.object({
     .min(1)
     .optional()
     .describe(
-      "Discard mine: the version the frozen draft was reviewed against. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it",
+      "Discard your changes: the version the frozen draft was reviewed against. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it",
     ),
 });
 export type LiveDiscardQuery = z.infer<typeof liveDiscardQuery>;

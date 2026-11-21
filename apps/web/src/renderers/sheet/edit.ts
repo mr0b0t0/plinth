@@ -7,21 +7,21 @@
 // back as it was. A checkbox toggles with Enter, Space or a double-click; Delete clears a cell;
 // pasting tab-separated text writes the rows it covers. Rows other people hold show their email.
 //
-// Rows and columns: a row's menu (from its number, or Alt+Down in a cell) and a column's menu (its
-// header's button, or Alt+Down in the header) insert, delete and move them with a `struct` frame,
-// which the room applies only while nobody else holds a lease; Alt+Shift+Up and Down move the
-// selected row, and a sheet with no rows gets its first from a column's menu. Everything else about a column goes through a lease on the header
-// line, re-serialized: the column settings (name, type, number format with its decimals, currency
-// and thousands separators, and a select column's options as a list to add to, rename, reorder
-// and remove from), its width by dragging the header's edge or with Alt+Left and Alt+Right (8 px a
-// step, 40 to 800), and "Freeze up to this column" or "Unfreeze". Renaming an
-// option that cells hold also renames it in those cells, in one change of the whole sheet. Every
-// line this sends is checked first with the same rules the room applies (checkRow, the header
-// rules), so a refused value never leaves the frame and the room's draft is always a valid sheet.
+// Rows and columns: the bar's Row and Column menus, acting on the selected cell, insert, delete and
+// move them with a `struct` frame, which the room applies only while nobody else holds a lease;
+// Alt+Shift+Up and Down move the selected row too. Everything else about a column goes through a
+// lease on the header line, re-serialized: the column settings (name, type, number format with
+// its decimals, currency and thousands separators, and a select column's options as a list to add
+// to, rename, reorder and remove from), its width by dragging the header's edge or with Alt+Left
+// and Alt+Right (8 px a step, 40 to 800), and the Column menu's "Freeze up to this column" or
+// "Unfreeze columns". Renaming an option that cells hold also renames it in those cells, in one
+// change of the whole sheet. Every line this sends is checked first with the same rules the room
+// applies (checkRow, the header rules), so a refused value never leaves the frame and the room's
+// draft is always a valid sheet.
 //
 // At phone width an open cell's field is not in the cell: it is docked at the bottom of the page
 // under its address and column's name, with a check button that saves it (as Enter does), and
-// the menus and the settings are full-width sheets.
+// the column settings are a sheet across the bottom.
 //
 // Two backends, as for docs: the room's socket (../common/live.ts, "room" mode) or a local copy of
 // the lines that only this frame edits (LocalSheet, "solo" mode). Everything is built with
@@ -45,6 +45,7 @@ import {
   type SheetHeader,
   type SheetNumberFormat,
   type SheetStructOp,
+  sameRowRules,
   serializeSheet,
   sheetHeaderLine,
   splitLines,
@@ -57,7 +58,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import { clampWidth, columnWidth, type Grid } from "./grid.ts";
+import { clampWidth, columnWidth, type Grid, personName } from "./grid.ts";
 import { cellFromInput, inputText, type NumberLocale, numberLocale, parseTsv } from "./input.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
@@ -73,15 +74,6 @@ export const MAX_OPTION_CHARS = 100;
 export const DOCK_QUERY = "(max-width: 640px)";
 const STALE_RETRIES = 3;
 const RULES = liveRules("sheet");
-/** What the column settings call each column type. */
-const TYPE_LABELS: Record<SheetColumnType, string> = {
-  text: "Text",
-  number: "Number",
-  date: "Date",
-  checkbox: "Checkbox",
-  select: "Dropdown",
-  url: "Link",
-};
 
 /** The live draft of a sheet: a LiveBackend that also takes rows and columns. */
 export interface SheetBackend extends LiveBackend {
@@ -193,14 +185,6 @@ interface Open {
   docked: boolean;
   /** A commit was refused with a notice, which goes once a value is kept. */
   refused?: boolean;
-}
-
-/** One item of a row's or a column's menu. */
-interface MenuItem {
-  label: string;
-  run: () => void;
-  /** Why it cannot be chosen now: the item stays in the menu, with this as its description. */
-  off?: string;
 }
 
 /** What a granted lease is for. */
@@ -436,12 +420,6 @@ function renamedRows(
 const isPrintable = (e: KeyboardEvent) =>
   e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " ";
 
-/** A key that opens the menu of the row or the column it is pressed in. */
-const isMenuKey = (e: KeyboardEvent) =>
-  (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey && e.key === "ArrowDown") ||
-  (e.shiftKey && e.key === "F10") ||
-  e.key === "ContextMenu";
-
 export class SheetEditor {
   editing = false;
   private grid: Grid | null = null;
@@ -449,6 +427,9 @@ export class SheetEditor {
   private want: Want | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private notice: HTMLElement | null = null;
+  /** Says to a screen reader what the tinted rows already show (who holds a row). */
+  private said: HTMLElement | null = null;
+  private strip: HTMLElement | null = null;
   private panel: HTMLElement | null = null;
   /**
    * The column the open settings are for, found again by its definition apart from its width
@@ -468,20 +449,6 @@ export class SheetEditor {
   private readonly loc: NumberLocale;
   /** The docked field's panel (phone width), while a cell is open there. */
   private dock: HTMLElement | null = null;
-  /**
-   * The open row or column menu, the control that opened it, where focus goes back, and whether
-   * the row or column it names is still where it was when it opened.
-   */
-  private menu: {
-    el: HTMLElement;
-    button: HTMLElement | null;
-    back: HTMLElement | null;
-    still: () => boolean;
-    /** Takes away what marks the menu's row while it is open. */
-    done: () => void;
-  } | null = null;
-  /** The frame's polite live region (row moves, widths, freezing). */
-  private announcer: HTMLElement | null = null;
   /** A width changed with Alt+arrows, sent once the keys rest. */
   private widthPending: { col: number; was: SheetColumn; width: number } | null = null;
   private widthTimer: ReturnType<typeof setTimeout> | null = null;
@@ -548,7 +515,7 @@ export class SheetEditor {
     if (old !== grid && this.editing) this.listen(grid, true);
     grid.setEditable(this.editing);
     grid.setHeaderTools(this.editing ? this.headerTools : null);
-    if (this.editing) this.mountPanel();
+    if (this.editing) this.mountStrip();
     const o = this.open;
     if (o) {
       const focused = this.doc.activeElement === o.field;
@@ -568,14 +535,14 @@ export class SheetEditor {
     const t = grid.table;
     if (on) {
       t.addEventListener("keydown", this.onKey);
+      t.addEventListener("mousedown", this.onPress);
       t.addEventListener("dblclick", this.onDouble);
       t.addEventListener("paste", this.onPaste);
-      t.addEventListener("click", this.onRowNumber);
     } else {
       t.removeEventListener("keydown", this.onKey);
+      t.removeEventListener("mousedown", this.onPress);
       t.removeEventListener("dblclick", this.onDouble);
       t.removeEventListener("paste", this.onPaste);
-      t.removeEventListener("click", this.onRowNumber);
     }
   }
 
@@ -591,6 +558,7 @@ export class SheetEditor {
       }
     }
     g.setHolders(held);
+    this.updateStrip();
     this.syncPanel();
   }
 
@@ -611,33 +579,22 @@ export class SheetEditor {
     g?.setHeaderTools(on ? this.headerTools : null);
     if (on) {
       this.win.addEventListener("keydown", this.onSaveKey);
-      this.mountPanel();
+      this.mountStrip();
     } else {
       this.win.removeEventListener("keydown", this.onSaveKey);
-      this.closePanel();
       this.closeMenu(false);
+      this.strip?.remove();
+      this.strip = null;
+      this.stripButtons.clear();
+      this.closePanel();
       this.hideNotice();
-      this.announcer?.remove();
-      this.announcer = null;
+      this.said?.remove();
+      this.said = null;
       this.moving = null;
     }
     g?.el.classList.toggle("plinth-sheet__page--editing", on);
     this.render();
     this.hooks.status();
-  }
-
-  /** A polite announcement in the frame, of this person's own row moves, widths and freezing. */
-  private announce(text: string): void {
-    let el = this.announcer;
-    if (!el) {
-      el = this.doc.createElement("div");
-      el.className = "plinth-sheet__announce";
-      el.setAttribute("role", "status");
-      el.setAttribute("aria-live", "polite");
-      this.doc.body.append(el);
-      this.announcer = el;
-    }
-    el.textContent = text;
   }
 
   private readonly onSaveKey = (e: KeyboardEvent) => {
@@ -676,13 +633,6 @@ export class SheetEditor {
     const at = this.addressOf(e.target);
     if (!at) return;
     const header = at.row === 1;
-    if (isMenuKey(e)) {
-      e.preventDefault();
-      const from = e.target as HTMLElement;
-      if (header) this.columnMenu(at.col, from, null);
-      else this.rowMenu(at.row, from);
-      return;
-    }
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
       if (header && !e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
@@ -711,9 +661,17 @@ export class SheetEditor {
     }
   };
 
+  /**
+   * A double-click outside an open field selects no words: it opens the cell or, on a row someone
+   * else holds or a cell that cannot be edited, does nothing, and the row's tint is the one cue.
+   */
+  private readonly onPress = (e: MouseEvent) => {
+    if (e.detail > 1 && !this.open?.td.contains(e.target as Node)) e.preventDefault();
+  };
+
   private readonly onDouble = (e: MouseEvent) => {
     if (this.open?.td.contains(e.target as Node)) return;
-    // The header's own controls (its menu button, its width handle) are not the cell.
+    // The header's own control (its width handle) is not the cell.
     if ((e.target as Element).closest?.(".plinth-sheet__tool")) return;
     const at = this.addressOf(e.target);
     if (!at) return;
@@ -728,17 +686,6 @@ export class SheetEditor {
     if (!at || text === undefined || text === "") return;
     e.preventDefault();
     this.paste(at.row, at.col, text);
-  };
-
-  /** A click on a row's number opens the row's menu. */
-  private readonly onRowNumber = (e: MouseEvent) => {
-    const th = (e.target as Element).closest?.("tbody th.plinth-sheet__rownum") as
-      | HTMLElement
-      | null
-      | undefined;
-    const row = Number((th?.parentElement as HTMLElement | null)?.dataset.row);
-    if (!th || !Number.isInteger(row) || row < 2) return;
-    this.rowMenu(row, th);
   };
 
   /** Enter or a double-click: a checkbox toggles, any other cell opens. */
@@ -773,23 +720,28 @@ export class SheetEditor {
     return undefined;
   }
 
+  /**
+   * A held row: its tint says it is held (the name on its row number), so only a screen reader
+   * is told, unless the holder went idle and the row can be taken over (a choice, so a notice
+   * with the button).
+   */
   private explainHeld(l: ClientLease, what: string): void {
     const idle = Date.now() - l.at >= LIMITS.liveLeaseIdleS * 1000;
-    this.showNotice(
-      `${l.by} is editing ${what}.`,
-      idle && this.backend.you?.right === "write"
-        ? {
-            label: "Take over",
-            run: () => {
-              this.close(true);
-              const row = l.start + 1;
-              const sel = this.grid?.selected();
-              this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
-              if (this.backend.takeover(l.id)) this.hideNotice();
-            },
-          }
-        : undefined,
-    );
+    const text = `${personName(l.by)} is editing ${what}.`;
+    if (!idle || this.backend.you?.right !== "write") {
+      this.announce(text);
+      return;
+    }
+    this.showNotice(text, {
+      label: "Take over",
+      run: () => {
+        this.close(true);
+        const row = l.start + 1;
+        const sel = this.grid?.selected();
+        this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
+        if (this.backend.takeover(l.id)) this.hideNotice();
+      },
+    });
   }
 
   /** Ask for a cell's row, then open a field in it. */
@@ -1049,7 +1001,7 @@ export class SheetEditor {
       this.dropKept(w);
       return;
     }
-    if (reason === "held") this.showNotice(`${by ?? "Someone"} is editing this row.`);
+    if (reason === "held") this.announce(`${by ? personName(by) : "Someone"} is editing this row.`);
     else if (reason === "frozen")
       this.showNotice("Editing is paused until the changes are reviewed.");
     else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
@@ -1095,13 +1047,29 @@ export class SheetEditor {
       };
       return;
     }
+    // What was typed since the room's last ack (the last moments before a freeze) is quoted, so
+    // the person can type it again. One line: the edit bar already says the sheet changed.
+    const unsent = this.unsent(o);
     this.closeField();
-    this.showNotice(
-      reason === "takeover"
-        ? "Someone else took over this row."
-        : "Editing is paused: the sheet changed. Your cell was closed.",
-    );
+    const takeover = reason === "takeover";
+    if (unsent === null) {
+      this.showNotice(takeover ? "Someone else took over this row." : "Paused: the sheet changed.");
+    } else {
+      const said = `${takeover ? "Taken over." : "Paused."} ${notKept(unsent, a1(o.row, o.col))}`;
+      this.showNotice(said, undefined, unsent);
+    }
     this.hooks.status();
+  }
+
+  /** The open field's text when the room does not hold it (typed after its last ack), or null. */
+  private unsent(o: Open): string | null {
+    const value = o.field.value;
+    const held = this.backend.ackedText ?? o.original;
+    const col = this.header()?.columns[o.col];
+    let kept: string;
+    if (o.row === 1) kept = sheetHeaderLine(held)?.columns[o.col]?.name ?? "";
+    else kept = col ? inputText(rowCells(held)?.[o.col] ?? null, col, this.loc) : "";
+    return value === kept ? null : value;
   }
 
   /** The backend's lines or leases changed (the grid was redrawn). */
@@ -1119,31 +1087,14 @@ export class SheetEditor {
       }
     }
     this.landed();
-    this.staleMenu();
     this.render();
-  }
-
-  /**
-   * A menu names a row or a column by its number, and its items act on that number. When someone
-   * else's change moved what sits there, the menu closes and says so, rather than act on another
-   * row or column than the one it names.
-   */
-  private staleMenu(): void {
-    const m = this.menu;
-    if (!m || m.still()) return;
-    const inside = m.el.contains(this.doc.activeElement);
-    this.closeMenu(false);
-    if (inside) this.grid?.focusSelected();
-    this.showNotice("The sheet changed while the menu was open. Open it again.");
   }
 
   /** A row could not be taken again: its field closes, and the text it held is shown. */
   private dropKept(w: Extract<Want, { kind: "cell" }>): void {
     const text = w.keep ?? "";
     this.closeField();
-    this.showNotice(
-      `${a1(w.row, w.col)} changed while you were away. Your text was not kept: ${text}`,
-    );
+    this.showNotice(`${a1(w.row, w.col)} changed meanwhile. ${notKept(text)}`, undefined, text);
     this.hooks.status();
   }
 
@@ -1162,7 +1113,9 @@ export class SheetEditor {
     this.lastStruct = null;
     this.moving = null;
     if (reason === "held") {
-      this.showNotice(`${by ?? "Someone"} is editing. Rows and columns change once they finish.`);
+      this.showNotice(
+        `${by ? personName(by) : "Someone"} is editing. Rows and columns change once they finish.`,
+      );
     } else if (reason === "frozen") {
       this.showNotice("Editing is paused until the changes are reviewed.");
     } else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
@@ -1409,6 +1362,15 @@ export class SheetEditor {
 
   // ---------- rows and columns ----------
 
+  /** The Row and Column menus go in the bar, beside the filter (no toolbar of their own). */
+  private mountStrip(): void {
+    const g = this.grid;
+    if (!g) return;
+    if (!this.strip) this.strip = this.makeStrip();
+    if (this.strip.parentNode !== g.tools) g.tools.append(this.strip);
+    this.mountPanel();
+  }
+
   /**
    * The column settings, when open, float under their column's header (a sheet across the bottom
    * at phone width), and follow it when the grid scrolls or is rebuilt.
@@ -1417,10 +1379,168 @@ export class SheetEditor {
     const p = this.panel;
     const head = this.panelAt ? this.grid?.cell(1, this.panelAt.col) : null;
     if (!p || !head || p.classList.contains("plinth-sheet__panel--sheet")) return;
-    this.float(p, head, "below");
+    this.float(p, head);
   }
 
   private readonly onPanelMove = () => this.mountPanel();
+
+  private stripButtons = new Map<string, HTMLButtonElement>();
+  private menuOpen: { button: HTMLButtonElement; list: HTMLElement } | null = null;
+
+  /** Two menus, Row and Column, acting on the selected cell. */
+  private makeStrip(): HTMLElement {
+    const d = this.doc;
+    const strip = d.createElement("div");
+    strip.className = "plinth-sheet__strip";
+    strip.setAttribute("role", "toolbar");
+    strip.setAttribute("aria-label", "Rows and columns");
+    strip.append(
+      this.makeMenu("Row", [
+        ["rowAbove", "Insert above", () => this.rowAction("above")],
+        ["rowBelow", "Insert below", () => this.rowAction("below")],
+        ["rowUp", "Move row up", () => this.moveRow(-1)],
+        ["rowDown", "Move row down", () => this.moveRow(1)],
+        ["rowDelete", "Delete row", () => this.rowAction("delete")],
+      ]),
+      this.makeMenu("Column", [
+        ["colLeft", "Insert left", () => this.columnAction("left")],
+        ["colRight", "Insert right", () => this.columnAction("right")],
+        ["colDelete", "Delete column", () => this.columnAction("delete")],
+        ["colFreeze", "Freeze up to this column", () => this.freezeTo(this.selectedCol())],
+        ["colUnfreeze", "Unfreeze columns", () => this.freezeTo(-1)],
+        ["colEdit", "Column settings…", () => this.openPanel()],
+      ]),
+    );
+    return strip;
+  }
+
+  /** A menu button and its list: arrows move, Escape and Tab close, a choice runs and closes. */
+  private makeMenu(label: string, items: [string, string, () => void][]): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement("div");
+    wrap.className = "plinth-sheet__menu";
+    const button = d.createElement("button");
+    button.type = "button";
+    button.className = "plinth-sheet__btn plinth-sheet__menu-btn";
+    button.textContent = label;
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    const list = d.createElement("div");
+    list.className = "plinth-sheet__menu-list";
+    list.id = `plinth-sheet-menu-${label.toLowerCase()}`;
+    list.setAttribute("role", "menu");
+    list.setAttribute("aria-label", label);
+    list.hidden = true;
+    button.setAttribute("aria-controls", list.id);
+    for (const [key, text, run] of items) {
+      const item = d.createElement("button");
+      item.type = "button";
+      item.className = "plinth-sheet__menu-item";
+      item.setAttribute("role", "menuitem");
+      item.tabIndex = -1;
+      item.textContent = text;
+      item.addEventListener("click", () => {
+        this.closeMenu(true);
+        run();
+      });
+      this.stripButtons.set(key, item);
+      list.append(item);
+    }
+    const enabled = () =>
+      [...list.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].filter((b) => !b.disabled);
+    const show = (focus: "first" | "last") => {
+      this.closeMenu(false);
+      this.updateStrip();
+      list.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      this.menuOpen = { button, list };
+      this.doc.addEventListener("pointerdown", this.onOutside, true);
+      const all = enabled();
+      (focus === "first" ? all[0] : all[all.length - 1])?.focus();
+    };
+    button.addEventListener("click", () => {
+      if (this.menuOpen?.list === list) this.closeMenu(true);
+      else show("first");
+    });
+    button.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        show(e.key === "ArrowDown" ? "first" : "last");
+      }
+    });
+    list.addEventListener("keydown", (e) => {
+      const all = enabled();
+      const at = all.indexOf(this.doc.activeElement as HTMLButtonElement);
+      let next: HTMLButtonElement | undefined;
+      if (e.key === "ArrowDown") next = all[(at + 1) % all.length];
+      else if (e.key === "ArrowUp") next = all[(at - 1 + all.length) % all.length];
+      else if (e.key === "Home") next = all[0];
+      else if (e.key === "End") next = all[all.length - 1];
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeMenu(true);
+        return;
+      } else if (e.key === "Tab") {
+        this.closeMenu(false);
+        return;
+      } else return;
+      e.preventDefault();
+      next?.focus();
+    });
+    wrap.append(button, list);
+    return wrap;
+  }
+
+  private readonly onOutside = (e: Event) => {
+    const m = this.menuOpen;
+    if (m && !m.list.parentNode?.contains(e.target as Node)) this.closeMenu(false);
+  };
+
+  private closeMenu(focusButton: boolean): void {
+    const m = this.menuOpen;
+    if (!m) return;
+    this.menuOpen = null;
+    this.doc.removeEventListener("pointerdown", this.onOutside, true);
+    m.list.hidden = true;
+    m.button.setAttribute("aria-expanded", "false");
+    if (focusButton) m.button.focus();
+  }
+
+  private updateStrip(): void {
+    if (!this.strip || !this.grid) return;
+    // Nothing on the strip works while the draft waits for a review.
+    this.strip.hidden = this.backend.conflictVersion !== null;
+    if (this.strip.hidden) this.closeMenu(false);
+    const { row, col } = this.grid.selected();
+    const header = this.header();
+    const cols = header?.columns.length ?? 0;
+    const frozen = header?.freeze?.cols ?? 0;
+    const last = this.backend.lines.length;
+    const set = (k: string, disabled: boolean) => {
+      const b = this.stripButtons.get(k);
+      if (b) b.disabled = disabled;
+    };
+    set("rowAbove", row < 2);
+    set("rowUp", row <= 2 || row > last);
+    set("rowDown", row < 2 || row >= last);
+    set("rowDelete", row < 2);
+    set("colFreeze", col + 1 > MAX_FROZEN || frozen === col + 1);
+    set("colUnfreeze", frozen === 0);
+    set("colDelete", cols <= 1);
+    set("colLeft", cols >= LIMITS.maxSheetColumns);
+    set("colRight", cols >= LIMITS.maxSheetColumns);
+  }
+
+  /** The selected cell's column. */
+  private selectedCol(): number {
+    return this.grid?.selected().col ?? 0;
+  }
+
+  /** The room's state changed (connected, frozen): the strip follows. */
+  sync(): void {
+    this.updateStrip();
+  }
 
   /** Send a struct; `again` aims it at the same rows or column if the room says it is stale. */
   private struct(op: SheetStructOp, again: SentStruct["again"]): boolean {
@@ -1430,7 +1550,9 @@ export class SheetEditor {
     const b = this.backend;
     for (const l of b.leases.values()) {
       if (l.id !== b.mine?.id) {
-        this.showNotice(`${l.by} is editing. Rows and columns change once they finish.`);
+        this.showNotice(
+          `${personName(l.by)} is editing. Rows and columns change once they finish.`,
+        );
         return false;
       }
     }
@@ -1556,33 +1678,18 @@ export class SheetEditor {
     });
   }
 
-  // ---------- the header: widths, freezing, menus ----------
+  // ---------- the header: widths and freezing ----------
 
-  /**
-   * A column header's controls in edit mode: its menu button, and the handle on its edge. Built
-   * from the column the grid shows (the room's lines may not have arrived yet).
-   */
-  private readonly headerTools = (col: number, c: SheetColumn): HTMLElement[] => {
+  /** A column header's control in edit mode: the handle on its edge, to drag its width. */
+  private readonly headerTools = (col: number): HTMLElement[] => {
     const d = this.doc;
-    const menu = d.createElement("button");
-    menu.type = "button";
-    menu.className = "plinth-sheet__tool plinth-sheet__colmenu";
-    // The header's own stop is its sort button (Alt+Down opens this menu from there).
-    menu.tabIndex = -1;
-    menu.setAttribute("aria-label", `Column ${colLetter(col)} menu: ${c.name}`);
-    menu.setAttribute("aria-haspopup", "menu");
-    menu.setAttribute("aria-expanded", "false");
-    menu.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.columnMenu(col, menu, menu);
-    });
     const handle = d.createElement("span");
     handle.className = "plinth-sheet__tool plinth-sheet__resize";
     // Pointer only: Alt+Left and Alt+Right do it by keyboard.
     handle.setAttribute("aria-hidden", "true");
     handle.title = "Drag to change the width";
     handle.addEventListener("pointerdown", (e) => this.dragWidth(e, col, handle));
-    return [menu, handle];
+    return [handle];
   };
 
   /** Drag a header's edge: the width shows as it moves, and is sent when the pointer lets go. */
@@ -1675,7 +1782,10 @@ export class SheetEditor {
         landed?.(at);
         const line = headerWith(now, at, change);
         if (typeof line !== "string") return line;
-        const problem = rowsProblem(lines, sheetHeaderLine(line) as SheetHeader);
+        const next = sheetHeaderLine(line) as SheetHeader;
+        // A rename, width or number format leaves every row as it was: only a type or options
+        // change checks the rows again.
+        const problem = sameRowRules(now, next) ? null : rowsProblem(lines, next);
         if (problem) return { error: `Some cells do not fit: ${problem}` };
         return [line];
       },
@@ -1714,254 +1824,24 @@ export class SheetEditor {
     );
   }
 
-  /** A column's menu, from its header's button or Alt+Down in the header. */
-  private columnMenu(col: number, from: HTMLElement, button: HTMLElement | null): void {
-    const header = this.header();
-    const c = header?.columns[col];
-    if (!header || !c || !this.canWrite()) return;
-    const frozen = header.freeze?.cols ?? 0;
-    const items: MenuItem[] = [{ label: "Column settings…", run: () => this.openPanel(col) }];
-    if (frozen !== col + 1) {
-      items.push({
-        label: "Freeze up to this column",
-        run: () => this.freezeTo(col),
-        ...(col + 1 > MAX_FROZEN ? { off: `At most ${MAX_FROZEN} columns stay in view.` } : {}),
-      });
-    }
-    if (frozen > 0) items.push({ label: "Unfreeze columns", run: () => this.freezeTo(-1) });
-    items.push(
-      { label: "Insert column left", run: () => this.columnAction("left", col) },
-      { label: "Insert column right", run: () => this.columnAction("right", col) },
-      {
-        label: "Delete column",
-        run: () => this.columnAction("delete", col),
-        ...(header.columns.length <= 1 ? { off: "A sheet keeps at least one column." } : {}),
-      },
-    );
-    // A sheet with no rows has no row number to open a row's menu from.
-    if (this.backend.lines.length <= 1) {
-      items.push({
-        label: "Insert row",
-        run: () => {
-          this.grid?.select(1, col);
-          this.rowAction("below");
-        },
-      });
-    }
-    const back = this.grid?.cell(1, col)?.querySelector<HTMLElement>(".plinth-sheet__sort") ?? from;
-    // Column names are unique, so the same name at the same letter is the same column.
-    const still = () => {
-      const h = this.header();
-      return h?.columns[col]?.name === c.name && (h.freeze?.cols ?? 0) === frozen;
-    };
-    this.openMenu({
-      // Under the header, where its settings open too.
-      anchor: this.grid?.cell(1, col) ?? from,
-      label: `Column ${colLetter(col)}, ${c.name}`,
-      title: `Column ${colLetter(col)}`,
-      items,
-      back,
-      button,
-      still,
-    });
-  }
-
-  /** A row's menu, from its number or Alt+Down in one of its cells. */
-  private rowMenu(row: number, from: HTMLElement): void {
-    const g = this.grid;
-    if (!g || row < 2 || !this.canWrite()) return;
-    const last = this.backend.lines.length;
-    const col = g.selected().col;
-    const select = () => g.select(row, col);
-    const items: MenuItem[] = [
-      {
-        label: "Insert row above",
-        run: () => {
-          select();
-          this.rowAction("above");
-        },
-      },
-      {
-        label: "Insert row below",
-        run: () => {
-          select();
-          this.rowAction("below");
-        },
-      },
-      {
-        label: "Move row up",
-        run: () => {
-          select();
-          this.moveRow(-1, row, true);
-        },
-        ...(row <= 2 ? { off: "This is the first row." } : {}),
-      },
-      {
-        label: "Move row down",
-        run: () => {
-          select();
-          this.moveRow(1, row, true);
-        },
-        ...(row >= last ? { off: "This is the last row." } : {}),
-      },
-      {
-        label: "Delete row",
-        run: () => {
-          select();
-          this.rowAction("delete");
-        },
-      },
-    ];
-    const line = this.backend.lines[row - 1];
-    const still = () => this.backend.lines[row - 1] === line;
-    // The row the menu acts on is the one selected and marked while it is open.
-    select();
-    const tr = (g.cell(row, col)?.parentElement ?? null) as HTMLTableRowElement | null;
-    tr?.classList.add("plinth-sheet__row--target");
-    this.openMenu({
-      anchor: (tr?.cells[0] as HTMLElement | undefined) ?? from,
-      side: "right",
-      label: `Row ${row}`,
-      title: `Row ${row}`,
-      items,
-      back: g.cell(row, col) ?? from,
-      button: null,
-      still,
-      done: () => tr?.classList.remove("plinth-sheet__row--target"),
-    });
-  }
-
   /**
-   * A menu of buttons (role="menu"): under what opened it (a column's) or beside it (a row's), or
-   * a full-width sheet titled with the row or column at phone width. The arrows, Home and End move
-   * between its items, Escape closes it and goes back, and Tab or a click elsewhere closes it.
+   * Put the column settings under what they are for, a column's header: above it when there is
+   * no room below, and given a scroll inside when there is none either.
    */
-  private openMenu(m: {
-    anchor: HTMLElement;
-    side?: "below" | "right";
-    label: string;
-    title: string;
-    items: readonly MenuItem[];
-    back: HTMLElement | null;
-    button: HTMLElement | null;
-    still: () => boolean;
-    done?: () => void;
-  }): void {
-    const { anchor, label, items, back, button, still } = m;
-    this.closeMenu(false);
-    const d = this.doc;
-    const menu = d.createElement("div");
-    menu.className = "plinth-sheet__menu";
-    menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", label);
-    // Shown at phone width only, where the sheet covers what it is for; the label names it.
-    const title = d.createElement("div");
-    title.className = "plinth-sheet__sheet-title";
-    title.setAttribute("aria-hidden", "true");
-    title.textContent = m.title;
-    menu.append(title);
-    const buttons: HTMLButtonElement[] = [];
-    items.forEach((it, i) => {
-      const b = d.createElement("button");
-      b.type = "button";
-      b.className = "plinth-sheet__menu-item";
-      b.setAttribute("role", "menuitem");
-      b.tabIndex = -1;
-      b.textContent = it.label;
-      if (it.off) {
-        // Kept in the menu with its reason, as a menu item that cannot be chosen now.
-        b.setAttribute("aria-disabled", "true");
-        const why = d.createElement("span");
-        why.id = `__plinth-menu-why-${i}`;
-        why.hidden = true;
-        why.textContent = it.off;
-        menu.append(why);
-        b.setAttribute("aria-describedby", why.id);
-        b.title = it.off;
-      }
-      b.addEventListener("click", () => {
-        if (it.off) {
-          this.announce(it.off);
-          return;
-        }
-        if (!still()) {
-          this.staleMenu();
-          return;
-        }
-        this.closeMenu(false);
-        it.run();
-      });
-      buttons.push(b);
-      menu.append(b);
-    });
-    menu.addEventListener("keydown", (e) => {
-      const at = buttons.indexOf(d.activeElement as HTMLButtonElement);
-      let to = -1;
-      if (e.key === "ArrowDown") to = (at + 1) % buttons.length;
-      else if (e.key === "ArrowUp") to = (at - 1 + buttons.length) % buttons.length;
-      else if (e.key === "Home") to = 0;
-      else if (e.key === "End") to = buttons.length - 1;
-      else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        this.closeMenu(true);
-        return;
-      } else if (e.key === "Tab") {
-        this.closeMenu(false);
-        return;
-      } else return;
-      e.preventDefault();
-      buttons[to]?.focus();
-    });
-    const sheet = this.narrow();
-    if (sheet) menu.classList.add("plinth-sheet__menu--sheet");
-    d.body.append(menu);
-    if (!sheet) this.float(menu, anchor, m.side ?? "below");
-    button?.setAttribute("aria-expanded", "true");
-    this.menu = { el: menu, button, back, still, done: m.done ?? (() => {}) };
-    d.addEventListener("pointerdown", this.onOutside, true);
-    buttons[0]?.focus();
-  }
-
-  /**
-   * Put a floating menu or the column settings under what they are for: under a column's header,
-   * or under a row and right of its number, so the row and the numbers stay in view. Above it
-   * when there is no room below, and given a scroll inside when there is none either.
-   */
-  private float(el: HTMLElement, anchor: HTMLElement, side: "below" | "right"): void {
+  private float(el: HTMLElement, anchor: HTMLElement): void {
     const d = this.doc;
     const r = anchor.getBoundingClientRect();
     const width = this.win.innerWidth || d.documentElement.clientWidth || 0;
     const height = this.win.innerHeight || d.documentElement.clientHeight || 0;
     const w = el.offsetWidth || 240;
     let top = r.bottom + 2;
-    let left = side === "right" ? r.right + 2 : r.left;
-    left = Math.max(8, Math.min(left, width - w - 8));
+    const left = Math.max(8, Math.min(r.left, width - w - 8));
     el.style.maxHeight = "";
     const h = el.offsetHeight;
     if (height > 0 && top + h > height - 8 && r.top - 2 - h >= 8) top = r.top - 2 - h;
     if (height > 0) el.style.maxHeight = `${Math.max(120, height - 8 - top)}px`;
     el.style.top = `${Math.round(top)}px`;
     el.style.left = `${Math.round(left)}px`;
-  }
-
-  private readonly onOutside = (e: Event) => {
-    if (this.menu && !this.menu.el.contains(e.target as Node)) this.closeMenu(false);
-  };
-
-  private closeMenu(goBack: boolean): void {
-    const m = this.menu;
-    if (!m) return;
-    this.menu = null;
-    this.doc.removeEventListener("pointerdown", this.onOutside, true);
-    m.el.remove();
-    m.done();
-    m.button?.setAttribute("aria-expanded", "false");
-    // A rebuild meanwhile (someone else's width or row) replaced the cell focus went back to.
-    if (goBack) {
-      if (m.back?.isConnected) m.back.focus();
-      else this.grid?.focusSelected();
-    }
   }
 
   // ---------- column settings ----------
@@ -2062,7 +1942,7 @@ export class SheetEditor {
     for (const t of SHEET_COLUMN_TYPES) {
       const o = d.createElement("option");
       o.value = t;
-      o.textContent = TYPE_LABELS[t];
+      o.textContent = t === "url" ? "URL" : `${t[0]?.toUpperCase()}${t.slice(1)}`;
       type.append(o);
     }
     type.value = c.type;
@@ -2138,10 +2018,10 @@ export class SheetEditor {
     };
     cancel.addEventListener("click", back);
     form.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        back();
-      }
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      back();
     });
     const actions = d.createElement("div");
     actions.className = "plinth-sheet__panel-actions";
@@ -2221,7 +2101,7 @@ export class SheetEditor {
           const next = sheetHeaderLine(line) as SheetHeader;
           const rows = renamedRows(now, next, at, renames);
           if (!Array.isArray(rows)) return rows;
-          const problem = rowsProblem([line, ...rows], next);
+          const problem = sameRowRules(h, next) ? null : rowsProblem([line, ...rows], next);
           if (problem) return { error: `Some cells do not fit: ${problem}` };
           return [line, ...rows];
         };
@@ -2389,7 +2269,12 @@ export class SheetEditor {
     if (this.editing) this.showNotice(text);
   }
 
-  private showNotice(text: string, action?: { label: string; run: () => void }): void {
+  private showNotice(
+    text: string,
+    action?: { label: string; run: () => void },
+    /** The whole text when the notice quotes only its start. */
+    full?: string,
+  ): void {
     let el = this.notice;
     if (!el) {
       el = this.doc.createElement("div");
@@ -2400,6 +2285,7 @@ export class SheetEditor {
     }
     const msg = this.doc.createElement("span");
     msg.textContent = text;
+    if (full !== undefined) msg.title = full;
     const parts: Node[] = [msg];
     if (action) {
       const btn = this.doc.createElement("button");
@@ -2424,8 +2310,46 @@ export class SheetEditor {
     this.notice = null;
   }
 
+  /** Tells a screen reader only (a polite status): nothing on screen repeats the rows' tint. */
+  private announce(text: string): void {
+    let el = this.said;
+    if (!el) {
+      el = this.doc.createElement("div");
+      el.className = "plinth-sheet__sr";
+      el.setAttribute("role", "status");
+      this.doc.body.append(el);
+      this.said = el;
+    }
+    // The same words again are announced again.
+    el.textContent = "";
+    el.textContent = text;
+  }
+
+  /** For tests: what a screen reader was last told. */
+  get announced(): string {
+    return this.said?.textContent ?? "";
+  }
+
   /** For tests and the status line. */
   get field(): Field | null {
     return this.open?.field ?? null;
   }
+}
+
+/** Characters of dropped text a notice quotes; the whole text is the notice's title. */
+const NOT_KEPT_CHARS = 40;
+
+/**
+ * The text a closed cell dropped, quoted on one line and cut to NOT_KEPT_CHARS (at a space when
+ * one is near the end).
+ */
+export function notKept(text: string, at?: string): string {
+  const chars = [...text.replace(/\s+/g, " ").trim()];
+  let shown = chars.join("");
+  if (chars.length > NOT_KEPT_CHARS) {
+    const cut = chars.slice(0, NOT_KEPT_CHARS - 1).join("");
+    const space = cut.lastIndexOf(" ");
+    shown = `${(space >= NOT_KEPT_CHARS / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
+  }
+  return `Not kept${at ? ` in ${at}` : ""}: "${shown}"`;
 }

@@ -42,9 +42,8 @@ export const PUBLISH_WARNING_CODES = [
   "ds_deprecated_alias",
   "design_system_unavailable",
   "design_system_outdated",
-  "blocked_feature",
-  "sensitive_file",
   "board_not_seeded",
+  "sensitive_file",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
 
@@ -55,22 +54,22 @@ export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
  */
 export const PROJECT_FILES_RECORD = ".plinth-files.json";
 
-/**
- * One rule of SENSITIVE_PATH_RULES, matched against a lowercased path segment. `name`: the whole
- * segment. `prefix`: the segment starts with `value` (and ends with `suffix` when given), unless it
- * is one of `except`. `extension`: the last segment ends with `value`. `folder`: a segment before
- * the last one.
- */
 export type SensitivePathRule =
   | { kind: "name"; value: string }
   | { kind: "prefix"; value: string; suffix?: string; except?: readonly string[] }
   | { kind: "extension"; value: string }
-  | { kind: "folder"; value: string };
+  | { kind: "folder"; value: string }
+  | { kind: "path"; value: string };
 
 /**
  * File names that usually hold secrets, for the advisory sensitive_file publish warning. Names only:
  * a secret in an ordinary file name is not caught. The project files record is on the list because
  * its artifact ids open unlisted artifacts, not because it holds a key. One rule per line.
+ *
+ * Each rule is matched against the lowercased path split at "/". `name`: a whole segment. `prefix`:
+ * a segment starts with `value` (and ends with `suffix` when given), unless it is one of `except`.
+ * `extension`: the last segment ends with `value`. `folder`: a segment before the last one. `path`:
+ * the path ends with these segments (`.docker/config.json` matches `x/.docker/config.json`).
  */
 export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "name", value: ".env" },
@@ -80,6 +79,8 @@ export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "name", value: ".git-credentials" },
   { kind: "name", value: ".dev.vars" },
   { kind: "name", value: ".htpasswd" },
+  { kind: "name", value: ".envrc" },
+  { kind: "name", value: ".pgpass" },
   { kind: "name", value: "id_rsa" },
   { kind: "name", value: "id_dsa" },
   { kind: "name", value: "id_ecdsa" },
@@ -96,10 +97,15 @@ export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "extension", value: ".keystore" },
   { kind: "extension", value: ".jks" },
   { kind: "extension", value: ".tfstate" },
+  { kind: "extension", value: ".tfvars" },
+  { kind: "extension", value: ".p8" },
+  { kind: "extension", value: ".ppk" },
   { kind: "folder", value: ".git" },
   { kind: "folder", value: ".ssh" },
   { kind: "folder", value: ".aws" },
   { kind: "folder", value: ".gnupg" },
+  { kind: "folder", value: ".kube" },
+  { kind: "path", value: ".docker/config.json" },
 ];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
@@ -112,14 +118,6 @@ export const MENTION_AGENT_NAMES: Record<string, ClientType> = {
   claude: "claude",
   codex: "codex",
 };
-
-/**
- * The client type a mention name stands for, or null. An own-key lookup, so a name such as
- * "constructor" or "toString" is never mistaken for an agent name through Object.prototype.
- */
-export function mentionAgentType(name: string): ClientType | null {
-  return Object.hasOwn(MENTION_AGENT_NAMES, name) ? (MENTION_AGENT_NAMES[name] ?? null) : null;
-}
 
 const KB = 1024;
 const MB = 1024 * KB;
@@ -216,28 +214,6 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
-  // Data sources (docs/spec.md "Live data from the owner's agents"). Fixed rules, not env vars.
-  /** Collection names in a page's plinth-data-sourced tag. */
-  maxDataSourced: 20,
-  /** Data sources on one artifact. */
-  maxDataSources: 10,
-  /** Characters of a source's label and of its connector name. */
-  maxSourceLabelLength: 60,
-  /** Characters of a source's recipe (newlines count). */
-  maxSourceRecipeLength: 1000,
-  /** Characters of a document's source_ref, after it is sanitised. */
-  maxSourceRefLength: 300,
-  /** How far ahead of the server clock an agent-reported fetched_at may be. */
-  sourceFetchedAheadMs: 5 * 60 * 1000,
-  /** How old an agent-reported fetched_at may be. */
-  sourceFetchedMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
-  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
-  /** A display name as stored (users.name, PATCH /api/v1/me). */
-  maxDisplayNameLength: 100,
-  /** Code points of a display name as pages, rooms and agents see it. */
-  maxPageDisplayNameLength: 64,
-  /** The `q` of a people search. */
-  maxPeopleQueryLength: 100,
   /** Bytes of design HTML (design.html) per version of a design artifact. */
   maxDesignBytes: 2 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
@@ -266,6 +242,8 @@ export const LIMITS = {
     /** Errors parseDesignSystem reports, at most. */
     maxErrors: 50,
   },
+  /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
+  maxStatsPeople: 500,
   // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
   /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
   maxSheetBytes: 1 * MB,
@@ -288,6 +266,12 @@ export const LIMITS = {
   /** Cells one edit_sheet call writes. */
   maxSheetOpCells: 10_000,
   /**
+   * Empty rows one edit_sheet set may add between the sheet's last row and the row it writes
+   * (a set at B5000 on a sheet of 10 data rows would add 4,988). Past it the op is refused with
+   * reason "too_far_past_end": append_rows or insert_rows add rows on purpose.
+   */
+  maxSheetSetGapRows: 1_000,
+  /**
    * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
    * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
    * four passes over a sheet that is all formulas.
@@ -303,11 +287,40 @@ export const LIMITS = {
   maxSheetImportBytes: 2 * MB,
   /** Bytes an .xlsx import may decompress in all (its parts' XML). */
   maxSheetImportInflatedBytes: 24 * MB,
+  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
+  /** A display name as stored (users.name, PATCH /api/v1/me). */
+  maxDisplayNameLength: 100,
+  /** Code points of a display name as pages, rooms and agents see it. */
+  maxPageDisplayNameLength: 64,
+  /** The `q` of a people search. */
+  maxPeopleQueryLength: 100,
   /**
    * Bytes of JSON (board.json) a publish or update of a whiteboard may send: its settings and, on
    * a new or empty board, its starting blocks and arrows (packages/shared/src/whiteboard.ts).
    */
   maxBoardBytes: 512 * KB,
+} as const;
+
+/** The windows an owner can pick for one artifact's stats, in UTC days. */
+export const STATS_RANGES = [7, 30, 90, 365] as const;
+
+/**
+ * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, before the cron
+ * folds it into the artifact's all-time count. The minimum keeps the 90-day trends whole.
+ */
+export const VIEW_LOG_DEFAULTS = { retentionDays: 365 } as const;
+export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] } as const;
+
+/**
+ * Invitation emails an instance sends per UTC day (docs/spec.md "Invitation emails"), set by the
+ * operator because they share the email provider's quota with sign-in and viewing codes.
+ * `perDay` (INVITATION_EMAILS_PER_DAY): every owner together; 0 turns invitation emails off.
+ * `perOwnerPerDay` (INVITATION_EMAILS_PER_OWNER_PER_DAY): one owner's sharing changes.
+ */
+export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 20 } as const;
+export const INVITATION_BOUNDS = {
+  perDay: [0, 1_000_000],
+  perOwnerPerDay: [1, 10_000],
 } as const;
 
 export const TTL = {
@@ -319,6 +332,12 @@ export const TTL = {
   viewerTokenMs: 60 * 1000,
   /** Host-only viewer cookie on one artifact's content subdomain. */
   contentCookieS: 12 * 60 * 60,
+  /**
+   * How long the content cookie stays in the browser while VIEW_COUNTS is on, so its anonymous
+   * visitor id outlives the 12-hour pass (docs/spec.md "Artifact stats"). The pass inside still
+   * expires after contentCookieS; past that the cookie only carries the visitor id.
+   */
+  visitorIdS: 30 * 24 * 60 * 60,
   /**
    * An in-chat preview's content cookie (MCP Apps, docs/spec.md "In-chat previews"): one look at
    * one version in an agent's thread. Each render mints a fresh one, so it is kept short.
@@ -350,6 +369,13 @@ export const RATE_LIMITS = {
   loginPerEmailPerHour: 5,
   loginPerIpPerHour: 20,
   codeAttemptsPerEmailPerHour: 10,
+  /** Review-account password sign-ins (REVIEW_LOGIN_*) from one address, right or wrong. */
+  reviewLoginAttemptsPerIpPerHour: 10,
+  /**
+   * Wrong review-account passwords across all addresses before that sign-in locks for the rest of
+   * the hour, so guessing cannot be spread over many IPs.
+   */
+  reviewLoginFailuresPerHour: 20,
   passwordAttemptsPerArtifactPerIpPerHour: 10,
   /** Across all addresses, so guessing cannot be spread over many IPs. */
   passwordAttemptsPerArtifactPerHour: 100,
@@ -365,8 +391,6 @@ export const RATE_LIMITS = {
   uploadMissesPerIpPerHour: 60,
   /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
   peopleReadsPerViewerPerHour: 600,
-  /** Invitation emails one owner's sharing changes may send (docs/spec.md "Invitation emails"). */
-  invitationsPerOwnerPerDay: 100,
   /** Invitation emails one sharing change may send, so one request stays within Worker limits. */
   invitationsPerChange: 40,
   /** Invitation emails one address may receive, from every owner together. */
@@ -419,11 +443,31 @@ export const DESIGN_EXPORT = {
   formats: ["png", "pdf"],
   /** PNG pixel scales: each CSS px becomes this many device pixels per side. */
   scales: [1, 2],
-  /** The largest PNG, in device pixels: width x height x scale^2 (8192 x 4096). */
-  maxPixels: 33_554_432,
+  /**
+   * The largest file one export makes, in bytes (24 MiB). The Worker holds the whole file in its
+   * 128 MB isolate (the browser sends it as base64), so a PDF is read in pieces and refused once
+   * it passes this, and a PNG is checked before it is decoded.
+   */
+  maxBytes: 25_165_824,
+  /**
+   * The largest PNG, in device pixels: width x height x scale^2. A PNG takes at most about 4 bytes
+   * a pixel (RGBA that does not compress, such as noise), so any PNG within it fits in maxBytes,
+   * and the browser's base64 message, its string and the decoded file stay near 60 MB together.
+   * A board of at most 1,000,000 px exports at 2x, every preset at 1x.
+   */
+  maxPixels: 4_000_000,
   /** DESIGN_EXPORTS_PER_HOUR's default and bounds. */
   perHour: 30,
   perHourBounds: [1, 1000],
+  /** DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR's default and bounds: every export on the instance. */
+  perInstancePerHour: 120,
+  perInstancePerHourBounds: [1, 100_000],
+  /**
+   * DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR's default and bounds: exports of one artifact by people
+   * other than its owner and editors.
+   */
+  perArtifactPerHour: 20,
+  perArtifactPerHourBounds: [1, 10_000],
   /**
    * Exports rendering at once across the instance, beside the thumbnails' own two (Browser
    * Rendering limits the account's concurrent browsers).
@@ -480,11 +524,9 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
  *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
- * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
- * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
- * shared data, not a room, and never the microphone.
+ * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  * `hold`: while the viewer is using the page (focus inside its frame), a newer version waits behind
  * an Update button instead of replacing it (docs/spec.md "Live views"). Not shared data either.
  */
@@ -492,12 +534,9 @@ export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
-  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
-  { token: "dictation", declares: true, needs: [], stored: "declared" },
+  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
   { token: "hold", declares: true, needs: [], stored: "declared" },
-  { token: "files", declares: true, needs: [], stored: "declared" },
-  { token: "requests", declares: true, needs: [], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;
@@ -505,11 +544,6 @@ export const CAPABILITY_TOKENS = [
   stored: "always" | "declared";
 }[];
 export type DataCapability = (typeof CAPABILITY_TOKENS)[number]["token"];
-
-/** The meta naming a page's default request target (docs/spec.md "Page requests"). */
-export const REQUESTS_TO_META = "plinth-requests-to";
-/** A request target: `claude`, `codex` or a connection handle, as mentionHandle() normalises labels. */
-export const PAGE_REQUEST_TO_RE = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
 export const DATA_CAPABILITIES: readonly DataCapability[] = CAPABILITY_TOKENS.map((t) => t.token);
 
 /** Query parameter that turns on review mode (comment anchoring bridge) on a content host. */
@@ -521,6 +555,10 @@ export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 /** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
 export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
 export const RENDERER_PROTOCOL_VERSION = 1;
+
+/** The files a sheet's frame builds when the app asks it to (the renderer message `export`). */
+export const SHEET_EXPORT_FORMATS = ["csv", "xlsx"] as const;
+export type SheetExportFormat = (typeof SHEET_EXPORT_FORMATS)[number];
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an

@@ -12,10 +12,13 @@
 //                                                as the doc renderer sends them, with the frame key
 //
 // The frame acts on a message only when it comes from its parent window at the app origin.
-import { RENDERER_MESSAGE_SOURCE, RENDERER_PROTOCOL_VERSION } from "@plinth/shared";
+import {
+  RENDERER_MESSAGE_SOURCE,
+  RENDERER_PROTOCOL_VERSION,
+  SHEET_EXPORT_FORMATS,
+  type SheetExportFormat,
+} from "@plinth/shared";
 import { type EditAppMessage, readEditMessage } from "../common/editSession.ts";
-
-export type SheetExportFormat = "csv" | "xlsx";
 
 export type SheetAppMessage =
   | { type: "print" }
@@ -28,8 +31,8 @@ export function readSheetAppMessage(data: unknown): SheetAppMessage | null {
   const m = data as Record<string, unknown>;
   if (m.source !== RENDERER_MESSAGE_SOURCE || m.v !== RENDERER_PROTOCOL_VERSION) return null;
   if (m.type === "print") return { type: "print" };
-  if (m.type === "export" && (m.format === "csv" || m.format === "xlsx")) {
-    return { type: "export", format: m.format };
+  if (m.type === "export" && SHEET_EXPORT_FORMATS.some((f) => f === m.format)) {
+    return { type: "export", format: m.format as SheetExportFormat };
   }
   return readEditMessage(data);
 }

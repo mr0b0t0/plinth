@@ -47,9 +47,9 @@ import { clearAllDrafts, clearDraft, saveDraft } from "./draft.ts";
 import type { EditorInitial, VersionText } from "./initial.ts";
 import { PreviewFrame } from "./PreviewFrame.tsx";
 import { utf8Bytes } from "./previewProtocol.ts";
-import { SheetImport } from "./SheetImport.tsx";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
 import { sourceProblems } from "./sourceChecks.ts";
+import { useLastValid } from "./useLastValid.ts";
 import "./editor.css";
 
 /** Keep the draft in sessionStorage this long after the last change. */
@@ -69,6 +69,12 @@ export interface EditorWorkspaceProps {
 export function draftModelName(def: ArtifactTypeDef): string {
   const ext = def.sourcePath.slice(def.sourcePath.lastIndexOf(".") + 1);
   return `draft.${ext}`;
+}
+
+/** The type's editor settings. The editor page mounts the workspace only for a type that has them. */
+function editorOf(def: ArtifactTypeDef): NonNullable<ArtifactTypeDef["editor"]> {
+  if (!def.editor) throw new Error(`Type ${def.id} has no source editor`);
+  return def.editor;
 }
 
 /** A size in whole megabytes for messages ("1 MB", "5 MB"). */
@@ -91,9 +97,6 @@ export function previewDocument(
     appOrigin: o.config.app_origin,
     // A deck's preview shows every slide stacked, so the author sees the whole deck.
     ...(def.present ? { view: "overview" as const } : {}),
-    // A renderer that uses the page runtime (a whiteboard) makes no shared-data or room call in
-    // the preview: it shows the draft alone. Other shells keep their bytes.
-    ...(def.renderer.runtime ? { preview: true as const } : {}),
   });
 }
 
@@ -114,7 +117,10 @@ export default function EditorWorkspace({
   const toast = useToast();
   const id = artifact.id;
   const { def } = sourceOf(artifact);
+  const editor = editorOf(def);
   const label = def.sourceLabel;
+  // The pane header starts with a capital, as "HTML" and "Markdown" do ("Design system JSON").
+  const paneLabel = label.charAt(0).toUpperCase() + label.slice(1);
   const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
   const codePaneId = useId();
   const tabHintId = useId();
@@ -140,9 +146,15 @@ export default function EditorWorkspace({
   // A typed format's own problems (a design system's JSON): Save waits until there are none.
   const problems = useMemo(() => sourceProblems(def.id, html), [def, html]);
   const invalid = problems.length > 0;
+  // While the draft has problems (listed above the editor), the preview keeps the last draft that
+  // had none instead of repeating them; it stays blank until one does.
+  const shown = useLastValid(html, !invalid);
   const preview = useMemo(
-    () => previewDocument(def, { id, title: artifact.title, text: html, config }),
-    [def, id, artifact.title, html, config],
+    () =>
+      shown === null
+        ? ""
+        : previewDocument(def, { id, title: artifact.title, text: shown, config }),
+    [def, id, artifact.title, shown, config],
   );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
@@ -279,11 +291,7 @@ export default function EditorWorkspace({
         return;
       }
       if (s.invalid) {
-        toast.toast({
-          title: `Fix the ${label} first`,
-          description: "The problems under the editor say what to change.",
-          tone: "warning",
-        });
+        toast.toast({ title: `Fix the ${label} first`, tone: "warning" });
         return;
       }
       if (s.dirty) void save();
@@ -395,7 +403,6 @@ export default function EditorWorkspace({
               }
             }}
           />
-          {def.id === "sheet" && mode === "edit" && <SheetImport onImport={setHtml} />}
           <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
@@ -424,21 +431,20 @@ export default function EditorWorkspace({
         </div>
       )}
       {invalid && (
-        <div className="pl-editor__notice pl-editor__problems" role="status" aria-live="polite">
+        <div
+          className="pl-editor__notice pl-editor__problems"
+          role="status"
+          aria-live="polite"
+          aria-label={`Fix the ${label} to save`}
+        >
           <InfoIcon aria-hidden="true" />
-          <div>
-            <p>
-              The {label} has {problems.length === 1 ? "a problem" : `${problems.length} problems`}.
-              Fix {problems.length === 1 ? "it" : "them"} to save.
-            </p>
-            <ul>
-              {problems.slice(0, 5).map((p) => (
-                <li key={`${p.path} ${p.message}`}>
-                  <code>{p.path || "(root)"}</code> {p.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ul>
+            {problems.slice(0, 5).map((p) => (
+              <li key={`${p.path} ${p.message}`}>
+                <code>{p.path || "(root)"}</code> {p.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {mode === "edit" && newer !== null && (
@@ -497,7 +503,7 @@ export default function EditorWorkspace({
             onCopyDraft={onCopyDraft}
             onLoadLatest={onLoadLatest}
             onSaveOnTop={() => void save(conflict.current)}
-            language={def.editor.language}
+            language={editor.language}
             sourceLabel={label}
           />
         )}
@@ -509,7 +515,7 @@ export default function EditorWorkspace({
             start={
               <div className="pl-editor-pane">
                 <div className="pl-editor-pane__tools">
-                  <span className="pl-editor-pane__label">{label}</span>
+                  <span className="pl-editor-pane__label">{paneLabel}</span>
                   <span className="pl-editor-pane__hint type-caption text-faint" id={tabHintId}>
                     Tab indents. {TAB_FOCUS_KEYS} makes Tab move focus instead.
                   </span>
@@ -523,8 +529,8 @@ export default function EditorWorkspace({
                       modifiedLabel={`${label} of ${artifact.title}, based on v${base.version}`}
                       onModifiedChange={setHtml}
                       path={`inmemory://plinth/${id}/reapply`}
-                      language={def.editor.language}
-                      wordWrap={def.editor.wordWrap}
+                      language={editor.language}
+                      wordWrap={editor.wordWrap}
                     />
                   ) : (
                     <CodeEditor
@@ -532,8 +538,8 @@ export default function EditorWorkspace({
                       onChange={setHtml}
                       ariaLabel={`${label} of ${artifact.title}. Tab indents; press ${TAB_FOCUS_KEYS} to make Tab move focus.`}
                       path={`inmemory://plinth/${id}/${draftModelName(def)}`}
-                      language={def.editor.language}
-                      wordWrap={def.editor.wordWrap}
+                      language={editor.language}
+                      wordWrap={editor.wordWrap}
                     />
                   )}
                 </div>

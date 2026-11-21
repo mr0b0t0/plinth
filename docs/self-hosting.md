@@ -77,9 +77,11 @@ It ends with the commands that connect Claude Code, Codex and the other agents. 
 that is the Plinth plugin set to your instance
 (`claude plugin install plinth@plinth --config instance_url=https://<app host>`). For Codex, it is
 your instance's server under the name `plinth`, which replaces the plugin's hosted server
-([agents.md](agents.md#claude-code)). A plugin installed from Anthropic's plugin directory or
-OpenAI's works with your instance the same way: set the Claude Code plugin's Plinth instance option,
-or add your server as `plinth` in Codex. ChatGPT connects from OpenAI's servers to the instance its
+([agents.md](agents.md#claude-code)). A plugin installed from OpenAI's directory works with your
+instance the same way: add your server as `plinth` in Codex. The build in Anthropic's plugin
+directory connects to the hosted instance only, so add your instance next to it
+(`claude mcp add --transport http plinth https://<app host>/mcp`), or install the full plugin from
+this repository's marketplace as above. ChatGPT connects from OpenAI's servers to the instance its
 listing names, the hosted one, so add your instance there as a custom connector instead, if it is
 reachable from the internet.
 
@@ -112,7 +114,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ENVIRONMENT` | `production` | `development`, `staging` or `production`. Production refuses unsafe settings (below) |
 | `APP_HOST` | none (required) | Host and optional port of the app: sign-in, dashboard, API, `/mcp` |
 | `CONTENT_HOST` | none (required) | Host for artifact content. Must differ from `APP_HOST`, not be a subdomain of it, and not be its parent. In production it must be a different registrable domain, or a subdomain listed on the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)), unless `CONTENT_ISOLATION=opaque` |
-| `CONTENT_ISOLATION` | `origin` | `origin` or `opaque`. `origin`: each artifact is its own origin with its own storage. `opaque`: every content response adds a CSP `sandbox` without `allow-same-origin`, so artifacts get an opaque origin: no cookies, `localStorage`, IndexedDB or service workers, and no `fetch` of their own files (load data with `<script>` or inline it). Editor preview and comment pins keep working; editing docs and sheets on their page is off (they are edited in the source editor). Required to run production with `APP_HOST` and `CONTENT_HOST` on one registrable domain, e.g. while the content host's Public Suffix List entry is pending; switch back to `origin` once it ships. See [security.md](security.md#opaque-content-isolation) for what it does not protect. `STAGING_CONTENT_FALLBACK` always behaves as `opaque` |
+| `CONTENT_ISOLATION` | `origin` | `origin` or `opaque`. `origin`: each artifact is its own origin with its own storage. `opaque`: every content response adds a CSP `sandbox` without `allow-same-origin`, so artifacts get an opaque origin: no cookies, `localStorage`, IndexedDB or service workers, and no `fetch` of their own files (load data with `<script>` or inline it). Editor preview and comment pins keep working; editing docs and sheets on their page is off (docs are edited in the source editor, and agents change sheets). Required to run production with `APP_HOST` and `CONTENT_HOST` on one registrable domain, e.g. while the content host's Public Suffix List entry is pending; switch back to `origin` once it ships. See [security.md](security.md#opaque-content-isolation) for what it does not protect. `STAGING_CONTENT_FALLBACK` always behaves as `opaque` |
 | `PUBLIC_SCHEME` | `https` | `http` only for local development. Production requires `https` |
 | `EMAIL_PROVIDER` | `console` | `sendgrid`, `resend` or `console`. `console` logs sign-in links and codes; production refuses it unless in single-user mode |
 | `EMAIL_FROM` | `Plinth <noreply@<APP_HOST>>` | Sender address. Must be on a domain verified with your provider |
@@ -134,7 +136,9 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ALLOW_SHARED_DATA` | `true` | Lets pages that declare it keep shared data (polls, sign-up sheets, trackers among invited people) and learn who is viewing; see [security.md](security.md#shared-data-api). Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. Off: no identity claims, pages report shared data as unavailable, and MCP and REST writes are refused while reads still work, so owners can export. Always off under `CONTENT_ISOLATION=opaque`. Whiteboards keep their board in shared data, so while it is off (or under opaque isolation) publishing a whiteboard is refused and `GET /api/v1/config` lists `whiteboard` as unavailable; existing boards then show read-only and empty |
 | `SHOW_SOURCE_LINK` | `true` | Adds "open source", a link to Plinth's GitHub repository, to the banner under every artifact. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. The banner belongs to the app's page around the frame: the artifact's own HTML is never changed. Off keeps the banner and its report link |
 | `THUMBNAILS` | `true` | Takes a screenshot of each version for dashboard cards and link previews (`og:image`). Only works with a Browser Rendering binding, which you add to your own wrangler config: `"browser": { "binding": "BROWSER" }`. Without it, or with any other value than `true`, `1`, `yes` or `on`, cards keep their placeholder and link previews have no image. Browser Rendering is billed by Cloudflare per browser hour; local, tunnel and Docker instances run without it |
-| `VIEW_COUNTS` | `true` | Counts how often each artifact is opened, per UTC day, for the owner's Share dialog and the admin Stats page. Stores one number per artifact per day: no IP addresses, user agents or viewer identities. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted. Counts start when the instance gets this feature (migration `0010_view_counts.sql`); earlier opens are not known. Each counted open costs one D1 row written. Any value other than `true`, `1`, `yes` or `on` turns it off; stored counts stay |
+| `VIEW_COUNTS` | `true` | Records each open of an artifact by someone other than its owner, for the owner's Stats pages and the admin Stats page: when, which version, and who (the account of people signed in, the email of allowlisted viewers who confirmed it by code; everyone else only as an approximate anonymous visitor, from a random id in the viewing cookie, which then lasts 30 days). No IP addresses or user agents. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted, and each browser counts at most once every 12 hours. Each counted open costs one D1 row written (plus its index entries). Any value other than `true`, `1`, `yes` or `on` turns recording off; what was recorded stays and owners still see it |
+| `VIEW_LOG_RETENTION_DAYS` | `365` | How long each open is kept with who made it, from 90 to 3650 days. The hourly cron, at 03 UTC, folds older opens into one count per artifact and deletes them; any other value stops the Worker from starting (and the cron then folds nothing). Instances without a cron keep every open |
+| `OPENAI_APPS_CHALLENGE` | unset | The domain verification token OpenAI's plugin portal shows when you submit this instance's MCP server. It is served as plain text at `/.well-known/openai-apps-challenge`; unset, that path is 404. The token alone, with no spaces, or the Worker refuses to start |
 | `DATA_MAX_DOCS_PER_ARTIFACT` | `1000` | Shared-data documents per artifact |
 | `DATA_MAX_BYTES_PER_ARTIFACT` | `1048576` (1 MiB) | Shared-data bytes per artifact. At least `DATA_MAX_DOC_BYTES` |
 | `DATA_MAX_BYTES_PER_USER` | `16777216` (16 MiB) | Shared-data bytes across all of one owner's artifacts (checked before each write, so concurrent writers may pass it by a request or two). At least `DATA_MAX_BYTES_PER_ARTIFACT`. D1 has a hard database size limit, so keep this modest |
@@ -145,31 +149,23 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` | `50` | Open sockets on one artifact's room, `2` to `1000` |
 | `ROOM_MAX_MESSAGE_BYTES` | `8192` | One message a page sends to its room, `512` to `65536` |
 | `ROOM_MESSAGES_PER_SECOND` | `20` | Messages per connection per second, with bursts of twice that, `1` to `100`. A socket that keeps going over is closed |
-| `ALLOW_LIVE_EDITING` | `true` | Owners and editors with an account edit a doc or a sheet right on its page; their changes are kept as a draft and become versions when published, and a version published meanwhile that is not combined with them is reviewed whole, beside them, in the page ([spec](spec.md#editing)). Empty keeps it on; any other value turns it off, leaving the source editor. Never under `CONTENT_ISOLATION=opaque`. `GET /api/v1/config` reports the mode in effect as `inline_editing` (`room`, `solo` or null) |
+| `ALLOW_LIVE_EDITING` | `true` | Owners and editors with an account edit a doc or a sheet right on its page; their changes are kept as a draft and become versions when published, and a version published meanwhile that is not combined with them is reviewed whole, beside them, in the page ([spec](spec.md#editing)). Empty keeps it on; any other value turns it off, leaving the source editor where the type has one. Never under `CONTENT_ISOLATION=opaque`. `GET /api/v1/config` reports the mode in effect as `inline_editing` (`room`, `solo` or null) |
 | `LIVE_CHECKPOINT_IDLE_S` | `120` | Seconds without page edits before the unsaved edits are saved as a version on their own. `0` saves only when someone saves; otherwise `30` to `3600` |
 | `LIVE_AUTO_CHECKPOINT_MIN_S` | `600` (or the idle time, when longer) | Least seconds between the current version (saved, autosaved, or published by an agent) and an automatic one, at least `LIVE_CHECKPOINT_IDLE_S`. An autosave asked for sooner waits and is tried again then, while someone is still editing the page. Saved versions count toward `MAX_PUBLISHES_PER_HOUR` |
 | `LIVE_DRAFT_FLUSH_S` | `5` | How often, at most, the room writes unsaved page edits to D1, `2` to `60`. A Worker restart can lose up to this much typing, which editors' pages send again |
 | `LIVE_DRAFT_RETENTION_DAYS` | `30` | Unsaved page edits nobody touched for this long are deleted, `1` to `365` |
-| `ALLOW_DICTATION` | `false` | Dictation run by the app: pages that declare `dictation` receive the words an identified viewer speaks, after a click in the page and the viewer's consent, recognized by the browser's own speech service (Chrome sends the audio to Google, Edge to Microsoft, Safari to Apple). Only `true`, `1`, `yes` or `on` turns it on; only with `CONTENT_ISOLATION=origin`. On, the app's `Permissions-Policy` allows the microphone to the app's own origin; artifact frames never get it ([security.md](security.md#dictation-and-text-to-speech)). The privacy notice describes it while it is on; an operator with a notice of their own should do the same |
-| `ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people, who see the artifacts the owner reviews into it on a portal page (`/p/<id>`); filing an artifact under a shared category never shares it ([spec](spec.md#category-sharing-and-personal-categories-decided-2026-11-19)). Only `false`, `0`, `no` or `off` turns it off: category grants then count for nothing, the share and portal endpoints answer `feature_disabled` or 404, and agents are no longer told about shared categories. Passes issued through a share before you turn it off end within 12 hours; `pnpm --filter @plinth/worker admin -- bump-epochs --category-shared --remote` ends them at once. The privacy notice names shared categories while it is on |
+| `REVIEW_LOGIN_EMAIL` | empty | With the secret `REVIEW_LOGIN_PASSWORD_HASH`: one account that may also sign in with a password at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. Off (404) unless both are set. Must not be an `ADMIN_EMAIL` address, and is refused on a single-user instance ([security.md](security.md#review-account-sign-in)) |
 | `ALLOW_LIVE_VIEWS` | `true` | Live views: open artifact pages pick up a new version within seconds, and pages that keep shared data learn of changes without waiting for their 15 s poll, over one WebSocket the app page opens on `APP_HOST` (`/api/v1/view/<id>/watch`). It carries only version numbers and change signals. Needs the `ROOMS` Durable Object binding (the same as live rooms), but neither `ALLOW_ROOMS` nor origin isolation; data signals also need shared data. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off, and pages poll as before. Each open view, version and shared-data write then costs a Durable Object request ([deploy-checklist.md](deploy-checklist.md#live-views)); on the Workers Free plan a busy instance may prefer it off. The same switch, without the binding, has open views keep the reader's state across versions: a doc updates in place, a page that loads the runtime keeps its scroll and place, and a page that declares `hold` waits while the viewer uses it ([spec.md](spec.md#live-views-decided-2026-11-19)); off, every new version reloads the frame |
 | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` | `1000` | Open views of one artifact that get pushed signals, `10` to `10000`, counted apart from `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`: half for the owner and the people it is shared with, half for everyone else. Views over it poll. It also sets how long open views spread their follow-up requests after a signal: 2 ms per socket, at most 10 s (2 s at the default) |
 | `SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000`: one step per expression and per cell a range visits. Past it, the agent gets the cells it did not reach as `#LIMIT!` with an `eval_budget` warning. Lower it on the Workers Free plan (10 ms of CPU per request) if large sheets time out; raise it on Workers Paid for big sheets. It never changes what viewers see: browsers compute sheets themselves |
-| `ALLOW_SLIDES_FOLLOW` | `true` | Following the presenter: an owner or editor can lead a deck, and the identified viewers who have it open follow their slide over the deck's live room (`/__plinth/room/v1/slides`), which carries only slide numbers. In effect only where live rooms are (`ALLOW_ROOMS`, the `ROOMS` binding, `CONTENT_ISOLATION=origin`); every follower is a room socket and counts toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, so a talk to more than about 50 people needs that raised. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off, and decks page alone |
-| `ALLOW_FILES` | `false` | Files people add to a page: pages that declare `files` let the people they are shared with upload raster images, PDFs, video and audio, which everyone who can open the page sees ([spec](spec.md#files-people-add-to-a-page-decided-2026-11-19), [security.md](security.md#files-people-add-to-a-page)). Only `true`, `1`, `yes` or `on` turns it on; only with `CONTENT_ISOLATION=origin`. The bytes go to the `FILES` bucket under each artifact's root, apart from the owners' version quota. The privacy notice and the acceptable use policy describe files while it is on; an operator with documents of their own should do the same, and should expect to moderate what people upload |
-| `FILES_MAX_FILE_BYTES` | `20971520` (20 MiB) | One file, `1048576` (1 MiB) to `104857600` (100 MiB) |
-| `FILES_MAX_PER_ARTIFACT` | `500` | Files on one artifact, counting unfinished uploads, `1` to `10000` |
-| `FILES_MAX_BYTES_PER_ARTIFACT` | `268435456` (256 MiB) | Bytes of files on one artifact. At least `FILES_MAX_FILE_BYTES` |
-| `FILES_MAX_BYTES_PER_UPLOADER` | `67108864` (64 MiB) | Bytes one person may upload to one artifact; the owner is exempt. From `FILES_MAX_FILE_BYTES` to `FILES_MAX_BYTES_PER_ARTIFACT` |
-| `FILES_MAX_BYTES_PER_USER` | `1073741824` (1 GiB) | Bytes of files across one owner's live artifacts, apart from `MAX_STORAGE_BYTES_PER_USER`. At least `FILES_MAX_BYTES_PER_ARTIFACT` |
-| `FILES_UPLOADS_PER_UPLOADER_PER_HOUR` | `60` | Uploads one person may start on one artifact per hour. At least 1 |
-| `FILES_UPLOADS_PER_ARTIFACT_PER_HOUR` | `300` | Uploads everyone together may start on one artifact per hour. At least 1 |
-| `DESIGN_EXPORT` | `true` | Designs download as PNG (one artboard, 1x or 2x) or PDF (every board or one, each page the board's size), rendered by the server: "Download PNG or PDF…" in the artifact menu, and `GET /api/v1/artifacts/:ref/export` ([spec](spec.md#designs-decided-2026-11-19), [security.md](security.md#design-export)). Only works with the Browser Rendering binding that thumbnails use (`"browser": { "binding": "BROWSER" }` in your own wrangler config); without it, or with any other value than `true`, `1`, `yes` or `on` (empty keeps it on), people keep the browser's own Print or save as PDF. Each export runs a browser for a few seconds, billed by Cloudflare per browser hour, and anyone who may view a design may export it |
-| `DESIGN_EXPORTS_PER_HOUR` | `30` | Design exports one person may start per hour (per confirmed email, or signed out per client network, an IPv6 /64 counting as one), `1` to `1000`. A refused request (a bad board or scale) does not count, nor does a busy answer: at most two exports render at once across the instance, beside the thumbnails' two. Lower it to bound Browser Rendering time |
-| `ALLOW_PAGE_REQUESTS` | `false` | Page requests: pages that declare `requests` let the people who may comment on them hand work to the owner's agent, which picks it up from its mention queue ([spec](spec.md#page-requests-decided-2026-11-19), [security.md](security.md#page-requests)). Only `true`, `1`, `yes` or `on` turns it on; only with `CONTENT_ISOLATION=origin`. Turning this on seals the viewer identity claim into identified viewers' content passes even when `ALLOW_SHARED_DATA` and `ALLOW_ROOMS` are off. Each request is stored like a comment under the requester's email; the privacy notice says so while it is on, and an operator with a notice of their own should do the same |
-| `PAGE_REQUESTS_PER_VIEWER_PER_HOUR` | `10` | Requests one person may file on one artifact per hour, `1` to `100` |
-| `PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR` | `60` | Requests everyone together may file on one artifact per hour, `1` to `1000` |
-| `PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT` | `25` | Requests waiting for or claimed by the owner's agent on one artifact, `1` to `500`. One person may have at most 3 open on an artifact |
+| `ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people, who see the artifacts the owner reviews into it on a portal page (`/p/<id>`); filing an artifact under a shared category never shares it ([spec](spec.md#category-sharing-and-personal-categories-decided-2026-11-19)). Only `false`, `0`, `no` or `off` turns it off: category grants then count for nothing, the share and portal endpoints answer `feature_disabled` or 404, and agents are no longer told about shared categories. Passes issued through a share before you turn it off end within 12 hours; `pnpm --filter @plinth/worker admin -- bump-epochs --category-shared --remote` ends them at once. The privacy notice names shared categories while it is on |
+| `INVITATION_EMAILS_PER_DAY` | `1000` | Invitation emails the whole instance sends per UTC day, `0` to `1000000`. One cap shared by every owner: once it is used up, nobody's invitations go out until the next UTC day (sign-in and viewing codes still do; they count separately). They share your email provider's daily quota with those codes, so keep it well under that quota. `0` turns invitation emails off, as do `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE`: the app shows no **Notify people** box, and a request with `notify: true` still applies but emails nobody ([spec](spec.md#invitation-emails-decided-2026-11-19)) |
+| `INVITATION_EMAILS_PER_OWNER_PER_DAY` | `20` | Invitation emails one owner's sharing changes send per UTC day, `1` to `10000`. Keep it a small share of `INVITATION_EMAILS_PER_DAY`, so a few accounts cannot use up the instance cap for everyone |
+| `ALLOW_SLIDES_FOLLOW` | `true` | Following the presenter: an owner or editor can lead a deck, and the identified viewers who have it open follow their slide over the deck's live room (`/__plinth/room/v1/slides`), which carries only slide numbers. In effect only where live rooms are (`ALLOW_ROOMS`, the `ROOMS` binding, `CONTENT_ISOLATION=origin`); every follower is a room socket and counts toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, of which 4 (at most half) are kept for owners and editors presenting, so a talk to more than about 45 people needs that raised. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off, and decks page alone |
+| `DESIGN_EXPORT` | `true` | Designs download as PNG (one artboard, 1x or 2x) or PDF (every board or one, each page the board's size), rendered by the server: "Download .png" and "Download .pdf" in the artifact menu, in place of Print or save as PDF, and `GET /api/v1/artifacts/:ref/export` ([spec](spec.md#designs-decided-2026-11-19), [security.md](security.md#design-export)). Only works with the Browser Rendering binding that thumbnails use (`"browser": { "binding": "BROWSER" }` in your own wrangler config); without it, or with any other value than `true`, `1`, `yes` or `on` (empty keeps it on), people keep the browser's own Print or save as PDF. Each export runs a browser for a few seconds, billed by Cloudflare per browser hour, and anyone who may view a design may export it |
+| `DESIGN_EXPORTS_PER_HOUR` | `30` | Design exports one person may start per hour (per confirmed email, or signed out per client network, an IPv6 /64 counting as one), `1` to `1000`. A refused request (a bad board or scale) does not count, nor does a busy answer: at most two exports render at once across the instance, beside the thumbnails' two |
+| `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` | `20` | Design exports of one design per hour by everyone but its owner and editors, `1` to `10000`, so one public or unlisted link cannot use up the instance's exports; its owner and editors still export. Past it the export answers 429 with `reason: "artifact_limit"` |
+| `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` | `120` | Design exports the whole instance renders per hour, whoever asks, `1` to `100000`: the bound on your Browser Rendering time (each render takes at most 25 seconds, so 120 an hour is at most about 50 browser minutes). Past it every export answers 429 with `reason: "instance_limit"` until the hour ends |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -180,6 +176,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ADMIN_TOKEN` | optional, single-user mode | At least 32 characters if set. Extra bearer token for the owner, for scripts |
 | `SENDGRID_API_KEY` | with `EMAIL_PROVIDER=sendgrid` | API key with Mail Send permission only |
 | `RESEND_API_KEY` | with `EMAIL_PROVIDER=resend` | Sending-access API key |
+| `REVIEW_LOGIN_PASSWORD_HASH` | optional, with `REVIEW_LOGIN_EMAIL` | The review account's password, hashed. Make it with `umask 077; openssl rand -base64 24 > review-password.txt`, then `node apps/worker/scripts/review-login-hash.mjs < review-password.txt \| wrangler secret put REVIEW_LOGIN_PASSWORD_HASH`. Give the reviewers the password file's contents. Delete the secret to turn the sign-in off |
 
 Rotating `TOKEN_SIGNING_KEY` invalidates open viewer links, content cookies and password passes;
 viewers pass the gate again. Rotating `SESSION_SECRET` may invalidate pending sign-in codes and
@@ -293,7 +290,7 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
 
 **CI.** Pipelines publish to your instance with the GitHub Action or the CLI, given its app origin
 (`url: https://<APP_HOST>` on the Action, `PLINTH_URL` for the CLI) and a token made on it,
-ideally one limited to the artifact (its Settings page, **Publish from CI**). Tokens limited to
+ideally one limited to the artifact (**Limit to one artifact** in the New token dialog). Tokens limited to
 one artifact need migration `0012_bound_tokens.sql`, which `deploy` applies; there is no setting
 to turn them on or off. See [ci.md](ci.md).
 
@@ -305,9 +302,10 @@ to turn them on or off. See [ci.md](ci.md).
 - **Abuse and usage.** Emails in `ADMIN_EMAIL` see the report queue at `/admin/reports` and can
   take an artifact down. They also see instance totals and 7, 30 or 90-day trends at
   `/admin/stats` (people, artifacts, publishes, storage, shared data, agent connections, open
-  reports and opens), which never name a page or a person. The hourly cron folds daily open counts
-  older than 90 days into one total per artifact at 03 UTC; instances without a cron (local,
-  tunnel, Docker) keep the daily rows instead, and every figure stays correct.
+  reports and opens), which never name a page or a person. Owners see who opened their own pages
+  at `/stats` and `/a/<slug>/stats`. The hourly cron folds opens older than
+  `VIEW_LOG_RETENTION_DAYS` into one count per artifact at 03 UTC; instances without a cron
+  (local, tunnel, Docker) keep every open instead, and every figure stays correct.
 - **Legal pages.** `/legal/terms`, `/legal/privacy` and `/legal/acceptable-use` are short, final,
   plain-language pages built from the `OPERATOR_*` settings. Set `OPERATOR_NAME` and
   `OPERATOR_EMAIL` (and in the EU your address and registration or VAT number) before letting other
@@ -324,7 +322,7 @@ to turn them on or off. See [ci.md](ci.md).
   removes a person's documents on other people's artifacts too.
 - **Live rooms.** Pages and docs reach their room over a WebSocket on the artifact's own content
   host (`/__plinth/room/`), served by one Durable Object per artifact (`ArtifactRoom`, binding
-  `ROOMS`) that stores nothing; unsaved page edits of a doc live in D1 (`live_drafts`) until
+  `ROOMS`) that stores only a small record of the page saves in progress; unsaved page edits of a doc live in D1 (`live_drafts`) until
   someone saves or discards them. To turn rooms off, set `ALLOW_ROOMS` (and, for on-page doc
   editing, `ALLOW_LIVE_EDITING`) to `"false"` and keep the binding. A config without the binding
   also runs, with rooms off, and `check-config` prints a note. Usage is billed as Durable Objects:
@@ -372,14 +370,22 @@ to turn them on or off. See [ci.md](ci.md).
   `--config $HOME/.plinth/plinth/cloudflare/wrangler.jsonc`.
 - **Invitation emails.** When an owner adds people with **Notify people** ticked (or an agent passes
   `notify: true`), each new person gets one email through `EMAIL_PROVIDER`, from `EMAIL_FROM`:
-  who shared what, their role and the link. There is no setting of its own. One change sends at
-  most 40, each owner at most 100 a day (3 of them to any one address) and each address receives
-  at most 10 a day, so plan your
-  provider's daily quota
-  with sign-in emails and invitations together. With `EMAIL_PROVIDER=console` they go to the Worker
-  log like sign-in codes. Their counters (hashed addresses) sit in `rate_limits` and the hourly
-  cron removes them after two days; on an instance without a cron they are pruned with the other
-  rate-limit rows.
+  who shared what, their role and the link. One change sends at most 40, each owner at most
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20) a day (3 of them to any one address), each address
+  receives at most 10 a day, and the whole instance sends at most `INVITATION_EMAILS_PER_DAY`
+  (1000) a day. That instance cap is shared by all owners: once their invitations together reach
+  it, nobody's go out until the next UTC day. Sign-in and viewing codes have counters of their own,
+  so they still go out, but they use the same provider quota, so set
+  `INVITATION_EMAILS_PER_DAY` well under your provider's daily quota (on a plan of about 100
+  emails a day, for example `30`), or `0` to turn invitation emails off. With
+  `EMAIL_PROVIDER=console` they go to the Worker log like sign-in codes in development, and are
+  off in staging and production (the result says `invitations_off`); they are off in
+  `SINGLE_USER_MODE` too. Each email's footer and `List-Unsubscribe` header link
+  `/invitation-emails`, where the recipient signs in and turns invitations to their address off;
+  those opt-outs (hashed addresses) sit in `invitation_opt_outs` (migration
+  `0021_invitation_opt_outs.sql`) and stay when an account is erased. Their counters (hashed
+  addresses) sit in `rate_limits` and the hourly cron removes them after two days; on an instance
+  without a cron they are pruned with the other rate-limit rows.
 
 ## Docker
 

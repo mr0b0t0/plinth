@@ -21,10 +21,12 @@ import {
   applySheetStruct,
   type ChangeItem,
   colIndex,
+  diffSequence,
   evaluateSheet,
   joinLines,
   LIMITS,
   liveRules,
+  NUMERIC_TEXT,
   parseSheet,
   type Sheet,
   type SheetEvaluation,
@@ -36,9 +38,16 @@ import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.t
 import { appPoster, ReviewSession } from "../common/editSession.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient } from "../common/live.ts";
-import { DraftReview, type ReviewPane } from "../common/review.ts";
+import {
+  bringIntoPane,
+  CHANGED_ATTR,
+  DraftReview,
+  type ItemWords,
+  type ReviewPane,
+} from "../common/review.ts";
 import { LocalSheet, type SheetBackend, SheetEditor } from "./edit.ts";
 import { exportSheet } from "./export.ts";
+import { formatNumber } from "./format.ts";
 import { buildGrid, type Grid } from "./grid.ts";
 import { fromApp, readSheetAppMessage, type SheetAppMessage } from "./protocol.ts";
 
@@ -61,15 +70,81 @@ function gridGoto(grid: Grid): (item: ChangeItem) => boolean {
           ? grid.cell(1, colIndex(col[1] as string))
           : null;
     if (!td) return false;
-    td.scrollIntoView({ block: "center", inline: "center" });
+    bringIntoPane(td);
     return true;
   };
 }
 
-/** The sheet's side of the review: its grid, read-only (no editing is attached to it). */
+/** A cell's change item: "B3 changed", "B3 filled in", "B3 cleared", "B6: calculation changed". */
+const CELL_ITEM = /^([A-Z]{1,3})(\d+)(?:: calculation changed| changed| (filled in)| (cleared))$/;
+
+/**
+ * A cell's change in the sheet's own words: its column's name and row ("Qty, row 3"), with the
+ * values as its cells show them (a number in its column's format, a date as the grid writes it).
+ * Null for any other item, which keeps the shared words.
+ */
+export function sheetItemWords(item: ChangeItem, sheet: Sheet | null): ItemWords | null {
+  const m = CELL_ITEM.exec(item.what);
+  if (!m) return null;
+  const col = sheet?.header.columns[colIndex(m[1] as string)];
+  const name = col?.name.trim() ? col.name : (m[1] as string);
+  const label = `${name}, row ${m[2]}${m[3] ? " filled in" : m[4] ? " cleared" : ""}`;
+  const shown = (v: string | undefined) =>
+    v === undefined || !col || !NUMERIC_TEXT.test(v) ? v : formatNumber(Number(v), col);
+  const out: ItemWords = { label };
+  const before = shown(item.before);
+  const after = shown(item.after);
+  if (before !== undefined) out.before = before;
+  if (after !== undefined) out.after = after;
+  return out;
+}
+
+/**
+ * The cells of `sheet` that differ from `base`, as A1 [row, col] (row 1 is the header): rows are
+ * matched as the change list matches them, then compared cell by cell; a row with no match in the
+ * base has every cell listed.
+ */
+export function changedCells(base: Sheet, sheet: Sheet): [number, number][] {
+  const out: [number, number][] = [];
+  const cols = Math.max(base.header.columns.length, sheet.header.columns.length);
+  for (let c = 0; c < sheet.header.columns.length; c++) {
+    if (JSON.stringify(base.header.columns[c]) !== JSON.stringify(sheet.header.columns[c])) {
+      out.push([1, c]);
+    }
+  }
+  const key = (r: readonly unknown[]) => JSON.stringify(r);
+  const { hunks } = diffSequence(base.rows.map(key), sheet.rows.map(key));
+  for (const h of hunks) {
+    const pairs = Math.min(h.aEnd - h.aStart, h.bEnd - h.bStart);
+    for (let i = h.bStart; i < h.bEnd; i++) {
+      const row = sheet.rows[i] ?? [];
+      const was = i - h.bStart < pairs ? (base.rows[h.aStart + (i - h.bStart)] ?? []) : null;
+      for (let c = 0; c < cols; c++) {
+        const v = row[c] ?? null;
+        if (was === null ? v !== null : v !== (was[c] ?? null)) out.push([i + 2, c]);
+      }
+      // A new row that is empty still shows where it went in.
+      if (was === null && row.every((v) => v === null)) out.push([i + 2, 0]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The sheet's side of the review: its grid, read-only (no editing is attached to it), with the
+ * cells that differ from the base marked.
+ */
 function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): ReviewPane {
+  const parsed = new Map<string, Sheet | null>();
   return {
-    render(el, text) {
+    describe(item, text) {
+      if (!parsed.has(text)) {
+        const p = parseSheet(text);
+        parsed.set(text, p.ok ? p.sheet : null);
+      }
+      return sheetItemWords(item, parsed.get(text) ?? null);
+    },
+    render(el, text, _version, base) {
       const p = parseSheet(text);
       if (!p.ok) {
         const msg = doc.createElement("p");
@@ -78,12 +153,14 @@ function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): Revi
         return null;
       }
       const ev = evaluate(p.sheet);
-      const grid = buildGrid(doc, p.sheet, ev, {
-        title: "",
-        onDownload: () => undefined,
-        exhausted: ev.exhausted,
-      });
+      const grid = buildGrid(doc, p.sheet, ev, { title: "", exhausted: ev.exhausted });
       el.replaceChildren(grid.el);
+      const was = base === null ? null : parseSheet(base);
+      if (was?.ok) {
+        for (const [r, c] of changedCells(was.sheet, p.sheet)) {
+          grid.cell(r, c)?.setAttribute(CHANGED_ATTR, "");
+        }
+      }
       return gridGoto(grid);
     },
   };
@@ -132,7 +209,7 @@ const ERRORS: Record<string, string> = {
  * the page. This notes where it was and returns how to give it back afterwards, or null when the
  * grid did not have it. A control that outlives the rebuild (the column settings, an open
  * cell's field) gets it again, caret and all; the filter's field gives it to the new filter;
- * a cell gives it to the selected cell. Anything else (a download button) leaves it where it fell:
+ * a cell gives it to the selected cell. Anything else leaves it where it fell:
  * never on a cell, where the next key would start editing it.
  */
 function keptFocus(doc: Document, grid: Grid): ((next: Grid) => void) | null {
@@ -204,8 +281,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   let ev: SheetEvaluation = evaluate(sheet);
   let shownText = payload.text;
   const download = (format: "csv" | "xlsx") => exportSheet(win, sheet, ev, title, format);
-  const build = () =>
-    buildGrid(doc, sheet, ev, { title, onDownload: download, exhausted: ev.exhausted });
+  const build = () => buildGrid(doc, sheet, ev, { title, exhausted: ev.exhausted });
   let grid: Grid = build();
   root.replaceChildren(grid.el);
   const mark = () => {
@@ -218,6 +294,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   let editor: SheetEditor | null = null;
   /** Show these lines (the live draft): in place when the shape is the same, rebuilt otherwise. */
+  // Each shown change parses the whole sheet and evaluates every formula again (a cell edit too).
+  // Evaluating only a changed formula's dependents would need a dependency graph kept across
+  // changes, so it is left out; a full pass is bounded by LIMITS.maxSheetFormulaCells and the
+  // browser's step budget.
   const show = (text: string) => {
     if (text === shownText) return;
     const p = parseSheet(text);
@@ -283,6 +363,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         publishable: RULES?.unpublishable(local ? local.text : (c?.text ?? "")) === null,
       };
       post({ type: "live", ...s });
+      editor?.sync();
     };
     const status = () => {
       if (queued) return;

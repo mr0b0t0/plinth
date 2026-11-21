@@ -19,6 +19,11 @@ export interface ArtifactFrameProps {
   src: string;
   /** Accessible name of the frame. */
   title: string;
+  /**
+   * The frame's name, which the page reads as `window.name`: on the viewer stage, the version it
+   * shows (viewFrameName), so the page runtime takes carried state only in the update it is for.
+   */
+  name?: string;
   /** The instance's content isolation (AppConfig.content_isolation). */
   isolation?: ContentIsolation;
   ref?: Ref<HTMLIFrameElement>;
@@ -31,6 +36,7 @@ export interface ArtifactFrameProps {
 export function ArtifactFrame({
   src,
   title,
+  name,
   isolation,
   ref,
   className,
@@ -42,6 +48,7 @@ export function ArtifactFrame({
       ref={ref}
       src={src}
       title={title}
+      name={name}
       onLoad={onLoad}
       inert={inert}
       aria-hidden={inert || undefined}

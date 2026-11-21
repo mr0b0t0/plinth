@@ -119,12 +119,6 @@ export const comments = sqliteTable("comments", {
     .default("open"),
   createdAt: text("created_at").notNull(),
   resolvedAt: text("resolved_at"),
-  /** `page_request`: filed by a page that declares `requests` (0016_page_requests). */
-  kind: text("kind", { enum: ["comment", "page_request"] })
-    .notNull()
-    .default("comment"),
-  /** JSON object a page attached to its request (page_request only). Untrusted. */
-  requestData: text("request_data"),
 });
 
 export const mentionTasks = sqliteTable("mention_tasks", {
@@ -271,14 +265,6 @@ export const artifactDocs = sqliteTable(
     updatedVia: text("updated_via", { enum: dataVia }).notNull(),
     updatedByLabel: text("updated_by_label"),
     updatedAt: text("updated_at").notNull(),
-    // Provenance (migrations/0015_data_sources.sql): set only by an owner's agent write with
-    // `source`, cleared by every other write.
-    sourceId: text("source_id"),
-    sourceLabel: text("source_label"),
-    sourceConnector: text("source_connector"),
-    sourceRef: text("source_ref"),
-    fetchedAt: text("fetched_at"),
-    sourceConnection: text("source_connection"),
   },
   (t) => [primaryKey({ columns: [t.artifactId, t.collection, t.docId] })],
 );
@@ -290,19 +276,30 @@ export const artifactDataUsage = sqliteTable("artifact_data_usage", {
   seq: integer("seq").notNull().default(0),
 });
 
-// Open counts (migrations/0010_view_counts.sql): one number per artifact per UTC day, and the
-// folded total of days older than the daily window. No viewer data of any kind.
-export const artifactViewDays = sqliteTable(
-  "artifact_view_days",
-  {
-    artifactId: text("artifact_id").notNull(),
-    /** UTC day, YYYY-MM-DD. */
-    day: text("day").notNull(),
-    views: integer("views").notNull().default(0),
-  },
-  (t) => [primaryKey({ columns: [t.artifactId, t.day] })],
-);
+// Artifact stats (migrations/0020_artifact_opens.sql): one row per counted open, with who opened
+// it, kept for VIEW_LOG_RETENTION_DAYS; older opens fold into artifact_view_totals (counts only).
+export const artifactOpens = sqliteTable("artifact_opens", {
+  id: integer("id").primaryKey(),
+  artifactId: text("artifact_id").notNull(),
+  /** The version shown; null for opens counted before versions were recorded. */
+  version: integer("version"),
+  /** UTC ISO 8601. */
+  openedAt: text("opened_at").notNull(),
+  viewerKind: text("viewer_kind", {
+    enum: ["user", "email", "anonymous", "unknown"],
+  }).notNull(),
+  /** Signed in (viewer_kind 'user'); cleared when the user is deleted. */
+  userId: text("user_id"),
+  /** Confirmed an allowlisted email by code, without an account (viewer_kind 'email'). */
+  email: text("email"),
+  /** A random per-browser id from the content cookie (viewer_kind 'anonymous'). */
+  visitor: text("visitor"),
+  role: text("role", {
+    enum: ["editor", "commenter", "viewer", "public", "link", "password"],
+  }),
+});
 
+// The all-time count of opens the log no longer keeps (migrations/0010_view_counts.sql).
 export const artifactViewTotals = sqliteTable("artifact_view_totals", {
   artifactId: text("artifact_id").primaryKey(),
   views: integer("views").notNull().default(0),
@@ -362,88 +359,6 @@ export const personalCategories = sqliteTable(
   (t) => [primaryKey({ columns: [t.userId, t.artifactId] })],
 );
 
-// Files people add to a page (migrations/0014_artifact_files.sql). Bytes live in R2 at
-// artifacts/<artifact_id>/files/<id>. artifact_file_usage is kept by triggers on artifact_files;
-// never write its files or bytes columns directly.
-export const artifactFiles = sqliteTable("artifact_files", {
-  id: text("id").primaryKey(),
-  artifactId: text("artifact_id").notNull(),
-  r2Key: text("r2_key").notNull(),
-  name: text("name").notNull(),
-  contentType: text("content_type").notNull(),
-  sizeBytes: integer("size_bytes").notNull(),
-  state: text("state", { enum: ["pending", "ready", "deleting"] }).notNull(),
-  parts: integer("parts").notNull(),
-  partsDone: integer("parts_done").notNull().default(0),
-  partEtags: text("part_etags"),
-  multipartId: text("multipart_id"),
-  createdByEmail: text("created_by_email"),
-  createdByRole: text("created_by_role", { enum: dataRole }),
-  createdVia: text("created_via", { enum: ["page"] }).notNull(),
-  createdAt: text("created_at").notNull(),
-  completedAt: text("completed_at"),
-  expiresAt: integer("expires_at").notNull(),
-  claimedAt: integer("claimed_at"),
-});
-
-export const artifactFileUsage = sqliteTable("artifact_file_usage", {
-  artifactId: text("artifact_id").primaryKey(),
-  files: integer("files").notNull().default(0),
-  bytes: integer("bytes").notNull().default(0),
-  seq: integer("seq").notNull().default(0),
-});
-
-// Data sources and the refresh queue (migrations/0015_data_sources.sql, docs/spec.md "Live data
-// from the owner's agents"). A source counts as confirmed only while confirmedHash = configHash.
-export const dataSources = sqliteTable(
-  "data_sources",
-  {
-    artifactId: text("artifact_id").notNull(),
-    sourceId: text("source_id").notNull(),
-    label: text("label").notNull(),
-    connector: text("connector").notNull(),
-    recipe: text("recipe").notNull(),
-    collection: text("collection").notNull(),
-    everyMinutes: integer("every_minutes"),
-    requestableBy: text("requestable_by", { enum: dataRole }).notNull().default("editor"),
-    targetClientType: text("target_client_type", { enum: ["claude", "codex", "other"] }).notNull(),
-    targetConnection: text("target_connection"),
-    pinLostAt: text("pin_lost_at"),
-    configHash: text("config_hash").notNull(),
-    confirmedHash: text("confirmed_hash"),
-    confirmedAt: text("confirmed_at"),
-    lastFetchedAt: text("last_fetched_at"),
-    lastFinishedAt: text("last_finished_at"),
-    lastOutcome: text("last_outcome", { enum: ["done", "failed"] }),
-    lastError: text("last_error"),
-    createdByConnection: text("created_by_connection"),
-    createdAt: text("created_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.artifactId, t.sourceId] })],
-);
-
-export const dataRefreshTasks = sqliteTable("data_refresh_tasks", {
-  id: text("id").primaryKey(),
-  artifactId: text("artifact_id").notNull(),
-  sourceId: text("source_id").notNull(),
-  configHash: text("config_hash").notNull(),
-  reason: text("reason", { enum: ["request", "schedule"] }).notNull(),
-  requestedByEmail: text("requested_by_email"),
-  requestedByRole: text("requested_by_role", { enum: dataRole }),
-  requestedVia: text("requested_via", { enum: ["page", "app", "agent", "schedule"] }).notNull(),
-  state: text("state", { enum: ["pending", "claimed", "done", "failed", "expired"] })
-    .notNull()
-    .default("pending"),
-  claimedBy: text("claimed_by"),
-  claimedAt: text("claimed_at"),
-  finishedAt: text("finished_at"),
-  resultVersion: integer("result_version"),
-  createdAt: text("created_at").notNull(),
-  expiresAt: text("expires_at").notNull(),
-});
-
-export type DataSourceRow = typeof dataSources.$inferSelect;
 export type CategoryShareRow = typeof categoryShares.$inferSelect;
 export type LiveDraftRow = typeof liveDrafts.$inferSelect;
 export type ArtifactDocRow = typeof artifactDocs.$inferSelect;
@@ -456,3 +371,11 @@ export type ConnectionRow = typeof agentConnections.$inferSelect;
 export type CommentRow = typeof comments.$inferSelect;
 export type MentionTaskRow = typeof mentionTasks.$inferSelect;
 export type GrantRow = typeof accessGrants.$inferSelect;
+
+// Invitation emails (migrations/0021_invitation_opt_outs.sql): mailboxes, by their invitation
+// hash (services/invitations.ts invitationAddressHash, of invitationMailbox), that turned
+// invitation emails off.
+export const invitationOptOuts = sqliteTable("invitation_opt_outs", {
+  addressHash: text("address_hash").primaryKey(),
+  createdAt: text("created_at").notNull(),
+});

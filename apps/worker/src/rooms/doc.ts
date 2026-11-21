@@ -11,6 +11,14 @@
 // never hibernates with an unflushed draft; only an eviction (a deploy or a crash) can lose up to
 // one flush interval, and the sockets close then too.
 //
+// The object's own storage holds one small record, never draft text (DOC_STATE_KEY): the draft's
+// epoch and the checkpoint snapshots still being saved (their hash, rev, base, lock and whether
+// they save a resolution). An idle room is evicted while a slow save runs (its sockets hibernate),
+// and the record lets the next wake still know that save's version as its own and finish onto
+// the same lines, instead of freezing the draft against it. While any snapshot is pending, the
+// D1 row stays even when the draft is back at its base, so the wake reloads that base and those
+// lines rather than taking the save's version as the draft.
+//
 // The room never creates a version. Checkpoints run on the app host (services/live.ts) through the
 // stager, with this draft's base_version and its base's files; when a version is published from
 // outside, a doc's draft is merged onto it when that is clean (merge3) and frozen for review when it
@@ -81,6 +89,8 @@ export interface DocHost {
   sockets(): { ws: WebSocket; s: DocSocket }[];
   /** Store a socket's state (its attachment). */
   save(ws: WebSocket, s: DocSocket): boolean;
+  /** The object's own storage, for the checkpoint record (DOC_STATE_KEY) only. */
+  storage: Pick<DurableObjectStorage, "get" | "put" | "delete">;
   send(ws: WebSocket, frame: LiveDocServerFrame): void;
   /** The artifact is gone: close every socket. */
   gone(): void;
@@ -147,17 +157,31 @@ interface Loaded {
   lastEditAt: string | null;
 }
 
+/** A checkpoint's snapshot, and its lock while it holds it. Stored as is (no text). */
 interface CheckpointLock {
   /** Random per snapshot: only the checkpoint that took the lock can release it. */
   id: string;
   rev: number;
-  text: string;
+  /** sha256 of the text it saves ("" until snapshotted): its version is known by this. */
   hash: string;
   until: number;
-  /** The snapshot was of a frozen draft: the checkpoint is "Publish mine" in the review. */
+  /** The snapshot was of a frozen draft: the checkpoint is "Publish your changes" in the review. */
   resolved: boolean;
-  /** The draft's epoch when snapshotted: its lines still descend from `text` while it holds. */
+  /** The draft's epoch when snapshotted ("" until then): its version finishes onto these lines. */
   epoch: string;
+  /** The draft's base_version when snapshotted. */
+  base: number;
+}
+
+/** The object's storage key for the draft's epoch and the pending checkpoints. */
+export const DOC_STATE_KEY = "live-doc";
+
+/** What DOC_STATE_KEY holds. */
+interface DocState {
+  artifactId: string;
+  /** The draft's epoch (`Loaded.epoch`), so a reload goes on with it. */
+  epoch: string;
+  saving: CheckpointLock[];
 }
 
 /** How two versions' files compare: by hash, or by where they are stored and their size. */
@@ -203,6 +227,20 @@ export class LiveDoc {
   private loaded: Loaded | null = null;
   private loading: Promise<Loaded | null> | null = null;
   private lock: CheckpointLock | null = null;
+  /**
+   * Every checkpoint snapshot still being saved (each the same object as its lock), oldest first,
+   * kept after its lock runs out until its own finish or abort, a discard, or the base moving
+   * past the version it was taken on. Another snapshot never drops one, whether it is ready,
+   * clean or busy: a slow save's own version is still recognized when its notify or finish comes
+   * late, even after a later save took the lock and gave up.
+   */
+  private saving: CheckpointLock[] = [];
+  /**
+   * The artifact and epoch DOC_STATE_KEY was last written with (null while nothing was): a load
+   * goes on with that epoch, since every change of epoch writes it.
+   */
+  private kept: { artifactId: string; epoch: string } | null = null;
+  private restoring: Promise<void> | null = null;
   private needsFlush = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> | null = null;
@@ -214,10 +252,51 @@ export class LiveDoc {
   /** The draft in memory, loading it from D1 (or the current version in R2) on first use. */
   async ensure(artifactId: string): Promise<Loaded | null> {
     if (this.loaded?.artifactId === artifactId) return this.loaded;
-    this.loading ??= this.load(artifactId).finally(() => {
-      this.loading = null;
-    });
+    this.loading ??= this.restore()
+      .then(() => this.load(artifactId))
+      .finally(() => {
+        this.loading = null;
+      });
     return this.loading;
+  }
+
+  /**
+   * Once per instance: the pending checkpoints and the epoch from the object's storage (after an
+   * eviction, the memory is new). A snapshot whose lock has not run out holds it again.
+   */
+  private restore(): Promise<void> {
+    this.restoring ??= (async () => {
+      let st: DocState | undefined;
+      try {
+        st = await this.host.storage.get<DocState>(DOC_STATE_KEY);
+      } catch {
+        console.error("live doc state read failed");
+      }
+      if (!st || this.kept) return;
+      this.kept = { artifactId: st.artifactId, epoch: st.epoch };
+      this.saving = st.saving;
+      const last = st.saving.at(-1);
+      if (!this.lock && last && last.until > Date.now()) this.lock = last;
+    })();
+    return this.restoring;
+  }
+
+  /** Write DOC_STATE_KEY (the epoch and the pending checkpoints) after either changed. */
+  private persist(doc: Loaded | null = this.loaded): void {
+    const at = doc ? { artifactId: doc.artifactId, epoch: doc.epoch } : this.kept;
+    if (!at) return;
+    this.kept = at;
+    const state: DocState = { ...at, saving: this.saving };
+    this.host.storage.put(DOC_STATE_KEY, state).catch(() => {
+      console.error("live doc state write failed");
+    });
+  }
+
+  /** The lines were replaced: a new epoch, which a reload goes on with. */
+  private newEpoch(doc: Loaded): void {
+    doc.epoch = randomString(12);
+    this.pruneSaving(doc);
+    this.persist(doc);
   }
 
   private async load(artifactId: string): Promise<Loaded | null> {
@@ -268,6 +347,17 @@ export class LiveDoc {
       lastEmail: null,
       lastEditAt: null,
     };
+    if (this.kept?.artifactId === artifactId) {
+      // The lines are the ones last flushed under this epoch (every replacement writes a new one).
+      doc.epoch = this.kept.epoch;
+      // A rev never comes back below a pending snapshot's (a draft with no row, never durable at
+      // the owner's limit, reloads at rev 0): a snapshot's rev is matched only by its own lines.
+      const floor = Math.max(0, ...this.saving.map((r) => r.rev));
+      if (doc.rev < floor) {
+        doc.rev = floor + 1;
+        doc.flushedRev = doc.rev;
+      }
+    }
     if (doc.conflictVersion !== null) {
       doc.conflictFiles = await this.filesBetween(doc, doc.baseVersion, doc.conflictVersion);
     }
@@ -283,14 +373,19 @@ export class LiveDoc {
     return obj ? obj.text() : null;
   }
 
-  /** Version n's source in the draft's live form, or null. */
-  private async versionText(doc: Loaded, n: number): Promise<string | null> {
+  /** Version n's source file as stored, or null. */
+  private async versionSource(doc: Loaded, n: number): Promise<string | null> {
     const v = await this.host.env.DB.prepare(
       "SELECT r2_prefix FROM versions WHERE artifact_id = ?1 AND number = ?2",
     )
       .bind(doc.artifactId, n)
       .first<{ r2_prefix: string }>();
-    const text = v ? await this.readVersionText(v.r2_prefix, doc.def) : null;
+    return v ? this.readVersionText(v.r2_prefix, doc.def) : null;
+  }
+
+  /** Version n's source in the draft's live form, or null. */
+  private async versionText(doc: Loaded, n: number): Promise<string | null> {
+    const text = await this.versionSource(doc, n);
     return text === null ? null : doc.rules.toLive(text);
   }
 
@@ -343,7 +438,12 @@ export class LiveDoc {
     this.timer = null;
     this.loaded = null;
     this.lock = null;
+    this.saving = [];
     this.needsFlush = false;
+    this.kept = null;
+    this.host.storage.delete(DOC_STATE_KEY).catch(() => {
+      console.error("live doc state delete failed");
+    });
   }
 
   // ---------- sockets ----------
@@ -591,6 +691,8 @@ export class LiveDoc {
         return this.host.send(ws, { t: "struct_denied", reason: "held", by: o.s.email });
       }
     }
+    // Two parses of the sheet per struct (the op's, then valid()'s check of its canonical result):
+    // kept, since struct frames are rare next to edits and the second proves what is stored.
     const applied = rules.apply(doc.lines, op);
     if ("error" in applied) return this.error(ws, applied.error);
     const next = applied.lines;
@@ -666,8 +768,12 @@ export class LiveDoc {
     const live = this.text(doc);
     // What is stored is the type's source form of the lines (identity for docs and sheets).
     const text = doc.rules.fromLive(live);
-    if (live === doc.baseText && doc.conflictVersion === null) {
-      // Equal to its base: there is no draft.
+    const atBase = live === doc.baseText && doc.conflictVersion === null;
+    // Equal to its base: there is no draft, and a reload takes "no row" as the current version.
+    // Not while a snapshot is still being saved: its version would load as the base and the
+    // finish drop the snapshot as already in it, losing an undo made during the save. The row is
+    // kept (at its base) until the last pending snapshot is done with (settle).
+    if (atBase && !this.saving.length) {
       await DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1 AND rev <= ?2")
         .bind(doc.artifactId, Math.max(rev, 1))
         .run();
@@ -719,7 +825,7 @@ export class LiveDoc {
         }
         if (why.rev === null) {
           // The owner's drafts are at the limit: edits stay live here but are not durable.
-          for (const { ws } of this.host.sockets()) this.error(ws, "draft_limit");
+          if (!atBase) for (const { ws } of this.host.sockets()) this.error(ws, "draft_limit");
           return;
         }
         // A newer rev is already stored: nothing to do.
@@ -759,9 +865,48 @@ export class LiveDoc {
     if (this.loaded === doc && !this.needsFlush) this.loaded = null;
   }
 
+  /** A pending checkpoint that saved `hash`, while the lines are still the ones it snapshotted. */
+  private pendingCheckpoint(doc: Loaded, hash: string): CheckpointLock | null {
+    return this.saving.find((r) => r.hash === hash && r.epoch === doc.epoch) ?? null;
+  }
+
+  /** A checkpoint's snapshot is done with (its finish, its abort, or a finish it lost to). */
+  private dropSaving(rec: CheckpointLock | null): void {
+    if (!rec || !this.saving.includes(rec)) return;
+    this.saving = this.saving.filter((r) => r !== rec);
+    this.persist();
+    this.settle();
+  }
+
+  /**
+   * The last pending snapshot is done with: a draft kept at its base for it (write) has no row
+   * any more. The flush deletes it (a no-op when there was none).
+   */
+  private settle(): void {
+    const doc = this.loaded;
+    if (this.saving.length || !doc || doc.conflictVersion !== null) return;
+    if (this.text(doc) === doc.baseText) this.scheduleFlush();
+  }
+
+  /**
+   * Snapshots that can no longer publish or be recognized: taken on a base the draft has moved
+   * past (the stager refuses their base as stale), or on lines replaced since whose lock ran out.
+   */
+  private pruneSaving(doc: Loaded): void {
+    const now = Date.now();
+    const live = this.saving.filter(
+      (r) => r.base >= doc.baseVersion && (r.epoch === doc.epoch || r.until > now),
+    );
+    if (live.length === this.saving.length) return;
+    this.saving = live;
+    this.persist(doc);
+    this.settle();
+  }
+
   /**
    * Version `n` was published while the draft is loaded (an agent, a restore, REST, another tab),
    * and it is newer than the draft's base and than any version the draft is frozen against.
+   * - A pending checkpoint's own version (its hash): that checkpoint finishes (finish).
    * - No changes: the draft moves to `n`, text and files (`reset`).
    * - A doc (merge "lines"): #49's rule. A clean merge3 that fits and that the type can hold
    *   rebases the draft onto `n` (`rebased`, the merged text on n's files); anything else freezes.
@@ -776,25 +921,26 @@ export class LiveDoc {
     if (n <= doc.baseVersion) return;
     // Already frozen against this version (or a newer one): nothing new to review.
     if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
-    const lock = this.lock;
-    if (
-      lock &&
-      hash !== null &&
-      hash === lock.hash &&
-      (lock.until > Date.now() || lock.epoch === doc.epoch)
-    ) {
-      // This is the pending checkpoint's own version (its finish RPC may not arrive). A save that
-      // outlived its lock is still finished when the lines were not replaced since its snapshot.
-      this.finish(doc, n, doc.rules.fromLive(lock.text), lock, lock.resolved);
-      await this.flushNow();
-      return;
-    }
-    const theirs = await this.versionText(doc, n);
+    const source = await this.versionSource(doc, n);
+    // Its hash, as a pending checkpoint's snapshot holds it (the notify's, or from its source when
+    // it came without one: the alarm's catch-up, a load).
+    const theirHash =
+      source !== null && this.saving.length ? (hash ?? (await sha256Hex(source))) : null;
     const stale = () =>
       this.loaded !== doc ||
       n <= doc.baseVersion ||
       (doc.conflictVersion !== null && n <= doc.conflictVersion);
-    if (theirs === null || stale()) return;
+    if (source === null || stale()) return;
+    const own = theirHash === null ? null : this.pendingCheckpoint(doc, theirHash);
+    if (own) {
+      // A pending checkpoint's own version (its finish RPC may not arrive), even when its lock
+      // ran out while the stager wrote it, or the room was evicted meanwhile.
+      this.finish(doc, n, source, own, own.rev, own.resolved);
+      await this.refreeze(doc, n);
+      await this.flushNow();
+      return;
+    }
+    const theirs = doc.rules.toLive(source);
     const ours = this.text(doc);
     if (ours === doc.baseText && doc.conflictVersion === null) {
       this.replace(doc, n, theirs, null, "rebased");
@@ -811,8 +957,8 @@ export class LiveDoc {
         doc.baseVersion = n;
         doc.conflictVersion = null;
         doc.conflictFiles = null;
-        doc.epoch = randomString(12);
         doc.rev += 1;
+        this.newEpoch(doc);
         this.revokeLeases("rebased");
         this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
         this.broadcastText(doc);
@@ -838,8 +984,8 @@ export class LiveDoc {
         doc.baseVersion = n;
         doc.conflictVersion = null;
         doc.conflictFiles = null;
-        doc.epoch = randomString(12);
         doc.rev += 1;
+        this.newEpoch(doc);
         this.revokeLeases("rebased");
         this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
         this.broadcastText(doc);
@@ -872,8 +1018,8 @@ export class LiveDoc {
     doc.baseVersion = n;
     doc.conflictVersion = null;
     doc.conflictFiles = null;
-    doc.epoch = randomString(12);
     doc.rev += 1;
+    this.newEpoch(doc);
     this.revokeLeases(leases);
     this.broadcast({
       t: "reset",
@@ -892,6 +1038,20 @@ export class LiveDoc {
     doc.conflictFiles = files;
     this.revokeLeases("closed");
     this.broadcast({ t: "conflict", version: n, ...(files ? { files } : {}) });
+  }
+
+  /**
+   * A checkpoint's version `n` became the base of a draft still frozen against a newer version:
+   * the review now runs from n, so the conflict names the files that version changed since n. A
+   * version that froze the draft (or a save that moved its base) during the read set its own.
+   */
+  private async refreeze(doc: Loaded, n: number): Promise<void> {
+    const frozen = doc.conflictVersion;
+    if (frozen === null || doc.baseVersion !== n) return;
+    const files = await this.filesBetween(doc, n, frozen);
+    if (this.loaded === doc && doc.conflictVersion === frozen && doc.baseVersion === n) {
+      this.freeze(doc, frozen, files);
+    }
   }
 
   // ---------- checkpoints (Worker RPC from services/live.ts) ----------
@@ -921,16 +1081,16 @@ export class LiveDoc {
       };
     }
     // The lock is taken before the flush awaits D1, so a second snapshot (or a discard) arriving
-    // meanwhile is busy instead of saving the same base. Its text and hash are filled in once
-    // flushed (an empty hash never matches a version notify).
+    // meanwhile is busy instead of saving the same base. Its hash is filled in once flushed (an
+    // empty hash never matches a version notify).
     const lock: CheckpointLock = {
       id: `k_${randomString(12)}`,
       rev: doc.rev,
-      text: "",
       hash: "",
       until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
       resolved: false,
-      epoch: doc.epoch,
+      epoch: "",
+      base: doc.baseVersion,
     };
     this.lock = lock;
     try {
@@ -954,6 +1114,7 @@ export class LiveDoc {
         : { state: "gone", ...empty, unchanged: true };
     }
     const live = this.text(doc);
+    // What a version stores is the type's source form of the lines (identity for docs and sheets).
     const text = doc.rules.fromLive(live);
     const epoch = doc.epoch;
     const unchanged = live === doc.baseText;
@@ -963,10 +1124,12 @@ export class LiveDoc {
       if (this.lock === lock) this.lock = null;
     } else if (this.lock === lock) {
       lock.rev = doc.rev;
-      lock.text = live;
       lock.hash = hash;
       lock.resolved = state === "conflict";
       lock.epoch = epoch;
+      lock.base = doc.baseVersion;
+      this.saving = [...this.saving, lock].slice(-LIVE_DOC.maxPendingCheckpoints);
+      this.persist(doc);
     }
     return {
       state,
@@ -984,11 +1147,12 @@ export class LiveDoc {
 
   /**
    * Version `n` holds the checkpoint: it becomes the draft's base; edits made since are kept.
-   * `resolved` (or a snapshot of a frozen draft): the checkpoint was "Publish mine", so the draft
-   * is the saved text now and every review closes (`reset` with why "published").
+   * `resolved` (or a snapshot of a frozen draft): the checkpoint was "Publish your changes", so
+   * the draft is the saved text now and every review closes (`reset` with why "published").
    * When the checkpoint no longer holds its lock (it ran out) and the lines were replaced since
    * its snapshot (`epoch`: a discard, a reset), the saved text is not their ancestor, so `n` is
-   * handled as any version published meanwhile instead of becoming the base under them.
+   * handled as any version published meanwhile instead of becoming the base under them. `rev` is
+   * the snapshot's, so edits made since are known even when the lock is gone.
    */
   async finishCheckpoint(
     artifactId: string,
@@ -996,25 +1160,26 @@ export class LiveDoc {
     text: string,
     lockId: string,
     epoch?: string,
+    rev?: number,
     resolved = false,
   ): Promise<{ rev: number; dirty: boolean }> {
     const doc = await this.ensure(artifactId);
     if (!doc) return { rev: 0, dirty: false };
-    const mine = this.lock?.id === lockId ? this.lock : null;
+    const held = this.lock?.id === lockId ? this.lock : null;
+    const rec = held ?? this.saving.find((r) => r.id === lockId) ?? null;
+    // A lock that ran out is still this checkpoint's while the lines are the ones it snapshotted.
+    const mine = rec && (rec.until > Date.now() || rec.epoch === doc.epoch) ? rec : null;
     if (n <= doc.baseVersion) {
-      if (mine) this.lock = null;
+      if (held) this.lock = null;
+      this.dropSaving(rec);
     } else if (mine || epoch === undefined || epoch === doc.epoch) {
-      this.finish(doc, n, text, mine, resolved || mine?.resolved === true);
-      const frozen = doc.conflictVersion;
-      if (frozen !== null) {
-        // Frozen against a version newer than this save: the review now runs from n. A version
-        // that froze the draft (or a save that moved its base) during the read set its own files.
-        const files = await this.filesBetween(doc, n, frozen);
-        if (this.loaded === doc && doc.conflictVersion === frozen && doc.baseVersion === n) {
-          this.freeze(doc, frozen, files);
-        }
-      }
+      this.finish(doc, n, text, mine, rev ?? mine?.rev, resolved || mine?.resolved === true);
+      await this.refreeze(doc, n);
+    } else if (!rec && (await this.unrecordedOwn(doc, n, text, rev))) {
+      this.finish(doc, n, text, null, rev, resolved);
+      await this.refreeze(doc, n);
     } else {
+      this.dropSaving(rec);
       await this.outside(doc, n, null);
     }
     await this.flushNow();
@@ -1023,37 +1188,102 @@ export class LiveDoc {
     return out;
   }
 
+  /**
+   * Defence in depth for a finish whose snapshot the room has no record of, on lines of another
+   * epoch: the room never stored anything (its first load since the record existed, or the record
+   * was lost), so the new epoch is a reload's, not a discard's or a reset's (those write theirs).
+   * It is still this checkpoint's when version `n` holds exactly the text it saved and the draft
+   * is at or past the snapshot's rev: the draft goes on from `n` (a freeze against `n` ends as
+   * `rebased`, with the lines and the edits since kept).
+   *
+   * A deploy window, at most once per room: `kept` is null only until the room first stores its
+   * record (a snapshot, a new epoch), and code with the record always stores one before a save,
+   * so only a save started under code without it can arrive here. It loses nothing: a finish it
+   * refuses goes to `outside`, which keeps the draft and freezes it for review.
+   */
+  private async unrecordedOwn(
+    doc: Loaded,
+    n: number,
+    text: string,
+    rev: number | undefined,
+  ): Promise<boolean> {
+    if (this.kept || rev === undefined || rev > doc.rev) return false;
+    const saved = await this.versionSource(doc, n);
+    return (
+      saved === text && !this.kept && this.loaded === doc && n > doc.baseVersion && rev <= doc.rev
+    );
+  }
+
+  /**
+   * The checkpoint's version `n` (holding `source`, snapshotted at rev `since`) becomes the
+   * draft's base. The lines become its text only when nothing was edited since the snapshot (a
+   * review's "Publish your changes", or a draft frozen meanwhile and not edited): edits made after
+   * the snapshot are never replaced by it. A draft frozen against this version (its notify came
+   * unrecognized) or an older one goes on from it with those edits; one frozen against a newer
+   * version stays frozen for that version's review (refreeze names its files from n).
+   */
   private finish(
     doc: Loaded,
     n: number,
     source: string,
     lock: CheckpointLock | null,
+    since: number | undefined,
     resolved: boolean,
   ): void {
     const text = doc.rules.toLive(source);
     // Another checkpoint's lock (this one's ran out and a newer save took it) stays.
     if (!this.lock || this.lock === lock || this.lock.until <= Date.now()) this.lock = null;
-    if (resolved && doc.conflictVersion !== null) {
-      // "Publish mine": the saved text is the draft now, and every open review closes.
-      this.replace(doc, n, text, "published", "closed");
-    } else {
-      doc.baseVersion = n;
-      doc.baseText = text;
-      // A draft frozen against this very version (its notify came without the lock) is not
-      // waiting for anything: the version is its base now.
-      if (doc.conflictVersion !== null && doc.conflictVersion <= n) {
-        doc.conflictVersion = null;
-        doc.conflictFiles = null;
-      }
-      this.needsFlush = true;
+    this.dropSaving(lock);
+    // Without the snapshot's rev, lines other than the saved text count as edits made since.
+    const later = since === undefined ? this.text(doc) !== text : doc.rev !== since;
+    const frozen = doc.conflictVersion;
+    const newer = frozen !== null && frozen > n ? frozen : null;
+    doc.baseVersion = n;
+    doc.baseText = text;
+    // The other saves of the old base can no longer publish.
+    this.pruneSaving(doc);
+    if (!later && (resolved || frozen !== null)) {
+      // "Publish your changes" (or a draft frozen since, unedited): the saved text is the draft
+      // now, and every open review closes.
+      doc.lines = splitLines(text);
+      doc.conflictVersion = newer;
+      doc.conflictFiles = null;
+      doc.rev += 1;
+      this.newEpoch(doc);
+      this.revokeLeases("closed");
+      this.broadcast({
+        t: "reset",
+        version: n,
+        gen: doc.gen,
+        rev: doc.rev,
+        ...(resolved && frozen !== null ? { why: "published" as const } : {}),
+      });
+      this.broadcastText(doc);
+      if (newer !== null) this.broadcast({ t: "conflict", version: newer });
+    } else if (frozen !== null && newer === null) {
+      // Frozen by this save's own version: editing resumes on it, the edits since kept as they are.
+      doc.conflictVersion = null;
+      doc.conflictFiles = null;
+      doc.rev += 1;
+      this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
+      this.broadcastText(doc);
     }
+    this.needsFlush = true;
     this.broadcast({ t: "saved", version: n, rev: doc.rev });
     this.status(doc);
   }
 
-  /** The checkpoint holding `lockId` gave up; another checkpoint's lock is left alone. */
+  /**
+   * The checkpoint holding `lockId` gave up; another checkpoint's lock is left alone, and so is
+   * every other snapshot still being saved (a slower save's own version is still recognized).
+   */
   async abortCheckpoint(lockId: string): Promise<void> {
+    await this.restore();
     if (this.lock?.id === lockId) this.lock = null;
+    const rec = this.saving.find((r) => r.id === lockId) ?? null;
+    this.dropSaving(rec);
+    // The last one gone: a draft kept at its base for it loses its row now (settle).
+    if (rec && !this.saving.length && this.needsFlush) await this.flushNow();
     if (this.loaded) await this.releaseIfIdle(this.loaded);
   }
 
@@ -1073,11 +1303,12 @@ export class LiveDoc {
    * Drop the unpublished edits: the draft goes back to the current version, text and files. It
    * runs under the checkpoint lock, so it never interleaves with a save or the review's other
    * choice: `busy` while another holder has the lock; otherwise it takes the lock before its first
-   * read (a snapshot arriving meanwhile is busy) and releases it when done.
-   * `conflictVersion` ("Discard mine" in the review) limits it to a draft frozen against exactly
-   * that version, which must still be the current one: "resolved" when the draft is no longer
-   * frozen, "conflict" when a newer version froze it. `rev`, the frozen version, the draft's base
-   * and its epoch are checked again after the reads, so a version notify or a late save that
+   * read (a snapshot arriving meanwhile is busy) and releases it when done. Every snapshot still
+   * being saved is dropped with the edits.
+   * `conflictVersion` ("Discard your changes" in the review) limits it to a draft frozen against
+   * exactly that version, which must still be the current one: "resolved" when the draft is no
+   * longer frozen, "conflict" when a newer version froze it. `rev`, the frozen version, the draft's
+   * base and its epoch are checked again after the reads, so a version notify or a late save that
    * changed the draft meanwhile stops it.
    */
   async discard(
@@ -1106,11 +1337,11 @@ export class LiveDoc {
     const lock: CheckpointLock = {
       id: `k_${randomString(12)}`,
       rev: doc.rev,
-      text: "",
       hash: "",
       until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
       resolved: false,
-      epoch: doc.epoch,
+      epoch: "",
+      base: doc.baseVersion,
     };
     this.lock = lock;
     const epoch = doc.epoch;
@@ -1134,6 +1365,7 @@ export class LiveDoc {
         // A newer version is current; its notify has not frozen the draft against it yet.
         return { ok: false, rev: doc.rev, reason: "conflict", version: cur.current_version };
       }
+      this.saving = [];
       this.replace(doc, cur.current_version, text, "discarded", "closed");
       doc.lastBy = null;
       await this.flushNow();

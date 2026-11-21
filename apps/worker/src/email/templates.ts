@@ -1,6 +1,7 @@
 // Email bodies. Plain text first (it is what the console provider prints and tests read); the HTML
 // version escapes every interpolated value.
 import { LIMITS, PRODUCT_NAME, REFUSED_CHARS, type Role } from "@plinth/shared";
+import { parse as parseHost } from "tldts";
 import type { EmailMessage } from "./index.ts";
 
 export function escapeHtml(s: string): string {
@@ -10,6 +11,20 @@ export function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * Text someone else wrote (an artifact's title, a sharer's stored name), made safe to quote inside
+ * one line of a plain-text email: every run of whitespace and control characters (line breaks,
+ * tabs, NEL, the line and paragraph separators) becomes one space, and format characters (bidi
+ * overrides, zero-width) are dropped. The text then cannot end the line that labels it as the sharer's and
+ * start lines of its own that read as Plinth's.
+ */
+export function oneLine(s: string): string {
+  return s
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\s\p{Cc}]+/gu, " ")
+    .trim();
 }
 
 export function loginEmail(opts: {
@@ -45,11 +60,37 @@ If you did not ask to sign in, you can ignore this email.</p>
 
 const REFUSED_ALL = new RegExp(REFUSED_CHARS.source, "gu");
 
+/** One host label: letters (any script, with their marks) and digits, hyphens inside. */
+const LABEL = "[\\p{L}\\p{M}\\p{N}](?:[\\p{L}\\p{M}\\p{N}_-]*[\\p{L}\\p{M}\\p{N}])?";
+/** The dots a host name may be written with (IDNA reads the ideographic and full-width ones as "."). */
+const DOT = "[.\u3002\uFF0E\uFF61]";
+/** Two or more labels joined by dots: anything that might be a host name. */
+const HOST_LIKE = new RegExp(`${LABEL}(?:${DOT}${LABEL})+`, "gu");
+const DOTS = new RegExp(DOT, "gu");
+
 /**
- * Untrusted text (a title, a share's name, a display name) as an email may show it: NFC, control
+ * Every host name in `s` whose suffix is a real public suffix (ICANN or the Public Suffix List's
+ * private part, as the pinned tldts knows it) with each dot written `[.]`: `office365-reset[.]co`,
+ * `bob@evil[.]com`, `пример[.]рф`. Mail clients linkify bare host names, and these emails go out
+ * under the instance's signed sender, so text someone else wrote must not become a link. Words that
+ * only look dotted (`Node.js`, `v1.2.3`, `e.g.`, `Q3.plan`) are left alone, since their last label
+ * is not a suffix anyone can register under.
+ */
+export function defangHosts(s: string): string {
+  return s.replace(HOST_LIKE, (token) => {
+    const host = token.replace(DOTS, ".").toLowerCase();
+    const r = parseHost(host, { allowPrivateDomains: true });
+    if (r.isIp || r.domain === null || !(r.isIcann || r.isPrivate)) return token;
+    return token.replace(DOTS, "[.]");
+  });
+}
+
+/**
+ * Untrusted text (a title, a share's title, a display name) as an email may show it: NFC, control
  * and format (invisible, bidi) characters dropped, whitespace runs to one space, cut to `max` code
  * points with an ellipsis, and anything that reads as a web address defanged (`https[:]//`,
- * `www[.]`), so that the artifact link stays the only link the message offers.
+ * `www[.]`, and host names under a public suffix, defangHosts), so that the links Plinth adds stay
+ * the only links the message offers.
  */
 export function emailText(raw: string, max: number): string {
   const s = raw.normalize("NFC").replace(/\s+/gu, " ").replace(REFUSED_ALL, "").trim();
@@ -61,7 +102,9 @@ export function emailText(raw: string, max: number): string {
           .join("")
           .trimEnd()}…`
       : s;
-  return cut.replace(/([a-z][a-z0-9+.-]*):\/\//giu, "$1[:]//").replace(/\bwww\./giu, "www[.]");
+  return defangHosts(cut)
+    .replace(/([a-z][a-z0-9+.-]*):\/\//giu, "$1[:]//")
+    .replace(/\bwww\./giu, "www[.]");
 }
 
 const ROLE_SENTENCE: Record<"artifact" | "category", Record<Role, string>> = {
@@ -71,20 +114,21 @@ const ROLE_SENTENCE: Record<"artifact" | "category", Record<Role, string>> = {
     editor: "You can view it, comment on it and publish new versions of it.",
   },
   category: {
-    viewer: "It is a collection of artifacts. You can view the ones it shares with you.",
-    commenter:
-      "It is a collection of artifacts. You can view the ones it shares with you and comment on them.",
+    viewer: "You can view the artifacts in it.",
+    commenter: "You can view the artifacts in it and comment on them.",
     // Category grants are viewer or commenter only (never editor); kept so the table is total.
-    editor: "It is a collection of artifacts. You can view the ones it shares with you.",
+    editor: "You can view the artifacts in it.",
   },
 };
 
 /**
  * '<owner> shared "<title>" with you': an owner added this person to an artifact (`artifact`) or
  * to a shared category (`category`, where the title is the name the people see and the link is the
- * portal). It carries the one link and the role, and never a code, a token or anything else to
- * copy. The owner's name and the title are untrusted: emailText cleans them for both bodies, and
- * the HTML escapes every value as well.
+ * portal). It carries the link and the role, and never a code, a token or anything else to copy;
+ * its footer links the app's page where the recipient, once signed in as this address, turns these
+ * emails off (`optOutLink`, also the List-Unsubscribe header, with no token or address in it). The
+ * owner's name and the title are untrusted: emailText cleans them for the subject and both bodies,
+ * and the HTML escapes every value as well.
  */
 export function invitationEmail(opts: {
   to: string;
@@ -95,6 +139,8 @@ export function invitationEmail(opts: {
   title: string;
   role: Role;
   link: string;
+  /** The app's /invitation-emails page (APP_ROUTES.invitationEmails), on the app host. */
+  optOutLink: string;
 }): EmailMessage {
   const name = opts.ownerName ? emailText(opts.ownerName, LIMITS.maxDisplayNameLength) : "";
   const title = emailText(opts.title, LIMITS.maxTitleLength) || "Untitled";
@@ -104,8 +150,7 @@ export function invitationEmail(opts: {
   // in an inbox list either.
   const subject = `${who} shared "${subjectTitle}" with you`;
   const role = ROLE_SENTENCE[opts.kind][opts.role];
-  const confirm = `If ${PRODUCT_NAME} asks who you are when you open it, confirm this email address with the code it sends you then.`;
-  const authored = `The title${name ? " and the name" : ""} above were written by the person who shared it, not by ${PRODUCT_NAME}.`;
+  const authored = `${name ? "The title and the name above were" : "The title above was"} written by the person who shared it, not by ${PRODUCT_NAME}.`;
   const why = `You got this email because ${opts.ownerEmail} added ${opts.to} on ${PRODUCT_NAME}. If you did not expect it, you can ignore it.`;
   const text = [
     `${who} shared "${title}" with you on ${PRODUCT_NAME}.`,
@@ -114,18 +159,21 @@ export function invitationEmail(opts: {
     "Open it:",
     opts.link,
     "",
-    confirm,
-    "",
     authored,
     why,
+    `Stop these emails: ${opts.optOutLink}`,
   ].join("\n");
-  const html = `<!doctype html><html><body style="font-family:system-ui,sans-serif;line-height:1.5">
+  // The footer is dimmed with opacity, not a fixed grey, so it stays legible in dark mail clients.
+  const html = `<!doctype html><html lang="en"><body style="font-family:system-ui,sans-serif;line-height:1.5">
 <p>${escapeHtml(who)} shared “<strong>${escapeHtml(title)}</strong>” with you on ${escapeHtml(PRODUCT_NAME)}.<br>
 ${escapeHtml(role)}</p>
 <p><a href="${escapeHtml(opts.link)}">Open it on ${escapeHtml(PRODUCT_NAME)}</a></p>
-<p>${escapeHtml(confirm)}</p>
-<p style="color:#555;font-size:0.9em">${escapeHtml(authored)}<br>
-${escapeHtml(why)}</p>
+<p style="opacity:0.7;font-size:0.9em">${escapeHtml(authored)}<br>
+${escapeHtml(why)}<br>
+<a href="${escapeHtml(opts.optOutLink)}">Stop these emails</a></p>
 </body></html>`;
-  return { to: opts.to, subject, text, html };
+  // RFC 2369. No List-Unsubscribe-Post (RFC 8058 one-click): that POST arrives with no session,
+  // so it would need a token in the URL saying whose address to stop (DECISIONS.md).
+  const headers = { "List-Unsubscribe": `<${opts.optOutLink}>` };
+  return { to: opts.to, subject, text, html, headers };
 }

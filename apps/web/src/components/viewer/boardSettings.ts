@@ -3,37 +3,26 @@
 // builds board.json itself from two known values (never from text a person typed), and saves it
 // as a new version against the version the dialog read, so a newer version is never overwritten.
 import {
+  BOARD_BACKGROUND_LABELS,
+  BOARD_EDIT_LABELS,
   type BoardBackground,
   type BoardEditMode,
   type BoardSettings,
   boardSettingsText,
+  type ErrorCode,
 } from "@plinth/shared";
 
-export const BACKGROUND_CHOICES: readonly {
-  value: BoardBackground;
-  label: string;
-  description: string;
-}[] = [
-  { value: "dots", label: "Dots", description: "A light dot grid behind the blocks." },
-  { value: "grid", label: "Grid", description: "Light lines behind the blocks." },
-  { value: "plain", label: "Plain", description: "No pattern." },
+// The labels are shared with History's Compare page, which lists a settings change in them.
+export const BACKGROUND_CHOICES: readonly { value: BoardBackground; label: string }[] = [
+  { value: "dots", label: BOARD_BACKGROUND_LABELS.dots },
+  { value: "grid", label: BOARD_BACKGROUND_LABELS.grid },
+  { value: "plain", label: BOARD_BACKGROUND_LABELS.plain },
 ];
 
-export const EDIT_CHOICES: readonly {
-  value: BoardEditMode;
-  label: string;
-  description: string;
-}[] = [
-  {
-    value: "commenters",
-    label: "Commenters and editors",
-    description: "Everyone it is shared with as a commenter or an editor changes the board.",
-  },
-  {
-    value: "editors",
-    label: "Editors only",
-    description: "Commenters see the board and follow along, but cannot change it.",
-  },
+export const EDIT_CHOICES: readonly { value: BoardEditMode; label: string }[] = [
+  // The default (DEFAULT_BOARD_SETTINGS) first.
+  { value: "editors", label: BOARD_EDIT_LABELS.editors },
+  { value: "commenters", label: BOARD_EDIT_LABELS.commenters },
 ];
 
 const labelOf = <T extends string>(list: readonly { value: T; label: string }[], v: T) =>
@@ -74,17 +63,29 @@ export function settingsBody(
 
 /** What the dialog says after a save was refused because a newer version exists. */
 export function conflictNotice(version: number): string {
-  return `v${version} changed the board settings. Here they are now.`;
+  return `v${version} was published meanwhile. These are its settings.`;
+}
+
+/** A refused request as the app's API client reports it (`ApiRequestError`). */
+export interface Refusal {
+  status: number;
+  code: ErrorCode;
+  details?: unknown;
 }
 
 /**
- * The newer version a refused save names, or null when the refusal is not about a newer version.
- * Only a 409 whose details carry a `current_version` above the version the dialog read is a version
- * conflict; the stager's other 409s (another version being written, an attempt that expired, too
- * many concurrent updates) name none, and the dialog shows their message instead.
+ * The newer version a refused save names, or null when the refusal is not a stale-version conflict.
+ * Every 409 shares the error code `conflict`, so the kind is in the details: only the stager's
+ * stale-version refusal (`conflictError`) carries a `current_version` and no `reason`. The other
+ * 409s name a reason (`attempt_expired`, `upload_used`, `live_busy`, `already_shared`, ...) or no
+ * version at all (another version being written, too many concurrent updates); for them, and for
+ * every other code, the dialog shows the server's message and offers no newer settings.
  */
-export function newerVersion(details: unknown, read: number): number | null {
+export function newerVersion(refusal: Refusal, read: number): number | null {
+  if (refusal.status !== 409 || refusal.code !== "conflict") return null;
+  const { details } = refusal;
   if (typeof details !== "object" || details === null) return null;
+  if ("reason" in details) return null;
   const current = (details as { current_version?: unknown }).current_version;
   return typeof current === "number" && Number.isInteger(current) && current > read
     ? current

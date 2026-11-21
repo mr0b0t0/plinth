@@ -2,9 +2,23 @@
 // two texts around where they differ.
 import { CHANGE_LIMITS } from "./limits.ts";
 
-/** Runs of whitespace become one space; the ends are trimmed. */
+/**
+ * Bidirectional controls: embeddings and overrides (U+202A to U+202E), isolates (U+2066 to
+ * U+2069) and the marks LRM, RLM and ALM. In an excerpt they could reorder what the list shows,
+ * so the text of another version reads as something it does not say. This is narrower than
+ * REFUSED_CHARS (text.ts at the package root): an excerpt keeps the joiners that emoji sequences
+ * and scripts such as Persian need.
+ */
+const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g;
+
+/** `s` without bidirectional controls. */
+export function withoutBidi(s: string): string {
+  return s.replace(BIDI_CONTROLS, "");
+}
+
+/** Bidirectional controls dropped, runs of whitespace become one space; the ends are trimmed. */
 export function foldSpace(s: string): string {
-  return s.replace(/\s+/g, " ").trim();
+  return withoutBidi(s).replace(/\s+/g, " ").trim();
 }
 
 /**

@@ -1,12 +1,13 @@
 // The write floor on fixed capabilities (policy.ts pageWriteFloor): who may write a whiteboard's
 // shared data from its page and emit its open topics. A whiteboard's versions carry `writers`
-// (set by the server from its settings); a missing or unknown value fails closed to commenter, and
-// an HTML page keeps the rule it always had (any identified viewer writes).
+// (set by the server from its settings); a missing or unknown value fails closed to editor, a
+// board's default, and an HTML page keeps the rule it always had (any identified viewer writes).
 import {
   type ArtifactType,
   BOARD_TOPICS,
   boardCapabilities,
   type Capabilities,
+  DEFAULT_BOARD_SETTINGS,
   type EffectiveRole,
 } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
@@ -43,11 +44,7 @@ const html = (over: Partial<Capabilities> = {}): Capabilities => ({
   roomOpen: ["cursor"],
   people: false,
   comments: false,
-  dictation: false,
   hold: false,
-  files: false,
-  requests: false,
-  requestsTo: [],
   ...over,
 });
 
@@ -55,12 +52,12 @@ describe("policy: pageWriteFloor", () => {
   it("is any identified viewer on an HTML page, and fails closed on every other type", () => {
     expect(pageWriteFloor("html", html())).toBe("viewer");
     expect(pageWriteFloor("html", null)).toBe("viewer");
-    expect(pageWriteFloor("whiteboard", withoutWriters(board("commenters")))).toBe("commenter");
-    expect(pageWriteFloor("whiteboard", null)).toBe("commenter");
+    expect(pageWriteFloor("whiteboard", withoutWriters(board("commenters")))).toBe("editor");
+    expect(pageWriteFloor("whiteboard", null)).toBe("editor");
     expect(pageWriteFloor("whiteboard", board("commenters"))).toBe("commenter");
     expect(pageWriteFloor("whiteboard", board("editors"))).toBe("editor");
     // A type this Worker does not know counts as fixed.
-    expect(pageWriteFloor("future-type", html())).toBe("commenter");
+    expect(pageWriteFloor("future-type", html())).toBe("editor");
     // A stored floor is honoured on any type (only the server ever sets it).
     expect(pageWriteFloor("html", html({ writers: "editor" }))).toBe("editor");
   });
@@ -109,10 +106,41 @@ describe("policy: pageDataAccess on a whiteboard", () => {
     });
   });
 
-  it("fails closed when the stored floor is missing", () => {
-    const caps = withoutWriters(board("editors"));
-    expect(pageDataAccess(claimOf("viewer"), caps, true, "whiteboard").write).toBe(false);
-    expect(pageDataAccess(claimOf("commenter"), caps, true, "whiteboard").write).toBe(true);
+  it("fails closed to editors when the stored floor is missing", () => {
+    for (const edit of ["commenters", "editors"] as const) {
+      const caps = withoutWriters(board(edit));
+      expect(pageDataAccess(claimOf("viewer"), caps, true, "whiteboard").write).toBe(false);
+      expect(pageDataAccess(claimOf("commenter"), caps, true, "whiteboard").write).toBe(false);
+      expect(pageDataAccess(claimOf("editor"), caps, true, "whiteboard").write).toBe(true);
+    }
+  });
+
+  it("a board's default settings let commenters view and comment only", () => {
+    const caps = boardCapabilities(DEFAULT_BOARD_SETTINGS);
+    expect(caps.writers).toBe("editor");
+    expect(pageDataAccess(claimOf("commenter"), caps, true, "whiteboard").write).toBe(false);
+    expect(pageDataAccess(claimOf("editor"), caps, true, "whiteboard").write).toBe(true);
+  });
+
+  it("an in-chat preview or a capture that may not read the data gets nothing, at any role", () => {
+    for (const role of ROLES) {
+      for (const pass of [{ preview: true }, { noData: true }]) {
+        for (const type of ["whiteboard", "html"]) {
+          const caps = type === "html" ? html() : board("commenters");
+          expect(pageDataAccess(claimOf(role), caps, true, type, pass)).toEqual({
+            read: false,
+            write: false,
+            seeIdentity: false,
+          });
+        }
+      }
+    }
+    // The pass facts take nothing away from a plain pass: the floor still decides.
+    expect(pageDataAccess(claimOf("viewer"), board("commenters"), true, "whiteboard", {})).toEqual({
+      read: true,
+      write: false,
+      seeIdentity: true,
+    });
   });
 
   it("keeps HTML as it was: every identified viewer writes, seeIdentity is the old write && viewer", () => {
@@ -167,10 +195,13 @@ describe("policy: roomAccess on a whiteboard", () => {
     }
   });
 
-  it("treats a board without a stored floor as a commenters board", () => {
+  it("treats a board without a stored floor as an editors board", () => {
     expect(
       roomAccess(claimOf("commenter"), withoutWriters(board("commenters")), "page", on),
-    ).toMatchObject({ emit: "open", openTopics: [...BOARD_TOPICS] });
+    ).toMatchObject({ emit: "none", openTopics: [] });
+    expect(
+      roomAccess(claimOf("editor"), withoutWriters(board("commenters")), "page", on),
+    ).toMatchObject({ emit: "all" });
   });
 
   it("gives no doc socket on a whiteboard, and no page room on a doc", () => {

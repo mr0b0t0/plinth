@@ -4,6 +4,8 @@
 // Worker avoids writing the local SQLite file from another process, which locked it under load.
 // `origin` picks the Worker (the opaque-isolation project runs a second one).
 import type { BrowserContext, Page } from "@playwright/test";
+// The design module is pure (no dependencies), so the suite runs the Worker's own expressions.
+import { designExportKeepOnlyScript } from "../../packages/shared/src/design.ts";
 import { APP_ORIGIN } from "./api.ts";
 
 interface SeedResponse {
@@ -144,25 +146,19 @@ export async function openCapture(page: Page, load: CaptureLoad): Promise<void> 
 }
 
 /**
- * What a design export opens for version `version` (POST /__dev/export-url, development only,
- * with DEV_SEED): the enter URL of a capture pass at the version's export layout (one board, or
- * every board when `board` is null) and the cookies services/designExport.ts sets first. Open it
- * with openCapture, then print or screenshot the page as Browser Rendering would.
+ * Open a version as a design export does in Browser Rendering (services/designExport.ts): the
+ * thumbnail's capture load (captureLoad), with print media emulated before the page loads, which
+ * is what puts the design renderer in its export layout. For one board, every other board leaves
+ * the page before the boards load, as the export does in its own browser.
  */
-export async function exportLoad(
-  artifactId: string,
-  version: number,
-  board: string | null,
-  origin = APP_ORIGIN,
-): Promise<CaptureLoad> {
-  const res = await fetch(`${origin}/__dev/export-url`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ artifact_id: artifactId, version, board }),
-  });
-  const text = await res.text();
-  if (res.status !== 201) throw new Error(`export url failed: ${res.status} ${text.slice(0, 300)}`);
-  return JSON.parse(text) as CaptureLoad;
+export async function openExport(page: Page, load: CaptureLoad, board: string | null = null) {
+  await page.emulateMedia({ media: "print" });
+  await openCapture(page, load);
+  if (board === null) return;
+  await page.locator("html[data-ready]").waitFor({ state: "attached", timeout: 15_000 });
+  // The Worker's own expression (services/designExport.ts evaluates the same text).
+  const found = await page.evaluate(designExportKeepOnlyScript(board));
+  if (found !== true) throw new Error(`no board ${board}`);
 }
 
 /**

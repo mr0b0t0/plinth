@@ -34,6 +34,21 @@ export const PAGE_ANCHOR_VECTORS: { name: string; anchor: unknown; ok: boolean }
     ok: true,
   },
   { name: "a label set to undefined", anchor: { key: "slide-3", text: undefined }, ok: true },
+  { name: "a label in another script", anchor: { key: "a", text: "שקף 3, Ünïcødé 😀" }, ok: true },
+  // not valid: control and format characters in a label or a data string
+  { name: "a right-to-left override in the label", anchor: { key: "a", text: "a‮b" }, ok: false },
+  { name: "a bidi isolate in the label", anchor: { key: "a", text: "a⁦b" }, ok: false },
+  { name: "a zero-width space in the label", anchor: { key: "a", text: "a​b" }, ok: false },
+  { name: "a zero-width joiner in the label", anchor: { key: "a", text: "a‍b" }, ok: false },
+  { name: "a newline in the label", anchor: { key: "a", text: "a\nb" }, ok: false },
+  { name: "a NUL in the label", anchor: { key: "a", text: "a\u0000b" }, ok: false },
+  {
+    name: "a right-to-left override in a data string",
+    anchor: { key: "a", data: { s: "x‮y" } },
+    ok: false,
+  },
+  { name: "a BOM in a data string", anchor: { key: "a", data: { s: "﻿y" } }, ok: false },
+  { name: "a tab in a data string", anchor: { key: "a", data: { s: "x\ty" } }, ok: false },
   // not valid
   { name: "no key", anchor: {}, ok: false },
   { name: "an empty key", anchor: { key: "" }, ok: false },

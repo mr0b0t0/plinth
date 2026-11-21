@@ -103,9 +103,3 @@ function ordered(ra: number, ca: number, rb: number, cb: number): CellRange {
     c2: Math.max(ca, cb),
   };
 }
-
-/** "A1:D20" for a range; one cell is "B7". */
-export function rangeText(r: CellRange): string {
-  const start = a1(r.r1, r.c1);
-  return r.r1 === r.r2 && r.c1 === r.c2 ? start : `${start}:${a1(r.r2, r.c2)}`;
-}

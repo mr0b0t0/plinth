@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import spec from "../../../docs/spec.md?raw";
 import skill from "../../../integrations/skill/plinth-artifacts/SKILL.md?raw";
+import { assetContentType, contentTypeFor } from "../src/services/storage.ts";
 
 /** The text of one `##` section of a Markdown file, up to the next `##` heading. */
 function section(md: string, heading: string): string {
@@ -46,6 +47,36 @@ describe("the project files recipe (skill and spec)", () => {
     expect(recipe).toContain("and `content_type` cannot change that");
     expect(specSection).toContain(
       "a named `content_type` applies only to extensions Plinth does not know",
+    );
+  });
+
+  it("the .txt rule holds in any letter case, and a project file never names a type", () => {
+    // contentTypeFor lowercases the extension, so app.HTML is served as HTML.
+    expect(contentTypeFor("files/x/App.HTML")).toBe("text/html; charset=utf-8");
+    expect(contentTypeFor("files/x/App.HTML.txt")).toBe("text/plain; charset=utf-8");
+    // A named type is honoured for an extension Plinth does not know: only text/plain is safe.
+    expect(assetContentType("files/src/app.ts", "application/xhtml+xml")).toBe(
+      "application/xhtml+xml",
+    );
+    expect(assetContentType("files/src/app.ts", "text/plain")).toBe("text/plain");
+    expect(recipe).toContain("Plinth serves a file by its extension, in any letter case");
+    expect(recipe).toContain("and `.HTML` or `.Svg` too");
+    expect(recipe).toContain(
+      "Send a project file with no `content_type` or with `text/plain`, never a named type such as `application/xhtml+xml`",
+    );
+    expect(specSection).toContain("served by its extension, in any letter case");
+    expect(specSection).toContain(
+      "sends a project file with no `content_type` or with `text/plain` only, never a named type such as `application/xhtml+xml`",
+    );
+  });
+
+  it("a list built from the artifact marks paths the record lacks, and who added them", () => {
+    expect(recipe).toContain(
+      "mark every path that is not in this artifact's entry in `.plinth-files.json`",
+    );
+    expect(recipe).toContain("say who added it: the author of the earliest version that has it");
+    expect(specSection).toContain(
+      "marks each path that is not in the local record and names who added it",
     );
   });
 

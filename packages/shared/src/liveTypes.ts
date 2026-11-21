@@ -138,6 +138,25 @@ export function sheetHeaderLine(line: string | undefined): SheetHeader | null {
   return serializeSheet({ header: r.sheet.header, rows: [] }) === line ? r.sheet.header : null;
 }
 
+/**
+ * Whether every row valid under header `a` is valid under `b`: the same number of columns with the
+ * same types and options. A row's cells are checked against those only (checkRow), so a rename, a
+ * width or a number format needs no recheck of the rows.
+ */
+export function sameRowRules(a: SheetHeader, b: SheetHeader): boolean {
+  return (
+    a.columns.length === b.columns.length &&
+    a.columns.every((c, i) => {
+      const d = b.columns[i];
+      return (
+        d !== undefined &&
+        c.type === d.type &&
+        JSON.stringify(c.options ?? null) === JSON.stringify(d.options ?? null)
+      );
+    })
+  );
+}
+
 /** Whether `line` is a valid row of a sheet with `header`, in its canonical spelling. */
 export function sheetRowLine(header: SheetHeader, line: string, rowNumber: number): boolean {
   if (line === "" || line.length > LIMITS.maxSheetRowBytes) return false;
@@ -247,7 +266,7 @@ const sheetRules: LiveTypeRules = {
       const next = sheetHeaderLine(ins[0]);
       if (!next || next.columns.length !== oldHeader.columns.length) return "invalid";
       header = next;
-      recheck = ins[0] !== lines[0];
+      recheck = ins[0] !== lines[0] && !sameRowRules(oldHeader, next);
       rows = ins.slice(1);
       firstRow = 2;
     }
@@ -255,7 +274,7 @@ const sheetRules: LiveTypeRules = {
       if (!sheetRowLine(header, rows[i] as string, firstRow + i)) return "invalid";
     }
     if (recheck) {
-      // A changed header: every row is checked against it again.
+      // A header whose types or options changed: every row is checked against it again.
       for (let i = start + del; i < lines.length; i++) {
         const n = i - del + ins.length + 1;
         if (!sheetRowLine(header, lines[i] as string, n)) return "invalid";
@@ -301,7 +320,7 @@ export function versionRange(from: number, to: number): string {
 }
 
 /**
- * The note of page edits published whole over the versions `from` to `to` ("Publish mine" in the
+ * The note of page edits published whole over the versions `from` to `to` ("Publish your changes" in the
  * review, where the draft is not combined with them): `note` (the editor's own, or "Edited on the
  * page") first, then what the new version leaves out, cut so the whole fits LIMITS.maxNoteLength.
  * "Edited on the page. Replaces the changes in v6." or "… in v6 to v7."

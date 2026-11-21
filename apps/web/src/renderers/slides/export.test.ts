@@ -1,7 +1,7 @@
 // The .pptx export in the frame: the lazy writer's URL next to the renderer script and its
 // one-event handoff, which images go in (the artifact's own files under origin isolation, inline
-// data: images always, nothing fetched under an opaque origin or from another origin), the ready
-// notice, and the boot wiring: an export message from the app (parent, app origin, nonce) builds
+// data: images always, nothing fetched under an opaque origin or from another origin), saving
+// with no notice of its own, and the boot wiring: an export message from the app (parent, app origin, nonce) builds
 // the file from every slide and answers with booleans and a count only.
 import {
   LIMITS,
@@ -15,8 +15,9 @@ import { boot } from "./boot.ts";
 import {
   clickDownload,
   collectImages,
+  IMAGE_CONCURRENCY,
   imageData,
-  showReadyNotice,
+  saveBlob,
   writerLoader,
   writerUrl,
 } from "./export.ts";
@@ -158,43 +159,85 @@ describe("images", () => {
     expect([...opaque.keys()]).toEqual([PNG]);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("reads at most IMAGE_CONCURRENCY images at once, and keeps their order", async () => {
+    expect(IMAGE_CONCURRENCY).toBe(4);
+    let open = 0;
+    let most = 0;
+    const fetch = vi.fn(async (url: string) => {
+      open++;
+      most = Math.max(most, open);
+      await new Promise((r) => setTimeout(r, 1));
+      open--;
+      const path = new URL(url).pathname;
+      return new Response(new Blob([path], { type: "image/png" }), { status: 200 });
+    });
+    const win = {
+      document: { baseURI: `${SELF}/` },
+      location: { origin: SELF },
+      fetch,
+    } as unknown as Window;
+    const srcs = Array.from({ length: 13 }, (_, i) => `img/${i}.png`);
+    const model = {
+      title: "t",
+      width: 13.333,
+      height: 7.5,
+      theme: "light" as const,
+      slides: srcs.map((src, i) => ({
+        n: i + 1,
+        notes: "",
+        background: "FFFFFF",
+        items: [{ kind: "image" as const, box: { x: 0, y: 0, w: 1, h: 1 }, src, alt: "" }],
+      })),
+    };
+    const got = await collectImages(win, model, false);
+    expect(fetch).toHaveBeenCalledTimes(13);
+    expect(most).toBe(IMAGE_CONCURRENCY);
+    expect([...got.keys()]).toEqual(srcs);
+    expect(got.get("img/12.png")).toBe(`data:image/png;base64,${btoa("/img/12.png")}`);
+  });
+
+  it("leaves out an image whose canvas the browser could not make", async () => {
+    // toDataURL gives "data:," for a canvas it could not allocate: no image, so it is counted.
+    const fake = (png: string) =>
+      ({
+        location: { origin: SELF },
+        document: {
+          baseURI: `${SELF}/`,
+          createElement: (tag: string) =>
+            tag === "img"
+              ? { decode: async () => {}, naturalWidth: 40, naturalHeight: 20 }
+              : { getContext: () => ({ drawImage() {} }), toDataURL: () => png },
+        },
+      }) as unknown as Window;
+    const svg = "data:image/svg+xml;base64,PHN2Zy8+";
+    expect(await imageData(fake("data:,"), svg, false)).toBeNull();
+    expect(await imageData(fake("data:image/png;base64,AAAA"), svg, false)).toBe(
+      "data:image/png;base64,AAAA",
+    );
+  });
 });
 
 describe("saving", () => {
-  it("downloads with an <a download> and offers a Download button until dismissed", () => {
+  it("downloads with an <a download> that it removes again", () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    const root = document.createElement("main");
-    document.body.append(root);
     clickDownload(document, "blob:x", "Q4.pptx");
     expect(click).toHaveBeenCalledTimes(1);
     expect(document.querySelector("a[download]")).toBeNull();
-
-    showReadyNotice(document, root, "blob:x", "Q4 <b>.pptx");
-    const bar = root.querySelector(".plinth-slides__ready");
-    expect(bar?.querySelector(".plinth-slides__ready-text")?.textContent).toBe(
-      "Q4 <b>.pptx is ready",
-    );
-    expect(bar?.querySelector("b")).toBeNull();
-    const [download, dismiss] = Array.from(bar?.querySelectorAll("button") ?? []);
-    download?.click();
-    expect(click).toHaveBeenCalledTimes(2);
-    dismiss?.click();
-    expect(root.querySelector(".plinth-slides__ready")).toBeNull();
-    expect(revoke).toHaveBeenCalledWith("blob:x");
   });
 
-  it("replaces an older notice and goes by itself", () => {
+  it("saves a blob with no notice of its own, and releases its URL later", () => {
     vi.useFakeTimers();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:1");
     const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    const root = document.createElement("main");
-    showReadyNotice(document, root, "blob:1", "a.pptx", 1000);
-    showReadyNotice(document, root, "blob:2", "a.pptx", 1000);
-    expect(root.querySelectorAll(".plinth-slides__ready")).toHaveLength(1);
-    expect(revoke).toHaveBeenCalledWith("blob:1");
+    const before = document.body.innerHTML;
+    saveBlob(window, new Blob(["x"]), "a.pptx", 1000);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(document.body.innerHTML).toBe(before);
+    expect(revoke).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1000);
-    expect(root.querySelector(".plinth-slides__ready")).toBeNull();
-    expect(revoke).toHaveBeenCalledWith("blob:2");
+    expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:1");
   });
 });
 

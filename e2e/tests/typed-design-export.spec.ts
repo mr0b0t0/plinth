@@ -1,16 +1,18 @@
 // A design's server-side PNG and PDF export (docs/spec.md "Designs"). The local Worker has no
 // Browser Rendering binding, so here Chromium plays the export's browser: it opens what
-// services/designExport.ts would open (POST /__dev/export-url: a capture pass at the version's
-// export layout, ?plinth-print=1, and the pass for the boards' cookie partition), waits as the
-// Worker does, then prints a PDF or takes the board's box as a PNG. Checked here: every board
-// renders with its own image and styles in that layout, the PDF has one page per board at the
-// board's size, the PNG is exactly the board, an unknown board is an error, and an instance
-// without the binding offers no export in the menu and refuses the endpoint.
+// services/designExport.ts would open (the thumbnail's capture load, POST /__dev/capture-url: a
+// capture pass bound to the version, and the pass for the boards' cookie partition) with print
+// media emulated before the page loads, waits as the Worker does, then prints a PDF or takes the
+// board's box as a PNG. Checked here: every board renders with its own image and styles in that
+// layout, the PDF has one page per board at the board's size, one board kept alone is exactly
+// the board, the same page on screen is the canvas, and an instance without the binding offers
+// no export in the menu and refuses the endpoint.
 import { expect, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, uniqueEmail } from "../support/api.ts";
 import {
-  exportLoad,
+  captureLoad,
   openCapture,
+  openExport,
   pdfPageSizes,
   pngSize,
   seedSession,
@@ -84,12 +86,13 @@ test.describe("the export layout", () => {
     test.setTimeout(60_000);
     const art = await publishDesign();
     await page.context().clearCookies();
-    const load = await exportLoad(art.id, art.version, null);
-    expect(new URL(load.url).searchParams.get("next")).toBe(
-      `/__plinth/v/${art.version}/?plinth-print=1`,
-    );
-    await openCapture(page, load);
-    expect(new URL(page.url()).search).toBe("?plinth-print=1");
+    const load = await captureLoad(art.id, art.version);
+    expect(new URL(load.url).searchParams.get("next")).toBe(`/__plinth/v/${art.version}/`);
+    await openExport(page, load);
+    // Nothing in the address: print media at boot is what selects the layout.
+    expect(new URL(page.url()).pathname).toBe(`/__plinth/v/${art.version}/`);
+    expect(new URL(page.url()).search).toBe("");
+    await expect(page.locator("html")).toHaveAttribute("data-export", "");
     await waitForExport(page, 3);
     // No canvas chrome: only the boards, in source order, with no covers.
     await expect(page.locator(".plinth-design__toolbar, .plinth-design__cover")).toHaveCount(0);
@@ -117,12 +120,17 @@ test.describe("the export layout", () => {
     }
   });
 
-  test("lays out one board for a PNG, whose box is exactly the board", async ({ page }) => {
+  test("keeps one board for a PNG, whose box is exactly the board", async ({ page }) => {
     const art = await publishDesign();
     await page.context().clearCookies();
-    await openCapture(page, await exportLoad(art.id, art.version, "post"));
-    await waitForExport(page, 1);
+    await openExport(page, await captureLoad(art.id, art.version), "post");
     await expect(page.locator(".plinth-design__board")).toHaveCount(1);
+    await expect(page.locator('.plinth-design__board[data-board="post"][data-loaded]')).toHaveCount(
+      1,
+      { timeout: 15_000 },
+    );
+    // A PNG is taken in screen media, as people see the board.
+    await page.emulateMedia({ media: "screen" });
     const box = await page.locator('.plinth-design__board[data-board="post"]').boundingBox();
     expect(box).toEqual({ x: 0, y: 0, width: 1080, height: 1080 });
     const png = await page.screenshot({
@@ -133,14 +141,19 @@ test.describe("the export layout", () => {
     expect(pngSize(png)).toEqual({ width: 1080, height: 1080 });
   });
 
-  test("is an error for a board the version does not have, never another board", async ({
+  test("is the canvas on screen: the same page as a thumbnail, with no address for the layout", async ({
     page,
   }) => {
     const art = await publishDesign();
     await page.context().clearCookies();
-    await openCapture(page, await exportLoad(art.id, art.version, "nope"));
-    await expect(page.locator("html")).toHaveAttribute("data-ready", "error", { timeout: 15_000 });
-    await expect(page.locator(".plinth-design__board")).toHaveCount(0);
+    const load = await captureLoad(art.id, art.version);
+    const enter = new URL(load.url);
+    // The old export address is just the canvas now.
+    enter.searchParams.set("next", `/__plinth/v/${art.version}/?plinth-print=1&plinth-board=post`);
+    await openCapture(page, { ...load, url: enter.toString() });
+    await expect(page.locator("html")).toHaveAttribute("data-ready", "ok", { timeout: 15_000 });
+    await expect(page.locator(".plinth-design")).toHaveAttribute("data-mode", "canvas");
+    await expect(page.locator("html")).not.toHaveAttribute("data-export", "");
   });
 });
 
@@ -160,5 +173,5 @@ test("without a Browser Rendering binding the menu offers no export and the endp
   await page.goto(`/a/${art.slug}`);
   await page.getByRole("button", { name: "Artifact actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Print or save as PDF" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Download PNG or PDF/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /^Download \.(png|pdf)$/ })).toHaveCount(0);
 });

@@ -18,7 +18,6 @@ import {
 } from "../src/index.ts";
 
 // ---------- the code before the registry, verbatim in behaviour ----------
-// (`dictation` and `files`, added after the registry, are false in every declaration the old code knew.)
 
 const META_TAG_RE = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
 const ATTR_RE = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
@@ -72,21 +71,16 @@ function legacyParse(html: string): Capabilities | null {
     if (roomOpen.length >= ROOM_LIMITS.maxOpenTopics) break;
     if ((t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)) && !roomOpen.includes(t)) roomOpen.push(t);
   }
-  // `people`, `comments`, `dictation` and `hold` came after the registry: a page without them (the
-  // whole corpus) reads as false.
+  // `comments`, `people` and `hold` came after the registry: the corpus never declares them.
   return {
     data,
     viewer: known.has("viewer"),
     shared,
     room,
     roomOpen,
-    people: false,
     comments: false,
-    dictation: false,
+    people: false,
     hold: false,
-    files: false,
-    requests: false,
-    requestsTo: [],
   };
 }
 
@@ -121,13 +115,9 @@ function legacyRead(json: string): Capabilities | null {
     shared: names,
     room: hasRoom,
     roomOpen: topics,
-    people: false,
     comments: false,
-    dictation: false,
+    people: false,
     hold: false,
-    files: false,
-    requests: false,
-    requestsTo: [],
   };
 }
 
@@ -175,17 +165,7 @@ function corpus(): string[] {
 describe("the declaration registry", () => {
   it("derives DATA_CAPABILITIES from the token table, in order", () => {
     expect(DATA_CAPABILITIES).toEqual(CAPABILITY_TOKENS.map((t) => t.token));
-    expect(DATA_CAPABILITIES).toEqual([
-      "data",
-      "viewer",
-      "room",
-      "people",
-      "comments",
-      "dictation",
-      "hold",
-      "files",
-      "requests",
-    ]);
+    expect(DATA_CAPABILITIES).toEqual(["data", "viewer", "room", "comments", "people", "hold"]);
   });
 
   it("places every token once, and lists name known tokens and unique metas", () => {

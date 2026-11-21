@@ -2,8 +2,18 @@
 // canvas size (1280x720 or 1024x768 CSS pixels) and shrunk or grown with a CSS transform, so text
 // wraps the same way on a phone, a projector and in print.
 
-/** Gap around the slides in the overview, in CSS pixels. */
-export const OVERVIEW_GUTTER = 16;
+/**
+ * The stage's gutter in CSS pixels, the same in every view so switching views does not move the
+ * slide: around the slide in deck view (on all four sides, the slide centred), around and between
+ * the overview's thumbnails, and around presenter view. Full screen keeps it too.
+ */
+export const GUTTER = 16;
+/** How far the controls' bottom edge sits above the slide's in deck view: the gutter again. */
+export const CONTROLS_INSET = GUTTER;
+/** From this frame width the overview is a grid of thumbnails; below it, one column. */
+export const OVERVIEW_GRID_MIN = 700;
+/** From this frame width the grid has four columns instead of three. */
+export const OVERVIEW_GRID_WIDE = 1100;
 
 /** The scale that fits a w x h canvas in a box, letterboxed. */
 export function fitScale(boxW: number, boxH: number, w: number, h: number): number {
@@ -16,9 +26,20 @@ export function prefersOverview(win: Pick<Window, "innerWidth" | "innerHeight">)
   return win.innerWidth < 600 && win.innerHeight > win.innerWidth;
 }
 
-/** The scale of each slide in the overview: the frame's width, never larger than the canvas. */
-export function overviewScale(frameWidth: number, w: number): number {
-  return Math.max(0.1, Math.min(1, (frameWidth - 2 * OVERVIEW_GUTTER) / w));
+/**
+ * Columns of the overview: a grid of three or four thumbnails on a wide frame, one column on a
+ * narrow one and in a fixed overview (review mode and the editor preview read every slide).
+ */
+export function overviewColumns(frameWidth: number, fixed = false): number {
+  if (fixed || frameWidth < OVERVIEW_GRID_MIN) return 1;
+  return frameWidth < OVERVIEW_GRID_WIDE ? 3 : 4;
+}
+
+/** The scale of each slide in the overview: its column's width, never larger than the canvas. */
+export function overviewScale(frameWidth: number, w: number, columns = 1): number {
+  const cols = Math.max(1, Math.trunc(columns));
+  const room = frameWidth - 2 * GUTTER - (cols - 1) * GUTTER;
+  return Math.max(0.1, Math.min(1, room / cols / w));
 }
 
 /** Sets the canvas size and the scale on an element: the CSS reads --w, --h and --s from it. */
