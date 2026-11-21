@@ -381,6 +381,56 @@ test("settings are for the owner only", async ({ page }) => {
   }
 });
 
+test("a card's open actions menu covers the cards below it and stays on screen", async ({
+  page,
+}) => {
+  const owner = uniqueEmail("cards");
+  const api = await newApiContext();
+  try {
+    const { token } = await seedToken(owner, { label: "Cards token" });
+    for (let i = 1; i <= 8; i++) {
+      await publishArtifact(api, token, { title: `Card ${i}`, html: HTML(`Card ${i}`) });
+    }
+  } finally {
+    await api.dispose();
+  }
+  await seedContextSession(page.context(), owner);
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Grid view" }).click();
+  const cards = page.locator(".pl-dash__card");
+  await expect(cards).toHaveCount(8);
+  await cards
+    .first()
+    .getByRole("button", { name: /^Actions for / })
+    .click();
+  const list = page.getByRole("menu");
+  await expect(list).toBeVisible();
+  // Every other card's actions button the open list lies over is painted under it.
+  const box = await list.boundingBox();
+  if (!box) throw new Error("menu has no box");
+  // On a phone the left column's menu stays on screen instead of running past its edge.
+  const width = page.viewportSize()?.width ?? 0;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(width);
+  let covered = 0;
+  for (const button of await page.locator(".pl-dash__card .pl-dash__menu > .pl-button").all()) {
+    if ((await button.getAttribute("aria-expanded")) === "true") continue;
+    const b = await button.boundingBox();
+    if (!b) continue;
+    const x = b.x + b.width / 2;
+    const y = b.y + b.height / 2;
+    if (x < box.x || x > box.x + box.width || y < box.y || y > box.y + box.height) continue;
+    covered++;
+    const onTop = await page.evaluate(
+      ([px, py]) =>
+        !!document.elementFromPoint(px as number, py as number)?.closest(".pl-menu__list"),
+      [x, y],
+    );
+    expect(onTop).toBe(true);
+  }
+  expect(covered).toBeGreaterThan(0);
+});
+
 test("categories: agents file artifacts, the owner filters, moves and renames, collaborators see none", async ({
   page,
   browser,

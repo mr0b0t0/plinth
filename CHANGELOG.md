@@ -10,6 +10,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
+  card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen
+  instead of running past its edge.
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no
