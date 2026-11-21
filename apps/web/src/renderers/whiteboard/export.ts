@@ -1,8 +1,33 @@
 // Export: the board as an SVG (built with DOM APIs, serialized with XMLSerializer) or a PNG (drawn
 // with Canvas 2D), downloaded through a blob: link, which the frame's allow-downloads permits. All
-// in the frame, from the model: nothing is fetched, no image is loaded, no foreignObject, no link.
-// Attribute values come only from numbers and fixed lists; text only goes in as text nodes.
-import { arrowEndpoints, arrowLabelAt, type BlockKind, type BoardColor } from "@plinth/shared";
+// in the frame, from the model: nothing is fetched, no image is loaded, no foreignObject, no link
+// (a link in a block's text is drawn as underlined words). Both formats draw the same list of
+// primitives (scene), so they always agree. Attribute values come only from numbers, fixed lists
+// and colours checked against a pattern; text only goes in as text nodes.
+import {
+  arrowHeads,
+  arrowRoute,
+  type BoardBlock,
+  type BoardColor,
+  type BoardInk,
+  type BoardPaint,
+  HEX_COLOR_RE,
+  heatOf,
+  isDarkHex,
+  isShapeKind,
+  lineHeightOf,
+  type MarkRun,
+  parseMarks,
+  roundRectPath,
+  routeHeads,
+  routeLabelAt,
+  routePath,
+  shapePath,
+  tableLayout,
+  textInset,
+  textPx,
+  trimRoute,
+} from "@plinth/shared";
 import type { BoardModel, Bounds } from "./model.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -14,6 +39,8 @@ export interface ExportTheme {
   border: string;
   /** Fill of a note in each colour, and of a shape with no colour (`none`). */
   fills: Record<BoardColor | "none", string>;
+  /** Each colour's deeper tone, for text, outlines and arrows in that colour. */
+  inks: Record<BoardColor, string>;
 }
 
 /** The light palette, used when the page's tokens cannot be read. */
@@ -31,9 +58,18 @@ export const LIGHT_THEME: ExportTheme = {
     purple: "#e2d5f5",
     gray: "#e4e2dc",
   },
+  inks: {
+    yellow: "#8a6a00",
+    green: "#2f7a3a",
+    blue: "#2b62b0",
+    pink: "#b23a64",
+    purple: "#6b44b0",
+    gray: "#6b675e",
+  },
 };
 
 const COLOR_KEYS = ["none", "yellow", "green", "blue", "pink", "purple", "gray"] as const;
+const INK_KEYS = ["yellow", "green", "blue", "pink", "purple", "gray"] as const;
 /** A CSS colour as getComputedStyle returns it: a hex or rgb()/rgba() of plain numbers. */
 const SAFE_COLOR = /^(#[0-9a-f]{3,8}|rgba?\([0-9., %/]+\))$/i;
 
@@ -51,12 +87,15 @@ export function themeOf(win: Window, el: Element): ExportTheme {
   };
   const fills = { ...LIGHT_THEME.fills };
   for (const k of COLOR_KEYS) fills[k] = read(`--wb-fill-${k}`, LIGHT_THEME.fills[k]);
+  const inks = { ...LIGHT_THEME.inks };
+  for (const k of INK_KEYS) inks[k] = read(`--wb-ink-${k}`, LIGHT_THEME.inks[k]);
   return {
     background: read("--wb-bg", LIGHT_THEME.background),
     text: read("--wb-block-fg", LIGHT_THEME.text),
     arrow: read("--wb-arrow", LIGHT_THEME.arrow),
     border: read("--wb-shape-border", LIGHT_THEME.border),
     fills,
+    inks,
   };
 }
 
@@ -64,22 +103,29 @@ export const FONT_SIZE = 14;
 export const LINE_HEIGHT = 18;
 const PAD = 10;
 const MARGIN = 40;
-export const FONT = `${FONT_SIZE}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+const FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+export const FONT = `${FONT_SIZE}px ${FAMILY}`;
 
 /** Width of a line of text: the canvas's measureText where there is one, else an estimate. */
-export type Measure = (s: string) => number;
+export type Measure = (s: string, px?: number, bold?: boolean) => number;
 
-export function estimateMeasure(s: string): number {
-  return [...s].length * FONT_SIZE * 0.56;
+export function estimateMeasure(s: string, px = FONT_SIZE, bold = false): number {
+  return [...s].length * px * 0.56 * (bold ? 1.06 : 1);
 }
+
+const fontOf = (px: number, bold?: boolean, italic?: boolean, code?: boolean) =>
+  `${italic ? "italic " : ""}${bold ? "700 " : ""}${px}px ${code ? MONO : FAMILY}`;
 
 /** A measure from a Canvas 2D context, or the estimate when the browser gives none. */
 export function canvasMeasure(doc: Document): Measure {
   try {
     const ctx = doc.createElement("canvas").getContext("2d");
     if (!ctx) return estimateMeasure;
-    ctx.font = FONT;
-    return (s) => ctx.measureText(s).width;
+    return (s, px = FONT_SIZE, bold = false) => {
+      ctx.font = fontOf(px, bold);
+      return ctx.measureText(s).width;
+    };
   } catch {
     return estimateMeasure;
   }
@@ -95,34 +141,95 @@ export function wrapText(
   maxLines: number,
   measure: Measure,
 ): string[] {
-  const out: string[] = [];
+  return layoutLines(
+    text.split("\n").map((t) => [{ text: t }]),
+    width,
+    maxLines,
+    FONT_SIZE,
+    measure,
+    true,
+  ).map((l) => l.map((s) => s.text).join(""));
+}
+
+/** One stretch of a laid-out line with the same marks. */
+export type Seg = Omit<MarkRun, "href"> & { link?: true };
+
+const sameStyle = (a: Seg, b: Seg) =>
+  a.bold === b.bold && a.italic === b.italic && a.code === b.code && a.link === b.link;
+
+function styleOf(r: MarkRun): Seg {
+  const s: Seg = { text: "" };
+  if (r.bold) s.bold = true;
+  if (r.italic) s.italic = true;
+  if (r.code) s.code = true;
+  if (r.href) s.link = true;
+  return s;
+}
+
+/**
+ * Lines of marked runs laid out at `width`: words wrap at spaces (when `wrap`), a word wider than
+ * the line is cut, and past `maxLines` the last line ends in an ellipsis.
+ */
+export function layoutLines(
+  lines: MarkRun[][],
+  width: number,
+  maxLines: number,
+  px: number,
+  measure: Measure,
+  wrap: boolean,
+): Seg[][] {
+  const out: Seg[][] = [];
   const room = Math.max(1, maxLines);
-  for (const para of text.split("\n")) {
-    let line = "";
-    for (const word of para.split(/\s+/).filter(Boolean)) {
-      let w = word;
-      while (measure(w) > width && [...w].length > 1) {
-        const chars = [...w];
-        let n = chars.length - 1;
-        while (n > 1 && measure(chars.slice(0, n).join("")) > width) n--;
-        if (line) {
-          out.push(line);
-          line = "";
+  for (const runs of lines) {
+    let line: Seg[] = [];
+    let used = 0;
+    const push = (text: string, style: Seg) => {
+      const last = line[line.length - 1];
+      if (last && sameStyle(last, style)) last.text += text;
+      else line.push({ ...style, text });
+    };
+    const breakLine = () => {
+      const last = line[line.length - 1];
+      if (last) last.text = last.text.replace(/\s+$/, "");
+      out.push(line.filter((s) => s.text));
+      line = [];
+      used = 0;
+    };
+    for (const run of runs) {
+      const style = styleOf(run);
+      for (const token of run.text.split(/(\s+)/)) {
+        if (!token) continue;
+        const w = measure(token, px, style.bold);
+        if (/^\s+$/.test(token)) {
+          if (used === 0 && line.length === 0) continue;
+          push(token, style);
+          used += w;
+          continue;
         }
-        out.push(chars.slice(0, n).join(""));
-        w = chars.slice(n).join("");
+        if (wrap && used > 0 && used + w > width) breakLine();
+        let word = token;
+        // A word wider than a whole line: cut it into pieces that fit.
+        while (wrap && measure(word, px, style.bold) > width && [...word].length > 1) {
+          const chars = [...word];
+          let n = chars.length - 1;
+          while (n > 1 && measure(chars.slice(0, n).join(""), px, style.bold) > width) n--;
+          if (used > 0) breakLine();
+          push(chars.slice(0, n).join(""), style);
+          breakLine();
+          word = chars.slice(n).join("");
+        }
+        push(word, style);
+        used += measure(word, px, style.bold);
       }
-      const next = line ? `${line} ${w}` : w;
-      if (line && measure(next) > width) {
-        out.push(line);
-        line = w;
-      } else line = next;
     }
-    out.push(line);
+    breakLine();
   }
   if (out.length <= room) return out;
   const kept = out.slice(0, room);
-  kept[room - 1] = `${kept[room - 1] ?? ""}…`;
+  const last = kept[room - 1] ?? [];
+  const tail = last[last.length - 1];
+  if (tail) tail.text = `${tail.text}…`;
+  else last.push({ text: "…" });
   return kept;
 }
 
@@ -132,11 +239,284 @@ export function exportBounds(model: BoardModel): Bounds {
   return { x: b.x - MARGIN, y: b.y - MARGIN, w: b.w + MARGIN * 2, h: b.h + MARGIN * 2 };
 }
 
-const fillOf = (theme: ExportTheme, kind: BlockKind, color: BoardColor | undefined) =>
-  kind === "text" ? "none" : theme.fills[color ?? (kind === "note" ? "yellow" : "none")];
+// ---------- the scene ----------
 
-const textLines = (b: { w: number; h: number; text: string }, measure: Measure) =>
-  wrapText(b.text, b.w - PAD * 2, Math.floor((b.h - PAD * 2) / LINE_HEIGHT), measure);
+/** Path data drawn at (x, y): filled and or stroked. */
+interface PathPrim {
+  t: "path";
+  d: string;
+  x: number;
+  y: number;
+  fill: string | null;
+  stroke: string | null;
+  width: number;
+  dash?: boolean;
+  /** Opacity of the fill (a section's tint, a table's shading). */
+  fillOpacity?: number;
+}
+
+/** One line of text, its top at y, anchored at x. */
+interface TextPrim {
+  t: "text";
+  x: number;
+  y: number;
+  px: number;
+  anchor: "start" | "middle" | "end";
+  fill: string;
+  segs: Seg[];
+  /** A halo in this colour behind the words (an arrow's label). */
+  halo?: string;
+  /** Every segment bold (a table's header, a section's title). */
+  bold?: boolean;
+}
+
+type Prim = PathPrim | TextPrim;
+
+const hex = (v: string | undefined): v is string => typeof v === "string" && HEX_COLOR_RE.test(v);
+
+function fillOf(theme: ExportTheme, paint: BoardPaint | undefined, fallback: string): string {
+  if (hex(paint)) return paint;
+  return paint ? theme.fills[paint as BoardColor] : fallback;
+}
+
+function inkOf(theme: ExportTheme, ink: BoardInk | undefined, fallback: string): string {
+  if (hex(ink)) return ink;
+  if (ink === "ink") return theme.text;
+  return ink ? theme.inks[ink as BoardColor] : fallback;
+}
+
+/** The words' colour on a fill: the board's text, or white on a dark #rrggbb. */
+const textOn = (theme: ExportTheme, paint: BoardPaint | undefined) =>
+  hex(paint) ? (isDarkHex(paint) ? "#ffffff" : "#1d1c1a") : theme.text;
+
+/** Lay a block's text out inside its box: one TextPrim per line. */
+function blockText(
+  b: BoardBlock,
+  measure: Measure,
+  fill: string,
+  out: Prim[],
+  box = { x: b.x, y: b.y, w: b.w, h: b.h },
+  centered = false,
+  bold = false,
+): void {
+  if (!b.text) return;
+  const px = textPx(b.size);
+  const lh = lineHeightOf(px);
+  const [t, r, bt, l] = textInset(b.kind, box.w, box.h);
+  const innerW = Math.max(1, box.w - PAD * 2 - l - r);
+  const innerH = box.h - PAD * 2 - t - bt;
+  const lines = layoutLines(
+    parseMarks(b.text),
+    innerW,
+    Math.floor(innerH / lh),
+    px,
+    measure,
+    b.wrap !== false,
+  );
+  const align = b.textAlign ?? (centered ? "center" : "left");
+  const anchor = align === "center" ? "middle" : align === "right" ? "end" : "start";
+  const x =
+    align === "center"
+      ? box.x + l + (box.w - l - r) / 2
+      : align === "right"
+        ? box.x + box.w - PAD - r
+        : box.x + PAD + l;
+  const top = centered ? box.y + t + (box.h - t - bt - lines.length * lh) / 2 : box.y + PAD + t;
+  for (const [i, segs] of lines.entries()) {
+    if (segs.length === 0) continue;
+    out.push({ t: "text", x, y: top + i * lh + (lh - px) / 2, px, anchor, fill, segs, bold });
+  }
+}
+
+function tableScene(theme: ExportTheme, b: BoardBlock, measure: Measure, out: Prim[]): void {
+  const layout = tableLayout(b);
+  const heat = heatOf(b);
+  out.push({
+    t: "path",
+    d: roundRectPath(b.w, b.h, 4),
+    x: b.x,
+    y: b.y,
+    fill: theme.fills.none,
+    stroke: theme.border,
+    width: 1,
+  });
+  for (const [ri, row] of layout.rows.entries()) {
+    const head = ri === 0;
+    if (head) {
+      out.push({
+        t: "path",
+        d: `M0 0H${b.w}V${row.h}H0Z`,
+        x: b.x,
+        y: b.y + row.y,
+        fill: fillOf(theme, b.color, theme.fills.gray),
+        stroke: null,
+        width: 0,
+      });
+    } else {
+      out.push({
+        t: "path",
+        d: `M0 0H${b.w}`,
+        x: b.x,
+        y: b.y + row.y,
+        fill: null,
+        stroke: theme.border,
+        width: 0.5,
+      });
+    }
+    for (const col of layout.cols) {
+      const cell = b.rows?.[row.id]?.[col.id];
+      const fill = b.fills?.[row.id]?.[col.id];
+      const shade = heat.get(`${row.id}\u0000${col.id}`);
+      const at = { x: b.x + col.x, y: b.y + row.y, w: col.w, h: row.h };
+      if (fill) {
+        out.push({
+          t: "path",
+          d: `M0 0H${col.w}V${row.h}H0Z`,
+          x: at.x,
+          y: at.y,
+          fill: fillOf(theme, fill, theme.fills.none),
+          stroke: null,
+          width: 0,
+        });
+      } else if (shade) {
+        out.push({
+          t: "path",
+          d: `M0 0H${col.w}V${row.h}H0Z`,
+          x: at.x,
+          y: at.y,
+          fill: hex(shade.paint) ? shade.paint : theme.inks[shade.paint as BoardColor],
+          stroke: null,
+          width: 0,
+          fillOpacity: 0.12 + shade.level * 0.5,
+        });
+      }
+      if (typeof cell === "string" && cell) {
+        blockText(
+          { ...b, kind: "table", text: cell, wrap: true },
+          measure,
+          fill ? textOn(theme, fill) : theme.text,
+          out,
+          at,
+          false,
+          head,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * What the board looks like, back to front: sections, then arrows, then every other block, each
+ * as paths and lines of text. The view draws the same order.
+ */
+export function scene(model: BoardModel, theme: ExportTheme, measure: Measure): Prim[] {
+  const out: Prim[] = [];
+  const ordered = model.ordered();
+  const blocks = (sections: boolean) =>
+    ordered.filter(([, e]) => (e.data.kind === "container") === sections);
+
+  for (const [, { data: b }] of blocks(true)) {
+    out.push({
+      t: "path",
+      d: roundRectPath(b.w, b.h, 12),
+      x: b.x,
+      y: b.y,
+      fill: b.hollow ? null : fillOf(theme, b.color, theme.fills.none),
+      stroke: inkOf(theme, b.stroke, theme.border),
+      width: 1,
+      fillOpacity: 0.45,
+    });
+    if (b.text) {
+      // The title stands above the section's box, on one line.
+      const px = b.size ? textPx(b.size) : 16;
+      const lines = layoutLines(parseMarks(b.text).slice(0, 1), b.w, 1, px, measure, false);
+      const segs = lines[0] ?? [];
+      if (segs.length) {
+        out.push({
+          t: "text",
+          x: b.x,
+          y: b.y - 6 - lineHeightOf(px) + (lineHeightOf(px) - px) / 2,
+          px,
+          anchor: "start",
+          fill: theme.text,
+          segs,
+          bold: true,
+        });
+      }
+    }
+  }
+
+  for (const [, { data: a }] of model.arrows) {
+    const from = model.blocks.get(a.from)?.data;
+    const to = model.blocks.get(a.to)?.data;
+    if (!from || !to) continue;
+    const route = arrowRoute(from, to, a);
+    const heads = arrowHeads(a);
+    const color = inkOf(theme, a.color, theme.arrow);
+    out.push({
+      t: "path",
+      d: routePath(trimRoute(route, heads)),
+      x: 0,
+      y: 0,
+      fill: null,
+      stroke: color,
+      width: 2,
+      dash: a.style === "dashed",
+    });
+    for (const d of routeHeads(route, heads)) {
+      if (d) out.push({ t: "path", d, x: 0, y: 0, fill: color, stroke: null, width: 0 });
+    }
+    if (a.label) {
+      // A halo in the background colour keeps the label clear of the line it sits beside.
+      const at = routeLabelAt(route);
+      out.push({
+        t: "text",
+        x: at.x,
+        y: at.y - 7,
+        px: 13,
+        anchor: at.anchor,
+        fill: theme.text,
+        segs: [{ text: a.label }],
+        halo: theme.background,
+      });
+    }
+  }
+
+  for (const [, { data: b }] of blocks(false)) {
+    if (b.kind === "table") {
+      tableScene(theme, b, measure, out);
+      continue;
+    }
+    if (b.kind !== "text") {
+      const note = b.kind === "note";
+      const shaped = isShapeKind(b.kind);
+      const fallback = note ? theme.fills.yellow : theme.fills.none;
+      const outline = shaped || b.stroke !== undefined;
+      out.push({
+        t: "path",
+        d:
+          note || b.kind === "rect"
+            ? roundRectPath(b.w, b.h, note ? 6 : 2)
+            : shapePath(isShapeKind(b.kind) ? b.kind : "rect", b.w, b.h),
+        x: b.x,
+        y: b.y,
+        fill: b.hollow ? null : fillOf(theme, b.color, fallback),
+        stroke: outline ? inkOf(theme, b.stroke, theme.border) : null,
+        width: 1.5,
+      });
+    }
+    const ink =
+      b.kind === "text"
+        ? inkOf(theme, b.color, theme.text)
+        : b.hollow
+          ? theme.text
+          : textOn(theme, b.color);
+    blockText(b, measure, ink, out, undefined, isShapeKind(b.kind));
+  }
+  return out;
+}
+
+// ---------- SVG ----------
 
 /** The board as an <svg> element of `doc` (not attached). */
 export function boardSvg(
@@ -162,80 +542,51 @@ export function boardSvg(
     "font-family": "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
     "font-size": FONT_SIZE,
   });
-  const defs = el("defs", {});
-  const marker = el("marker", {
-    id: "head",
-    viewBox: "0 0 10 10",
-    refX: 9,
-    refY: 5,
-    markerWidth: 8,
-    markerHeight: 8,
-    orient: "auto-start-reverse",
-  });
-  marker.append(el("path", { d: "M0 0 10 5 0 10z", fill: theme.arrow }));
-  defs.append(marker);
-  svg.append(defs, el("rect", { x: r.x, y: r.y, width: r.w, height: r.h, fill: theme.background }));
-
-  for (const [, { data: a }] of model.arrows) {
-    const from = model.blocks.get(a.from)?.data;
-    const to = model.blocks.get(a.to)?.data;
-    if (!from || !to) continue;
-    const p = arrowEndpoints(from, to);
-    const head = a.head ?? "end";
-    const line = el("line", { ...p, stroke: theme.arrow, "stroke-width": 2 });
-    if (a.style === "dashed") line.setAttribute("stroke-dasharray", "6 4");
-    if (head !== "none") line.setAttribute("marker-end", "url(#head)");
-    if (head === "both") line.setAttribute("marker-start", "url(#head)");
-    svg.append(line);
-    if (a.label) {
-      // A halo in the background colour keeps the label clear of the line it sits beside.
-      const at = arrowLabelAt(p);
-      const t = el("text", {
-        x: at.x,
-        y: at.y,
-        "text-anchor": at.anchor,
-        "dominant-baseline": "central",
-        fill: theme.text,
-        stroke: theme.background,
-        "stroke-width": 4,
-        "stroke-linejoin": "round",
-        "paint-order": "stroke",
-      });
-      t.textContent = a.label;
-      svg.append(t);
-    }
-  }
-
-  for (const [, { data: b }] of model.ordered()) {
-    const fill = fillOf(theme, b.kind, b.color);
-    const shape =
-      b.kind === "ellipse"
-        ? el("ellipse", { cx: b.x + b.w / 2, cy: b.y + b.h / 2, rx: b.w / 2, ry: b.h / 2 })
-        : el("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: b.kind === "note" ? 6 : 2 });
-    shape.setAttribute("fill", fill);
-    if (b.kind === "rect" || b.kind === "ellipse") {
-      shape.setAttribute("stroke", theme.border);
-      shape.setAttribute("stroke-width", "1.5");
-    }
-    svg.append(shape);
-    const lines = textLines(b, measure);
-    if (lines.some(Boolean)) {
-      const centered = b.kind === "rect" || b.kind === "ellipse";
-      const top = centered ? b.y + (b.h - lines.length * LINE_HEIGHT) / 2 : b.y + PAD;
-      const t = el("text", {
-        x: centered ? b.x + b.w / 2 : b.x + PAD,
-        y: top,
-        fill: theme.text,
-        "text-anchor": centered ? "middle" : "start",
-        "dominant-baseline": "hanging",
-      });
-      for (const [i, line] of lines.entries()) {
-        const s = el("tspan", { x: t.getAttribute("x") ?? 0, dy: i === 0 ? 0 : LINE_HEIGHT });
-        s.textContent = line;
-        t.append(s);
+  svg.append(el("rect", { x: r.x, y: r.y, width: r.w, height: r.h, fill: theme.background }));
+  for (const p of scene(model, theme, measure)) {
+    if (p.t === "path") {
+      const path = el("path", { d: p.d });
+      if (p.x || p.y) path.setAttribute("transform", `translate(${p.x} ${p.y})`);
+      path.setAttribute("fill", p.fill ?? "none");
+      if (p.fillOpacity !== undefined) path.setAttribute("fill-opacity", String(p.fillOpacity));
+      if (p.stroke) {
+        path.setAttribute("stroke", p.stroke);
+        path.setAttribute("stroke-width", String(p.width));
+        path.setAttribute("stroke-linejoin", "round");
+        if (p.dash) path.setAttribute("stroke-dasharray", "6 4");
       }
-      svg.append(t);
+      svg.append(path);
+      continue;
     }
+    const t = el("text", {
+      x: p.x,
+      y: p.y,
+      "font-size": p.px,
+      fill: p.fill,
+      "text-anchor": p.anchor,
+      "dominant-baseline": "hanging",
+    });
+    if (p.bold) t.setAttribute("font-weight", "700");
+    if (p.halo) {
+      t.setAttribute("stroke", p.halo);
+      t.setAttribute("stroke-width", "4");
+      t.setAttribute("stroke-linejoin", "round");
+      t.setAttribute("paint-order", "stroke");
+    }
+    for (const s of p.segs) {
+      if (!s.bold && !s.italic && !s.code && !s.link && p.segs.length === 1) {
+        t.textContent = s.text;
+        break;
+      }
+      const span = el("tspan", {});
+      if (s.bold) span.setAttribute("font-weight", "700");
+      if (s.italic) span.setAttribute("font-style", "italic");
+      if (s.code) span.setAttribute("font-family", "ui-monospace, Menlo, Consolas, monospace");
+      if (s.link) span.setAttribute("text-decoration", "underline");
+      span.textContent = s.text;
+      t.append(span);
+    }
+    svg.append(t);
   }
   return svg;
 }
@@ -245,6 +596,8 @@ export function svgBlob(svg: SVGSVGElement): Blob {
   const text = new XMLSerializer().serializeToString(svg);
   return new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${text}`], { type: "image/svg+xml" });
 }
+
+// ---------- PNG ----------
 
 /** At most this many pixels in a PNG, and this long a side. */
 export const PNG_MAX_PIXELS = 32_000_000;
@@ -275,81 +628,56 @@ export function drawPng(
   ctx.translate(-r.x, -r.y);
   ctx.fillStyle = theme.background;
   ctx.fillRect(r.x, r.y, r.w, r.h);
-  ctx.font = FONT;
-  const measure: Measure = (s) => ctx.measureText(s).width;
-
-  ctx.lineWidth = 2;
-  for (const [, { data: a }] of model.arrows) {
-    const from = model.blocks.get(a.from)?.data;
-    const to = model.blocks.get(a.to)?.data;
-    if (!from || !to) continue;
-    const p = arrowEndpoints(from, to);
-    ctx.strokeStyle = theme.arrow;
-    ctx.fillStyle = theme.arrow;
-    ctx.setLineDash(a.style === "dashed" ? [6, 4] : []);
-    ctx.beginPath();
-    ctx.moveTo(p.x1, p.y1);
-    ctx.lineTo(p.x2, p.y2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    const head = a.head ?? "end";
-    if (head !== "none") arrowHead(ctx, p.x1, p.y1, p.x2, p.y2);
-    if (head === "both") arrowHead(ctx, p.x2, p.y2, p.x1, p.y1);
-    if (a.label) {
-      const at = arrowLabelAt(p);
-      ctx.textAlign = at.anchor === "middle" ? "center" : at.anchor === "end" ? "right" : "left";
-      ctx.textBaseline = "middle";
-      ctx.strokeStyle = theme.background;
-      ctx.lineWidth = 4;
-      ctx.lineJoin = "round";
-      ctx.strokeText(a.label, at.x, at.y);
-      ctx.lineWidth = 2;
-      ctx.fillStyle = theme.text;
-      ctx.fillText(a.label, at.x, at.y);
+  const measure: Measure = (s, px = FONT_SIZE, bold = false) => {
+    ctx.font = fontOf(px, bold);
+    return ctx.measureText(s).width;
+  };
+  ctx.lineJoin = "round";
+  for (const p of scene(model, theme, measure)) {
+    if (p.t === "path") {
+      if (typeof Path2D !== "function") continue;
+      const path = new Path2D(p.d);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      if (p.fill) {
+        ctx.globalAlpha = p.fillOpacity ?? 1;
+        ctx.fillStyle = p.fill;
+        ctx.fill(path);
+        ctx.globalAlpha = 1;
+      }
+      if (p.stroke) {
+        ctx.strokeStyle = p.stroke;
+        ctx.lineWidth = p.width;
+        ctx.setLineDash(p.dash ? [6, 4] : []);
+        ctx.stroke(path);
+      }
+      ctx.restore();
+      continue;
     }
-  }
-
-  for (const [, { data: b }] of model.ordered()) {
-    const fill = fillOf(theme, b.kind, b.color);
-    ctx.beginPath();
-    if (b.kind === "ellipse") {
-      ctx.ellipse(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2);
-    } else if (typeof ctx.roundRect === "function") {
-      ctx.roundRect(b.x, b.y, b.w, b.h, b.kind === "note" ? 6 : 2);
-    } else {
-      ctx.rect(b.x, b.y, b.w, b.h);
-    }
-    if (fill !== "none") {
-      ctx.fillStyle = fill;
-      ctx.fill();
-    }
-    if (b.kind === "rect" || b.kind === "ellipse") {
-      ctx.strokeStyle = theme.border;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    const lines = textLines(b, measure);
-    const centered = b.kind === "rect" || b.kind === "ellipse";
-    ctx.fillStyle = theme.text;
-    ctx.textAlign = centered ? "center" : "left";
     ctx.textBaseline = "top";
-    const top = centered ? b.y + (b.h - lines.length * LINE_HEIGHT) / 2 : b.y + PAD;
-    for (const [i, line] of lines.entries()) {
-      ctx.fillText(line, centered ? b.x + b.w / 2 : b.x + PAD, top + i * LINE_HEIGHT);
+    ctx.textAlign = "left";
+    const fonts = p.segs.map((s) => fontOf(p.px, p.bold || s.bold, s.italic, s.code));
+    const widths = p.segs.map((s, i) => {
+      ctx.font = fonts[i] ?? FONT;
+      return ctx.measureText(s.text).width;
+    });
+    const total = widths.reduce((a, b) => a + b, 0);
+    let x = p.anchor === "middle" ? p.x - total / 2 : p.anchor === "end" ? p.x - total : p.x;
+    for (const [i, s] of p.segs.entries()) {
+      ctx.font = fonts[i] ?? FONT;
+      if (p.halo) {
+        ctx.strokeStyle = p.halo;
+        ctx.lineWidth = 4;
+        ctx.strokeText(s.text, x, p.y);
+      }
+      ctx.fillStyle = p.fill;
+      ctx.fillText(s.text, x, p.y);
+      const w = widths[i] ?? 0;
+      if (s.link) ctx.fillRect(x, p.y + p.px + 1, w, Math.max(1, p.px / 14));
+      x += w;
     }
   }
   return canvas;
-}
-
-function arrowHead(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
-  const a = Math.atan2(y2 - y1, x2 - x1);
-  const s = 10;
-  ctx.beginPath();
-  ctx.moveTo(x2, y2);
-  ctx.lineTo(x2 - s * Math.cos(a - 0.45), y2 - s * Math.sin(a - 0.45));
-  ctx.lineTo(x2 - s * Math.cos(a + 0.45), y2 - s * Math.sin(a + 0.45));
-  ctx.closePath();
-  ctx.fill();
 }
 
 /** The PNG file of a canvas. */

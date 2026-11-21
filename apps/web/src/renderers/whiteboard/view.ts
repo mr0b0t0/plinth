@@ -1,15 +1,39 @@
 // The board's DOM: the toolbar, the notices, and the viewport with a transformed world layer that
 // holds the arrows (one <svg>), the blocks and peers' cursors. Text from documents and peers only
-// ever goes in through textContent or an inert text attribute (aria-label, title), and every
-// other attribute takes only numbers and fixed values: no innerHTML, and no id or name is ever set
-// from data, so nothing a collaborator writes can clobber a global or inject markup.
+// ever goes in through textContent or an inert text attribute (aria-label, title); inline marks
+// become spans built here from parseMarks' runs, and a link's href is only ever an address the URL
+// parser read as http(s). Every other attribute and style takes only numbers, fixed values and
+// colours checked against #rrggbb: no innerHTML, and no id or name is ever set from data, so
+// nothing a collaborator writes can clobber a global or inject markup.
 import {
-  arrowEndpoints,
-  arrowLabelAt,
+  arrowHeads,
+  arrowRoute,
+  type BlockKind,
   BOARD_COLORS,
   type BoardBackground,
   type BoardBlock,
   type BoardColor,
+  type BoardInk,
+  type BoardPaint,
+  HEX_COLOR_RE,
+  hasMarks,
+  heatOf,
+  isDarkHex,
+  isShapeKind,
+  lineHeightOf,
+  parseMarks,
+  routeHeads,
+  routeLabelAt,
+  routePath,
+  SHAPE_KINDS,
+  type ShapeKind,
+  shapePath,
+  TEXT_SIZES,
+  type TextSize,
+  tableLayout,
+  textInset,
+  textPx,
+  trimRoute,
 } from "@plinth/shared";
 import type { Camera } from "./camera.ts";
 import type { BoardModel } from "./model.ts";
@@ -17,19 +41,57 @@ import type { RuntimePeer } from "./runtime.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-export const KIND_LABELS = { note: "Note", text: "Text", rect: "Box", ellipse: "Ellipse" } as const;
-export type ToolKind = keyof typeof KIND_LABELS;
+/** What the add buttons make. */
+export const ADD_LABELS = { note: "Note", text: "Text", rect: "Box", ellipse: "Ellipse" } as const;
+export type ToolKind = keyof typeof ADD_LABELS;
+
+/** A shape's name in the Shape list. */
+export const SHAPE_LABELS: Record<ShapeKind, string> = {
+  rect: "Box",
+  rounded: "Rounded",
+  ellipse: "Ellipse",
+  diamond: "Diamond",
+  pill: "Pill",
+  hexagon: "Hexagon",
+  parallelogram: "Parallelogram",
+  database: "Database",
+  queue: "Queue",
+  document: "Document",
+  cloud: "Cloud",
+  person: "Person",
+};
+
+/** A block's kind as screen readers hear it. */
+export const KIND_LABELS: Record<BlockKind, string> = {
+  ...SHAPE_LABELS,
+  note: "Note",
+  text: "Text",
+  rounded: "Rounded box",
+  container: "Section",
+  table: "Table",
+};
+
+export const SIZE_LABELS: Record<TextSize, string> = {
+  small: "Small",
+  body: "Body",
+  large: "Large",
+  title: "Title",
+  huge: "Huge",
+};
 
 /**
  * The toolbar's controls, kept to show, enable and label them. The add buttons show only to
- * people who may edit, and the selection's controls (colour, connect, delete) only while
- * something is selected. Zoom is the wheel, a pinch or the keys; export is in the app's menu.
+ * people who may edit, and the selection's controls (shape or text size, colour, connect, delete)
+ * only while something they apply to is selected. Zoom is the wheel, a pinch or the keys; export
+ * is in the app's menu.
  */
 export interface Toolbar {
   el: HTMLElement;
   /** The add buttons' group. */
   adds: HTMLElement;
   add: Record<ToolKind, HTMLButtonElement>;
+  /** A selected shape's kind, or a selected text's size: one list, shown only for those. */
+  style: HTMLSelectElement;
   /** The colour control: the swatches, and at phone width the one swatch that opens them. */
   colour: HTMLElement;
   /** The swatches' group. */
@@ -44,6 +106,14 @@ export interface Toolbar {
   people: HTMLUListElement;
 }
 
+interface ArrowEls {
+  g: SVGGElement;
+  hit: SVGPathElement;
+  line: SVGPathElement;
+  heads: [SVGPathElement, SVGPathElement];
+  label: SVGTextElement;
+}
+
 export interface ViewEls {
   root: HTMLElement;
   toolbar: Toolbar;
@@ -55,8 +125,10 @@ export interface ViewEls {
   arrows: SVGSVGElement;
   /** The block elements by id. */
   blocks: Map<string, HTMLElement>;
-  arrowEls: Map<string, { hit: SVGLineElement; line: SVGLineElement; label: SVGTextElement }>;
+  arrowEls: Map<string, ArrowEls>;
   cursors: Map<string, HTMLElement>;
+  /** A table's cell elements, for finding which cell was clicked: [row id, column id]. */
+  cells: WeakMap<Element, [string, string]>;
 }
 
 function button(doc: Document, text: string, label?: string): HTMLButtonElement {
@@ -82,7 +154,7 @@ function buildToolbar(doc: Document, banner: HTMLElement): Toolbar {
   el.setAttribute("role", "toolbar");
   el.setAttribute("aria-label", "Board tools");
   const add = {} as Record<ToolKind, HTMLButtonElement>;
-  for (const [k, label] of Object.entries(KIND_LABELS) as [ToolKind, string][]) {
+  for (const [k, label] of Object.entries(ADD_LABELS) as [ToolKind, string][]) {
     add[k] = button(doc, label, `Add ${label.toLowerCase()}`);
     add[k].dataset.add = k;
   }
@@ -94,6 +166,8 @@ function buildToolbar(doc: Document, banner: HTMLElement): Toolbar {
     b.setAttribute("aria-pressed", "false");
     colors[c] = b;
   }
+  const style = doc.createElement("select");
+  style.className = "wb-style";
   const connect = button(doc, "Connect");
   connect.setAttribute("aria-pressed", "false");
   const remove = button(doc, "Delete");
@@ -118,12 +192,60 @@ function buildToolbar(doc: Document, banner: HTMLElement): Toolbar {
   // One row: the tools (which scroll sideways at phone width), then who is here and Fit.
   const tools = doc.createElement("div");
   tools.className = "wb-tools";
-  tools.append(banner, adds, connect, remove, colour);
+  tools.append(banner, adds, connect, remove, style, colour);
   const end = doc.createElement("div");
   end.className = "wb-end";
   end.append(people, status, fit);
   el.append(tools, end);
-  return { el, adds, add, colour, palette, colors, pick, connect, remove, fit, status, people };
+  return {
+    el,
+    adds,
+    add,
+    style,
+    colour,
+    palette,
+    colors,
+    pick,
+    connect,
+    remove,
+    fit,
+    status,
+    people,
+  };
+}
+
+/** What the style list holds now: a shape's kinds, a text's sizes, or nothing. */
+export type StyleList = "shape" | "size" | null;
+
+/** Fill the style list for a selected shape or text block, or empty it. */
+export function setStyleList(
+  doc: Document,
+  sel: HTMLSelectElement,
+  b: BoardBlock | null,
+): StyleList {
+  const list: StyleList = b && isShapeKind(b.kind) ? "shape" : b?.kind === "text" ? "size" : null;
+  if (sel.dataset.list !== (list ?? "")) {
+    sel.dataset.list = list ?? "";
+    const options =
+      list === "shape"
+        ? SHAPE_KINDS.map((k) => [k, SHAPE_LABELS[k]] as const)
+        : list === "size"
+          ? TEXT_SIZES.map((k) => [k, SIZE_LABELS[k]] as const)
+          : [];
+    sel.replaceChildren(
+      ...options.map(([value, label]) => {
+        const o = doc.createElement("option");
+        o.value = value;
+        o.textContent = label;
+        return o;
+      }),
+    );
+    sel.setAttribute("aria-label", list === "size" ? "Text size" : "Shape");
+  }
+  if (b && list === "shape") sel.value = b.kind;
+  // A text that names no size is drawn at 14, as Small is.
+  if (b && list === "size") sel.value = b.size ?? "small";
+  return list;
 }
 
 /** Build the board's DOM into `root`, replacing what it held. */
@@ -149,24 +271,6 @@ export function buildView(doc: Document, root: HTMLElement, background: BoardBac
   const arrows = doc.createElementNS(SVG_NS, "svg");
   arrows.setAttribute("class", "wb-arrows");
   arrows.setAttribute("aria-hidden", "true");
-  const defs = doc.createElementNS(SVG_NS, "defs");
-  const marker = doc.createElementNS(SVG_NS, "marker");
-  for (const [k, v] of [
-    ["id", "wb-head"],
-    ["viewBox", "0 0 10 10"],
-    ["refX", "9"],
-    ["refY", "5"],
-    ["markerWidth", "8"],
-    ["markerHeight", "8"],
-    ["orient", "auto-start-reverse"],
-  ] as const) {
-    marker.setAttribute(k, v);
-  }
-  const head = doc.createElementNS(SVG_NS, "path");
-  head.setAttribute("d", "M0 0 10 5 0 10z");
-  marker.append(head);
-  defs.append(marker);
-  arrows.append(defs);
   world.append(arrows);
   viewport.append(world);
   // Named, so the frame's main landmark differs from the app's around it.
@@ -183,6 +287,7 @@ export function buildView(doc: Document, root: HTMLElement, background: BoardBac
     blocks: new Map(),
     arrowEls: new Map(),
     cursors: new Map(),
+    cells: new WeakMap(),
   };
 }
 
@@ -211,12 +316,182 @@ export interface DrawState {
   peerMoves: ReadonlyMap<string, { x: number; y: number }>;
 }
 
-const blockLabel = (kind: ToolKind, text: string) => {
+const blockLabel = (kind: BlockKind, text: string) => {
   const t = text.replace(/\s+/g, " ").trim();
   return t
     ? `${KIND_LABELS[kind]}: ${[...t].slice(0, 80).join("")}`
     : `${KIND_LABELS[kind]}, empty`;
 };
+
+const isHex = (v: unknown): v is string => typeof v === "string" && HEX_COLOR_RE.test(v);
+
+/** A colour as a CSS value: a board colour's token, the board's text colour, or #rrggbb. */
+function inkCss(ink: BoardInk): string {
+  if (isHex(ink)) return ink;
+  return ink === "ink" ? "var(--wb-block-fg)" : `var(--wb-ink-${ink})`;
+}
+
+function paintCss(paint: BoardPaint): string {
+  return isHex(paint) ? paint : `var(--wb-fill-${paint})`;
+}
+
+/** The source each text element was last drawn from, so unchanged text is not rebuilt. */
+const drawnText = new WeakMap<Element, string>();
+
+/**
+ * Put a block's text into `el`: as one text node when it has no marks, otherwise as spans for
+ * bold, italic and code and an <a> for each http(s) link (opened in a new tab, with no opener or
+ * referrer). Never parsed as HTML.
+ */
+export function renderText(doc: Document, el: Element, text: string): void {
+  if (drawnText.get(el) === text && el.childNodes.length > 0 === text.length > 0) return;
+  drawnText.set(el, text);
+  if (!hasMarks(text)) {
+    el.textContent = text;
+    return;
+  }
+  const nodes: Node[] = [];
+  for (const [i, line] of parseMarks(text).entries()) {
+    if (i > 0) nodes.push(doc.createTextNode("\n"));
+    for (const run of line) {
+      if (!run.bold && !run.italic && !run.code && !run.href) {
+        nodes.push(doc.createTextNode(run.text));
+        continue;
+      }
+      let node: HTMLElement;
+      if (run.href) {
+        const a = doc.createElement("a");
+        a.className = "wb-link";
+        a.href = run.href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer nofollow";
+        node = a;
+      } else {
+        node = doc.createElement("span");
+        node.className = run.code
+          ? "wb-code"
+          : run.bold && run.italic
+            ? "wb-bi"
+            : run.bold
+              ? "wb-b"
+              : "wb-i";
+      }
+      node.textContent = run.text;
+      nodes.push(node);
+    }
+  }
+  el.replaceChildren(...nodes);
+}
+
+/** The colours, outline and text style of one block's element. */
+function styleBlock(el: HTMLElement, text: HTMLElement, b: BoardBlock): void {
+  const custom = isHex(b.color);
+  el.dataset.color = b.color === undefined ? "" : custom ? "custom" : b.color;
+  if (custom) {
+    el.style.setProperty("--wb-fill", b.color as string);
+    el.style.setProperty("--wb-on", isDarkHex(b.color as string) ? "#ffffff" : "#1d1c1a");
+  } else {
+    el.style.removeProperty("--wb-fill");
+    el.style.removeProperty("--wb-on");
+  }
+  if (b.stroke === undefined) {
+    delete el.dataset.stroke;
+    el.style.removeProperty("--wb-stroke");
+  } else {
+    el.dataset.stroke = "";
+    el.style.setProperty("--wb-stroke", inkCss(b.stroke));
+  }
+  if (b.hollow) el.dataset.hollow = "";
+  else delete el.dataset.hollow;
+  const px = b.size ? textPx(b.size) : null;
+  text.style.fontSize = px ? `${px}px` : "";
+  text.style.lineHeight = px ? `${lineHeightOf(px)}px` : "";
+  text.style.textAlign = b.textAlign ?? "";
+  text.style.whiteSpace = b.wrap === false ? "pre" : "";
+  text.style.overflow = b.wrap === false && b.kind === "text" ? "visible" : "";
+  // A shape whose outline curves in keeps its words inside it.
+  const [t, r, bt, l] = textInset(b.kind, b.w, b.h);
+  text.style.padding = t || r || bt || l ? `${8 + t}px ${10 + r}px ${8 + bt}px ${10 + l}px` : "";
+}
+
+/** A shape other than the box and the ellipse (which CSS draws) is an <svg> path behind its text. */
+function drawShape(doc: Document, el: HTMLElement, b: BoardBlock): void {
+  let svg = el.querySelector<SVGSVGElement>(":scope > .wb-shape");
+  const wants = isShapeKind(b.kind) && b.kind !== "rect" && b.kind !== "ellipse";
+  el.toggleAttribute("data-shape", wants);
+  if (!wants) {
+    svg?.remove();
+    return;
+  }
+  if (!svg) {
+    svg = doc.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "wb-shape");
+    svg.setAttribute("aria-hidden", "true");
+    svg.append(doc.createElementNS(SVG_NS, "path"));
+    el.prepend(svg);
+  }
+  svg.setAttribute("viewBox", `0 0 ${b.w} ${b.h}`);
+  svg.querySelector("path")?.setAttribute("d", shapePath(b.kind as ShapeKind, b.w, b.h));
+}
+
+/** The source a table was last drawn from. */
+const drawnTable = new WeakMap<Element, string>();
+
+/** Forget how a block's table was drawn, so the next draw builds its cells afresh. */
+export function forgetTable(el: HTMLElement): void {
+  const grid = el.querySelector(":scope > .wb-table");
+  if (grid) drawnTable.delete(grid);
+}
+
+/** A table: a grid of cells, columns by their weights and equal rows, the first row the header. */
+function drawTable(doc: Document, v: ViewEls, el: HTMLElement, b: BoardBlock): void {
+  let grid = el.querySelector<HTMLElement>(":scope > .wb-table");
+  if (b.kind !== "table") {
+    grid?.remove();
+    return;
+  }
+  if (!grid) {
+    grid = doc.createElement("div");
+    grid.className = "wb-table";
+    el.append(grid);
+  }
+  const key = JSON.stringify([b.w, b.h, b.cols, b.rows, b.fills, b.heat, b.size, b.textAlign]);
+  if (drawnTable.get(grid) === key) return;
+  drawnTable.set(grid, key);
+  const layout = tableLayout(b);
+  const heat = heatOf(b);
+  grid.style.gridTemplateColumns = layout.cols.map((c) => `${Math.max(1, c.w)}fr`).join(" ");
+  grid.style.gridTemplateRows = `repeat(${Math.max(1, layout.rows.length)}, 1fr)`;
+  const px = b.size ? textPx(b.size) : null;
+  grid.style.fontSize = px ? `${px}px` : "";
+  const cells: HTMLElement[] = [];
+  for (const [ri, row] of layout.rows.entries()) {
+    for (const col of layout.cols) {
+      const cell = doc.createElement("div");
+      cell.className = ri === 0 ? "wb-cell wb-head" : "wb-cell";
+      const value = b.rows?.[row.id]?.[col.id];
+      const span = doc.createElement("span");
+      span.textContent = typeof value === "string" ? value : "";
+      cell.append(span);
+      if (b.textAlign) cell.style.textAlign = b.textAlign;
+      const fill = b.fills?.[row.id]?.[col.id];
+      const shade = heat.get(`${row.id}\u0000${col.id}`);
+      if (fill) {
+        cell.style.background = paintCss(fill);
+        if (isHex(fill)) cell.style.color = isDarkHex(fill) ? "#ffffff" : "#1d1c1a";
+      } else if (shade) {
+        const c = isHex(shade.paint) ? shade.paint : `var(--wb-ink-${shade.paint})`;
+        const pct = Math.round((0.12 + shade.level * 0.5) * 100);
+        cell.dataset.heat = "";
+        cell.style.setProperty("--wb-heat", c);
+        cell.style.setProperty("--wb-heat-pct", `${pct}%`);
+      }
+      v.cells.set(cell, [row.id, col.id]);
+      cells.push(cell);
+    }
+  }
+  grid.replaceChildren(...cells);
+}
 
 /** Draw every block and arrow of the model, reusing elements by id. */
 export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState): void {
@@ -226,6 +501,7 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
   };
   const seen = new Set<string>();
   let order = 1;
+  let sections = 0;
   for (const [id, { data }] of model.ordered()) {
     const b = shown(id, data);
     seen.add(id);
@@ -241,24 +517,27 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
       v.world.append(el);
       v.blocks.set(id, el);
     }
+    const text = el.querySelector<HTMLElement>(":scope > .wb-text");
     el.dataset.kind = b.kind;
-    el.dataset.color = b.color ?? "";
     el.style.left = `${b.x}px`;
     el.style.top = `${b.y}px`;
     el.style.width = `${b.w}px`;
     el.style.height = `${b.h}px`;
-    el.style.zIndex = String(order++);
-    el.setAttribute("aria-label", blockLabel(b.kind, b.text));
+    if (b.kind === "container") sections = order;
+    el.style.zIndex = String(b.kind === "container" ? order++ : 1 + order++);
+    el.setAttribute("aria-label", blockLabel(b.kind, b.kind === "table" ? "" : b.text));
     el.classList.toggle("selected", s.selected === id || s.connectFrom === id);
     el.classList.toggle("moving", s.peerMoves.has(id));
     const hue = s.peerSelections.get(id);
     if (hue === undefined) el.style.removeProperty("--wb-peer");
     else el.style.setProperty("--wb-peer", `hsl(${hue} 65% 45%)`);
     el.classList.toggle("peer-selected", hue !== undefined);
-    if (s.editing !== id) {
-      const text = el.querySelector(".wb-text");
-      if (text && text.textContent !== b.text) text.textContent = b.text;
+    if (text) {
+      styleBlock(el, text, b);
+      if (s.editing !== id) renderText(doc, text, b.kind === "table" ? "" : b.text);
     }
+    drawShape(doc, el, b);
+    drawTable(doc, v, el, b);
     const handle = el.querySelector(".wb-resize");
     const wantHandle = s.selected === id && !s.readOnly && s.editing !== id;
     if (wantHandle && !handle) {
@@ -268,6 +547,8 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
       el.append(h);
     } else if (!wantHandle && handle) handle.remove();
   }
+  // Arrows lie over every section and under every other block.
+  v.arrows.style.zIndex = String(sections + 1);
   for (const [id, el] of [...v.blocks]) {
     if (!seen.has(id)) {
       el.remove();
@@ -285,33 +566,40 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
     seenArrows.add(id);
     let els = v.arrowEls.get(id);
     if (!els) {
-      const hit = doc.createElementNS(SVG_NS, "line");
+      const g = doc.createElementNS(SVG_NS, "g");
+      const hit = doc.createElementNS(SVG_NS, "path");
       hit.setAttribute("class", "wb-arrow-hit");
-      const line = doc.createElementNS(SVG_NS, "line");
+      const line = doc.createElementNS(SVG_NS, "path");
       line.setAttribute("class", "wb-arrow");
+      const head0 = doc.createElementNS(SVG_NS, "path");
+      const head1 = doc.createElementNS(SVG_NS, "path");
+      head0.setAttribute("class", "wb-arrow-head");
+      head1.setAttribute("class", "wb-arrow-head");
       const label = doc.createElementNS(SVG_NS, "text");
       label.setAttribute("class", "wb-arrow-label");
       label.setAttribute("dominant-baseline", "central");
-      v.arrows.append(hit, line, label);
-      els = { hit, line, label };
+      g.append(hit, line, head0, head1, label);
+      v.arrows.append(g);
+      els = { g, hit, line, heads: [head0, head1], label };
       v.arrowEls.set(id, els);
     }
     els.hit.dataset.arrow = id;
-    const p = arrowEndpoints(from, to);
-    for (const l of [els.hit, els.line]) {
-      l.setAttribute("x1", String(p.x1));
-      l.setAttribute("y1", String(p.y1));
-      l.setAttribute("x2", String(p.x2));
-      l.setAttribute("y2", String(p.y2));
+    const route = arrowRoute(from, to, a);
+    const heads = arrowHeads(a);
+    els.hit.setAttribute("d", routePath(route));
+    els.line.setAttribute("d", routePath(trimRoute(route, heads)));
+    const [h0, h1] = routeHeads(route, heads);
+    for (const [i, d] of [h0, h1].entries()) {
+      const head = els.heads[i] as SVGPathElement;
+      if (d) head.setAttribute("d", d);
+      else head.removeAttribute("d");
     }
-    const head = a.head ?? "end";
-    if (head === "none") els.line.removeAttribute("marker-end");
-    else els.line.setAttribute("marker-end", "url(#wb-head)");
-    if (head === "both") els.line.setAttribute("marker-start", "url(#wb-head)");
-    else els.line.removeAttribute("marker-start");
+    if (a.color) els.g.style.setProperty("--wb-arrow-c", inkCss(a.color));
+    else els.g.style.removeProperty("--wb-arrow-c");
     els.line.classList.toggle("dashed", a.style === "dashed");
+    els.g.classList.toggle("selected", s.selected === id);
     els.line.classList.toggle("selected", s.selected === id);
-    const at = arrowLabelAt(p);
+    const at = routeLabelAt(route);
     els.label.setAttribute("x", String(at.x));
     els.label.setAttribute("y", String(at.y));
     els.label.setAttribute("text-anchor", at.anchor);
@@ -319,9 +607,7 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
   }
   for (const [id, els] of [...v.arrowEls]) {
     if (!seenArrows.has(id)) {
-      els.hit.remove();
-      els.line.remove();
-      els.label.remove();
+      els.g.remove();
       v.arrowEls.delete(id);
     }
   }

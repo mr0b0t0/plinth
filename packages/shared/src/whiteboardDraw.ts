@@ -40,8 +40,8 @@ const d = (parts: TemplateStringsArray, ...nums: number[]) =>
 
 // ---------- shapes ----------
 
-/** A rounded box's path, corners of radius `r`. */
-function roundRect(w: number, h: number, r: number): string {
+/** A rounded box's path, corners of radius `r` (a note, a section, a table). */
+export function roundRectPath(w: number, h: number, r: number): string {
   return d`M${r} 0H${w - r}A${r} ${r} 0 0 1 ${w} ${r}V${h - r}A${r} ${r} 0 0 1 ${w - r} ${h}H${r}A${r} ${r} 0 0 1 0 ${h - r}V${r}A${r} ${r} 0 0 1 ${r} 0Z`;
 }
 
@@ -63,9 +63,9 @@ export function shapePath(kind: ShapeKind, w: number, h: number): string {
     case "rect":
       return d`M0 0H${w}V${h}H0Z`;
     case "rounded":
-      return roundRect(w, h, Math.min(16, w / 4, h / 4));
+      return roundRectPath(w, h, Math.min(16, w / 4, h / 4));
     case "pill":
-      return roundRect(w, h, Math.min(w, h) / 2);
+      return roundRectPath(w, h, Math.min(w, h) / 2);
     case "ellipse":
       return d`M0 ${h / 2}A${w / 2} ${h / 2} 0 1 1 ${w} ${h / 2}A${w / 2} ${h / 2} 0 1 1 0 ${h / 2}Z`;
     case "diamond":

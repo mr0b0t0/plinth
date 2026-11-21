@@ -74,12 +74,34 @@ export class BoardModel {
     return [...this.arrows].filter(([, a]) => a.data.from === blockId || a.data.to === blockId);
   }
 
-  /** Blocks in draw order: z, then id. */
+  /**
+   * Blocks in draw order: sections behind everything else, then z, then id. Arrows are drawn
+   * between the two, so an arrow inside a section shows over its tint.
+   */
   ordered(): [string, Entry<BoardBlock>][] {
     return [...this.blocks].sort(([ia, a], [ib, b]) => {
+      const ds = Number(b.data.kind === "container") - Number(a.data.kind === "container");
+      if (ds !== 0) return ds;
       const dz = (a.data.z ?? 0) - (b.data.z ?? 0);
       return dz !== 0 ? dz : ia < ib ? -1 : ia > ib ? 1 : 0;
     });
+  }
+
+  /** The blocks lying wholly inside a section, which move with it (sections inside it stay). */
+  inside(id: string): string[] {
+    const s = this.blocks.get(id)?.data;
+    if (s?.kind !== "container") return [];
+    return [...this.blocks]
+      .filter(
+        ([bid, { data: b }]) =>
+          bid !== id &&
+          b.kind !== "container" &&
+          b.x >= s.x &&
+          b.y >= s.y &&
+          b.x + b.w <= s.x + s.w &&
+          b.y + b.h <= s.y + s.h,
+      )
+      .map(([bid]) => bid);
   }
 
   /** The highest z on the board, for a block brought to the front. */

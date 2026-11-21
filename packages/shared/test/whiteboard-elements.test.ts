@@ -48,8 +48,8 @@ const table = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("blocks", () => {
-  it.each([
-    ...SHAPE_KINDS.map((kind) => [kind, block({ kind })] as const),
+  it.each<[string, unknown]>([
+    ...SHAPE_KINDS.map((kind) => [kind, block({ kind })] as [string, unknown]),
     ["a section", block({ kind: "container", text: "Now", color: "blue", stroke: "ink" })],
     [
       "a styled shape",
@@ -78,7 +78,7 @@ describe("blocks", () => {
     expect(boardDocError("blocks", data)).toBeNull();
   });
 
-  it.each([
+  it.each<[string, unknown, RegExp]>([
     ["an unknown kind", block({ kind: "star" }), /kind must be one of/],
     ["a colour that is not #rrggbb", block({ color: "#fff" }), /color must be/],
     ["a css colour", block({ color: "red" }), /color must be/],
@@ -150,7 +150,7 @@ describe("blocks", () => {
 });
 
 describe("arrows", () => {
-  it.each([
+  it.each<[Record<string, unknown>]>([
     [{ from: "a", to: "b", heads: ["circle", "arrow"] }],
     [{ from: "a", to: "b", fromSide: "bottom", toSide: "top", color: "#ff0000" }],
     [{ from: "a", to: "b", bends: ["v", 65, -160, -75] }],
@@ -160,7 +160,7 @@ describe("arrows", () => {
     expect(cleanArrow(data)).toEqual(data);
   });
 
-  it.each([
+  it.each<[Record<string, unknown>, RegExp]>([
     [{ from: "a", to: "b", heads: ["arrow"] }, /heads must be/],
     [{ from: "a", to: "b", heads: ["arrow", "star"] }, /heads must be/],
     [{ from: "a", to: "b", fromSide: "middle" }, /fromSide must be/],
