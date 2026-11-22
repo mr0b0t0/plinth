@@ -1342,12 +1342,14 @@ export async function commitVersion(
   const afterCommit = typeHooks(def).afterCommit;
   if (afterCommit) {
     const source = staged.entries.find((e) => e.path === def.sourcePath);
+    const alt = def.altSource && staged.entries.some((e) => e.path === def.altSource?.path);
     result = await afterCommit(ctx, {
       def,
       result,
       capabilities: extra.capabilities,
       update: target.mode === "update",
       sourceSha256: source?.sha256 ?? null,
+      sourcePath: alt && !source && def.altSource ? def.altSource.path : def.sourcePath,
       liveCheckpoint: opts.liveCheckpoint === true,
       restored: opts.restoredFrom != null,
     });

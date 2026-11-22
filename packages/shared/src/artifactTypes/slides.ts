@@ -1,10 +1,11 @@
 // The slides type, in two formats. A Markdown deck: slides.md (a line --- between slides,
-// packages/shared/src/slides.ts) plus image assets, edited in the source editor. An HTML deck
-// (Claude's slide format, packages/shared/src/slidesHtml.ts): deck.json (the source), deck.css and
-// slides/<id>.html, plus images and fonts, which people never see the source of. Both are shown as
-// a deck by Plinth's slides renderer (apps/web/src/renderers/slides/), with paging, Present, a
-// presenter view, print to PDF, a .pptx download and, where live rooms run, following the
-// presenter.
+// packages/shared/src/slides.ts) plus image assets, which owners and editors edit on its page
+// (slide text, speaker notes and the deck's settings), live with each other (#36; the slides
+// rules in liveTypes.ts). An HTML deck (Claude's slide format, packages/shared/src/slidesHtml.ts):
+// deck.json (the source), deck.css and slides/<id>.html, plus images and fonts, which people never
+// see the source of and agents change. Both are shown as a deck by Plinth's slides renderer
+// (apps/web/src/renderers/slides/), with paging, Present, a presenter view, print to PDF, a .pptx
+// download and, where live rooms run, following the presenter.
 import type { TypeModule } from "../artifactTypes.ts";
 import { LIMITS } from "../constants.ts";
 import { HTML_DECK_INDEX, SLIDE_EMBED_FILE } from "../slidesHtml.ts";
@@ -38,7 +39,11 @@ export const slides: TypeModule<"slides"> = {
     frame: SLIDE_EMBED_FILE,
   },
   editor: { language: "markdown", wordWrap: "on" },
-  edit: "ask",
+  edit: "live",
+  // "New" on the dashboard: v1 is this one slide, and the page opens in edit mode on its title.
+  create: { label: "Slide deck", title: "Untitled deck", content: "# Untitled deck\n" },
+  // What the agent-facing texts call one ("People are editing this deck on its page").
+  noun: "deck",
   present: true,
   // Owners and editors lead identified viewers over the room's `slides` channel (rooms/slides.ts).
   follow: true,

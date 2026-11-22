@@ -64,6 +64,11 @@ export interface ItemWords {
 
 /** The attribute a pane sets on each block or cell that changed since the base. */
 export const CHANGED_ATTR = "data-review-changed";
+/**
+ * On a pane's drawing whose children are whole items (a deck's slides): a change is brought into
+ * view at the top of the pane, never centred with the item before it cut in half.
+ */
+export const REVIEW_START_ATTR = "data-review-start";
 
 export type ReviewOutcome = "publish" | "discard" | "cancelled";
 
@@ -78,6 +83,17 @@ export interface ReviewSetup {
   choose(outcome: ReviewOutcome, note?: string): void;
   /** For tests: reads a version's source. */
   fetchText?: (n: number) => Promise<string | null>;
+  /**
+   * Version n's side when its source is not the type's own file: the words that stand in for its
+   * changes and its drawing (a Markdown deck's changes beside an HTML deck), or null when it is
+   * simply missing.
+   */
+  otherFormat?: (n: number) => Promise<string | null>;
+  /**
+   * Why "Publish your changes" is off for a draft the type cannot publish yet, in its words (an
+   * empty deck's). Absent: REVIEW_WORDS.unpublishable.
+   */
+  unpublishableWords?: string;
 }
 
 export interface ReviewState {
@@ -290,6 +306,10 @@ export class DraftReview {
     // new range is drawn.
     if (this.root) this.setButtons(false, "");
     const [baseRaw, theirsRaw] = await Promise.all([this.read(state.base), this.read(state.n)]);
+    const other =
+      theirsRaw === null && this.setup.otherFormat
+        ? await this.setup.otherFormat(state.n).catch(() => null)
+        : null;
     if (run !== this.opened || this.state !== state) return;
     const { rules, type } = this.setup;
     const baseText = baseRaw === null ? null : rules.toLive(baseRaw);
@@ -297,7 +317,7 @@ export class DraftReview {
     const mineList = baseText === null ? null : describeChanges(type, baseText, state.draft);
     const theirList =
       baseText === null || theirs === null ? null : describeChanges(type, baseText, theirs);
-    this.draw(state, baseText, theirs, mineList, theirList);
+    this.draw(state, baseText, theirs, mineList, theirList, other);
     if (reopened) {
       this.announce(
         `v${state.n} was published too. The review now covers ${versionRange(state.base + 1, state.n)}.`,
@@ -311,6 +331,7 @@ export class DraftReview {
     theirs: string | null,
     mineList: ChangeList | null,
     theirList: ChangeList | null,
+    other: string | null = null,
   ): void {
     const d = this.doc;
     const from = state.base + 1;
@@ -364,11 +385,18 @@ export class DraftReview {
       files: { lines: string[]; more: number },
       text: string | null,
       version: number,
+      note: string | null = null,
     ) => {
       const s = el(d, "section", "plinth-review__pane");
       s.dataset.side = side;
       s.setAttribute("aria-label", label);
       s.append(el(d, "h3", "plinth-review__label", label));
+      if (note !== null) {
+        // A version in another format: one line in place of its changes and its drawing.
+        s.append(el(d, "p", "plinth-review__other", note));
+        gotos.push(null);
+        return s;
+      }
       s.append(this.changes(list, files, goTo, text));
       const body = el(d, "div", "plinth-review__body");
       body.tabIndex = 0;
@@ -398,7 +426,7 @@ export class DraftReview {
     panes.append(
       // Page changes never change files, so only vN's side can list any.
       pane("mine", REVIEW_WORDS.mine, mineList, fileLines(null), state.draft, state.base),
-      pane("theirs", REVIEW_WORDS.theirs(to), theirList, fileLines(state.files), theirs, to),
+      pane("theirs", REVIEW_WORDS.theirs(to), theirList, fileLines(state.files), theirs, to, other),
     );
     // Each side opens at its first change (once it is shown: one at a time at phone width), without
     // moving the other side with it.
@@ -457,7 +485,7 @@ export class DraftReview {
     reason.setAttribute("role", "status");
     if (unpublishable) {
       publish.disabled = true;
-      reason.textContent = REVIEW_WORDS.unpublishable;
+      reason.textContent = this.setup.unpublishableWords ?? REVIEW_WORDS.unpublishable;
       reason.id = nextId("reason");
       publish.setAttribute("aria-describedby", reason.id);
     }
@@ -647,26 +675,59 @@ export class DraftReview {
 }
 
 /**
+ * Scroll `pane` so the item `target` starts it with the list's top padding above it, as the first
+ * item starts an unscrolled pane, so no item is cut at the top and nothing of the item before it
+ * shows (a deck's slides). A change near the end gets room below the last item, so it can still
+ * start the pane.
+ */
+export function startPaneAt(pane: HTMLElement, target: Element): void {
+  const list = target.parentElement;
+  const view = pane.ownerDocument.defaultView;
+  const pad = (side: "paddingTop" | "paddingBottom") =>
+    list && view ? Number.parseFloat(view.getComputedStyle(list)[side]) || 0 : 0;
+  const want = target.previousElementSibling
+    ? Math.max(
+        0,
+        pane.scrollTop +
+          target.getBoundingClientRect().top -
+          pane.getBoundingClientRect().top -
+          pane.clientTop -
+          pad("paddingTop"),
+      )
+    : 0;
+  const short = want - (pane.scrollHeight - pane.clientHeight);
+  if (list && short > 0) {
+    list.style.paddingBottom = `${Math.ceil(pad("paddingBottom") + short)}px`;
+  }
+  pane.scrollTop = want;
+}
+
+/**
  * Scroll `pane` so `target` is in view when it is not already wholly in view: centred from top to
  * bottom (clear of a sheet's sticky header rows), or that far below the pane's top when the pane
  * sets `--plinth-review-scroll-top` (a design system's rows, which centring cut in half above it),
  * and from side to side with its left edge just past whatever sticks at the left of its row (a
  * sheet's row numbers and frozen columns), so its column shows whole, with its name, and no
- * unlabelled sliver of another is left beside them. True when it scrolled.
+ * unlabelled sliver of another is left beside them. In a pane of whole items (REVIEW_START_ATTR, a
+ * deck's slides) the target starts the pane instead (startPaneAt). True when it scrolled.
  */
 function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
   const p = pane.getBoundingClientRect();
   const t = target.getBoundingClientRect();
   let moved = false;
   if (t.top < p.top || t.bottom > p.bottom) {
-    const top = Number.parseFloat(
-      pane.ownerDocument.defaultView
-        ?.getComputedStyle(pane)
-        .getPropertyValue("--plinth-review-scroll-top") ?? "",
-    );
-    pane.scrollTop += Number.isFinite(top)
-      ? t.top - p.top - top
-      : t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    if (target.parentElement?.closest(`[${REVIEW_START_ATTR}]`)) {
+      startPaneAt(pane, target);
+    } else {
+      const top = Number.parseFloat(
+        pane.ownerDocument.defaultView
+          ?.getComputedStyle(pane)
+          .getPropertyValue("--plinth-review-scroll-top") ?? "",
+      );
+      pane.scrollTop += Number.isFinite(top)
+        ? t.top - p.top - top
+        : t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    }
     moved = true;
   }
   if (sticks(target)) return moved;

@@ -8,6 +8,7 @@
 // No route returns draft text: the renderer reads it on the draft socket. The room never creates a
 // version.
 import {
+  isLiveSource,
   isLiveType,
   LIVE_DEFAULTS,
   type LiveCheckpointInput,
@@ -20,12 +21,14 @@ import {
   liveRules,
   TYPE_REGISTRY,
   typeDef,
+  versionSourcePath,
 } from "@plinth/shared";
 import { type Bindings, getConfig, liveEditMode, roomsActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { requireArtifact, updateArtifact } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
+import { parseManifest } from "./storage.ts";
 
 /** The note a checkpoint's version carries when the editor gave none. */
 export const LIVE_NOTE = "Edited on the page";
@@ -88,10 +91,10 @@ const unavailable = () =>
     reason: "live_unavailable",
   });
 
-/** What can be edited on its page, for the refusal: "a doc or a sheet". */
+/** What can be edited on its page, for the refusal: "a doc or a deck or a sheet". */
 const LIVE_KINDS = Object.values(TYPE_REGISTRY)
   .filter((d) => isLiveType(d))
-  .map((d) => `a ${(d.badge ?? d.label).toLowerCase()}`)
+  .map((d) => `a ${d.noun ?? (d.badge ?? d.label).toLowerCase()}`)
   .join(" or ");
 
 /** Policy (live_edit), then a type edited on its page. */
@@ -135,10 +138,31 @@ export async function getLiveInfo(ctx: Ctx, ref: string): Promise<LiveInfo> {
 }
 
 /** Says a version froze the draft, in the type's words (a doc's overlapped; others always do). */
-function frozenMessage(merges: boolean, n: number): string {
+function frozenMessage(merges: boolean, n: number, html = false): string {
+  if (html) return htmlDeckMessage(n);
   return merges
     ? `v${n} changed the same lines. Review it.`
     : `v${n} was published while you edited. Review it.`;
+}
+
+/** A deck's draft frozen against an HTML deck, which is never edited on its page. */
+function htmlDeckMessage(n: number): string {
+  return (
+    `v${n} is an HTML deck, which isn't edited on its page, so your page edits can't be added ` +
+    "to it. They are kept: review them to publish your deck as the next version, or discard them."
+  );
+}
+
+/** Whether version n of `a` is a deck stored as deck.json (an HTML deck). */
+async function htmlDeckVersion(ctx: Ctx, a: ArtifactRow, n: number): Promise<boolean> {
+  const def = typeDef(a.type);
+  if (!def?.altSource) return false;
+  const row = await ctx.env.DB.prepare(
+    "SELECT manifest FROM versions WHERE artifact_id = ?1 AND number = ?2",
+  )
+    .bind(a.id, n)
+    .first<{ manifest: string }>();
+  return row !== null && !isLiveSource(def, versionSourcePath(def, parseManifest(row.manifest)));
 }
 
 /**
@@ -215,7 +239,8 @@ export async function liveCheckpoint(
     return { saved: false, reason: "clean" };
   } else if (snap.conflict_version !== null) {
     await abort();
-    throw new ApiError("conflict", frozenMessage(merges, snap.conflict_version), {
+    const html = await htmlDeckVersion(ctx, a, snap.conflict_version);
+    throw new ApiError("conflict", frozenMessage(merges, snap.conflict_version, html), {
       current_version: snap.conflict_version,
       reason: "live_conflict",
     });
@@ -265,7 +290,7 @@ export async function liveCheckpoint(
     });
   } catch (e) {
     await abort();
-    throw await staleRoom(stub, a.id, base, e, merges);
+    throw await staleRoom(stub, a.id, base, e, merges, (n) => htmlDeckVersion(ctx, a, n));
   }
   let live = { rev: snap.rev, dirty: false };
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -299,6 +324,7 @@ async function staleRoom(
   base: number,
   e: unknown,
   merges = true,
+  isHtml: (n: number) => Promise<boolean> = async () => false,
 ): Promise<unknown> {
   const current = (
     e instanceof ApiError && e.code === "conflict"
@@ -314,10 +340,19 @@ async function staleRoom(
     return e;
   }
   if (after?.conflict_version != null) {
-    return new ApiError("conflict", frozenMessage(merges, after.conflict_version), {
+    const html = await isHtml(after.conflict_version).catch(() => false);
+    return new ApiError("conflict", frozenMessage(merges, after.conflict_version, html), {
       current_version: after.conflict_version,
       reason: "live_conflict",
     });
+  }
+  if (await isHtml(current).catch(() => false)) {
+    // The draft had no changes, so it ended: there is nothing of the page's to publish.
+    return new ApiError(
+      "conflict",
+      `v${current} is an HTML deck, which isn't edited on its page. There were no page edits to keep.`,
+      { current_version: current, reason: "live_resolved" },
+    );
   }
   return new ApiError(
     "conflict",

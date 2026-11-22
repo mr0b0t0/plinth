@@ -43,8 +43,8 @@ account.
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts (docs, sheets and design systems are edited on the page; HTML
-  in the source editor).
+- On-page editing of HTML artifacts (docs, decks, sheets and design systems are edited on the
+  page; HTML in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -635,10 +635,10 @@ the count survives.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
 the draft's files decided 2026-11-19; design systems decided 2026-11-21). Owners and editors
-edit a doc, a sheet or a design system right on its rendered page, and the other editors with the
-page open see the changes as they are typed. The registry says which types are edited this way
-(`edit: "live"`: docs, sheets and design systems); HTML pages and decks are edited in the source
-editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
+edit a doc, a deck, a sheet or a design system right on its rendered page, and the other editors
+with the page open see the changes as they are typed. The registry says which types are edited
+this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages are edited in the
+source editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
 the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
@@ -655,9 +655,9 @@ page shows the strip and makes the REST calls, and renders no content.
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
   client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
-  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block,
-  or a design system's formatted text, holding typing it cannot write yet), starts that minute
-  again.
+  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc or deck
+  block, or a design system's formatted text, holding typing it cannot write yet), starts that
+  minute again.
 - **Answers are matched by id** (decided 2026-11-22). The client puts its own number, `id`, on
   every frame the room answers directly: `lease`, `takeover`, `edit`, `release`, `keep`, `struct`
   and `sync`. The room puts it back as `re` on that frame's direct answer, success or failure:
@@ -679,8 +679,9 @@ page shows the strip and makes the REST calls, and renders no content.
   then puts the block back as the room has it, keeps it open and says why. The rules hold every
   check the type's publish hook makes on the source alone, so a draft can always be published: a
   doc never starts like a whole HTML document (`<html` or `<!doctype html` first, which the stager
-  refuses), a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19), and a
-  design system's draft (a line projection of its JSON) keeps the rules of
+  refuses), a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19), a deck
+  keeps its structure ([Decks on the page](#decks-on-the-page-decided-2026-11-21)), and a design
+  system's draft (a line projection of its JSON) keeps the rules of
   [Design systems](#design-systems-decided-2026-11-19): one whole value per edit, written
   canonically and checked with the publish rules on the whole system. To keep
   that rule out of people's way, the doc editor writes a `<` at the start of any top-level block
@@ -710,7 +711,7 @@ page shows the strip and makes the REST calls, and renders no content.
   `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
   nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
   made while a save runs are kept on top of the new version. A draft that cannot be a version yet
-  (a type's `unpublishable` rule; no doc, sheet or design system has one) is never checkpointed (409
+  (a type's `unpublishable` rule: only a deck that shows no slide) is never checkpointed (409
   `live_unpublishable`), and Publish is off, with the reason in its tooltip.
 - **Versions from elsewhere.** When an agent, the source editor, the CLI, REST or a restore
   publishes a version vN while a draft exists:
@@ -718,13 +719,13 @@ page shows the strip and makes the REST calls, and renders no content.
   - a **doc's** draft is merged onto vN line by line when the two changed different lines and the
     result fits the doc's rules (the editors see "v5 was published; your changes were kept"), as
     #49 decided; otherwise it is frozen for review;
-  - a **sheet's** or a **design system's** draft is never merged. A version's content is its
-    source and its files together (a design system's source compared as its projection, so a
-    version that only spells the same JSON another way, with other white space or compact, is no
-    change). When vN's content equals the draft's base (it changed only the title, or restored the
-    same content), the base moves under the draft's lines as they are, which also unfreezes a
-    draft frozen against an older version; when it equals the draft, the draft ends; anything
-    else freezes it.
+  - a **sheet's**, a **deck's** or a **design system's** draft is never merged. A version's
+    content is its source and its files together (a design system's source compared as its
+    projection, so a version that only spells the same JSON another way, with other white space or
+    compact, is no change). When vN's content equals the draft's base (it changed only the title,
+    or restored the same content), the base moves under the draft's lines as they are, which also
+    unfreezes a draft frozen against an older version; when it equals the draft, the draft ends;
+    anything else freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
   autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
@@ -812,7 +813,8 @@ page shows the strip and makes the REST calls, and renders no content.
   ⋯ menu while editing with changes and nothing to review, behind the same confirmation. A doc's
   block opens as formatted text, never as Markdown, in the page's own type, size and line height,
   so editing looks like the page
-  ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)); blocks other people hold
+  ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)), and so does a slide's text
+  ([Decks on the page](#decks-on-the-page-decided-2026-11-21)); blocks other people hold
   show their email and their text as it arrives. There is no "+" between blocks: "Insert below" in
   a block's menu, or Enter, adds one. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
@@ -848,10 +850,10 @@ page shows the strip and makes the REST calls, and renders no content.
   `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
   new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
   agents keep the carry rule.
-- **Ask an agent where editing is off.** Owners and editors of a doc, a sheet or a design system
-  on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque isolation
-  and the path fallback) see Ask an agent in the Edit slot, with the reason; HTML pages and designs
-  always do, and decks do until they are edited on the page. While editing, Ask an agent
+- **Ask an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a design
+  system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque
+  isolation and the path fallback) see Ask an agent in the Edit slot, with the reason; HTML pages
+  and designs always do. While editing, Ask an agent
   opens a dialog that leaves edit mode and the draft as they are. See
   [Ask an agent](#ask-an-agent-decided-2026-11-19).
 
@@ -1029,8 +1031,8 @@ Decided 2026-11-14 (issue #1). Design:
 Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
 open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
 durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
-late joiner reads it. Plinth's own on-page editing of docs, sheets and design systems is the
-room's first use.
+late joiner reads it. Plinth's own on-page editing of docs, decks, sheets and design systems is
+the room's first use.
 
 - **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
   `content="data viewer room"`), and may list topics commenters may emit too with
@@ -1060,7 +1062,7 @@ room's first use.
   `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
-  `/__plinth/room/v1/doc` (on-page editing of docs, sheets and design systems) and
+  `/__plinth/room/v1/doc` (on-page editing of docs, decks, sheets and design systems) and
   `/__plinth/room/v1/slides`
   (following the presenter in a deck) the same way. The handshake is checked in order: method,
   exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active, the artifact, the
@@ -1390,7 +1392,8 @@ A presentation is a deck: the agent writes Markdown, Plinth renders fixed slides
 [typed output](#mcp-interface), after docs, and works like one: `publish_artifact` and
 `update_artifact` take `type: "slides"` with the Markdown in `content`, a version stores
 `slides.md` and its images, and versions, `base_version` conflicts, restore, history and the
-source editor work as for docs. A deck is not edited on its page.
+source editor work as for docs. Owners and editors edit a deck's text, speaker notes and settings
+on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
 
 - **Source format.** A line that is exactly `---` (outside fenced code) separates slides; the split
   happens before Markdown, so `---` under a line of text is never a heading. Optional front matter
@@ -1543,8 +1546,8 @@ source editor work as for docs. A deck is not edited on its page.
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
-  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }` and
-  `paired` and `lead` from the app; `ready`, `position`, `view`, `fullscreen`,
+  (renderer protocol version 1: `goto`, `view`, `print`, `export { format, nonce }`, `paired`,
+  `lead` and `presenting { on }` from the app; `ready`, `position`, `view`, `fullscreen`,
   `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
@@ -1684,8 +1687,22 @@ differs from Claude only where noted.
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
     `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
   - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
-    they ask an agent for changes. Compare lists the index's changes (title, size, fonts, slides
-    added, removed or moved) beside the slide files that changed.
+    they ask an agent for changes (Ask an agent takes the bar's Edit slot, as for an `ask` type).
+    Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
+    gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
+    draft on it, and the frame takes no editing message. When an agent publishes an HTML deck over a
+    Markdown deck's room, a draft with no changes and no lease held ends (its row goes, its sockets
+    close); any other (with changes, or with a lease whose typing may be on its way) freezes for
+    the review of the people editing it ("vN is an HTML deck, which isn't edited on its page, so
+    your page edits can't be added to it"), where Publish your changes makes their deck the next
+    version and Discard ends the draft. While such a draft waits, owners and editors still get
+    `live` in the gate and the shell, after a reload too, and only for that review: the bar's Edit
+    shows the strip with Review changes, the frame joins the room without entering edit mode, the
+    draft is frozen (no lease or edit), and the HTML side of the review is one line ("vN is an HTML
+    deck, so it isn't shown beside your changes…") in place of its changes and drawing. The agent's
+    `live_draft` says the edits are neither merged into nor shown beside its deck. Compare lists the index's
+    changes (title, size, fonts, slides added, removed or moved) beside the slide files that
+    changed.
 - **Design systems.** `designSystems` is kept as written (its `namespace`s checked, at most 4), and
   a face's `src` or an image may name `ds/<folder>/...`. `get_design_system` with `install_for:
   "slides"` and `deck_format: "html"` lists the system's `tokens.json`, font files and images, as
@@ -3348,7 +3365,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
-  draft. It opens from the ⋯ item, or from an `ask` message a renderer posts, which opens it about
+  draft. Focus starts in its description, where typing goes. It opens from the ⋯ item, or from an
+  `ask` message a renderer posts, which opens it about
   a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural name such
   as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
   "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
@@ -3359,12 +3377,14 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
   published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
   Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
-  `ask` with block anchors, and the design system renderer with `token:<path>`, `group:<path>`,
-  `component:<id>` and `system:settings` (keys made from the published version only: a path too
-  long for an anchor key gives its index in the published version, `token:12`, and a token or
-  group only the draft has is just `token` or `group`, with no words), and with the block
-  anchors of its formatted texts behind the text's part (`guidelines:block-3`, named in the
-  published version's text as a doc's are); other types don't yet. While the app is in edit mode, an `ask`
+  `ask` with block anchors, the slides renderer with slide anchors (`slide-3:image-1`,
+  `slide-3:block-2`, `slide-3:notes`, with structural words such as "Slide 3, image 1"), and the
+  design system renderer with `token:<path>`, `group:<path>`, `component:<id>` and
+  `system:settings` (keys made from the published version only: a path too long for an anchor key
+  gives its index in the published version, `token:12`, and a token or group only the draft has is
+  just `token` or `group`, with no words), and with the block anchors of its formatted texts
+  behind the text's part (`guidelines:block-3`, named in the published version's text as a doc's
+  are); other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
   refuse, under the rules for a page's own compose ([comments from the
@@ -3419,16 +3439,17 @@ pages and designs come only from agents.
 
 - **New.** The dashboard's **New** button (in the top bar; while there is nothing yet, in the empty
   state beside "Connect an agent") opens a menu built from the type registry's `create` rows:
-  "Document" and "Sheet", then "Import a spreadsheet…", and nothing else. Which of the two places
+  "Document", "Slide deck" and "Sheet", then "Import a spreadsheet…", and nothing else. Which of the two places
   it takes is known once the artifact list has loaded, so New appears only then and never moves
   from one to the other. The blank items are
   offered only where editing on the page works here (`inline_editing` in `GET /api/v1/config` is not
   null) and for types the instance publishes now (`artifact_types`); Import is offered wherever
   sheets are. With neither, there is no New button at all. Only types edited on the page have a
-  `create` row (docs and sheets).
+  `create` row (docs, decks and sheets).
 - **A blank artifact is a placeholder v1.** New publishes the type's `create` row with the signed-in
   session over `POST /api/v1/artifacts`, the route agents use: a doc titled "Untitled document"
-  whose Markdown is `# Untitled document`, or a sheet titled "Untitled sheet" with three text
+  whose Markdown is `# Untitled document`, a deck titled "Untitled deck" whose one slide is
+  `# Untitled deck`, or a sheet titled "Untitled sheet" with three text
   columns, "Column 1" to "Column 3", and 20 empty rows. v1 has the note "Created in the app", and
   the first Publish on the page makes v2. A version is never empty and an artifact always has a
   current version, so the starter content is v1. It is private, like every publish, and counts
@@ -3675,6 +3696,205 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   before and checks the doc's rules, the sanitizer runs on every rendered block and every kept part,
   and the editor builds its DOM with `createElement` and `textContent` only. The serializer only
   changes which Markdown a person's typing produces.
+
+### Decks on the page (decided 2026-11-21)
+
+People edit a deck's slide text, speaker notes and settings on its page, through the same leases,
+room, drafts, Publish and whole-draft review as [Editing](#editing), with no Markdown shown. A deck
+is still Markdown in `slides.md`, which agents read and write as before. Adding, moving and
+deleting slides, and a slide's columns, stay with agents for now.
+
+- **Edit mode draws every raw slide**, one at a time and scaled to fit above its notes panel
+  (centred, or at the top under 600 px wide, as the overview is, with the deck's controls in the
+  empty stage under the notes panel, never over the slide being edited, and no tooltips on
+  touch): every
+  run of lines between separators, the empty ones at the deck's start and end included, which
+  presenting and the view leave out. Any empty slide shows "Click to add a title", which starts a
+  heading there, as a tap anywhere on the empty slide does; however small the slide is drawn, the
+  placeholder keeps at least 16 px text in a 44 px target. Each text element (a heading, a
+  paragraph, a list, a table, a quote or a code block of the slide's head or a column) is a focus
+  stop named by its place and role ("Slide 3, heading 1, editable"), never its text; a click or
+  Enter leases the lines of that block and opens it as formatted text, as in
+  [Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19) (the same model, format
+  bar, shortcuts, fidelity check and verify step). Enter at the end of a heading or paragraph opens
+  a new paragraph below it; Enter inside one sends the text before and after the caret as two
+  blocks in one edit, so the text after the caret is in the draft at once. The block closes then
+  and there (its lease is let go and its editor is gone, so no key typed before the room answers
+  can reach it), and the second block opens on its own lines once the room has let the lease go
+  after taking the edit. A closed or split block whose last edit the room refused (the deck was
+  full, the typing came too fast) is never taken as written: what it sent is written again in its
+  place, both halves together, and the place closes again; refused a second time, or when the deck
+  cannot take it, it stays on the page with Copy and is tried again after a reconnect.
+  The slide fits again as text changes. Presenting, full screen and
+  following the presenter wait until editing ends (Present is not offered while editing; Done
+  publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
+  Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
+  neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
+  or when the room merges a version into the draft, is taken again once the draft (after a merge,
+  the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
+  only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
+  that repeat it, nor notes on a slide, and a lease granted on the other kind of part is let go
+  unused). One rule decides, with no guessing: a block is taken again only when every line of the
+  deck above it and every line below it is as it was when its lease ended, and the lines between
+  hold one of those texts. After any change outside the block (a slide added or removed, a
+  co-editor's typing anywhere, an agent's version), what was typed goes in as a new block at the
+  nearest free place, as below, and a place clicked is not opened ("The deck changed meanwhile.
+  Try again."). Two slides may share a title, or a co-editor type the same words, so nothing else
+  proves which block is the person's: a duplicate is acceptable, another block's text written
+  over is not. What
+  was typed since is sent there unless the room's block already reads exactly so. After a drop that
+  is the text sent last (it may have arrived without its answer), the text the room acknowledged
+  or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.
+  An empty one (an insert point, or a block emptied) is found by the lines around it, and an
+  insert point nothing was typed in closes. A place clicked whose lines move
+  before the room reads its lease is looked for again the same way (an insert point by the lines
+  before and at it), at most three times, and nothing opens on lines that no longer hold what was
+  clicked.
+- **Nothing typed is lost**, by the doc editor's rules
+  ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)). Typing a slide block or
+  the notes cannot write as typed stays as typed, the place stays open, the frame reports unsent
+  changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
+  Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the
+  rescue store has it without its formatting, and in a room the holder sends `keep` every 20 s
+  while connected. Adding speaker notes and applying deck settings wait too (with the
+  same words), since a structural change would take the place's lines from under it. If edit mode ends anyway, it is written without its formatting. Typing the room does
+  not have yet when the lease ends (in the debounce, not writable as typed, or not sent because the
+  deck is at its size limit, the block is too long or the socket is down) is kept: taken over,
+  it goes in as a new block below the block (kept notes, after the slide's notes once nobody holds
+  them, the slide found by its first line of text, then its number, then where the notes were);
+  closed by a review or a reset, in its place again once the review ends; a block taken
+  again after a reconnect whose place someone else holds, or whose text is gone, goes in as a new
+  block at the nearest block end nobody's lease touches (of two as near, the one on its own
+  slide), three places at most, and never in speaker notes. A room's refusal never replaces it with the room's
+  text. A refused edit of a block still open (`invalid`) draws the room's text again in it, and
+  what was typed there that the room does not hold is kept on the page with **Copy** and in the
+  rescue store, as below: a duplicate at worst, never a loss. What no place takes stays on the page ("Couldn't add
+  your text yet", with **Copy**; "Couldn't add your text yet. Copy it before you reload" when the
+  app's rescue store could not take it), counts as unsent changes
+  (the page asks before it is left, and a hidden tab keeps its socket), and is tried again after a
+  reconnect; a discard drops it. A block closed, or split by Enter, whose last edit had no answer
+  when its lease went, or whose typing since its last edit was never sent, is written again (both
+  halves of a split together) and closed. Kept text is
+  in the app's rescue store too, as a doc's is, each item saying whether it was typed on a slide
+  or in the speaker notes, the slide it was on and that slide's first line of text: after a reload
+  it is written back into the same part (a slide's as a new block near where it was on that slide,
+  notes after that slide's notes, never on a slide), or kept with **Copy** when that part is gone.
+  In solo mode the frame's text is the whole draft and no room makes space later, so typing the
+  deck at its size limit cannot take counts as `unsavable` too: its block stays open as typed
+  (Escape, focus leaving and a click elsewhere leave it open, and the frame says "The deck is at
+  its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S, Done
+  and Ask's "Publish my changes first" wait, the page asks before it is left, and the typing is in
+  the rescue store. The tab's kept copy stays the deck as written, which can still be published
+  from "Unpublished changes from earlier in this tab" after a reload (the typing would put it past
+  the size limit), and the rescue store writes the typing back once editing starts again; the
+  notice's **Discard**, or Discard in the review of that copy or of the frame's own, drops the
+  typing from the store with the copy, as the ⋯ menu's Discard does. If edit
+  mode ends anyway it is kept on the page with **Copy**, still `unsavable`, and editing again opens
+  it as a block of its own. Alone, the room's frame limit does not apply to a block: only the
+  deck's size limit does. A struct op that removes the lines a solo place holds ends its lease as
+  a room's closed draft does, so its typing is written again or kept, never left unleased.
+- **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
+  change, as a doc's frame shows its draft (the published deck while the draft shows none). While
+  the deck is presented (full screen, which the app tells the frame with `presenting { on }`;
+  presenter view; an audience window) and while a presenter leads the room (this one, or one it
+  follows), it shows the deck as last published instead: its own version, or the room's draft
+  while the room says it holds no edits since its base version (after a page Publish). That deck
+  is fixed when presenting or the lead begins, so a co-editor's typing never reaches a presented
+  screen, a version published meanwhile waits until it ends, and the leader and every follower
+  count the same slides.
+- **Writing it back without changing the deck's structure.** The slides serializer
+  (`packages/shared/src/slidesSerialize.ts`, on the doc's) escapes what a deck would read as
+  structure, part by part as the deck reads it: in a head or a column a line `---` (a heading's
+  underline is written `----`), a line starting `Note:` or `Notes:` (written `\Note:`, which the
+  deck reads back as `Note:`) and a line `|||`; in the notes part only `---`; and in the raw slide
+  right after a bare opening `---` (a deck whose line 0 is `---` without front matter), a line that
+  would read as a `key: value` setting has its first colon escaped (`Date\: 3 March`, which renders
+  as `Date: 3 March`), so the slide can never become front matter.
+- **The structure rule.** The room checks every text edit of a deck, and the renderer the same
+  before it sends (`liveTypes.ts`, `deckLayout` in `slides.ts`, which `parseDeck` reads every deck
+  through): (1) the edited range lies inside one part of one raw slide (its head, one column, or
+  its notes part), never in the front matter; (2) the removed and inserted lines have the same
+  structural kinds in order, read in the same part and fence state (none in a head or column; the
+  notes marker first when an edit starts on it); (3) the fence state after the edit is the one it
+  found; (4) where the front matter ends is unchanged; (5) `deckKeeps` holds on the whole result:
+  every line outside the edit keeps its kind, and the front matter is byte for byte as it was. No
+  inserted line may hold a carriage return, and a deck's lines are read with CRLF as LF, as
+  `parseDeck` does. The HTML-document rule applies as for docs. An edit that breaks any of these
+  is refused (`invalid`), and the page puts the block back and says "That change would change the
+  deck's layout, so it wasn't kept." The editor's messages (this one, "Ana is editing slide 3.",
+  which names the holder by a first name taken from their address, or "Someone", and the others)
+  go to the deck's live region and show for a few seconds in the deck's one notice, a toast that
+  floats over the stage and never moves or resizes the slide: inside the slide's top right corner,
+  letting taps through, or at phone width in the empty stage under the notes panel and the deck's
+  controls. While typing is kept on the
+  page, that notice is the kept typing's, with **Copy**, and messages are only read out. A block
+  holding typing it cannot write as typed keeps it as
+  typed, and typing kept from a lease that ended (below) is kept on the page instead.
+- **Emptying a block.** Deleting all of a block's text removes its lines. Where that would run two
+  text lines together, or bring a `---` to line 0 (which would turn the next slide's
+  `key: value` lines into settings), one blank line takes its place. A deck that opens with a bare
+  `---` first loses it (the op `trim_start`, which only drops empty slides presenting never shows),
+  because blank lines under it would read as empty front matter. A slide that loses its last block
+  stays, as an empty slide. A draft that shows no slide cannot be published (`unpublishable`
+  `"empty"`): Publish is off with "Write something on a slide to publish", autosave skips it,
+  and Done leaves edit mode with the draft kept.
+- **Speaker notes** are one part, its marker line included, edited in the panel under the slide
+  (named "Notes for slide 3", with no heading shown): one lease from the marker to the slide's last
+  line of text. The serializer
+  keeps the marker word (`Note` or `Notes`) and its form, the first line on the marker line
+  (`Note: Welcome everyone.`) or the marker alone (it is alone when the first line starts with
+  white space or opens fenced code). The panel has no control of its own: a slide without notes,
+  or with empty ones, shows only "Add speaker notes", as a field's placeholder, and open notes
+  tint the whole panel, as an open block is tinted. Adding notes is the struct op `add_notes`.
+  Notes left empty are no notes: once the empty field's last edit is in and its lease let go, the
+  editor sends `remove_notes`, which says nothing if refused (the empty notes stay, drawn as none).
+- **Deck settings** (aspect, theme, page numbers, footer) are a popover the ⋯ menu's "Slide
+  setup" opens while editing (the popover's title is the same words; not "settings", since the
+  menu's Settings is the artifact's), never a lease on the front matter. The popover takes focus
+  itself, so no setting
+  shows a focus ring until a key moves to it. Apply sends the struct op
+  `set_deck`, which writes the front matter canonically, with only the keys that differ from the
+  defaults (`aspect: 16:9`, `theme: auto`, `paginate: true`, no footer) and the footer as plain
+  text of at most 120 characters on one line; it creates the front matter at line 0 when the deck
+  has none and removes it when nothing is left in it. Lines of keys the reader does not know are
+  kept, after the known ones.
+- **Struct ops** (`packages/shared/src/slidesStruct.ts`: `add_notes`, `remove_notes`, `set_deck`,
+  `trim_start`) are pure and applied by the room and every renderer to the same lines, at the
+  draft's current `rev`. Each ends with the line-0 step (unless the deck starts with the front
+  matter it had, or that `set_deck` just wrote, it removes `---` lines from line 0 while there is
+  one), so no op leaves a bare `---` at line 0. Each is checked by its postcondition before it is
+  taken: `deckKeeps` with the op's line map (only `set_deck` may change the front matter), the raw
+  slide count it should give, every slide it does not name byte for byte at its new place, and the
+  deck's rules. Each lists every range it removes or rewrites and every point it inserts at (line
+  0 too when the deck has front matter), and is refused (`held`) while another editor's lease
+  overlaps one: a removed range `[c, d)` overlaps a line lease that shares a line and an insert
+  point at q when c ≤ q ≤ d; an insertion point p overlaps a line lease `[a, b)` when a < p < b
+  and an insert point at exactly p. So a person can add notes to one slide while another types on
+  another, and every lease elsewhere moves with the op's line map.
+- **Images are agent-only.** Selecting an image offers "Ask an agent" (described "An agent adds
+  or replaces the image."), its one action (no Delete: adding and deleting images stay with
+  agents); a block the formatted editor cannot show faithfully, and
+  notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
+  can change it."), as a doc's blocks do. That bar sits next to the block at its right edge (an
+  image's own edge): just above it, or just below when that covers less of the slide's other
+  blocks; the deck's controls step aside while it shows. An image's tint, focus ring and selection
+  are drawn on the image itself, not on the slide-wide paragraph around it. Their `ask` anchors are
+  structural (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`, numbered as the deck shows its
+  slides) with structural words ("Slide 3, image 1"), never the deck's text. Images are drawn from
+  the draft's base version's files.
+- **A version published meanwhile** is never merged into a deck draft: the draft freezes, unless
+  that version changed nothing the draft holds or is the draft, and the whole-draft review shows
+  both decks as slides, side by side (one at a time at phone width), each with its own version's
+  images, the slides that changed marked, and the two change lists. A side that scrolls to its
+  first change puts that slide at the top of the pane with the same margin above it as slide 1 has,
+  and nothing of the slide before it in view, so no slide is cut at the top. Side by side, the two
+  panes' rules under their change lists and the bottoms of their slides line up. "Publish your changes"
+  publishes the draft deck as it is with its base's files; an empty draft deck cannot be (its
+  Publish is off, with the reason).
+- **Security.** The structure rule and the struct ops' postconditions run in the room on every
+  edit and op, whatever a client sends, so no text edit can split a slide, swallow a separator in
+  an unclosed fence, drop a notes marker or turn slide text into settings. Everything the editor
+  draws goes through the unchanged sanitizer, or is made with `createElement` and `textContent`.
 
 ### Published from code (decided 2026-11-21)
 
@@ -4151,8 +4371,8 @@ Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Fre
 a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
 request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
 are free, and a hibernating room accrues no duration. A room stores almost nothing: its alarm and,
-for a doc, sheet or design system edited on its page, one small record of the saves in progress
-(never their text).
+for a doc, deck, sheet or design system edited on its page, one small record of the saves in
+progress (never their text).
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |

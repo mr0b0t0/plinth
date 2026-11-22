@@ -255,14 +255,16 @@ export async function browserExport(
     // Before anything loads: the page reaches only its own version, the board loader and the
     // CSP's hosts, and any window it opens is closed (as for a thumbnail).
     await guardCapturePage(page as unknown as GuardedPage, job.scope);
-    // One DevTools session for the cookies and the PDF stream.
-    let cdp: CDPSession | null = null;
-    const session = async (): Promise<CDPSession> => {
-      cdp ??= await page.createCDPSession();
-      return cdp;
-    };
+    // One DevTools session for the cookies, the media and the PDF stream. Media goes through it,
+    // not page.emulateMediaType: while a second session is attached, the browser drops the page's
+    // own media emulation, and the shell would boot on screen without the export layout.
+    const s: CDPSession = await page.createCDPSession();
+    const media = (type: "print" | "screen") =>
+      s.send("Emulation.setEmulatedMedia", {
+        media: type,
+        features: [{ name: "prefers-color-scheme", value: "light" }],
+      });
     if (job.cookies.length > 0) {
-      const s = await session();
       for (const cookie of job.cookies) {
         // Without it boards still render, without their own files (as for thumbnails).
         await s.send("Network.setCookie", cookie).catch((e: unknown) => {
@@ -273,9 +275,8 @@ export async function browserExport(
       }
     }
     await page.setViewport(job.viewport);
-    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     // Print media as the shell boots, top-level: the renderer's export layout (boot.ts).
-    await page.emulateMediaType("print");
+    await media("print");
     // The document, not network idle: a slow board must not fail the load, only be left out.
     const res = await page.goto(job.url, {
       waitUntil: "domcontentloaded",
@@ -308,12 +309,11 @@ export async function browserExport(
       .catch(() => undefined);
     if (signal.aborted) throw new Error("the render ran out of time");
     // A PNG is the board as people see it on screen; a PDF prints.
-    if (job.format === "png") await page.emulateMediaType("screen");
+    if (job.format === "png") await media("screen");
     await new Promise((r) => setTimeout(r, EXPORT_RUN.settleMs));
     if (job.format === "pdf") {
       // A stream read in pieces, so a PDF past the cap is refused before it is ever whole in the
       // Worker. The options are puppeteer's page.pdf() defaults plus the two the export sets.
-      const s = await session();
       const { stream } = await s.send("Page.printToPDF", {
         transferMode: "ReturnAsStream",
         printBackground: true,

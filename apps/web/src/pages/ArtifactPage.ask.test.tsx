@@ -304,6 +304,23 @@ describe("Ask an agent: not editing", () => {
   });
 });
 
+describe("Ask an agent on a deck", () => {
+  const DECK: ViewArtifact = { ...PAGE, type: "slides", title: "Launch" };
+
+  it("takes the Edit slot of an HTML deck, which agents change, and offers no Edit", async () => {
+    stub(gateOf({ artifact: DECK, no_editor: true }));
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Launch, version 3");
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Ask an agent" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Ask an agent" })).toBeNull();
+  });
+});
+
 describe("Ask an agent where editing on the page is off", () => {
   const off = (reason: "disabled" | "isolation") =>
     gateOf({ artifact: DOC, role: "editor", live_off: { reason } });

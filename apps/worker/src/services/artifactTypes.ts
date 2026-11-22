@@ -49,6 +49,8 @@ export interface CommittedVersion {
   update: boolean;
   /** The stored source file's sha256, or null. */
   sourceSha256: string | null;
+  /** Where the source is stored (the type's sourcePath, or its altSource: an HTML deck). */
+  sourcePath: string;
   /** A checkpoint of a live draft (services/live.ts). */
   liveCheckpoint: boolean;
   /** A restore of an older version. */

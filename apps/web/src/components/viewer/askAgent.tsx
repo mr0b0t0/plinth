@@ -7,8 +7,8 @@
 // It is offered only when the owner has an agent that can take the request. Where it appears,
 // from this file's items (one place each time):
 // - the bar's Edit slot (owners and editors, at desktop width) for a type people change by asking
-//   (registry `edit: "ask"`: HTML pages, designs, and decks until they edit on the page) and for
-//   any type whose editing on the page is off here (`live_off`, with its reason);
+//   (registry `edit: "ask"`: HTML pages and designs; and an HTML deck, `no_editor`) and for any
+//   type whose editing on the page is off here (`live_off`, with its reason);
 // - the ⋯ menu everywhere else it may be used: commenters, phone width, and live types whose
 //   editing is on.
 //
@@ -109,7 +109,9 @@ export function useAskAgent({
 }): AskAgent {
   const available = (gate.ask?.targets.length ?? 0) > 0;
   const def = typeDef(gate.artifact.type);
-  const inSlot = available && (def?.edit === "ask" || gate.live_off !== undefined);
+  // An HTML deck (`no_editor`) is a deck people change by asking, though Markdown decks edit live.
+  const inSlot =
+    available && (def?.edit === "ask" || gate.live_off !== undefined || gate.no_editor === true);
   const reason = gate.live_off ? LIVE_OFF_TEXT[gate.live_off.reason] : null;
   const [dialogAnchor, setDialogAnchor] = useState<AskAnchor | null>(null);
   const [dialogWhat, setDialogWhat] = useState<AskWhat | null>(null);

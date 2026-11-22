@@ -27,12 +27,13 @@ import {
 } from "./newArtifact.ts";
 
 describe("blank items", () => {
-  it("offers a document and a sheet only where editing on the page works", () => {
+  it("offers a document, a deck and a sheet only where editing on the page works", () => {
     expect(blankItems({ ...CONFIG, inline_editing: "room" }).map((i) => i.type)).toEqual([
       "doc",
+      "slides",
       "sheet",
     ]);
-    expect(blankItems({ ...CONFIG, inline_editing: "solo" })).toHaveLength(2);
+    expect(blankItems({ ...CONFIG, inline_editing: "solo" })).toHaveLength(3);
     expect(blankItems({ ...CONFIG, inline_editing: null })).toEqual([]);
     // Absent reads as null (an older Worker).
     expect(blankItems(CONFIG)).toEqual([]);
@@ -45,6 +46,7 @@ describe("blank items", () => {
       inline_editing: "room" as const,
       artifact_types: [
         { id: "doc" as const, available: true },
+        { id: "slides" as const, available: false },
         { id: "sheet" as const, available: false },
       ],
     };

@@ -251,9 +251,9 @@ describe("design system ops", () => {
       }
       // A lease on the guidelines' first line moves with them.
       const end = ls.indexOf("}");
-      const g = mapRange({ start: end + 1, end: end + 2 }, r.map, r.lines.length);
+      const g = mapRange({ start: end + 1, end: end + 2 }, r.map, ls.length, r.lines.length);
       expect(g && r.lines[g.start]).toBe(ls[end + 1]);
-      const insert = mapRange({ start: end + 1, end: end + 1 }, r.map, r.lines.length);
+      const insert = mapRange({ start: end + 1, end: end + 1 }, r.map, ls.length, r.lines.length);
       expect(insert).toEqual({ start: r.lines.indexOf("}") + 1, end: r.lines.indexOf("}") + 1 });
     }
   });

@@ -459,14 +459,16 @@ light and dark themes, and phone
 width. Publish it as is (`publish_artifact` with its HTML) to try it with someone. The skill's
 "Multiplayer pages (rooms)" section has the full API and limits.
 
-Doc, sheet and design system artifacts get the same live machinery without declaring anything:
-where an instance has live editing on, owners and editors edit a doc, a sheet or a design system on
-its page together, and Publish (or a pause) makes a version. A design system's token values,
-descriptions, guidelines and component text are edited in place; its component code, fonts,
-settings and names stay with agents. A doc is edited as formatted text, never as Markdown: Plinth writes the
+Doc, deck, sheet and design system artifacts get the same live machinery without declaring
+anything: where an instance has live editing on, owners and editors edit a doc, a deck, a sheet or
+a design system on its page together, and Publish (or a pause) makes a version. A design system's
+token values, descriptions, guidelines and component text are edited in place; its component code,
+fonts, settings and names stay with agents. A doc is edited as formatted text, never as Markdown: Plinth writes the
 changes back as Markdown, keeps every block nobody touched byte for byte, and leaves what it
 cannot show faithfully as formatted text (a code block in a list item, say) and images for agents
-to change, through Ask an agent. An agent's `update_artifact` (or `edit_sheet`) on an artifact being
+to change, through Ask an agent. A deck's slide text, speaker notes and settings are edited the
+same way; adding, moving and deleting slides stay with agents. An agent's `update_artifact` (or
+`edit_sheet`) on a doc, deck or sheet being
 edited gets the `live_draft` warning, which needs no action
 ([mcp.md](mcp.md#publish-warnings)): your version is published either way, and when it is not
 combined with their changes, the people editing review it beside theirs and keep one. Read the

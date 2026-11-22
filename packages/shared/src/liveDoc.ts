@@ -13,17 +13,24 @@
 // A sheet (the other live-editable type) uses the same channel: a row is a line, a lease on a row
 // is a lease on its line, and each line an edit puts in is checked by the type's rules
 // (liveTypes.ts). Rows and columns are inserted and deleted with one more frame, `struct`, that
-// both sides apply with the same pure function (applySheetStruct), so no text is resent.
+// both sides apply with the same pure function (applySheetStruct), so no text is resent. A deck
+// does too (slides-text): a lease is a block of one slide part, or the whole notes part, and its
+// notes and settings change with `struct` (applySlidesStruct), whose ops name the ranges they
+// touch, so a person can change one slide while others type on another.
 import { z } from "zod";
 import { FILE_SUMMARY_LIMITS } from "./changes/files.ts";
 import { LIMITS } from "./constants.ts";
 import { DS_TOKEN_TYPES, dsJsonDepthWithin } from "./designSystem.ts";
 import { sheetColumnInputSchema } from "./schemas.ts";
+import { MAX_DECK_FOOTER } from "./slides.ts";
+import { FOOTER_UNSAFE_RE } from "./slidesStruct.ts";
 
 // The line and lease helpers live in liveLines.ts, the per-type rules in liveTypes.ts (neither
 // with zod), so the renderers can use them without carrying the schemas below.
 export * from "./liveLines.ts";
 export * from "./liveTypes.ts";
+export * from "./slidesSerialize.ts";
+export * from "./slidesStruct.ts";
 
 /** Fixed live-editing rules, not env vars (the env-var ones are LIVE_DEFAULTS). */
 export const LIVE_DOC = {
@@ -143,6 +150,27 @@ const dsTokenPath = z
   .max(16 * 65)
   .regex(/^[A-Za-z0-9_-]{1,64}(?:\.[A-Za-z0-9_-]{1,64}){0,15}$/);
 const dsText = z.string().max(LIMITS.liveDocFrameBytes);
+const rawSlide = z.number().int().min(1).max(LIMITS.maxSlides);
+
+/** A deck's structural change (SlidesStructOp, slidesStruct.ts), as a struct frame carries it. */
+export const slidesStructOpSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("add_notes"), n: rawSlide }).strict(),
+  z.object({ op: z.literal("remove_notes"), n: rawSlide }).strict(),
+  z
+    .object({
+      op: z.literal("set_deck"),
+      aspect: z.enum(["16:9", "4:3"]),
+      theme: z.enum(["auto", "light", "dark"]),
+      paginate: z.boolean(),
+      footer: z
+        .string()
+        .max(MAX_DECK_FOOTER)
+        .refine((f) => !FOOTER_UNSAFE_RE.test(f), { message: "plain text on one line" }),
+    })
+    .strict(),
+  z.object({ op: z.literal("trim_start") }).strict(),
+]);
+
 /**
  * A token's value: any JSON (the room checks it with the publish rules; the frame bounds its size)
  * nested no deeper than a design system may be, so nothing has to write out a deeper one.
@@ -171,13 +199,14 @@ export const designSystemStructOpSchema = z.discriminatedUnion("op", [
 ]);
 
 /**
- * Every live type's structural op, as a struct frame carries it (a sheet's or a design system's).
- * The room checks the op's kind against the artifact's type (LiveTypeRules.struct.kinds) before it
- * applies it.
+ * Every live type's structural op, as a struct frame carries it (a sheet's, a design system's or a
+ * deck's). The room checks the op's kind against the artifact's type (LiveTypeRules.struct.kinds)
+ * before it applies it.
  */
 export const liveStructOpSchema = z.discriminatedUnion("op", [
   ...sheetStructOpSchema.options,
   ...designSystemStructOpSchema.options,
+  ...slidesStructOpSchema.options,
 ]);
 
 /**
@@ -313,7 +342,7 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
   }),
   /**
    * A structural change, applied: every socket applies `op` with the type's own function
-   * (applySheetStruct, applyDesignSystemStruct).
+   * (applySheetStruct, applyDesignSystemStruct, applySlidesStruct).
    */
   z.object({
     t: z.literal("struct"),
