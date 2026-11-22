@@ -40,6 +40,11 @@ declare module "@cloudflare/puppeteer-types" {
   /** A DevTools protocol session (only the calls services/thumbnails.ts and designExport.ts make). */
   export interface CDPSession {
     send(method: "Network.setCookie", params: object): Promise<unknown>;
+    /** services/designExport.ts: print or screen media, through the session that holds the page. */
+    send(
+      method: "Emulation.setEmulatedMedia",
+      params: { media: string; features?: { name: string; value: string }[] },
+    ): Promise<unknown>;
     /** services/designExport.ts: the PDF as a stream the Worker reads in pieces. */
     send(
       method: "Page.printToPDF",

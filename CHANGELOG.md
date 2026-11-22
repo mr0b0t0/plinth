@@ -10,6 +10,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Design export works again in Browser Rendering.** A PNG or PDF export of a design was
+  refused with "the design did not take the export layout": while the export's DevTools session
+  was attached (it sets the board cookies), Browser Rendering ignored the page's print media, so
+  the design opened on its canvas instead of its export layout. The export now sets print and
+  screen media through that same session.
+
 - **Doc editing keeps typing the doc refuses.** Three more cases where typed text could be lost on
   a doc's page now keep it. A block that would take a live doc past its 50,000-line limit, or that
   the room refuses as too large, stays open with what was typed, as a block past the byte limit
