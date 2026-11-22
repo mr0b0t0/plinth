@@ -757,6 +757,49 @@ describe("room editing", () => {
     expect(notice()).toContain("That change was not sent");
   });
 
+  it("a row the room refuses shows the room's row again and says why; the next edit is unflushed until its ack", async () => {
+    const { f, ws } = start();
+    const lastLive = () =>
+      f.parent.postMessage.mock.calls
+        .map((c) => c[0])
+        .filter((m) => m?.type === "live")
+        .at(-1);
+    dbl(cell("B3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "6");
+    key(field() as HTMLInputElement, "Enter");
+    expect(ws.sent.at(-2)).toMatchObject({ t: "edit", seq: 1 });
+    ws.frame({ t: "error", code: "invalid" });
+    await tick();
+    // The refused value was never in the draft: the grid shows the room's row, and says so.
+    expect(text("B3")).toBe("5");
+    expect(notice()).toContain("does not fit the sheet");
+    // Nothing of this frame waits for the room any more.
+    expect(lastLive()).toMatchObject({ unflushed: false });
+    // A later edit is unsent until the room acknowledges it, as before.
+    dbl(cell("B2"));
+    ws.frame({ t: "leased", lease: "l2", start: 1, end: 2, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "7");
+    key(field() as HTMLInputElement, "Enter");
+    await tick();
+    expect(lastLive()).toMatchObject({ unflushed: true });
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l2",
+      start: 1,
+      del: 1,
+      ins: '["Apples",7,1.5,true,"new"]',
+      by: "s1",
+      seq: 2,
+    });
+    ws.frame({ t: "flushed", rev: 4 });
+    await tick();
+    expect(text("B2")).toBe("7");
+    expect(lastLive()).toMatchObject({ unflushed: false });
+  });
+
   it("says why the room refused a struct", async () => {
     const { ws } = start();
     cell("B2").focus();

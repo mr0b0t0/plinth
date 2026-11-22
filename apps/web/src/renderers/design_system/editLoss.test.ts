@@ -19,6 +19,7 @@ import {
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
+import { ASK_TIMEOUT_MS } from "./edit.ts";
 import { FIXTURE } from "./testFixture.ts";
 
 const APP = "https://plinth.example.com";
@@ -61,6 +62,8 @@ class Room {
   cursor = 0;
   /** Edits to refuse with this error code (by the order they come). */
   refuseNext: string | null = null;
+  needsFlush = false;
+  flushDue = false;
   ws: FakeSocket;
   constructor(ws: FakeSocket, text: string) {
     this.ws = ws;
@@ -125,6 +128,7 @@ class Room {
         this.rev += 1;
         const del = l.end - l.start;
         this.mine = { ...l, end: l.start + ins.length };
+        this.needsFlush = true;
         out.push({
           t: "op",
           gen: this.gen,
@@ -144,8 +148,9 @@ class Room {
         const id = this.mine.id;
         this.mine = null;
         out.push({ t: "released", lease: id });
-        // A finished block is written to D1 straight away (doc.ts release, flushNow).
-        out.push({ t: "flushed", rev: this.rev });
+        // doc.ts release: `if (this.needsFlush) void this.flushNow()`: D1 is awaited, so the
+        // `flushed` frame comes after the frames already queued.
+        if (this.needsFlush) this.flushDue = true;
         return;
       }
       case "struct": {
@@ -160,6 +165,26 @@ class Room {
         this.lines = r.lines;
         this.rev += 1;
         out.push({ t: "struct", gen: this.gen, rev: this.rev, op: f.op, by: "s1" });
+        this.needsFlush = true;
+        return;
+      }
+      case "takeover": {
+        // doc.ts takeover: no holder of that lease (it was released meanwhile) is `not_held`.
+        if (!this.ben || this.ben.id !== f.lease) return out.push({ t: "error", code: "not_held" });
+        const { start, end } = this.ben;
+        this.ben = null;
+        const prev = this.mine?.id;
+        this.mine = { id: `L${++this.n}`, start, end };
+        if (prev) out.push({ t: "released", lease: prev });
+        out.push({ t: "released", lease: f.lease });
+        out.push({
+          t: "leased",
+          lease: this.mine.id,
+          start,
+          end,
+          holder: "s1",
+          by: "ada@example.org",
+        });
         return;
       }
       case "keep":
@@ -172,8 +197,9 @@ class Room {
   }
   /** Handle what the client sent so far, then deliver the answers one message at a time. */
   async pump(): Promise<boolean> {
-    const batch = this.ws.sent.slice(this.cursor);
-    this.cursor = this.ws.sent.length;
+    const n = process.env.ONE ? 1 : this.ws.sent.length - this.cursor;
+    const batch = this.ws.sent.slice(this.cursor, this.cursor + n);
+    this.cursor += batch.length;
     if (batch.length === 0) return false;
     const out: Json[] = [];
     for (const f of batch) {
@@ -189,6 +215,11 @@ class Room {
             .map((o) => JSON.stringify(o).slice(0, 70))
             .join(" | "),
         );
+    }
+    if (this.flushDue) {
+      this.flushDue = false;
+      this.needsFlush = false;
+      out.push({ t: "flushed", rev: this.rev });
     }
     for (const o of out) {
       this.ws.frame(o);
@@ -270,11 +301,12 @@ class Room {
 
 /** Pump until nothing more is sent, letting the 1.5 s let-go timers run. */
 async function settle(room: Room) {
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 60; i++) {
     const any = await room.pump();
     vi.advanceTimersByTime(2000);
     await flush();
     if (!any && room.ws.sent.length === room.cursor) return;
+    if (process.env.ONE) i = Math.min(i, 10);
   }
 }
 
@@ -585,3 +617,104 @@ function room_addToken(group: string, name: string) {
   input.value = name;
   form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
+
+describe("re-review: a takeover the room answers with not_held", () => {
+  it("Ada takes over Ben's idle guidelines block just as he lets go: her token values still go", async () => {
+    const room = await start();
+    const end = room.lines.indexOf("}");
+    const at = end + 3; // "One primary button per view."
+    room.ben = { id: "B1", start: at, end: at + 1 };
+    room.ws.frame({
+      t: "leased",
+      lease: "B1",
+      start: at,
+      end: at + 1,
+      holder: "s2",
+      by: "ben@example.org",
+    });
+    await flush();
+    vi.advanceTimersByTime(61_000);
+    const held = root().querySelector<HTMLElement>("[data-text='guidelines'] .plinth-doc__held");
+    if (!held) throw new Error("no held block");
+    held.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const take = [
+      ...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button"),
+    ].find((b) => b.textContent === "Take over");
+    if (!take) throw new Error("no Take over");
+    take.click();
+    expect(room.ws.sent.at(-1)).toMatchObject({ t: "takeover", lease: "B1" });
+    // Ben lets go first: the room has no holder of B1 when the takeover comes.
+    room.ben = null;
+    room.ws.frame({ t: "released", lease: "B1" });
+    await flush();
+    await settle(room);
+    change("color.bg", "#fafafa");
+    await settle(room);
+    expect(room.value(BG)).toBe("#fafafa");
+    change("color.fg", "#101010");
+    await settle(room);
+    expect(room.value(FG)).toBe("#101010");
+  });
+});
+
+describe("re-review: a composite another editor changed while Ada is in its row", () => {
+  it("Ada's change to X keeps Ben's new blur", async () => {
+    const room = await start();
+    const r = row("shadow.card");
+    const x = r.querySelector<HTMLInputElement>('[aria-label="shadow.card x: number"]');
+    if (!x) throw new Error("no x");
+    x.focus();
+    // Ben changes the blur while Ada's focus is in the row (the row is not drawn again).
+    await room.benSets(["tokens", "shadow", "card", "$value"], {
+      color: "#0000001f",
+      offsetX: "0px",
+      offsetY: "1px",
+      blur: "9px",
+    });
+    x.value = "2";
+    x.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle(room);
+    expect(room.value(["tokens", "shadow", "card", "$value", "offsetX"])).toBe("2px");
+    expect(room.value(["tokens", "shadow", "card", "$value", "blur"])).toBe("9px");
+  });
+
+  it("a part refused while Ben holds the token is not sent again with the next part", async () => {
+    const room = await start();
+    const node = dsNodeAtPath(room.lines, ["tokens", "shadow", "card", "$value"]);
+    if (!node) throw new Error("no node");
+    const r = row("shadow.card");
+    const x = r.querySelector<HTMLInputElement>('[aria-label="shadow.card x: number"]');
+    const y = r.querySelector<HTMLInputElement>('[aria-label="shadow.card y: number"]');
+    if (!x || !y) throw new Error("no part fields");
+    x.focus();
+    room.ben = { id: "B1", start: node.start, end: node.end };
+    x.value = "2";
+    x.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle(room);
+    expect(notice()).toContain("ben@example.org is editing this");
+    // Ben lets go; Ada, still in the row, sets Y: X is the draft's again, not her refused 2.
+    room.ben = null;
+    y.focus();
+    y.value = "4";
+    y.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle(room);
+    expect(room.value(["tokens", "shadow", "card", "$value", "offsetY"])).toBe("4px");
+    expect(room.value(["tokens", "shadow", "card", "$value", "offsetX"])).toBe("0px");
+  });
+});
+
+describe("a lease request the room never answers", () => {
+  it("is given up after a while, and the value asks again", async () => {
+    const room = await start();
+    change("color.bg", "#fafafa");
+    const asked = () => room.ws.sent.filter((f) => f.t === "lease").length;
+    expect(asked()).toBe(1);
+    // The room never answers it (an error the frame cannot match, or a frame lost).
+    room.cursor = room.ws.sent.length;
+    vi.advanceTimersByTime(ASK_TIMEOUT_MS + 1);
+    await flush();
+    expect(asked()).toBe(2);
+    await settle(room);
+    expect(room.value(BG)).toBe("#fafafa");
+  });
+});

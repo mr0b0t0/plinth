@@ -1275,9 +1275,12 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     keeps the value until the review ends (the notice says it is not in the draft yet, with Copy),
     and it is written if the draft is kept, dropped with a discard. Only the room refusing the
     value (`invalid`, `too_large`: never sent again), someone else holding its lines, or the
-    token being gone ends it, and the notice says so with Copy. A composite's parts (shadow,
-    border, typography) each write the whole value from what the row's fields hold now, never
-    from the value the row was drawn with.
+    token being gone ends it, and the notice says so with Copy. A request the room answers with
+    an error (a takeover whose holder let go first: `not_held`) or not at all is given up after
+    15 seconds, and its part asks again. A composite's part (shadow, border, typography) writes the
+    whole value as the draft has it at that moment, with the parts written from that row still on
+    their way and the one part changed, so another person's change to another part is kept and a
+    refused part is not sent again.
   - **The controls** keep the form a value is stored in: a colour string or the picker's
     `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
     its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded

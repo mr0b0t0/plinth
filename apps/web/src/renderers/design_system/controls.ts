@@ -32,6 +32,12 @@ export interface ControlContext {
   targets(type: DsTokenType): string[];
   /** The person set a new value; false when it was refused (not written). */
   change(value: unknown): unknown;
+  /**
+   * The value as the draft has it now, and whether a change written from this control is still
+   * on its way (not in the draft yet). A composite builds each part's write from it, so another
+   * person's change to another part since the row was drawn is kept. Absent: the drawn value.
+   */
+  current?(): { value: unknown; pending: boolean };
   /** Ask before a change of form the person may not mean: `run` only on yes. */
   confirm(question: string, yes: string, run: () => void): void;
 }
@@ -423,30 +429,19 @@ const TYPOGRAPHY_PARTS: [string, DsTokenType][] = [
 function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown): HTMLElement {
   const box = ctx.doc.createElement("div");
   box.className = "ds-control ds-control--parts";
+  const setPart = compositeWriter(ctx, value);
   if (type === "shadow") {
     const layers = Array.isArray(value) ? value : [value];
-    const now = [...layers];
     layers.forEach((layer, i) => {
       if (!isObject(layer)) return;
-      const setPart = (name: string, v: unknown) => {
-        const next = [...now];
-        next[i] = withKey(now[i] as Record<string, unknown>, name, v);
-        if (ctx.change(Array.isArray(value) ? next : next[i]) !== false)
-          now.splice(0, now.length, ...next);
-      };
       for (const [name, t] of SHADOW_PARTS) {
         if (!(name in layer)) continue;
-        box.append(part(ctx, name, t, layer[name], (v) => setPart(name, v)));
+        box.append(part(ctx, name, t, layer[name], (v) => setPart(i, name, v)));
       }
     });
     return box;
   }
   if (!isObject(value)) return box;
-  let now: Record<string, unknown> = value;
-  const setPart = (name: string, v: unknown) => {
-    const next = withKey(now, name, v);
-    if (ctx.change(next) !== false) now = next;
-  };
   const parts: [string, DsTokenType][] =
     type === "border"
       ? [
@@ -458,7 +453,7 @@ function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown
     if (!(name in value)) continue;
     // A line height may be a number or a dimension: it keeps the form it has.
     const pt = name === "lineHeight" && typeof value[name] !== "number" ? "dimension" : t;
-    box.append(part(ctx, name, pt, value[name], (v) => setPart(name, v)));
+    box.append(part(ctx, name, pt, value[name], (v) => setPart(0, name, v)));
   }
   if (type === "border") {
     const styles = [
@@ -478,7 +473,7 @@ function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown
       styles.map((x) => [x, x] as const),
       typeof value.style === "string" ? value.style : "solid",
     );
-    s.addEventListener("change", () => setPart("style", s.value));
+    s.addEventListener("change", () => setPart(0, "style", s.value));
     const p = ctx.doc.createElement("div");
     p.className = "ds-part";
     const label = ctx.doc.createElement("span");
@@ -488,6 +483,42 @@ function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown
     box.append(p);
   }
   return box;
+}
+
+/**
+ * How a composite writes one part: the whole value as the draft has it now (another person may
+ * have changed another part since the row was drawn, and a row is not drawn again under the
+ * focus), with the parts written here that are still on their way laid over it, and the part.
+ * Those parts are forgotten once nothing is on its way (in the draft, or refused), so a refused
+ * part is never sent again with the next one. A shadow's layer `i` (0 for one layer, a border or
+ * a typography).
+ */
+function compositeWriter(
+  ctx: ControlContext,
+  drawn: unknown,
+): (i: number, name: string, v: unknown) => void {
+  const mine = new Map<string, { i: number; name: string; v: unknown }>();
+  const same = (a: unknown, b: unknown) => Array.isArray(a) === Array.isArray(b);
+  return (i, name, v) => {
+    const cur = ctx.current?.();
+    if (cur && !cur.pending) mine.clear();
+    // The draft's value, when it is still this kind of value (else the one drawn).
+    const base =
+      cur && same(cur.value, drawn) && (Array.isArray(drawn) || isObject(cur.value))
+        ? cur.value
+        : drawn;
+    const layers = Array.isArray(base) ? [...base] : [base];
+    const set = (at: number, key: string, val: unknown) => {
+      const l = layers[at];
+      if (isObject(l)) layers[at] = withKey(l, key, val);
+    };
+    for (const m of mine.values()) set(m.i, m.name, m.v);
+    set(i, name, v);
+    const next = Array.isArray(base) ? layers : layers[0];
+    const key = `${i}.${name}`;
+    if (ctx.change(next) !== false) mine.set(key, { i, name, v });
+    else mine.delete(key);
+  };
 }
 
 /** A value that names another token: pick the token. */

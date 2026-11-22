@@ -200,6 +200,8 @@ export class LiveDocClient implements LiveBackend {
   private seq = 0;
   /** The seq of an edit sent and not acked yet. */
   private unacked: number | null = null;
+  /** The seqs of this socket's edits the room has not answered yet, oldest first. */
+  private editsOut: number[] = [];
   private acks: Ack[] = [];
   /** The room's text of this socket's block as written to D1 (or as it was when leased). */
   private durable: string | null = null;
@@ -310,6 +312,7 @@ export class LiveDocClient implements LiveBackend {
       this.opts.listener.lost("reconnect");
     }
     this.unacked = null;
+    this.editsOut = [];
     this.structPending = false;
     this.keepsAwaiting = 0;
     this.leaseAsks = 0;
@@ -395,6 +398,7 @@ export class LiveDocClient implements LiveBackend {
     const seq = ++this.seq;
     if (!this.send({ t: "edit", lease: l.id, seq, text })) return false;
     this.unacked = seq;
+    this.editsOut.push(seq);
     return true;
   }
 
@@ -509,6 +513,7 @@ export class LiveDocClient implements LiveBackend {
           this.mine = lease;
           this.answered();
           this.unacked = null;
+          this.editsOut = [];
           this.acks = [];
           this.durable = joinLines(this.lines.slice(f.start, f.end));
           L.granted(lease);
@@ -552,6 +557,7 @@ export class LiveDocClient implements LiveBackend {
         if (this.mine?.id === f.lease) {
           this.mine = null;
           this.unacked = null;
+          this.editsOut = [];
           L.lost(f.reason);
         }
         L.changed();
@@ -638,7 +644,9 @@ export class LiveDocClient implements LiveBackend {
         // refused edit's answer: it is not waiting to be acknowledged any more.
         if (this.structPending) this.structPending = false;
         else if (f.code === "invalid" || f.code === "too_large") {
-          this.unacked = null;
+          // The room answers edits in order: the oldest one out is the one refused.
+          this.editsOut.shift();
+          this.unacked = this.editsOut.at(-1) ?? null;
         }
         L.error(f.code);
         return;
@@ -685,6 +693,7 @@ export class LiveDocClient implements LiveBackend {
         if (mine && (fresh || !this.leases.has(mine.id))) {
           this.mine = null;
           this.unacked = null;
+          this.editsOut = [];
           this.opts.listener.lost("reconnect");
         } else if (mine) {
           this.mine = this.leases.get(mine.id) ?? null;
@@ -769,6 +778,8 @@ export class LiveDocClient implements LiveBackend {
       if (f.seq !== undefined && f.seq === this.unacked) this.unacked = null;
     }
     if (f.by === this.you?.id && f.seq !== undefined) {
+      const seq = f.seq;
+      this.editsOut = this.editsOut.filter((x) => x > seq);
       this.ackedSeqs.push(f.seq);
       if (this.ackedSeqs.length > 64) this.ackedSeqs.shift();
     }

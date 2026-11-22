@@ -163,6 +163,60 @@ describe("LiveDocClient", () => {
     expect(sock().sent.length).toBe(before);
   });
 
+  it("an edit the room refuses is not waiting for an ack, while a later one still is", () => {
+    client.start();
+    welcome(sock(), "a\n\nb");
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    expect(client.edit("x")).toBe(true);
+    sock().frame({ t: "error", code: "invalid" });
+    expect(L.calls).toContain("error:invalid");
+    expect(client.unflushed).toBe(false);
+    // Two edits out; the room refuses the first: the second is still on its way.
+    expect(client.edit("y")).toBe(true);
+    expect(client.edit("z")).toBe(true);
+    sock().frame({ t: "error", code: "too_large" });
+    expect(client.unflushed).toBe(true);
+    sock().frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "mine",
+      start: 0,
+      del: 1,
+      ins: "z",
+      by: "s1",
+      seq: 3,
+    });
+    sock().frame({ t: "flushed", rev: 4 });
+    expect(client.unflushed).toBe(false);
+  });
+
+  it("with countLeases, passes on a denial for each request out, not only the first", () => {
+    const counted = new LiveDocClient({
+      win: window,
+      listener: L,
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      countLeases: true,
+    });
+    counted.start();
+    try {
+      welcome(sock(), "a\n\nb");
+      expect(counted.lease({ start: 0, end: 1 })).toBe(true);
+      expect(counted.lease({ start: 2, end: 3 })).toBe(true);
+      sock().frame({ t: "lease_denied", reason: "stale" });
+      sock().frame({ t: "lease_denied", reason: "held", by: "bo@example.org" });
+      // A third denial answers nothing this socket asked.
+      sock().frame({ t: "lease_denied", reason: "stale" });
+      expect(L.calls.filter((c) => c.startsWith("denied"))).toEqual([
+        "denied:stale,",
+        "denied:held,bo@example.org",
+      ]);
+    } finally {
+      counted.stop();
+    }
+  });
+
   it("shifts other leases and recognizes its own ack", () => {
     client.start();
     welcome(sock(), "a\n\nb\n\nc");

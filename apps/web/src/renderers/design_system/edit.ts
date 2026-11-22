@@ -103,6 +103,11 @@ export const WORDS = {
 } as const;
 
 const NONE: unique symbol = Symbol("none");
+/**
+ * A lease request the room has not answered in this long is given up (a frame it answers with an
+ * error, or not at all): its part asks again, and later answers are not matched to it.
+ */
+export const ASK_TIMEOUT_MS = 15_000;
 
 /** One part of the page that may hold the socket's lease. */
 interface LeaseOwner {
@@ -746,6 +751,12 @@ class ValueWriter implements LeaseOwner {
     this.host.drop(this);
   }
 
+  /** An edit it sent that the room has not acknowledged went on a lease the socket no longer has. */
+  get sentOnOldLease(): boolean {
+    const f = this.inFlight;
+    return f !== null && f.lease !== this.host.backend.mine?.id && !this.landed();
+  }
+
   /** The room answered `not_held`: an edit that went on a lease the socket no longer has. */
   notHeld(): void {
     const f = this.inFlight;
@@ -885,7 +896,8 @@ export class DsEditor {
    * each (range null: a takeover). The room answers each in order (leased or lease_denied), so the
    * first answer is always the first request's.
    */
-  private asks: { owner: LeaseOwner; range: LineRange | null }[] = [];
+  private asks: { owner: LeaseOwner; range: LineRange | null; at: number }[] = [];
+  private askTimer: ReturnType<typeof setTimeout> | null = null;
   /** The part whose edit or op was sent last: a refusal from the room is about it. */
   private last: LeaseOwner | null = null;
   /** Whether that was a struct op (else an edit). */
@@ -927,6 +939,8 @@ export class DsEditor {
     if (this.owner) this.owner.yield();
     this.owner = null;
     this.asks = [];
+    if (this.askTimer) clearTimeout(this.askTimer);
+    this.askTimer = null;
     for (const w of this.writers.values()) w.passed();
     this.backend = b;
     this.seen = null;
@@ -974,20 +988,43 @@ export class DsEditor {
   ask(o: LeaseOwner, range: LineRange): boolean {
     this.take(o);
     // In the list before it is sent: the frame alone (local.ts) answers at once.
-    const a = { owner: o, range };
+    const a = { owner: o, range, at: Date.now() };
     this.asks.push(a);
-    if (this.backend.lease(range)) return true;
+    if (this.backend.lease(range)) return this.watchAsks();
     this.asks = this.asks.filter((x) => x !== a);
     return false;
   }
   /** `o` takes over the lease `id`; the answer goes to `o`. */
   takeover(o: LeaseOwner, id: string): boolean {
     this.take(o);
-    const a = { owner: o, range: null };
+    const a = { owner: o, range: null, at: Date.now() };
     this.asks.push(a);
-    if (this.backend.takeover(id)) return true;
+    if (this.backend.takeover(id)) return this.watchAsks();
     this.asks = this.asks.filter((x) => x !== a);
     return false;
+  }
+
+  /** Gives up the requests the room has not answered in ASK_TIMEOUT_MS (checked while any wait). */
+  private watchAsks(): true {
+    if (!this.askTimer && this.asks.length > 0) {
+      this.askTimer = setTimeout(() => {
+        this.askTimer = null;
+        const cut = Date.now() - ASK_TIMEOUT_MS;
+        while (this.asks[0] && this.asks[0].at <= cut) this.giveUp(this.asks.shift());
+        if (this.asks.length > 0) this.watchAsks();
+        this.kick();
+      }, ASK_TIMEOUT_MS);
+    }
+    return true;
+  }
+
+  /** A request that will not be answered: its part asks again when it needs to. */
+  private giveUp(a: { owner: LeaseOwner; range: LineRange | null } | undefined): void {
+    if (!a) return;
+    if (a.owner instanceof ValueWriter) a.owner.passed();
+    else if (a.owner instanceof TextValueDoc) a.owner.dropped();
+    // A text's block asks again as after a stale answer (doc/edit.ts denied).
+    else if (a.owner === this.owner) a.owner.denied("stale");
   }
   drop(o: LeaseOwner): void {
     if (this.owner === o) this.owner = null;
@@ -1056,15 +1093,24 @@ export class DsEditor {
     // the reconnect, and what each was for waits meanwhile.
     const asks = this.asks;
     this.asks = [];
+    if (this.askTimer) clearTimeout(this.askTimer);
+    this.askTimer = null;
     for (const a of asks) if (a.owner instanceof TextValueDoc) a.owner.dropped();
     for (const w of this.writers.values()) w.dropped();
     if (this.owner instanceof ValueWriter) this.owner = null;
     for (const t of this.texts.values()) t.editor.disconnected();
   }
 
-  /** The room answered `not_held`: a value's edit that went on a lease it replaced waits again. */
+  /**
+   * The room answered `not_held`: to a takeover of a lease that was let go first (the room's
+   * takeover has no holder), or to a value's edit that went on a lease it replaced. A value with
+   * such an edit waits again; otherwise a takeover first in line is the one answered, and its part
+   * asks for the lines again as after a stale answer.
+   */
   notHeld(): void {
-    for (const w of this.writers.values()) w.notHeld();
+    const values = [...this.writers.values()].filter((w) => w.sentOnOldLease);
+    if (values.length > 0) for (const w of values) w.notHeld();
+    else if (this.asks[0]?.range === null) this.giveUp(this.asks.shift());
     this.kick();
   }
 
@@ -1870,6 +1916,10 @@ export class DsEditor {
         label: `${path}${darkValue !== undefined ? `, ${which.toLowerCase()}` : ""}`,
         targets: (type: DsTokenType) => this.targets(type, path),
         change: (v: unknown) => this.writer(valuePath).write(v),
+        current: () => ({
+          value: dsGet(this.system, valuePath),
+          pending: this.writer(valuePath).pending,
+        }),
         confirm: (q: string, yes: string, run: () => void) => this.confirm(box, q, yes, run),
         swatch: t.type !== "color",
       };
