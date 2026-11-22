@@ -1275,9 +1275,13 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     keeps the value until the review ends (the notice says it is not in the draft yet, with Copy),
     and it is written if the draft is kept, dropped with a discard. Only the room refusing the
     value (`invalid`, `too_large`: never sent again), someone else holding its lines, or the
-    token being gone ends it, and the notice says so with Copy. A request the room answers with
-    an error (a takeover whose holder let go first: `not_held`) or not at all is given up after
-    15 seconds, and its part asks again. A composite's part (shadow, border, typography) writes the
+    token being gone ends it, and the notice says so with Copy. The live client matches every answer
+    to the frame it answers (the room answers lease, takeover, edit, release, keep and struct
+    frames once each, in order): a takeover answered `not_held` (its holder let go first) asks
+    again, and an edit answered `not_held` or with a denial waits again. A lease request with no
+    answer 15 seconds after it was sent means the socket is stuck: the frame closes it and opens
+    another, and every part asks again after the welcome; no request is dropped while its socket
+    is open, so no late answer is taken for another's. A composite's part (shadow, border, typography) writes the
     whole value as the draft has it at that moment, with the parts written from that row still on
     their way and the one part changed, so another person's change to another part is kept and a
     refused part is not sent again.

@@ -417,18 +417,22 @@ function live(
           if (!local) session.version(kind, n, info);
           status();
         },
-        error: (code) => {
-          if (code === "invalid" || code === "too_large") editor?.error(code);
-          // A lease that went before its last frame was answered (a takeover, a `keep` after
-          // it): the editor says what happened already, and a value's edit that went on a lease
-          // the room had replaced waits to be sent again.
+        error: (code, answers) => {
+          if (local) return;
+          // A lease or takeover request answered with an error (the holder let go first).
+          if (answers && "lease" in answers) editor?.leaseFailed();
           else if (code === "not_held") {
-            if (!local) editor?.notHeld();
-            return;
-          } else editor?.say(ERRORS[code] ?? "Something went wrong with live editing.");
+            // A value's edit on a lease that went first waits again. A text's edit or a release
+            // concerns nobody: the editor said what happened when the lease went.
+            if (answers && "edit" in answers) editor?.notHeld(answers.edit);
+          } else if (code === "invalid" || code === "too_large") editor?.error(code);
+          else editor?.say(ERRORS[code] ?? "Something went wrong with live editing.");
         },
         structDenied: (r, by) => {
           if (!local) editor?.structDenied(r, by);
+        },
+        editDenied: (r, seq) => {
+          if (!local) editor?.editDenied(r, seq);
         },
         structLanded: (op) => {
           if (!local) editor?.structLanded(op);

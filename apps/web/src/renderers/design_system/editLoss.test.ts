@@ -302,10 +302,18 @@ class Room {
 /** Pump until nothing more is sent, letting the 1.5 s let-go timers run. */
 async function settle(room: Room) {
   for (let i = 0; i < 60; i++) {
+    // The frame opened a new socket (a reconnect): the room welcomes it, and drops the old one's
+    // frames, as a room does for a closed socket.
+    const latest = FakeSocket.all.at(-1);
+    if (latest && latest !== room.ws) {
+      room.welcome(latest);
+      await flush();
+      continue;
+    }
     const any = await room.pump();
     vi.advanceTimersByTime(2000);
     await flush();
-    if (!any && room.ws.sent.length === room.cursor) return;
+    if (!any && room.ws.sent.length === room.cursor && FakeSocket.all.at(-1) === room.ws) return;
     if (process.env.ONE) i = Math.min(i, 10);
   }
 }
@@ -704,17 +712,78 @@ describe("re-review: a composite another editor changed while Ada is in its row"
 });
 
 describe("a lease request the room never answers", () => {
-  it("is given up after a while, and the value asks again", async () => {
+  it("opens the socket again ASK_TIMEOUT_MS after the request, and the value is written after the welcome", async () => {
     const room = await start();
+    const first = room.ws;
     change("color.bg", "#fafafa");
-    const asked = () => room.ws.sent.filter((f) => f.t === "lease").length;
-    expect(asked()).toBe(1);
-    // The room never answers it (an error the frame cannot match, or a frame lost).
-    room.cursor = room.ws.sent.length;
+    expect(first.sent.filter((f) => f.t === "lease")).toHaveLength(1);
+    // The room never answers it (a frame lost, or answered with nothing the frame can match).
+    room.cursor = first.sent.length;
+    vi.advanceTimersByTime(ASK_TIMEOUT_MS - 1);
+    await flush();
+    expect(first.onmessage).not.toBeNull();
+    vi.advanceTimersByTime(2);
+    await flush();
+    // Closed, so no late answer on it is ever read; a new socket comes after the backoff.
+    expect(first.onmessage).toBeNull();
+    expect(lastLive()).toMatchObject({ unflushed: true, pending: true });
+    await settle(room);
+    expect(room.ws).not.toBe(first);
+    expect(room.value(BG)).toBe("#fafafa");
+    expect(lastLive()).toMatchObject({ unflushed: false });
+  });
+
+  it("an answer that comes after the request's socket was closed is never read", async () => {
+    const room = await start();
+    const first = room.ws;
+    change("color.bg", "#fafafa");
+    room.cursor = first.sent.length;
     vi.advanceTimersByTime(ASK_TIMEOUT_MS + 1);
     await flush();
-    expect(asked()).toBe(2);
+    // The old socket's late grant: nothing is written on it.
+    first.frame({
+      t: "leased",
+      lease: "L9",
+      start: 0,
+      end: 1,
+      holder: "s1",
+      by: "ada@example.org",
+    });
+    await flush();
+    expect(first.sent.filter((f) => f.t === "edit")).toHaveLength(0);
     await settle(room);
     expect(room.value(BG)).toBe("#fafafa");
+  });
+});
+
+describe("round 3: an answer that comes after its request was given up", () => {
+  it("a slow room's held denial for bg does not end fg's value", async () => {
+    const room = await start();
+    // fg was changed earlier, so its writer comes first in the page's list of values.
+    change("color.fg", "#202020");
+    await settle(room);
+    expect(room.value(FG)).toBe("#202020");
+    const bg = dsNodeAtPath(room.lines, BG);
+    if (!bg) throw new Error("no node");
+    room.ben = { id: "B1", start: bg.start, end: bg.end };
+    change("color.bg", "#fafafa");
+    change("color.fg", "#101010");
+    // The room is slow (a cold load, a stall): nothing is answered for 15 s.
+    vi.advanceTimersByTime(2 * ASK_TIMEOUT_MS + 1);
+    await flush();
+    // Now the room answers, in order: bg's request first (held by Ben), then the next.
+    await settle(room);
+    if (process.env.TRACE) console.log("NOTICE", notice());
+    expect(room.value(FG)).toBe("#101010");
+  });
+
+  it("a slow room's grant comes after the give-up: the value is written and no lease is left held", async () => {
+    const room = await start();
+    change("color.bg", "#fafafa");
+    vi.advanceTimersByTime(2 * ASK_TIMEOUT_MS + 1);
+    await flush();
+    await settle(room);
+    expect(room.value(BG)).toBe("#fafafa");
+    expect(room.mine).toBeNull();
   });
 });

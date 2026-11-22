@@ -74,12 +74,32 @@ export interface LiveDocListener {
     version: number,
     info: { why?: "published" | "discarded"; was: number | null },
   ): void;
-  error(code: LiveDocErrorCode): void;
+  /**
+   * The room refused a frame of this socket. `answers` says which, when the client can tell (the
+   * room answers frames in order): an edit (its seq), a lease or takeover request, a release.
+   */
+  error(code: LiveDocErrorCode, answers?: Answered): void;
+  /**
+   * An edit of this socket was answered with a denial (`frozen`, `watch`), not applied. It is never
+   * passed to `denied`, which answers lease requests only.
+   */
+  editDenied?(reason: LeaseDenial, seq: number): void;
   /** This socket's struct frame was refused (a sheet's rows or columns). */
   structDenied?(reason: LeaseDenial, by?: string): void;
   /** This socket's struct frame was applied (just before `changed`), with its op. */
   structLanded?(op: LiveStructOp): void;
 }
+
+/** A frame of this socket the room has still to answer (it answers each, in order). */
+type Due =
+  | { k: "lease" }
+  | { k: "edit"; seq: number; lease: string }
+  | { k: "release"; lease: string }
+  | { k: "keep" }
+  | { k: "struct" };
+
+/** Which frame an error answered: an edit (its seq), a lease or takeover request, a release. */
+export type Answered = { edit: number } | { lease: true } | { release: true };
 
 /** What an editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
 export interface LiveBackend {
@@ -100,6 +120,8 @@ export interface LiveBackend {
   takeover(leaseId: string): boolean;
   /** A struct op this socket sent that the room has not answered yet (room only). */
   readonly structWaiting?: boolean;
+  /** Close the socket and open it again (a room that stopped answering); room only. */
+  reconnect?(): void;
   /** Say the held lease is in use though no edit is sent (the room's `keep`); room only. */
   keep?(): boolean;
   /** The seq of the last edit sent (room only), to ask `acked` about later. */
@@ -198,10 +220,13 @@ export class LiveDocClient implements LiveBackend {
   private syncing = false;
   private pendingText: PendingText | null = null;
   private seq = 0;
-  /** The seq of an edit sent and not acked yet. */
-  private unacked: number | null = null;
-  /** The seqs of this socket's edits the room has not answered yet, oldest first. */
-  private editsOut: number[] = [];
+  /**
+   * The frames this socket sent that the room has not answered yet, oldest first. The room
+   * answers each lease, takeover, edit, release, keep and struct frame once, in order, so an
+   * answer is matched to the first one it can answer (a `released` only to a release first in
+   * line: the room also sends one when a new lease replaces the old).
+   */
+  private due: Due[] = [];
   private acks: Ack[] = [];
   /** The room's text of this socket's block as written to D1 (or as it was when leased). */
   private durable: string | null = null;
@@ -219,6 +244,24 @@ export class LiveDocClient implements LiveBackend {
   private ownStructRev = 0;
 
   constructor(private readonly opts: LiveDocOptions) {}
+
+  /** The seq of this socket's newest edit the room has not answered, or null. */
+  private get unacked(): number | null {
+    for (let i = this.due.length - 1; i >= 0; i--) {
+      const d = this.due[i] as Due;
+      if (d.k === "edit") return d.seq;
+    }
+    return null;
+  }
+
+  /** The first frame still due that `fits` answers, taken off the list with every one before it. */
+  private answer(fits: (d: Due) => boolean): Due | null {
+    const i = this.due.findIndex(fits);
+    if (i < 0) return null;
+    const d = this.due[i] as Due;
+    this.due.splice(0, i + 1);
+    return d;
+  }
 
   /** Text this socket sent that the room has not written to D1 yet (beforeunload, hidden tabs). */
   get unflushed(): boolean {
@@ -257,6 +300,24 @@ export class LiveDocClient implements LiveBackend {
     this.stopped = false;
     this.opts.win.document.addEventListener("visibilitychange", this.onVisibility);
     this.open();
+  }
+
+  /**
+   * The room has not answered for too long: close this socket (its late answers are never read)
+   * and open another, as after a drop, so every request is made again after the welcome.
+   */
+  reconnect(): void {
+    const ws = this.ws;
+    if (!ws || this.stopped) return;
+    this.ws = null;
+    ws.onclose = null;
+    ws.onmessage = null;
+    try {
+      ws.close(1000);
+    } catch {
+      // closing anyway
+    }
+    this.onClosed(1006);
   }
 
   stop(): void {
@@ -311,8 +372,7 @@ export class LiveDocClient implements LiveBackend {
       this.mine = null;
       this.opts.listener.lost("reconnect");
     }
-    this.unacked = null;
-    this.editsOut = [];
+    this.due = [];
     this.structPending = false;
     this.keepsAwaiting = 0;
     this.leaseAsks = 0;
@@ -387,6 +447,7 @@ export class LiveDocClient implements LiveBackend {
   lease(range: LineRange): boolean {
     if (this.you?.right !== "write" || this.conflictVersion !== null) return false;
     if (!this.send({ t: "lease", rev: this.rev, start: range.start, end: range.end })) return false;
+    this.due.push({ k: "lease" });
     this.asked();
     return true;
   }
@@ -397,19 +458,19 @@ export class LiveDocClient implements LiveBackend {
     if (!l) return false;
     const seq = ++this.seq;
     if (!this.send({ t: "edit", lease: l.id, seq, text })) return false;
-    this.unacked = seq;
-    this.editsOut.push(seq);
+    this.due.push({ k: "edit", seq, lease: l.id });
     return true;
   }
 
   release(): void {
     const l = this.mine;
     if (!l) return;
-    this.send({ t: "release", lease: l.id });
+    if (this.send({ t: "release", lease: l.id })) this.due.push({ k: "release", lease: l.id });
   }
 
   takeover(leaseId: string): boolean {
     if (!this.send({ t: "takeover", lease: leaseId })) return false;
+    this.due.push({ k: "lease" });
     this.asked();
     return true;
   }
@@ -434,6 +495,7 @@ export class LiveDocClient implements LiveBackend {
     const l = this.mine;
     if (!l || !this.connected || this.keepUnsupported) return false;
     if (!this.send({ t: "keep", lease: l.id })) return false;
+    this.due.push({ k: "keep" });
     this.keepsAwaiting += 1;
     return true;
   }
@@ -447,6 +509,7 @@ export class LiveDocClient implements LiveBackend {
       return false;
     }
     if (!this.send({ t: "struct", rev: this.rev, op })) return false;
+    this.due.push({ k: "struct" });
     this.structPending = true;
     return true;
   }
@@ -512,8 +575,7 @@ export class LiveDocClient implements LiveBackend {
         if (f.holder === this.you?.id) {
           this.mine = lease;
           this.answered();
-          this.unacked = null;
-          this.editsOut = [];
+          this.answer((d) => d.k === "lease");
           this.acks = [];
           this.durable = joinLines(this.lines.slice(f.start, f.end));
           L.granted(lease);
@@ -522,13 +584,19 @@ export class LiveDocClient implements LiveBackend {
         L.status();
         return;
       }
-      case "lease_denied":
-        if (this.leaseAsks === 0) return;
-        this.answered();
-        {
-          L.denied(f.reason, f.by);
+      case "lease_denied": {
+        // A lease or takeover request's answer, or an edit's (frozen, watch): the first due.
+        const d = this.answer((x) => x.k === "lease" || x.k === "edit");
+        if (d?.k === "edit") {
+          L.editDenied?.(f.reason, d.seq);
+          L.status();
           return;
         }
+        if (this.leaseAsks === 0) return;
+        this.answered();
+        L.denied(f.reason, f.by);
+        return;
+      }
       case "op": {
         this.op(f);
         return;
@@ -538,15 +606,18 @@ export class LiveDocClient implements LiveBackend {
         return;
       }
       case "struct_denied":
+        this.answer((d) => d.k === "struct");
         if (!this.structPending) return;
         this.structPending = false;
         L.structDenied?.(f.reason, f.by);
         L.status();
         return;
       case "kept":
+        this.answer((d) => d.k === "keep");
         if (this.keepsAwaiting > 0) this.keepsAwaiting -= 1;
         return;
       case "released":
+        if (this.due[0]?.k === "release" && this.due[0].lease === f.lease) this.due.shift();
         this.leases.delete(f.lease);
         if (this.mine?.id === f.lease) this.mine = null;
         L.changed();
@@ -556,8 +627,6 @@ export class LiveDocClient implements LiveBackend {
         this.leases.delete(f.lease);
         if (this.mine?.id === f.lease) {
           this.mine = null;
-          this.unacked = null;
-          this.editsOut = [];
           L.lost(f.reason);
         }
         L.changed();
@@ -626,29 +695,29 @@ export class LiveDocClient implements LiveBackend {
           return;
         }
       case "error": {
+        const d = this.answer(() => true);
         // The answer to a `keep` (only ever sent while nothing else waits for an answer): a room
         // deployed before `keep` refuses it as invalid, and one whose lease went meanwhile (a
         // takeover racing it) as not held. Neither concerns the editor: no more `keep` to the
         // first, and nothing to say about the second.
-        if (
-          this.keepsAwaiting > 0 &&
-          (f.code === "invalid" || f.code === "not_held") &&
-          this.unacked === null &&
-          !this.structPending
-        ) {
-          this.keepsAwaiting -= 1;
+        if (d?.k === "keep" || (d === null && this.keepsAwaiting > 0 && !this.structPending)) {
+          if (this.keepsAwaiting > 0) this.keepsAwaiting -= 1;
           if (f.code === "invalid") this.keepUnsupported = true;
           return;
         }
-        // A refused struct frame is answered with an error too (invalid, too_large). Otherwise a
-        // refused edit's answer: it is not waiting to be acknowledged any more.
-        if (this.structPending) this.structPending = false;
-        else if (f.code === "invalid" || f.code === "too_large") {
-          // The room answers edits in order: the oldest one out is the one refused.
-          this.editsOut.shift();
-          this.unacked = this.editsOut.at(-1) ?? null;
-        }
-        L.error(f.code);
+        // A refused struct frame is answered with an error too (invalid, too_large).
+        if (d?.k === "struct" || (d === null && this.structPending)) this.structPending = false;
+        if (d?.k === "lease") this.answered();
+        L.error(
+          f.code,
+          d?.k === "edit"
+            ? { edit: d.seq }
+            : d?.k === "lease"
+              ? { lease: true }
+              : d?.k === "release"
+                ? { release: true }
+                : undefined,
+        );
         return;
       }
     }
@@ -692,8 +761,6 @@ export class LiveDocClient implements LiveBackend {
         const mine = this.mine;
         if (mine && (fresh || !this.leases.has(mine.id))) {
           this.mine = null;
-          this.unacked = null;
-          this.editsOut = [];
           this.opts.listener.lost("reconnect");
         } else if (mine) {
           this.mine = this.leases.get(mine.id) ?? null;
@@ -741,6 +808,7 @@ export class LiveDocClient implements LiveBackend {
     this.lastEditAt = new Date().toISOString();
     this.dirty = true;
     if (f.by === this.you?.id) {
+      this.answer((d) => d.k === "struct");
       this.structPending = false;
       this.ownStructRev = f.rev;
       this.opts.listener.structLanded?.(f.op);
@@ -775,11 +843,10 @@ export class LiveDocClient implements LiveBackend {
     this.dirty = true;
     if (f.by === this.you?.id && this.mine?.id === f.lease) {
       this.acks.push({ rev: f.rev, text: f.ins });
-      if (f.seq !== undefined && f.seq === this.unacked) this.unacked = null;
     }
     if (f.by === this.you?.id && f.seq !== undefined) {
       const seq = f.seq;
-      this.editsOut = this.editsOut.filter((x) => x > seq);
+      this.answer((d) => d.k === "edit" && d.seq === seq);
       this.ackedSeqs.push(f.seq);
       if (this.ackedSeqs.length > 64) this.ackedSeqs.shift();
     }

@@ -63,7 +63,8 @@ function listener(): LiveDocListener & { calls: string[] } {
       calls.push(
         `version:${kind},${n}${info.why ? `,${info.why}` : ""}${info.was ? `,was ${info.was}` : ""}`,
       ),
-    error: rec("error"),
+    // The code only: which frame it answered is the client's own bookkeeping.
+    error: (code: string) => calls.push(`error:${code}`),
   };
 }
 
@@ -189,6 +190,91 @@ describe("LiveDocClient", () => {
     });
     sock().frame({ t: "flushed", rev: 4 });
     expect(client.unflushed).toBe(false);
+  });
+
+  it("an edit answered not_held or with a denial is not waiting any more, and a later refusal ends the right edit", () => {
+    const answers: unknown[] = [];
+    const denied: string[] = [];
+    const c = new LiveDocClient({
+      win: window,
+      listener: {
+        ...L,
+        error: (code, a) => answers.push([code, a]),
+        editDenied: (r, seq) => denied.push(`${r}:${seq}`),
+      },
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      countLeases: true,
+    });
+    c.start();
+    try {
+      welcome(sock(), "a\n\nb");
+      sock().frame({ t: "leased", lease: "L1", start: 0, end: 1, holder: "s1", by: YOU.email });
+      // Edit 1 goes on a lease the room had replaced: not_held.
+      expect(c.edit("x")).toBe(true);
+      sock().frame({ t: "error", code: "not_held" });
+      expect(answers.at(-1)).toEqual(["not_held", { edit: 1 }]);
+      expect(c.unflushed).toBe(false);
+      // Edit 2 comes after a freeze: denied, never taken for a lease request's answer.
+      expect(c.edit("y")).toBe(true);
+      sock().frame({ t: "lease_denied", reason: "frozen" });
+      expect(denied).toEqual(["frozen:2"]);
+      expect(L.calls.filter((x) => x.startsWith("denied"))).toEqual([]);
+      expect(c.unflushed).toBe(false);
+      // Edits 3 and 4; the room refuses 3: 4 is still out until its ack.
+      expect(c.edit("z")).toBe(true);
+      expect(c.edit("w")).toBe(true);
+      sock().frame({ t: "error", code: "invalid" });
+      expect(answers.at(-1)).toEqual(["invalid", { edit: 3 }]);
+      expect(c.unflushed).toBe(true);
+      sock().frame({
+        t: "op",
+        gen: "g1",
+        rev: 4,
+        lease: "L1",
+        start: 0,
+        del: 1,
+        ins: "w",
+        by: "s1",
+        seq: 4,
+      });
+      sock().frame({ t: "flushed", rev: 4 });
+      expect(c.unflushed).toBe(false);
+    } finally {
+      c.stop();
+    }
+  });
+
+  it("a not_held that answers a release is not taken for the takeover sent after it", () => {
+    const answers: unknown[] = [];
+    const c = new LiveDocClient({
+      win: window,
+      listener: { ...L, error: (code, a) => answers.push([code, a]) },
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      countLeases: true,
+    });
+    c.start();
+    try {
+      welcome(sock(), "a\n\nb\n\nc", {
+        leases: [{ id: "B1", start: 2, end: 3, by: "bo@example.org" }],
+      });
+      sock().frame({ t: "leased", lease: "L1", start: 0, end: 1, holder: "s1", by: YOU.email });
+      c.release();
+      expect(c.takeover("B1")).toBe(true);
+      // The room had ended L1 already: the release is answered not_held; then the takeover's lease.
+      sock().frame({ t: "error", code: "not_held" });
+      expect(answers.at(-1)).toEqual(["not_held", { release: true }]);
+      sock().frame({ t: "released", lease: "B1" });
+      sock().frame({ t: "leased", lease: "L2", start: 2, end: 3, holder: "s1", by: YOU.email });
+      expect(L.calls).toContain("granted:2-3");
+      // A takeover the room answers not_held (its holder let go first) says so as the lease's.
+      expect(c.takeover("B7")).toBe(true);
+      sock().frame({ t: "error", code: "not_held" });
+      expect(answers.at(-1)).toEqual(["not_held", { lease: true }]);
+    } finally {
+      c.stop();
+    }
   });
 
   it("with countLeases, passes on a denial for each request out, not only the first", () => {

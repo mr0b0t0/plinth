@@ -104,8 +104,9 @@ export const WORDS = {
 
 const NONE: unique symbol = Symbol("none");
 /**
- * A lease request the room has not answered in this long is given up (a frame it answers with an
- * error, or not at all): its part asks again, and later answers are not matched to it.
+ * A lease request the room has not answered in this long (counted from when it was sent) means the
+ * socket is stuck: it is closed and opened again, and every part asks again after the welcome. No
+ * request is ever dropped while its socket is open, so no late answer is taken for another's.
  */
 export const ASK_TIMEOUT_MS = 15_000;
 
@@ -751,18 +752,26 @@ class ValueWriter implements LeaseOwner {
     this.host.drop(this);
   }
 
-  /** An edit it sent that the room has not acknowledged went on a lease the socket no longer has. */
-  get sentOnOldLease(): boolean {
-    const f = this.inFlight;
-    return f !== null && f.lease !== this.host.backend.mine?.id && !this.landed();
+  /** Its edit `seq` is the one on its way. */
+  sent(seq: number): boolean {
+    return this.inFlight !== null && this.inFlight.seq === seq;
   }
 
-  /** The room answered `not_held`: an edit that went on a lease the socket no longer has. */
+  /** The room answered its edit `not_held` (the lease went first): the value waits again. */
   notHeld(): void {
-    const f = this.inFlight;
-    if (!f || f.lease === this.host.backend.mine?.id) return;
     this.held = false;
     this.again();
+  }
+
+  /** The room answered its edit with a denial (`frozen`, `watch`): it was not applied. */
+  editDenied(r: LeaseDenial): void {
+    this.held = false;
+    this.again();
+    if (this.want === NONE) return;
+    if (r === "frozen") {
+      this.host.say(WORDS.frozenValue, this.host.copyAction(this.want));
+      this.host.statusSoon();
+    } else this.end(denialWords(r));
   }
 
   /** The room refused the value sent (`invalid`, `too_large`): it is never sent again. */
@@ -990,7 +999,7 @@ export class DsEditor {
     // In the list before it is sent: the frame alone (local.ts) answers at once.
     const a = { owner: o, range, at: Date.now() };
     this.asks.push(a);
-    if (this.backend.lease(range)) return this.watchAsks();
+    if (this.backend.lease(range)) return this.armAsks();
     this.asks = this.asks.filter((x) => x !== a);
     return false;
   }
@@ -999,27 +1008,33 @@ export class DsEditor {
     this.take(o);
     const a = { owner: o, range: null, at: Date.now() };
     this.asks.push(a);
-    if (this.backend.takeover(id)) return this.watchAsks();
+    if (this.backend.takeover(id)) return this.armAsks();
     this.asks = this.asks.filter((x) => x !== a);
     return false;
   }
 
-  /** Gives up the requests the room has not answered in ASK_TIMEOUT_MS (checked while any wait). */
-  private watchAsks(): true {
-    if (!this.askTimer && this.asks.length > 0) {
-      this.askTimer = setTimeout(() => {
+  /**
+   * Times the oldest request still unanswered, ASK_TIMEOUT_MS from when it was sent (once per
+   * request: set again whenever the oldest changes). If it is still first then, the socket is
+   * opened again (LiveBackend.reconnect), and `disconnected` sends every part to ask again.
+   */
+  private armAsks(): true {
+    if (this.askTimer) clearTimeout(this.askTimer);
+    this.askTimer = null;
+    const head = this.asks[0];
+    if (!head) return true;
+    this.askTimer = setTimeout(
+      () => {
         this.askTimer = null;
-        const cut = Date.now() - ASK_TIMEOUT_MS;
-        while (this.asks[0] && this.asks[0].at <= cut) this.giveUp(this.asks.shift());
-        if (this.asks.length > 0) this.watchAsks();
-        this.kick();
-      }, ASK_TIMEOUT_MS);
-    }
+        if (this.asks[0] === head) this.backend.reconnect?.();
+      },
+      Math.max(0, head.at + ASK_TIMEOUT_MS - Date.now()),
+    );
     return true;
   }
 
-  /** A request that will not be answered: its part asks again when it needs to. */
-  private giveUp(a: { owner: LeaseOwner; range: LineRange | null } | undefined): void {
+  /** A request answered with an error (a takeover whose holder let go first): its part asks again. */
+  private unanswered(a: { owner: LeaseOwner; range: LineRange | null } | undefined): void {
     if (!a) return;
     if (a.owner instanceof ValueWriter) a.owner.passed();
     else if (a.owner instanceof TextValueDoc) a.owner.dropped();
@@ -1056,6 +1071,7 @@ export class DsEditor {
    */
   granted(l: ClientLease): void {
     const head = this.asks.shift();
+    this.armAsks();
     const fits =
       head && (head.range === null || (head.range.start === l.start && head.range.end === l.end));
     if (head && fits && head.owner === this.owner) {
@@ -1079,6 +1095,7 @@ export class DsEditor {
   }
   denied(r: LeaseDenial, by?: string): void {
     const head = this.asks.shift();
+    this.armAsks();
     if (!head) return;
     // A value's request is its own however the turn moved on; a text hears only while it asks.
     if (head.owner instanceof ValueWriter) head.owner.denied(r, by);
@@ -1102,15 +1119,25 @@ export class DsEditor {
   }
 
   /**
-   * The room answered `not_held`: to a takeover of a lease that was let go first (the room's
-   * takeover has no holder), or to a value's edit that went on a lease it replaced. A value with
-   * such an edit waits again; otherwise a takeover first in line is the one answered, and its part
-   * asks for the lines again as after a stale answer.
+   * The room answered a lease or takeover request with an error (`not_held`: a takeover of a lease
+   * its holder let go first; `invalid`). The client matched the answer to the request (the room
+   * answers in order), so it is the oldest one here: its part asks again.
    */
-  notHeld(): void {
-    const values = [...this.writers.values()].filter((w) => w.sentOnOldLease);
-    if (values.length > 0) for (const w of values) w.notHeld();
-    else if (this.asks[0]?.range === null) this.giveUp(this.asks.shift());
+  leaseFailed(): void {
+    this.unanswered(this.asks.shift());
+    this.armAsks();
+    this.kick();
+  }
+
+  /** The room answered a value's edit `seq` with `not_held` (its lease went first): it waits again. */
+  notHeld(seq: number): void {
+    for (const w of this.writers.values()) if (w.sent(seq)) w.notHeld();
+    this.kick();
+  }
+
+  /** The room answered a value's edit `seq` with a denial (`frozen`, `watch`). */
+  editDenied(r: LeaseDenial, seq: number): void {
+    for (const w of this.writers.values()) if (w.sent(seq)) w.editDenied(r);
     this.kick();
   }
 
