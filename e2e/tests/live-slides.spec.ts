@@ -433,3 +433,89 @@ test("an agent's version during the page edits is never merged: the review shows
   expect(v3).toContain("- Two new enterprise accounts (rounded)");
   expect(v3).toContain("## Revenue\n");
 });
+
+/** An agent's HTML deck (deck.json) as v2, over the page edits. */
+const HTML_INDEX = JSON.stringify({ title: "Launch", order: ["cover"], cover: "cover" });
+const HTML_ASSETS = [
+  { path: "slides/cover.html", content: '<section id="cover"><h1>Launch</h1></section>' },
+];
+
+/**
+ * An edit typed on slide 2, then an agent's HTML deck as v2, then a reload: the notice says so, and
+ * the bar's Edit (at phone width, the ⋯ menu's) opens the strip with Review changes, where the
+ * HTML side is one line.
+ */
+async function reviewAfterReload(page: Page, s: Setup) {
+  await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
+  await startEditing(page);
+  await showSlide(page, 2);
+  await activeSlide(page).locator("ul").click();
+  await expect(openField(page)).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type(" (rounded)");
+  await page.keyboard.press("Escape");
+  await expect(strip(page)).toContainText("Draft saved", { timeout: 10_000 });
+  const put = await apiPut(
+    page.request,
+    `/artifacts/${s.id}`,
+    { content: HTML_INDEX, assets: HTML_ASSETS, base_version: 1 },
+    { token: s.token },
+  );
+  expect(put.status, JSON.stringify(put.body)).toBe(200);
+  await page.reload();
+  await expect(frameOf(page).locator('html[data-ready="ok"][data-format="html"]')).toHaveCount(1, {
+    timeout: 15_000,
+  });
+  await expect(page.getByRole("note")).toContainText("v2 was published over unpublished changes");
+  const toggle = page.getByRole("button", { name: "Edit", exact: true });
+  if (await toggle.isVisible()) await toggle.click();
+  else {
+    await page.getByRole("button", { name: "Artifact actions" }).click();
+    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
+  }
+  await expect(strip(page)).toContainText("v2 was published while you edited", {
+    timeout: 10_000,
+  });
+  // The HTML deck is never edited: no edit mode in the frame.
+  await expect(frameOf(page).locator(".plinth-slides[data-editing]")).toHaveCount(0);
+  await strip(page).getByRole("button", { name: "Review changes" }).click();
+  const review = frameOf(page).getByRole("region", { name: "Review v2 and your changes" });
+  await expect(review).toBeVisible();
+  await expect(review.locator(".plinth-review__other")).toHaveText(/^v2 is an HTML deck/);
+  await expect(review).not.toContainText("could not be loaded");
+  return review;
+}
+
+test("after a reload, the page edits frozen under an HTML deck are reviewed; Publish your changes makes them v3", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const s = await setup(page);
+  const review = await reviewAfterReload(page, s);
+  await shoot(page, "html-review");
+  await review.getByRole("button", { name: "Publish your changes", exact: true }).click();
+  await expect
+    .poll(async () => (await apiGet(page.request, `/artifacts/${s.id}`)).body.current_version, {
+      timeout: 10_000,
+    })
+    .toBe(3);
+  expect(await contentOf(page, s.id)).toContain("- Two new enterprise accounts (rounded)");
+});
+
+test("after a reload, the page edits frozen under an HTML deck are reviewed; Discard keeps the HTML deck", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const s = await setup(page);
+  const review = await reviewAfterReload(page, s);
+  await review.getByRole("button", { name: "Discard your changes" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+  await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
+  // The page is read again: the HTML deck, with nothing left to review or edit.
+  await expect(page.getByRole("note")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  const after = await apiGet(page.request, `/artifacts/${s.id}`);
+  expect(after.body.current_version).toBe(2);
+  expect(after.body.content).toBe(HTML_INDEX);
+  expect(after.body.live_draft).toBeNull();
+});

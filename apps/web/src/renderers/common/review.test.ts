@@ -124,6 +124,28 @@ describe("the whole-draft review", () => {
     expect(mine?.querySelector(".plinth-review__item-button")?.textContent).toMatch(/changed/);
   });
 
+  it("shows one line for a version in another format, never an error, and keeps both choices", async () => {
+    const choose = vi.fn();
+    const review = new DraftReview({
+      win: window,
+      type: "doc",
+      sourcePath: "content.md",
+      rules: RULES as NonNullable<typeof RULES>,
+      pane: docPane,
+      choose,
+      fetchText: async (n) => (n === 5 ? BASE : null),
+      otherFormat: async (n) => `v${n} is an HTML deck.`,
+    });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
+    const [mine, theirs] = panes();
+    expect(mine?.textContent).toContain("First, by a person.");
+    expect(theirs?.querySelector("h3")?.textContent).toBe("v6");
+    expect(theirs?.querySelector(".plinth-review__other")?.textContent).toBe("v6 is an HTML deck.");
+    expect(theirs?.textContent).not.toContain("could not be");
+    button("Publish your changes")?.click();
+    expect(choose).toHaveBeenCalledWith("publish", undefined);
+  });
+
   it("names a range in the region, and the newest version on its side", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 7, files: null, draft: MINE });

@@ -8,6 +8,7 @@ import {
   type EffectiveRole,
   HOST_COOKIE_PREFIX,
   isLiveSource,
+  isLiveType,
   REVIEW_MODE_PARAM,
   TTL,
   typeDef,
@@ -28,6 +29,7 @@ import { openJson, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { readDeckFiles } from "../services/deckFiles.ts";
+import { readLiveDraftInfo } from "../services/live.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
 import { isCountableRequest, recordOpen } from "../services/views.ts";
 import { serveBoardLoader } from "./boardLoader.ts";
@@ -719,16 +721,18 @@ async function serve(
     // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
     const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";
     // A deck's source is slides.md or deck.json (an HTML deck, whose shell also embeds its slides
-    // and which is never edited on its page).
+    // and which is never edited on its page: its frame joins the room only to review a Markdown
+    // deck's unpublished changes from before it).
     const sourcePath = versionSourcePath(def, v.entries);
     const live =
-      isLiveSource(def, sourcePath) &&
       socket !== undefined &&
       liveEditMode(config, env) === "room" &&
       editor &&
       !pass.capture &&
       !vm &&
-      !url.searchParams.has(REVIEW_MODE_PARAM)
+      !url.searchParams.has(REVIEW_MODE_PARAM) &&
+      (isLiveSource(def, sourcePath) ||
+        (isLiveType(def) && (await readLiveDraftInfo(env.DB, artifactId)) !== null))
         ? ("room" as const)
         : undefined;
     // Following the presenter: any identified view pass (never a capture or a preview, which has

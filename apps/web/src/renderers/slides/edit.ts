@@ -126,6 +126,9 @@ export const DECK_WORDS = {
   settings: "Slide setup",
   apply: "Apply",
   cancel: "Cancel",
+  /** A version that is an HTML deck, in the review of a Markdown deck's changes. */
+  htmlVersion: (n: number) =>
+    `v${n} is an HTML deck, so it isn't shown beside your changes. Publishing your changes makes your deck the next version; v${n} stays in History.`,
 } as const;
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local copy (solo). */
@@ -317,11 +320,6 @@ interface Open {
   rescue?: string;
   /** Its slide's first line of text outside its own lines, when granted (Want's `ref`). */
   ref?: string;
-  /**
-   * What the place held before this person typed in it (Want's `was`): text other than this is
-   * words they wrote, which only their own block can hold (placeAgain).
-   */
-  was?: string;
 }
 
 /**
@@ -350,8 +348,6 @@ interface Snap {
   kept?: true;
   /** Open's `ref`. */
   ref?: string;
-  /** Open's `was`. */
-  was?: string;
 }
 
 /**
@@ -426,11 +422,6 @@ interface Want {
    * has it.
    */
   ref?: string;
-  /**
-   * What the place held before this person typed in it, when known: a text the room may hold of
-   * it that differs is their own words, a text equal to it can be another slide's too (placeAgain).
-   */
-  was?: string;
 }
 
 interface Mark {
@@ -456,63 +447,24 @@ function seenAt(lines: readonly string[], start: number, text: string): Seen | u
   return { lines, range: { start, end: start + len } };
 }
 
-/**
- * Which lines around `seen`'s place are unchanged in `lines`: `above` when every line above it is
- * (trivially so at the deck's start), `below` when every line below it is, counted from the deck's
- * end (trivially so at its end). `start` and `end` are where those lines put the place, only when
- * that side holds a line of text (the deck's edge, or only blank lines, places nothing alone).
- */
-function anchorsOf(
-  lines: readonly string[],
-  seen: Seen,
-): { above: boolean; below: boolean; start: number | null; end: number | null } {
-  const was = seen.lines;
-  const { start: s, end: e } = seen.range;
-  const tail = was.length - e;
-  const hasText = (from: number, to: number) => {
-    for (let i = from; i < to; i++) if (!isBlank(was[i])) return true;
-    return false;
-  };
-  let above = s <= lines.length;
-  for (let i = 0; i < s && above; i++) above = was[i] === lines[i];
-  let below = tail <= lines.length;
-  for (let k = 1; k <= tail && below; k++) below = was[was.length - k] === lines[lines.length - k];
-  return {
-    above,
-    below,
-    start: above && hasText(0, s) ? s : null,
-    end: below && hasText(e, was.length) ? lines.length - tail : null,
-  };
-}
-
 /** A place found again: where it starts, the text it holds, and its slide. */
 type Place = { at: number; mark: Mark; slide: RawSlideLayout };
 
 /**
  * Where a place whose lease ended (or whose lines moved before the room read its lease) is now,
- * or null when that is not certain: then typing goes in as a new block, and a place clicked is not
- * opened. A duplicate is acceptable; another slide's text written over is not. Only places in its
- * own kind of part count (partSlide), each text found only as whole blocks (marksAt).
- *
- * - Every line above and below it unchanged: the lines between are the place, when they hold one
- *   of its texts exactly.
- * - Otherwise a block counts only where it is still the same slide's: its slide's first line
- *   outside it is the one its slide had (`ref`, when it had one), and the lines just above and
- *   below it are the ones it had (a deck's edge, which slides are added at, is not checked). And
- *   typing to write needs words only this place could hold: its slide's first line (`ref`), text
- *   the person wrote (any text but `was`, what the place held before they typed), or a text that
- *   no other block held in the lines as they were. The old words alone, two slides titled
- *   "Agenda", prove nothing: the person's own block may be gone and the other one moved to its
- *   line. A place clicked, with nothing typed yet, opens where the person sees it without them.
- * - Where the unchanged lines on one side pin the place, only a block there counts; else only one
- *   place may be left.
- * - Failing that, an insert point the room may hold of it (the nearest): writing there adds text
- *   and replaces none.
+ * or null. One rule, with no guessing: an existing block is taken again only when every line of
+ * the deck above it and every line below it is as it was (`seen`), and the lines between hold one
+ * of the texts the room may hold of it (the longest, then the newest). After any change outside
+ * the block, nothing tells it apart for sure from another block with the same words (two slides
+ * titled "Agenda", a co-editor's same words on another slide), so it is never taken: typing goes
+ * in as a new block nearby, and a place clicked is not opened. A duplicate is acceptable; another
+ * block's text written over is not. An insert point the room may hold of it (the nearest, in its
+ * own kind of part) can always be taken: writing there adds text and replaces none.
  */
 function placeAgain(
   lines: readonly string[],
   layout: DeckLayout,
-  w: Pick<Want, "mark" | "alts" | "seen" | "ref" | "open" | "was" | "resend">,
+  w: Pick<Want, "mark" | "alts" | "seen" | "open">,
   near: number,
   edges: () => Set<number>,
 ): Place | null {
@@ -525,59 +477,27 @@ function placeAgain(
       if (slide) all.push({ at, mark, slide, order, len });
     }
   });
-  const byLength = (a: Found, b: Found) => b.len - a.len || a.order - b.order;
   const seen = w.seen;
-  const pin = seen ? anchorsOf(lines, seen) : null;
-  if (seen && pin?.above && pin.below) {
-    // Nothing but the place changed: the lines between are it.
-    const s = seen.range.start;
-    const e = lines.length - (seen.lines.length - seen.range.end);
-    const exact = all.filter((c) => c.at === s && c.at + c.len === e).sort(byLength)[0];
-    if (exact) return exact;
-  }
-  const hasRef = w.ref !== undefined && w.ref !== "";
-  const above = seen ? (seen.lines[seen.range.start - 1] ?? null) : null;
-  const below = seen ? (seen.lines[seen.range.end] ?? null) : null;
-  // Whether a text was this place's, and no other block's, in the lines as they were: then the one block
-  // holding it now is this one (unless its own was removed and the same words added meanwhile).
-  const onlyOne = new Map<string, boolean>();
-  const wasOnly = (mark: Mark): boolean => {
-    if (!seen) return false;
-    let v = onlyOne.get(mark.text);
-    if (v === undefined) {
-      const old = seen.lines;
-      const oldLayout = deckLayout(old);
-      const oldEdges = memo(() => blockEdges(old));
-      const len = blockLines(mark.text).length;
-      const at = marksAt(old, mark, oldEdges).filter((p) =>
-        partSlide(oldLayout, { start: p, end: p + len }, w.open.kind),
-      );
-      v = at.length === 1 && at[0] === seen.range.start;
-      onlyOne.set(mark.text, v);
+  if (seen) {
+    const was = seen.lines;
+    const { start: s, end: e } = seen.range;
+    const tail = was.length - e;
+    let same = s + tail <= lines.length;
+    for (let i = 0; i < s && same; i++) same = was[i] === lines[i];
+    for (let k = 1; k <= tail && same; k++) same = was[was.length - k] === lines[lines.length - k];
+    if (same) {
+      const end = lines.length - tail;
+      const exact = all
+        .filter((c) => c.at === s && c.at + c.len === end)
+        .sort((a, b) => b.len - a.len || a.order - b.order)[0];
+      if (exact) return exact;
     }
-    return v;
-  };
-  const sure = all.filter((c) => {
-    if (c.len === 0) return false;
-    if (pin && pin.start !== null && c.at !== pin.start) return false;
-    if (pin && pin.end !== null && c.at + c.len !== pin.end) return false;
-    const range = { start: c.at, end: c.at + c.len };
-    const sameRef = hasRef && refOutside(lines, c.slide, range) === w.ref;
-    if (hasRef && !sameRef) return false;
-    if (above !== null && (lines[c.at - 1] ?? null) !== above) return false;
-    if (below !== null && (lines[c.at + c.len] ?? null) !== below) return false;
-    // A place clicked opens where the person sees it, with nothing typed yet: no words to prove.
-    if (!w.resend) return true;
-    const theirWords = w.was !== undefined && c.mark.text !== w.was;
-    return sameRef || theirWords || wasOnly(c.mark);
-  });
-  if (new Set(sure.map((c) => c.at)).size === 1) return sure.sort(byLength)[0] ?? null;
+  }
   const points = all
     .filter((c) => c.len === 0)
     .sort((a, b) => Math.abs(a.at - near) - Math.abs(b.at - near) || a.order - b.order);
   return points[0] ?? null;
 }
-
 /** A place asked for is looked for again at most this many times when its lines keep moving. */
 const RETAKE_TRIES = 3;
 
@@ -1474,9 +1394,6 @@ export class SlidesEditor {
       // The lines as asked on: should they move before the room reads the lease, the place is
       // found again by what is around it.
       seen: { lines, range: ask.range },
-      ...(ask.was === undefined
-        ? { was: joinLines(lines.slice(ask.range.start, ask.range.end)) }
-        : {}),
       tries: 0,
     };
     this.want = w;
@@ -1528,7 +1445,6 @@ export class SlidesEditor {
       ...(w.resend ? { kept: true as const } : {}),
       ...(w.rescue ? { rescue: w.rescue } : {}),
       ...SlidesEditor.refFrom(w),
-      was: w.was ?? joinLines(this.backend.lines.slice(lease.start, lease.end)),
     };
     for (const m of w.open.models) o.editors.push(this.makeEditor(o, m));
     host.append(...o.editors.map((r) => r.el));
@@ -1929,7 +1845,6 @@ export class SlidesEditor {
       ...(o.rescue ? { rescue: o.rescue } : {}),
       ...(o.kept ? { kept: true as const } : {}),
       ...SlidesEditor.refFrom(o),
-      ...(o.was !== undefined ? { was: o.was } : {}),
     };
   }
 
@@ -2118,7 +2033,6 @@ export class SlidesEditor {
     const extra = {
       closeAfter: true as const,
       ...SlidesEditor.refFrom(s),
-      ...(s.was !== undefined ? { was: s.was } : {}),
       ...(rescue ? { rescue } : {}),
     };
     if (s.kept) {
@@ -2267,7 +2181,6 @@ export class SlidesEditor {
             open: { kind, n, ctx, env, pad, form, models },
             resend: true,
             ...SlidesEditor.refFrom(o),
-            ...(o.was !== undefined ? { was: o.was } : {}),
             ...(seen ? { seen } : {}),
             ...after,
             ...(rescue ? { rescue } : {}),
@@ -2288,7 +2201,6 @@ export class SlidesEditor {
       const extra = {
         ...after,
         ...SlidesEditor.refFrom(o),
-        ...(o.was !== undefined ? { was: o.was } : {}),
         ...(rescue ? { rescue } : {}),
       };
       // What the room holds of the block: its last acknowledged text (the text at the grant when

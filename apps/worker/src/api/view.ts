@@ -267,7 +267,8 @@ async function gateLiveOff(
  * Who would edit this artifact on its page, whether or not editing on the page is on here: an
  * owner or editor of a live type that is not taken down, on the current version, signed in
  * ("user") or confirmed by code ("viewer"); null for anyone else, and for an HTML deck (the
- * current version's source is deck.json), which agents change. `live` and `live_off` both start
+ * current version's source is deck.json), which agents change, unless a Markdown deck's
+ * unpublished changes from before it wait there for their review. `live` and `live_off` both start
  * from it, so one is present exactly where the other would be.
  */
 async function liveSeat(
@@ -281,7 +282,14 @@ async function liveSeat(
   if (opts.version !== undefined) return null;
   const p = ctx.principal;
   if (p.kind !== "user" && p.kind !== "viewer") return null;
-  if (await altSourceShown(ctx, a, a.currentVersion)) return null;
+  // An HTML deck is never edited on its page; a Markdown deck's unpublished changes from before it
+  // stay reachable for their review (Publish your changes, Discard), and only those.
+  if (
+    (await altSourceShown(ctx, a, a.currentVersion)) &&
+    !(await readLiveDraftInfo(ctx.env.DB, a.id))
+  ) {
+    return null;
+  }
   return p.kind;
 }
 

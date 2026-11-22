@@ -84,6 +84,12 @@ export interface ReviewSetup {
   /** For tests: reads a version's source. */
   fetchText?: (n: number) => Promise<string | null>;
   /**
+   * Version n's side when its source is not the type's own file: the words that stand in for its
+   * changes and its drawing (a Markdown deck's changes beside an HTML deck), or null when it is
+   * simply missing.
+   */
+  otherFormat?: (n: number) => Promise<string | null>;
+  /**
    * Why "Publish your changes" is off for a draft the type cannot publish yet, in its words (an
    * empty deck's). Absent: REVIEW_WORDS.unpublishable.
    */
@@ -300,6 +306,10 @@ export class DraftReview {
     // new range is drawn.
     if (this.root) this.setButtons(false, "");
     const [baseRaw, theirsRaw] = await Promise.all([this.read(state.base), this.read(state.n)]);
+    const other =
+      theirsRaw === null && this.setup.otherFormat
+        ? await this.setup.otherFormat(state.n).catch(() => null)
+        : null;
     if (run !== this.opened || this.state !== state) return;
     const { rules, type } = this.setup;
     const baseText = baseRaw === null ? null : rules.toLive(baseRaw);
@@ -307,7 +317,7 @@ export class DraftReview {
     const mineList = baseText === null ? null : describeChanges(type, baseText, state.draft);
     const theirList =
       baseText === null || theirs === null ? null : describeChanges(type, baseText, theirs);
-    this.draw(state, baseText, theirs, mineList, theirList);
+    this.draw(state, baseText, theirs, mineList, theirList, other);
     if (reopened) {
       this.announce(
         `v${state.n} was published too. The review now covers ${versionRange(state.base + 1, state.n)}.`,
@@ -321,6 +331,7 @@ export class DraftReview {
     theirs: string | null,
     mineList: ChangeList | null,
     theirList: ChangeList | null,
+    other: string | null = null,
   ): void {
     const d = this.doc;
     const from = state.base + 1;
@@ -374,11 +385,18 @@ export class DraftReview {
       files: { lines: string[]; more: number },
       text: string | null,
       version: number,
+      note: string | null = null,
     ) => {
       const s = el(d, "section", "plinth-review__pane");
       s.dataset.side = side;
       s.setAttribute("aria-label", label);
       s.append(el(d, "h3", "plinth-review__label", label));
+      if (note !== null) {
+        // A version in another format: one line in place of its changes and its drawing.
+        s.append(el(d, "p", "plinth-review__other", note));
+        gotos.push(null);
+        return s;
+      }
       s.append(this.changes(list, files, goTo, text));
       const body = el(d, "div", "plinth-review__body");
       body.tabIndex = 0;
@@ -408,7 +426,7 @@ export class DraftReview {
     panes.append(
       // Page changes never change files, so only vN's side can list any.
       pane("mine", REVIEW_WORDS.mine, mineList, fileLines(null), state.draft, state.base),
-      pane("theirs", REVIEW_WORDS.theirs(to), theirList, fileLines(state.files), theirs, to),
+      pane("theirs", REVIEW_WORDS.theirs(to), theirList, fileLines(state.files), theirs, to, other),
     );
     // Each side opens at its first change (once it is shown: one at a time at phone width), without
     // moving the other side with it.

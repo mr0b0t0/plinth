@@ -371,7 +371,7 @@ describe("an HTML deck published while a Markdown deck's room is open", () => {
     return { ...s, a, put: await json(put) };
   }
 
-  it("freezes the draft for its own review: no lease, no edit, no new socket, honest answers", async () => {
+  it("freezes the draft for its own review: no lease or edit on any socket, honest answers", async () => {
     const { id, ownerP, a, put } = await editedThenHtml();
     // The agent is told the edits are neither merged nor shown beside an HTML deck.
     expect(put.warnings).toContainEqual(
@@ -389,14 +389,11 @@ describe("an HTML deck published while a Markdown deck's room is open", () => {
     });
     expect(await draftRow(id)).toEqual({ conflict_version: 2 });
     expect(await lease(a, 0, 1, 1)).toMatchObject({ t: "lease_denied", reason: "frozen" });
-    const b = await within(
-      connectDoc(id, ownerP.cookie).then(
-        () => "welcome",
-        () => "refused",
-      ),
-      3000,
-    );
-    expect(b).not.toBe("welcome");
+    // A socket that joins later (a reload, for the review) finds it frozen too.
+    const b = await connectDoc(id, ownerP.cookie);
+    expect(b.welcome).toMatchObject({ conflict_version: 2 });
+    expect(await lease(b, 0, 1, 1)).toMatchObject({ t: "lease_denied", reason: "frozen" });
+    b.ws.close(1000);
     // Publish outside the review says what happened, never "publish again".
     const cp = await call(id, ownerP.session.headers, "/live/checkpoint", {
       body: { base_version: 1, rev: 1, reason: "save" },
@@ -447,5 +444,147 @@ describe("an HTML deck published while a Markdown deck's room is open", () => {
     expect(await within(a.closed, 3000)).toMatchObject({ code: 4404 });
     expect(await draftRow(id)).toBeNull();
     expect(await peek(id)).toBeUndefined();
+  });
+});
+
+describe("a Markdown deck's changes frozen against an HTML deck, after a reload", () => {
+  const INDEX = JSON.stringify({ title: "Launch", order: ["cover"], cover: "cover" });
+  const ASSETS = [
+    { path: "slides/cover.html", content: '<section id="cover"><h1>Launch</h1></section>' },
+  ];
+  const gateOf = async (id: string, headers: Record<string, string>) =>
+    json(await run(`${APP}/api/v1/view/${id}`, { headers }));
+  const shellLive = async (id: string, cookie: string) => {
+    const res = await run(`${contentOrigin(id)}/`, { headers: { Cookie: cookie } });
+    const m = /<script type="application\/json" id="__plinth-content">([^<]*)<\/script>/.exec(
+      await res.text(),
+    );
+    return JSON.parse(m?.[1] ?? "null") as { path: string; live?: string };
+  };
+
+  /**
+   * A deck typed in by an editor whose page then closed (the room unloads), and an agent's HTML
+   * deck as v2 published while nobody had the page open.
+   */
+  async function typedThenHtmlWhileAway() {
+    const s = await deckSetup("# Talk\n\nBody\n");
+    const ed = await person(s.id, "editor");
+    const a = await connectDoc(s.id, ed.cookie);
+    const l = await lease(a, 0, 1);
+    expect(await edit(a, l.lease, "# Talk, typed")).toMatchObject({ t: "op" });
+    a.send({ t: "release", lease: l.lease });
+    await a.nextOf("flushed");
+    a.ws.close(1000);
+    await a.closed;
+    const put = await call(s.id, s.owner.auth, "", {
+      method: "PUT",
+      body: { content: INDEX, assets: ASSETS, base_version: 1 },
+    });
+    expect(put.status).toBe(200);
+    return { ...s, ed };
+  }
+
+  /** The editor reloads: the gate and the shell offer the room, and the socket gets the review. */
+  async function reload(id: string, ed: Awaited<ReturnType<typeof person>>) {
+    const gate = await gateOf(id, ed.session.headers);
+    expect(gate).toMatchObject({ status: "ok", no_editor: true });
+    expect(gate.live).toBeDefined();
+    expect(gate.live.draft).toMatchObject({ base_version: 1 });
+    expect(await shellLive(id, ed.cookie)).toMatchObject({ path: "deck.json", live: "room" });
+    const b = await connectDoc(id, ed.cookie);
+    expect(b.welcome).toMatchObject({ conflict_version: 2, base_version: 1 });
+    expect(b.text).toBe("# Talk, typed\n\nBody\n");
+    // Frozen: nothing is typed into it.
+    expect(await lease(b, 0, 1, b.welcome.rev as number)).toMatchObject({
+      t: "lease_denied",
+      reason: "frozen",
+    });
+    return b;
+  }
+
+  it("offers its review after a reload; Publish your changes makes the deck the next version", async () => {
+    const { id, ed, owner } = await typedThenHtmlWhileAway();
+    const b = await reload(id, ed);
+    const cp = await call(id, ed.session.headers, "/live/checkpoint", {
+      body: { base_version: 1, rev: b.welcome.rev, reason: "save", conflict_version: 2 },
+    });
+    expect(cp.status, JSON.stringify(await cp.clone().json())).toBe(200);
+    expect(await json(cp)).toMatchObject({ saved: true, version: { version: 3 } });
+    expect((await json(await call(id, owner.auth, ""))).content).toBe("# Talk, typed\n\nBody\n");
+    b.ws.close(1000);
+    // A Markdown deck again: edited on its page as before.
+    expect((await gateOf(id, ed.session.headers)).live).toBeDefined();
+  });
+
+  it("offers its review after a reload; Discard ends the draft and the page is the HTML deck", async () => {
+    const { id, ed, owner } = await typedThenHtmlWhileAway();
+    const b = await reload(id, ed);
+    const res = await run(
+      `${APP}/api/v1/artifacts/${id}/live/draft?rev=${b.welcome.rev}&conflict_version=2`,
+      { method: "DELETE", headers: ed.session.headers },
+    );
+    expect(res.status).toBe(204);
+    expect(await b.nextOf("reset")).toMatchObject({ version: 2, why: "discarded" });
+    expect(String((await json(await call(id, owner.auth, ""))).content)).toBe(INDEX);
+    const gate = await gateOf(id, ed.session.headers);
+    expect(gate.live).toBeUndefined();
+    expect((await shellLive(id, ed.cookie)).live).toBeUndefined();
+  });
+});
+
+describe("an HTML deck over an open room with a lease held", () => {
+  const INDEX = JSON.stringify({ title: "Launch", order: ["cover"], cover: "cover" });
+  const ASSETS = [
+    { path: "slides/cover.html", content: '<section id="cover"><h1>Launch</h1></section>' },
+  ];
+
+  it("ends nothing it may hold typing for: a socket's lease freezes the draft instead", async () => {
+    const { id, ownerP, owner } = await deckSetup("# Talk\n\nBody\n");
+    const a = await connectDoc(id, ownerP.cookie);
+    // A lease held with nothing written yet: its typing may be in the debounce.
+    expect(await lease(a, 0, 1)).toMatchObject({ t: "leased" });
+    const put = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: INDEX, assets: ASSETS, base_version: 1 },
+    });
+    expect(put.status).toBe(200);
+    expect(await a.nextOf("conflict")).toMatchObject({ version: 2 });
+    expect(await stubFor(id).docPeek(id)).toMatchObject({ base_version: 1, conflict_version: 2 });
+    a.ws.close(1000);
+  });
+
+  it("Publish your changes against an older HTML version is refused; the current one publishes", async () => {
+    const { id, ownerP, owner } = await deckSetup("# Talk\n\nBody\n");
+    const a = await connectDoc(id, ownerP.cookie);
+    const l = await lease(a, 0, 1);
+    expect(await edit(a, l.lease, "# Talk 2")).toMatchObject({ t: "op" });
+    const p2 = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: INDEX, assets: ASSETS, base_version: 1 },
+    });
+    expect(p2.status).toBe(200);
+    expect(await a.nextOf("conflict")).toMatchObject({ version: 2 });
+    // Every socket: no lease, no edit.
+    const l2 = await lease(a, 2, 3, 99);
+    a.send({ t: "edit", lease: l.lease, seq: 2, text: "# Talk 3" });
+    const index3 = JSON.stringify({ title: "Launch 2", order: ["cover"], cover: "cover" });
+    const p3 = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: index3, base_version: 2 },
+    });
+    expect(p3.status).toBe(200);
+    await a.nextOf("conflict");
+    const stale = await call(id, ownerP.session.headers, "/live/checkpoint", {
+      body: { base_version: 1, rev: 1, reason: "save", conflict_version: 2 },
+    });
+    expect(stale.status).toBe(409);
+    expect(String((await json(await call(id, owner.auth, ""))).content)).toBe(index3);
+    const ok = await call(id, ownerP.session.headers, "/live/checkpoint", {
+      body: { base_version: 1, rev: 1, reason: "save", conflict_version: 3 },
+    });
+    expect(ok.status).toBe(200);
+    expect(l2.t).toBe("lease_denied");
+    expect(String((await json(await call(id, owner.auth, ""))).content)).toBe("# Talk 2\n\nBody\n");
+    a.ws.close(1000);
   });
 });

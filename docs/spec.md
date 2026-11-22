@@ -1523,11 +1523,16 @@ differs from Claude only where noted.
     Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
     gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
     draft on it, and the frame takes no editing message. When an agent publishes an HTML deck over a
-    Markdown deck's open room, a draft with no changes ends (its row goes, its sockets close); one
-    with changes freezes for the review of the people editing it ("vN is an HTML deck, which isn't
-    edited on its page, so your page edits can't be added to it"), where Publish your changes
-    makes their deck the next version and Discard ends the draft. No other socket joins it, and the
-    agent's `live_draft` says the edits are neither merged into nor shown beside its deck. Compare lists the index's
+    Markdown deck's room, a draft with no changes and no lease held ends (its row goes, its sockets
+    close); any other (with changes, or with a lease whose typing may be on its way) freezes for
+    the review of the people editing it ("vN is an HTML deck, which isn't edited on its page, so
+    your page edits can't be added to it"), where Publish your changes makes their deck the next
+    version and Discard ends the draft. While such a draft waits, owners and editors still get
+    `live` in the gate and the shell, after a reload too, and only for that review: the bar's Edit
+    shows the strip with Review changes, the frame joins the room without entering edit mode, the
+    draft is frozen (no lease or edit), and the HTML side of the review is one line ("vN is an HTML
+    deck, so it isn't shown beside your changes…") in place of its changes and drawing. The agent's
+    `live_draft` says the edits are neither merged into nor shown beside its deck. Compare lists the index's
     changes (title, size, fonts, slides added, removed or moved) beside the slide files that
     changed.
 - **Design systems.** `designSystems` is kept as written (its `namespace`s checked, at most 4), and
@@ -3554,19 +3559,14 @@ deleting slides, and a slide's columns, stay with agents for now.
   the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
   only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
   that repeat it, nor notes on a slide, and a lease granted on the other kind of part is let go
-  unused). Two slides may share a title, so a block is taken again only where it is certainly
-  this one; otherwise what was typed goes in as a new block nearby, as below. A copy at worst,
-  never another slide's text written over. It is certain when every line of the deck but the
-  block's is as it was when its lease ended, and the block's lines hold one of those texts.
-  Otherwise a block counts only where it is still on its own slide: its slide's first line of text
-  outside it is the one its slide had (when it had one) and the lines just above and below it are
-  the ones it had (a deck's edge, where slides are added, is not compared). It must also hold
-  words only that block could: that first line, text the person wrote (not the words the block had
-  before they typed), or words no other block of the deck held. Where every line above it, or
-  every line below it, is unchanged, only a block at that line counts; else only one may be left.
-  The old words alone prove nothing, since the person's own slide may have been removed and
-  another with the same title moved to its line. A place clicked, with nothing typed yet, is
-  opened where the person sees it under the first rules only. What
+  unused). One rule decides, with no guessing: a block is taken again only when every line of the
+  deck above it and every line below it is as it was when its lease ended, and the lines between
+  hold one of those texts. After any change outside the block (a slide added or removed, a
+  co-editor's typing anywhere, an agent's version), what was typed goes in as a new block at the
+  nearest free place, as below, and a place clicked is not opened ("The deck changed meanwhile.
+  Try again."). Two slides may share a title, or a co-editor type the same words, so nothing else
+  proves which block is the person's: a duplicate is acceptable, another block's text written
+  over is not. What
   was typed since is sent there unless the room's block already reads exactly so. After a drop that
   is the text sent last (it may have arrived without its answer), the text the room acknowledged
   or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.

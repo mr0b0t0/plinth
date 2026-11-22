@@ -158,11 +158,6 @@ interface Loaded {
   conflictVersion: number | null;
   /** While frozen: the files conflictVersion changed since baseVersion, for the review. */
   conflictFiles: FileChangeSummary | null;
-  /**
-   * Frozen against an HTML deck (a deck whose source is deck.json), which is never edited on its
-   * page: no socket joins, and a discard drops the draft (there is no Markdown to go back to).
-   */
-  html: boolean;
   /** The socket whose edit made the latest rev (for the last-writer autosave). */
   lastBy: string | null;
   /** The email behind the latest edit (updated_by_user). */
@@ -343,11 +338,9 @@ export class LiveDoc {
     if (!isLiveType(def) || !def || !rules) return null;
     const draft = row.content !== null && row.base_version !== null && row.rev !== null;
     // An HTML deck (deck.json) is never edited on its page: no draft opens on it. A Markdown
-    // deck's draft from before it loads only for its review's choices (Publish yours, Discard);
-    // no socket joins it (connected).
+    // deck's draft from before it loads, frozen against it (outsideHtml), for its review only.
     const current = versionSourcePath(def, parseManifest(row.current_manifest ?? "[]"));
-    const html = !isLiveSource(def, current);
-    if (html && !draft) return null;
+    if (!isLiveSource(def, current) && !draft) return null;
     const baseSource = await this.readVersionText(row.base_prefix, def);
     if (baseSource === null) return null;
     // The draft's lines are the type's live form of its source (identity for docs, decks and sheets).
@@ -365,7 +358,6 @@ export class LiveDoc {
       lines: splitLines(draft ? rules.toLive(row.content as string) : baseText),
       conflictVersion: draft ? row.conflict_version : null,
       conflictFiles: null,
-      html,
       lastBy: null,
       lastEmail: null,
       lastEditAt: null,
@@ -537,11 +529,8 @@ export class LiveDoc {
   async connected(ws: WebSocket, s: DocSocket, artifactId: string): Promise<boolean> {
     const doc = await this.ensure(artifactId);
     if (!doc) return false;
-    // A draft frozen against an HTML deck is kept only for the review of those editing it.
-    if (doc.html && doc.conflictVersion !== null) {
-      await this.releaseIfIdle(doc);
-      return false;
-    }
+    // A draft frozen against an HTML deck is joined only for its review: frozen, it takes no lease,
+    // edit or struct op, and its socket's only use is the review's choices.
     this.welcome(ws, s, doc);
     this.status(doc);
     return true;
@@ -1001,7 +990,6 @@ export class LiveDoc {
     // Already frozen against this version (or a newer one): nothing new to review.
     if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
     if (doc.def.altSource && (await this.htmlVersion(doc, n))) return this.outsideHtml(doc, n);
-    if (this.loaded === doc && n > doc.baseVersion) doc.html = false;
     const source = await this.versionSource(doc, n);
     // Its hash, as a pending checkpoint's snapshot holds it (the notify's, or from its source when
     // it came without one: the alarm's catch-up, a load).
@@ -1136,16 +1124,24 @@ export class LiveDoc {
 
   /**
    * Version n is an HTML deck, which is never edited on its page: nothing can be merged onto it or
-   * reset to it. A draft with no changes ends: its leases go, its row goes (it never counts toward
-   * the owner's draft limit) and its sockets close. A draft with changes freezes against n and is
-   * kept for the people editing it, whose review publishes their deck as the next version or
-   * discards it; no other socket joins it (connected).
+   * reset to it. A draft with no changes, and no lease held on it, ends: its row goes (it never
+   * counts toward the owner's draft limit) and its sockets close. Any other draft freezes against
+   * n and is kept for the people editing it, whose review publishes their deck as the next version
+   * or discards it: one with changes, and one whose lease is held, since its holder may have typing
+   * on its way (in the debounce, or sent with no answer), which goes back in after the review. A
+   * socket that joins it (a reload, which the gate allows only for that review) finds it frozen:
+   * no lease, edit or struct op.
    */
   private async outsideHtml(doc: Loaded, n: number): Promise<void> {
     if (this.loaded !== doc || n <= doc.baseVersion) return;
     if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
-    doc.html = true;
-    if (this.text(doc) === doc.baseText && doc.conflictVersion === null && !this.saving.length) {
+    const held = this.host.sockets().some(({ s }) => Boolean(s.lease));
+    if (
+      this.text(doc) === doc.baseText &&
+      doc.conflictVersion === null &&
+      !this.saving.length &&
+      !held
+    ) {
       await this.dropDraft(doc);
       return;
     }

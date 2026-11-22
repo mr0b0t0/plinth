@@ -47,7 +47,7 @@ import {
   ReviewSession,
   readEditMessage,
 } from "../common/editSession.ts";
-import { pinFiles } from "../common/files.ts";
+import { fetchVersionSource, pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, type LeaseLoss, LiveDocClient } from "../common/live.ts";
 import {
@@ -890,7 +890,14 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     const review = new DraftReview({
       win,
       type: "slides",
-      sourcePath: payload?.path ?? "slides.md",
+      // The draft is a Markdown deck's, whatever this version is: its base is read as slides.md.
+      sourcePath: "slides.md",
+      // A version that is an HTML deck is not drawn beside a Markdown deck's changes: one line
+      // says so in its place.
+      otherFormat: async (n) =>
+        (await fetchVersionSource(win, n, HTML_DECK_INDEX)) === null
+          ? null
+          : DECK_WORDS.htmlVersion(n),
       rules: RULES as NonNullable<typeof RULES>,
       pane: deckPane(doc),
       unpublishableWords: "Your deck has no slides, so it can't be published.",
@@ -928,7 +935,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
             if (!local) notePublished();
             if (client && !client.connected && !local) editor?.disconnected();
             if (!local) editor?.roomStatus();
-            if (client?.failed && !local && editor?.editing) {
+            if (client?.failed && !local && editor?.editing && !htmlDeck) {
               // The room never answered: keep editing alone.
               goSolo();
               redraw();
@@ -991,13 +998,19 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     const onMessage = (m: EditAppMessage) => {
       if (m.type === "edit") {
         if (m.base !== undefined) soloBase = m.base;
+        // An HTML deck is never edited here: its frame joins the room only so a Markdown deck's
+        // changes from before it can be reviewed (Review changes on the strip).
+        if (htmlDeck) {
+          status();
+          return;
+        }
         if (m.on && (!client || client.failed)) goSolo();
         setEditing(m.on);
         if (m.on && m.focus === "first") editor?.focusFirst();
         status();
       } else if (m.type === "rescue") {
         // What the app kept from an earlier frame (a reload), and its answers to this one's reports.
-        if (m.items.length > 0) editor?.offerRescue(m.items);
+        if (m.items.length > 0 && !htmlDeck) editor?.offerRescue(m.items);
         if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
       } else if (m.type === "collect" && local) {
         editor?.flush();
@@ -1044,7 +1057,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
 
   // Only a Markdown deck is edited on its page: an HTML deck (deck.json) is changed by agents, so
   // it opens no draft socket and takes no editing message.
-  if (payload.live === "room" && appOrigin !== "" && !fixedOverview && !htmlDeck) {
+  // An HTML deck's payload has `live` only while a Markdown deck's changes from before it wait for
+  // their review: the room is joined for that review alone.
+  if (payload.live === "room" && appOrigin !== "" && !fixedOverview) {
     live = startLive();
   }
 
@@ -1077,7 +1092,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (m) return onSlidesMessage(m);
     // On-page editing: never in review mode or the editor preview, which show every slide, and
     // never for an HTML deck.
-    if (fixedOverview || htmlDeck) return;
+    if (fixedOverview || (htmlDeck && payload.live !== "room")) return;
     const edit = readEditMessage(e.data);
     if (!edit) return;
     live ??= startLive();

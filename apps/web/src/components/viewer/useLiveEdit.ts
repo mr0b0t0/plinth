@@ -780,6 +780,9 @@ export function useLiveEdit({
             done("done");
           }
           setReview(null);
+          // Reviewed beside an HTML deck, which is never edited on its page: the page is read
+          // again, as the deck published now or as the HTML deck with no changes left.
+          if (latest.current.gate.no_editor) latest.current.onReload();
         } catch (e) {
           roomFail(e);
         } finally {
