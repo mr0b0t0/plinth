@@ -65,3 +65,40 @@ export function applyLineEdit(
 ): string[] {
   return [...lines.slice(0, start), ...ins, ...lines.slice(start + del)];
 }
+
+/**
+ * Whether a range a struct op touches (slidesStruct.ts slidesTouches) collides with a lease. A
+ * removed or rewritten range [c, d) collides with a line lease that shares a line with it, and
+ * with an insert point at q when c <= q <= d (the lines around it go). An insertion point p (a
+ * zero-length range) collides with a line lease [a, b) when a < p < b (it would insert inside a
+ * block someone is typing in), and with an insert point at exactly p. So an op may insert just
+ * above or just below a held block, which the line map then moves.
+ */
+export function structOverlaps(touch: LineRange, lease: LineRange): boolean {
+  if (touch.start === touch.end) return rangesOverlap(touch, lease);
+  if (lease.start === lease.end) return touch.start <= lease.start && lease.start <= touch.end;
+  return touch.start < lease.end && lease.start < touch.end;
+}
+
+/**
+ * Where a lease lies after a struct op whose line map (old line to new line, -1 for removed) is
+ * `map`, over lines that were `oldLength` long and are `newLength` long: a line lease keeps its
+ * lines, an insert point stays before the line it was before. Null when the op removed one of its
+ * lines (structOverlaps refuses such an op while the lease is held).
+ */
+export function mapRange(
+  r: LineRange,
+  map: readonly number[],
+  oldLength: number,
+  newLength: number,
+): LineRange | null {
+  if (r.start === r.end) {
+    if (r.start >= oldLength) return { start: newLength, end: newLength };
+    const at = map[r.start] ?? -1;
+    return at < 0 ? null : { start: at, end: at };
+  }
+  const start = map[r.start] ?? -1;
+  const last = map[r.end - 1] ?? -1;
+  if (start < 0 || last < start || last - start !== r.end - 1 - r.start) return null;
+  return { start, end: last + 1 };
+}

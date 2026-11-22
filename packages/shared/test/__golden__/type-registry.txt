@@ -91,7 +91,13 @@
         "language": "markdown",
         "wordWrap": "on"
       },
-      "edit": "ask",
+      "edit": "live",
+      "create": {
+        "label": "Slide deck",
+        "title": "Untitled deck",
+        "content": "# Untitled deck\n"
+      },
+      "noun": "deck",
       "present": true,
       "follow": true,
       "fileExports": [

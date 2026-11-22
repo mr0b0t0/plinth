@@ -186,6 +186,7 @@ ins.plinth-review__word {
 }
 
 .plinth-review__none,
+.plinth-review__other,
 .plinth-review__missing {
   margin: 0;
   color: var(--review-muted);

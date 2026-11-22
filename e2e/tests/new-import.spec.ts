@@ -44,6 +44,7 @@ test("New document: v1 'Created in the app' opens in edit mode on its title, and
   const menu = await openNew(page);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Document",
+    "Slide deck",
     "Sheet",
     "Import a spreadsheet…",
   ]);

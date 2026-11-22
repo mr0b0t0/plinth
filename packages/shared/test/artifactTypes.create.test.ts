@@ -18,9 +18,10 @@ import {
 } from "../src/index.ts";
 
 describe("create rows", () => {
-  it("offers a blank doc and sheet, in registry order, and nothing agents alone make", () => {
+  it("offers a blank doc, deck and sheet, in registry order, and nothing agents alone make", () => {
     expect(creatableTypes().map((d) => [d.id, d.create.label])).toEqual([
       ["doc", "Document"],
+      ["slides", "Slide deck"],
       ["sheet", "Sheet"],
     ]);
     for (const t of ARTIFACT_TYPES) {

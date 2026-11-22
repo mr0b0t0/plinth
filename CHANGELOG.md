@@ -482,6 +482,28 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   The **+** between blocks is gone: **Insert below** or Enter adds a block. A change the doc
   cannot take says so and keeps the block open with what was typed.
 
+- **Edit a deck on its page.** Owners and editors now edit a deck's slide text, speaker notes and
+  settings right on its page, as formatted text with no Markdown shown, live with each other like
+  docs and sheets. Edit mode shows every slide, empty ones included ("Click to add a title"), with
+  the slide's notes in a panel under it (emptying the notes removes them); **Slide setup** in the
+  ⋯ menu sets the aspect, theme, page numbers and footer. Whatever is typed
+  stays text: a `---`, `Note:` or `Date: 3 March` never splits a slide, eats its notes or becomes a
+  setting, and the room refuses any edit that would change the deck's structure. Images, and
+  blocks the editor cannot show as they are, offer **Ask an agent**. A deck whose every slide was
+  emptied cannot be published until it has text again, and a version published while people edit
+  a deck is reviewed beside their changes, never merged. **New** on the dashboard offers a blank
+  slide deck. Outside edit mode the deck shows the live draft, but while it is presented (full
+  screen, presenter view) or someone leads viewers, it shows the published deck, so nobody's
+  half-typed text reaches the audience and every follower is on the presenter's slide. Print and
+  Download .pptx wait until editing ends, as Present does. Nothing typed in a deck is lost when a
+  lease ends or a block closes, even with the deck at its size limit: text the room does not have
+  yet goes back in (below the block when someone took it over, in its place after a review), what
+  cannot go in yet stays on the page with **Copy**, and after a reload it goes back into the slide
+  or the speaker notes it was typed in. Editing alone (without live rooms), text a full deck
+  cannot take stays in its block, and Publish and Done wait until it is shortened; the copy kept
+  for a reload can still be published, and the text comes back when editing starts again.
+  Discarding that copy, or the changes in a review, discards the text too.
+
 ## 0.6.0 (2026-11-20)
 
 - **Thumbnails picture the version they are of.** The capture of a version is served that

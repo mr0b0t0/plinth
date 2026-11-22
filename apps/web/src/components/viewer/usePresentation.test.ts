@@ -630,6 +630,53 @@ describe("usePresentation", () => {
     expect(f.contentWindow.postMessage).not.toHaveBeenCalled();
     expect(result.current.pause).toBeNull();
   });
+
+  it("tells the frame when it goes full screen and back, and a new frame that it is", () => {
+    const one = fakeFrame();
+    const { result, rerender } = renderHook(
+      ({ frame }) =>
+        usePresentation({
+          gate: gate(),
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+        }),
+      { initialProps: { frame: one.frame } },
+    );
+    const presenting = (w: { postMessage: ReturnType<typeof vi.fn> }) =>
+      w.postMessage.mock.calls
+        .map((c) => c[0] as { type: string; on?: boolean })
+        .filter((m) => m.type === "presenting")
+        .map((m) => m.on);
+    // Nothing is said while the deck is not full screen.
+    fromFrame(one.contentWindow, { type: "ready", slide: 4, count: 6 });
+    expect(presenting(one.contentWindow)).toEqual([]);
+    let element: Element | null = one.frame;
+    // jsdom has no full screen: the document's fullscreenElement is modelled.
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => element,
+    });
+    act(() => {
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    expect(result.current.pause).toBe("present");
+    expect(one.contentWindow.postMessage).toHaveBeenLastCalledWith(
+      { source: "plinth-renderer", v: 1, type: "presenting", on: true },
+      ORIGIN,
+    );
+    const two = fakeFrame();
+    rerender({ frame: two.frame });
+    fromFrame(two.contentWindow, { type: "ready", slide: 4, count: 6 });
+    expect(presenting(two.contentWindow)).toEqual([true]);
+    element = null;
+    act(() => {
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    expect(presenting(two.contentWindow)).toEqual([true, false]);
+    Reflect.deleteProperty(document, "fullscreenElement");
+  });
 });
 
 describe("usePresentation in review mode", () => {

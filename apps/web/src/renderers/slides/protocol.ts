@@ -12,6 +12,14 @@
 //                                            window moves it, so it stops following the room
 //   app -> frame: lead                       the frame this one replaced was leading viewers and
 //                                            the person never stopped: lead again from here
+//   app -> frame: deck_settings              open the deck settings popover (the app's ⋯ "Deck
+//                                            settings…", while editing on the page)
+//   app -> frame: presenting { on }          the app shows this frame full screen (Present),
+//                                            or no longer: meanwhile a deck that follows the
+//                                            room's draft shows the published deck instead, as
+//                                            in presenter view
+//   app -> frame: edit, collect, review, reviewed
+//                                            on-page editing (common/editSession.ts), as for docs
 //   frame -> app: ready { slide, count }     after boot
 //   frame -> app: position { slide, count }  after every change
 //   frame -> app: view { mode }              the view it now shows, after every change (its own
@@ -39,7 +47,9 @@ export type SlidesAppMessage =
   | { type: "print" }
   | { type: "export"; format: "pptx"; nonce: string }
   | { type: "paired" }
-  | { type: "lead" };
+  | { type: "lead" }
+  | { type: "deck_settings" }
+  | { type: "presenting"; on: boolean };
 
 /** The app's nonce for one export request. */
 export const EXPORT_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -64,6 +74,10 @@ export function readSlidesAppMessage(data: unknown): SlidesAppMessage | null {
   }
   if (m.type === "paired") return { type: "paired" };
   if (m.type === "lead") return { type: "lead" };
+  if (m.type === "deck_settings") return { type: "deck_settings" };
+  if (m.type === "presenting") {
+    return typeof m.on === "boolean" ? { type: "presenting", on: m.on } : null;
+  }
   return null;
 }
 

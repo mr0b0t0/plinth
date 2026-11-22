@@ -60,6 +60,11 @@ export interface RichHost {
    * punycode), so the link reads back as the same mark.
    */
   normalizeHref(url: string): string;
+  /**
+   * How much the block is scaled on screen (a slide is a fixed canvas scaled to fit), so the
+   * floating bars are placed by the screen's pixels. Absent: 1.
+   */
+  scale?(): number;
 }
 
 /** More about a split (RichHost.split). */
@@ -909,8 +914,10 @@ export class RichBlockEditor {
     const above = touch ? !fitsBelow && fitsAbove : fitsAbove || !fitsBelow;
     const top = above ? at.top - h - EDGE : at.bottom + EDGE;
     const left = Math.max(EDGE, Math.min(vw - w - EDGE, (at.left + at.right) / 2 - w / 2));
-    box.style.top = `${Math.round(top - host.top)}px`;
-    box.style.left = `${Math.round(left - host.left)}px`;
+    // Inside a scaled box (a slide), the bar's own offsets are scaled too.
+    const k = this.host.scale?.() ?? 1;
+    box.style.top = `${Math.round((top - host.top) / k)}px`;
+    box.style.left = `${Math.round((left - host.left) / k)}px`;
   }
 
   /**
@@ -924,8 +931,9 @@ export class RichBlockEditor {
     const host = this.el.getBoundingClientRect();
     const w = box.offsetWidth;
     const left = Math.max(host.left, Math.min(host.right - w, at.left));
-    box.style.top = `${Math.round(at.bottom + EDGE / 2 - host.top)}px`;
-    box.style.left = `${Math.round(left - host.left)}px`;
+    const k = this.host.scale?.() ?? 1;
+    box.style.top = `${Math.round((at.bottom + EDGE / 2 - host.top) / k)}px`;
+    box.style.left = `${Math.round((left - host.left) / k)}px`;
   }
 
   /** The selection's rectangle, or the block's when it has none. */

@@ -546,7 +546,7 @@ export interface AppConfig {
    */
   artifact_types?: { id: ArtifactType; available: boolean }[];
   /**
-   * How owners and editors edit docs and sheets on their page here: "room" (live with each other,
+   * How owners and editors edit docs, decks and sheets on their page here: "room" (live with each other,
    * with rooms), "solo" (alone, origin isolation without rooms), or null when editing on the page
    * is off (ALLOW_LIVE_EDITING=false, or opaque isolation and the path fallback). The Worker
    * always sends it; absent reads as null.

@@ -1108,6 +1108,65 @@ describe("useLiveEdit", () => {
     expect(sessionStorage.length).toBe(0);
   });
 
+  it("solo: the restore notice's Discard and a review's Discard drop the rescue store with the copy", async () => {
+    // A deck at its size limit: the tab's copy is the deck as written, its typing is in the store.
+    const key = "plinth-draft:page-rescue:u1:art1";
+    const kept = [{ id: "r1", text: "Typed past the limit", near: 0 }];
+    stubApi({
+      handle: (c) => {
+        if (c.method === "PUT") return conflict409(4, "");
+        if (/\/versions\/\d$/.test(c.path)) return json({ type: "doc", content: "", assets: [] });
+        return undefined;
+      },
+    });
+    const later = gate("solo");
+    later.artifact = { ...later.artifact, version: 4, current_version: 4 };
+
+    // 1. The notice's Discard: nothing is offered on the next Edit, and leaving does not warn.
+    savePageDraft("art1", 3, "# Kept");
+    sessionStorage.setItem(key, JSON.stringify(kept));
+    const notice = hook(later, vi.fn(), { userId: "u1" });
+    expect(notice.result.current.restore).toMatchObject({ text: "# Kept" });
+    act(() => notice.result.current.dropRestore());
+    expect(sessionStorage.getItem(key)).toBeNull();
+    const leave = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(leave);
+    expect(leave.defaultPrevented).toBe(false);
+    act(() => notice.result.current.start());
+    expect(sentToFrame("rescue")).toHaveLength(0);
+    notice.unmount();
+
+    // 2. The kept copy's review (a newer version is current), then Discard.
+    savePageDraft("art1", 3, "# Kept");
+    sessionStorage.setItem(key, JSON.stringify(kept));
+    const copy = hook(later, vi.fn(), { userId: "u1" });
+    await act(() => copy.result.current.saveRestore());
+    await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
+    fromFrame({ type: "resolved", nonce: sentToFrame("review")[0]?.[0].nonce, outcome: "discard" });
+    act(() => copy.result.current.answerDiscard(true));
+    expect(copy.result.current.review).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
+    copy.unmount();
+
+    // 3. The editing frame's own review, then Discard.
+    toFrame.mockClear();
+    sessionStorage.setItem(key, JSON.stringify(kept));
+    const own = hook(gate("solo"), vi.fn(), { userId: "u1" });
+    act(() => own.result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    let saving: Promise<void> = Promise.resolve();
+    act(() => {
+      saving = own.result.current.publish();
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "# Mine" });
+    await act(() => saving);
+    await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
+    fromFrame({ type: "resolved", nonce: sentToFrame("review")[0]?.[0].nonce, outcome: "discard" });
+    act(() => own.result.current.answerDiscard(true));
+    expect(sessionStorage.getItem(key)).toBeNull();
+  });
+
   it("Esc at the top level of the frame moves focus to the strip", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const onLeave = vi.fn();

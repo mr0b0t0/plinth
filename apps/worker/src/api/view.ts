@@ -210,7 +210,7 @@ export const GATE_PARTS: readonly GatePart[] = [
     return ask ? { ask } : undefined;
   },
   async ({ ctx, a, d, opts }) => {
-    const liveOff = gateLiveOff(ctx, a, d, opts);
+    const liveOff = await gateLiveOff(ctx, a, d, opts);
     return liveOff ? { live_off: liveOff } : undefined;
   },
   async ({ ctx, a, version }) =>
@@ -252,13 +252,13 @@ async function gateAsk(ctx: Ctx, a: ArtifactRow): Promise<ViewGateAsk | undefine
  * type on the current version, signed in or confirmed by code) when liveEditMode is null. So a
  * gate never has both, and the Edit slot shows Ask an agent with the reason instead.
  */
-function gateLiveOff(
+async function gateLiveOff(
   ctx: Ctx,
   a: ArtifactRow,
   d: Extract<Decision, { allow: true }>,
   opts: GateOptions,
-): ViewGateLiveOff | undefined {
-  if (!liveSeat(ctx, a, d, opts)) return undefined;
+): Promise<ViewGateLiveOff | undefined> {
+  if (!(await liveSeat(ctx, a, d, opts))) return undefined;
   if (liveEditMode(ctx.config, ctx.env)) return undefined;
   return { reason: ctx.config.allowLiveEditing ? "isolation" : "disabled" };
 }
@@ -266,20 +266,31 @@ function gateLiveOff(
 /**
  * Who would edit this artifact on its page, whether or not editing on the page is on here: an
  * owner or editor of a live type that is not taken down, on the current version, signed in
- * ("user") or confirmed by code ("viewer"); null for anyone else. `live` and `live_off` both start
+ * ("user") or confirmed by code ("viewer"); null for anyone else, and for an HTML deck (the
+ * current version's source is deck.json), which agents change, unless a Markdown deck's
+ * unpublished changes from before it wait there for their review. `live` and `live_off` both start
  * from it, so one is present exactly where the other would be.
  */
-function liveSeat(
+async function liveSeat(
   ctx: Ctx,
   a: ArtifactRow,
   d: Extract<Decision, { allow: true }>,
   opts: GateOptions,
-): "user" | "viewer" | null {
+): Promise<"user" | "viewer" | null> {
   if (!isLiveType(typeDef(a.type)) || a.takenDownAt) return null;
   if (d.role !== "owner" && d.role !== "editor") return null;
   if (opts.version !== undefined) return null;
   const p = ctx.principal;
-  return p.kind === "user" || p.kind === "viewer" ? p.kind : null;
+  if (p.kind !== "user" && p.kind !== "viewer") return null;
+  // An HTML deck is never edited on its page; a Markdown deck's unpublished changes from before it
+  // stay reachable for their review (Publish your changes, Discard), and only those.
+  if (
+    (await altSourceShown(ctx, a, a.currentVersion)) &&
+    !(await readLiveDraftInfo(ctx.env.DB, a.id))
+  ) {
+    return null;
+  }
+  return p.kind;
 }
 
 // ---------- live views ----------
@@ -408,7 +419,7 @@ async function gateLive(
   d: Extract<Decision, { allow: true }>,
   opts: GateOptions,
 ): Promise<ViewGateLive | undefined> {
-  const seat = liveSeat(ctx, a, d, opts);
+  const seat = await liveSeat(ctx, a, d, opts);
   if (!seat) return undefined;
   const mode = liveEditMode(ctx.config, ctx.env);
   if (!mode) return undefined;

@@ -12,7 +12,9 @@
 // renderer may not show (script, handlers, frames, URLs, Claude's caps) with each problem's file
 // and line, and lists what shows differently as publish warnings. Its title is deck.json's title.
 //
-// Neither format declares capabilities or has a room, so nothing happens after a commit.
+// Neither format declares capabilities. A new version of a Markdown deck people are editing on
+// its page freezes their live draft for review (rooms/doc.ts): it is never merged, and the agent
+// is told so once, with nothing to do. An HTML deck has no live draft.
 import {
   deckFileProblem,
   deckImagePaths,
@@ -34,6 +36,7 @@ import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks, VersionCheck } from "../artifactTypes.ts";
 import { echo } from "../publishCheck.ts";
 import { docHooks, markdownTitle } from "./doc.ts";
+import { liveAfterCommit } from "./live.ts";
 
 /** The deck's own problems and its missing images, as publish warnings on slides.md. */
 export function deckWarnings(
@@ -159,6 +162,7 @@ export const slidesHooks: TypeHooks = {
   sourceWarnings: (def, text, manifestPaths, sourcePath) =>
     isHtmlSource(text, sourcePath) ? [] : deckWarnings(def.sourcePath, text, manifestPaths),
   keepsText: isDeckTextFile,
+  afterCommit: liveAfterCommit("deck"),
   carries: (sourcePath, path, contentType) =>
     deckFileProblem(sourcePath === HTML_DECK_INDEX ? "html" : "markdown", path, contentType) ===
     null,

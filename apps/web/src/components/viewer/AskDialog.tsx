@@ -138,6 +138,8 @@ export function AskDialog({
   /** Publish first did not succeed: why, in the strip's words. Nothing was posted. */
   const [unpublished, setUnpublished] = useState<string | null>(null);
   const alive = useRef(false);
+  /** Focus goes to the description, where typing goes, not to the chip's Stop pointing. */
+  const describe = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -215,6 +217,7 @@ export function AskDialog({
       open
       onClose={onClose}
       title="Ask an agent"
+      initialFocus={describe}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -250,6 +253,7 @@ export function AskDialog({
             <PointingChip text={anchor.text || anchor.key} onRemove={() => setAnchor(null)} />
           ))}
         <Textarea
+          ref={describe}
           label="What should change?"
           hideLabel
           placeholder="Describe the change…"

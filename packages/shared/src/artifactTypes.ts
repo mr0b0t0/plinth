@@ -89,6 +89,11 @@ export interface ArtifactTypeDef {
    */
   create?: CreateRow;
   /**
+   * What agent-facing texts call one artifact of the type ("this deck", "a sheet, deck or design
+   * system"), when it is not its badge in lower case. Absent: the badge (or the label).
+   */
+  noun?: string;
+  /**
    * The viewer offers Present and Presenter view, and review mode and the editor preview show
    * every page stacked (payload `view: "overview"`). Absent means false.
    */
@@ -233,6 +238,18 @@ export const RENDERERS_DIR = "__plinth-renderers";
 /** Whether people edit the type on its page (its registry row has `edit: "live"`). */
 export function isLiveType(def: Pick<ArtifactTypeDef, "edit"> | null | undefined): boolean {
   return def?.edit === "live";
+}
+
+/**
+ * Whether people edit a version stored with this source file on its page: a live type's own
+ * format only. An HTML deck (a deck whose source is its altSource, deck.json) is changed by
+ * agents, as before decks were edited on the page.
+ */
+export function isLiveSource(
+  def: Pick<ArtifactTypeDef, "edit" | "altSource"> | null | undefined,
+  sourcePath: string,
+): boolean {
+  return isLiveType(def) && sourcePath !== def?.altSource?.path;
 }
 
 /**

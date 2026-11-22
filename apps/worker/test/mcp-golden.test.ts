@@ -97,7 +97,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "cc51244b73dcd0a92d22a231969983e6ddb68593f2e8291ce5cdc4e3d66fddb6",
+      tools: "9957b3687a8cb04fac9429bf20dde5830619c72c247abae5c697db145ec3e76f",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -107,7 +107,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "191f4fda5ff515e28bc0d8465988a452591ed418a18d811639ca940a653217f9",
+      tools: "2a4bacffdf00812b3c4aae58eb3f57b9bc4b2131672141fcced78ea05e3cad98",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -119,7 +119,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "4783a7fb4273cda8956bcd5fa25009ad325aa3afcaf3315853de7278da71db1c",
+      tools: "7e15db521bc6624ceb1aaef08732a0c350984826896e4ea54aa3e367d738921f",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -129,7 +129,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "e17873d5d847bdd4074f68106335cde2c8107ee5d93983908983f95c8489024d",
+      tools: "c201c8bc6c11fd423d87a5957bb0b3764b5bf01db0ca1a4b6861906f1a15257b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "d8268c9a89b929368d3fff8f674899075da782af5e68a15e47b8f9fbd34ffb20",

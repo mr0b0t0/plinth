@@ -232,7 +232,8 @@ export function mergeRescue(
   );
   const fits = (m: Map<string, RescueItem>) => {
     let total = 0;
-    for (const i of m.values()) total += i.text.length;
+    // A deck item's ref counts too, as readRescueItems counts it.
+    for (const i of m.values()) total += i.text.length + (i.ref?.length ?? 0);
     return m.size <= MAX_RESCUE_ITEMS && total <= MAX_RESCUE_TOTAL;
   };
   const refused = new Set<string>();

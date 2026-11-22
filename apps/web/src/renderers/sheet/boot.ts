@@ -467,7 +467,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
             if (!local) editor?.structDenied(r, by);
           },
           structLanded: (op) => {
-            if (!local) editor?.structLanded(op);
+            // A sheet's room takes only a sheet's ops (struct.kinds).
+            if (!local) editor?.structLanded(op as SheetStructOp);
           },
         },
       });

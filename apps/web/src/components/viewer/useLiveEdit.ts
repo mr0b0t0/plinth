@@ -54,6 +54,7 @@ import {
   savePageDraft,
 } from "../editor/draft.ts";
 import { showToast } from "../ui/index.ts";
+import { unpublishableReason } from "./deckItems.ts";
 import {
   type AskWhat,
   collectMessage,
@@ -246,7 +247,9 @@ export function useLiveEdit({
   const def = typeDef(artifact.type);
   const merges = liveRules(artifact.type)?.merge === "lines";
   // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
-  const noun = (def?.badge ?? "doc").toLowerCase();
+  const noun = def?.noun ?? (def?.badge ?? "doc").toLowerCase();
+  // Why Publish is off for a draft that cannot be a version yet (an empty deck), in its words.
+  const unpublishable = unpublishableReason(artifact.type) ?? UNPUBLISHABLE;
   const maxBytes =
     artifact.type === "doc" ? config?.limits.max_doc_bytes : (def?.maxSourceBytes ?? undefined);
   const target = editTargetOrigin(config, contentOrigin);
@@ -272,6 +275,15 @@ export function useLiveEdit({
   const unkept = useRef<RescueReportMsg[]>([]);
   /** What a `rescue` report from the frame does (set once collect exists, below). */
   const onRescue = useRef<(r: RescueReportMsg) => void>(() => undefined);
+  /**
+   * A discard (the ⋯ menu's, a review's, the restore notice's): what was kept to rescue goes with
+   * the changes it belongs to, so it is never written back on the next Edit.
+   */
+  const forgetRescue = useCallback(() => {
+    if (who) clearRescue(who, id);
+    unkept.current = [];
+    setRescued(countRescue(id, userId));
+  }, [who, id, userId]);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
   const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
@@ -645,8 +657,8 @@ export function useLiveEdit({
       } catch (e) {
         const code = reasonOf(e);
         if (code === "live_unpublishable") {
-          if (!quiet) toast(UNPUBLISHABLE, "neutral");
-          return { error: UNPUBLISHABLE };
+          if (!quiet) toast(unpublishable, "neutral");
+          return { error: unpublishable };
         }
         return refuse(e, code === "live_conflict" ? () => void openReview(tell) : undefined, tell);
       } finally {
@@ -654,7 +666,7 @@ export function useLiveEdit({
         setSaving(false);
       }
     },
-    [id, refuse, openReview],
+    [id, refuse, openReview, unpublishable],
   );
 
   /**
@@ -673,8 +685,8 @@ export function useLiveEdit({
         return { error: UNSAVABLE };
       }
       if (s?.publishable === false) {
-        if (tell === "toast") toast(UNPUBLISHABLE, "neutral");
-        return { error: UNPUBLISHABLE };
+        if (tell === "toast") toast(unpublishable, "neutral");
+        return { error: unpublishable };
       }
       if (m === "room") return checkpoint("save", { note, tell });
       if (m !== "solo") return { error: "Editing on the page is not available." };
@@ -692,7 +704,7 @@ export function useLiveEdit({
         setSaving(false);
       }
     },
-    [checkpoint, collect, publishSolo, refuse],
+    [checkpoint, collect, publishSolo, refuse, unpublishable],
   );
   const publish = useCallback(
     async (note?: string) => {
@@ -764,12 +776,13 @@ export function useLiveEdit({
           } else {
             await liveDiscard(id, rev, version);
             // Discarded: so is what was kept to rescue (the frame drops its own on the reset).
-            if (who) clearRescue(who, id);
-            unkept.current = [];
-            setRescued(countRescue(id, userId));
+            forgetRescue();
             done("done");
           }
           setReview(null);
+          // Reviewed beside an HTML deck, which is never edited on its page: the page is read
+          // again, as the deck published now or as the HTML deck with no changes left.
+          if (latest.current.gate.no_editor) latest.current.onReload();
         } catch (e) {
           roomFail(e);
         } finally {
@@ -779,10 +792,11 @@ export function useLiveEdit({
       })();
       return;
     }
-    // Solo: the frame's own copy, or dropping it.
+    // Solo: the frame's own copy, or dropping it (with what was kept to rescue, as the menu does).
     if (m.outcome === "discard") {
       clearPageDraft(id);
       setRestore(null);
+      forgetRescue();
       done("done");
       setReview(null);
       latest.current.onReload();
@@ -859,9 +873,7 @@ export function useLiveEdit({
     if (m === "solo") {
       clearPageDraft(id);
       setRestore(null);
-      if (who) clearRescue(who, id);
-      unkept.current = [];
-      setRescued(countRescue(id, userId));
+      forgetRescue();
       latest.current.onReload();
       return;
     }
@@ -874,14 +886,12 @@ export function useLiveEdit({
     try {
       await liveDiscard(id, s.rev);
       // What was kept to rescue goes too; the frame drops its own on the room's reset.
-      if (who) clearRescue(who, id);
-      unkept.current = [];
-      setRescued(countRescue(id, userId));
+      forgetRescue();
       showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }
-  }, [id, who, userId, fail]);
+  }, [id, fail, forgetRescue]);
 
   // ---------- solo: keep a copy, offer it back after a reload ----------
 
@@ -959,10 +969,13 @@ export function useLiveEdit({
     });
   }, [restore, publishSolo]);
 
+  // The notice's Discard drops the typing kept apart from the copy too (a deck at its size limit
+  // keeps the copy as written and that typing in the rescue store), so Edit never writes it back.
   const dropRestore = useCallback(() => {
     clearPageDraft(id);
     setRestore(null);
-  }, [id]);
+    forgetRescue();
+  }, [id, forgetRescue]);
 
   // ---------- Ask an agent: publish first ----------
 
@@ -974,11 +987,11 @@ export function useLiveEdit({
       if (savingRef.current) return { error: CHOOSING_BUSY };
       if (s?.conflict_version != null) return { error: conflictText(s.conflict_version) };
       if (s?.unsavable) return { error: UNSAVABLE };
-      if (s?.publishable === false) return { error: UNPUBLISHABLE };
+      if (s?.publishable === false) return { error: unpublishable };
       if (m === "room" && !s?.connected) return { error: NOT_CONNECTED };
     }
     return publishNow(undefined, "report");
-  }, [publishNow]);
+  }, [publishNow, unpublishable]);
 
   // ---------- room: autosave after a quiet spell ----------
 

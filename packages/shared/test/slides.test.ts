@@ -280,7 +280,8 @@ describe("the slides registry row and shell", () => {
       altSource: { path: "deck.json" },
       reservedPaths: ["index.html", "slides.md", "deck.json"],
       renderer: { script: "slides.js", style: "slides.css", frame: "embed.html" },
-      edit: "ask",
+      edit: "live",
+      create: { label: "Slide deck", title: "Untitled deck", content: "# Untitled deck\n" },
       present: true,
     });
     expect(d.assetTypes?.test("image/svg+xml")).toBe(true);

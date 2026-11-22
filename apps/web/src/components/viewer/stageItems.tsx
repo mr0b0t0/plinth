@@ -48,6 +48,7 @@ import {
 import { type AskAgent, askAgentButton, askAgentDialog, askAgentMenu } from "./askAgent.tsx";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
+import { deckSettings, notWhileEditing, unpublishableReason } from "./deckItems.ts";
 import { designExportDialog, downloadDesign, unlessExports } from "./designItems.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
@@ -288,7 +289,7 @@ const downloadBoard: MenuItem = (c) => [
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [printTyped, downloadPptx],
+  slides: [notWhileEditing(printTyped), notWhileEditing(downloadPptx), deckSettings],
   design: [unlessExports(printTyped), downloadDesign],
   sheet: [printTyped, downloadSheet],
   whiteboard: [boardSettings, downloadBoard],
@@ -448,9 +449,13 @@ const commentsToggle: StageNode = (c) => {
   );
 };
 
-/** Present a deck: the one bar control for full screen and presenter view (presentEntries). */
+/**
+ * Present a deck: the one bar control for full screen and presenter view (presentEntries). Not
+ * while the deck is edited on the page: Done publishes and ends editing first.
+ */
 const presentButton: StageNode = (c) =>
-  c.present.available && (
+  c.present.available &&
+  !c.editing && (
     <Menu
       label="Present"
       icon={PlayIcon}
@@ -527,6 +532,7 @@ const editBar: StageNode = ({ editing, live, gate, refs, actions, compact }) =>
       newerVersion={live.newerVersion}
       conflictVersion={live.status?.conflict_version ?? live.review?.current ?? null}
       publishable={live.status?.publishable ?? true}
+      unpublishableReason={unpublishableReason(gate.artifact.type)}
       editors={live.status?.editors ?? []}
       onPublish={() => void live.publish()}
       onDone={actions.finishEditing}

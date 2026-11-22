@@ -153,10 +153,14 @@ describe("slides socket: the gate", () => {
     await refused(await upgrade(plain, plainOwner.cookie, { kind: "slides" }), 404, "plain");
     const { id: doc, ownerP: docOwner } = await setup(undefined, DOC_BODY);
     await refused(await upgrade(doc, docOwner.cookie, { kind: "slides" }), 404, "doc");
-    // And a deck has no page room and no doc channel.
+    // And a deck has no page room. Its doc channel is the draft socket people edit it on
+    // (slides-text, live-slides.test.ts).
     const { id: deck, ownerP } = await deckSetup();
     await refused(await upgrade(deck, ownerP.cookie), 404, "deck on page");
-    await refused(await upgrade(deck, ownerP.cookie, { kind: "doc" }), 404, "deck on doc");
+    const draft = await upgrade(deck, ownerP.cookie, { kind: "doc" });
+    expect(draft.status, "deck on doc").toBe(101);
+    draft.webSocket?.accept();
+    draft.webSocket?.close(1000);
   });
 
   it("refuses an anonymous link pass, a preview and a capture; no pass is 401 before the kind", async () => {

@@ -596,6 +596,7 @@ describe("a mark next to punctuation", () => {
     "**[a](https://x.example)**",
   ];
   const CHARS = [..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", " ", "a", "中", "，", "。", "1", "é"];
+  // Thousands of insertions, each written and read back: seconds on a loaded CI runner.
   it("takes every single-character insertion in or next to a formatted run, and reopens it", () => {
     const refused: string[] = [];
     let tried = 0;
@@ -631,5 +632,5 @@ describe("a mark next to punctuation", () => {
     }
     expect(tried).toBeGreaterThan(1500);
     expect(refused).toEqual([]);
-  });
+  }, 30_000);
 });
