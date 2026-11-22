@@ -460,6 +460,31 @@ export class LiveDoc {
     for (const { ws } of this.host.sockets()) if (ws !== except) this.host.send(ws, frame);
   }
 
+  /**
+   * The client frame being handled and its `id` (docs/spec.md "Editing", the room protocol): set
+   * only while its handler runs, synchronously, so only that frame's direct answers carry `re`.
+   */
+  private answering: { ws: WebSocket; id: number } | null = null;
+
+  /** `frame` as the direct answer to the frame `ws` sent, with its `re` when it had an id. */
+  private withRe<F extends LiveDocServerFrame>(ws: WebSocket, frame: F): F {
+    const a = this.answering;
+    return a && a.ws === ws ? { ...frame, re: a.id } : frame;
+  }
+  /** Sends `ws` the direct answer to its frame. */
+  private answer(ws: WebSocket, frame: LiveDocServerFrame): void {
+    this.host.send(ws, this.withRe(ws, frame));
+  }
+  /** Broadcasts a frame that answers `ws`'s frame: `ws`'s copy carries `re`. */
+  private answerAll(ws: WebSocket, frame: LiveDocServerFrame): void {
+    for (const o of this.host.sockets())
+      this.host.send(o.ws, o.ws === ws ? this.withRe(ws, frame) : frame);
+  }
+  /** Refuses `ws`'s frame with an error that answers it. */
+  private refuse(ws: WebSocket, code: LiveDocErrorCode): void {
+    this.answer(ws, { t: "error", code });
+  }
+
   private sendText(ws: WebSocket, doc: Loaded): void {
     const parts = chunkText(this.text(doc), LIVE_DOC.textChunkBytes);
     parts.forEach((chunk, part) => {
@@ -473,7 +498,7 @@ export class LiveDoc {
 
   private welcome(ws: WebSocket, s: DocSocket, doc: Loaded): void {
     const all = this.host.sockets();
-    this.host.send(ws, {
+    this.answer(ws, {
       t: "welcome",
       v: 1,
       you: { id: s.id, email: s.email, right: s.doc === "write" ? "write" : "watch" },
@@ -545,6 +570,7 @@ export class LiveDoc {
     }
   }
 
+  /** An error that answers no frame (`draft_limit` after a flush). */
   private error(ws: WebSocket, code: LiveDocErrorCode): void {
     this.host.send(ws, { t: "error", code });
   }
@@ -553,6 +579,16 @@ export class LiveDoc {
   async message(ws: WebSocket, s: DocSocket, f: LiveDocClientFrame, artifactId: string) {
     const doc = await this.ensure(artifactId);
     if (!doc) return this.host.gone();
+    // Its direct answers carry its id as `re`; a frame from an older tab has none, and they none.
+    this.answering = f.id === undefined ? null : { ws, id: f.id };
+    try {
+      this.handle(ws, s, doc, f);
+    } finally {
+      this.answering = null;
+    }
+  }
+
+  private handle(ws: WebSocket, s: DocSocket, doc: Loaded, f: LiveDocClientFrame) {
     switch (f.t) {
       case "sync":
         return this.welcome(ws, s, doc);
@@ -576,17 +612,17 @@ export class LiveDoc {
   }
 
   private lease(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, start: number, end: number) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "lease_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
     }
-    if (rev !== doc.rev) return this.host.send(ws, { t: "lease_denied", reason: "stale" });
-    if (end > doc.lines.length || start > end) return this.error(ws, "invalid");
+    if (rev !== doc.rev) return this.answer(ws, { t: "lease_denied", reason: "stale" });
+    if (end > doc.lines.length || start > end) return this.refuse(ws, "invalid");
     const want = { start, end };
     for (const o of this.host.sockets()) {
       if (o.ws === ws || !o.s.lease) continue;
       if (rangesOverlap(o.s.lease, want)) {
-        return this.host.send(ws, { t: "lease_denied", reason: "held", by: o.s.email });
+        return this.answer(ws, { t: "lease_denied", reason: "held", by: o.s.email });
       }
     }
     // One lease per socket: taking a block releases the one held before.
@@ -594,22 +630,22 @@ export class LiveDoc {
     s.lease = { id: `l_${randomString(12)}`, start, end, at: Date.now() };
     this.host.save(ws, s);
     if (prev) this.broadcast({ t: "released", lease: prev });
-    this.broadcast({ t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
+    this.answerAll(ws, { t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
   }
 
   private edit(ws: WebSocket, s: DocSocket, doc: Loaded, id: string, seq: number, text: string) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "lease_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
     const l = s.lease;
-    if (!l || l.id !== id) return this.error(ws, "not_held");
+    if (!l || l.id !== id) return this.refuse(ws, "not_held");
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
     }
     const ins = blockLines(text);
     // The type's rules first (a sheet's rows and header), then its size.
     const refused = doc.rules.checkEdit(doc.lines, l.start, l.end - l.start, ins);
-    if (refused) return this.error(ws, refused);
+    if (refused) return this.refuse(ws, refused);
     const next = applyLineEdit(doc.lines, l.start, l.end - l.start, ins);
-    if (doc.rules.tooLarge(joinLines(next))) return this.error(ws, "too_large");
+    if (doc.rules.tooLarge(joinLines(next))) return this.refuse(ws, "too_large");
     const e = { start: l.start, del: l.end - l.start, ins: ins.length };
     doc.lines = next;
     doc.rev += 1;
@@ -627,7 +663,7 @@ export class LiveDoc {
         this.host.save(o.ws, o.s);
       }
     }
-    this.broadcast({
+    this.answerAll(ws, {
       t: "op",
       gen: doc.gen,
       rev: doc.rev,
@@ -642,10 +678,10 @@ export class LiveDoc {
   }
 
   private release(ws: WebSocket, s: DocSocket, doc: Loaded, id: string) {
-    if (!s.lease || s.lease.id !== id) return this.error(ws, "not_held");
+    if (!s.lease || s.lease.id !== id) return this.refuse(ws, "not_held");
     s.lease = null;
     this.host.save(ws, s);
-    this.broadcast({ t: "released", lease: id });
+    this.answerAll(ws, { t: "released", lease: id });
     // A finished block is written straight away.
     if (this.needsFlush) void this.flushNow();
     else this.status(doc);
@@ -657,23 +693,34 @@ export class LiveDoc {
    * A holder that sends neither for LIMITS.liveLeaseIdleS can still be taken over.
    */
   private keep(ws: WebSocket, s: DocSocket, id: string) {
-    if (s.doc !== "write") return;
-    if (!s.lease || s.lease.id !== id) return this.error(ws, "not_held");
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
+    if (!s.lease || s.lease.id !== id) return this.refuse(ws, "not_held");
     s.lease = { ...s.lease, at: Date.now() };
     this.host.save(ws, s);
-    this.host.send(ws, { t: "kept", lease: id });
+    this.answer(ws, { t: "kept", lease: id });
   }
 
   private takeover(ws: WebSocket, s: DocSocket, doc: Loaded, id: string) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "lease_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
     }
     const holder = this.holderOf(id);
-    if (!holder?.s.lease) return this.error(ws, "not_held");
-    if (holder.ws === ws) return;
+    if (!holder?.s.lease) return this.refuse(ws, "not_held");
+    // Its own lease: the answer is the lease it holds.
+    if (holder.ws === ws) {
+      const own = holder.s.lease;
+      return this.answer(ws, {
+        t: "leased",
+        lease: own.id,
+        start: own.start,
+        end: own.end,
+        holder: s.id,
+        by: s.email,
+      });
+    }
     if (Date.now() - holder.s.lease.at < LIMITS.liveLeaseIdleS * 1000) {
-      return this.host.send(ws, { t: "lease_denied", reason: "held", by: holder.s.email });
+      return this.answer(ws, { t: "lease_denied", reason: "held", by: holder.s.email });
     }
     const { start, end } = holder.s.lease;
     holder.s.lease = null;
@@ -684,7 +731,7 @@ export class LiveDoc {
     this.host.save(ws, s);
     if (prev) this.broadcast({ t: "released", lease: prev });
     this.broadcast({ t: "released", lease: id });
-    this.broadcast({ t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
+    this.answerAll(ws, { t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
   }
 
   /**
@@ -697,29 +744,29 @@ export class LiveDoc {
    * can hold.
    */
   private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: LiveStructOp) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "struct_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "struct_denied", reason: "watch" });
     const rules = doc.rules.struct;
-    if (!rules?.kinds.includes(op.op)) return this.error(ws, "invalid");
+    if (!rules?.kinds.includes(op.op)) return this.refuse(ws, "invalid");
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "struct_denied", reason: "frozen" });
+      return this.answer(ws, { t: "struct_denied", reason: "frozen" });
     }
-    if (rev !== doc.rev) return this.host.send(ws, { t: "struct_denied", reason: "stale" });
+    if (rev !== doc.rev) return this.answer(ws, { t: "struct_denied", reason: "stale" });
     const touched = rules.touches(doc.lines, op);
     for (const o of this.host.sockets()) {
       const l = o.s.lease;
       if (o.ws === ws || !l) continue;
       if (touched === "all" || touched.some((r) => rangesOverlap(r, l))) {
-        return this.host.send(ws, { t: "struct_denied", reason: "held", by: o.s.email });
+        return this.answer(ws, { t: "struct_denied", reason: "held", by: o.s.email });
       }
     }
     // Two parses of the sheet per struct (the op's, then valid()'s check of its canonical result):
     // kept, since struct frames are rare next to edits and the second proves what is stored.
     const applied = rules.apply(doc.lines, op);
-    if ("error" in applied) return this.error(ws, applied.error);
+    if ("error" in applied) return this.refuse(ws, applied.error);
     const next = applied.lines;
     const text = joinLines(next);
-    if (doc.rules.tooLarge(text)) return this.error(ws, "too_large");
-    if (!doc.rules.valid(text)) return this.error(ws, "invalid");
+    if (doc.rules.tooLarge(text)) return this.refuse(ws, "too_large");
+    if (!doc.rules.valid(text)) return this.refuse(ws, "invalid");
     if (s.lease) {
       const id = s.lease.id;
       s.lease = null;
@@ -751,7 +798,7 @@ export class LiveDoc {
     doc.lastEditAt = nowIso();
     // As it came: the frame schema checked it (a design system's value is any JSON there).
     const sent = op as Extract<LiveDocServerFrame, { t: "struct" }>["op"];
-    this.broadcast({ t: "struct", gen: doc.gen, rev: doc.rev, op: sent, by: s.id });
+    this.answerAll(ws, { t: "struct", gen: doc.gen, rev: doc.rev, op: sent, by: s.id });
     this.scheduleFlush();
   }
 

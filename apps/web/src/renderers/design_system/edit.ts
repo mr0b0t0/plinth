@@ -1072,6 +1072,7 @@ export class DsEditor {
   granted(l: ClientLease): void {
     const head = this.asks.shift();
     this.armAsks();
+    this.unowned = null;
     const fits =
       head && (head.range === null || (head.range.start === l.start && head.range.end === l.end));
     if (head && fits && head.owner === this.owner) {
@@ -1088,14 +1089,28 @@ export class DsEditor {
       head.owner.granted();
     } else {
       if (head?.owner instanceof ValueWriter) head.owner.passed();
-      // Nobody here holds it: it goes back to the room, so nobody else sees those lines held.
-      if (this.backend.mine?.id === l.id && this.asks.length === 0) this.backend.release();
+      // Nobody here holds it: it goes back to the room, so nobody else sees those lines held. With
+      // a newer request out, that request's lease replaces it, unless it is refused (letGoUnowned).
+      if (this.backend.mine?.id === l.id) {
+        if (this.asks.length === 0) this.backend.release();
+        else this.unowned = l.id;
+      }
     }
     this.kick();
+  }
+  /** A lease the room granted that no part took, while a newer request was out. */
+  private unowned: string | null = null;
+  /** The last request was refused: a lease no part took goes back to the room. */
+  private letGoUnowned(): void {
+    const id = this.unowned;
+    if (id === null || this.asks.length > 0) return;
+    this.unowned = null;
+    if (this.backend.mine?.id === id) this.backend.release();
   }
   denied(r: LeaseDenial, by?: string): void {
     const head = this.asks.shift();
     this.armAsks();
+    this.letGoUnowned();
     if (!head) return;
     // A value's request is its own however the turn moved on; a text hears only while it asks.
     if (head.owner instanceof ValueWriter) head.owner.denied(r, by);
@@ -1110,6 +1125,7 @@ export class DsEditor {
     // the reconnect, and what each was for waits meanwhile.
     const asks = this.asks;
     this.asks = [];
+    this.unowned = null;
     if (this.askTimer) clearTimeout(this.askTimer);
     this.askTimer = null;
     for (const a of asks) if (a.owner instanceof TextValueDoc) a.owner.dropped();
@@ -1126,6 +1142,7 @@ export class DsEditor {
   leaseFailed(): void {
     this.unanswered(this.asks.shift());
     this.armAsks();
+    this.letGoUnowned();
     this.kick();
   }
 

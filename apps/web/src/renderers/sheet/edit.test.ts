@@ -39,6 +39,21 @@ class FakeSocket {
   sent: Record<string, unknown>[] = [];
   /** A frame type whose send throws (a socket that went away). */
   refuse: string | null = null;
+  /**
+   * Each frame's `id` (the room answers with it as `re`), kept apart so the frames read as before:
+   * `idOf(t)` is the id of the last frame of kind `t` sent.
+   */
+  ids: { t: string; id: number }[] = [];
+  idOf(t: string): number {
+    const hit = this.ids.filter((x) => x.t === t).at(-1);
+    if (!hit) throw new Error(`no ${t} sent`);
+    return hit.id;
+  }
+  private unId(f: Record<string, unknown>): Record<string, unknown> {
+    if (typeof f.id === "number") this.ids.push({ t: String(f.t), id: f.id });
+    const { id: _id, ...rest } = f;
+    return rest;
+  }
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -50,7 +65,7 @@ class FakeSocket {
     if (raw === "ping") return;
     const f = JSON.parse(raw);
     if (f.t === this.refuse) throw new Error("closed");
-    this.sent.push(f);
+    this.sent.push(this.unId(f));
   }
   close() {}
   frame(f: Record<string, unknown>) {
@@ -769,7 +784,7 @@ describe("room editing", () => {
     type(field() as HTMLInputElement, "6");
     key(field() as HTMLInputElement, "Enter");
     expect(ws.sent.at(-2)).toMatchObject({ t: "edit", seq: 1 });
-    ws.frame({ t: "error", code: "invalid" });
+    ws.frame({ t: "error", code: "invalid", re: ws.idOf("edit") });
     await tick();
     // The refused value was never in the draft: the grid shows the room's row, and says so.
     expect(text("B3")).toBe("5");
@@ -793,6 +808,7 @@ describe("room editing", () => {
       ins: '["Apples",7,1.5,true,"new"]',
       by: "s1",
       seq: 2,
+      re: ws.idOf("edit"),
     });
     ws.frame({ t: "flushed", rev: 4 });
     await tick();

@@ -30,6 +30,21 @@ class FakeSocket {
   static all: FakeSocket[] = [];
   readyState = 1 as const;
   sent: Json[] = [];
+  /**
+   * Each frame's `id` (the room answers with it as `re`), kept apart so the frames read as before:
+   * `idOf(t)` is the id of the last frame of kind `t` sent.
+   */
+  ids: { t: string; id: number }[] = [];
+  idOf(t: string): number {
+    const hit = this.ids.filter((x) => x.t === t).at(-1);
+    if (!hit) throw new Error(`no ${t} sent`);
+    return hit.id;
+  }
+  private unId(f: Record<string, unknown>): Record<string, unknown> {
+    if (typeof f.id === "number") this.ids.push({ t: String(f.t), id: f.id });
+    const { id: _id, ...rest } = f;
+    return rest;
+  }
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -39,7 +54,7 @@ class FakeSocket {
   }
   closed = false;
   send(raw: string) {
-    if (raw !== "ping") this.sent.push(JSON.parse(raw));
+    if (raw !== "ping") this.sent.push(this.unId(JSON.parse(raw)));
   }
   close() {
     this.closed = true;
@@ -225,6 +240,39 @@ describe("with the room", () => {
       key: "guidelines:block-2:add-image",
       text: "One primary button per view.",
     });
+  });
+
+  it("a lease granted to a part that let go is released when the newer request is refused", async () => {
+    const ws = connected();
+    const end = splitLines(LIVE).indexOf("}");
+    const desc = dsNodeAtPath(splitLines(LIVE), ["components", 0, "description"]);
+    if (!desc) throw new Error("no node");
+    // The guidelines' paragraph asks, then the description takes the turn and asks too.
+    root()
+      .querySelector<HTMLElement>("[data-text='guidelines'] p")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const first = ws.idOf("lease");
+    root()
+      .querySelector<HTMLElement>("[data-text='component:button:description'] p")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const second = ws.idOf("lease");
+    expect(second).not.toBe(first);
+    // The room grants the first (nobody's now), then refuses the second: Ben holds it.
+    ws.frame({
+      t: "leased",
+      lease: "L1",
+      start: end + 3,
+      end: end + 4,
+      holder: "s1",
+      by: "ada@example.org",
+      re: first,
+    });
+    await tick();
+    expect(ws.sent.filter((f) => f.t === "release")).toHaveLength(0);
+    ws.frame({ t: "lease_denied", reason: "held", by: "ben@example.org", re: second });
+    await tick();
+    expect(lastOf(ws, "release")).toEqual({ t: "release", lease: "L1" });
+    expect(desc.start).toBeGreaterThan(0);
   });
 
   it("leases a guidelines block at its place after the JSON part", () => {
@@ -800,7 +848,7 @@ describe("a token value waiting for its lease", () => {
     expect(lastOf(ws, "edit")).toMatchObject({ lease: "L1" });
     ws.frame({ t: "released", lease: "L1" });
     ws.frame({ t: "struct", gen: "g1", rev: 1, op, by: "s1" });
-    ws.frame({ t: "error", code: "not_held" });
+    ws.frame({ t: "error", code: "not_held", re: ws.idOf("edit") });
     await flush();
     expect(lastLive()).toMatchObject({ unflushed: true });
     const applied = applyDesignSystemStruct(splitLines(LIVE), op as never);

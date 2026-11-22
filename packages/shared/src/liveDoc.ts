@@ -180,31 +180,41 @@ export const liveStructOpSchema = z.discriminatedUnion("op", [
   ...designSystemStructOpSchema.options,
 ]);
 
+/**
+ * A client frame's own number (docs/spec.md "Editing", the room protocol): the room puts it back as
+ * `re` on its direct answer to that frame, so the client matches answers by number, never by order.
+ * Optional: a tab opened before the room knew it sends none, and gets answers with no `re`.
+ */
+const frameId = count.optional();
+/** The `id` of the client frame a server frame directly answers (absent: not an answer). */
+const re = count.optional();
+
 /** What the renderer sends. The raw frame is checked against LIMITS.liveDocFrameBytes first. */
 export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
   z
-    .object({ t: z.literal("lease"), rev: count, start: line, end: line })
+    .object({ t: z.literal("lease"), rev: count, start: line, end: line, id: frameId })
     .refine((v) => v.end >= v.start, { message: "end before start", path: ["end"] }),
   z.object({
     t: z.literal("edit"),
     lease: leaseId,
     seq: count,
     text: z.string().max(LIMITS.liveDocFrameBytes),
+    id: frameId,
   }),
-  z.object({ t: z.literal("release"), lease: leaseId }),
-  z.object({ t: z.literal("takeover"), lease: leaseId }),
+  z.object({ t: z.literal("release"), lease: leaseId, id: frameId }),
+  z.object({ t: z.literal("takeover"), lease: leaseId, id: frameId }),
   /**
    * The holder still has typing in the block it cannot send yet (a doc block whose text cannot be
    * written as typed): the lease counts as in use, as an edit would make it, so it is not taken
    * over as idle. Sent by a connected tab only, every LIMITS.liveLeaseKeepS.
    */
-  z.object({ t: z.literal("keep"), lease: leaseId }),
-  z.object({ t: z.literal("sync") }),
+  z.object({ t: z.literal("keep"), lease: leaseId, id: frameId }),
+  z.object({ t: z.literal("sync"), id: frameId }),
   /**
    * A sheet's rows or columns (while nobody else holds a lease), or a design system's keys (while
    * no lease overlaps what the op changes), at the draft's current rev.
    */
-  z.object({ t: z.literal("struct"), rev: count, op: liveStructOpSchema }),
+  z.object({ t: z.literal("struct"), rev: count, op: liveStructOpSchema, id: frameId }),
 ]);
 export type LiveDocClientFrame = z.infer<typeof liveDocClientFrameSchema>;
 
@@ -257,6 +267,8 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
       .max(1000),
     /** While the draft is frozen: the files conflict_version changed since base_version. */
     files: liveFilesSchema.optional(),
+    /** Answering this socket's `sync`. */
+    re,
   }),
   z.object({
     t: z.literal("text"),
@@ -265,7 +277,10 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     of: z.number().int().min(1),
     chunk: z.string(),
   }),
-  /** Sent to every doc socket: `holder` is the socket that holds it, `by` its email. */
+  /**
+   * Sent to every doc socket: `holder` is the socket that holds it, `by` its email. The holder's
+   * copy has `re` when it answers that socket's lease or takeover.
+   */
   z.object({
     t: z.literal("leased"),
     lease: leaseId,
@@ -273,11 +288,14 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     end: line,
     holder: z.string().max(64),
     by: email,
+    re,
   }),
+  /** A lease or takeover refused, or an edit (`watch`, `frozen`): `re` says which frame. */
   z.object({
     t: z.literal("lease_denied"),
     reason: z.enum(["held", "stale", "frozen", "watch"]),
     by: email.optional(),
+    re,
   }),
   z.object({
     t: z.literal("op"),
@@ -290,6 +308,8 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     /** The sending socket's id, so a client recognizes its own ack. */
     by: z.string().max(64),
     seq: count.optional(),
+    /** The sender's copy: its edit frame's id. */
+    re,
   }),
   /**
    * A structural change, applied: every socket applies `op` with the type's own function
@@ -301,16 +321,23 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     rev: z.number().int().min(1),
     op: liveStructOpSchema,
     by: z.string().max(64),
+    /** The sender's copy: its struct frame's id. */
+    re,
   }),
   /** Sent only to the socket whose struct frame was refused. */
   z.object({
     t: z.literal("struct_denied"),
     reason: z.enum(["held", "stale", "frozen", "watch"]),
     by: email.optional(),
+    re,
   }),
-  z.object({ t: z.literal("released"), lease: leaseId }),
+  /**
+   * A lease ended. `re` only on the copy answering this socket's own `release`; one a takeover, a
+   * struct or a closed socket caused is no answer.
+   */
+  z.object({ t: z.literal("released"), lease: leaseId, re }),
   /** The answer to a `keep` for a lease the socket holds (an older room answers `invalid`). */
-  z.object({ t: z.literal("kept"), lease: leaseId }),
+  z.object({ t: z.literal("kept"), lease: leaseId, re }),
   z.object({
     t: z.literal("lease_lost"),
     lease: leaseId,
@@ -339,9 +366,14 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     last_edit_at: z.string().max(40).nullable(),
     last_by_you: z.boolean(),
   }),
+  /**
+   * `re` when it answers that frame of this socket (refused, over the rate, not held); none when
+   * it answers nothing (`draft_limit` after a flush, a frame that does not parse).
+   */
   z.object({
     t: z.literal("error"),
     code: z.enum(LIVE_DOC_ERROR_CODES),
+    re,
   }),
 ]);
 export type LiveDocServerFrame = z.infer<typeof liveDocServerFrameSchema>;

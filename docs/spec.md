@@ -658,6 +658,21 @@ page shows the strip and makes the REST calls, and renders no content.
   lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc block,
   or a design system's formatted text, holding typing it cannot write yet), starts that minute
   again.
+- **Answers are matched by id** (decided 2026-11-22). The client puts its own number, `id`, on
+  every frame the room answers directly: `lease`, `takeover`, `edit`, `release`, `keep`, `struct`
+  and `sync`. The room puts it back as `re` on that frame's direct answer, success or failure:
+  `lease_denied`, `struct_denied`, an `error` that refuses the frame (also `rate_limited`, and
+  `invalid` for a frame that does not parse when its `id` can be read), the requester's own copy
+  of `leased` (a lease or takeover), of `released` (its own release), of its `op` and of its
+  `struct`, `kept`, and the `welcome` that answers a `sync`. Nothing else carries `re`: not
+  `draft_limit` after a flush, `flushed`, `status`, `reset`, `rebased`, `conflict`, another
+  socket's frames, the other sockets' copies of a broadcast, nor a `released` that a takeover, a
+  struct op or a closed socket caused. The client matches answers by `re` only, never by order
+  (the room interleaves frames that answer nothing), and treats a frame with no `re` as no answer;
+  only from a room deployed before `re` does it take a grant, denial, ack or `kept` by kind. A
+  frame from a tab opened before `id` (none on it) is answered as before, with no `re`. A
+  design-system frame whose lease request has no answer within 15 seconds reconnects its socket
+  (below).
 - **Per-type rules.** The room checks every edit with the type's rules
   (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
   a refused edit means someone else changed the lines first or the edit was forged; the renderer
@@ -1263,10 +1278,10 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     tokens rather than remove them themselves.
   - **A value set on the page is never dropped in the frame.** A token value, the name or a
     status is written when its field changes, after the room grants its lines. The frame sends a
-    value's lease request only while no other request of its socket is unanswered (the room
-    answers each in order, `leased` or `lease_denied`, and the frame matches each answer to its
-    own request: `LiveDocOptions.countLeases`), so another value's denial is never taken for this
-    one's. Until the room acknowledges the edit, or the draft holds the value, it counts as pending
+    value's lease request only while no other request of its socket is unanswered, and every
+    answer is matched to its own request by `re` (above), so another value's denial is never
+    taken for this one's, and a lease granted to a part that let go meanwhile goes back to the
+    room, at once or when the newer request is refused. Until the room acknowledges the edit, or the draft holds the value, it counts as pending
     (the status's `unflushed` and `pending`; Publish and Done wait for `pending`, at most 3
     seconds, before the checkpoint): edit mode ending keeps the request and lets the lease go right
     after the write; a socket that closes asks again on the reconnect; an edit the room answers
@@ -1275,10 +1290,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     keeps the value until the review ends (the notice says it is not in the draft yet, with Copy),
     and it is written if the draft is kept, dropped with a discard. Only the room refusing the
     value (`invalid`, `too_large`: never sent again), someone else holding its lines, or the
-    token being gone ends it, and the notice says so with Copy. The live client matches every answer
-    to the frame it answers (the room answers lease, takeover, edit, release, keep and struct
-    frames once each, in order): a takeover answered `not_held` (its holder let go first) asks
-    again, and an edit answered `not_held` or with a denial waits again. A lease request with no
+    token being gone ends it, and the notice says so with Copy. A takeover answered `not_held` (its
+    holder let go first) asks again, and an edit answered `not_held` or with a denial waits again.
+    `draft_limit` is only ever the warning that the edits are live but not kept. A lease request with no
     answer 15 seconds after it was sent means the socket is stuck: the frame closes it and opens
     another, and every part asks again after the welcome; no request is dropped while its socket
     is open, so no late answer is taken for another's. A composite's part (shadow, border, typography) writes the

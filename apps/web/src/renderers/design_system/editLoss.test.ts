@@ -64,6 +64,10 @@ class Room {
   refuseNext: string | null = null;
   needsFlush = false;
   flushDue = false;
+  /** The owner is at the draft limit: doc.ts flush sends `error draft_limit` to every socket. */
+  draftLimit = false;
+  /** A draft_limit error whose D1 write finished after the frames already queued. */
+  lateError = false;
   ws: FakeSocket;
   constructor(ws: FakeSocket, text: string) {
     this.ws = ws;
@@ -200,11 +204,24 @@ class Room {
     const n = process.env.ONE ? 1 : this.ws.sent.length - this.cursor;
     const batch = this.ws.sent.slice(this.cursor, this.cursor + n);
     this.cursor += batch.length;
-    if (batch.length === 0) return false;
+    if (batch.length === 0 && !this.lateError) return false;
     const out: Json[] = [];
+    if (this.lateError) {
+      this.lateError = false;
+      out.push({ t: "error", code: "draft_limit" });
+    }
     for (const f of batch) {
       const before = out.length;
       this.handle(f, out);
+      // The room's direct answers carry the frame's id as `re` (doc.ts answer/answerAll/refuse):
+      // not a `released` a new lease caused, nor `flushed`.
+      if (typeof f.id === "number") {
+        for (const o of out.slice(before)) {
+          if (o.t === "flushed") continue;
+          if (o.t === "released" && f.t !== "release") continue;
+          o.re = f.id;
+        }
+      }
       if (process.env.TRACE)
         console.log(
           "C>",
@@ -219,7 +236,8 @@ class Room {
     if (this.flushDue) {
       this.flushDue = false;
       this.needsFlush = false;
-      out.push({ t: "flushed", rev: this.rev });
+      if (this.draftLimit) this.lateError = true;
+      else out.push({ t: "flushed", rev: this.rev });
     }
     for (const o of out) {
       this.ws.frame(o);
@@ -785,5 +803,89 @@ describe("round 3: an answer that comes after its request was given up", () => {
     await settle(room);
     expect(room.value(BG)).toBe("#fafafa");
     expect(room.mine).toBeNull();
+  });
+});
+
+describe("round 4: the owner at the draft limit (doc.ts flush sends error draft_limit)", () => {
+  it("two tokens in a row: both are written, and the person is told the edits are not kept", async () => {
+    const room = await start();
+    room.draftLimit = true;
+    change("color.bg", "#fafafa");
+    change("color.fg", "#101010");
+    await settle(room);
+    expect(room.value(BG)).toBe("#fafafa");
+    expect(room.value(FG)).toBe("#101010");
+    expect(notice()).toContain("not kept");
+  });
+
+  it("Ben holds fg; Ada changes bg then fg: fg's denial reaches fg (not lost to a draft_limit error)", async () => {
+    const room = await start();
+    room.draftLimit = true;
+    const fg = dsNodeAtPath(room.lines, FG);
+    if (!fg) throw new Error("no node");
+    change("color.bg", "#fafafa");
+    change("color.fg", "#101010");
+    room.ben = { id: "B1", start: fg.start + 0, end: fg.end };
+    await settle(room);
+    expect(room.value(BG)).toBe("#fafafa");
+    // fg is refused, and said: not left waiting with nothing said.
+    expect(notice()).toMatch(/ben@example.org is editing this|not kept/);
+    if (process.env.TRACE)
+      console.log(
+        "LIVE",
+        JSON.stringify(lastLive()),
+        "NOTICE",
+        notice(),
+        "BG",
+        room.value(BG),
+        "MINE",
+        JSON.stringify(room.mine),
+      );
+    expect(lastLive()?.pending).toBeUndefined();
+  });
+});
+
+describe("round 4: a draft_limit error that arrives while a lease request is out", () => {
+  it("bg is written and released (flush: draft_limit, late); Ada changes fg meanwhile: fg is written, Ben's denial and the warning are not lost", async () => {
+    const room = await start();
+    room.draftLimit = true;
+    change("color.bg", "#fafafa");
+    for (let i = 0; i < 5 && !room.lateError; i++) {
+      await room.pump();
+      vi.advanceTimersByTime(2000);
+      await flush();
+    }
+    expect(room.value(BG)).toBe("#fafafa");
+    expect(room.lateError).toBe(true);
+    document.querySelector(".ds-notice")?.remove();
+    // Ben holds fg now; Ada changes it before the room's flush answer reaches her.
+    const fg = dsNodeAtPath(room.lines, FG);
+    if (!fg) throw new Error("no node");
+    room.ben = { id: "B1", start: fg.start, end: fg.end };
+    change("color.fg", "#101010");
+    await room.pump();
+    await flush();
+    if (process.env.TRACE) console.log("NOTICE1", notice(), "LIVE", JSON.stringify(lastLive()));
+    // Ben's denial reaches fg at once (not only after a 15 s reconnect).
+    expect(notice()).toContain("ben@example.org is editing this");
+  });
+
+  it("the same, fg free: fg is written and the person is told the edits are not kept", async () => {
+    const room = await start();
+    room.draftLimit = true;
+    change("color.bg", "#fafafa");
+    for (let i = 0; i < 5 && !room.lateError; i++) {
+      await room.pump();
+      vi.advanceTimersByTime(2000);
+      await flush();
+    }
+    document.querySelector(".ds-notice")?.remove();
+    change("color.fg", "#101010");
+    await room.pump();
+    await flush();
+    // The room's draft_limit error is a warning for everyone, whatever frame it came after.
+    expect(notice()).toContain("not kept");
+    await settle(room);
+    expect(room.value(FG)).toBe("#101010");
   });
 });
