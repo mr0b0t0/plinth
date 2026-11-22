@@ -11,6 +11,7 @@ import {
   type ArtifactEditing,
   type ArtifactType,
   type BundleResult,
+  copyFilesSchema,
   LIMITS,
   type PublishResult,
   RATE_LIMITS,
@@ -44,6 +45,7 @@ import { readBundle } from "./bundle.ts";
 import { requireCategoryRight, resolveCategory } from "./categories.ts";
 import { categoryShareResult, filingShareResult } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
+import { type CopyPlan, copyRecords, resolveCopies, stageCopies } from "./copies.ts";
 import {
   commitStaged,
   DB_NOW,
@@ -91,7 +93,9 @@ export interface TicketRow {
   note: string | null;
   /** The category start_upload was given (migrations/0009_categories.sql); NULL = none given. */
   category: string | null;
-  /** start_upload's `editing` (migrations/0022_artifact_editing.sql); NULL = none given. */
+  /** The copy_files start_upload was given, as JSON (migrations/0022); NULL = none. */
+  copy_files: string | null;
+  /** start_upload's `editing` (migrations/0023_artifact_editing.sql); NULL = none given. */
   editing: ArtifactEditing | null;
   base_version: number | null;
   state: "open" | "used" | "dead";
@@ -201,7 +205,6 @@ export async function startUpload(
       next: "Send board JSON inline in publish_artifact or update_artifact",
     });
   }
-
   const limit = uploadTicketsPerHour(ctx.config);
   const rate = await hit(ctx.env.DB, `upload:${p.userId}`, limit, 3600);
   if (!rate.allowed) {
@@ -210,6 +213,9 @@ export async function startUpload(
       next: "Wait for the limit to reset, then call start_upload again",
     });
   }
+  // Copies are authorized after the mint rate hit and before the ticket exists, so a ticket that
+  // cannot copy is never minted; the bundle authorizes them again as the ticket's principal.
+  if (input.copy_files !== undefined && def) await resolveCopies(ctx, input.copy_files, def);
 
   let credential: "connection" | "admin";
   let adminTokenHash: string | null = null;
@@ -235,8 +241,8 @@ export async function startUpload(
   await ctx.env.DB.prepare(
     `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, admin_token_hash,
        scopes, mode, artifact_id, artifact_type, title, note, base_version, state, attempts,
-       created_at, expires_at, reserved_artifact_id, category, editing)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17, ?18)`,
+       created_at, expires_at, reserved_artifact_id, category, copy_files, editing)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17, ?18, ?19)`,
   )
     .bind(
       id,
@@ -256,6 +262,7 @@ export async function startUpload(
       expiresAt,
       fresh ? fresh.artifactId : null,
       target.category ?? null,
+      input.copy_files !== undefined ? JSON.stringify(input.copy_files) : null,
       input.editing ?? null,
     )
     .run();
@@ -296,7 +303,7 @@ export async function startUpload(
     content_isolation: ctx.config.contentIsolation,
     commands: { curl: curlCommand(token, uploadUrl), ...(npx ? { npx } : {}) },
     next: uploadNext({
-      sourcePath: typeDef(type)?.sourcePath ?? "index.html",
+      sourcePath: sourceNames(type),
       id: targetId,
       baseVersion: update ? (input.base_version as number) : null,
       visibility: update?.artifact.visibility ?? null,
@@ -331,6 +338,13 @@ export { isReleaseAtLeast };
 export function npxCommand(version: string, token: string, uploadUrl: string): string | null {
   if (!cliPublishReleased(version)) return null;
   return `PLINTH_UPLOAD_TOKEN='${token}' npx -y @mr0b0t0/plinth@${version} upload <folder> --to '${uploadUrl}'`;
+}
+
+/** The source file(s) a type's build folder has at its top: "slides.md or deck.json" for a deck. */
+function sourceNames(type: string): string {
+  const def = typeDef(type);
+  if (!def) return "index.html";
+  return def.altSource ? `${def.sourcePath} or ${def.altSource.path}` : def.sourcePath;
 }
 
 export function uploadNext(o: {
@@ -514,6 +528,9 @@ export async function redeemBundle(
     }
     const target = await ticketTarget(ctx, ticket, deps);
     await deps.enforcePublishRate(ctx);
+    // The ticket's copies, authorized again as the ticket's principal, after the rate hits and
+    // before the stager opens.
+    const copies = await ticketCopies(ctx, ticket, def);
     // An account already at its quota stages nothing; below it, the stager refuses puts past the
     // room left, so an abandoned attempt cannot leave more than that behind.
     const ownerId = target.mode === "update" ? target.artifact.ownerId : ticket.user_id;
@@ -534,6 +551,7 @@ export async function redeemBundle(
       maxEntries: w.config.maxAssetsPerVersion + 1,
       maxMetaBytes: LIMITS.maxTarMetaBytes,
       sourcePath: def.sourcePath,
+      ...(def.altSource ? { altSourcePath: def.altSource.path } : {}),
       reserve: (size) => staging.reserve(size),
     });
     for await (const entry of reader) {
@@ -541,6 +559,9 @@ export async function redeemBundle(
       await stager.add(entry.path, entry.bytes);
     }
     stopClock();
+    // Beside the bundle's files, at their own paths (a prefix strip never moves them).
+    await stageCopies(stager, copies);
+    inTime();
     const staged = await stager.finish(
       reader.summary.strippedPrefix ? { stripPrefix: reader.summary.strippedPrefix } : undefined,
     );
@@ -573,10 +594,12 @@ export async function redeemBundle(
         target.mode === "publish" ? "owner" : (target.role ?? null),
       ),
     );
+    const copied = copyRecords(copies);
     return {
       status: ticket.mode === "publish" ? 201 : 200,
       body: {
         ...result,
+        ...(copied ? { copied_from: copied } : {}),
         ...(share ? { category_share: share } : {}),
         // Only the uploader that minted the ticket reads this, and only an owner can set it.
         ...(target.category !== undefined ? { category: target.category } : {}),
@@ -594,6 +617,24 @@ export async function redeemBundle(
     stopClock();
     req.signal?.removeEventListener("abort", onDisconnect);
   }
+}
+
+/** A ticket's copy_files, authorized as `ctx` (the ticket's principal now), or null. */
+async function ticketCopies(
+  ctx: Ctx,
+  t: TicketRow,
+  def: NonNullable<ReturnType<typeof typeDef>>,
+): Promise<CopyPlan | null> {
+  if (t.copy_files === null) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(t.copy_files);
+  } catch {
+    raw = null;
+  }
+  const parsed = copyFilesSchema.safeParse(raw);
+  if (!parsed.success) throw new ApiError("internal", "The upload's copy_files cannot be read");
+  return resolveCopies(ctx, parsed.data, def);
 }
 
 const tooSlow = uploadTooSlow;

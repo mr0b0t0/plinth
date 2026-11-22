@@ -6,7 +6,7 @@
 import { CSRF_HEADER, type ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { savePageDraft } from "../editor/draft.ts";
+import { loadRescue, savePageDraft } from "../editor/draft.ts";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 import { apiError, CONFIG, json, stubApi } from "./test-utils.ts";
 import { AUTOSAVE_FALLBACK_MS, CHOOSING_BUSY, useLiveEdit } from "./useLiveEdit.ts";
@@ -20,6 +20,17 @@ vi.mock("../ui/index.ts", async (orig) => {
       toasts.push(o.title);
       return 1;
     },
+  };
+});
+
+/** Makes savePageDraft fail (storage full), for the test that needs it. */
+const failSave = vi.hoisted(() => ({ on: false }));
+vi.mock("../editor/draft.ts", async (orig) => {
+  const actual = await orig<typeof import("../editor/draft.ts")>();
+  return {
+    ...actual,
+    savePageDraft: (...a: Parameters<typeof actual.savePageDraft>) =>
+      failSave.on ? false : actual.savePageDraft(...a),
   };
 });
 
@@ -74,6 +85,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  failSave.on = false;
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -821,6 +833,66 @@ describe("useLiveEdit", () => {
     const e = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(e);
     expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("warns only about the signed-in account's store once the session is known", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    sessionStorage.setItem(
+      "plinth-draft:page-rescue:u1:art1",
+      JSON.stringify([{ id: "r1", text: "Kept", near: 0 }]),
+    );
+    const leaves = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    // Another account, or no one, signed in now: u1's store does not warn them (nor a viewer).
+    for (const userId of ["u2", null]) {
+      const r = hook(gate("room"), vi.fn(), { userId });
+      expect(leaves(), String(userId)).toBe(false);
+      r.unmount();
+    }
+    const own = hook(gate("room"), vi.fn(), { userId: "u1" });
+    expect(leaves()).toBe(true);
+    own.unmount();
+  });
+
+  it("solo: a tab copy that cannot be kept is tried again, then the items go back to the frame to copy", async () => {
+    vi.useFakeTimers();
+    stubApi({ handle: () => undefined });
+    const stored = () => (loadRescue("u1", "art1") as unknown[] | null) ?? [];
+    // The tab's copy cannot be written (storage full); the rescue store still can.
+    failSave.on = true;
+    const { result } = hook(gate("solo"), vi.fn(), { userId: "u1" });
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
+    fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
+    fromFrame({ ...up([]), written: ["r1"] });
+    const answerCollect = async () => {
+      const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+      fromFrame({ type: "draft", nonce, text: "# Plan\n\nKept" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    };
+    await answerCollect();
+    // Not kept: the store keeps the item, and nothing goes back to the frame yet.
+    expect(stored()).toHaveLength(1);
+    const collects = sentToFrame("collect").length;
+    for (const ms of [1000, 2000, 4000]) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+      await answerCollect();
+    }
+    expect(sentToFrame("collect").length).toBe(collects + 3);
+    // Every try failed: the frame gets the item to copy (or dismiss), not to write again.
+    expect(sentToFrame("rescue").at(-1)?.[0]).toMatchObject({
+      type: "rescue",
+      items: [{ id: "r1", text: "Kept", near: 0 }],
+      copy: true,
+    });
+    expect(stored()).toHaveLength(1);
   });
 
   it("solo: items the frame wrote into its text are kept in the tab's copy before they leave the store", async () => {

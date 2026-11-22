@@ -62,6 +62,7 @@ import {
   type FileChangeSummary,
   LIMITS,
   PAGE_ANCHOR_KEY_RE,
+  PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENT_LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -387,6 +388,8 @@ export interface RescueItem {
 /** A rescue store holds at most this many items, and this much text in all (UTF-16 units). */
 export const MAX_RESCUE_ITEMS = 20;
 export const MAX_RESCUE_TOTAL = 256 * 1024;
+/** One rescue item's text at most (UTF-16 units): what one frame of the live doc may carry. */
+export const MAX_RESCUE_ITEM = LIMITS.liveDocFrameBytes;
 const RESCUE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** A list of rescue items, checked field by field (from the frame, or from storage), or null. */
@@ -400,7 +403,7 @@ export function readRescueItems(v: unknown): RescueItem[] | null {
     if (typeof it !== "object" || it === null) return null;
     const { id, text, near } = it as Record<string, unknown>;
     if (typeof id !== "string" || !RESCUE_ID_RE.test(id)) return null;
-    if (typeof text !== "string" || text.length > LIMITS.liveDocFrameBytes) return null;
+    if (typeof text !== "string" || text.length > MAX_RESCUE_ITEM) return null;
     if (!isLine(near)) return null;
     total += text.length;
     if (total > MAX_RESCUE_TOTAL) return null;
@@ -515,11 +518,17 @@ export interface RescueMessage {
   /** The ids the app's store holds now, as of the frame's report `n` (the answer to it). */
   stored?: string[];
   n?: number;
+  /**
+   * The items are for copying only: the frame wrote them into its own text, which the app could
+   * not keep a copy of (solo), so writing them again would add them twice.
+   */
+  copy?: true;
 }
 
 export function rescueMessage(
   items: RescueItem[],
   stored?: { ids: string[]; n: number },
+  copy = false,
 ): RescueMessage {
   return {
     source: RENDERER_MESSAGE_SOURCE,
@@ -527,6 +536,7 @@ export function rescueMessage(
     type: "rescue",
     items,
     ...(stored ? { stored: stored.ids, n: stored.n } : {}),
+    ...(copy ? { copy: true as const } : {}),
   };
 }
 
@@ -708,14 +718,6 @@ const KEYED: ReadonlySet<FrameMessageKind> = new Set([
   "leave",
 ]);
 const MAX_WHERE = 80;
-/** Whether `s` holds a control character (U+0000 to U+001F, or U+007F). */
-function hasControl(s: string): boolean {
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x20 || c === 0x7f) return true;
-  }
-  return false;
-}
 
 /** Each frame -> app kind's validator: the message, or null when any field is wrong. */
 const FRAME_READERS: {
@@ -798,7 +800,13 @@ const FRAME_READERS: {
     if (typeof a !== "object" || a === null) return null;
     const { key, text } = a;
     if (typeof key !== "string" || !PAGE_ANCHOR_KEY_RE.test(key)) return null;
-    if (typeof text !== "string" || text.length > PAGE_COMMENT_LIMITS.maxText || hasControl(text)) {
+    // The same rules the server applies to a page anchor, so a dialog never opens about a label
+    // that would be refused on send.
+    if (
+      typeof text !== "string" ||
+      text.length > PAGE_COMMENT_LIMITS.maxText ||
+      PAGE_ANCHOR_UNSAFE_RE.test(text)
+    ) {
       return null;
     }
     if (m.what === undefined) return { type: "ask", anchor: { key, text } };

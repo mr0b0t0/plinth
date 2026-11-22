@@ -5,6 +5,8 @@
 // no dark theme, a CSS block's url() naming a file the version lacks) become publish warnings.
 import {
   cssUrlArgs,
+  designSystemGeneratedFile,
+  isDsGeneratedFile,
   isPlainRelativeUrl,
   LIMITS,
   type PublishWarning,
@@ -50,6 +52,16 @@ export const designSystemHooks: TypeHooks = {
   },
   assetRule:
     "A design system's assets are images (png, jpg, gif, webp, avif, svg) and fonts (woff2, woff, ttf, otf)",
+  // tokens.css, fonts.css, components.css and tokens.json, generated from the version's
+  // system.json for copy_files (shared designSystemFiles.ts). Its assets are images and fonts only,
+  // so no stored file has these names.
+  copySource(text, path, ref, stored) {
+    if (!isDsGeneratedFile(path)) return null;
+    const r = parseDesignSystem(text);
+    if (!r.ok) return null;
+    const file = designSystemGeneratedFile(r.value, path, ref, stored);
+    return file && { bytes: new TextEncoder().encode(file.text), contentType: file.contentType };
+  },
   async publishWarnings(_ctx, v) {
     const r = parseDesignSystem(v.text);
     if (!r.ok) return [];

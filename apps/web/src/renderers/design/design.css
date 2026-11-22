@@ -128,6 +128,70 @@ body {
   display: none;
 }
 
+/* Canvas notes: Plinth's own text on the canvas, moving and zooming with the boards. Titles take
+   the canvas's ink; stickies are paper, the same in light and dark. Drags pass through them. */
+.plinth-design__note {
+  position: absolute;
+  left: var(--pd-x, 0);
+  top: var(--pd-y, 0);
+  box-sizing: border-box;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.plinth-design__note[data-kind="title"] {
+  width: max-content;
+  white-space: pre;
+  font-size: calc(56px * var(--pd-unit, 1));
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--pd-fg);
+}
+
+.plinth-design__note[data-kind="title"][data-wrap] {
+  white-space: pre-wrap;
+}
+
+.plinth-design__note[data-kind="sticky"] {
+  --pd-fill: #fde68a;
+  padding: calc(16px * var(--pd-unit, 1)) calc(18px * var(--pd-unit, 1));
+  border-radius: calc(4px * var(--pd-unit, 1));
+  background: var(--pd-fill);
+  color: #1b1a17;
+  font-size: calc(18px * var(--pd-unit, 1));
+  line-height: 1.4;
+  box-shadow:
+    0 1px 2px rgb(28 24 18 / 0.12),
+    0 6px 18px rgb(28 24 18 / 0.08);
+}
+
+.plinth-design__note[data-color="gray"] {
+  --pd-fill: #e5e4e0;
+}
+.plinth-design__note[data-color="red"] {
+  --pd-fill: #fecaca;
+}
+.plinth-design__note[data-color="orange"] {
+  --pd-fill: #fed7aa;
+}
+.plinth-design__note[data-color="green"] {
+  --pd-fill: #bbf7d0;
+}
+.plinth-design__note[data-color="teal"] {
+  --pd-fill: #99f6e4;
+}
+.plinth-design__note[data-color="blue"] {
+  --pd-fill: #bfdbfe;
+}
+.plinth-design__note[data-color="purple"] {
+  --pd-fill: #ddd6fe;
+}
+.plinth-design__note[data-color="pink"] {
+  --pd-fill: #fbcfe8;
+}
+
 .plinth-design__labels {
   position: absolute;
   inset: 0;
@@ -305,6 +369,7 @@ html[data-export] body {
 }
 
 .plinth-design[data-print] .plinth-design__labels,
+.plinth-design[data-print] .plinth-design__note,
 .plinth-design[data-print] .plinth-design__toolbar,
 .plinth-design[data-print] .plinth-design__cover {
   display: none;

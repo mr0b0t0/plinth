@@ -127,7 +127,7 @@ export async function prepareBoardSource(ctx: Ctx, p: PrepareInput): Promise<Pre
 
   const measured: Measured[] = seed.map((s) => ({
     seed: s,
-    ...measureDoc(ctx.config, s.collection, s.id, s.data),
+    ...measureDoc(ctx.config, s.collection, s.id, s.data, "whiteboard"),
   }));
   const bytes = measured.reduce((n, m) => n + m.size, 0);
   const artifactId = t.mode === "publish" ? t.artifactId : t.artifact.id;
@@ -143,10 +143,10 @@ export async function prepareBoardSource(ctx: Ctx, p: PrepareInput): Promise<Pre
     bytes: 0,
   };
   const userBytes = Number((user?.results[0] as { total?: number } | undefined)?.total ?? 0);
-  const limits = ctx.config.data;
+  const limits = ctx.config.data.board;
   if (u.docs + measured.length > limits.maxDocsPerArtifact) throw quotaExceeded("docs");
   if (u.bytes + bytes > limits.maxBytesPerArtifact) throw quotaExceeded("bytes");
-  if (userBytes + bytes > limits.maxBytesPerUser) throw quotaExceeded("user_bytes");
+  if (userBytes + bytes > ctx.config.data.maxBytesPerUser) throw quotaExceeded("user_bytes");
 
   return { text, afterCommit: (result) => seedBoard(ctx, result, measured) };
 }
@@ -242,9 +242,9 @@ export async function seedBoard(
         writer.via,
         writer.label ?? null,
         now,
-        config.data.maxDocsPerArtifact,
+        config.data.board.maxDocsPerArtifact,
         bytes,
-        config.data.maxBytesPerArtifact,
+        config.data.board.maxBytesPerArtifact,
       )
       .all<{ collection: string }>();
     if (results.length === 0) return notSeeded(result, await whyNotSeeded(ctx, result.id));

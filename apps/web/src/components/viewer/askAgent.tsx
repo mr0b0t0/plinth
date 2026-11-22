@@ -19,6 +19,7 @@ import { RobotIcon } from "@phosphor-icons/react";
 import {
   type ClientType,
   type LiveOffReason,
+  PAGE_COMMENT_LIMITS,
   type PageAnchor,
   typeDef,
   type ViewGate,
@@ -127,17 +128,22 @@ export function useAskAgent({
     }
   }, []);
   const reopen = useRef<ReopenGate | null>(null);
+  const lastAsk = useRef(Number.NEGATIVE_INFINITY);
   const fromFrame = useCallback(
     (anchor: AskAnchor | null, what?: AskWhat) => {
       const l = latest.current;
       if (!l.available || l.blocked || document.visibilityState !== "visible") return;
+      const t = Date.now();
+      // At most one a second, whatever is open: with the comments panel open (nothing to reopen)
+      // each one would point the composer somewhere else and take the focus again.
+      if (t - lastAsk.current < PAGE_COMMENT_LIMITS.composeMinIntervalMs) return;
       // In edit mode it opens the Ask dialog, which is closed whenever nothing blocks; otherwise
       // the comments panel, unless it is open already.
       const closed = l.editing || !l.panelOpen;
-      const t = Date.now();
       reopen.current ??= reopenGate();
       if (reopen.current.refused(t, closed)) return;
       reopen.current.take(t, closed);
+      lastAsk.current = t;
       open(anchor, what);
     },
     [open],

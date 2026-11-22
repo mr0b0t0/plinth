@@ -68,6 +68,8 @@ type In =
 // raw: a CSV field as written, which a text column keeps (1.50 stays 1.50 beside 00123).
 
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
+/** A character a column name would show: not white space, control or format. */
+const VISIBLE = /[^\s\p{Cc}\p{Cf}]/u;
 
 /** The first `n` UTF-16 units of `s`, one fewer when the last would split a surrogate pair. */
 function cut(s: string, n: number): string {
@@ -80,15 +82,15 @@ function cut(s: string, n: number): string {
 function columnName(raw: string, i: number): { name: string; truncated: boolean } {
   // Cut before the replaces and normalize: header cells are not counted toward the sheet's size,
   // and one shared string of megabytes can stand behind all 100 of them.
-  const name = cut(raw, COLUMN_NAME_SOURCE_CHARS)
-    .replace(CONTROL_OR_FORMAT, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .normalize("NFC");
+  const source = cut(raw, COLUMN_NAME_SOURCE_CHARS);
+  const name = source.replace(CONTROL_OR_FORMAT, " ").replace(/\s+/g, " ").trim().normalize("NFC");
   const full = name || colLetter(i);
+  // Text past the source cut is dropped as well, even when what is left collapses (runs of white
+  // space) to fewer than MAX_IMPORT_COLUMN_NAME characters: that is a cut name too.
+  const dropped = raw.length > source.length && VISIBLE.test(raw.slice(source.length));
   return {
     name: cut(full, MAX_IMPORT_COLUMN_NAME).trimEnd(),
-    truncated: full.length > MAX_IMPORT_COLUMN_NAME,
+    truncated: full.length > MAX_IMPORT_COLUMN_NAME || dropped,
   };
 }
 

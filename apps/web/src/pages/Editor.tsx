@@ -48,7 +48,11 @@ const canEdit = (a: ArtifactDetail) => (a.role === "owner" || a.role === "editor
 async function load(slug: string): Promise<Load> {
   try {
     const artifact = await api<ArtifactDetail>(route(API.artifact, { ref: slug }));
-    if (!sourceOf(artifact).def.editor) return { kind: "no_editor" };
+    const { def } = sourceOf(artifact);
+    // An HTML deck (source deck.json) has no source editor: people see the deck, agents change it.
+    if (!def.editor || (def.altSource && artifact.source_path === def.altSource.path)) {
+      return { kind: "no_editor" };
+    }
     if (!canEdit(artifact)) return { kind: "forbidden", artifact };
     const initial = await initialState(artifact, async (n) => {
       const old = await api<ArtifactDetail>(route(API.version, { ref: artifact.id, n }));

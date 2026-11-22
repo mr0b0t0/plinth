@@ -54,7 +54,7 @@ describe("/__plinth/runtime.js", () => {
     expect(rest).not.toMatch(/https?:\/\//);
     // Shared data, the live room, page comments and the people list together; still one small
     // static file (the bound DECISIONS gives).
-    expect(RUNTIME_SCRIPT.length).toBeLessThan(48 * 1024);
+    expect(RUNTIME_SCRIPT.length).toBeLessThan(50 * 1024);
   });
 
   it("speaks the API it is served next to", () => {

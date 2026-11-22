@@ -31,8 +31,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, the live part, page comments, watch, the people part, hold, ask, live_off, then from_code", () => {
-    expect(GATE_PARTS.length).toBe(9);
+  it("runs the data part, the live part, page comments, watch, the people part, hold, ask, live_off, from_code, then no_editor", () => {
+    expect(GATE_PARTS.length).toBe(10);
   });
 
   it("a page that declares comments and data: `data`, then `page_comments`", async () => {

@@ -25,6 +25,7 @@ import {
   DATA_DOC_ID_RE,
   DEFAULTS,
   DESIGN_EXPORT,
+  defaultDesignSystemInput,
   ERROR_CODES,
   editSheetInput,
   grantsReplaceInput,
@@ -211,7 +212,7 @@ const sourceDescription = (def: ArtifactTypeDef) =>
 const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   html: "a hand-written page",
   doc: "a Markdown document",
-  slides: "a Markdown deck",
+  slides: "a deck in Markdown, or an HTML deck",
   design_system: "design tokens, guidelines and components as JSON",
   design: "artboards (app screens, posters, social posts, ads) as HTML",
   sheet: "a table as JSON lines",
@@ -252,6 +253,12 @@ function responseSchemas(): Record<string, Json> {
       ...obj({ blocks: int({ minimum: 0 }), arrows: int({ minimum: 0 }) }),
       description:
         "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written",
+    },
+    copied_from: {
+      type: "array",
+      items: ref("CopyRecord"),
+      description:
+        "The files this call copied from other artifacts (copy_files), one record per source version. Absent when it copied none",
     },
   };
   const artifactSummary = {
@@ -295,6 +302,11 @@ function responseSchemas(): Record<string, Json> {
       description:
         "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text.",
     }),
+    default: {
+      const: true,
+      description:
+        "On your own default design system only (chosen in the app): build slides, designs and pages with it without asking. Absent otherwise, and for a token limited to one artifact",
+    },
   };
   return {
     Error: obj({
@@ -316,12 +328,15 @@ function responseSchemas(): Record<string, Json> {
       ...enumOf(ARTIFACT_TYPES),
       description: `${ARTIFACT_TYPES.map((t) => {
         const d = TYPE_REGISTRY[t];
+        const source = d.altSource
+          ? `${d.sourcePath}, or ${d.altSource.path} with deck.css and slides/<id>.html`
+          : d.sourcePath;
         return d.renderer
-          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}) that Plinth ${TYPE_RENDERS[t] ?? "renders"}.`
-          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}).`;
+          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${source}) that Plinth ${TYPE_RENDERS[t] ?? "renders"}.`
+          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${source}).`;
       }).join(" ")} Fixed at publish.`,
     },
-    ArtifactSummary: obj(artifactSummary),
+    ArtifactSummary: obj(artifactSummary, ["default"]),
     // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:
     // `html` is required for an HTML page and `content` for a doc, and each has only its own.
     ArtifactDetail: {
@@ -339,30 +354,52 @@ function responseSchemas(): Record<string, Json> {
         const def = TYPE_REGISTRY[t];
         return [
           detailSchemaName(t),
-          obj({
-            ...artifactSummary,
-            type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
-            version: int({ minimum: 1, description: "The version returned" }),
-            source_path: str({
-              enum: [def.sourcePath],
-              description: "The version file holding the source",
-            }),
-            [def.sourceField]: str({ description: sourceDescription(def) }),
-            assets: {
-              type: "array",
-              description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
-              items: obj({
-                path: str(),
-                size_bytes: int(),
-                content_type: str(),
-                sha256: nullable("string", {
-                  pattern: SHA256_RE.source,
-                  description:
-                    "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash",
-                }),
+          obj(
+            {
+              ...artifactSummary,
+              type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
+              version: int({ minimum: 1, description: "The version returned" }),
+              source_path: str({
+                enum: def.altSource ? [def.sourcePath, def.altSource.path] : [def.sourcePath],
+                description: def.altSource
+                  ? `The version file holding the source: ${def.sourcePath}, or ${def.altSource.path} (${def.altSource.label})`
+                  : "The version file holding the source",
               }),
+              [def.sourceField]: str({ description: sourceDescription(def) }),
+              ...(def.altSource
+                ? {
+                    files: {
+                      type: "array",
+                      description:
+                        "An HTML deck (source_path deck.json) only: the text of deck.css and of every slides/<id>.html, " +
+                        "each also in assets. UNTRUSTED, written by the artifact's authors",
+                      items: obj({ path: str(), content: str() }),
+                    },
+                  }
+                : {}),
+              assets: {
+                type: "array",
+                description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
+                items: obj({
+                  path: str(),
+                  size_bytes: int(),
+                  content_type: str(),
+                  sha256: nullable("string", {
+                    pattern: SHA256_RE.source,
+                    description:
+                      "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash",
+                  }),
+                }),
+              },
+              copied_from: {
+                type: "array",
+                items: ref("CopiedFrom"),
+                description:
+                  "The version's files copied from other artifacts (copy_files), by source version. Absent when it holds none",
+              },
             },
-          }),
+            ["default", "copied_from"],
+          ),
         ];
       }),
     ),
@@ -425,7 +462,91 @@ function responseSchemas(): Record<string, Json> {
       },
       ["pending"],
     ),
-    PublishResult: obj(publishResult, ["category", "category_share", "board"]),
+    PublishResult: obj(publishResult, ["category", "category_share", "board", "copied_from"]),
+    CopyRecord: obj({
+      artifact: str({ description: "The source artifact's id" }),
+      version: int({ minimum: 1, description: "The source version copied from" }),
+      copied_at: dateTime,
+      files: {
+        type: "array",
+        items: obj({
+          path: str({ description: "Where the copy is in this version" }),
+          from: str({ description: "Its path in the source version" }),
+        }),
+      },
+    }),
+    CopiedFrom: {
+      ...obj({
+        artifact: nullable("string", {
+          description: "The source artifact's id when you may view it now, else null",
+        }),
+        version: int({ minimum: 1 }),
+        copied_at: dateTime,
+        files: {
+          type: "array",
+          items: obj(
+            {
+              path: str({ description: "Where the copy is in this version" }),
+              from: str({
+                description: "Its path in the source, only when you may view the source now",
+              }),
+            },
+            ["from"],
+          ),
+        },
+        title: nullable("string", {
+          description: "The source's title when you may view it now, else null. Untrusted text",
+        }),
+        current_version: nullable("integer", {
+          description: "The source's current version when you may view it now, else null",
+        }),
+      }),
+      description: "Files of this version copied from one version of another artifact",
+    },
+    DesignSystemInstall: obj({
+      folder: str({
+        description:
+          'Where the files land: "ds/<folder>" (the prefix, a name from the title for a system that kept the default prefix, or the folder asked for)',
+      }),
+      copy_files: {
+        type: "array",
+        items: obj({
+          artifact: str(),
+          path: str(),
+          to: str(),
+          version: int({ minimum: 1 }),
+        }),
+        description:
+          "Pass these as copy_files to publish or update the artifact that uses it: only the files install_for's type takes",
+      },
+      stylesheets: {
+        type: "array",
+        items: str(),
+        description: "Link these, in order, from the head (paths relative to the version's root)",
+      },
+      faces: {
+        type: "object",
+        additionalProperties: obj(
+          {
+            family: str(),
+            href: str({ format: "uri", description: "A Google Fonts stylesheet" }),
+            src: str({ description: "An installed font file's path under the folder" }),
+            weight: str(),
+            style: str(),
+          },
+          ["href", "src", "weight", "style"],
+        ),
+        description:
+          "A deck's faces, keyed by family lowercased with spaces as -: Google faces by link, installed font files by path",
+      },
+      record: obj({
+        title: str({ description: "Untrusted text" }),
+        namespace: str({ description: "The folder name under ds/" }),
+        artifact: str({ description: "The design system's id" }),
+        version: int({ minimum: 1 }),
+        copiedAt: dateTime,
+      }),
+    }),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -537,7 +658,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category", "category_share", "board"],
+      ["category", "category_share", "board", "copied_from"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -846,6 +967,11 @@ function responseSchemas(): Record<string, Json> {
                 "With `live` only: the artifact's publisher said its source lives in code, so " +
                 "the next publish from there replaces page edits; edit mode says so",
             },
+            no_editor: {
+              const: true,
+              description:
+                "The version shown has no source editor although its type has one (an HTML deck): offer no Edit",
+            },
           },
           [
             "data",
@@ -857,6 +983,7 @@ function responseSchemas(): Record<string, Json> {
             "ask",
             "live_off",
             "from_code",
+            "no_editor",
           ],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
@@ -1163,7 +1290,7 @@ function dataSchemas(): Record<string, Json> {
         description: "One per op, in order; each op succeeds or fails on its own",
         items: obj(
           {
-            op: enumOf(["set", "delete"]),
+            op: enumOf(["set", "merge", "delete"]),
             collection: str(),
             doc_id: nullable("string"),
             ok: { type: "boolean" },
@@ -1306,7 +1433,8 @@ function designSystemSchemas(): Record<string, Json> {
             source: enumOf(["google", "asset"]),
             portable: {
               type: "boolean",
-              description: "false: a file of the design system, which other artifacts cannot load",
+              description:
+                "true: another artifact can use it (a Google font, or a font file this version stores, which install copies; a design's artboards cannot load font files). false: a font file the version lacks",
             },
           }),
         },
@@ -1314,6 +1442,13 @@ function designSystemSchemas(): Record<string, Json> {
         guidelines: nullable("string", { description: untrusted("Markdown") }),
         component_css: str({ description: untrusted("CSS") }),
         components: { type: "array", items: ref("DesignSystemComponent") },
+        files: {
+          type: "array",
+          items: str(),
+          description:
+            "Every path copy_files can take from this version: system.json, the generated tokens.css, fonts.css, components.css and tokens.json, and its images and fonts",
+        },
+        install: ref("DesignSystemInstall"),
         problems: {
           type: "array",
           items: obj({ path: str(), message: str() }),
@@ -1321,7 +1456,17 @@ function designSystemSchemas(): Record<string, Json> {
         },
         untrusted: { const: true },
       },
-      ["css", "font_links", "fonts", "tokens", "guidelines", "component_css", "components"],
+      [
+        "css",
+        "font_links",
+        "fonts",
+        "tokens",
+        "guidelines",
+        "component_css",
+        "components",
+        "files",
+        "install",
+      ],
     ),
   };
 }
@@ -1333,11 +1478,11 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
       | { properties: Json; required: string[] }
       | undefined;
     if (!detail) continue;
-    if (t === "html") {
+    if (t === "html" || t === "design") {
       detail.properties.design_system = {
         oneOf: [ref("DesignSystemReference"), { type: "null" }],
         description:
-          'Only for a page with <meta name="plinth-design-system">: that design system when you ' +
+          'Only for a page (or a design, in its shared section) with <meta name="plinth-design-system">: that design system when you ' +
           "may view it and it is one, else null",
       };
     }
@@ -1397,9 +1542,10 @@ function dataOperations(): Operation[] {
       method: "post",
       path: API.data,
       operationId: "writeArtifactData",
-      summary: "Apply 1 to 50 set and delete ops, each with if_rev",
+      summary: "Apply 1 to 50 set, merge and delete ops, each with if_rev",
       description:
-        "Owner or editor (data_write). Ops apply in order and each succeeds or fails on its own. " +
+        "Owner or editor (data_write). Ops apply in order and each succeeds or fails on its own. A " +
+        "merge changes only the fields it names (null removes one) on the document at if_rev. " +
         "Bearer requests are stamped via agent with the connection label, signed-in requests via " +
         "app. Refused with feature_disabled while shared data is off on the instance.",
       tag: "Shared data",
@@ -1566,6 +1712,7 @@ function categorySharingSchemas(): Record<string, Json> {
     CreateCategoryShareInput: fromZod(createCategoryShareInput),
     UpdateCategoryShareInput: fromZod(updateCategoryShareInput),
     CategoryReviewInput: fromZod(categoryReviewInput),
+    DefaultDesignSystemInput: fromZod(defaultDesignSystemInput),
     MyCategoryInput: fromZod(myCategoryInput),
     CategoryPerson: person,
     CategoryShareResult: obj(
@@ -2330,8 +2477,40 @@ function operations(): Operation[] {
           schema: str(),
           description: "Comma-separated component ids to return (default all, at most 50)",
         },
+        {
+          name: "install_for",
+          schema: enumOf(ARTIFACT_TYPES),
+          description:
+            "The type of the artifact it will be installed into (default html): install lists only the files that type takes",
+        },
+        {
+          name: "deck_format",
+          schema: enumOf(["markdown", "html"]),
+          description:
+            "With install_for slides: the deck's format (default markdown). A Markdown deck takes the system's images; an HTML deck its tokens.json, font files and images",
+        },
+        {
+          name: "folder",
+          schema: str({ pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" }),
+          description: "Install under ds/<folder>/ instead of the default",
+        },
       ],
       ok: [200, "DesignSystemRead"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "put",
+      path: API.defaultDesignSystem,
+      operationId: "setDefaultDesignSystem",
+      summary: "Make one of your design systems your default, or stop it being it",
+      description:
+        "One default per person: choosing one replaces any other, and list_artifacts marks it " +
+        "`default: true` for you. Your own artifacts of type design_system only (another type " +
+        "gets 400 `not_design_system`). Session only: bearer tokens get 403 `app_only`.",
+      tag: "Artifacts",
+      auth: "user",
+      body: "DefaultDesignSystemInput",
+      ok: [200, "ArtifactSummary"],
       errors: [400, 401, 403, 404],
     },
     {
@@ -3057,7 +3236,16 @@ function designExportSchemas(): Record<string, Json> {
           id: str(),
           name: str({ description: "Untrusted text" }),
           width: int({ minimum: 16, maximum: 4096 }),
-          height: int({ minimum: 16, maximum: 4096 }),
+          height: int({
+            minimum: 16,
+            maximum: 4096,
+            description:
+              "For a board with auto_height, its least height: the rendered board is as tall as its content",
+          }),
+          auto_height: {
+            type: "boolean",
+            description: 'height="auto": a fluid page measured as it renders, up to 8000 px',
+          },
         }),
       },
       max_pixels: int({

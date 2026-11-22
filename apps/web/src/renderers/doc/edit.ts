@@ -47,9 +47,15 @@ import {
   rangesOverlap,
   serializeBlock,
   splitLines,
+  stripUnsafeText,
   verifyBlock,
 } from "@plinth/shared";
-import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
+import {
+  type AskWhat,
+  MAX_RESCUE_ITEM,
+  MAX_RESCUE_ITEMS,
+  MAX_RESCUE_TOTAL,
+} from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
@@ -63,8 +69,11 @@ import {
   kindName,
   RichBlockEditor,
   type RichHost,
+  type RichPoint,
   reveal,
+  type SplitMore,
 } from "../common/richblock.ts";
+import { type AskImage, askKey } from "./askAnchor.ts";
 import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./blocks.ts";
 import {
   docEnv,
@@ -100,6 +109,8 @@ export const JOINED_BLOCKS =
   "That would run the blocks around it together into one, so nothing was changed.";
 /** Why a block op was not made: the doc has no room for it. */
 export const DOC_FULL = "The doc is at its size limit, so that change wasn't made.";
+/** Turn into that would drop text, a table, a divider or an image (see turnDrops). */
+export const TURN_DROPS = "That would drop part of this block, so it wasn't changed.";
 /** Why an edit was not sent: the room is out of reach (or this frame has no lease). */
 export const NOT_SENT = "Not connected. Try again in a moment.";
 /** Why a block was not sent: it is over one frame. */
@@ -136,6 +147,9 @@ export const RESCUE_FRAME_ONLY =
   "What you typed couldn't be added to the doc yet. It's kept on this page until you reload. Copy it to be safe.";
 /** What both rescue notices start with. */
 const RESCUE_NOTICE = "What you typed couldn't be added to the doc yet.";
+/** Dismiss on a rescue notice asks once: kept text dropped on purpose cannot be brought back. */
+export const RESCUE_DISMISS =
+  "What you typed couldn't be added to the doc yet. Dismiss drops it for good: copy it first to keep it.";
 /** The rescued text waits for a review to end before it goes in. */
 export const RESCUE_WAITS =
   "Editing is paused until the changes are reviewed. What you typed is kept and goes in after.";
@@ -253,6 +267,8 @@ export interface EditorHooks {
    * for the dialog's "Pointing at" chip.
    */
   ask?(anchor: AskAnchor, what: AskWhat): void;
+  /** The published version's text the frame was served, which Ask anchors are named in. */
+  published?(): string;
   /** The rescue store changed: the app merges this into its copy (see RescueReport). */
   rescue?(report: RescueReport): void;
   /** The words of an empty text's place to write in (EMPTY_DOC when not given). */
@@ -279,8 +295,10 @@ const WORD_BREAKS = new Set([
 
 /**
  * The first words of a block as the person sees them, for the Ask dialog's "Pointing at" chip: spaces
- * between cells and lines, " · " between a list's items, every run of white space or control
- * characters one space, at most the page anchor's length.
+ * between cells and lines, " · " between a list's items, every run of white space one space,
+ * without the characters no label may hold (UNSAFE_TEXT_RE: control and format characters, emoji
+ * joiners among them, which the server would refuse), at most the page anchor's length in UTF-16
+ * code units (as the app and the server count it), never cutting a character in two.
  */
 export function blockWords(nodes: Node[]): string {
   // Runs of text, cut at each list item's edges.
@@ -304,14 +322,19 @@ export function blockWords(nodes: Node[]): string {
     }
   };
   for (const n of nodes) walk(n);
-  // Control characters (none of them shown) read as spaces, as white space does.
+  // White space (line breaks and tabs among it) reads as one space; what no label shows goes
+  // (the BOM too, which JavaScript counts as white space).
   const words = (run: string) =>
-    Array.from(run, (c) => (c < " " || c === "\u007f" ? " " : c))
-      .join("")
-      .replace(/\s+/g, " ")
+    stripUnsafeText(run.replace(/[^\S\ufeff]+/g, " "))
+      .replace(/ +/g, " ")
       .trim();
   const text = runs.map(words).filter(Boolean).join(" · ");
-  return Array.from(text).slice(0, PAGE_COMMENT_LIMITS.maxText).join("").trimEnd();
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > PAGE_COMMENT_LIMITS.maxText) break;
+    out += ch;
+  }
+  return out.trimEnd();
 }
 
 /** What a drawn block is, in the Ask dialog's words ("Pointing at the list"), for one with no text. */
@@ -341,6 +364,24 @@ function whatOf(nodes: Node[]): AskWhat {
     default:
       return "block";
   }
+}
+
+/** An open block's first words, as blockWords reads the drawn block (an image's alt for one). */
+function modelWords(doc: Document, b: RichBlock): string {
+  if (b.t === "image") return blockWords([doc.createTextNode(b.alt)]);
+  // An atom reads as the page draws it: an image as nothing, a link as its label, an autolink as
+  // its address.
+  const atom = (md: string) =>
+    md.startsWith("!")
+      ? ""
+      : md.startsWith("<")
+        ? md.slice(1, -1)
+        : (/^\[([^\]]*)\]/.exec(md)?.[1] ?? "");
+  const words = (c: RichInline) =>
+    c.map((s) => (s.k === "text" ? s.text : s.k === "atom" ? atom(s.md) : " ")).join("");
+  const runs = runsOf(b).map(words);
+  const text = b.t === "bullet" || b.t === "ordered" ? runs.join(" · ") : runs.join(" ");
+  return blockWords([doc.createTextNode(text)]);
 }
 
 /** The same for a block's model (an open block). */
@@ -387,7 +428,7 @@ interface Want extends LineRange {
   /** Where the person clicked, to put the caret there. */
   at?: { x: number; y: number };
   /** Where the caret goes otherwise. */
-  caret?: "start" | "end";
+  caret?: Caret;
   /** Select the block's text once open (a new doc's title, from `?edit`), not place a caret. */
   select?: true;
   /**
@@ -470,9 +511,25 @@ interface Open {
   /** Lines of the lease after it (reference definitions), kept byte for byte. */
   suffix: string[];
   env: MdEnv;
+  /** The Enter (or paste) that made this block, which Undo in it takes back (undoSplit). */
+  split?: Split;
+}
+
+type Caret = "start" | "end" | RichPoint;
+
+/**
+ * An Enter or a multi-paragraph paste that split a block: the blocks it left (their cores, in
+ * order, from about line `near`) and the block as it was, which Undo writes back over them.
+ */
+interface Split {
+  cores: string[];
+  near: number;
+  before: string;
+  caret: RichPoint;
 }
 
 const isBlank = (s: string | undefined) => s === undefined || s.trim() === "";
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).byteLength;
 
 /** The field's text as the room stores it: an inserted block keeps a blank line on each side. */
 export function padded(value: string, pad: Pad): string {
@@ -607,6 +664,41 @@ export function turnInto(b: RichBlock, kind: BlockKind, near: (string | undefine
   }
 }
 
+/**
+ * What Turn into must keep of a block: its text without white space, and what has no text as a
+ * mark of its own (an image or other atom, a table, a divider). Formatting and white space may
+ * change (a code block's indentation, a list's items as lines), and Undo puts them back.
+ */
+function keptText(b: RichBlock): string {
+  const inline = (c: RichInline) =>
+    c.map((s) => (s.k === "text" ? s.text : s.k === "atom" ? `\uFFFC${s.md}` : "")).join("");
+  switch (b.t) {
+    case "paragraph":
+    case "heading":
+      return inline(b.c);
+    case "quote":
+      return b.blocks.map(keptText).join("");
+    case "bullet":
+    case "ordered":
+      return b.items.flatMap((it) => it.blocks.map(keptText)).join("");
+    case "code":
+    case "indented":
+      return b.text;
+    case "table":
+      return `\uFFFCtable${[b.head, ...b.rows].flat().map(inline).join("")}`;
+    case "divider":
+      return "\uFFFCdivider";
+    case "image":
+      return `\uFFFCimage${b.alt}${b.rest}`;
+  }
+}
+
+/** Whether turning `from` into `to` loses text, or a table, divider or image in it. */
+export function turnDrops(from: RichBlock, to: RichBlock): boolean {
+  const squeeze = (b: RichBlock) => keptText(b).replace(/\s+/g, "");
+  return squeeze(from) !== squeeze(to);
+}
+
 /** Text standing in for what will be typed into an empty block, to check where it would go. */
 const PROBE: RichInline = [{ k: "text", text: "x", m: {} }];
 
@@ -662,7 +754,9 @@ export class DocEditor {
   private barHost: HTMLElement | null = null;
   /** After an op: the line of the block to focus (and open, or select) once it is drawn. */
   private after: { line: number; open: boolean; insert?: RichBlock } | null = null;
-  private afterCaret: "start" | "end" = "end";
+  private afterCaret: Caret = "end";
+  /** A split just sent, for the block it opens next (see Open.split). */
+  private splitting: Split | null = null;
   /** What the person asked for while a block op waited for its lease, run once it is done. */
   private queued: (() => void) | null = null;
   /** A cleared block being removed (removeCleared), until the block is open where it was. */
@@ -674,6 +768,8 @@ export class DocEditor {
    * in the doc, so it counts as pending, and the block does not close until the text changes.
    */
   private stuck = false;
+  /** Why the open block is `stuck`: UNSAVABLE, or the reason its last send was refused. */
+  private stuckWhy = UNSAVABLE;
   /** While `stuck` in a room: says the lease is in use every LIMITS.liveLeaseKeepS (`keep`). */
   private keepAlive: ReturnType<typeof setInterval> | null = null;
   /** Text typed that is not in the draft yet, by id, until the room's lines hold it. */
@@ -685,6 +781,20 @@ export class DocEditor {
   private rescueN = 0;
   /** A rescue write was refused because a review waits: none is tried until the review ends. */
   private rescueFrozen: { seen: boolean } | null = null;
+  /**
+   * The last block send in a room, until the room acknowledges it: its seq, its lease, what it
+   * wrote as the block's own Markdown (`core`, at line `near`), and whether its block is still
+   * open. A refusal that arrives once the block has closed keeps that text, parked (roomRefused).
+   * Closed is the editor's own record: the room's `released` comes only after the answer to the
+   * send, so the lease is still `mine` when a refusal of it arrives.
+   */
+  private lastSend: {
+    seq: number;
+    lease: string;
+    core: string;
+    near: number;
+    open: boolean;
+  } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -731,6 +841,7 @@ export class DocEditor {
    * written, the block closes or the socket goes.
    */
   private setStuck(on: boolean): void {
+    if (!on) this.stuckWhy = UNSAVABLE;
     if (this.stuck === on) return;
     this.stuck = on;
     if (this.keepAlive) clearInterval(this.keepAlive);
@@ -780,6 +891,7 @@ export class DocEditor {
       if (r.owner === "op") r.owner = null;
     }
     if (this.want?.rescue) this.want = null;
+    this.lastSend = null;
     if (this.rescues.size > 0) queueMicrotask(() => this.flushRescues());
   }
 
@@ -1028,7 +1140,7 @@ export class DocEditor {
       this.flush();
       // Typing that cannot be written yet is not in the draft: no Publish goes out without it.
       if (this.stuck) {
-        this.showNotice(UNSAVABLE);
+        this.showNotice(this.stuckWhy);
         return;
       }
       this.hooks.save();
@@ -1157,12 +1269,7 @@ export class DocEditor {
     this.open_(found.block, "end", at);
   }
 
-  private open_(
-    block: Block,
-    caret: "start" | "end",
-    at?: { x: number; y: number },
-    select = false,
-  ): void {
+  private open_(block: Block, caret: Caret, at?: { x: number; y: number }, select = false): void {
     const b = this.backend;
     if (!this.editing || !b.ready) return;
     const text = joinLines(b.lines.slice(block.start, block.end));
@@ -1316,7 +1423,7 @@ export class DocEditor {
     ask.setAttribute("aria-description", READ_ONLY_NOTE);
     ask.addEventListener("click", (e) => {
       e.preventDefault();
-      this.ask(block.start, false);
+      this.ask(block.start, null);
     });
     const menu = new BlockMenu(this.doc, () =>
       this.menuGroups({ start: block.start }, null, this.tableForm(block.start)),
@@ -1369,7 +1476,7 @@ export class DocEditor {
         label: "Image",
         disabled: start === null,
         run: () => {
-          if (start !== null) this.ask(start, true);
+          if (start !== null) this.ask(start, "add");
         },
       });
     }
@@ -1414,34 +1521,49 @@ export class DocEditor {
     return { insert: (rows: number, cols: number) => this.insertTable(start, rows, cols) };
   }
 
-  /** Ask an agent about block `start` (its image, with `image`): the app opens its Ask dialog. */
-  private ask(start: number, image: boolean): void {
-    const index = this.blockAt(start)?.index ?? 0;
+  /**
+   * Ask an agent about block `start` (its image, or a new image below it, with `image`): the app
+   * opens its Ask dialog. The key names the block as the published version has it (askKey), so the
+   * agent finds it in the version it reads; a block only in the draft is named after the published
+   * block above it, with its draft words.
+   */
+  private ask(start: number, image: AskImage): void {
+    const found = this.blockAt(start);
+    const index = found?.index ?? 0;
     const sel = this.selected;
-    const open = this.open?.rich.model;
+    const place = this.open ? this.openPlace(start) : null;
+    const open = place && "start" in place && place.start === start ? this.open?.rich.model : null;
     const nodes =
-      sel?.start === start ? Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar) : null;
-    const what: AskWhat = image
-      ? "image"
-      : nodes
-        ? whatOf(nodes)
+      sel?.start === start
+        ? Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar)
         : open
-          ? whatOfModel(open)
-          : "block";
-    // The block's first words, as the person sees them (an open image's alt text): its number
-    // would mean nothing to the person asking. "Insert below, Image" asks about an image that is
-    // not there yet, and the dialog names the kind of block instead. The frame posts them only
-    // when the published version has them too (boot.ts).
+          ? null
+          : this.drawnBlock(start);
+    const what: AskWhat =
+      image === "replace" ? "image" : nodes ? whatOf(nodes) : open ? whatOfModel(open) : "block";
+    // The block's first words, as the person sees them (an image's alt text): its number would
+    // mean nothing to the person asking.
     const text =
       open?.t === "image"
         ? blockWords([this.doc.createTextNode(open.alt)])
-        : !image && nodes
-          ? blockWords(nodes)
-          : "";
+        : open
+          ? modelWords(this.doc, open)
+          : nodes
+            ? blockWords(nodes)
+            : "";
     if (!this.close(true)) return;
     this.deselect();
-    const n = index + 1;
-    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text }, what);
+    const draft = joinLines(this.backend.lines);
+    const { key } = askKey(draft, this.hooks.published?.() ?? draft, index, image);
+    this.hooks.ask?.({ key, text }, what);
+  }
+
+  /** The drawn nodes of block `start` in the page (none for an open or a missing block). */
+  private drawnBlock(start: number): Node[] | null {
+    for (const n of Array.from(this.root.childNodes)) {
+      if (n.nodeType === 1 && rangeOf(n)?.start === start) return [n];
+    }
+    return null;
   }
 
   private turn(kind: BlockKind): void {
@@ -1454,6 +1576,10 @@ export class DocEditor {
     }
     const near = this.neighbours(mine);
     const next = turnInto(open.rich.model, kind, near);
+    if (turnDrops(open.rich.model, next)) {
+      this.showNotice(TURN_DROPS);
+      return;
+    }
     if (verifyBlock(next, TOOLS, open.env) === null) {
       this.showNotice(FORMAT_LOST);
       return;
@@ -1469,7 +1595,8 @@ export class DocEditor {
       this.showNotice(JOINED_BLOCKS);
       return;
     }
-    open.rich.setModel(next);
+    // Undo in the block puts it back as it was (a code block's indentation, say).
+    open.rich.setModel(next, null, true);
     open.rich.focus("end");
     this.cancelTimer();
     this.send();
@@ -1816,6 +1943,10 @@ export class DocEditor {
       return;
     }
     const open = keep ?? this.makeOpen(lease.start, model as RichBlock, env);
+    // The block an Enter just opened: Undo in it takes the Enter back.
+    const split = this.splitting;
+    this.splitting = null;
+    if (!keep && split) open.split = split;
     open.prefix = prefix;
     open.suffix = suffix;
     open.env = env;
@@ -1900,7 +2031,7 @@ export class DocEditor {
         e.preventDefault();
         const place = this.openPlace(start);
         const at = "start" in place ? place.start : place.above;
-        if (at !== null) this.ask(at, true);
+        if (at !== null) this.ask(at, "replace");
       });
       extra.push(ask);
     }
@@ -1912,7 +2043,8 @@ export class DocEditor {
         return Array.from(frag.childNodes);
       },
       changed: () => this.edited(),
-      split: (keep, next) => this.split(keep, next),
+      split: (keep, next, more) => this.split(keep, next, more),
+      undo: () => this.undoSplit(holder.open),
       tab: (back) => this.tabOut(back),
       escape: () => this.close(true, true),
       announce: (text) => (text ? this.showNotice(text) : this.hideNotice()),
@@ -2023,9 +2155,9 @@ export class DocEditor {
     if (result.blocks !== undefined && parseBlocks(joinLines(after)).length !== result.blocks) {
       return { refusal: JOINED_BLOCKS };
     }
-    if (new TextEncoder().encode(joinLines(after)).byteLength > LIMITS.maxDocBytes) {
-      return { refusal: DOC_FULL };
-    }
+    if (this.tooLarge(joinLines(after))) return { refusal: DOC_FULL };
+    // An op's edit is one frame of the room too (solo sends none).
+    if (this.backend.keep && this.overFrame(fitted)) return { refusal: TOO_LONG };
     return { text: fitted };
   }
 
@@ -2142,6 +2274,8 @@ export class DocEditor {
     for (const r of this.rescues.values()) {
       if (r.sent && !(r.sent.seq !== null && this.backend.acked?.(r.sent.seq))) r.sent.lost = true;
     }
+    // No refusal of a frame sent over the closed socket can come any more.
+    this.lastSend = null;
     if (this.clearing) this.lost("reconnect");
     if (!this.asking) return;
     this.asking = false;
@@ -2251,6 +2385,7 @@ export class DocEditor {
       this.retake(w);
     }
     this.clearedSent();
+    if (this.lastSend && this.backend.acked?.(this.lastSend.seq)) this.lastSend = null;
     // The rescue store: what the room's lines hold now goes, a review that ended lets the rest in.
     this.roomStatus();
     this.checkRescues();
@@ -2268,6 +2403,7 @@ export class DocEditor {
 
   private dropOpen(): void {
     this.setStuck(false);
+    if (this.lastSend) this.lastSend.open = false;
     const br = this.blockRescue ? this.rescues.get(this.blockRescue) : undefined;
     if (br?.owner === "block") br.owner = null;
     this.blockRescue = null;
@@ -2282,13 +2418,14 @@ export class DocEditor {
    * Enter that ends the block: this one keeps `keep`, and `next` goes into a new block below it,
    * in one edit (or, for an empty `next`, an insert right after it once this lease is released).
    */
-  private split(keep: RichBlock, next: RichBlock | null): void {
+  private split(keep: RichBlock, next: RichBlock | null, more: SplitMore = {}): void {
     const open = this.open;
     const mine = this.backend.mine;
     if (!open || !mine || this.clearing) return;
     const keepCore = verifyBlock(keep, TOOLS, open.env);
     const nextCore = next ? verifyBlock(next, TOOLS, open.env) : "";
-    if (keepCore === null || nextCore === null) {
+    const between = (more.between ?? []).map((b) => verifyBlock(b, TOOLS, open.env));
+    if (keepCore === null || nextCore === null || between.some((c) => c === null)) {
       // Nothing is split, and the text stays as typed.
       this.showNotice(UNSAVABLE);
       return;
@@ -2301,20 +2438,34 @@ export class DocEditor {
       this.removeCleared();
       return;
     }
+    const middle = between.filter((c): c is string => c !== null && c !== "");
+    // What Undo in the block this opens writes back: the block as it was before the Enter.
+    const beforeCore = more.before ? verifyBlock(more.before.model, TOOLS, open.env) : null;
+    const undo = (cores: string[]): Split | null =>
+      beforeCore && more.before
+        ? {
+            cores: cores.filter((c) => c !== ""),
+            near: mine.start,
+            before: beforeCore,
+            caret: more.before.from,
+          }
+        : null;
     // Typing not sent yet goes with the split (at the start, before the paragraph above opens).
     const pending = this.timer !== null;
     this.cancelTimer();
-    if (keepCore === "" && nextCore !== "") {
+    if (keepCore === "" && nextCore !== "" && middle.length === 0) {
       // Enter at the very start: a new paragraph above, once this block's typing is in.
       if (pending && !this.send()) {
         this.schedule(EDIT_DEBOUNCE_MS);
         return;
       }
       if (!this.close(true)) return;
+      this.splitting = undo([nextCore]);
       this.openInsert(mine.start + (this.pad.before ? 1 : 0), para());
       return;
     }
-    const core = nextCore === "" ? keepCore : `${keepCore}\n\n${nextCore}`;
+    const parts = [keepCore, ...middle, nextCore].filter((c) => c !== "");
+    const core = parts.join("\n\n");
     const block = composeBlock(open.prefix, core, open.suffix);
     const text = padded(block, this.pad);
     const lines = this.backend.lines;
@@ -2327,7 +2478,6 @@ export class DocEditor {
       (this.pad.before && text !== "" ? 1 : 0) +
       open.prefix.length +
       (open.prefix.length > 0 && !isBlank(open.prefix.at(-1)) ? 1 : 0);
-    const keepLines = keepCore === "" ? 0 : keepCore.split("\n").length;
     const end = mine.start + (text === "" ? 0 : text.split("\n").length) - (this.pad.after ? 1 : 0);
     if (joinLines(lines.slice(mine.start, mine.end)) !== text) {
       const refusal =
@@ -2338,17 +2488,70 @@ export class DocEditor {
         if (pending) this.schedule(EDIT_DEBOUNCE_MS);
         return;
       }
+      // The block closes now: a refusal the room sends later keeps what this wrote (roomRefused).
+      this.noteSent(mine, core);
     }
     this.backend.release();
     this.dropOpen();
     this.held = null;
+    // The last block starts after the ones before it, each with a blank line after it.
+    let nextAt = keepAt;
+    for (const c of parts.slice(0, -1)) nextAt += c.split("\n").length + 1;
     this.after =
       nextCore === ""
         ? { line: Math.max(mine.start, end), open: false, insert: next ?? para() }
-        : { line: keepAt + keepLines + 1, open: true };
-    if (nextCore !== "") this.afterCaret = "start";
+        : { line: nextAt, open: true };
+    if (nextCore !== "") {
+      this.afterCaret = more.caret !== undefined ? { leaf: 0, offset: more.caret } : "start";
+    }
+    this.splitting = undo(parts);
     this.render();
     this.hooks.status();
+  }
+
+  /**
+   * Undo in a block an Enter (or a multi-paragraph paste) opened, with nothing left to undo in
+   * it: the blocks the split left are written back as the one block it was, which opens with the
+   * caret where the Enter was. Not once the block or the ones before it changed.
+   */
+  private undoSplit(open: Open | null): boolean {
+    const split = open?.split;
+    if (!split || open !== this.open || this.busy) return false;
+    open.split = undefined;
+    // The blocks the split wrote (the open one among them), or, when it opened an empty block not
+    // typed into, the one block it left: that one is written back, and the empty one closes.
+    const cores = split.cores;
+    if (cores.length < 2 && !isEmptyBlock(open.rich.model)) return false;
+    const find = (): { start: number; end: number } | null => {
+      const lines = this.backend.lines;
+      const blocks = this.blocks();
+      const coreOf = (b: Block) => joinLines(lines.slice(b.core.start, b.core.end));
+      let best: { start: number; end: number } | null = null;
+      for (let i = 0; i + cores.length <= blocks.length; i++) {
+        if (!cores.every((c, k) => coreOf(blocks[i + k] as Block) === c)) continue;
+        const range = {
+          start: (blocks[i] as Block).core.start,
+          end: (blocks[i + cores.length - 1] as Block).core.end,
+        };
+        if (!best || Math.abs(range.start - split.near) < Math.abs(best.start - split.near)) {
+          best = range;
+        }
+      }
+      return best;
+    };
+    const plan = () => {
+      const r = find();
+      return r && { ...r, text: joinLines(this.backend.lines.slice(r.start, r.end)) };
+    };
+    if (!plan()) return false;
+    this.afterCaret = split.caret;
+    this.runOp(plan, (lines, lease) => ({
+      text: split.before,
+      focus: lease.start,
+      open: true,
+      blocks: parseBlocks(joinLines(lines)).length - (cores.length - 1),
+    }));
+    return true;
   }
 
   private tabOut(back: boolean): void {
@@ -2414,19 +2617,25 @@ export class DocEditor {
       return true;
     }
     const block = this.currentText();
-    if (block === null) {
-      // Never dropped: the text stays in the block, the block stays open and counts as pending
-      // (close() refuses), and the person changes it. The keystroke is not undone. A room's copy
-      // goes to the rescue store too.
+    // Never dropped: text that cannot be written as typed, or whose send is refused (the doc is
+    // full, the block is over one frame, the socket did not take it), stays in the block, which
+    // stays open and counts as pending and unsavable (close() refuses, nothing is published or
+    // collected without it, leaving the page warns), and the person changes it or it is sent
+    // again (flush, a reconnect). The keystroke is not undone. A room's copy goes to the rescue
+    // store too, and a solo tab's kept copy has it (textWithTyping).
+    const stick = (why: string): false => {
       this.setStuck(true);
+      this.stuckWhy = why;
       this.noteStuck();
-      this.showNotice(UNSAVABLE);
+      this.showNotice(why);
       this.hooks.status();
       return false;
-    }
+    };
+    if (block === null) return stick(UNSAVABLE);
     if (this.stuck) {
+      const why = this.stuckWhy;
       this.setStuck(false);
-      if (this.notice?.textContent?.startsWith(UNSAVABLE)) this.hideNotice();
+      if (this.notice?.textContent?.startsWith(why)) this.hideNotice();
       this.hooks.status();
     }
     const text = padded(block, this.pad);
@@ -2443,10 +2652,8 @@ export class DocEditor {
     }
     const refusal =
       this.unsendable(lines, mine, text) ?? (this.backend.edit(text) ? null : NOT_SENT);
-    if (refusal) {
-      this.showNotice(refusal);
-      return false;
-    }
+    if (refusal) return stick(refusal);
+    this.noteSent(mine, verifyBlock(this.open.rich.model, TOOLS, this.open.env) ?? "");
     // Every accepted send from a block with a rescue copy replaces what that copy waits for.
     this.rescueSent(this.blockRescue, this.backend.lastSeq ?? null, mine.start, text);
     return true;
@@ -2640,8 +2847,11 @@ export class DocEditor {
    * the op needs, and released otherwise. Until the op is made the frame reports unsent changes,
    * and after a reconnect it is asked for again once the draft is back. A refusal says so.
    */
-  private keepTyped(c: Clearing, core: string, rescue?: string): void {
+  private keepTyped(c: Clearing, core: string, given?: string): void {
     const b = this.backend;
+    // In a room the text is a rescue item while it is on its way, so a refusal of it (here or by
+    // the room, which may have less room than this frame saw) keeps it, never only a notice.
+    const rescue = given ?? this.keptItem(core, c.point ?? c.from);
     const block = composeBlock(c.prefix, core, c.suffix);
     const plan = () => {
       const lines = b.lines;
@@ -2693,21 +2903,60 @@ export class DocEditor {
     this.hooks.status();
   }
 
-  /** Why `text` in place of the leased lines cannot be sent, checked first; null when it can. */
+  /**
+   * Why `text` in place of the leased lines cannot be sent, checked first; null when it can: over
+   * one frame (overFrame), or the doc after it past its size (tooLarge).
+   */
   private unsendable(lines: readonly string[], mine: LineRange, text: string): string | null {
-    const bytes = (s: string) => new TextEncoder().encode(s).byteLength;
-    if (bytes(text) > LIMITS.liveDocFrameBytes - 256) return TOO_LONG;
+    if (this.overFrame(text)) return TOO_LONG;
     const after = [...lines.slice(0, mine.start), ...blockLines(text), ...lines.slice(mine.end)];
-    if (bytes(joinLines(after)) > LIMITS.maxDocBytes) return DOC_FULL;
+    if (this.tooLarge(joinLines(after))) return DOC_FULL;
     return null;
   }
 
   /**
-   * An edit was refused (by this frame's check, or by the room because the lines changed first):
-   * the block goes back to the room's text and stays open, and the frame says why.
+   * `text` is over one frame of the room. A room's frame carries it as JSON, where quotes,
+   * backslashes and line breaks take two bytes; solo, where nothing is sent, its bytes are counted.
    */
-  refused(reason: string): void {
-    this.cancelTimer();
+  private overFrame(text: string): boolean {
+    const sent = this.backend.keep ? JSON.stringify(text) : text;
+    return utf8Bytes(sent) > LIMITS.liveDocFrameBytes - 256;
+  }
+
+  /**
+   * More than the doc may hold: LIMITS.maxDocBytes, and in a room also its line limit (the room's
+   * own check, RULES.tooLarge), so a room never has to refuse a send for its size.
+   */
+  private tooLarge(doc: string): boolean {
+    if (utf8Bytes(doc) > LIMITS.maxDocBytes) return true;
+    return this.backend.keep !== undefined && (RULES?.tooLarge(doc) ?? false);
+  }
+
+  /**
+   * A block send the room took into its socket (`lease`, writing `core`): kept until it is
+   * acknowledged, for a refusal that comes once the block has closed. Rooms only.
+   */
+  private noteSent(lease: ClientLease, core: string): void {
+    const b = this.backend;
+    this.lastSend =
+      b.acked && b.lastSeq !== undefined
+        ? { seq: b.lastSeq, lease: lease.id, core, near: lease.start, open: true }
+        : null;
+  }
+
+  /**
+   * The room refused one of this socket's frames: `invalid` (its rules: the doc would start like a
+   * web page) or `too_large` (its size check: bytes or lines). What was typed is never dropped:
+   * - A send of a block that has closed since, or lost its lease, keeps what it wrote, parked in
+   *   the rescue store (park).
+   * - `too_large` for the open block's own send: the block stays open with its typing, `stuck`, as
+   *   when this frame finds the doc full first.
+   * - `invalid` for the open block: as refused().
+   * - `not_held` (the lease went first, a takeover): the send was not applied, so a closed block's
+   *   send is parked too. An open block (taken again after a merge) keeps its own typing.
+   */
+  roomRefused(code: "invalid" | "too_large" | "not_held"): void {
+    const reason = code === "invalid" ? REFUSED_EDIT : code === "too_large" ? DOC_FULL : "";
     const open = this.open;
     const mine = this.backend.mine;
     // A rescue write the room refused after it was sent: tried again elsewhere, never dropped.
@@ -2715,28 +2964,138 @@ export class DocEditor {
       .filter((r) => r.sent?.seq != null && !this.backend.acked?.(r.sent.seq))
       .sort((a, b) => (b.sent?.seq ?? 0) - (a.sent?.seq ?? 0))[0];
     if (sent && sent.owner !== "block") {
-      this.rescueFailed(sent.id, "moved");
+      // A block's send that was the write of a rescue item it had: that item is the one kept.
+      if (this.lastSend?.seq === sent.sent?.seq) this.lastSend = null;
+      // Too large anywhere: kept to copy at once, not tried at other places.
+      this.rescueFailed(sent.id, code === "too_large" ? "refused" : "moved");
       return;
     }
     if (sent) sent.sent = null;
-    // Typing that cannot be written as typed stays as typed: the room's text does not replace it.
+    // The room answers a socket's frames in order: a send not acknowledged yet is the one refused.
+    const last = this.lastSend;
+    const unanswered = last !== null && !(this.backend.acked?.(last.seq) ?? true);
+    this.lastSend = null;
+    if (last && unanswered && !last.open) {
+      // Its block closed before the answer: the open block, if any, is another.
+      if (this.park(last.core, last.near)) this.showRescueNotice();
+      else if (reason) this.showNotice(reason);
+      this.hooks.status();
+      return;
+    }
+    // Not held: the editor said what happened when the lease went (lost).
+    if (code === "not_held") return;
+    if (code === "too_large") {
+      // The open block's send did not fit: it stays as typed, to be made smaller or sent again.
+      if (unanswered && open && mine && this.typedDiffers(mine)) {
+        this.cancelTimer();
+        this.setStuck(true);
+        this.stuckWhy = reason;
+        this.noteStuck();
+      }
+      this.showNotice(reason);
+      this.hooks.status();
+      return;
+    }
+    this.refused(reason);
+  }
+
+  /**
+   * An edit of the open block was refused by the doc's rules (this frame's check before sending,
+   * or the room's: roomRefused): the block goes back to the room's text and stays open, and its
+   * typing is kept first, parked in the rescue store with Copy and Dismiss (park). Typing that
+   * cannot be written as typed (`stuck`) stays as typed instead.
+   */
+  refused(reason: string): void {
+    this.cancelTimer();
+    const open = this.open;
+    const mine = this.backend.mine;
     if (this.stuck) {
       this.showNotice(reason);
       this.hooks.status();
       return;
     }
+    let parked = false;
     if (open && mine) {
       const lines = this.backend.lines;
       const block = parseBlocks(joinLines(lines)).find(
         (b) => b.core.start >= mine.start && b.core.end <= mine.end,
       );
-      const model = block
-        ? editableBlock(joinLines(lines.slice(block.core.start, block.core.end)), TOOLS, open.env)
-        : null;
+      const own = block ? joinLines(lines.slice(block.core.start, block.core.end)) : "";
+      parked = this.parkTyped(open, own, mine.start);
+      const model = block ? editableBlock(own, TOOLS, open.env) : null;
       open.rich.setModel(model ?? para());
     }
-    this.showNotice(reason);
+    if (parked) this.showRescueNotice();
+    else this.showNotice(reason);
     this.hooks.status();
+  }
+
+  /** The open block holds text its leased lines do not (or text that cannot be written). */
+  private typedDiffers(mine: LineRange): boolean {
+    const block = this.currentText();
+    if (block === null) return true;
+    return padded(block, this.pad) !== joinLines(this.backend.lines.slice(mine.start, mine.end));
+  }
+
+  /**
+   * The open block's typing, about to be replaced by the room's text (`own`), kept as a parked
+   * rescue item (park). Whether there was anything to keep.
+   */
+  private parkTyped(open: Open, own: string, near: number): boolean {
+    const model = open.rich.model;
+    if (isEmptyBlock(model)) return false;
+    const core =
+      verifyBlock(model, TOOLS, open.env) ?? verifyBlock(withoutMarks(model), TOOLS, open.env);
+    if (!core || core === own) return false;
+    return this.park(core, near);
+  }
+
+  /** A rescue item for typing a kept op writes (keepTyped), in a room; none solo. */
+  private keptItem(core: string, near: number): string | undefined {
+    if (!this.backend.keep || core.trim() === "") return undefined;
+    const id = `r${Date.now().toString(36)}${++this.rescueN}`;
+    const r: Rescue = {
+      id,
+      text: core,
+      near,
+      sent: null,
+      owner: null,
+      n: ++this.rescueN,
+      free: false,
+      tries: 0,
+      parked: false,
+      reported: null,
+      kept: null,
+    };
+    this.rescues.set(id, r);
+    this.report([r], [], []);
+    return id;
+  }
+
+  /**
+   * Typed text that did not go in, kept as a parked rescue item near line `near`: the app keeps
+   * it, the page offers Copy and Dismiss, and nothing writes it until a reload. Whether it was kept
+   * (blank text is nothing to keep).
+   */
+  private park(core: string, near: number): boolean {
+    if (core.trim() === "") return false;
+    const id = `r${Date.now().toString(36)}${++this.rescueN}`;
+    const r: Rescue = {
+      id,
+      text: core,
+      near,
+      sent: null,
+      owner: null,
+      n: ++this.rescueN,
+      free: true,
+      tries: RESCUE_TRIES,
+      parked: true,
+      reported: null,
+      kept: null,
+    };
+    this.rescues.set(id, r);
+    this.report([r], [], []);
+    return true;
   }
 
   /** Send a pending block now. */
@@ -2854,16 +3213,38 @@ export class DocEditor {
     this.hooks.status();
   }
 
-  /** Tells the app what changed in the store (it merges; see RescueReport). */
+  /**
+   * Tells the app what changed in the store (it merges; see RescueReport). An item the app would
+   * refuse (longer than one may be, or past a report's limits) would make it drop the whole
+   * report: it stays on this page only, with Copy, and the rest goes.
+   */
   private report(upsert: Rescue[], written: string[], gone: string[]): void {
     const n = ++this.reportN;
-    for (const r of upsert) r.reported = n;
+    const sent: Rescue[] = [];
+    let total = 0;
+    let capped = false;
+    for (const r of upsert) {
+      if (
+        r.text.length > MAX_RESCUE_ITEM ||
+        total + r.text.length > MAX_RESCUE_TOTAL ||
+        sent.length >= MAX_RESCUE_ITEMS
+      ) {
+        r.reported = null;
+        r.kept = false;
+        capped = true;
+        continue;
+      }
+      total += r.text.length;
+      r.reported = n;
+      sent.push(r);
+    }
     this.hooks.rescue?.({
-      upsert: upsert.map(({ id, text, near }) => ({ id, text, near })),
+      upsert: sent.map(({ id, text, near }) => ({ id, text, near })),
       written,
       gone,
       n,
     });
+    if (capped) this.updateRescueNotice();
   }
 
   /**
@@ -2873,23 +3254,40 @@ export class DocEditor {
    */
   rescueStored(ids: readonly string[], n: number): void {
     const held = new Set(ids);
+    // Something left the app's store since its last answer (written or gone): an item it had no
+    // room for is offered to it again.
+    const freed = [...this.heldByApp].some((id) => !held.has(id));
+    this.heldByApp = held;
     for (const r of this.rescues.values()) {
       if (held.has(r.id)) r.kept = true;
       else if (r.reported !== null && r.reported <= n) r.kept = false;
     }
+    const retry = freed
+      ? [...this.rescues.values()].filter(
+          (r) => r.kept === false && r.text.length <= MAX_RESCUE_ITEM,
+        )
+      : [];
+    if (retry.length > 0) this.report(retry, [], []);
     this.updateRescueNotice();
   }
 
+  /** The ids the app's store held at its last answer (rescueStored). */
+  private heldByApp = new Set<string>();
+
   /** Shows the rescue notice while something can only be copied, and hides it once nothing can. */
   private updateRescueNotice(): void {
-    const showing = this.notice?.textContent?.startsWith(RESCUE_NOTICE) ?? false;
+    const shown = this.notice?.textContent ?? "";
+    const showing = shown.startsWith(RESCUE_NOTICE);
     if (this.needsCopy) {
-      if (!this.notice || showing) this.showRescueNotice();
+      // A Dismiss waiting for its confirmation stays as it is.
+      if (!this.notice || (showing && !shown.startsWith(RESCUE_DISMISS))) this.showRescueNotice();
     } else if (showing) this.hideNotice();
   }
 
   /** Everything kept is dropped: the unpublished changes were discarded. */
   clearRescues(): void {
+    // A send to the discarded draft that the room refuses keeps nothing either.
+    this.lastSend = null;
     if (this.rescues.size === 0 && !this.want?.rescue) return;
     const ids = [...this.rescues.keys()];
     this.rescues.clear();
@@ -2917,11 +3315,17 @@ export class DocEditor {
    * has them), or ones tried too often.
    */
   private get needsCopy(): boolean {
-    return [...this.rescues.values()].some((r) => r.kept === false || r.parked);
+    // Kept text that this person cannot write any more (their right changed) waits too.
+    const blocked = this.backend.ready && this.backend.you?.right !== "write";
+    return [...this.rescues.values()].some((r) => r.kept === false || r.parked || blocked);
   }
 
-  /** Items the app kept from before a reload: each one not in the draft already is written. */
-  offerRescue(items: readonly RescueItem[]): void {
+  /**
+   * Items the app kept from before a reload: each one not in the draft already is written. With
+   * `copy`, they are in this page's text already (solo, where the app could not keep a copy of
+   * it): they are kept to copy or dismiss, never written again.
+   */
+  offerRescue(items: readonly RescueItem[], copy = false): void {
     let added = false;
     for (const it of items) {
       if (this.rescues.has(it.id)) continue;
@@ -2933,16 +3337,16 @@ export class DocEditor {
         n: ++this.rescueN,
         free: true,
         tries: 0,
-        parked: false,
+        parked: copy,
         reported: null,
         kept: true,
       });
       added = true;
     }
-    if (added) {
-      this.hooks.status();
-      this.flushRescues();
-    }
+    if (!added) return;
+    this.hooks.status();
+    if (copy) this.updateRescueNotice();
+    else this.flushRescues();
   }
 
   /**
@@ -2990,7 +3394,11 @@ export class DocEditor {
     const b = this.backend;
     if (this.want || b.mine || this.open || this.clearing) return;
     if (!b.ready || !b.connected || !b.settled || b.conflictVersion !== null) return;
-    if (this.rescueFrozen || b.you?.right !== "write") return;
+    if (this.rescueFrozen) return;
+    if (b.you?.right !== "write") {
+      this.updateRescueNotice();
+      return;
+    }
     const r = [...this.rescues.values()].find(
       (x) => x.sent === null && x.owner === null && !x.parked,
     );
@@ -3059,12 +3467,30 @@ export class DocEditor {
     queueMicrotask(() => this.flushRescues());
   }
 
-  private showRescueNotice(): void {
+  private showRescueNotice(confirming = false): void {
     const only = [...this.rescues.values()].some((r) => r.kept === false);
-    this.showNotice(only ? RESCUE_FRAME_ONLY : RESCUE_STUCK, {
-      label: "Copy",
-      run: () => this.copyRescues(),
-    });
+    this.showNotice(
+      confirming ? RESCUE_DISMISS : only ? RESCUE_FRAME_ONLY : RESCUE_STUCK,
+      { label: "Copy", run: () => this.copyRescues() },
+      {
+        label: "Dismiss",
+        run: () => (confirming ? this.dismissRescues() : this.showRescueNotice(true)),
+      },
+    );
+  }
+
+  /**
+   * Dismiss, confirmed: every kept text leaves the store on purpose (`gone`), here and in the
+   * app's copy. The person who typed it may, whatever their right on the doc now.
+   */
+  private dismissRescues(): void {
+    const ids = [...this.rescues.keys()];
+    this.rescues.clear();
+    this.blockRescue = null;
+    if (ids.length > 0) this.report([], [], ids);
+    if (this.want?.rescue && !this.backend.mine) this.want = null;
+    this.hideNotice();
+    this.hooks.status();
   }
 
   /** Puts every kept text on the clipboard, for the person to paste where they want it. */
@@ -3105,8 +3531,8 @@ export class DocEditor {
     }
     this.flush();
     if (this.stuck && !force) {
-      // What is typed cannot be written yet: the block stays open with it (UNSAVABLE).
-      this.showNotice(UNSAVABLE);
+      // What is typed cannot be written yet: the block stays open with it, and the page says why.
+      this.showNotice(this.stuckWhy);
       return false;
     }
     if (this.want && !this.want.op && !this.clearing) this.want = null;
@@ -3138,7 +3564,11 @@ export class DocEditor {
     if (this.editing) this.showNotice(text);
   }
 
-  private showNotice(text: string, action?: { label: string; run: () => void }): void {
+  private showNotice(
+    text: string,
+    action?: { label: string; run: () => void },
+    second?: { label: string; run: () => void },
+  ): void {
     let el = this.notice;
     if (!el) {
       el = this.doc.createElement("div");
@@ -3150,20 +3580,23 @@ export class DocEditor {
     const msg = this.doc.createElement("span");
     msg.textContent = text;
     const parts: Node[] = [msg];
-    if (action) {
+    for (const a of [action, second]) {
+      if (!a) continue;
       const btn = this.doc.createElement("button");
       btn.type = "button";
-      btn.textContent = action.label;
-      btn.addEventListener("click", action.run);
+      btn.textContent = a.label;
+      btn.addEventListener("click", a.run);
       parts.push(btn);
     }
     const close = this.doc.createElement("button");
     close.type = "button";
     close.className = "plinth-doc__notice-close";
     close.textContent = "×";
-    close.setAttribute("aria-label", "Dismiss");
+    // "Dismiss" is the rescue notice's own action there: this one only hides the notice.
+    close.setAttribute("aria-label", second?.label === "Dismiss" ? "Close" : "Dismiss");
     close.addEventListener("click", () => this.hideNotice());
     parts.push(close);
+    el.classList.toggle("plinth-doc__notice--two", second !== undefined);
     el.replaceChildren(...parts);
   }
 

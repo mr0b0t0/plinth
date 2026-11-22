@@ -2,7 +2,19 @@
 // every pointer, wheel and key handler. Writes go through BoardSync and room traffic through Live;
 // without them (the editor preview, a page without the runtime) the board only shows what it was
 // given, read-only. Every handler is a no-op for edits while the board is read-only.
-import { BOARD_LIMITS, type BoardBlock, type BoardColor, type BoardSettings } from "@plinth/shared";
+import {
+  BOARD_LIMITS,
+  type BoardBlock,
+  type BoardColor,
+  type BoardSettings,
+  cellText,
+  HEX_COLOR_RE,
+  isShapeKind,
+  SHAPE_KINDS,
+  type TableCol,
+  type TableRow,
+  TEXT_SIZES,
+} from "@plinth/shared";
 import {
   type Camera,
   center,
@@ -26,15 +38,17 @@ import {
 import type { Live } from "./live.ts";
 import { BoardModel, type DocIn, type Entry } from "./model.ts";
 import type { RuntimePeer } from "./runtime.ts";
-import { type BoardSync, KEPT_THEIRS_TEXT, USE_MINE_LABEL } from "./sync.ts";
+import { type BoardSync, DELETED_AS_NOTE_TEXT, KEPT_AS_NOTE_TEXT, putCells } from "./sync.ts";
 import {
   applyCamera,
   buildView,
   type DrawState,
   draw,
   drawPeers,
+  forgetTable,
   hueOf,
   KIND_LABELS,
+  setStyleList,
   type ToolKind,
   type ViewEls,
 } from "./view.ts";
@@ -73,6 +87,8 @@ type Drag =
       /** Where the block was when the drag began. */
       bx: number;
       by: number;
+      /** What a section carries with it: the blocks inside it, from where each began. */
+      carried: { id: string; bx: number; by: number }[];
     }
   | { kind: "resize"; pointer: number; id: string; x0: number; y0: number; w0: number; h0: number };
 
@@ -98,8 +114,24 @@ export class Board {
    * changes the block, or a snapshot arrives.
    */
   private readonly peerMoves = new Map<string, { x: number; y: number; rev: number }>();
-  /** The stored text and rev of the block being edited, as the edit began: what it saves over. */
-  private editStart: { text: string; rev: number } | null = null;
+  /**
+   * The stored text and rev of the block being edited, as the edit began: what it saves over. On a
+   * table, the cell being written in and the rows as they were.
+   */
+  private editStart: {
+    text: string;
+    rev: number;
+    /** Where the block was: what the viewer wrote goes in a note there if it is deleted. */
+    box: { x: number; y: number; w: number; h: number };
+    cell?: {
+      row: string;
+      col: string;
+      rows: Record<string, TableRow>;
+      cols: Record<string, TableCol>;
+    };
+  } | null = null;
+  /** The link a press began on: opened when the press ends without a drag. */
+  private downLink: HTMLAnchorElement | null = null;
   private drag: Drag | null = null;
   private pinch: Map<number, { x: number; y: number }> = new Map();
   private pinchDist = 0;
@@ -121,6 +153,12 @@ export class Board {
   // ---------- state ----------
 
   redraw(): void {
+    // The block being written in is gone (someone deleted it): end the edit while its editor is
+    // still on the page, so what was typed is kept (finishEditing puts it in a note).
+    if (this.editing && !this.model.blocks.has(this.editing)) {
+      this.finishEditing(true);
+      return;
+    }
     const peerSelections = new Map<string, number>();
     for (const p of this.peers) {
       const sel = p.presence?.sel;
@@ -152,13 +190,93 @@ export class Board {
   }
 
   setReadOnly(on: boolean): void {
+    const was = this.readOnly;
     this.readOnly = on;
     this.doc.documentElement.dataset.readonly = String(on);
     if (on) {
+      // An edit in progress cannot be saved now: what was typed is held on the page (and becomes
+      // a note once the board may be changed again), never dropped.
+      const typed = this.typedNow();
+      if (typed) this.sync?.hold(typed.near, typed.text);
       this.finishEditing(false);
       this.setConnecting(false);
-    }
+    } else if (was) void this.sync?.flushHeld();
     this.redraw();
+  }
+
+  /** The text of the edit in progress, where its block is, when it differs from where it began. */
+  private typedNow(): {
+    near: { x: number; y: number; w: number; h: number };
+    text: string;
+  } | null {
+    const id = this.editing;
+    const start = this.editStart;
+    if (!id || !start) return null;
+    const ta = this.view.blocks.get(id)?.querySelector("textarea");
+    if (!ta || ta.value === start.text || ta.value === "") return null;
+    const b = this.model.blocks.get(id)?.data;
+    return { near: b ? { x: b.x, y: b.y, w: b.w, h: b.h } : start.box, text: ta.value };
+  }
+
+  /**
+   * Show what the viewer wrote that could not be saved yet, with Copy and Dismiss; nothing else
+   * replaces it, and it never times out. Empty hides it.
+   */
+  showHeld(texts: readonly string[]): void {
+    const el = this.view.held;
+    if (texts.length === 0) {
+      el.replaceChildren();
+      el.hidden = true;
+      return;
+    }
+    const d = this.doc;
+    const line = d.createElement("p");
+    line.textContent = "Couldn't save what you wrote. Copy it to keep it.";
+    const area = d.createElement("textarea");
+    area.readOnly = true;
+    area.rows = 2;
+    area.value = texts.join("\n\n");
+    area.setAttribute("aria-label", "What you wrote");
+    area.addEventListener("focus", () => area.select());
+    const copy = d.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", () => void this.copyHeld(area, copy, line));
+    const dismiss = d.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", () => this.sync?.dismissHeld());
+    const actions = d.createElement("div");
+    actions.append(copy, dismiss);
+    el.replaceChildren(line, area, actions);
+    el.hidden = false;
+  }
+
+  /** Copy what is held; where the frame may not use the clipboard, select it for the viewer. */
+  private async copyHeld(
+    area: HTMLTextAreaElement,
+    copy: HTMLButtonElement,
+    line: HTMLElement,
+  ): Promise<void> {
+    let done = false;
+    try {
+      await this.win.navigator.clipboard.writeText(area.value);
+      done = true;
+    } catch {
+      area.focus();
+      area.select();
+      try {
+        done = this.doc.execCommand("copy");
+      } catch {
+        done = false;
+      }
+    }
+    if (done) copy.textContent = "Copied";
+    else {
+      area.focus();
+      area.select();
+      line.textContent = "Couldn't save what you wrote. Press Ctrl+C (⌘C on a Mac) to copy it.";
+    }
   }
 
   /**
@@ -177,9 +295,12 @@ export class Board {
     for (const [c, b] of Object.entries(t.colors) as [BoardColor, HTMLButtonElement][]) {
       b.setAttribute("aria-pressed", String(block?.color === c));
     }
+    // A selected shape's kind, or a selected text's size.
+    t.style.hidden = setStyleList(this.doc, t.style, edit && block ? block : null) === null;
     // At phone width one swatch shows the colour and opens the others; they close on a pick, on
-    // Escape and when the selection goes.
-    t.pick.dataset.color = block ? (block.color ?? "") : this.color;
+    // Escape and when the selection goes. A custom #rrggbb shows as plain.
+    const named = block?.color && !HEX_COLOR_RE.test(block.color) ? block.color : "";
+    t.pick.dataset.color = block ? named : this.color;
     if (t.colour.hidden) this.openPalette(false);
     t.connect.hidden = !edit || (!block && !this.connecting);
     t.connect.disabled = this.model.blocks.size < 2;
@@ -388,22 +509,43 @@ export class Board {
     this.redraw();
   }
 
-  startEditing(id: string): void {
+  /**
+   * Write in a block: its text, a section's title, or on a table one cell (`cell`, or the
+   * header's first when none is named).
+   */
+  startEditing(id: string, cell?: [string, string]): void {
     if (this.readOnly || this.editing === id) return;
     const el = this.view.blocks.get(id);
     const entry = this.model.blocks.get(id);
     const b = entry?.data;
     if (!el || !entry || !b) return;
     this.finishEditing(true);
+    let host: Element = el;
+    let value = b.text;
+    if (b.kind === "table") {
+      const target = cell ?? this.firstCell(el);
+      const cellEl = target ? this.cellEl(el, target) : null;
+      if (!target || !cellEl) return;
+      host = cellEl;
+      const v = b.rows?.[target[0]]?.[target[1]];
+      value = typeof v === "string" ? v : "";
+      this.editStart = {
+        text: value,
+        rev: entry.rev,
+        box: { x: b.x, y: b.y, w: b.w, h: b.h },
+        cell: { row: target[0], col: target[1], rows: b.rows ?? {}, cols: b.cols ?? {} },
+      };
+    } else
+      this.editStart = { text: b.text, rev: entry.rev, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
     this.editing = id;
-    this.editStart = { text: b.text, rev: entry.rev };
     const ta = this.doc.createElement("textarea");
     ta.className = "wb-edit";
-    ta.value = b.text;
-    ta.maxLength = BOARD_LIMITS.maxText;
-    ta.setAttribute("aria-label", `${KIND_LABELS[b.kind]} text`);
-    el.querySelector(".wb-text")?.replaceChildren();
-    el.append(ta);
+    ta.value = value;
+    ta.maxLength = b.kind === "table" ? BOARD_LIMITS.maxCell : BOARD_LIMITS.maxText;
+    ta.setAttribute("aria-label", b.kind === "table" ? "Cell text" : `${KIND_LABELS[b.kind]} text`);
+    if (b.kind === "table") host.querySelector("span")?.replaceChildren();
+    else el.querySelector(".wb-text")?.replaceChildren();
+    host.append(ta);
     ta.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Escape") {
@@ -435,18 +577,77 @@ export class Board {
     const ta = el?.querySelector("textarea");
     this.editing = null;
     this.editStart = null;
-    const text = ta ? [...ta.value].slice(0, BOARD_LIMITS.maxText).join("") : null;
+    const max = start.cell ? BOARD_LIMITS.maxCell : BOARD_LIMITS.maxText;
+    const text = ta ? [...ta.value].slice(0, max).join("") : null;
     ta?.remove();
     const cur = this.model.blocks.get(id)?.data;
-    if (keep && text !== null && cur && text !== start.text && text !== cur.text) {
+    const sync = this.sync;
+    const typed = keep && text !== null && text !== start.text ? text : null;
+    if (typed !== null && !cur) {
+      // Deleted while the viewer wrote in it: what they wrote goes into a new note where it was.
+      void sync?.keepTyped(start.box, [typed], DELETED_AS_NOTE_TEXT);
+    } else if (start.cell && cur) {
+      // A table: the cell goes into its row, over the rows as the edit began. Typed text is never
+      // dropped: when the cell, its row or its column changed meanwhile, theirs is kept, the
+      // viewer's text goes into a new note beside the table, and Use mine puts it in the cell
+      // (bringing back a row or column that went).
+      const { row, col, rows, cols } = start.cell;
+      const nowRow = cur.rows && Object.hasOwn(cur.rows, row) ? cur.rows[row] : undefined;
+      const colThere = cur.cols !== undefined && Object.hasOwn(cur.cols, col);
+      const now = cellText(cur, row, col);
+      if (typed !== null && !(nowRow && colThere && now === typed)) {
+        if (nowRow && colThere && now === start.text) {
+          const next = { ...cur.rows, [row]: { ...nowRow, [col]: typed } as TableRow };
+          this.save(id, { rows: next }, { rows }, start.rev);
+        } else {
+          const cells = [{ row, col, text: typed }];
+          void sync?.keepTyped(cur, [typed], KEPT_AS_NOTE_TEXT, () => {
+            const b = this.model.blocks.get(id)?.data;
+            if (!b || this.readOnly || !sync) return Promise.resolve(false);
+            return sync
+              .saveBlock(id, putCells(b, { rows, cols }, cells))
+              .then((ok) => ok && sync.inPlace(id, { cells }));
+          });
+        }
+      }
+      // Draw the cells again (the edit emptied one).
+      const el = this.view.blocks.get(id);
+      if (el) forgetTable(el);
+    } else if (typed !== null && cur && typed !== cur.text) {
       if (cur.text !== start.text) {
         // A peer's text reached the model during the edit (a conflict on another save of it).
-        this.say(KEPT_THEIRS_TEXT, { label: USE_MINE_LABEL, run: () => this.save(id, { text }) });
-      } else this.save(id, { text }, { text: start.text }, start.rev);
+        void sync?.keepTyped(cur, [typed], KEPT_AS_NOTE_TEXT, () =>
+          !this.readOnly && sync && this.model.blocks.has(id)
+            ? sync
+                .saveBlock(id, { text: typed })
+                .then((ok) => ok && sync.inPlace(id, { text: typed }))
+            : Promise.resolve(false),
+        );
+      } else this.save(id, { text: typed }, { text: start.text }, start.rev);
     }
     // A peer's save that came in during the edit: read now, or after the save just started.
     this.sync?.release(id);
     this.redraw();
+  }
+
+  /** A table's header's first cell: [row id, column id]. */
+  private firstCell(el: HTMLElement): [string, string] | null {
+    const first = el.querySelector(".wb-cell");
+    return first ? (this.view.cells.get(first) ?? null) : null;
+  }
+
+  private cellEl(el: HTMLElement, [row, col]: [string, string]): HTMLElement | null {
+    for (const c of el.querySelectorAll<HTMLElement>(".wb-cell")) {
+      const at = this.view.cells.get(c);
+      if (at && at[0] === row && at[1] === col) return c;
+    }
+    return null;
+  }
+
+  /** The cell of a table under an event's target, if any. */
+  private cellOf(target: Element | null): [string, string] | null {
+    const c = target?.closest?.(".wb-cell");
+    return c ? (this.view.cells.get(c) ?? null) : null;
   }
 
   // ---------- export ----------
@@ -502,6 +703,17 @@ export class Board {
       });
     }
     t.pick.addEventListener("click", () => this.openPalette(t.colour.dataset.open !== "true"));
+    t.style.addEventListener("change", () => {
+      const id = this.selected;
+      const blk = id ? this.model.blocks.get(id)?.data : undefined;
+      if (!id || !blk) return;
+      const value = t.style.value;
+      if (isShapeKind(blk.kind) && (SHAPE_KINDS as readonly string[]).includes(value)) {
+        this.save(id, { kind: value as BoardBlock["kind"] });
+      } else if (blk.kind === "text" && (TEXT_SIZES as readonly string[]).includes(value)) {
+        this.save(id, { size: value as BoardBlock["size"] });
+      }
+    });
     t.colour.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || t.colour.dataset.open !== "true") return;
       e.stopPropagation();
@@ -532,10 +744,22 @@ export class Board {
     vp.addEventListener("dblclick", (e) => {
       // The viewport captures the pointer on a block's pointerdown, so the double click is aimed
       // at the viewport: find the block under the pointer.
-      const id =
-        this.blockIdOf(e.target) ??
-        this.blockIdOf(this.doc.elementFromPoint?.(e.clientX, e.clientY) ?? null);
-      if (id) this.startEditing(id);
+      const under = this.doc.elementFromPoint?.(e.clientX, e.clientY) ?? null;
+      const id = this.blockIdOf(e.target) ?? this.blockIdOf(under);
+      if (id) this.startEditing(id, this.cellOf(under) ?? undefined);
+    });
+    // A link in a block opens in a new tab when it is pressed without a drag (onPointerUp), or
+    // from the keyboard; the browser's own navigation never runs, so a press that moves the block
+    // never opens it.
+    vp.addEventListener("click", (e) => {
+      const a = (e.target as Element | null)?.closest?.("a.wb-link");
+      if (!a) return;
+      e.preventDefault();
+      if (e.detail === 0) this.openLink(a as HTMLAnchorElement);
+    });
+    // A middle click (or any other button) on a link never opens it either.
+    vp.addEventListener("auxclick", (e) => {
+      if ((e.target as Element | null)?.closest?.("a.wb-link")) e.preventDefault();
     });
     vp.addEventListener(
       "wheel",
@@ -556,11 +780,19 @@ export class Board {
     });
   }
 
+  /** Open a block's link in a new tab, with no opener or referrer. */
+  private openLink(a: HTMLAnchorElement): void {
+    const href = a.href;
+    if (!/^https?:/i.test(href)) return;
+    this.win.open(href, "_blank", "noopener,noreferrer");
+  }
+
   private onPointerDown(e: PointerEvent): void {
     if (e.button > 0) return;
     const vp = this.view.viewport;
     const target = e.target as Element | null;
     if (target?.closest?.("textarea")) return;
+    this.downLink = (target?.closest?.("a.wb-link") as HTMLAnchorElement | null) ?? null;
     const arrowId = (target as SVGElement | null)?.dataset?.arrow;
     if (arrowId && this.model.arrows.has(arrowId)) {
       this.select(arrowId);
@@ -573,7 +805,11 @@ export class Board {
         return;
       }
       if (this.selected !== id) this.select(id);
-      if (this.readOnly) return;
+      if (this.readOnly) {
+        // A viewer's press on a link opens it as it ends.
+        if (this.downLink) vp.setPointerCapture?.(e.pointerId);
+        return;
+      }
       const b = this.model.blocks.get(id)?.data;
       const seen = this.shown(id);
       if (!b || !seen) return;
@@ -590,6 +826,11 @@ export class Board {
           h0: b.h,
         };
       } else {
+        // A section carries the blocks inside it.
+        const carried = this.model.inside(id).flatMap((cid) => {
+          const c = this.model.blocks.get(cid)?.data;
+          return c ? [{ id: cid, bx: c.x, by: c.y }] : [];
+        });
         this.drag = {
           kind: "move",
           pointer: e.pointerId,
@@ -599,6 +840,7 @@ export class Board {
           moved: false,
           bx: b.x,
           by: b.y,
+          carried,
         };
       }
       e.preventDefault();
@@ -658,6 +900,12 @@ export class Board {
       drag.moved = true;
       this.peerMoves.delete(drag.id);
       cur.data = { ...cur.data, x, y };
+      for (const c of drag.carried) {
+        const e = this.model.blocks.get(c.id);
+        if (!e) continue;
+        this.peerMoves.delete(c.id);
+        e.data = { ...e.data, x: coord(c.bx + x - drag.bx), y: coord(c.by + y - drag.by) };
+      }
       this.live?.moving(drag.id, x, y);
     } else {
       cur.data = {
@@ -672,7 +920,10 @@ export class Board {
   private onPointerUp(e: PointerEvent): void {
     this.pinch.delete(e.pointerId);
     if (this.pinch.size < 2) this.pinchDist = 0;
+    const link = this.downLink;
+    this.downLink = null;
     const drag = this.drag;
+    if (link && (!drag || (drag.kind === "move" && !drag.moved))) this.openLink(link);
     if (!drag || drag.pointer !== e.pointerId) return;
     this.drag = null;
     if (drag.kind === "pan") return;
@@ -680,6 +931,11 @@ export class Board {
     if (cur && drag.kind === "move" && drag.moved) {
       this.live?.moved();
       this.save(drag.id, { x: cur.x, y: cur.y }, { x: drag.bx, y: drag.by });
+      for (const c of drag.carried) {
+        const moved = this.model.blocks.get(c.id)?.data;
+        if (moved) this.save(c.id, { x: moved.x, y: moved.y }, { x: c.bx, y: c.by });
+        this.sync?.release(c.id);
+      }
     } else if (cur && drag.kind === "resize") {
       this.save(drag.id, { w: cur.w, h: cur.h }, { w: drag.w0, h: drag.h0 });
     }
@@ -687,9 +943,14 @@ export class Board {
     this.sync?.release(drag.id);
   }
 
-  /** Whether this viewer is dragging or resizing a block (its model copy holds the gesture). */
+  /**
+   * Whether this viewer is dragging or resizing a block, or carrying it in a section it drags (its
+   * model copy holds the gesture).
+   */
   gesturing(id: string): boolean {
-    return this.drag !== null && this.drag.kind !== "pan" && this.drag.id === id;
+    const d = this.drag;
+    if (d === null || d.kind === "pan") return false;
+    return d.id === id || (d.kind === "move" && d.carried.some((c) => c.id === id));
   }
 
   /**
@@ -734,7 +995,7 @@ export class Board {
     }
     if (e.key === "Enter" && id) {
       e.preventDefault();
-      this.startEditing(id);
+      this.startEditing(id, this.cellOf(e.target as Element | null) ?? undefined);
       return;
     }
     if (e.key === "Escape") {
@@ -765,6 +1026,7 @@ export class Board {
     if (collection === "blocks") {
       const busy = new Set<string>();
       if (this.drag && this.drag.kind !== "pan") busy.add(this.drag.id);
+      if (this.drag?.kind === "move") for (const c of this.drag.carried) busy.add(c.id);
       if (this.editing) busy.add(this.editing);
       for (const id of this.model.blocks.keys()) if (this.sync?.saving(id)) busy.add(id);
       for (const id of busy) {

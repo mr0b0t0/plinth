@@ -65,11 +65,17 @@
       "sourceLabel": "Markdown",
       "contentType": "text/markdown; charset=utf-8",
       "maxSourceBytes": 1048576,
+      "altSource": {
+        "path": "deck.json",
+        "contentType": "application/json; charset=utf-8",
+        "label": "deck index (deck.json)"
+      },
       "reservedPaths": [
         "index.html",
-        "slides.md"
+        "slides.md",
+        "deck.json"
       ],
-      "assetTypes": "/^image\\/(png|jpeg|gif|webp|avif|svg\\+xml)$/",
+      "assetTypes": "/^(image\\/(png|jpeg|gif|webp|avif|svg\\+xml)|text\\/html|text\\/css|application\\/json|font\\/(woff2|woff|ttf|otf))(;|$)/",
       "renderer": {
         "script": "slides.js",
         "style": "slides.css",
@@ -78,7 +84,8 @@
             "file": "slides-pptx.js",
             "entry": "pptx.ts"
           }
-        ]
+        ],
+        "frame": "embed.html"
       },
       "editor": {
         "language": "markdown",

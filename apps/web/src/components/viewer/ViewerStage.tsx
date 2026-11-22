@@ -42,6 +42,7 @@ import {
   type StageContext,
   type StageItem,
 } from "./stageItems.tsx";
+import { useDesignLink } from "./useDesignLink.ts";
 import { useEditStart } from "./useEditStart.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
@@ -130,7 +131,7 @@ export function ViewerStage({
   liveData,
   update: updateHandlers,
 }: ViewerStageProps) {
-  const { me, config, loading: sessionLoading } = useSession();
+  const { me, config, loading: sessionLoading, failed: sessionFailed } = useSession();
   const [theme, setTheme] = useTheme();
   const [shareOpen, setShareOpen] = useState(false);
   // The STAGE_DIALOGS entry open now, by id (Board settings), or null.
@@ -208,7 +209,8 @@ export function ViewerStage({
     onLeave: () => barRef.current?.focus(),
     onAsk: (anchor, what) => askFromFrame.current(pageAnchorOf(anchor), what),
     // Unknown while the session loads: the rescue store waits for it.
-    userId: sessionLoading ? undefined : (me?.id ?? null),
+    // Unknown (undefined) while the session loads or could not be read; null: no one signed in.
+    userId: sessionLoading || (sessionFailed && !me) ? undefined : (me?.id ?? null),
   });
   const editing = live.editing;
   // `?edit` (New and Import): start editing, with the focus on the frame's first block or cell.
@@ -230,6 +232,8 @@ export function ViewerStage({
     review,
     leaveReview: onLeaveReview,
   });
+  // A design keeps the board on view in the address (#board=<id>).
+  useDesignLink({ available: artifact.type === "design", frame, contentOrigin, config });
   const pause: WatchPause = live.pause ?? present.pause;
   // Live views: shared-data changes reach the page's runtime (origin isolation only).
   useLiveDataRelay({

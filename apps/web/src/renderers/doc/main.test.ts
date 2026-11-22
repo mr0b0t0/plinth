@@ -7,7 +7,7 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { boot } from "./boot.ts";
+import { boot, roomError } from "./boot.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
@@ -328,7 +328,7 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
-  it("asks the app about a block by its place and its published words, never draft text", async () => {
+  it("asks the app about a block by its place in the published version, and its words", async () => {
     mountShell("Intro\n\n- first item\n\n  ```\n  fenced in a list\n  ```\n\n![Old alt](x.png)");
     stop = boot(window);
     post({ ...base, type: "edit", on: true });
@@ -356,7 +356,8 @@ describe("doc renderer on-page editing (#36)", () => {
       anchor: { key: "block-3:image", text: "Old alt" },
       what: "image",
     });
-    // Alt text changed in the draft is not posted: the dialog names the kind of block instead.
+    // Alt text changed in the draft: the block is not the published one any more. Its draft
+    // words go, named after the published block above it, as not published yet ("new-…").
     image().click();
     const alt = root().querySelector(".plinth-rich__alt input") as HTMLInputElement;
     alt.value = "Draft alt";
@@ -365,10 +366,9 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(posted("ask").at(-1)).toEqual({
       ...base,
       type: "ask",
-      anchor: { key: "block-3:image", text: "" },
+      anchor: { key: "new-2:image", text: "Draft alt" },
       what: "image",
     });
-    expect(JSON.stringify(posted("ask"))).not.toContain("Draft");
   });
 
   it("with live: room, follows the live draft over the doc socket, never sending text to the app", async () => {
@@ -487,5 +487,23 @@ describe("doc renderer entry", () => {
     vi.resetModules();
     await import("./main.ts");
     expect(root().querySelector("h2")?.id).toBe("from-the-entry");
+  });
+});
+
+describe("doc renderer room errors", () => {
+  it("hands an edit the room refused to the editor, which keeps the typing, never only a notice", () => {
+    const editor = { roomRefused: vi.fn(), notify: vi.fn() };
+    roomError(editor, "invalid");
+    roomError(editor, "too_large");
+    expect(editor.roomRefused.mock.calls).toEqual([["invalid"], ["too_large"]]);
+    expect(editor.notify).not.toHaveBeenCalled();
+    // A lease that went before its frame was answered: the send was not applied either.
+    roomError(editor, "not_held");
+    expect(editor.roomRefused).toHaveBeenLastCalledWith("not_held");
+    expect(editor.notify).not.toHaveBeenCalled();
+    roomError(editor, "rate_limited");
+    expect(editor.notify).toHaveBeenCalledWith(
+      "Typing too fast for the room. Your text is kept and sent again.",
+    );
   });
 });

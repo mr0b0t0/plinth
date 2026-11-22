@@ -36,6 +36,15 @@ function queryOf(args: Json): string {
 const grant = (artifactId: string, email: string, role: "viewer" | "commenter" | "editor") =>
   db().insert(accessGrants).values({ artifactId, email, role, createdAt: nowIso() }).run();
 
+/** A read without install.record.copiedAt, the time of each answer. */
+function sameRead(body: Json): Json {
+  if (!body?.install?.record) return body;
+  return {
+    ...body,
+    install: { ...body.install, record: { ...body.install.record, copiedAt: "" } },
+  };
+}
+
 /** Both surfaces: status and body over REST, isError and body over MCP. */
 async function readBoth(a: Agent, args: Json) {
   const rest = await call(`/api/v1/artifacts/${args.id}/design-system${queryOf(args)}`, {
@@ -52,7 +61,7 @@ async function readOk(a: Agent, args: Json) {
   const r = await readBoth(a, args);
   expect(r.status, JSON.stringify(r.rest)).toBe(200);
   expect(r.mcp.isError).toBe(false);
-  expect(r.mcp.data).toEqual(r.rest);
+  expect(sameRead(r.mcp.data)).toEqual(sameRead(r.rest));
   return r.rest;
 }
 
@@ -61,7 +70,7 @@ async function readError(a: Agent, args: Json, status: number) {
   const r = await readBoth(a, args);
   expect(r.status).toBe(status);
   expect(r.mcp.isError).toBe(true);
-  expect(r.mcp.data).toEqual(r.rest);
+  expect(sameRead(r.mcp.data)).toEqual(sameRead(r.rest));
   return r.rest.error as Json;
 }
 

@@ -33,4 +33,18 @@ describe("useSignOut", () => {
     expect(countRescue("art2")).toBe(0);
     expect(window.location.pathname).toBe("/login");
   });
+
+  it("is the only way the app signs out: no page posts the logout itself", () => {
+    // History, Compare, the admin pages and the design page used to sign out on their own, which
+    // left the rescue stores behind.
+    const sources = import.meta.glob("../../**/*.{ts,tsx}", {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    }) as Record<string, string>;
+    const posting = Object.entries(sources)
+      .filter(([path, src]) => !/\.test\.tsx?$/.test(path) && src.includes("API.logout"))
+      .map(([path]) => path);
+    expect(posting).toEqual(["./hooks.tsx"]);
+  });
 });

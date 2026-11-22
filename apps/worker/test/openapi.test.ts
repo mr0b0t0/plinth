@@ -240,11 +240,12 @@ describe("OpenAPI document", () => {
     const deck = schemas.SlidesArtifactDetail;
     expect(deck.required).toContain("content");
     expect(deck.properties.type.enum).toEqual(["slides"]);
-    expect(deck.properties.source_path.enum).toEqual(["slides.md"]);
+    expect(deck.properties.source_path.enum).toEqual(["slides.md", "deck.json"]);
+    expect(deck.properties.files.items.properties).toHaveProperty("content");
     expect(deck.properties.html).toBeUndefined();
     expect(deck.properties.live_draft).toBeUndefined();
     expect(schemas.ArtifactType.description).toBe(
-      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. "whiteboard": a board of notes, shapes and arrows, its settings as JSON (source board.json) that Plinth renders as a live board, its blocks and arrows kept in shared data. Fixed at publish.',
+      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a deck in Markdown, or an HTML deck (source slides.md, or deck.json with deck.css and slides/<id>.html) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. "whiteboard": a board of notes, shapes and arrows, its settings as JSON (source board.json) that Plinth renders as a live board, its blocks and arrows kept in shared data. Fixed at publish.',
     );
     const page = schemas.HtmlArtifactDetail;
     // Existing clients keep a required html field, as before typed artifacts.

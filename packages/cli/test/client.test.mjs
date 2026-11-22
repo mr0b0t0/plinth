@@ -395,7 +395,7 @@ describe("plinth publish", () => {
     });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /No index\.html/);
-    assert.match(r.stderr, /slides\.md for a deck/);
+    assert.match(r.stderr, /slides\.md or deck\.json for a deck/);
     assert.match(r.stderr, /sheet\.jsonl for a sheet/);
   });
 

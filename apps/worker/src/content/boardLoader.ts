@@ -17,16 +17,30 @@
 //
 // Protocol (version 1). Every message is { source: BOARD_MESSAGE_SOURCE, v: 1, type }.
 //   loader -> parent: { type: "ready" }               posted to "*" once, on load
-//   parent -> loader: { type: "render", html }        from the parent window only, once; html a
-//                                                     string of at most LIMITS.maxHtmlBytes bytes
+//   parent -> loader: { type: "render", html, fluid? }
+//                                                     from the parent window only, once; html a
+//                                                     string of at most LIMITS.maxHtmlBytes bytes;
+//                                                     fluid true for a board with height="auto"
+//   loader -> parent: { type: "size", height }        a fluid board only: its content's height in
+//                                                     CSS px (1 to DESIGN_LIMITS.maxAutoHeight),
+//                                                     once before "loaded" and again whenever it
+//                                                     changes
 //   loader -> parent: { type: "loaded" }              posted to "*" when the written document has
 //                                                     loaded (its images and styles included)
+//   loader -> parent: { type: "goto", board }         a click on a link whose href is exactly
+//                                                     #board=<id> (a prototype flow); the link is
+//                                                     not followed
 // Board scripts run in the same window afterwards and can post anything to the parent, a forged
-// "loaded" included: the renderer only counts it for print readiness, from that frame's window.
+// "loaded", "size" or "goto" included: the renderer only counts "loaded" for print readiness,
+// keeps a size within the board's bounds, and follows a "goto" only from the board in use, from
+// that frame's window. None of them reaches anything but the canvas's own view.
 import {
   type ArtifactTypeDef,
+  BOARD_ID_PATTERN,
+  BOARD_LINK_PREFIX,
   BOARD_MESSAGE_SOURCE,
   BOARD_PROTOCOL_VERSION,
+  DESIGN_LIMITS,
   LIMITS,
 } from "@plinth/shared";
 import type { Config } from "../config.ts";
@@ -49,6 +63,9 @@ export function boardLoaderHtml(): string {
   var SOURCE = ${JSON.stringify(BOARD_MESSAGE_SOURCE)};
   var VERSION = ${BOARD_PROTOCOL_VERSION};
   var MAX_BYTES = ${LIMITS.maxHtmlBytes};
+  var MAX_HEIGHT = ${DESIGN_LIMITS.maxAutoHeight};
+  var LINK_PREFIX = ${JSON.stringify(BOARD_LINK_PREFIX)};
+  var BOARD_ID = new RegExp(${JSON.stringify(BOARD_ID_PATTERN)});
   var parentWindow = window.parent;
   var done = false;
 
@@ -58,12 +75,69 @@ export function boardLoaderHtml(): string {
     return new TextEncoder().encode(html).length > MAX_BYTES;
   }
 
-  function post(type) {
+  function post(type, extra) {
+    var m = { source: SOURCE, v: VERSION, type: type };
+    if (extra) for (var k in extra) m[k] = extra[k];
     try {
-      parentWindow.postMessage({ source: SOURCE, v: VERSION, type: type }, "*");
+      parentWindow.postMessage(m, "*");
     } catch (e) {
       // The parent is gone.
     }
+  }
+
+  // The board a clicked link names with an href of exactly #board=<id>, or null. Read from the
+  // attribute, never the resolved URL: the board's <base> points elsewhere.
+  function linkedBoard(event) {
+    var path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+    for (var i = 0; i < path.length; i++) {
+      var el = path[i];
+      if (!el || el.nodeType !== 1 || el.localName !== "a") continue;
+      var href = el.getAttribute("href");
+      if (href === null || href.indexOf(LINK_PREFIX) !== 0) return null;
+      var id = href.slice(LINK_PREFIX.length);
+      return BOARD_ID.test(id) ? id : null;
+    }
+    return null;
+  }
+
+  function followLinks() {
+    window.addEventListener("click", function (event) {
+      var id = linkedBoard(event);
+      if (id === null) return;
+      event.preventDefault();
+      post("goto", { board: id });
+    }, true);
+  }
+
+  // A fluid board's height: its content's, which its document leaves unsized.
+  function measure() {
+    var root = document.documentElement;
+    var body = document.body;
+    var h = Math.max(root ? root.getBoundingClientRect().height : 0, body ? body.scrollHeight : 0);
+    return Math.max(1, Math.min(MAX_HEIGHT, Math.ceil(h)));
+  }
+
+  function watchHeight() {
+    var last = 0;
+    var queued = false;
+    function report() {
+      queued = false;
+      var h = measure();
+      if (h === last) return;
+      last = h;
+      post("size", { height: h });
+    }
+    function queue() {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(report);
+    }
+    if (typeof ResizeObserver === "function") {
+      var ro = new ResizeObserver(queue);
+      if (document.documentElement) ro.observe(document.documentElement);
+      if (document.body) ro.observe(document.body);
+    }
+    return report;
   }
 
   function onMessage(event) {
@@ -73,11 +147,16 @@ export function boardLoaderHtml(): string {
     if (d.source !== SOURCE || d.v !== VERSION || d.type !== "render") return;
     if (typeof d.html !== "string" || tooLarge(d.html)) return;
     done = true;
+    var fluid = d.fluid === true;
     window.removeEventListener("message", onMessage);
     document.open();
     document.write(d.html);
     document.close();
+    // Listeners go on after document.open, which clears the window's.
+    followLinks();
+    var report = fluid ? watchHeight() : null;
     window.addEventListener("load", function () {
+      if (report) report();
       post("loaded");
     }, { once: true });
   }

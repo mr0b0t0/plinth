@@ -16,6 +16,7 @@ import {
   formatOf,
   importedNote,
   importProblem,
+  NOT_TEXT,
   openHref,
   plainCause,
   readSpreadsheet,
@@ -136,6 +137,28 @@ describe("spreadsheet files", () => {
     });
   });
 
+  it("reads UTF-16 without its BOM by where the NUL bytes fall, and refuses other NULs", () => {
+    const le = new Uint8Array([..."Item,Qty\nCafé,3"].flatMap((c) => [c.charCodeAt(0), 0]));
+    expect(decodeCsv(le)).toEqual({ text: "Item,Qty\nCafé,3", warnings: [] });
+    const be = new Uint8Array([..."Item,Qty\nCafé,3"].flatMap((c) => [0, c.charCodeAt(0)]));
+    expect(decodeCsv(be)).toEqual({ text: "Item,Qty\nCafé,3", warnings: [] });
+    // NULs that are no UTF-16 (a binary file, or a NUL in a UTF-8 file): never read as cells.
+    const junk = new Uint8Array([0x41, 0, 0, 0x42, 0x43, 0x44, 0, 0x45, 0x46]);
+    expect(() => decodeCsv(junk, "dump.csv")).toThrow(SpreadsheetFileError);
+    expect(() => decodeCsv(junk, "dump.csv")).toThrow(`dump.csv ${NOT_TEXT}`);
+    expect(() => decodeCsv(new TextEncoder().encode("a,b\nc\u0000,d\n"))).toThrow(NOT_TEXT);
+  });
+
+  it("refuses a CSV that is too large once converted to UTF-8, saying so", async () => {
+    // Just under the limit as Windows-1252, over it as UTF-8 (é takes two bytes there).
+    const n = LIMITS.maxSheetImportBytes - 10;
+    const bytes = new Uint8Array(n).fill(0xe9);
+    bytes.set(new TextEncoder().encode("Name\n"), 0);
+    await expect(readSpreadsheet(new File([bytes], "big.csv"))).rejects.toThrow(
+      "big.csv is larger than 2 MB once converted to UTF-8, the most a spreadsheet import takes.",
+    );
+  });
+
   it("drops control and bidi characters from a file name it shows or notes", () => {
     expect(cleanFileName("sales.csv")).toBe("sales.csv");
     // C0, C1, LRM/RLM, the embeddings and overrides, the isolates, and the Arabic letter mark.
@@ -148,6 +171,10 @@ describe("spreadsheet files", () => {
     // Letters, accents and other scripts stay.
     expect(cleanFileName("Résumé — 東京.csv")).toBe("Résumé — 東京.csv");
     expect(cleanFileName("\u202E")).toBe("the file");
+    // Zero-width characters, emoji joiners and the line and paragraph separators go too
+    // (UNSAFE_TEXT_RE, shared with Ask anchors, titles and sheet names).
+    expect(cleanFileName("a\u200Bb\u200Dc\u2028d\u2029e\uFEFF.csv")).toBe("abcde.csv");
+    expect(titleFromFileName("Q4\u2028plan\u200D.csv")).toBe("Q4plan");
   });
 });
 

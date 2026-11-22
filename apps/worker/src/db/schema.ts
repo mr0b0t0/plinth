@@ -16,6 +16,11 @@ export const users = sqliteTable("users", {
    * category shares; a category rename guards its batch on it.
    */
   categoryShareRev: integer("category_share_rev").notNull().default(0),
+  /**
+   * migrations/0022: the id of the person's default design system (one of their own design_system
+   * artifacts), or null. Owner-only metadata; list_artifacts marks it `default: true`.
+   */
+  defaultDesignSystem: text("default_design_system"),
 });
 
 export const agentConnections = sqliteTable("agent_connections", {
@@ -66,7 +71,7 @@ export const artifacts = sqliteTable("artifacts", {
   categoryReview: text("category_review", { enum: ["shared", "private"] }),
   categoryReviewShare: text("category_review_share"),
   /**
-   * migrations/0022 (docs/spec.md "Published from code"): "code" when the publisher said the
+   * migrations/0023 (docs/spec.md "Published from code"): "code" when the publisher said the
    * artifact's source lives in code, null = edited on the page. Never versioned.
    */
   editing: text("editing", { enum: ["code"] }),

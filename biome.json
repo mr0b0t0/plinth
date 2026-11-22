@@ -20,6 +20,7 @@
       "!integrations/plugin-openai/**/*.json",
       "!integrations/plugin-cursor/**/*.json",
       "!integrations/gemini/**/*.json",
+      "!docs/examples/plinth-deck/slides",
       "!.claude-plugin",
       "!.agents"
     ]

@@ -28,6 +28,19 @@ export interface ManifestEntry {
    * input and never returned by the API.
    */
   stored_at?: string;
+  /**
+   * Server-written: where a file copied from another artifact came from (copy_files), kept as the
+   * file is carried into later versions. Never accepted from input.
+   */
+  copied_from?: CopiedFromEntry;
+}
+
+/** One copied file's origin: the source artifact's id, its version and path, and when. */
+export interface CopiedFromEntry {
+  artifact: string;
+  version: number;
+  path: string;
+  copied_at: string;
 }
 
 /** `artifacts/<id>/`: everything one artifact stores. */

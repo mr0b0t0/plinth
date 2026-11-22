@@ -197,7 +197,22 @@ describe("the doc frame's rescue store", () => {
     ).toEqual(["z", "y"]);
   });
 
-  it("is kept per person, counted for any person, and cleared only by clearRescueStores", () => {
+  it("leaves an update refused over the caps out of the ids it answers with, keeping the old text", () => {
+    sessionStorage.clear();
+    const chunk = "y".repeat(60 * 1024);
+    const four = ["a", "b", "c", "d"].map((id) => item(id, chunk));
+    mergeRescue("u1", "art1", [...four, item("e", "small")], []);
+    // "e" grows past the 256 KiB total: refused, so its older text stays, and its id is not
+    // answered as held (the frame then still offers Copy for the newer text).
+    const ids = mergeRescue("u1", "art1", [item("e", "z".repeat(30 * 1024))], []);
+    expect(ids).toHaveLength(4);
+    expect(ids).not.toContain("e");
+    expect(loadRescue("u1", "art1")).toContainEqual(item("e", "small"));
+    // An update that fits is answered as held.
+    expect(mergeRescue("u1", "art1", [item("e", "short")], [])).toContain("e");
+  });
+
+  it("is kept per person, counted per person once known, and cleared only by clearRescueStores", () => {
     sessionStorage.clear();
     mergeRescue("u0", "art1", [item("a")], []);
     mergeRescue("u1", "art1", [item("b"), item("c")], []);
@@ -206,6 +221,12 @@ describe("the doc frame's rescue store", () => {
     expect(loadRescue("u0", "art1")).toEqual([item("a")]);
     expect(countRescue("art1")).toBe(3);
     expect(countRescue("art2")).toBe(0);
+    // Once the session is known, only its own store counts: none when no one is signed in.
+    expect(countRescue("art1", "u1")).toBe(2);
+    expect(countRescue("art1", "u0")).toBe(1);
+    expect(countRescue("art1", "u9")).toBe(0);
+    expect(countRescue("art1", null)).toBe(0);
+    expect(countRescue("art1", undefined)).toBe(3);
     // An explicit sign-out in the tab.
     clearRescueStores();
     expect(loadRescue("u0", "art1")).toBeNull();

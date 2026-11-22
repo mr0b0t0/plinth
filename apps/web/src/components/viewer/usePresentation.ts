@@ -96,7 +96,12 @@ export const EXPORT_INTERRUPTED_TOAST = {
  * The toast for a finished export, or null for a clean one: the browser shows its own download.
  * Exported for tests.
  */
-export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: boolean }): {
+export function exportedToast(m: {
+  ok: boolean;
+  images_skipped: number;
+  embeds_skipped?: number;
+  opaque: boolean;
+}): {
   title: string;
   description?: string;
   tone: "warning" | "danger";
@@ -104,22 +109,25 @@ export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: 
   if (!m.ok) {
     return { title: "The .pptx could not be made", tone: "danger" };
   }
-  if (m.images_skipped === 0) return null;
-  if (m.opaque) {
-    return {
-      title: "Downloaded the .pptx",
-      description: "Images were left out.",
-      tone: "warning",
-    };
+  const embeds = m.embeds_skipped ?? 0;
+  if (m.images_skipped === 0 && embeds === 0) return null;
+  const parts: string[] = [];
+  if (m.images_skipped > 0) {
+    parts.push(
+      m.opaque
+        ? "Images were left out."
+        : m.images_skipped === 1
+          ? "1 image could not be added."
+          : `${m.images_skipped} images could not be added.`,
+    );
   }
-  return {
-    title: "Downloaded the .pptx",
-    description:
-      m.images_skipped === 1
-        ? "1 image could not be added."
-        : `${m.images_skipped} images could not be added.`,
-    tone: "warning",
-  };
+  // A live embed runs code, which a .pptx cannot hold.
+  if (embeds > 0) {
+    parts.push(
+      embeds === 1 ? "1 live embed was left out." : `${embeds} live embeds were left out.`,
+    );
+  }
+  return { title: "Downloaded the .pptx", description: parts.join(" "), tone: "warning" };
 }
 
 export interface PresentationOptions {

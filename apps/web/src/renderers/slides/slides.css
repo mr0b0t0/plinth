@@ -163,6 +163,23 @@ body {
   padding: 56px 64px 68px;
 }
 
+/* An HTML deck's slide (html/build.ts): its own shadow root holds the whole canvas, with the
+   deck's look, so the host adds no padding, colour or font of its own. */
+.plinth-slides__slide[data-format="html"] {
+  display: block;
+  padding: 0;
+  background: #ffffff;
+  color: #1f2328;
+  line-height: normal;
+}
+
+/* The slide being left keeps showing while its transition plays (html/transitions.ts). */
+.plinth-slides[data-mode="deck"] .plinth-slides__frame[data-leaving] {
+  display: block;
+  position: absolute;
+  pointer-events: none;
+}
+
 .plinth-slides__body {
   display: flex;
   flex: 1;
@@ -947,6 +964,29 @@ body {
 
   html[data-aspect="4:3"] .plinth-slides[data-print="handout"] .plinth-slides__slide {
     transform: scale(0.62);
+  }
+
+  /* An HTML deck's 1920 or 1440 px canvas, scaled to the handout's page width. */
+  html[data-format="html"] .plinth-slides[data-print="handout"] .plinth-slides__canvas {
+    width: calc(var(--w) * 0.35);
+    height: calc(var(--h) * 0.35);
+  }
+
+  html[data-format="html"] .plinth-slides[data-print="handout"] .plinth-slides__slide {
+    transform: scale(0.35);
+  }
+
+  html[data-format="html"][data-aspect="4:3"]
+    .plinth-slides[data-print="handout"]
+    .plinth-slides__canvas {
+    width: calc(var(--w) * 0.44);
+    height: calc(var(--h) * 0.44);
+  }
+
+  html[data-format="html"][data-aspect="4:3"]
+    .plinth-slides[data-print="handout"]
+    .plinth-slides__slide {
+    transform: scale(0.44);
   }
 
   html .plinth-slides[data-print="handout"] .plinth-slides__handout {

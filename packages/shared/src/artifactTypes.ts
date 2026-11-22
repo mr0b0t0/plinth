@@ -16,6 +16,7 @@ import { sheet } from "./artifactTypes/sheet.ts";
 import { slides } from "./artifactTypes/slides.ts";
 import { whiteboard } from "./artifactTypes/whiteboard.ts";
 import { escapeHtml } from "./markdown.ts";
+import { isHtmlDeckIndex } from "./slidesHtml.ts";
 
 /** Every type, in registry order. */
 // biome-ignore format: one type per line, so each type adds its own line
@@ -48,15 +49,23 @@ export interface ArtifactTypeDef {
   /** Content-Type of the stored source file. */
   contentType: string;
   maxSourceBytes: number;
+  /**
+   * A second source file a version may hold instead of sourcePath, in another format: an HTML
+   * deck's deck.json beside a Markdown deck's slides.md (docs/spec.md "Slides"). Its text is a JSON
+   * object, which is how a sent source says it is this one (sourcePathForText); a stored version
+   * says it by the file it holds (versionSourcePath). The source field carries either. Absent: the
+   * type has one source file. Both paths are among reservedPaths.
+   */
+  altSource?: { path: string; contentType: string; label: string };
   /** Paths an asset may not use. */
   reservedPaths: readonly string[];
   /** Allowed asset content types, or null for any. */
   assetTypes: RegExp | null;
   /**
-   * Renderer files under /__plinth/types/<id>/, or null for a type served as-is. `frame`, only
-   * with opaqueFrames, names a fixed Plinth page the renderer frames, at /__plinth/frames/<id>/
-   * (a design's board loader, content/boardLoader.ts): the content host serves it only behind the
-   * content pass, never from the web build.
+   * Renderer files under /__plinth/types/<id>/, or null for a type served as-is. `frame` names a
+   * fixed Plinth page the renderer frames, at /__plinth/frames/<id>/ (a design's board loader,
+   * content/boardLoader.ts; a deck's embed loader, content/embedLoader.ts): the content host
+   * serves it only behind the content pass, never from the web build.
    */
   renderer: RendererFiles | null;
   /**
@@ -234,6 +243,49 @@ export function isLiveType(def: Pick<ArtifactTypeDef, "edit"> | null | undefined
  */
 export const HTML_DOCUMENT_RE = /^\s*(<!doctype[ ]html|<html[\s>])/i;
 
+/**
+ * Where a sent source is stored: the type's altSource when it has one and the text is a JSON object
+ * (an HTML deck's deck.json), else its sourcePath.
+ */
+export function sourcePathForText(def: ArtifactTypeDef, text: string | Uint8Array): string {
+  if (!def.altSource) return def.sourcePath;
+  let head: string;
+  if (typeof text === "string") head = text.slice(0, 64);
+  else {
+    // The first bytes as ASCII, a UTF-8 byte order mark skipped: all isHtmlDeckIndex looks at.
+    let k = text[0] === 0xef && text[1] === 0xbb && text[2] === 0xbf ? 3 : 0;
+    head = "";
+    for (; k < text.length && head.length < 64; k++) head += String.fromCharCode(text[k] as number);
+  }
+  return isHtmlDeckIndex(head) ? def.altSource.path : def.sourcePath;
+}
+
+/**
+ * The source file of a stored version, from the paths it holds: the type's altSource when the
+ * version holds that file and not sourcePath, else sourcePath.
+ */
+export function versionSourcePath(
+  def: ArtifactTypeDef,
+  paths: { has(path: string): boolean } | readonly { path: string }[],
+): string {
+  if (!def.altSource) return def.sourcePath;
+  const has = (p: string) =>
+    "has" in paths && typeof paths.has === "function"
+      ? paths.has(p)
+      : (paths as readonly { path: string }[]).some((e) => e.path === p);
+  return !has(def.sourcePath) && has(def.altSource.path) ? def.altSource.path : def.sourcePath;
+}
+
+/** The stored Content-Type and the name of a type's source file at `path`. */
+export function sourceFileOf(
+  def: ArtifactTypeDef,
+  path: string,
+): { contentType: string; label: string } {
+  return def.altSource && path === def.altSource.path
+    ? { contentType: def.altSource.contentType, label: def.altSource.label }
+    : { contentType: def.contentType, label: def.sourceLabel };
+}
+
 /** The registry row for a type id, or null for an unknown value (prototype keys included). */
 export function typeDef(t: string): ArtifactTypeDef | null {
   return Object.hasOwn(TYPE_REGISTRY, t) ? TYPE_REGISTRY[t as ArtifactType] : null;
@@ -284,6 +336,12 @@ export interface TypedPayload {
    * unchanged.
    */
   follow?: "present" | "watch";
+  /**
+   * An HTML deck's deck.css and slide files (slides/<id>.html), by path, set only when `path` is
+   * the type's altSource (deck.json, whose text is `text`). Absent otherwise, so every other shell
+   * is unchanged.
+   */
+  files?: Record<string, string>;
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -329,20 +387,26 @@ export function typedShellHtml(
     view?: "overview";
     version?: number;
     follow?: "present" | "watch";
+    /** The stored source's path, when it is the type's altSource (an HTML deck's deck.json). */
+    path?: string;
+    /** An HTML deck's other text files, by path (TypedPayload.files). */
+    files?: Record<string, string>;
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
   const dir = `${o.base}/__plinth/types/${def.id}`;
+  const alt = def.altSource && o.path === def.altSource.path;
   const payload: TypedPayload = {
     v: TYPED_PAYLOAD_VERSION,
     type: def.id,
-    path: def.sourcePath,
+    path: alt && def.altSource ? def.altSource.path : def.sourcePath,
     app_origin: o.appOrigin,
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
     ...(o.version !== undefined ? { version: o.version } : {}),
     ...(o.follow ? { follow: o.follow } : {}),
+    ...(alt && o.files ? { files: o.files } : {}),
   };
   // The page runtime, right before the renderer, for a type whose page uses it (renderer.runtime).
   const runtime = def.renderer.runtime

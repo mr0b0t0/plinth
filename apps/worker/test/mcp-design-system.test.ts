@@ -31,8 +31,11 @@ describe("design systems over MCP", () => {
     expect(t?.description).toContain('<meta name="plinth-design-system" content="<id>@<version>">');
     expect(Object.keys(t?.inputSchema.properties ?? {}).sort()).toEqual([
       "components",
+      "deck_format",
+      "folder",
       "id",
       "include",
+      "install_for",
       "version",
     ]);
     const publish = tools.find((x) => x.name === "publish_artifact");
