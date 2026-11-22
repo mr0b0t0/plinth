@@ -996,6 +996,10 @@ describe("the browser's steps", () => {
             calls.steps.push("cookie");
             return {};
           }
+          if (method === "Emulation.setEmulatedMedia") {
+            calls.steps.push(`media:${params.media as string}`);
+            return {};
+          }
           if (method === "Page.printToPDF") {
             calls.steps.push("pdf");
             calls.pdf += 1;
@@ -1019,9 +1023,12 @@ describe("the browser's steps", () => {
         },
       }),
       setViewport: async () => undefined,
-      emulateMediaFeatures: async () => undefined,
-      emulateMediaType: async (type: string) => {
-        calls.steps.push(`media:${type}`);
+      // Media goes through the DevTools session (Emulation.setEmulatedMedia), never the page.
+      emulateMediaFeatures: async () => {
+        throw new Error("page.emulateMediaFeatures is dropped while a session is attached");
+      },
+      emulateMediaType: async () => {
+        throw new Error("page.emulateMediaType is dropped while a session is attached");
       },
       goto: async (_url: string, o: { waitUntil?: string; timeout?: number }) => {
         calls.steps.push("goto");
