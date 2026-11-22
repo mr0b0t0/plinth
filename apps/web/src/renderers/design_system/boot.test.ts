@@ -365,13 +365,100 @@ describe("boot", () => {
     expect(root().textContent).toContain(evil);
   });
 
-  it("shows one short line and sets data-ready=error for JSON it cannot use", () => {
+  it("lists the problems an agent needs to fix, names no editor, and sets data-ready=error", () => {
     mountShell(JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" }));
     stop = boot(window);
     expect(document.documentElement.getAttribute("data-ready")).toBe("error");
-    // The editor lists the problems above the source; the page does not repeat them.
-    expect(root().textContent).toBe("This design system could not be shown.");
-    expect(root().querySelectorAll("h1, ul")).toHaveLength(0);
+    const error = root().querySelector(".ds-error");
+    expect(error?.querySelector("p")?.textContent).toBe(
+      "This design system has problems an agent needs to fix:",
+    );
+    expect([...root().querySelectorAll(".ds-error__list li")].map((l) => l.textContent)).toEqual([
+      'format must be "plinth.design-system/1"',
+    ]);
+    expect(root().textContent).not.toMatch(/editor/i);
+    expect(root().querySelectorAll("h1")).toHaveLength(0);
+    // Without the room's draft (not an owner or editor here), there is nothing to ask from the page.
+    expect(root().querySelector("button")).toBeNull();
+  });
+
+  it("offers Ask an agent on the error page to the owner and editors, posting `ask`", () => {
+    const text = JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" });
+    const html = typedShellHtml(TYPE_REGISTRY.design_system, {
+      title: "T",
+      text,
+      base: "",
+      appOrigin: APP,
+      live: "room",
+    });
+    const main = /<main [^>]*><\/main>/.exec(html)?.[0] ?? "";
+    const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0] ?? "";
+    document.body.innerHTML = main + data;
+    const posted: unknown[] = [];
+    const spy = vi.spyOn(window.parent, "postMessage").mockImplementation((m: unknown) => {
+      posted.push(m);
+    });
+    // No socket in the test: the room client's first connection fails and stays quiet.
+    const ws = vi.spyOn(window, "WebSocket").mockImplementation((() => {
+      throw new Error("no sockets here");
+    }) as never);
+    try {
+      stop = boot(window);
+      const ask = [...root().querySelectorAll("button")].find(
+        (b) => b.textContent === "Ask an agent",
+      );
+      expect(ask).toBeTruthy();
+      ask?.click();
+      expect(posted).toContainEqual(
+        expect.objectContaining({
+          type: "ask",
+          anchor: { key: "system:problems", text: "Problems" },
+        }),
+      );
+    } finally {
+      spy.mockRestore();
+      ws.mockRestore();
+    }
+  });
+
+  it("tells the app an invalid system is not edited on the page, and stays as it is", async () => {
+    const KEY = "K".repeat(43);
+    mountShell(JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" }));
+    const posted: Record<string, unknown>[] = [];
+    const spy = vi.spyOn(window.parent, "postMessage").mockImplementation((m: unknown) => {
+      posted.push(m as Record<string, unknown>);
+    });
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      // A viewer's frame has no key: it tells the app nothing.
+      stop = boot(window);
+      await flush();
+      expect(posted.filter((m) => m.type === "live")).toHaveLength(0);
+      stop();
+      // An owner's or editor's frame (the app put its key in the address) says why.
+      window.location.hash = `#plinth-k=${KEY}`;
+      stop = boot(window);
+      await flush();
+      const live = posted.filter((m) => m.type === "live");
+      expect(live.at(-1)).toMatchObject({ key: KEY, editing: false, unavailable: "invalid" });
+      // Edit mode asked for anyway: nothing changes on the page.
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { source: "plinth-renderer", v: 1, type: "edit", on: true },
+          origin: APP,
+          source: window.parent as never,
+        }),
+      );
+      await flush();
+      expect(posted.filter((m) => m.type === "live").at(-1)).toMatchObject({
+        editing: false,
+        unavailable: "invalid",
+      });
+      expect(root().querySelector(".ds-error")).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+      window.location.hash = "";
+    }
   });
 
   it("refuses a payload for another type or that is not JSON", () => {

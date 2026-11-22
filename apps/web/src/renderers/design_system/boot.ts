@@ -4,20 +4,54 @@
 // html[data-ready="ok"|"error"], which thumbnails and end-to-end tests wait for.
 //
 // It finds the root and data by id and reads only window properties the platform defines.
+//
+// On-page editing (#36), as for docs and sheets: view mode renders exactly as before. With
+// `live: "room"` in the payload (an owner or editor on the current version, rooms on) it also opens
+// the room's draft socket, shows the live draft (a line projection of the JSON,
+// designSystemLive.ts) as it changes and reports its status to the app; edit code runs only once
+// the app sends { type: "edit", on: true }. Without `live` that message turns on solo editing of
+// the version's projection, which the app saves through its own session after asking for it with
+// `collect` (the frame hands over the storage form, never the projection). A system too large to
+// edit on its page answers with `unavailable: "too_large"`. A frozen draft is reviewed whole in the
+// frame (common/review.ts) when the app sends `review`: the two sites side by side, each with its
+// own version's files. Every editing message to the app carries the frame key the app put in the
+// address (common/frameKey.ts), which is taken out of it before anything renders.
 import {
-  designSystemFontFaces,
-  designSystemFontLinks,
+  applyDesignSystemStruct,
+  type DesignSystem,
+  type DsStructOp,
+  type LiveStructOp,
+  liveRules,
+  PAGE_ANCHOR_KEY_RE,
+  PAGE_COMMENT_LIMITS,
   parseDesignSystem,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
+import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
+import {
+  appPoster,
+  type EditAppMessage,
+  ReviewSession,
+  readEditMessage,
+} from "../common/editSession.ts";
+import { takeFrameKey } from "../common/frameKey.ts";
+import { type ClientLease, LiveDocClient, type LiveDocOptions } from "../common/live.ts";
+import { DraftReview } from "../common/review.ts";
+import { blockWords, type RescueReport } from "../doc/edit.ts";
+import { renderMarkdown } from "../doc/markdown.ts";
+import { sanitizeHtml } from "../doc/sanitize.ts";
+import { type DsAskAnchor, type DsAskKind, DsEditor } from "./edit.ts";
+import { LocalSystem } from "./local.ts";
+import { applyFonts, systemPane } from "./pane.ts";
 import type { PreviewTheme } from "./preview.ts";
-import { renderProblems, renderSite, sectionId, setPreviewTheme } from "./render.ts";
+import { renderProblems, renderSite, sectionId, setPreviewTheme, tokenGroup } from "./render.ts";
 
 const ROOT_ID = "__plinth-design_system";
 const DATA_ID = "__plinth-content";
+const RULES = liveRules("design_system");
 
 function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -97,10 +131,386 @@ function trackSection(win: Window, root: HTMLElement): () => void {
   return () => observer.disconnect();
 }
 
+const ERRORS: Record<string, string> = {
+  draft_limit:
+    "These edits are live but not kept: the owner has too many artifacts with unpublished page edits. Publish a version.",
+  rate_limited: "Changing too fast for the room. Your change is kept and sent again.",
+  unavailable: "Live editing is unavailable right now. Your changes are kept on this page.",
+};
+
+/**
+ * What may cross to the app as an anchor's words: only what the published version shows (token
+ * and group paths, component names, the first words of its formatted texts' blocks), so no draft
+ * text reaches the app.
+ */
+function publishedWords(doc: Document, ds: DesignSystem | null): Set<string> {
+  const out = new Set<string>(["Fonts and settings", "Problems"]);
+  if (!ds) return out;
+  for (const t of ds.tokens) {
+    out.add(t.path);
+    out.add(tokenGroup(t.path));
+  }
+  const texts = [ds.guidelines, ds.description];
+  for (const c of ds.components) {
+    out.add(c.name);
+    texts.push(c.description, c.usage);
+  }
+  for (const md of texts) {
+    if (!md) continue;
+    const shown = sanitizeHtml(renderMarkdown(md), doc);
+    for (const n of Array.from(shown.childNodes)) out.add(blockWords([n]));
+    for (const img of Array.from(shown.querySelectorAll("img"))) {
+      out.add(blockWords([doc.createTextNode(img.alt)]));
+    }
+  }
+  return out;
+}
+
+/**
+ * The names of what the published version has, in its order: its tokens' paths, their groups
+ * (first appearance), its components' ids. Anchor keys are made from these alone.
+ */
+function publishedNames(ds: DesignSystem | null): Record<DsAskKind, string[]> {
+  const out: Record<DsAskKind, string[]> = { token: [], group: [], component: [] };
+  if (!ds) return out;
+  const groups = new Set<string>();
+  for (const t of ds.tokens) {
+    out.token.push(t.path);
+    groups.add(tokenGroup(t.path));
+  }
+  out.group = [...groups];
+  out.component = ds.components.map((c) => c.id);
+  return out;
+}
+
+/**
+ * The anchor key of a token, group or component, from the published version only: by its name
+ * when the name fits a key, else by its place in the published version (`token:12`), and just the
+ * kind (`token`) for one only the draft has, so no draft name or position reaches the app.
+ */
+function publishedAnchorKey(
+  names: Record<DsAskKind, string[]>,
+  kind: DsAskKind,
+  name: string,
+): string {
+  const at = names[kind].indexOf(name);
+  if (at < 0) return kind;
+  const key = `${kind}:${name}`;
+  return key.length <= PAGE_COMMENT_LIMITS.maxKey && PAGE_ANCHOR_KEY_RE.test(key)
+    ? key
+    : `${kind}:${at}`;
+}
+
+/** A formatted text of the published version by its key (DsEditorHooks.publishedText). */
+function publishedText(ds: DesignSystem | null, key: string): string {
+  if (!ds) return "";
+  if (key === "guidelines") return ds.guidelines ?? "";
+  if (key === "description") return ds.description ?? "";
+  const m = /^component:(.+):(description|usage)$/.exec(key);
+  const c = m ? ds.components.find((x) => x.id === m[1]) : undefined;
+  return (m && c ? c[m[2] as "description" | "usage"] : null) ?? "";
+}
+
+/** Wires on-page editing. Returns its message handler and how to stop it. */
+function live(
+  win: Window,
+  root: HTMLElement,
+  payload: TypedPayload,
+  appOrigin: string,
+  key: string | null,
+  theme: () => PreviewTheme,
+  published: DesignSystem | null,
+  connect?: LiveDocOptions["connect"],
+  /** The site was drawn again (from the draft): the navigation follows the new sections. */
+  redrawn: () => void = () => undefined,
+) {
+  const rules = RULES as NonNullable<typeof RULES>;
+  let client: LiveDocClient | null = null;
+  let local: LocalSystem | null = null;
+  let editor: DsEditor | null = null;
+  let queued = false;
+  let unavailable = false;
+  /**
+   * Edit mode was asked for before the room's text arrived: its size is checked when the text
+   * comes (an empty draft is not a projection, so checking it then would refuse every page).
+   * `focus` is the focus asked for with it.
+   */
+  let sizeDue: { focus: boolean } | null = null;
+  /** Solo: the version shown, whose files the draft is drawn with. */
+  let soloBase: number | null = null;
+  let words: Set<string> | null = null;
+  let names: Record<DsAskKind, string[]> | null = null;
+  // The published version has problems only an agent can fix: it is not edited on the page.
+  const invalid = published === null;
+
+  const poster = appPoster(win, appOrigin, key);
+  const post = poster.post;
+  const statusNow = () => {
+    queued = false;
+    const c = local ? null : client;
+    const backend = local ?? client;
+    const you = c?.you?.email;
+    const where = new Map<string, string>();
+    for (const l of c?.leases.values() ?? []) {
+      const w = editor?.whereOf(l.start);
+      if (w) where.set(l.by, w);
+    }
+    const holders = new Set([...(c?.leases.values() ?? [])].map((l) => l.by));
+    const editors = (c?.editors ?? [])
+      .filter((e) => e !== you)
+      .slice(0, 50)
+      .map((email) => ({
+        email: email.slice(0, 254),
+        block: holders.has(email),
+        ...(where.has(email) ? { where: where.get(email) as string } : {}),
+      }));
+    const s: LiveFrameStatus = {
+      connected: c?.connected ?? false,
+      failed: client?.failed ?? false,
+      editing: editor?.editing ?? false,
+      holding: (editor?.editing ?? false) && backend?.mine != null,
+      dirty: local ? local.dirty : (c?.dirty ?? false),
+      unflushed: c ? c.unflushed || (editor?.pending ?? false) : (editor?.unsavable ?? false),
+      rev: c?.rev ?? 0,
+      base_version: c?.baseVersion ?? 0,
+      conflict_version: c?.conflictVersion ?? null,
+      last_by_you: c?.lastByYou ?? false,
+      last_edit_at: c?.lastEditAt ?? null,
+      editors,
+      publishable: editor?.parsed != null && !(editor?.unsavable ?? false),
+      ...(unavailable
+        ? { unavailable: "too_large" as const }
+        : invalid
+          ? { unavailable: "invalid" as const }
+          : {}),
+      ...(editor?.unsavable ? { unsavable: true as const } : {}),
+      // A value or text set here that the room's draft does not hold yet: Publish and Done wait.
+      ...(c && editor?.pending ? { pending: true as const } : {}),
+    };
+    post({ type: "live", ...s });
+  };
+  const status = () => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(statusNow);
+  };
+  const hooks = {
+    save: () => post({ type: "save" }),
+    status,
+    // The texts' rescue stores: the app keeps a copy in its own storage (never this origin's).
+    rescue: (r: RescueReport) => post({ type: "rescue", ...r }),
+    leave: () => {
+      if (!session.isOpen) post({ type: "leave" });
+    },
+    fileVersion: () => {
+      if (local) return soloBase;
+      return client && client.baseVersion > 0 ? client.baseVersion : null;
+    },
+    // A place the person wants an agent to change: the app opens its Ask dialog. The anchor is a
+    // structural key made from the published version only (publishedAnchorKey), with words only
+    // the published version has.
+    ask: (anchor: DsAskAnchor) => {
+      words ??= publishedWords(win.document, published);
+      names ??= publishedNames(published);
+      const key =
+        "kind" in anchor ? publishedAnchorKey(names, anchor.kind, anchor.name) : anchor.key;
+      post({
+        type: "ask",
+        anchor: { key, text: words.has(anchor.text) ? anchor.text : "" },
+      });
+    },
+    publishedText: (key: string) => publishedText(published, key),
+    theme,
+    drawn: (ds: DesignSystem) => {
+      applyFonts(win.document, ds, hooks.fileVersion(), "site");
+      redrawn();
+    },
+  };
+  const events = {
+    granted: (l: ClientLease) => editor?.granted(l),
+    changed: () => {
+      editor?.changed();
+      status();
+    },
+    structLanded: (op: LiveStructOp) => editor?.structLanded(op),
+  };
+
+  const review = new DraftReview({
+    win,
+    type: "design_system",
+    sourcePath: payload.path,
+    rules,
+    pane: systemPane(win.document, theme),
+    choose: (outcome, note) => session.choose(outcome, note),
+  });
+  const session = new ReviewSession(review, {
+    post,
+    rules,
+    room: () => (local ? null : client),
+    soloText: () => local?.text ?? null,
+  });
+
+  const goSolo = () => {
+    local ??= new LocalSystem(rules.toLive(payload.text), events);
+    if (editor) editor.setBackend(local);
+    else editor = new DsEditor(root, win, local, hooks);
+  };
+
+  /** The draft is here: the room's text has arrived, or the frame edits on its own. */
+  const draftHere = () => local !== null || (client?.ready ?? false);
+  /** Too large to edit on the page: say so, and stay as it is. */
+  const refuseIfTooLarge = (): boolean => {
+    const text = local ? local.text : (client?.text ?? "");
+    unavailable = rules.tooLarge(text) || (editor?.tooLarge ?? false);
+    if (unavailable) {
+      editor?.setEditing(false);
+      editor?.say(
+        "This design system is too large to edit on the page. Ask an agent to change it.",
+      );
+    }
+    return unavailable;
+  };
+  /** The draft arrived after edit mode was asked for: check its size now. */
+  const checkDueSize = () => {
+    if (!sizeDue || !draftHere()) return;
+    const { focus } = sizeDue;
+    sizeDue = null;
+    if (!refuseIfTooLarge() && focus) editor?.focusFirst();
+    status();
+  };
+
+  if (payload.live === "room") {
+    client = new LiveDocClient({
+      win,
+      // Each lease request is answered once, in order: the editor matches answers to requests.
+      countLeases: true,
+      ...(connect ? { connect } : {}),
+      // Typed text not in the draft yet keeps a hidden tab's socket, as unflushed text does.
+      keepOpen: () => editor?.pending ?? false,
+      listener: {
+        changed: () => {
+          if (!local) editor?.changed();
+          checkDueSize();
+        },
+        status: () => {
+          if (client && !client.connected && !local) editor?.disconnected();
+          if (!local) editor?.roomStatus();
+          if (client?.failed && !local && editor?.editing) goSolo();
+          checkDueSize();
+          status();
+        },
+        granted: (l) => {
+          if (!local) editor?.granted(l);
+        },
+        denied: (r, by) => {
+          if (!local) editor?.denied(r, by);
+        },
+        lost: (r) => {
+          if (!local) editor?.lost(r);
+        },
+        version: (kind, n, info) => {
+          // The unpublished changes were discarded: so is everything kept to rescue.
+          if (kind === "reset" && info.why === "discarded") {
+            editor?.clearRescues();
+            editor?.clearValues();
+          }
+          if (!local) session.version(kind, n, info);
+          status();
+        },
+        error: (code, answers) => {
+          if (local) return;
+          // A lease or takeover request answered with an error (the holder let go first).
+          if (answers && "lease" in answers) editor?.leaseFailed();
+          else if (code === "not_held") {
+            // A value's edit on a lease that went first waits again. A text's edit or a release
+            // concerns nobody: the editor said what happened when the lease went.
+            if (answers && "edit" in answers) editor?.notHeld(answers.edit);
+          } else if (code === "invalid" || code === "too_large") editor?.error(code);
+          else editor?.say(ERRORS[code] ?? "Something went wrong with live editing.");
+        },
+        structDenied: (r, by) => {
+          if (!local) editor?.structDenied(r, by);
+        },
+        editDenied: (r, seq) => {
+          if (!local) editor?.editDenied(r, seq);
+        },
+        structLanded: (op) => {
+          if (!local) editor?.structLanded(op);
+        },
+      },
+      applyStruct: (lines, op) => {
+        const r = applyDesignSystemStruct(lines, op as DsStructOp);
+        return typeof r === "string" ? null : { lines: r.lines, map: r.map };
+      },
+    });
+    editor = new DsEditor(root, win, client, hooks);
+    client.start();
+  }
+
+  const onMessage = (m: EditAppMessage) => {
+    if (m.type === "edit") {
+      if (m.base !== undefined) soloBase = m.base;
+      // Problems only an agent can fix: the page stays as it is (the status says why). One too
+      // large to edit on the page says that first, as it always has.
+      if (m.on && invalid && !rules.tooLarge(rules.toLive(payload.text))) {
+        status();
+        return;
+      }
+      if (m.on && (!client || client.failed)) goSolo();
+      if (editor && m.on) editor.fromCode = m.code === true;
+      sizeDue = null;
+      unavailable = false;
+      if (!m.on) {
+        editor?.setEditing(false);
+      } else if (!draftHere()) {
+        // The room's text is still on its way: edit mode starts (nothing is leased before the text
+        // is here), and the size is checked when it comes.
+        editor?.setEditing(true);
+        sizeDue = { focus: m.focus === "first" };
+      } else if (!refuseIfTooLarge()) {
+        editor?.setEditing(true);
+        if (m.focus === "first") editor?.focusFirst();
+      }
+      status();
+    } else if (m.type === "rescue") {
+      if (m.items.length > 0) editor?.offerRescue(m.items);
+      if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
+    } else if (m.type === "collect" && local) {
+      editor?.flush();
+      // What a version stores: the storage form, never the projection. Typing that cannot be
+      // written as typed is not in the draft: the app publishes nothing, and keeps a copy with
+      // it, without its formatting.
+      if (editor?.unsavable) {
+        const kept = editor.textWithTyping() ?? local.text;
+        post({ type: "draft", nonce: m.nonce, text: rules.fromLive(kept), unsavable: true });
+      } else post({ type: "draft", nonce: m.nonce, text: rules.fromLive(local.text) });
+    } else if (m.type === "review") {
+      editor?.flush();
+      void session.open(m);
+    } else if (m.type === "reviewed") {
+      session.answer(m);
+    }
+  };
+  return {
+    onMessage,
+    /** Tell the app where editing stands now (an invalid system, before any message). */
+    status,
+    stop: () => {
+      client?.stop();
+      editor?.setEditing(false);
+      review.close();
+      poster.stop();
+    },
+  };
+}
+
 /** Renders the site and starts listening. Returns a function that stops it. */
-export function boot(win: Window): () => void {
+/** `connect`, for tests: makes the room's socket. */
+export function boot(win: Window, opts: { connect?: LiveDocOptions["connect"] } = {}): () => void {
   const doc = win.document;
   const html = doc.documentElement;
+  // The frame key leaves the address before anything renders (common/frameKey.ts).
+  const key = takeFrameKey(win);
   const root = doc.getElementById(ROOT_ID);
   const payload = readPayload(doc);
   if (!root || !payload) {
@@ -108,35 +518,45 @@ export function boot(win: Window): () => void {
     html.setAttribute("data-ready", "error");
     return () => {};
   }
-  const parsed = parseDesignSystem(payload.text);
-  if (!parsed.ok) {
-    root.replaceChildren(renderProblems(doc));
-    html.setAttribute("data-ready", "error");
-    return () => {};
-  }
-  const ds = parsed.value;
-  // The design system's fonts, for the type specimens: Google Fonts stylesheets (validated by the
-  // parser, allowed by the content CSP) and @font-face rules for its own font files.
-  for (const href of designSystemFontLinks(ds)) {
-    const link = doc.createElement("link");
-    link.rel = "stylesheet";
-    link.href = href;
-    link.referrerPolicy = "no-referrer";
-    doc.head.append(link);
-  }
-  const faces = designSystemFontFaces(ds);
-  if (faces) {
-    const style = doc.createElement("style");
-    style.textContent = faces;
-    doc.head.append(style);
-  }
+  const appOrigin = payload.app_origin;
   // Previews follow the reader's color scheme, as the site's own chrome does.
   const scheme = win.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
   const theme = (): PreviewTheme => (scheme?.matches ? "dark" : "light");
-  root.replaceChildren(renderSite(doc, ds, theme()));
-  html.setAttribute("data-ready", "ok");
-  follow(doc);
-  const stopTracking = trackSection(win, root);
+  let editing: ReturnType<typeof live> | null = null;
+  const parsed = parseDesignSystem(payload.text);
+  const published = parsed.ok ? parsed.value : null;
+  const start = () => {
+    editing ??= live(win, root, payload, appOrigin, key, theme, published, opts.connect, () => {
+      stopTracking();
+      stopTracking = trackSection(win, root);
+    });
+    return editing;
+  };
+  if (!parsed.ok) {
+    // The owner and editors (here with the room's draft) may ask an agent to fix it.
+    const ask =
+      payload.live === "room" && appOrigin !== ""
+        ? () =>
+            appPoster(win, appOrigin, key).post({
+              type: "ask",
+              anchor: { key: "system:problems", text: "Problems" },
+            })
+        : undefined;
+    root.replaceChildren(renderProblems(doc, parsed.errors, ask));
+    html.setAttribute("data-ready", "error");
+  } else {
+    // The design system's fonts, for the type specimens: Google Fonts stylesheets (validated by
+    // the parser, allowed by the content CSP) and @font-face rules for its own font files.
+    applyFonts(doc, parsed.value, null, "site");
+    root.replaceChildren(renderSite(doc, parsed.value, theme()));
+    html.setAttribute("data-ready", "ok");
+    follow(doc);
+  }
+  let stopTracking = trackSection(win, root);
+  if (payload.live === "room" && appOrigin !== "") start();
+  // Problems only an agent can fix: the app keeps its Edit off and says why. Only a frame the app
+  // gave its key (the owner's and editors') tells it.
+  if (!parsed.ok && appOrigin !== "" && key !== null) start().status();
 
   const onScheme = () => setPreviewTheme(root, theme());
   scheme?.addEventListener?.("change", onScheme);
@@ -148,8 +568,7 @@ export function boot(win: Window): () => void {
       win.print();
     }
   };
-  // A print request, only from the app page that frames this one.
-  const appOrigin = payload.app_origin;
+  // Printing and on-page editing, only from the app page that frames this one.
   const onMessage = (e: MessageEvent) => {
     if (e.source !== win.parent || appOrigin === "" || e.origin !== appOrigin) return;
     const m = e.data as Record<string, unknown> | null;
@@ -160,7 +579,10 @@ export function boot(win: Window): () => void {
       m.type === "print"
     ) {
       win.print();
+      return;
     }
+    const edit = readEditMessage(e.data);
+    if (edit) start().onMessage(edit);
   };
   win.addEventListener("hashchange", onHash);
   win.addEventListener("keydown", onKey);
@@ -171,5 +593,6 @@ export function boot(win: Window): () => void {
     win.removeEventListener("hashchange", onHash);
     win.removeEventListener("keydown", onKey);
     win.removeEventListener("message", onMessage);
+    editing?.stop();
   };
 }

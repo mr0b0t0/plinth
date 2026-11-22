@@ -14,6 +14,7 @@ import {
 } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
+import { liveAfterCommit } from "./live.ts";
 
 /** The design system's name, or null when the JSON has none. */
 function designSystemTitle(text: string): string | null {
@@ -110,4 +111,9 @@ export const designSystemHooks: TypeHooks = {
     // Uncapped: the stager caps them with the publish's own (at most 50, then "and N more").
     return out;
   },
+  // People edit a design system on its page too: a new version freezes their live draft for review
+  // unless its projection and files are the draft's base's (rooms/doc.ts). There is no canonical
+  // hook: a publish keeps the bytes it was sent, and only a Publish from the page writes Plinth's
+  // storage form (designSystemLive.ts).
+  afterCommit: liveAfterCommit("design system"),
 };

@@ -43,8 +43,8 @@ account.
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts (docs, decks and sheets are edited on the page; HTML in the
-  source editor).
+- On-page editing of HTML artifacts (docs, decks, sheets and design systems are edited on the
+  page; HTML in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -117,7 +117,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`), `design` (artboards in `design.html`), `sheet` (JSON lines in `sheet.jsonl`, no assets) or `whiteboard` (settings in `board.json`; its blocks and arrows are shared data), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, editing, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`), `design` (artboards in `design.html`), `sheet` (JSON lines in `sheet.jsonl`, no assets) or `whiteboard` (settings in `board.json`; its blocks and arrows are shared data), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner. `editing` is `code` when the publisher said its source lives in code, NULL for the page ([Published from code](#published-from-code-decided-2026-11-21)) |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -330,10 +330,10 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, copy_files?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given; `copied_from` when `copy_files` copied files from other artifacts, see [Copying files from another artifact](#copying-files-from-another-artifact-decided-2026-11-21)). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
-| `update_artifact(id, html \| content, content_format?, assets?, copy_files?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version; `copy_files` copies files from other artifacts the user can view. `category` is owner only. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?, category?, copy_files?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page or a design that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)), and a version holding copied files gets `copied_from` |
+| `publish_artifact(title, html \| type+content, assets?, copy_files?, visibility?, category?, editing?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given; `copied_from` when `copy_files` copied files from other artifacts, see [Copying files from another artifact](#copying-files-from-another-artifact-decided-2026-11-21)). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
+| `update_artifact(id, html \| content, content_format?, assets?, copy_files?, base_version?, note?, category?, editing?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version; `copy_files` copies files from other artifacts the user can view. `category` is owner only. `editing` (`code` or `page`, [Published from code](#published-from-code-decided-2026-11-21)) is kept when left out. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?, category?, copy_files?, editing?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. Owners and editors also get `editing` (`code` or `page`). An HTML page or a design that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)), and a version holding copied files gets `copied_from` |
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system`; the owner's default design system has `default: true` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
@@ -628,17 +628,17 @@ the count survives.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
 - The source editor stays for the types that have one until each type's editing on the page
-  covers what it does. Where a doc can be edited on its page, the page is its one way in and the
-  viewer offers no source editor item; where it cannot (opaque isolation, the path fallback,
-  `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
+  covers what it does. Where a doc or a design system can be edited on its page, the page is its
+  one way in and the viewer offers no source editor item; where it cannot (opaque isolation, the
+  path fallback, `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
   whiteboards have no source editor.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
-the draft's files decided 2026-11-19). Owners and editors edit a doc or a sheet right on its
-rendered page, and the other editors with the page open see the changes as they are typed. The
-registry says which types are edited this way (`edit: "live"`: docs, decks and sheets); HTML
-pages and design systems are edited in the source editor only and designs by agents only (`edit:
-"ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
+the draft's files decided 2026-11-19; design systems decided 2026-11-21). Owners and editors
+edit a doc, a deck, a sheet or a design system right on its rendered page, and the other editors
+with the page open see the changes as they are typed. The registry says which types are edited
+this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages are edited in the
+source editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
 the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
@@ -656,15 +656,39 @@ page shows the strip and makes the REST calls, and renders no content.
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
   client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
   lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc or deck
-  block holding typing it cannot write yet), starts that minute again.
+  block, or a design system's formatted text, holding typing it cannot write yet), starts that
+  minute again.
+- **Answers are matched by id** (decided 2026-11-22). The client puts its own number, `id`, on
+  every frame the room answers directly: `lease`, `takeover`, `edit`, `release`, `keep`, `struct`
+  and `sync`. The room puts it back as `re` on that frame's direct answer, success or failure:
+  `lease_denied`, `struct_denied`, an `error` that refuses the frame (also `rate_limited`, and
+  `invalid` for a frame that does not parse when its `id` can be read), the requester's own copy
+  of `leased` (a lease or takeover), of `released` (its own release), of its `op` and of its
+  `struct`, `kept`, and the `welcome` that answers a `sync`. Nothing else carries `re`: not
+  `draft_limit` after a flush, `flushed`, `status`, `reset`, `rebased`, `conflict`, another
+  socket's frames, the other sockets' copies of a broadcast, nor a `released` that a takeover, a
+  struct op or a closed socket caused. The client matches answers by `re` only, never by order
+  (the room interleaves frames that answer nothing), and treats a frame with no `re` as no answer;
+  only from a room deployed before `re` does it take a grant, denial, ack or `kept` by kind. A
+  frame from a tab opened before `id` (none on it) is answered as before, with no `re`. A struct
+  op waits for its own answer only (an error with no `re` never ends it); one whose broadcast this
+  socket cannot apply is settled by the welcome its resync brings, and a closed socket ends them
+  all. While a draft is being ended (an HTML deck published over an unchanged Markdown deck's draft),
+  the room refuses every frame but `sync` as it would a frozen draft's, so nothing is acknowledged
+  and then lost with the draft. A
+  design-system frame whose lease request has no answer within 15 seconds reconnects its socket
+  (below).
 - **Per-type rules.** The room checks every edit with the type's rules
   (`packages/shared/src/liveTypes.ts`), and the renderer checks the same rules before it sends, so
   a refused edit means someone else changed the lines first or the edit was forged; the renderer
   then puts the block back as the room has it, keeps it open and says why. The rules hold every
   check the type's publish hook makes on the source alone, so a draft can always be published: a
   doc never starts like a whole HTML document (`<html` or `<!doctype html` first, which the stager
-  refuses), a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19), and a deck
-  keeps its structure ([Decks on the page](#decks-on-the-page-decided-2026-11-21)). To keep
+  refuses), a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19), a deck
+  keeps its structure ([Decks on the page](#decks-on-the-page-decided-2026-11-21)), and a design
+  system's draft (a line projection of its JSON) keeps the rules of
+  [Design systems](#design-systems-decided-2026-11-19): one whole value per edit, written
+  canonically and checked with the publish rules on the whole system. To keep
   that rule out of people's way, the doc editor writes a `<` at the start of any top-level block
   it writes as `\<`, which renders as `<`, so any block a person wrote can become the first one.
   When a Delete or a Move would leave a block an agent wrote first while it starts like an HTML
@@ -681,8 +705,9 @@ page shows the strip and makes the REST calls, and renders no content.
   is based on. Every page Publish stages exactly that: the text, and every file of the draft's base
   version carried by reference (`files_from_version`), never the current version's files. For an
   ordinary Publish the base is the current version, so nothing changes. In edit mode a doc draws
-  its images from the base version's files (`/__plinth/v/<base>/`), so the page never shows a file
-  the draft would not publish.
+  its images from the base version's files (`/__plinth/v/<base>/`), and a design system its fonts
+  and its examples' images and CSS files, so the page never shows a file the draft would not
+  publish.
 - **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), leaving edit mode (the Edit
   toggle, or Done at phone width), or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
   while it is editing; no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version,
@@ -699,11 +724,13 @@ page shows the strip and makes the REST calls, and renders no content.
   - a **doc's** draft is merged onto vN line by line when the two changed different lines and the
     result fits the doc's rules (the editors see "v5 was published; your changes were kept"), as
     #49 decided; otherwise it is frozen for review;
-  - a **sheet's** or a **deck's** draft is never merged. A version's content is its source and its files together.
-    When vN's content equals the draft's base (it changed only the title, or restored the same
-    content), the base moves under the draft's lines as they are, which also unfreezes a draft
-    frozen against an older version; when it equals the draft, the draft ends; anything else
-    freezes it.
+  - a **sheet's**, a **deck's** or a **design system's** draft is never merged. A version's
+    content is its source and its files together (a design system's source compared as its
+    projection, so a version that only spells the same JSON another way, with other white space or
+    compact, is no change). When vN's content equals the draft's base (it changed only the title,
+    or restored the same content), the base moves under the draft's lines as they are, which also
+    unfreezes a draft frozen against an older version; when it equals the draft, the draft ends;
+    anything else freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
   autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
@@ -775,8 +802,8 @@ page shows the strip and makes the REST calls, and renders no content.
   changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
   held, the app sends that copy with the review, and Publish your changes and Discard your changes
   act on it); under opaque
-  isolation and the path fallback there is no editing on the page: docs are edited in the source
-  editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
+  isolation and the path fallback there is no editing on the page: docs and design systems are
+  edited in the source editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
   off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
 - **On the page.** An Edit toggle in the artifact bar, the one way in (no source editor item
   beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
@@ -828,10 +855,10 @@ page shows the strip and makes the REST calls, and renders no content.
   `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
   new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
   agents keep the carry rule.
-- **Ask an agent where editing is off.** Owners and editors of a doc, a deck or a sheet on an instance
-  where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque isolation and the path
-  fallback) see Ask an agent in the Edit slot, with the reason; HTML pages and designs always do,
-  and design systems do until they are edited on the page. While editing, Ask an agent
+- **Ask an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a design
+  system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque
+  isolation and the path fallback) see Ask an agent in the Edit slot, with the reason; HTML pages
+  and designs always do. While editing, Ask an agent
   opens a dialog that leaves edit mode and the draft as they are. See
   [Ask an agent](#ask-an-agent-decided-2026-11-19).
 
@@ -1009,8 +1036,8 @@ Decided 2026-11-14 (issue #1). Design:
 Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
 open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
 durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
-late joiner reads it. Plinth's own on-page editing of docs, decks and sheets is the room's first
-use.
+late joiner reads it. Plinth's own on-page editing of docs, decks, sheets and design systems is
+the room's first use.
 
 - **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
   `content="data viewer room"`), and may list topics commenters may emit too with
@@ -1040,7 +1067,8 @@ use.
   `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
-  `/__plinth/room/v1/doc` (on-page editing of docs, decks and sheets) and `/__plinth/room/v1/slides`
+  `/__plinth/room/v1/doc` (on-page editing of docs, decks, sheets and design systems) and
+  `/__plinth/room/v1/slides`
   (following the presenter in a deck) the same way. The handshake is checked in order: method,
   exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active, the artifact, the
   content pass with its identity claim at the current epoch, the kind the path
@@ -1088,7 +1116,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   own CSS). Token types: color, dimension, fontFamily, fontWeight, duration, cubicBezier, number,
   shadow, typography and border. Unknown keys are refused, so typos fail loudly. Limits: 1 MB of
   JSON, 2,000 tokens nested at most 8 deep, alias chains of 16, 200 components of 1 to 20 examples
-  (20 KB of HTML each), 200 KB of guidelines, 100 KB of shared CSS. Assets are images and fonts.
+  (20 KB of HTML each), 200 KB of guidelines, 100 KB of shared CSS, and objects and arrays nested at
+  most 32 levels deep anywhere in the file (`$extensions` included). Assets are images and fonts.
 - **Validation.** One parser (`packages/shared/src/designSystem.ts`) serves the Worker, the
   renderer and the editor. A publish, update or bundle that does not parse is refused with
   `invalid_input` and up to 50 problems, each with its path into the JSON. Every string that
@@ -1124,8 +1153,16 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   section headings stay the only ones. The site's own chrome uses Plinth's neutral
   styles; the design system's tokens and CSS apply only to samples and previews. Navigation is by
   hash (`#tokens/color`, `#components/button`) from a sidebar that marks the section in view: on a phone, one
-  row that scrolls sideways and fades at its edges. JSON that does not parse shows one line, "This design system
-  could not be shown."
+  row that scrolls sideways and fades at its edges. Each example shows only its rendered preview,
+  never its HTML or CSS. A system the format refuses (one stored before a stricter parser, say)
+  shows "This design system has problems an agent needs to fix:" and up to 10 of its problems,
+  each its path and words as text, with "Ask an agent" (an `ask` anchored at `system:problems`)
+  for the owner and editors where they edit with the room; a page whose payload cannot be read
+  shows one line, "This design system could not be shown." Such a system is not edited on the
+  page: the owner's and editors' frame tells the app so (its status's `unavailable: "invalid"`),
+  the bar's Edit stays off with its reason in its tooltip ("This design system has problems an
+  agent needs to fix. Ask an agent to fix them."), the phone's ⋯ leaves "Edit on the page" out,
+  and Ask an agent is the way in.
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1203,10 +1240,146 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   one the person names, ask when there are several and someone can answer, and otherwise use their
   own look. An organization default and an explicit "no default" choice are not offered (Plinth has
   no organizations).
-- **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
-  JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
-  keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
-  link (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
+- **In the app.** Owners and editors edit a design system on its page (below). Where editing on
+  the page is off (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path fallback), the source
+  editor holds the JSON with Monaco's JSON language and the format's JSON Schema, lists the
+  parser's problems (one short line each, with its path) above the editor, keeps the preview at
+  the last draft that parsed (blank while none has), and keeps Save off until there are none. The
+  dashboard shows a "Design system" badge. To point an agent at one, the person gives it the link
+  (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
+- **Editing on the page** (decided 2026-11-21; [Editing](#editing) gives the model every live type
+  shares: leases, drafts, Publish, the whole-draft review). Owners and editors change values in
+  place on the site itself, live with each other, and no JSON is ever shown:
+  - **The draft is a line projection** (`packages/shared/src/designSystemLive.ts`). A token's value
+    is a JSON line, but the guidelines are one long string (up to 200 KB) that a line lease cannot
+    share, so the draft is the JSON without its guidelines, written `JSON.stringify(…, null, 2)`
+    with `"guidelines": null` as the root's last member (wherever the file has the key), then
+    the guidelines' Markdown as lines of their own after the root's closing `}` (the first line
+    that is exactly `}`): none when the file has no `guidelines` key, one empty line for
+    `"guidelines": ""`. A structural change that adds a root key puts it before the placeholder.
+    The room holds the projection in memory; `live_drafts` stores its storage form (below), so a
+    draft row stays within 1 MB, and the storage form projects back to the same lines, so after a
+    Publish the draft is its base and a reload keeps every lease on its line.
+  - **What is edited, and how.** A lease is the lines of one editable value: a token's light or
+    dark `$value`, a token's `$description`, the system's `name` and `description`, and a
+    component's `description`, `usage` and `status`. An edit replaces that whole value, written
+    as the whole JSON part writes it (`JSON.stringify(value, null, 2)` at its indent, with its key
+    and its comma), so the JSON part stays canonical edit by edit, and the room checks the new
+    value with the publish rules on the whole system: the value grammar of the token's type (which
+    may come from its groups), an alias's target (it exists, has the same type, makes no cycle),
+    every text's length, and the statuses (`stable`, `beta`, `deprecated`). A change of form the
+    grammar takes is allowed (a number weight becoming a keyword, an object colour a string, an
+    alias in place of a composite). The guidelines' lines take any Markdown within 200 KB. No
+    edit spans both parts or touches the root's braces. Keys come and go only through structural
+    changes, each checked the same way and refused while another person's lease overlaps the lines
+    it changes (other leases move with their lines): `set_dark`/`clear_dark` (a dark value, with
+    its groups, and the groups it leaves empty), `set_text`/`clear_text` (an absent description,
+    usage or status is added; emptying one removes the key, never stores ""),
+    `add_token` (last in an existing group, with `$type` only when the group gives none) and
+    `remove_token` (with its dark value; refused while an alias names it or the shared or a
+    component's CSS holds its variable, or for a typography token one of its parts' variables
+    such as `--acme-font-body-font-size`, and the page says what uses it). Pages built on the
+    design system are not checked: a copy of its `tokens.css` installed with `copy_files` or from
+    a default design system keeps the variable until it is copied again, so the craft guide tells
+    agents to replace a removed variable before they copy a newer version in, and to deprecate
+    tokens rather than remove them themselves.
+  - **A value set on the page is never dropped in the frame.** A token value, the name or a
+    status is written when its field changes, after the room grants its lines. The frame sends a
+    value's lease request only while no other request of its socket is unanswered, and every
+    answer is matched to its own request by `re` (above), so another value's denial is never
+    taken for this one's, and a lease granted to a part that let go meanwhile goes back to the
+    room, at once or when the newer request is refused. Until the room acknowledges the edit, or the draft holds the value, it counts as pending
+    (the status's `unflushed` and `pending`; Publish and Done wait for `pending`, at most 3
+    seconds, before the checkpoint): edit mode ending keeps the request and lets the lease go right
+    after the write; a socket that closes asks again on the reconnect; an edit the room answers
+    `not_held` (its lease replaced first), or one sent but not acknowledged before a drop or a lost
+    lease, is sent again unless the draft holds it; a `stale` denial asks again; a `frozen` one
+    keeps the value until the review ends (the notice says it is not in the draft yet, with Copy),
+    and it is written if the draft is kept, dropped with a discard. Only the room refusing the
+    value (`invalid`, `too_large`: never sent again), someone else holding its lines, or the
+    token being gone ends it, and the notice says so with Copy. A takeover answered `not_held` (its
+    holder let go first) asks again, and an edit answered `not_held` or with a denial waits again.
+    `draft_limit` is only ever the warning that the edits are live but not kept. A lease request with no
+    answer 15 seconds after it was sent means the socket is stuck: the frame closes it and opens
+    another, and every part asks again after the welcome; no request is dropped while its socket
+    is open, so no late answer is taken for another's. A composite's part (shadow, border, typography) writes the
+    whole value as the draft has it at that moment, with the parts written from that row still on
+    their way and the one part changed, so another person's change to another part is kept and a
+    refused part is not sent again.
+  - **The controls** keep the form a value is stored in: a colour string or the picker's
+    `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
+    its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
+    to 5 decimals) and its `hex` kept in step, and a string typed in its place asks first;
+    dimensions and durations a number and a unit (an object dimension `px` or `rem`), every
+    number in a text field that shows it as stored ("1.5", never a locale's "1,5"; a typed decimal
+    comma reads as a point), with the decimal keypad on phones except for a part that may be below
+    zero (a letter spacing, a shadow's offsets and spread, a value that is), which keeps the full
+    keyboard for its minus; a weight
+    one select of 100 to 900, with a keyword or another number the token has kept as its own
+    option; a font family a comma list or an array as stored; a cubic Bézier one field of four
+    numbers; a shadow, a border or a typography token one field per part; another token through
+    "Use another token" (and back with "Use a value", the target's own stored value). Edit mode
+    keeps the row as it reads: a colour token's sample is its picker, with only its text field
+    beside it, and the fields sit on their own line under the variable, light then dark in the
+    samples' order, with no "Light" or "Dark" on the row (the group says it once above the
+    samples; a token with a dark value shows both samples, even when they are the same). A
+    composite's parts are a label and field grid (labels above the fields on a phone), named
+    "Light" and "Dark" only when it has both. The name is a field in the heading's place; the
+    description, the guidelines and each component's description and usage are formatted text,
+    with the doc's block editor ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19));
+    an empty one names what goes there in its place ("Description", "Usage", "Guidelines"), and
+    a block's ⋯ sits in the same right-hand column as the page's other ⋯. Typing in them keeps the doc's rules for text the page cannot write yet: the block stays
+    open and every way to publish waits, the holder sends `keep`, the solo kept copy has the text
+    without its formatting, and the rescue store keeps it until the room acknowledges a write of
+    it. Each item's id starts with its text's code (`g_` the guidelines, `d_` the description, `c`
+    and a hash of the key for a component's description or usage), so the app's one store per
+    artifact gives each back to its own text; one whose text is gone (its component removed)
+    goes into the guidelines as a block of its own. A description, usage or status's words the
+    room does not have yet (a creation refused because someone holds lines it changes) count as
+    unsent changes and go once the place is free; an edit of its line the room refuses shows the
+    room's text again, as a doc block's does.
+    A component's status stays the pill beside its name and is set from its heading's ⋯
+    ("Status", then Stable, Beta or Deprecated). Each token row has one ⋯ (dark value,
+    description, another token, "Rename: Ask an agent", "Remove"), each group row one ⋯ ("Add a
+    token", "Rename: Ask an agent"); on a phone a row's ⋯ is centred on the token's name and a
+    group's on its label. "Remove" asks in place, its two buttons always together (on a phone the
+    question has its own line). The parts of a shadow, border or typography token are
+    labelled in words (Color, X, Y, Blur, Spread; Width, Style; Font, Size, Weight, Line height,
+    Letter spacing).
+  - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
+    components), renaming tokens and groups, types, the fonts, the prefix, the format and the
+    shared CSS. Each has Ask an agent on the page, in the ⋯ it belongs to: a token's or a group's
+    ("Rename: Ask an agent"), a component's ("Ask an agent", after "Status") and the header's,
+    beside the name ("Ask an agent", whose dialog names "Fonts and settings"). In the review both
+    sides are one height, and each opens with its first change at the top of the side, just under
+    its list of changes; on a phone a side's values wrap inside it, with as much room on a row's
+    right as on its left. A change in the review that is in a component
+    names it ("Button: description changed").
+  - **Published from code** ([Published from code](#published-from-code-decided-2026-11-21)).
+    When the design system's publisher said its source lives in code (the gate's `from_code`),
+    starting edit mode shows one short notice in the frame's status line: "This design system is
+    published from code. Its next publish from code won't include changes made here.", with
+    Dismiss only (Ask an agent stays in the rows' and components' menus). Editing is not blocked.
+  - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
+    most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
+    (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
+    whose JSON part would pass 8 MB of text (`LIMITS.maxLiveProjectionChars`, counted before it is
+    written), is not edited on the page: Edit says "This design system is too large to edit on the page", edit
+    mode ends, and Ask an agent is offered.
+  - **Storage form.** A Publish from the page stores 2-space JSON when it fits 1 MB, and compact
+    JSON when it does not, with the guidelines as the last key (none when the draft has no line
+    after its JSON part), so it never fails on size where the agent's version fit. An agent's
+    publish, update or restore keeps the bytes it sent (there is no canonical form on publish).
+    After a Publish from the page, `get_artifact` returns Plinth's formatting; the values are the
+    same.
+  - **Versions published meanwhile** are never merged ([Editing](#editing)): compared by
+    projection, a version that changes nothing the draft holds needs no review, and anything else
+    freezes the draft. The review draws each side's site read-only, each against its own version's
+    files (its fonts' `@font-face` from `/__plinth/v/<n>/`, and its examples' frames with that
+    version as their base), marks the tokens, components, header and guidelines blocks that
+    changed, and lists the changes ("color.brand.500 changed: #3355ff → #2f4ac0"). Two sides that
+    use the same font family with different files share whichever rule loaded last, outside the
+    examples' frames.
 - **Uploads and the CLI.** `start_upload` with `type: "design_system"` (or the `id` of a design
   system) takes a folder with `system.json` and its images and fonts at its top. The Plinth CLI
   publishes such a folder as a design system (`plinth publish <dir>`), updates one with the JSON in
@@ -1214,9 +1387,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   1 MB limit before sending. A folder with `index.html` at its top is a page, whatever else it holds.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
   origins and a content pass for two artifacts; files are copied at publish instead), no script in
-  previews, no on-page or live editing, no themes other than `dark`, no organization default, and
-  no reading of Claude's design-system folder layout (`tokens.json` in list form, `README.md`,
-  `components/*/`), which would need a converter to `system.json`.
+  previews, no themes other than `dark`, no organization default, and no reading of Claude's
+  design-system folder layout (`tokens.json` in list form, `README.md`, `components/*/`), which
+  would need a converter to `system.json`.
 
 ### Slides (decided 2026-11-19)
 
@@ -1760,7 +1933,9 @@ keeps every run. Guide: `docs/ci.md`.
   `index.html`, `content.md`, `slides.md`, or `system.json` to update a design system; or one
   `.html`/`.md` file), `id`, `url`
   (the instance, hosted by default), `title` and `category` (a new artifact only), `note`,
-  `link-run`, `base-version`, `include-maps`, `dry-run`, `fail-on-warnings`, `summary`. **Outputs**:
+  `link-run`, `base-version`, `editing` (`code` by default, passed as the CLI's `--editing`:
+  [Published from code](#published-from-code-decided-2026-11-21)), `include-maps`, `dry-run`,
+  `fail-on-warnings`, `summary`. **Outputs**:
   `id`, `slug`, `version`, `url`, `version-url`, `compare-url`, `outcome` (`published`,
   `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error`),
   `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`).
@@ -1845,8 +2020,8 @@ document through the gate and the shared-data API, with all of their checks.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   One such notice shows at a time: a newer version's replaces the last, so versions published in
-  a row never stack. While someone edits on the page, or the frame is held (a doc or sheet edited
-  on its page, a deck presented), no notice shows: the version picker takes the new number, and
+  a row never stack. While someone edits on the page, or the frame is held (a doc, sheet or design
+  system edited on its page, a deck presented), no notice shows: the version picker takes the new number, and
   the edit strip says what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
@@ -3167,8 +3342,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   by code included. Never viewers, never agents. It is offered only when the owner has an agent
   that can take the request (the gate's `ask.targets` is not empty).
 - **Where.** The registry says how people change each type (`edit`): `"ask"` (HTML pages and
-  designs, and decks and design systems until they are edited on the page), `"live"` (docs and
-  sheets) or `"board"` (whiteboards).
+  designs, and decks until they are edited on the page), `"live"` (docs, sheets and design
+  systems) or `"board"` (whiteboards).
   - For an `"ask"` type, and for a live type whose editing on the page is off here, owners and
     editors get Ask an agent in the bar's Edit slot; its description gives the reason when editing
     is off ("Editing on the page is turned off on this Plinth instance." or "Editing on the page
@@ -3207,9 +3382,14 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
   published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
   Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
-  `ask` with block anchors, and the slides renderer with slide anchors (`slide-3:image-1`,
-  `slide-3:block-2`, `slide-3:notes`, with structural words such as "Slide 3, image 1"); other
-  types don't yet. While the app is in edit mode, an `ask`
+  `ask` with block anchors, the slides renderer with slide anchors (`slide-3:image-1`,
+  `slide-3:block-2`, `slide-3:notes`, with structural words such as "Slide 3, image 1"), and the
+  design system renderer with `token:<path>`, `group:<path>`, `component:<id>` and
+  `system:settings` (keys made from the published version only: a path too long for an anchor key
+  gives its index in the published version, `token:12`, and a token or group only the draft has is
+  just `token` or `group`, with no words), and with the block anchors of its formatted texts
+  behind the text's part (`guidelines:block-3`, named in the published version's text as a doc's
+  are); other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
   refuse, under the rules for a page's own compose ([comments from the
@@ -3721,6 +3901,35 @@ deleting slides, and a slide's columns, stay with agents for now.
   an unclosed fence, drop a notes marker or turn slide text into settings. Everything the editor
   draws goes through the unchanged sanitizer, or is made with `createElement` and `textContent`.
 
+### Published from code (decided 2026-11-21)
+
+A design system (or any artifact) whose source lives in a repository is published from there by
+the CLI or the GitHub Action, and each such publish is the whole next version: what people changed
+on the page since then is replaced, with nothing to warn them. So the publisher says where the
+artifact is edited, and the page tells the people who edit it there.
+
+- **The flag.** `editing`, `"code"` or `"page"`, on `publish_artifact`, `update_artifact` and
+  `start_upload` (and `POST`/`PUT /api/v1/artifacts`, `POST /api/v1/uploads`). It is stored on
+  the artifact (`artifacts.editing`, migration `0023_artifact_editing.sql`: `'code'` or NULL for
+  the page, the default), not on a version, and commits with the version that carries it, behind
+  the same guards (a refused or stale publish changes neither); an upload ticket keeps it until its
+  commit. A publish or update without it keeps what is there. Whoever may publish the version may
+  set it, a token limited to one artifact included. It changes no permission and blocks nothing.
+- **Who reads it.** `get_artifact` and `GET /api/v1/artifacts/:ref` return `editing` (`"code"` or
+  `"page"`) to owners and editors (and their agents) only. The view gate adds `from_code: true`
+  beside `live` (only where `live` is: an owner or editor of a live type on the current version,
+  with editing on the page on), and the app passes it to the frame in its `edit` message
+  (`code: true`).
+- **What the page does.** A design system shows the notice of [Design systems](#design-systems-decided-2026-11-19)
+  ("Published from code") when edit mode starts. Docs, sheets and decks keep the flag and do not
+  show it yet.
+- **Who sets it.** The CLI's `plinth publish` sends `editing: "code"` for a folder or a single
+  `.html` or `.md` file (its files are the artifact's source), and nothing for a `.csv` or `.xlsx`
+  import (data to edit on the page) unless asked; `--editing code|page` says otherwise. The GitHub
+  Action passes its `editing` input (default `code`) as `--editing`. Agents set `editing: "code"`
+  when they publish an artifact from files in a repository they will publish from again, and
+  `"page"` when people are to take over editing it on the page.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -4167,8 +4376,8 @@ Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Fre
 a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
 request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
 are free, and a hibernating room accrues no duration. A room stores almost nothing: its alarm and,
-for a doc, deck or sheet edited on its page, one small record of the saves in progress (never their
-text).
+for a doc, deck, sheet or design system edited on its page, one small record of the saves in
+progress (never their text).
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |

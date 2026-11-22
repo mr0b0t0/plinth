@@ -24,8 +24,11 @@ import type { DraftReview, ReviewOutcome } from "./review.ts";
 export type ReviewResult = "busy" | "resolved" | "conflict" | "failed" | "done";
 
 export type EditAppMessage =
-  /** `focus: "first"` (from the app's `?edit`): focus the first block or cell once there is one. */
-  | { type: "edit"; on: boolean; base?: number; focus?: "first" }
+  /**
+   * `focus: "first"` (from the app's `?edit`): focus the first block or cell once there is one.
+   * `code` (gate `from_code`): the artifact is published from code, and the frame says so.
+   */
+  | { type: "edit"; on: boolean; base?: number; focus?: "first"; code?: true }
   | { type: "collect"; nonce: string }
   | {
       type: "review";
@@ -48,7 +51,11 @@ export type EditAppMessage =
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 /** The longest kept copy a `review` may carry, in UTF-16 units; the type's rules check it exactly. */
-const MAX_REVIEW_TEXT = Math.max(LIMITS.maxDocBytes, LIMITS.maxSheetBytes);
+const MAX_REVIEW_TEXT = Math.max(
+  LIMITS.maxDocBytes,
+  LIMITS.maxSheetBytes,
+  LIMITS.maxDesignSystemBytes,
+);
 const RESULTS = new Set(["busy", "resolved", "conflict", "failed", "done"]);
 const FILE_KINDS = new Set(["added", "removed", "replaced", "same"]);
 const isVersion = (v: unknown): v is number =>
@@ -97,11 +104,13 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
   if (m.type === "edit" && typeof m.on === "boolean") {
     if (m.base !== undefined && !isVersion(m.base)) return null;
     if (m.focus !== undefined && m.focus !== "first") return null;
+    if (m.code !== undefined && m.code !== true) return null;
     return {
       type: "edit",
       on: m.on,
       ...(isVersion(m.base) ? { base: m.base } : {}),
       ...(m.on && m.focus === "first" ? { focus: "first" as const } : {}),
+      ...(m.on && m.code === true ? { code: true as const } : {}),
     };
   }
   if (m.type === "rescue") {
@@ -220,7 +229,9 @@ export class ReviewSession {
     }
     const text = this.kept ?? this.host.soloText();
     if (outcome === "publish" && text !== null) {
-      this.host.post({ type: "resolved", nonce, outcome, text, ...(note ? { note } : {}) });
+      // What a version stores: the type's source form of the draft (a design system's JSON).
+      const source = this.host.rules.fromLive(text);
+      this.host.post({ type: "resolved", nonce, outcome, text: source, ...(note ? { note } : {}) });
     } else if (outcome === "discard") {
       this.host.post({ type: "resolved", nonce, outcome });
     }
@@ -248,9 +259,11 @@ export class ReviewSession {
     }
     // A kept copy is checked as the room checks a whole draft: one the type cannot hold is not
     // reviewed (the app keeps it, and can still drop it).
+    // The copy is the type's source form (what the frame handed over): reviewed in its live form.
+    const copy = m.text === undefined ? undefined : this.host.rules.toLive(m.text);
     const kept =
-      m.text !== undefined && !this.host.rules.tooLarge(m.text) && this.host.rules.valid(m.text)
-        ? m.text
+      copy !== undefined && !this.host.rules.tooLarge(copy) && this.host.rules.valid(copy)
+        ? copy
         : null;
     const text = m.text !== undefined ? kept : this.host.soloText();
     if (text === null || m.n === undefined || m.base === undefined) {

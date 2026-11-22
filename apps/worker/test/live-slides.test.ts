@@ -403,6 +403,26 @@ describe("an HTML deck published while a Markdown deck's room is open", () => {
     a.ws.close(1000);
   });
 
+  it("its frozen answers carry the frame's id as re; the freeze itself answers nothing", async () => {
+    const { a } = await editedThenHtml();
+    expect(await a.nextOf("conflict")).not.toHaveProperty("re");
+    a.send({ t: "lease", rev: 1, start: 0, end: 1, id: 71 });
+    expect(await a.nextOf("lease_denied")).toEqual({
+      t: "lease_denied",
+      reason: "frozen",
+      re: 71,
+    });
+    a.send({ t: "edit", lease: "l_gone", seq: 9, text: "# X", id: 72 });
+    expect(await a.nextOf("error")).toEqual({ t: "error", code: "not_held", re: 72 });
+    a.send({ t: "struct", rev: 1, op: { op: "trim_start" }, id: 73 });
+    expect(await a.nextOf("struct_denied")).toEqual({
+      t: "struct_denied",
+      reason: "frozen",
+      re: 73,
+    });
+    a.ws.close(1000);
+  });
+
   it("its review publishes the person's deck as the next version, keeping the HTML deck in History", async () => {
     const { id, ownerP, owner, a } = await editedThenHtml();
     await a.nextOf("conflict");

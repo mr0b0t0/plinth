@@ -8,6 +8,7 @@ import {
   type DsToken,
   parseDesignSystem,
 } from "../designSystem.ts";
+import { designSystemFromLive } from "../designSystemLive.ts";
 import { describeMarkdown } from "./doc.ts";
 import { changeExcerpt, differenceExcerpts, quoted } from "./text.ts";
 import type { ChangeCollector } from "./types.ts";
@@ -105,10 +106,14 @@ function describeComponent(out: ChangeCollector, a: DsComponent, b: DsComponent)
   }
 }
 
-/** Adds the changes from `before` to `after`, two design systems, to `out`. False when one does not parse. */
+/**
+ * Adds the changes from `before` to `after`, two design systems, to `out`. Either may be a
+ * system.json or a live draft's projection (the review passes projections). False when one does
+ * not parse.
+ */
 export function describeDesignSystem(out: ChangeCollector, before: string, after: string): boolean {
-  const pa = parseDesignSystem(before);
-  const pb = parseDesignSystem(after);
+  const pa = parseDesignSystem(designSystemFromLive(before));
+  const pb = parseDesignSystem(designSystemFromLive(after));
   if (!pa.ok || !pb.ok) return false;
   const a = pa.value;
   const b = pb.value;

@@ -23,6 +23,21 @@ class FakeSocket {
   readyState = 1 as const;
   sent: unknown[] = [];
   closed: number | null = null;
+  /**
+   * Each frame's `id` (the room answers with it as `re`), kept apart so the frames read as before:
+   * `idOf(t)` is the id of the last frame of kind `t` sent.
+   */
+  ids: { t: string; id: number }[] = [];
+  idOf(t: string): number {
+    const hit = this.ids.filter((x) => x.t === t).at(-1);
+    if (!hit) throw new Error(`no ${t} sent`);
+    return hit.id;
+  }
+  private unId(f: Record<string, unknown>): Record<string, unknown> {
+    if (typeof f.id === "number") this.ids.push({ t: String(f.t), id: f.id });
+    const { id: _id, ...rest } = f;
+    return rest;
+  }
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -34,7 +49,7 @@ class FakeSocket {
     FakeSocket.all.push(this);
   }
   send(raw: string) {
-    this.sent.push(raw === "ping" ? raw : JSON.parse(raw));
+    this.sent.push(raw === "ping" ? raw : this.unId(JSON.parse(raw)));
   }
   close(code = 1000) {
     this.closed = code;
@@ -69,7 +84,8 @@ function listener(): LiveDocListener & { calls: string[] } {
       calls.push(
         `version:${kind},${n}${info.why ? `,${info.why}` : ""}${info.was ? `,was ${info.was}` : ""}`,
       ),
-    error: rec("error"),
+    // The code only: which frame it answered is the client's own bookkeeping.
+    error: (code: string) => calls.push(`error:${code}`),
   };
 }
 
@@ -167,6 +183,196 @@ describe("LiveDocClient", () => {
     sock().frame({ t: "op", gen: "g9", rev: 5, lease: "l1", start: 0, del: 1, ins: "z", by: "s2" });
     expect(client.lines[0]).toBe("a");
     expect(sock().sent.length).toBe(before);
+  });
+
+  /** The ids of the frames of kind `t` sent on the current socket, oldest first. */
+  const idsOf = (t: string) =>
+    sock()
+      .ids.filter((x) => x.t === t)
+      .map((x) => x.id);
+
+  it("puts an id on every frame the room answers directly, each its own", () => {
+    client.start();
+    welcome(sock(), "a\n\nb");
+    client.lease({ start: 0, end: 1 });
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    client.edit("x");
+    client.keep();
+    client.release();
+    client.takeover("l2");
+    const ids = sock().ids.map((x) => x.t);
+    expect(ids).toEqual(["lease", "edit", "keep", "release", "takeover"]);
+    const nums = sock().ids.map((x) => x.id);
+    expect(new Set(nums).size).toBe(nums.length);
+  });
+
+  it("an edit the room refuses (by its re) is not waiting for an ack, while a later one still is", () => {
+    client.start();
+    welcome(sock(), "a\n\nb");
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    expect(client.edit("x")).toBe(true);
+    sock().frame({ t: "error", code: "invalid", re: idsOf("edit")[0] });
+    expect(L.calls).toContain("error:invalid");
+    expect(client.unflushed).toBe(false);
+    // Two edits out; the room refuses the first: the second is still on its way.
+    expect(client.edit("y")).toBe(true);
+    expect(client.edit("z")).toBe(true);
+    sock().frame({ t: "error", code: "too_large", re: idsOf("edit")[1] });
+    expect(client.unflushed).toBe(true);
+    sock().frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "mine",
+      start: 0,
+      del: 1,
+      ins: "z",
+      by: "s1",
+      seq: 3,
+      re: idsOf("edit")[2],
+    });
+    sock().frame({ t: "flushed", rev: 4 });
+    expect(client.unflushed).toBe(false);
+  });
+
+  it("an edit answered not_held or with a denial is not waiting any more, and a refusal ends the edit it names", () => {
+    const answers: unknown[] = [];
+    const denied: string[] = [];
+    const c = new LiveDocClient({
+      win: window,
+      listener: {
+        ...L,
+        error: (code, a) => answers.push([code, a]),
+        editDenied: (r, seq) => denied.push(`${r}:${seq}`),
+      },
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      countLeases: true,
+    });
+    c.start();
+    try {
+      welcome(sock(), "a\n\nb");
+      sock().frame({ t: "leased", lease: "L1", start: 0, end: 1, holder: "s1", by: YOU.email });
+      // Edit 1 goes on a lease the room had replaced: not_held.
+      expect(c.edit("x")).toBe(true);
+      sock().frame({ t: "error", code: "not_held", re: idsOf("edit")[0] });
+      expect(answers.at(-1)).toEqual(["not_held", { edit: 1 }]);
+      expect(c.unflushed).toBe(false);
+      // Edit 2 comes after a freeze: denied, never taken for a lease request's answer.
+      expect(c.edit("y")).toBe(true);
+      sock().frame({ t: "lease_denied", reason: "frozen", re: idsOf("edit")[1] });
+      expect(denied).toEqual(["frozen:2"]);
+      expect(L.calls.filter((x) => x.startsWith("denied"))).toEqual([]);
+      expect(c.unflushed).toBe(false);
+      // Edits 3 and 4; the room refuses 4 first by its re (whatever the order): 3 is still out.
+      expect(c.edit("z")).toBe(true);
+      expect(c.edit("w")).toBe(true);
+      sock().frame({ t: "error", code: "invalid", re: idsOf("edit")[3] });
+      expect(answers.at(-1)).toEqual(["invalid", { edit: 4 }]);
+      expect(c.unflushed).toBe(true);
+      sock().frame({
+        t: "op",
+        gen: "g1",
+        rev: 4,
+        lease: "L1",
+        start: 0,
+        del: 1,
+        ins: "z",
+        by: "s1",
+        seq: 3,
+        re: idsOf("edit")[2],
+      });
+      sock().frame({ t: "flushed", rev: 4 });
+      expect(c.unflushed).toBe(false);
+    } finally {
+      c.stop();
+    }
+  });
+
+  it("errors and released frames with no re answer nothing: draft_limit, a takeover's released", () => {
+    const answers: unknown[] = [];
+    const c = new LiveDocClient({
+      win: window,
+      listener: { ...L, error: (code, a) => answers.push([code, a]) },
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      countLeases: true,
+    });
+    c.start();
+    try {
+      welcome(sock(), "a\n\nb\n\nc", {
+        leases: [{ id: "B1", start: 2, end: 3, by: "bo@example.org" }],
+      });
+      sock().frame({ t: "leased", lease: "L1", start: 0, end: 1, holder: "s1", by: YOU.email });
+      c.release();
+      expect(c.takeover("B1")).toBe(true);
+      // A flush's draft_limit (to every socket) answers nothing.
+      sock().frame({ t: "error", code: "draft_limit" });
+      expect(answers.at(-1)).toEqual(["draft_limit", undefined]);
+      // Someone else takes L1 over first: its released has no re and is not the release's answer.
+      sock().frame({ t: "released", lease: "L1" });
+      // The release's own answer: not_held, by its re.
+      sock().frame({ t: "error", code: "not_held", re: idsOf("release")[0] });
+      expect(answers.at(-1)).toEqual(["not_held", { release: true }]);
+      sock().frame({ t: "released", lease: "B1" });
+      sock().frame({
+        t: "leased",
+        lease: "L2",
+        start: 2,
+        end: 3,
+        holder: "s1",
+        by: YOU.email,
+        re: idsOf("takeover")[0],
+      });
+      expect(L.calls).toContain("granted:2-3");
+      // A takeover the room answers not_held (its holder let go first) says so as the lease's.
+      expect(c.takeover("B7")).toBe(true);
+      sock().frame({ t: "error", code: "not_held", re: idsOf("takeover")[1] });
+      expect(answers.at(-1)).toEqual(["not_held", { lease: true }]);
+    } finally {
+      c.stop();
+    }
+  });
+
+  it("a sync the room drops over the rate (its re) is asked for again, and eats no other answer", () => {
+    client.start();
+    const ws = sock();
+    welcome(ws, "a\nb\nc");
+    ws.frame({ t: "op", gen: "g1", rev: 9, lease: "X1", start: 0, del: 1, ins: "z", by: "s2" });
+    expect(idsOf("sync")).toHaveLength(1);
+    client.lease({ start: 1, end: 2 });
+    ws.frame({ t: "error", code: "rate_limited", re: idsOf("sync")[0] });
+    ws.frame({ t: "lease_denied", reason: "held", by: "ben@example.org", re: idsOf("lease")[0] });
+    expect(L.calls).toContain("denied:held,ben@example.org");
+    expect(L.calls.filter((c) => c.startsWith("error"))).toEqual([]);
+    vi.advanceTimersByTime(1000);
+    expect(idsOf("sync")).toHaveLength(2);
+  });
+
+  it("with countLeases, passes on a denial for each request out, not only the first", () => {
+    const counted = new LiveDocClient({
+      win: window,
+      listener: L,
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      countLeases: true,
+    });
+    counted.start();
+    try {
+      welcome(sock(), "a\n\nb");
+      expect(counted.lease({ start: 0, end: 1 })).toBe(true);
+      expect(counted.lease({ start: 2, end: 3 })).toBe(true);
+      sock().frame({ t: "lease_denied", reason: "stale" });
+      sock().frame({ t: "lease_denied", reason: "held", by: "bo@example.org" });
+      // A third denial answers nothing this socket asked.
+      sock().frame({ t: "lease_denied", reason: "stale" });
+      expect(L.calls.filter((c) => c.startsWith("denied"))).toEqual([
+        "denied:stale,",
+        "denied:held,bo@example.org",
+      ]);
+    } finally {
+      counted.stop();
+    }
   });
 
   it("shifts other leases and recognizes its own ack", () => {
@@ -672,5 +878,130 @@ describe("readServerFrame", () => {
       expect(readServerFrame(withColumn(c)), JSON.stringify(c)).toBeNull();
       expect(liveDocServerFrameSchema.safeParse(withColumn(c)).success).toBe(false);
     }
+  });
+});
+
+// Round 4 review: frames the room sends that are not the answer to this socket's oldest frame.
+describe("round 4: answers matched to frames, against doc.ts's unsolicited and untracked answers", () => {
+  it("a draft_limit error from a flush (doc.ts flush, to every socket) does not eat a lease's denial", () => {
+    client.start();
+    const ws = sock();
+    welcome(ws, "a\nb\nc");
+    client.lease({ start: 1, end: 2 });
+    // The room flushes someone's edits while the owner is at the draft limit: every socket gets it.
+    ws.frame({ t: "error", code: "draft_limit" });
+    // Then the room answers the lease: Ben holds those lines.
+    ws.frame({ t: "lease_denied", reason: "held", by: "ben@example.org" });
+    expect(L.calls).toContain("denied:held,ben@example.org");
+  });
+
+  it("a rate-limited sync (untracked) does not eat the answer of the lease sent after it", () => {
+    client.start();
+    const ws = sock();
+    welcome(ws, "a\nb\nc");
+    // A gap: the client asks for a sync.
+    ws.frame({ t: "op", gen: "g1", rev: 9, lease: "X1", start: 0, del: 1, ins: "z", by: "s2" });
+    expect(ws.sent.some((f) => (f as { t?: string }).t === "sync")).toBe(true);
+    client.lease({ start: 1, end: 2 });
+    // ArtifactRoom drops the sync as over the rate: `error rate_limited`, then answers the lease.
+    ws.frame({ t: "error", code: "rate_limited" });
+    ws.frame({ t: "lease_denied", reason: "held", by: "ben@example.org" });
+    expect(L.calls).toContain("denied:held,ben@example.org");
+  });
+});
+
+describe("a struct op waiting while frames with no re arrive", () => {
+  const SHEET = [
+    '{"plinth":"sheet","v":1,"columns":[{"name":"A","type":"text"},{"name":"B","type":"number"}]}',
+    '["x",1]',
+  ].join("\n");
+  it("an own struct this socket cannot apply is settled by the welcome its resync brings", () => {
+    const c = new LiveDocClient({
+      win: window,
+      listener: listener(),
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    c.start();
+    try {
+      welcome(sock(), SHEET);
+      expect(c.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(true);
+      expect(c.structWaiting).toBe(true);
+      const ids = sock().ids;
+      // Its broadcast comes at a rev this socket did not expect: it asks for the draft again.
+      sock().frame({
+        t: "struct",
+        gen: "g1",
+        rev: 9,
+        op: { op: "insert_rows", before: 2, count: 1 },
+        by: "s1",
+        re: ids.filter((x) => x.t === "struct").at(-1)?.id,
+      });
+      const sync = ids.filter((x) => x.t === "sync").at(-1)?.id;
+      expect(sync).toBeTypeOf("number");
+      welcome(sock(), SHEET, { rev: 9, re: sync });
+      expect(c.structWaiting).toBe(false);
+    } finally {
+      c.stop();
+    }
+  });
+
+  it("an error with no re (draft_limit) leaves a struct waiting for its own answer", () => {
+    const c = new LiveDocClient({
+      win: window,
+      listener: listener(),
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    c.start();
+    try {
+      welcome(sock(), SHEET);
+      expect(c.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(true);
+      sock().frame({ t: "error", code: "draft_limit" });
+      expect(c.structWaiting).toBe(true);
+      sock().frame({
+        t: "error",
+        code: "invalid",
+        re: sock()
+          .ids.filter((x) => x.t === "struct")
+          .at(-1)?.id,
+      });
+      expect(c.structWaiting).toBe(false);
+    } finally {
+      c.stop();
+    }
+  });
+  it("a draft_limit (no re) does not swallow the struct's own denial that follows", () => {
+    const l = listener();
+    const denied: string[] = [];
+    l.structDenied = (r, by) => denied.push(`${r}:${by ?? ""}`);
+    const c = new LiveDocClient({
+      win: window,
+      listener: l,
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    c.start();
+    welcome(sock(), SHEET);
+    expect(c.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(true);
+    const id = sock()
+      .ids.filter((x) => x.t === "struct")
+      .at(-1)?.id;
+    expect(id).toBeTypeOf("number");
+    // Someone's flush while the owner is at the draft limit: to every socket, no `re`.
+    sock().frame({ t: "error", code: "draft_limit" });
+    // The room's answer to the struct: Ben holds a row.
+    sock().frame({
+      t: "struct_denied",
+      reason: "held",
+      by: "ben@example.org",
+      ...(id ? { re: id } : {}),
+    });
+    expect(denied).toEqual(["held:ben@example.org"]);
+    expect(c.structWaiting).toBe(false);
+    c.stop();
   });
 });

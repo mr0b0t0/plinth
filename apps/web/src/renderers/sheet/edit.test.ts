@@ -39,6 +39,21 @@ class FakeSocket {
   sent: Record<string, unknown>[] = [];
   /** A frame type whose send throws (a socket that went away). */
   refuse: string | null = null;
+  /**
+   * Each frame's `id` (the room answers with it as `re`), kept apart so the frames read as before:
+   * `idOf(t)` is the id of the last frame of kind `t` sent.
+   */
+  ids: { t: string; id: number }[] = [];
+  idOf(t: string): number {
+    const hit = this.ids.filter((x) => x.t === t).at(-1);
+    if (!hit) throw new Error(`no ${t} sent`);
+    return hit.id;
+  }
+  private unId(f: Record<string, unknown>): Record<string, unknown> {
+    if (typeof f.id === "number") this.ids.push({ t: String(f.t), id: f.id });
+    const { id: _id, ...rest } = f;
+    return rest;
+  }
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -50,7 +65,7 @@ class FakeSocket {
     if (raw === "ping") return;
     const f = JSON.parse(raw);
     if (f.t === this.refuse) throw new Error("closed");
-    this.sent.push(f);
+    this.sent.push(this.unId(f));
   }
   close() {}
   frame(f: Record<string, unknown>) {
@@ -755,6 +770,50 @@ describe("room editing", () => {
     ws.frame({ t: "leased", lease: "l1", start: 1, end: 2, holder: "s1", by: YOU.email });
     expect(ws.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
     expect(notice()).toContain("That change was not sent");
+  });
+
+  it("a row the room refuses shows the room's row again and says why; the next edit is unflushed until its ack", async () => {
+    const { f, ws } = start();
+    const lastLive = () =>
+      f.parent.postMessage.mock.calls
+        .map((c) => c[0])
+        .filter((m) => m?.type === "live")
+        .at(-1);
+    dbl(cell("B3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "6");
+    key(field() as HTMLInputElement, "Enter");
+    expect(ws.sent.at(-2)).toMatchObject({ t: "edit", seq: 1 });
+    ws.frame({ t: "error", code: "invalid", re: ws.idOf("edit") });
+    await tick();
+    // The refused value was never in the draft: the grid shows the room's row, and says so.
+    expect(text("B3")).toBe("5");
+    expect(notice()).toContain("does not fit the sheet");
+    // Nothing of this frame waits for the room any more.
+    expect(lastLive()).toMatchObject({ unflushed: false });
+    // A later edit is unsent until the room acknowledges it, as before.
+    dbl(cell("B2"));
+    ws.frame({ t: "leased", lease: "l2", start: 1, end: 2, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "7");
+    key(field() as HTMLInputElement, "Enter");
+    await tick();
+    expect(lastLive()).toMatchObject({ unflushed: true });
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l2",
+      start: 1,
+      del: 1,
+      ins: '["Apples",7,1.5,true,"new"]',
+      by: "s1",
+      seq: 2,
+      re: ws.idOf("edit"),
+    });
+    ws.frame({ t: "flushed", rev: 4 });
+    await tick();
+    expect(text("B2")).toBe("7");
+    expect(lastLive()).toMatchObject({ unflushed: false });
   });
 
   it("says why the room refused a struct", async () => {

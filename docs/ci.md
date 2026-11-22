@@ -144,6 +144,7 @@ is safe.
 | `note` | empty | The version note. Empty: the commit subject and short SHA. `-`: no note |
 | `link-run` | `false` | Append this run's URL to the note |
 | `base-version` | empty | Publish only if the artifact is still at this version. Needs an artifact to update (`id`, or a token limited to one): without one the step fails with exit code 2 and creates nothing |
+| `editing` | `code` | `code`: the artifact is published from this repository, so people who edit it on its page (a design system) are told that the next run won't include their changes. `page`: no such notice. See [Published from code](#published-from-code) |
 | `include-maps` | `false` | Also send source maps |
 | `dry-run` | `false` | Check the build and report what would be sent; publish nothing |
 | `fail-on-warnings` | `false` | Fail the step when the publish reports warnings (it is still published). `not_scanned` and `live_draft` need no action and never fail it |
@@ -165,7 +166,7 @@ takes two).
 | `outcome` | `published`, `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error` |
 | `current-version` | On a conflict, the version someone else published |
 | `verified` | `true` when every file was read back and matched |
-| `warnings` | The number of publish warnings to fix (missing files, blocked hosts). Not counted: `not_scanned` (some files were not checked) and `live_draft` (people have unsaved edits on the page of a doc or a sheet; the version was published, and nothing was overwritten) |
+| `warnings` | The number of publish warnings to fix (missing files, blocked hosts). Not counted: `not_scanned` (some files were not checked) and `live_draft` (people have unsaved edits on the page of a doc, a sheet or a design system; the version was published, and nothing was overwritten) |
 | `json` | The CLI's `--json` output (untrusted, see above) |
 
 ## Pull requests and forks
@@ -258,6 +259,20 @@ With `--dry-run` it prints what would be sent, and sends nothing:
 `files` and `bytes` count the whole version. For an update, `changed` and `reused` count its asset
 files (the source is always sent), and `send` is `inline` (one request) or `bundle`. A new artifact
 has only `type`, `files`, `bytes` and `send`.
+
+## Published from code
+
+A publish from CI is the whole new version: it leaves out whatever people changed on the
+artifact's page since the last run (those versions stay in its history, and a draft being edited
+at the time is held for review beside the new version, where the editors choose which to keep). So
+the Action and `plinth publish` mark the artifact as published from code (`editing: code`), and the
+mark stays until a publish says otherwise. On a design system, people who start editing it on its
+page are then told "This design system is published from code. Its next publish from code won't
+include changes made here." Editing is not blocked. Set the `editing` input (or `--editing page`) to `page` to clear the mark, for an
+artifact you publish once and then edit on its page. Every run sends its `editing`, so a CI publish
+without `editing: page` sets the mark again even after an owner chose `page`. A `.csv` or `.xlsx`
+import sends no mark unless `--editing` is given. Every type stores the mark; only design systems
+show the notice so far.
 
 ## Your own instance
 

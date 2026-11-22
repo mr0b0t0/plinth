@@ -119,6 +119,10 @@
   background: var(--color-accent-soft);
   color: var(--color-accent-ink);
 }
+/* Off, with its reason in the tooltip (a page only an agent can fix): it keeps the focus. */
+.pl-viewer__edit[aria-disabled="true"] {
+  opacity: 0.45;
+}
 .pl-editbar,
 .pl-livenotice {
   display: flex;

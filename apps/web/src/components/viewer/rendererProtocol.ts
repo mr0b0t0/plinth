@@ -313,6 +313,11 @@ export interface EditMessage {
    * doc's first block opened for typing. Absent: focus stays where it is.
    */
   focus?: "first";
+  /**
+   * Turning editing on for an artifact published from code (gate `from_code`): the frame says
+   * that the next publish from code won't include what is changed on the page. Absent otherwise.
+   */
+  code?: true;
 }
 
 /** Open the whole-draft review in the frame. */
@@ -377,13 +382,22 @@ export interface LiveFrameStatus {
   editors: { email: string; block: boolean; where?: string }[];
   /** False when the draft cannot be a version yet (LiveTypeRules.unpublishable). */
   publishable: boolean;
-  /** The frame cannot edit this artifact on its page (it is too large to). */
-  unavailable?: "too_large";
+  /**
+   * The frame cannot edit this artifact on its page: it is too large to, or the version it shows
+   * has problems only an agent can fix (a design system the format refuses).
+   */
+  unavailable?: "too_large" | "invalid";
   /**
    * An open block holds text the page cannot write as typed yet (the frame says so): it is not
    * in the draft, so editing may not end and nothing may be published until it is changed.
    */
   unsavable?: true;
+  /**
+   * The frame holds a change on its way to the room: set on the page, and not in the room's draft
+   * yet (a value waiting for its lease, or sent and not acknowledged). Publish and Done wait for
+   * it, a while, before they take the checkpoint. Absent otherwise.
+   */
+  pending?: true;
 }
 
 /**
@@ -502,7 +516,12 @@ const MAX_EDITORS = 50;
 const MAX_EMAIL = 254;
 const MAX_INT = 2 ** 31;
 
-export function editMessage(on: boolean, base?: number, focus?: "first"): EditMessage {
+export function editMessage(
+  on: boolean,
+  base?: number,
+  focus?: "first",
+  code?: boolean,
+): EditMessage {
   return {
     source: RENDERER_MESSAGE_SOURCE,
     v: RENDERER_PROTOCOL_VERSION,
@@ -510,6 +529,7 @@ export function editMessage(on: boolean, base?: number, focus?: "first"): EditMe
     on,
     ...(base !== undefined ? { base } : {}),
     ...(on && focus ? { focus } : {}),
+    ...(on && code ? { code: true as const } : {}),
   };
 }
 
@@ -718,8 +738,11 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
   }
   const publishable = m.publishable === undefined ? true : m.publishable;
   if (!isBool(publishable)) return null;
-  if (m.unavailable !== undefined && m.unavailable !== "too_large") return null;
+  if (m.unavailable !== undefined && m.unavailable !== "too_large" && m.unavailable !== "invalid") {
+    return null;
+  }
   if (m.unsavable !== undefined && m.unsavable !== true) return null;
+  if (m.pending !== undefined && m.pending !== true) return null;
   return {
     connected: connected as boolean,
     failed: failed as boolean,
@@ -734,8 +757,11 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
     last_edit_at: last_edit_at as string | null,
     editors: list,
     publishable,
-    ...(m.unavailable === "too_large" ? { unavailable: "too_large" as const } : {}),
+    ...(m.unavailable === "too_large" || m.unavailable === "invalid"
+      ? { unavailable: m.unavailable }
+      : {}),
     ...(m.unsavable === true ? { unsavable: true as const } : {}),
+    ...(m.pending === true ? { pending: true as const } : {}),
   };
 }
 

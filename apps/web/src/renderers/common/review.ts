@@ -704,11 +704,12 @@ export function startPaneAt(pane: HTMLElement, target: Element): void {
 
 /**
  * Scroll `pane` so `target` is in view when it is not already wholly in view: centred from top to
- * bottom (clear of a sheet's sticky header rows), and from side to side with its left edge just
- * past whatever sticks at the left of its row (a sheet's row numbers and frozen columns), so its
- * column shows whole, with its name, and no unlabelled sliver of another is left beside them. In
- * a pane of whole items (REVIEW_START_ATTR, a deck's slides) the target starts the pane instead
- * (startPaneAt). True when it scrolled.
+ * bottom (clear of a sheet's sticky header rows), or that far below the pane's top when the pane
+ * sets `--plinth-review-scroll-top` (a design system's rows, which centring cut in half above it),
+ * and from side to side with its left edge just past whatever sticks at the left of its row (a
+ * sheet's row numbers and frozen columns), so its column shows whole, with its name, and no
+ * unlabelled sliver of another is left beside them. In a pane of whole items (REVIEW_START_ATTR, a
+ * deck's slides) the target starts the pane instead (startPaneAt). True when it scrolled.
  */
 function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
   const p = pane.getBoundingClientRect();
@@ -718,7 +719,14 @@ function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
     if (target.parentElement?.closest(`[${REVIEW_START_ATTR}]`)) {
       startPaneAt(pane, target);
     } else {
-      pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+      const top = Number.parseFloat(
+        pane.ownerDocument.defaultView
+          ?.getComputedStyle(pane)
+          .getPropertyValue("--plinth-review-scroll-top") ?? "",
+      );
+      pane.scrollTop += Number.isFinite(top)
+        ? t.top - p.top - top
+        : t.top - p.top - Math.max(0, (p.height - t.height) / 2);
     }
     moved = true;
   }

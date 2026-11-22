@@ -213,6 +213,11 @@ export const GATE_PARTS: readonly GatePart[] = [
     const liveOff = await gateLiveOff(ctx, a, d, opts);
     return liveOff ? { live_off: liveOff } : undefined;
   },
+  // Published from code: only where `live` is, so only the people who edit on the page hear it.
+  async ({ ctx, a, d, opts }) =>
+    a.editing === "code" && (await liveSeat(ctx, a, d, opts)) && liveEditMode(ctx.config, ctx.env)
+      ? { from_code: true as const }
+      : undefined,
   async ({ ctx, a, version }) =>
     (await altSourceShown(ctx, a, version)) ? { no_editor: true as const } : undefined,
 ];

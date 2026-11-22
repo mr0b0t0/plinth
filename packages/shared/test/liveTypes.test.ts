@@ -44,12 +44,12 @@ if (!sheet) throw new Error("no sheet rules");
 describe("live type rules", () => {
   it("cover exactly the types with edit: live", () => {
     const live = ARTIFACT_TYPES.filter((t) => isLiveType(TYPE_REGISTRY[t]));
-    expect(live).toEqual(["doc", "slides", "sheet"]);
+    expect(live).toEqual(["doc", "slides", "design_system", "sheet"]);
     expect(ARTIFACT_TYPES.map((t) => TYPE_REGISTRY[t].edit)).toEqual([
       "ask",
       "live",
       "live",
-      "ask",
+      "live",
       "ask",
       "live",
       "board",

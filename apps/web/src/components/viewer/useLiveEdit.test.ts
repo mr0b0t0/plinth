@@ -166,6 +166,67 @@ describe("useLiveEdit", () => {
     expect(result.current.status?.rev).toBe(7);
   });
 
+  it("leaves edit mode and offers Ask an agent when the frame is too large to edit on the page", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const onAsk = vi.fn();
+    const { result } = renderHook(() =>
+      useLiveEdit({
+        gate: gate("room"),
+        frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        frameKey: KEY,
+        onReload: vi.fn(),
+        onAsk,
+      }),
+    );
+    act(() => result.current.start());
+    expect(result.current.editing).toBe(true);
+    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "too_large" });
+    expect(result.current.editing).toBe(false);
+    expect(toasts.at(-1)).toBe("This doc is too large to edit on the page");
+    expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ type: "edit", on: false });
+    // Not editing: the same status says nothing again.
+    const before = toasts.length;
+    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "too_large" });
+    expect(toasts).toHaveLength(before);
+  });
+
+  it("tells the frame an artifact published from code is, only when the gate says so", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const { result } = hook(gate("room", { from_code: true }));
+    act(() => result.current.start());
+    expect(sentToFrame("edit").at(-1)?.[0]).toEqual({
+      source: "plinth-renderer",
+      v: 1,
+      type: "edit",
+      on: true,
+      code: true,
+    });
+    cleanup();
+    toFrame.mockClear();
+    const plain = hook(gate("room"));
+    act(() => plain.result.current.start());
+    expect(sentToFrame("edit").at(-1)?.[0]).not.toHaveProperty("code");
+  });
+
+  it("keeps Edit off, with why, while the frame says only an agent can fix the page", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const { result } = hook(
+      gate("room", {
+        artifact: { ...gate("room").artifact, type: "design_system" },
+      }),
+    );
+    expect(result.current.blocked).toBeNull();
+    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "invalid" });
+    expect(result.current.blocked).toBe(
+      "This design system has problems an agent needs to fix. Ask an agent to fix them.",
+    );
+    act(() => result.current.start());
+    expect(result.current.editing).toBe(false);
+    expect(sentToFrame("edit")).toHaveLength(0);
+  });
+
   it("has no on-page editing under opaque isolation", () => {
     stubApi();
     const { result } = renderHook(() =>
@@ -597,6 +658,43 @@ describe("useLiveEdit", () => {
     fromFrame({ type: "live", ...STATUS });
     await act(() => result.current.publish());
     expect(calls.some((c) => c.path.endsWith("/live/checkpoint"))).toBe(true);
+  });
+
+  it("Done and Publish wait for a value the frame is still sending before the checkpoint", async () => {
+    const seen: number[] = [];
+    stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint")) {
+          seen.push((c.body as { rev: number }).rev);
+          return json({ saved: true, version: { version: 4 } });
+        }
+        return undefined;
+      },
+    });
+    const { result } = hook(gate("room"));
+    act(() => result.current.start());
+    // A token's value is on its way to the room (its lease asked for, not granted yet).
+    fromFrame({ type: "live", ...STATUS, rev: 7, pending: true });
+    let published = false;
+    // Not inside act(): the frame's next status has to reach the hook while this waits.
+    const p = result.current.publish().then(() => {
+      published = true;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(published).toBe(false);
+    expect(seen).toEqual([]);
+    // The room has it now: the checkpoint is taken at the rev that holds it.
+    fromFrame({ type: "live", ...STATUS, rev: 8 });
+    await p;
+    expect(seen).toEqual([8]);
+    fromFrame({ type: "live", ...STATUS, rev: 8, pending: true });
+    const d = result.current.done();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(seen).toEqual([8]);
+    fromFrame({ type: "live", ...STATUS, rev: 9 });
+    await d;
+    expect(seen).toEqual([8, 9]);
   });
 
   it("publishes nothing while a block holds typing it cannot save: solo, even if the status lags", async () => {

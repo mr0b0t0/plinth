@@ -1,0 +1,587 @@
+// The value controls of a design system's token rows in edit mode (docs/spec.md "Design systems"):
+// one control per token type, each writing the whole $value in the form it is stored in (a colour
+// string stays a string, a colour object keeps its space and alpha, a dimension object stays an
+// object) unless the person picks another form. A colour token's own sample is its picker (the
+// row draws it; samplePicker), with a text field for any colour the grammar takes; a colour inside
+// a composite has a small swatch beside its field. An object colour converts the picked sRGB
+// colour into its own space (colorSpaces.ts). A composite (shadow, border, typography) has one
+// field per part on a label | field grid, each by the rules of its own type, and a part that names
+// another token picks one. Built with createElement only; every value reaches the page through
+// .value or textContent. The room checks every value with the publish grammar again.
+import {
+  type ColorSpace,
+  componentsOf,
+  type DsTokenType,
+  dsAliasOf,
+  fromSrgb,
+  hexToSrgb,
+  srgbToHex,
+  type Triple,
+  toSrgb,
+} from "@plinth/shared";
+
+export interface ControlContext {
+  doc: Document;
+  /** What the controls are named after ("color.brand.500, dark"). */
+  label: string;
+  /** False when the row's sample is the colour picker (samplePicker): no swatch beside the field. */
+  swatch?: boolean;
+  /** A part whose value may be below zero (a letter spacing, a shadow's offset or spread). */
+  signed?: boolean;
+  /** Tokens of `type` a value (or a part) may name, for the pickers. */
+  targets(type: DsTokenType): string[];
+  /** The person set a new value; false when it was refused (not written). */
+  change(value: unknown): unknown;
+  /**
+   * The value as the draft has it now, and whether a change written from this control is still
+   * on its way (not in the draft yet). A composite builds each part's write from it, so another
+   * person's change to another part since the row was drawn is kept. Absent: the drawn value.
+   */
+  current?(): { value: unknown; pending: boolean };
+  /** Ask before a change of form the person may not mean: `run` only on yes. */
+  confirm(question: string, yes: string, run: () => void): void;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+let ids = 0;
+const nextId = () => `ds-control-${++ids}`;
+
+function input(ctx: ControlContext, type: string, label: string, value: string): HTMLInputElement {
+  const i = ctx.doc.createElement("input");
+  i.type = type;
+  i.className = `ds-field ds-field--${type}`;
+  i.value = value;
+  i.setAttribute("aria-label", `${ctx.label}: ${label}`);
+  i.id = nextId();
+  return i;
+}
+
+function select(
+  ctx: ControlContext,
+  label: string,
+  options: readonly (readonly [string, string])[],
+  value: string,
+): HTMLSelectElement {
+  const s = ctx.doc.createElement("select");
+  s.className = "ds-field ds-field--select";
+  s.setAttribute("aria-label", `${ctx.label}: ${label}`);
+  for (const [v, text] of options) {
+    const o = ctx.doc.createElement("option");
+    o.value = v;
+    o.textContent = text;
+    s.append(o);
+  }
+  s.value = value;
+  return s;
+}
+
+function group(ctx: ControlContext, ...children: HTMLElement[]): HTMLElement {
+  const g = ctx.doc.createElement("div");
+  g.className = "ds-control";
+  g.append(...children);
+  return g;
+}
+
+/** A finite number from a field, or null. A decimal comma ("1,5") reads as a point. */
+function numberOf(s: string): number | null {
+  const t = s.trim();
+  if (t === "") return null;
+  const n = Number(/^-?\d*,\d+$/.test(t) ? t.replace(",", ".") : t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * A number field: a text field, so the value reads as it is stored ("1.5", never a locale's
+ * "1,5"), with the decimal keypad on phones. A field whose value may be below zero (a letter
+ * spacing, a shadow's offset) keeps the full keyboard, whose minus the decimal keypad lacks on
+ * some phones.
+ */
+function numberField(ctx: ControlContext, value: string, signed: boolean): HTMLInputElement {
+  const n = input(ctx, "text", "number", value);
+  n.className = "ds-field ds-field--number";
+  n.inputMode = signed ? "text" : "decimal";
+  n.autocomplete = "off";
+  n.spellcheck = false;
+  return n;
+}
+
+/** `o` with `key` set to `value`, keeping the order of its keys (a new key goes last). */
+function withKey(o: Record<string, unknown>, key: string, value: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(o)) out[k] = k === key ? value : o[k];
+  if (!(key in o)) out[key] = value;
+  return out;
+}
+
+// ---------- colours ----------
+
+const NUM = String.raw`(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(%?)`;
+const SEP = String.raw`[\s,/]+`;
+const FN_RE = new RegExp(
+  `^(rgba?|oklch|oklab|color)\\(\\s*(srgb|display-p3)?\\s*${NUM}${SEP}${NUM}${SEP}${NUM}(?:${SEP}${NUM})?\\s*\\)$`,
+  "i",
+);
+
+/** A CSS colour as sRGB components, as far as this page can tell (hex, rgb(), oklch(), oklab(), color()). */
+export function cssColorToSrgb(s: string, doc?: Document): Triple | null {
+  const t = s.trim();
+  const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(t);
+  if (hex) {
+    const h = hex[1] as string;
+    return hexToSrgb(`#${h.length <= 4 ? h.slice(0, 3) : h.slice(0, 6)}`);
+  }
+  const m = FN_RE.exec(t);
+  if (m) {
+    const fn = (m[1] as string).toLowerCase();
+    const space = (m[2] ?? "").toLowerCase();
+    const n = (i: number) => Number(m[3 + i * 2]);
+    const pct = (i: number) => m[4 + i * 2] === "%";
+    if (fn === "rgb" || fn === "rgba") {
+      return [0, 1, 2].map((i) => (pct(i) ? n(i) / 100 : n(i) / 255)) as Triple;
+    }
+    if (fn === "oklch") return toSrgb("oklch", [pct(0) ? n(0) / 100 : n(0), n(1), n(2)]);
+    if (fn === "oklab") return toSrgb("oklab", [pct(0) ? n(0) / 100 : n(0), n(1), n(2)]);
+    if (fn === "color" && (space === "srgb" || space === "display-p3")) {
+      return toSrgb(space as ColorSpace, [n(0), n(1), n(2)]);
+    }
+  }
+  // A colour name, hsl() and the rest: the browser's own reading, as rgb().
+  if (!doc?.defaultView || !/^[a-z]{3,24}$|^hsla?\(|^hwb\(/i.test(t)) return null;
+  const probe = doc.createElement("span");
+  probe.style.color = t;
+  if (!probe.style.color) return null;
+  doc.body.append(probe);
+  const rgb = doc.defaultView.getComputedStyle(probe).color;
+  probe.remove();
+  const r = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(rgb);
+  return r ? ([1, 2, 3].map((i) => Number(r[i]) / 255) as Triple) : null;
+}
+
+/** A colour value (a string, or an object in its space) as #rrggbb for the picker, or null. */
+export function colorHex(v: unknown, doc?: Document): string | null {
+  if (typeof v === "string") {
+    const rgb = cssColorToSrgb(v, doc);
+    return rgb ? srgbToHex(rgb) : null;
+  }
+  if (isObject(v) && typeof v.colorSpace === "string") {
+    if (typeof v.hex === "string" && /^#[0-9a-f]{6}$/i.test(v.hex)) return v.hex.toLowerCase();
+    const c = componentsOf(v.components);
+    if (!c) return null;
+    const space = v.colorSpace as ColorSpace;
+    return srgbToHex(toSrgb(space, c));
+  }
+  return null;
+}
+
+/** An object colour as text, as the compiler writes it ("oklch(0.52 0.19 268)"). */
+function objectColorText(v: Record<string, unknown>): string {
+  const c = Array.isArray(v.components) ? v.components.join(" ") : "";
+  const a = typeof v.alpha === "number" && v.alpha !== 1 ? ` / ${v.alpha}` : "";
+  return v.colorSpace === "oklch" || v.colorSpace === "oklab"
+    ? `${v.colorSpace}(${c}${a})`
+    : `color(${String(v.colorSpace)} ${c}${a})`;
+}
+
+/** The picked colour (#rrggbb) written in the stored form: a hex string, or the object's own space. */
+export function pickedColor(stored: unknown, hex: string): unknown {
+  if (!isObject(stored)) return hex;
+  const rgb = hexToSrgb(hex);
+  if (!rgb) return stored;
+  const space = (stored.colorSpace as ColorSpace) ?? "srgb";
+  let out = withKey(stored, "components", fromSrgb(space, rgb));
+  // A hex beside the components always says the same colour.
+  if ("hex" in stored) out = withKey(out, "hex", hex.toLowerCase());
+  return out;
+}
+
+function colorControl(ctx: ControlContext, value: unknown): HTMLElement {
+  const text = input(
+    ctx,
+    "text",
+    "colour as text",
+    typeof value === "string" ? value : isObject(value) ? objectColorText(value) : "",
+  );
+  text.classList.add("ds-field--short");
+  text.spellcheck = false;
+  text.addEventListener("change", () => {
+    const t = text.value.trim();
+    if (t === "") return;
+    if (isObject(value)) {
+      ctx.confirm(
+        `Store this colour as text? It is stored in ${String(value.colorSpace)} components now.`,
+        "Store as text",
+        () => ctx.change(t),
+      );
+      return;
+    }
+    ctx.change(t);
+  });
+  if (ctx.swatch === false) return group(ctx, text);
+  const swatch = input(ctx, "color", "colour", colorHex(value, ctx.doc) ?? "#000000");
+  swatch.classList.add("ds-swatch");
+  swatch.addEventListener("input", () => ctx.change(pickedColor(value, swatch.value)));
+  return group(ctx, swatch, text);
+}
+
+/**
+ * A colour token's sample as its picker: a colour input over the whole sample, which shows the
+ * picked colour at once (the row is drawn again once the person leaves it).
+ */
+export function samplePicker(ctx: ControlContext, value: unknown, sample: HTMLElement): void {
+  const pick = input(ctx, "color", "colour", colorHex(value, ctx.doc) ?? "#000000");
+  pick.className = "ds-sample__picker";
+  pick.addEventListener("input", () => {
+    sample.style.setProperty("--ds-sample", pick.value);
+    ctx.change(pickedColor(value, pick.value));
+  });
+  sample.classList.add("ds-sample--pick");
+  sample.append(pick);
+}
+
+// ---------- numbers with units ----------
+
+const DIMENSION_UNITS = ["px", "rem", "em", "%"] as const;
+const OBJECT_DIMENSION_UNITS = ["px", "rem"] as const;
+const DURATION_UNITS = ["ms", "s"] as const;
+
+function unitControl(
+  ctx: ControlContext,
+  value: unknown,
+  units: readonly string[],
+  objectUnits: readonly string[],
+): HTMLElement {
+  const asObject = isObject(value);
+  let num = 0;
+  let unit = units[0] as string;
+  if (asObject) {
+    num = typeof value.value === "number" ? value.value : 0;
+    unit = typeof value.unit === "string" ? value.unit : unit;
+  } else if (typeof value === "string") {
+    const m = /^(-?(?:\d+|\d*\.\d+))([a-z%]*)$/.exec(value.trim());
+    if (m) {
+      num = Number(m[1]);
+      unit = m[2] || unit;
+    }
+  }
+  const allowed = asObject ? objectUnits : units;
+  const n = numberField(ctx, String(num), ctx.signed === true || num < 0);
+  const u = select(
+    ctx,
+    "unit",
+    allowed.map((x) => [x, x] as const),
+    allowed.includes(unit) ? unit : (allowed[0] as string),
+  );
+  const write = () => {
+    const v = numberOf(n.value);
+    if (v === null) return;
+    ctx.change(asObject ? withKey(withKey(value, "value", v), "unit", u.value) : `${v}${u.value}`);
+  };
+  n.addEventListener("change", write);
+  u.addEventListener("change", write);
+  return group(ctx, n, u);
+}
+
+const WEIGHTS = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
+
+/** One select: 100 to 900, and the keyword or other number the token has, kept as it is stored. */
+function weightControl(ctx: ControlContext, value: unknown): HTMLElement {
+  const current = typeof value === "number" || typeof value === "string" ? String(value) : "400";
+  const options = WEIGHTS.includes(current)
+    ? WEIGHTS
+    : /^\d+$/.test(current)
+      ? [...WEIGHTS, current].sort((a, b) => Number(a) - Number(b))
+      : [...WEIGHTS, current];
+  const s = select(
+    ctx,
+    "weight",
+    options.map((w) => [w, w] as const),
+    current,
+  );
+  s.addEventListener("change", () => ctx.change(/^\d+$/.test(s.value) ? Number(s.value) : s.value));
+  return group(ctx, s);
+}
+
+function numberControl(ctx: ControlContext, value: unknown): HTMLElement {
+  const n = numberField(
+    ctx,
+    typeof value === "number" ? String(value) : "",
+    typeof value === "number" && value < 0,
+  );
+  n.addEventListener("change", () => {
+    const v = numberOf(n.value);
+    if (v !== null) ctx.change(v);
+  });
+  return group(ctx, n);
+}
+
+function familyControl(ctx: ControlContext, value: unknown): HTMLElement {
+  const list = Array.isArray(value);
+  const t = input(
+    ctx,
+    "text",
+    "font families",
+    list ? (value as unknown[]).join(", ") : typeof value === "string" ? value : "",
+  );
+  t.classList.add("ds-field--wide");
+  t.spellcheck = false;
+  t.addEventListener("change", () => {
+    const s = t.value.trim();
+    if (s === "") return;
+    // The same form as stored: a comma string, or an array of names.
+    ctx.change(
+      list
+        ? s
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : s,
+    );
+  });
+  return group(ctx, t);
+}
+
+/** One field holding the four numbers ("0.4, 0, 0.2, 1"); the room checks them as on publish. */
+function bezierControl(ctx: ControlContext, value: unknown): HTMLElement {
+  const v = Array.isArray(value) ? value : [0, 0, 1, 1];
+  const t = input(ctx, "text", "cubic Bézier", v.join(", "));
+  t.classList.add("ds-field--short");
+  t.spellcheck = false;
+  t.addEventListener("change", () => {
+    const parts = t.value
+      .trim()
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(numberOf);
+    // Anything but four numbers goes to the check as typed, which says what a Bézier takes.
+    ctx.change(parts.length === 4 && parts.every((x) => x !== null) ? parts : t.value.trim());
+  });
+  return group(ctx, t);
+}
+
+// ---------- composites ----------
+
+/** One part of a composite: its own type's control, or a token picker when it names one. */
+function part(
+  ctx: ControlContext,
+  name: string,
+  type: DsTokenType,
+  value: unknown,
+  set: (v: unknown) => void,
+): HTMLElement {
+  const words = PART_WORDS[name] ?? name;
+  const sub: ControlContext = {
+    ...ctx,
+    label: `${ctx.label} ${words.toLowerCase()}`,
+    change: set,
+    swatch: true,
+    signed: SIGNED_PARTS.has(name),
+  };
+  const box = ctx.doc.createElement("div");
+  box.className = "ds-part";
+  const label = ctx.doc.createElement("span");
+  label.className = "ds-part__name";
+  label.textContent = words;
+  box.append(label, valueControl(sub, type, value));
+  return box;
+}
+
+/** The parts whose value may be below zero. */
+const SIGNED_PARTS = new Set(["offsetX", "offsetY", "spread", "letterSpacing"]);
+
+/** What a composite's part is called on the page (its key is what the JSON says). */
+const PART_WORDS: Record<string, string> = {
+  color: "Color",
+  offsetX: "X",
+  offsetY: "Y",
+  blur: "Blur",
+  spread: "Spread",
+  fontFamily: "Font",
+  fontSize: "Size",
+  fontWeight: "Weight",
+  lineHeight: "Line height",
+  letterSpacing: "Letter spacing",
+  width: "Width",
+  style: "Style",
+};
+
+const SHADOW_PARTS: [string, DsTokenType][] = [
+  ["color", "color"],
+  ["offsetX", "dimension"],
+  ["offsetY", "dimension"],
+  ["blur", "dimension"],
+  ["spread", "dimension"],
+];
+const TYPOGRAPHY_PARTS: [string, DsTokenType][] = [
+  ["fontFamily", "fontFamily"],
+  ["fontSize", "dimension"],
+  ["fontWeight", "fontWeight"],
+  ["lineHeight", "number"],
+  ["letterSpacing", "dimension"],
+];
+
+/**
+ * A composite's control. Each part's change writes the whole value from what the control holds
+ * now (`now`, updated on every change), never from the value it was drawn with: a row is not
+ * drawn again while the person is in it, so a second part changed there keeps the first.
+ */
+function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown): HTMLElement {
+  const box = ctx.doc.createElement("div");
+  box.className = "ds-control ds-control--parts";
+  const setPart = compositeWriter(ctx, value);
+  if (type === "shadow") {
+    const layers = Array.isArray(value) ? value : [value];
+    layers.forEach((layer, i) => {
+      if (!isObject(layer)) return;
+      for (const [name, t] of SHADOW_PARTS) {
+        if (!(name in layer)) continue;
+        box.append(part(ctx, name, t, layer[name], (v) => setPart(i, name, v)));
+      }
+    });
+    return box;
+  }
+  if (!isObject(value)) return box;
+  const parts: [string, DsTokenType][] =
+    type === "border"
+      ? [
+          ["color", "color"],
+          ["width", "dimension"],
+        ]
+      : TYPOGRAPHY_PARTS;
+  for (const [name, t] of parts) {
+    if (!(name in value)) continue;
+    // A line height may be a number or a dimension: it keeps the form it has.
+    const pt = name === "lineHeight" && typeof value[name] !== "number" ? "dimension" : t;
+    box.append(part(ctx, name, pt, value[name], (v) => setPart(0, name, v)));
+  }
+  if (type === "border") {
+    const styles = [
+      "solid",
+      "dashed",
+      "dotted",
+      "double",
+      "groove",
+      "ridge",
+      "outset",
+      "inset",
+      "none",
+    ];
+    const s = select(
+      ctx,
+      "style",
+      styles.map((x) => [x, x] as const),
+      typeof value.style === "string" ? value.style : "solid",
+    );
+    s.addEventListener("change", () => setPart(0, "style", s.value));
+    const p = ctx.doc.createElement("div");
+    p.className = "ds-part";
+    const label = ctx.doc.createElement("span");
+    label.className = "ds-part__name";
+    label.textContent = PART_WORDS.style ?? "Style";
+    p.append(label, s);
+    box.append(p);
+  }
+  return box;
+}
+
+/**
+ * How a composite writes one part: the whole value as the draft has it now (another person may
+ * have changed another part since the row was drawn, and a row is not drawn again under the
+ * focus), with the parts written here that are still on their way laid over it, and the part.
+ * Those parts are forgotten once nothing is on its way (in the draft, or refused), so a refused
+ * part is never sent again with the next one. A shadow's layer `i` (0 for one layer, a border or
+ * a typography).
+ */
+function compositeWriter(
+  ctx: ControlContext,
+  drawn: unknown,
+): (i: number, name: string, v: unknown) => void {
+  const mine = new Map<string, { i: number; name: string; v: unknown }>();
+  const same = (a: unknown, b: unknown) => Array.isArray(a) === Array.isArray(b);
+  return (i, name, v) => {
+    const cur = ctx.current?.();
+    if (cur && !cur.pending) mine.clear();
+    // The draft's value, when it is still this kind of value (else the one drawn).
+    const base =
+      cur && same(cur.value, drawn) && (Array.isArray(drawn) || isObject(cur.value))
+        ? cur.value
+        : drawn;
+    const layers = Array.isArray(base) ? [...base] : [base];
+    const set = (at: number, key: string, val: unknown) => {
+      const l = layers[at];
+      if (isObject(l)) layers[at] = withKey(l, key, val);
+    };
+    for (const m of mine.values()) set(m.i, m.name, m.v);
+    set(i, name, v);
+    const next = Array.isArray(base) ? layers : layers[0];
+    const key = `${i}.${name}`;
+    if (ctx.change(next) !== false) mine.set(key, { i, name, v });
+    else mine.delete(key);
+  };
+}
+
+/** A value that names another token: pick the token. */
+function aliasControl(ctx: ControlContext, type: DsTokenType, target: string): HTMLElement {
+  const options = [target, ...ctx.targets(type).filter((p) => p !== target)];
+  const s = select(
+    ctx,
+    "token",
+    options.map((p) => [p, p] as const),
+    target,
+  );
+  s.addEventListener("change", () => ctx.change(`{${s.value}}`));
+  return group(ctx, s);
+}
+
+/** The control for one value of `type`, in the form it is stored in. */
+export function valueControl(ctx: ControlContext, type: DsTokenType, value: unknown): HTMLElement {
+  const alias = dsAliasOf(value);
+  if (alias !== null) return aliasControl(ctx, type, alias);
+  switch (type) {
+    case "color":
+      return colorControl(ctx, value);
+    case "dimension":
+      return unitControl(ctx, value, DIMENSION_UNITS, OBJECT_DIMENSION_UNITS);
+    case "duration":
+      return unitControl(ctx, value, DURATION_UNITS, DURATION_UNITS);
+    case "fontWeight":
+      return weightControl(ctx, value);
+    case "number":
+      return numberControl(ctx, value);
+    case "fontFamily":
+      return familyControl(ctx, value);
+    case "cubicBezier":
+      return bezierControl(ctx, value);
+    case "shadow":
+    case "border":
+    case "typography":
+      return compositeControl(ctx, type, value);
+  }
+}
+
+/** A starting value for a new token of `type` (the person edits it next). */
+export function starterValue(type: DsTokenType): unknown {
+  switch (type) {
+    case "color":
+      return "#000000";
+    case "dimension":
+      return "8px";
+    case "duration":
+      return "200ms";
+    case "fontWeight":
+      return 400;
+    case "number":
+      return 1;
+    case "fontFamily":
+      return "system-ui";
+    case "cubicBezier":
+      return [0.4, 0, 0.2, 1];
+    case "shadow":
+      return { color: "#00000033", offsetX: "0px", offsetY: "1px", blur: "3px" };
+    case "border":
+      return { color: "#000000", width: "1px", style: "solid" };
+    case "typography":
+      return { fontFamily: "system-ui", fontSize: "16px" };
+  }
+}

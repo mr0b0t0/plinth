@@ -31,6 +31,7 @@ const DEFAULTS = {
   note: "",
   "link-run": "false",
   "base-version": "",
+  editing: "code",
   "include-maps": "false",
   "dry-run": "false",
   "fail-on-warnings": "false",
@@ -66,6 +67,7 @@ export function readInputs(env) {
     category: raw("category"),
     note: raw("note"),
     baseVersion: raw("base-version"),
+    editing: raw("editing").toLowerCase(),
   };
   for (const b of BOOLEANS) {
     const v = raw(b).toLowerCase();
@@ -75,6 +77,10 @@ export function readInputs(env) {
   }
   if (out.baseVersion && !/^[1-9][0-9]*$/.test(out.baseVersion))
     throw new InputError("The base-version input must be a version number");
+  if (out.editing !== "code" && out.editing !== "page")
+    throw new InputError(
+      `The editing input must be code or page (it is "${escapeData(raw("editing"))}")`,
+    );
   return out;
 }
 
@@ -157,6 +163,8 @@ export function buildArgv(inputs, id, note) {
     if (inputs.title) argv.push("--title", inputs.title);
     if (inputs.category) argv.push("--category", inputs.category);
   }
+  // The workflow publishes from the repository: people editing on the page are told (default code).
+  if (inputs.editing) argv.push("--editing", inputs.editing);
   if (inputs.includeMaps) argv.push("--include-maps");
   if (inputs.dryRun) argv.push("--dry-run");
   return argv;

@@ -7,6 +7,7 @@
 // row and deletes it, so a killed invocation can only leave unreferenced objects under its own
 // attempt prefix, which the hourly scheduled sweep removes.
 import {
+  type ArtifactEditing,
   type ArtifactType,
   type ArtifactTypeDef,
   ASSET_PATH_RE,
@@ -84,6 +85,8 @@ export type VersionTarget =
       category?: string;
       /** v1's note: only the app's New and Import set one (REST, never MCP). */
       note?: string;
+      /** Where it is edited ("code": its source lives in code; docs/spec.md "Published from code"). */
+      editing?: ArtifactEditing;
     }
   | {
       mode: "update";
@@ -92,6 +95,8 @@ export type VersionTarget =
       note?: string;
       /** The resolved category to set with this version (owner only, checked by the caller). */
       category?: string;
+      /** Where it is edited from now on, set with this version; undefined keeps it. */
+      editing?: ArtifactEditing;
       /**
        * The caller's role on the artifact (from the edit check): an editor's result carries
        * nothing about the owner's category sharing.
@@ -232,7 +237,13 @@ async function liveArtifactCount(ctx: Ctx, ownerId: string): Promise<number> {
  */
 export async function newArtifactTarget(
   ctx: Ctx,
-  input: { type: ArtifactType; title?: string; category?: string; artifactId?: string },
+  input: {
+    type: ArtifactType;
+    title?: string;
+    category?: string;
+    artifactId?: string;
+    editing?: ArtifactEditing;
+  },
 ): Promise<VersionTarget> {
   const actor = requireActor(ctx);
   // A token limited to one artifact never creates one (policy.mayCreateArtifacts): publish_artifact,
@@ -273,6 +284,7 @@ export async function newArtifactTarget(
     type: input.type,
     ...(title ? { title } : {}),
     ...(category !== undefined ? { category } : {}),
+    ...(input.editing !== undefined ? { editing: input.editing } : {}),
   };
 }
 
@@ -1414,8 +1426,8 @@ async function commitOnce(
       stmts.push(
         DB.prepare(
           `INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, password_hash,
-             access_epoch, created_at, updated_at, type, category, category_key)
-           SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?
+             access_epoch, created_at, updated_at, type, category, category_key, editing)
+           SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?
             WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ? AND deleted_at IS NULL) < ?
               AND ${QUOTA_GUARD}${ticketClause} AND ${ATTEMPT_GUARD}`,
         ).bind(
@@ -1432,6 +1444,7 @@ async function commitOnce(
           // A new artifact is never shared: its review columns start NULL (pending in a shared
           // category, whoever filed it).
           keyOf(target.category),
+          target.editing === "code" ? "code" : null,
           ownerId,
           artifactLimit,
           ownerId,
@@ -1480,6 +1493,15 @@ async function commitOnce(
           WHERE id = ? AND current_version = ? AND EXISTS (SELECT 1 FROM versions WHERE id = ?)`,
       ).bind(n, now, artifactId, base, versionId),
     );
+    if (target.mode === "update" && target.editing !== undefined) {
+      // Where it is edited commits with the version, behind the same guards (docs/spec.md
+      // "Published from code"): whoever may publish the version may say so.
+      stmts.push(
+        DB.prepare(
+          "UPDATE artifacts SET editing = ? WHERE id = ? AND EXISTS (SELECT 1 FROM versions WHERE id = ?)",
+        ).bind(target.editing === "code" ? "code" : null, artifactId, versionId),
+      );
+    }
     if (target.mode === "update" && target.category !== undefined) {
       // The category commits with the version, behind the same guards: a stale or failed commit
       // changes neither. Scoped to the actor's own row as well as the policy check before it. A

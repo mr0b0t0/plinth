@@ -504,6 +504,32 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   for a reload can still be published, and the text comes back when editing starts again.
   Discarding that copy, or the changes in a review, discards the text too.
 
+- **Edit design systems on their page.** Owners and editors turn on Edit and change a design
+  system in place, live with each other: token values in light and dark (a colour's own sample is
+  its picker, beside a text field; numbers with units, weights, font families and each part of a
+  shadow, border or typography token, always in the form the value is stored in), another token
+  instead of a value, dark values, descriptions, adding and removing tokens (a token something
+  still uses stays, and the page says what uses it), the name, and the description, guidelines
+  and each component's description and usage as formatted text, never JSON or Markdown, and a
+  component's status from its ⋯.
+  Renames, component code, fonts and settings stay with agents, with Ask an agent on each. A
+  version an agent publishes meanwhile is reviewed beside the page's changes, each side with its
+  own fonts and images. A Publish from the page stores 2-space JSON, or compact JSON for the
+  largest systems, with the guidelines last; an agent's own publishes keep their bytes. A system
+  that no longer parses lists what an agent needs to fix, and its Edit stays off with that reason,
+  so Ask an agent is the way in. A design system may nest objects and
+  arrays at most 32 levels deep (`$extensions` included); a publish past that is refused. Typing
+  in its formatted texts keeps the doc's rules: text the page cannot save as typed stays in its
+  block, keeps Publish off and is kept until the draft has it, across a takeover or a reload.
+
+- **Published from code.** `publish_artifact`, `update_artifact` and `start_upload` take
+  `editing: "code"` for an artifact whose source lives in a repository you publish from, kept
+  until a publish says `"page"`; `get_artifact` returns it to owners and editors. `plinth publish`
+  and the GitHub Action (its new `editing` input, `code` by default) set it for you. People who
+  start editing such a design system on its page are told that the next publish from code
+  won't include their changes; editing is not blocked. Migration
+  `0023_artifact_editing.sql`.
+
 ## 0.6.0 (2026-11-20)
 
 - **Thumbnails picture the version they are of.** The capture of a version is served that

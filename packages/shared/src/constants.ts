@@ -9,6 +9,14 @@ export type Visibility = (typeof VISIBILITIES)[number];
 export const ROLES = ["viewer", "commenter", "editor"] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * Where an artifact is edited (docs/spec.md "Published from code"): "code" when its source lives
+ * in code that is published from (the CLI's folder publish and the GitHub Action say so), "page"
+ * otherwise.
+ */
+export const ARTIFACT_EDITING = ["code", "page"] as const;
+export type ArtifactEditing = (typeof ARTIFACT_EDITING)[number];
+
 /** Effective role of a principal on one artifact. `owner` is never stored in access_grants. */
 export type EffectiveRole = Role | "owner";
 
@@ -169,6 +177,18 @@ export const LIMITS = {
   // On-page doc editing (#36, packages/shared/src/liveDoc.ts). A live draft keeps maxDocBytes.
   /** Lines in a live doc draft. */
   maxLiveDocLines: 50_000,
+  /**
+   * Lines in a design system's live draft (its line projection, designSystemLive.ts), which is
+   * pretty JSON and so runs longer than the file it projects: a system past it is not edited on
+   * its page (agents change it).
+   */
+  maxLiveProjectionLines: 200_000,
+  /**
+   * Characters in the JSON part of a design system's live draft. The room counts them before it
+   * writes the projection out, so a small file that nests or indents into a huge text is not
+   * edited on its page either.
+   */
+  maxLiveProjectionChars: 8 * MB,
   /** One doc-socket frame, either way (a page room uses ROOM_MAX_MESSAGE_BYTES). */
   liveDocFrameBytes: 64 * KB,
   /** A lease whose holder sent no edit for this long may be taken over. */
@@ -246,6 +266,8 @@ export const LIMITS = {
     maxTokens: 2000,
     /** Path segments of one token, its own name included. */
     maxDepth: 8,
+    /** Objects and arrays nested in system.json, the root included ($extensions too). */
+    maxJsonDepth: 32,
     maxAliasChain: 16,
     maxValueLength: 256,
     maxNameLength: 120,

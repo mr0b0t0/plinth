@@ -3,7 +3,8 @@
 // `page_comments`, then `watch` (live views, live-view.test.ts), then `people`, then `hold` (live
 // views, live-view-update.test.ts), then `ask` (Ask an agent: for everyone who may mention, so for
 // these owners, whose test token is an `other` connection), then `live_off` (ask-agent.test.ts),
-// each only when its part has something to say.
+// then `from_code` (published from code, published-from-code.test.ts), each only when its part
+// has something to say.
 import { describe, expect, it } from "vitest";
 import { GATE_PARTS } from "../src/api/view.ts";
 import { agent, browserSession, call, json, publish } from "./helpers.ts";
@@ -30,8 +31,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, the live part, page comments, watch, the people part, hold, ask, live_off, then no_editor", () => {
-    expect(GATE_PARTS.length).toBe(9);
+  it("runs the data part, the live part, page comments, watch, the people part, hold, ask, live_off, from_code, then no_editor", () => {
+    expect(GATE_PARTS.length).toBe(10);
   });
 
   it("a page that declares comments and data: `data`, then `page_comments`", async () => {

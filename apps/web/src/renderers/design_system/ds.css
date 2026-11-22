@@ -432,6 +432,375 @@
   color: var(--doc-muted);
 }
 
+.ds-error p {
+  margin: 0 0 8px;
+  color: var(--doc-fg);
+}
+
+.ds-error__list {
+  margin: 0 0 16px;
+  padding-left: 1.25em;
+}
+
+.ds-error__list code {
+  font-family: var(--doc-mono);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Editing on the page (edit.ts). Only present in edit mode. ---------- */
+
+.ds-button {
+  min-height: 2rem;
+  padding: 0.25rem 0.75rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--doc-fg);
+  color: var(--doc-bg);
+  font: 600 0.85rem / 1.4 var(--doc-font);
+  cursor: pointer;
+}
+
+.ds-button--ghost {
+  border: 1px solid var(--doc-border);
+  background: transparent;
+  color: var(--doc-fg);
+  font-weight: 500;
+}
+
+.ds-button:focus-visible,
+.ds-field:focus-visible,
+.ds-name:focus-visible {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 1px;
+}
+
+/* The name, edited where it is: the heading's own size, a hairline until it has the focus. Its
+   padding and border sit outside the text, so the name starts where the description does. */
+.ds-name {
+  box-sizing: border-box;
+  width: calc(100% + 10px);
+  margin: 0 -5px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+@media (hover: hover) {
+  .ds-name:hover {
+    border-color: var(--doc-border);
+  }
+}
+
+.ds-field {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--doc-border);
+  border-radius: 6px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+  font: 0.85rem / 1.4 var(--doc-font);
+}
+
+.ds-field--text {
+  width: min(100%, 13rem);
+  font-family: var(--doc-mono);
+}
+
+/* A colour or a cubic Bézier as text. */
+.ds-field--short {
+  width: min(100%, 12rem);
+}
+
+/* A font stack: as wide as the column allows, up to a line of names. */
+.ds-field--wide {
+  width: min(100%, 24rem);
+}
+
+.ds-field--number {
+  width: 5.5rem;
+}
+
+.ds-field--select {
+  padding-right: 0.25rem;
+}
+
+/* A colour inside a composite: a small swatch that opens the picker. */
+.ds-field--color.ds-swatch {
+  width: 2rem;
+  height: 2rem;
+  padding: 2px;
+  cursor: pointer;
+}
+
+/* A colour token's sample is its picker: the colour input covers it, unseen. */
+.ds-sample--pick {
+  position: relative;
+  cursor: pointer;
+}
+
+.ds-sample__picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ds-sample__picker:disabled {
+  cursor: default;
+}
+
+.ds-sample--pick:has(.ds-sample__picker:focus-visible) {
+  outline: 2px solid var(--doc-live);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .ds-sample--pick:has(.ds-sample__picker:not(:disabled)):hover {
+    border-color: var(--doc-muted);
+  }
+}
+
+/* The fields: a line of their own under the variable, at the same left edge in every row. Light
+   and dark sit side by side, in the samples' order. */
+.ds-token__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.ds-token__side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* A composite's side is its grid of parts, named "Light" or "Dark" when it has both. */
+.ds-token__side--parts {
+  display: block;
+  flex: 1 1 18rem;
+}
+
+.ds-token__side-name,
+.ds-part__name {
+  color: var(--doc-muted);
+  font-size: 0.78rem;
+}
+
+.ds-token__side-name {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.ds-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* A composite's parts: one label column and one field column, the same in every row. */
+.ds-control--parts {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.ds-part {
+  display: contents;
+}
+
+.ds-token__desc-field {
+  width: min(100%, 28rem);
+  margin-top: 8px;
+  font-family: var(--doc-font);
+}
+
+/* One ⋯ per row, at its end. */
+.ds-token--editing .ds-token__info {
+  position: relative;
+  padding-right: 44px;
+}
+
+.ds-menu {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+/* A menu is as wide as its longest item (up to the menu's own limit), so no item wraps. */
+.ds-menu .plinth-doc__menu {
+  width: max-content;
+}
+
+/* Edit mode: the header's ⋯ (fonts and settings) sits at the end of the name's line. */
+.ds-header--editing {
+  position: relative;
+}
+
+.ds-header--editing h1 {
+  padding-right: 44px;
+}
+
+.ds-header--editing > .ds-menu {
+  top: 4px;
+}
+
+.ds-group th {
+  position: relative;
+  padding: 14px 44px 6px 12px;
+  border-bottom: 1px solid var(--doc-border);
+  color: var(--doc-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.ds-group__name {
+  font-family: var(--doc-mono);
+}
+
+.ds-group .ds-menu {
+  top: 8px;
+}
+
+.ds-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 8px;
+  color: var(--doc-fg);
+  font-weight: 400;
+}
+
+/* A question's two buttons stay together: when the line is short they wrap as one, under it. */
+.ds-form__actions {
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+}
+
+/* Add a token: the name takes the room, its buttons stay on its line. */
+.ds-form--add {
+  flex-wrap: nowrap;
+  max-width: 32rem;
+}
+
+.ds-form__name {
+  flex: 1 1 8rem;
+}
+
+.ds-form--add .ds-button,
+.ds-form--add .ds-field--select {
+  flex: none;
+}
+
+/* A component's ⋯ (status, Ask an agent) at the end of its heading's line; the status stays the
+   pill beside the name. */
+.ds-component--editing {
+  position: relative;
+}
+
+.ds-component--editing > h2 {
+  padding-right: 44px;
+}
+
+.ds-component--editing > .ds-menu {
+  top: 0;
+}
+
+/* A formatted text's block ⋯ sits in the same right-hand column as every other ⋯ of the page (the
+   header's, the rows', the components'), not at the end of the text's narrower measure: these
+   boxes are the width the ⋯ are placed against. */
+.ds-header--editing,
+.ds-component--editing,
+.ds-overview:has(> .plinth-doc--editing) {
+  container-type: inline-size;
+}
+
+/* A container keeps its last child's bottom margin inside: the section's own (larger) margin
+   stays the only gap, as in view mode, so nothing moves when editing starts. */
+.ds-component--editing > :last-child,
+.ds-overview:has(> .plinth-doc--editing) > :last-child {
+  margin-bottom: 0;
+}
+
+.ds-prose.plinth-doc--editing .plinth-rich__corner {
+  right: calc(100% - 100cqi + 6px);
+}
+
+/* An empty formatted text in edit mode still has a place to write in, named by what it holds
+   ("Description", "Usage", "Guidelines"; edit.ts), also where the person cannot write. */
+.ds-prose.plinth-doc--editing:empty::before {
+  content: attr(data-placeholder);
+  color: var(--doc-muted);
+}
+
+.ds-notice {
+  z-index: 4;
+}
+
+/* Each side of the review is the site without its navigation. */
+.ds-site--pane .ds-layout {
+  display: block;
+}
+
+.ds-site--pane .ds-nav {
+  display: none;
+}
+
+/* The review (common/review.ts) on a design system: both sides one height, whatever their lists
+   of changes, and a change brought to the top of its side (just under the list), not cut off in
+   the middle of the row before it. This file is loaded only on a design system's page. */
+.plinth-review__panes:has(.ds-site--pane) {
+  align-items: stretch;
+}
+
+.plinth-review__body:has(> .ds-site--pane) {
+  --plinth-review-scroll-top: 8px;
+  flex: 1 1 auto;
+  height: min(60vh, 576px);
+  max-height: none;
+}
+
+@media (pointer: coarse) {
+  /* 16px keeps mobile browsers from zooming when a field is focused. */
+  .ds-field {
+    font-size: 16px;
+  }
+
+  .ds-button,
+  .ds-field,
+  .ds-field--color.ds-swatch {
+    min-height: 44px;
+  }
+
+  .ds-field--color.ds-swatch {
+    width: 44px;
+  }
+
+  .ds-sample--pick {
+    height: 44px;
+  }
+}
+
 /* Headings the author wrote sit under the site's own section headings, which carry the only rules
    and no "#" anchors, so the page has one heading style and every rule spans the column. */
 .ds-prose.plinth-doc h1 {
@@ -529,6 +898,103 @@
     margin-top: 8px;
   }
 
+  /* Edit mode: a group's row is a full-width label with its ⋯ at the end, and fields fit. */
+  .ds-table tr.ds-group {
+    padding: 14px 0 6px;
+  }
+
+  .ds-group th {
+    display: block;
+    padding: 0 44px 0 0;
+    border: 0;
+  }
+
+  /* A row's ⋯ is centred on the token's name, a group's on the group's label: half a line down,
+     then up by half the button (2rem, or 2.75rem for a finger). */
+  .ds-group .ds-menu,
+  .ds-token--editing .ds-token__info > .ds-menu {
+    display: flex;
+    top: 0.5lh;
+    margin-top: -1rem;
+  }
+
+  .ds-token--editing .ds-token__info {
+    padding-right: 40px;
+  }
+
+  /* A question has its own line, its two buttons the next. */
+  .ds-form__question {
+    flex: 1 1 100%;
+  }
+
+  /* The review's sides: the values wrap inside the side, with as much room on the right of a row
+     as on its left, and a changed row's tint reaches the side's edges. */
+  .ds-site--pane {
+    padding-inline: 8px;
+  }
+
+  .ds-site--pane [data-review-changed] {
+    margin-inline: -8px;
+    padding-inline: 8px;
+  }
+
+  .ds-field--text,
+  .ds-field--short,
+  .ds-field--wide,
+  .ds-token__desc-field {
+    width: 100%;
+  }
+
+  /* Light and dark share the line, each half of it; a composite's sides stack. */
+  .ds-token__controls {
+    flex-wrap: nowrap;
+  }
+
+  .ds-token__controls:has(.ds-token__side--parts) {
+    flex-direction: column;
+  }
+
+  .ds-token__side {
+    flex: 1 1 0;
+  }
+
+  .ds-control {
+    flex: 1 1 auto;
+  }
+
+  .ds-control .ds-field--number {
+    flex: 1 1 3.5rem;
+    width: 0;
+  }
+
+  .ds-control .ds-field--select {
+    flex: none;
+  }
+
+  /* A select that is the whole value (a weight, another token) is as wide as the other fields. */
+  .ds-control > .ds-field--select:only-child {
+    flex: 1 1 auto;
+  }
+
+  /* Every label above its field. */
+  .ds-control--parts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .ds-part:not(:first-child) > .ds-part__name {
+    margin-top: 6px;
+  }
+
+  /* Add a token: the name on its own line, the type and buttons under it. */
+  .ds-form--add {
+    flex-wrap: wrap;
+  }
+
+  .ds-form__name {
+    flex: 1 1 100%;
+  }
+
   .ds-themes {
     padding: 0 0 4px;
   }
@@ -536,6 +1002,14 @@
 
 @page {
   margin: 16mm;
+}
+
+/* After the narrow rules: a finger's ⋯ is 2.75rem, so half of it up. */
+@media (max-width: 760px) and (pointer: coarse) {
+  .ds-group .ds-menu,
+  .ds-token--editing .ds-token__info > .ds-menu {
+    margin-top: -1.375rem;
+  }
 }
 
 @media print {

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ARTIFACT_TYPES } from "./artifactTypes.ts";
 import { CATEGORY_ROLES } from "./categories.ts";
 import {
+  ARTIFACT_EDITING,
   ASSET_PATH_RE,
   CLIENT_TYPES,
   COMMENT_STATUSES,
@@ -66,6 +67,20 @@ export const categorySchema = z
   .describe(
     "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name " +
       "from list_artifacts' categories. Only the owner sees or sets it.",
+  );
+/**
+ * Where an artifact is edited (docs/spec.md "Published from code"): "code" when its source lives
+ * in a repository or folder you publish from, so the next publish from there is the whole next
+ * version, without what people changed on the page; "page" (the default) otherwise. Kept on the artifact until a publish says
+ * otherwise.
+ */
+export const editingSchema = z
+  .enum(ARTIFACT_EDITING)
+  .describe(
+    '"code" when this artifact\'s source lives in a repository or folder you publish from (the next ' +
+      "publish from there is the whole next version, without what people changed on the page, and " +
+      'they are told so); "page" ' +
+      "when people edit it on its page. Kept until a publish says otherwise; omit it to keep it.",
   );
 export const htmlSchema = z.string().min(1).describe("Complete HTML document");
 /** The source of a typed artifact (Markdown for a doc). */
@@ -207,6 +222,8 @@ export const publishArtifactInput = z.object({
   /** Allowlisted viewer emails when visibility is "allowlist". */
   emails: z.array(emailSchema).max(LIMITS.maxAllowlistEmails).optional(),
   category: categorySchema.optional(),
+  /** "code" when its source lives in code you publish from; default "page". */
+  editing: editingSchema.optional(),
 });
 export type PublishArtifactInput = z.input<typeof publishArtifactInput>;
 
@@ -236,6 +253,8 @@ export const updateArtifactInput = z.object({
   base_version: versionNumberSchema.optional(),
   /** Owner only (an editor's call that carries it is refused); omitted keeps the current one. */
   category: categorySchema.optional(),
+  /** Omitted keeps the current one. */
+  editing: editingSchema.optional(),
 });
 export type UpdateArtifactInput = z.input<typeof updateArtifactInput>;
 
@@ -270,6 +289,8 @@ export const startUploadInput = z.object({
   note: noteSchema.optional(),
   /** Either mode; with id, owner only. Applied when the ticket commits. */
   category: categorySchema.optional(),
+  /** Either mode. Applied when the ticket commits; omitted with id keeps the current one. */
+  editing: editingSchema.optional(),
   /** Copied into the version when the bundle commits, beside the bundle's files. */
   copy_files: copyFilesSchema.optional(),
 });

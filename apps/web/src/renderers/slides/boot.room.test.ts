@@ -29,6 +29,21 @@ class FakeSocket implements FollowSocket {
   static all: FakeSocket[] = [];
   readyState = 1 as const;
   sent: Record<string, unknown>[] = [];
+  /**
+   * Each frame's `id` (the room answers with it as `re`), kept apart so the frames read as before:
+   * `idOf(t)` is the id of the last frame of kind `t` sent.
+   */
+  ids: { t: string; id: number }[] = [];
+  idOf(t: string): number {
+    const hit = this.ids.filter((x) => x.t === t).at(-1);
+    if (!hit) throw new Error(`no ${t} sent`);
+    return hit.id;
+  }
+  private unId(f: Record<string, unknown>): Record<string, unknown> {
+    if (typeof f.id === "number") this.ids.push({ t: String(f.t), id: f.id });
+    const { id: _id, ...rest } = f;
+    return rest;
+  }
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -37,7 +52,7 @@ class FakeSocket implements FollowSocket {
     FakeSocket.all.push(this);
   }
   send(raw: string) {
-    if (raw !== "ping") this.sent.push(JSON.parse(raw));
+    if (raw !== "ping") this.sent.push(this.unId(JSON.parse(raw)));
   }
   close() {}
   frame(f: Record<string, unknown>) {

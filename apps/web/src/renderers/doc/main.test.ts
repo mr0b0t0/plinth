@@ -473,7 +473,10 @@ describe("doc renderer on-page editing (#36)", () => {
       welcome(1);
       // Nothing waits for the Delete: a click opens a block at once.
       (root().querySelectorAll("p")[1] as HTMLElement).click();
-      expect(sent(1, "lease")).toEqual([{ t: "lease", rev: 1, start: 2, end: 3 }]);
+      // (Each frame carries its own id, which the room answers with as `re`.)
+      expect(sent(1, "lease")).toEqual([
+        { t: "lease", rev: 1, start: 2, end: 3, id: expect.any(Number) },
+      ]);
       expect(root().textContent).toContain("one");
     } finally {
       vi.useRealTimers();

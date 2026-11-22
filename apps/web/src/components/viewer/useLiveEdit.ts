@@ -1,7 +1,7 @@
-// On-page editing of a doc or a sheet (#36), app side: the state machine behind the Edit toggle,
-// the edit bar and the unpublished-changes notice. The frame does the editing (the doc or sheet
-// renderer); this hook talks to it with the renderer protocol (rendererProtocol.ts) and to the
-// server with the session cookie. It accepts the frame's editing messages only with the key of
+// On-page editing of a doc, a sheet or a design system (#36), app side: the state machine behind
+// the Edit toggle, the edit bar and the unpublished-changes notice. The frame does the editing (the
+// type's renderer); this hook talks to it with the renderer protocol (rendererProtocol.ts) and to
+// the server with the session cookie. It accepts the frame's editing messages only with the key of
 // the frame it holds (`frameKey`, which ViewerStage put in the frame's address).
 //
 // Modes (gate.live.mode, decided by the server):
@@ -96,6 +96,8 @@ export const LIVE_NOTE = "Edited on the page";
 export const SOLO_KEEP_MS = 5000;
 /** How long the frame has to answer a collect. */
 export const COLLECT_TIMEOUT_MS = 5000;
+/** Room: how long Publish and Done wait for a change the frame is still sending (`pending`). */
+export const PENDING_WAIT_MS = 3000;
 /**
  * Solo: how often keeping the tab's copy with rescue items the frame wrote is tried (storage full
  * or blocked), the first retry after this long, each next one twice as late.
@@ -141,6 +143,11 @@ export interface LiveEdit {
   merges: boolean;
   /** Confirmed by code without an account: they must sign in to edit. */
   signIn: boolean;
+  /**
+   * Why Edit is off although editing on the page exists here: the version has problems only an
+   * agent can fix (the frame said so), in words for the Edit button. Null otherwise.
+   */
+  blocked: string | null;
   mode: "room" | "solo" | null;
   editing: boolean;
   phase: LivePhase;
@@ -466,6 +473,22 @@ export function useLiveEdit({
           }
           // The frame turned editing on: a `focus: "first"` it was sent has been acted on.
           if (next.editing) focusFirst.current = false;
+          // Too large to edit on its page (a design system past its projection's line cap): edit
+          // mode ends, and an agent can make the change.
+          if (next.unavailable === "too_large" && latest.current.editing) {
+            setEditing(false);
+            showToast({
+              title: `This ${noun} is too large to edit on the page`,
+              description: "Ask an agent to make the change.",
+              tone: "neutral",
+              ...(latest.current.onAsk
+                ? { action: { label: "Ask an agent", onClick: () => latest.current.onAsk?.(null) } }
+                : {}),
+            });
+          }
+          // Problems only an agent can fix (a design system the format refuses): the page says so
+          // and offers Ask an agent; Edit stays off (LiveEdit.blocked).
+          if (next.unavailable === "invalid" && latest.current.editing) setEditing(false);
           setStatus(next);
         },
         save() {
@@ -496,11 +519,13 @@ export function useLiveEdit({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, maxBytes, frameKey]);
+  }, [available, frame, target, maxBytes, frameKey, noun]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
   const soloBase = gate.live?.mode === "solo" || status?.failed ? artifact.version : undefined;
+  // Published from code (gate `from_code`): the frame says so in edit mode.
+  const fromCode = gate.from_code === true;
   useEffect(() => {
     if (!available || !frame) return;
     if (!editing && !told.current) return;
@@ -509,12 +534,12 @@ export function useLiveEdit({
       const focus = editing && focusFirst.current ? ("first" as const) : undefined;
       // The frame's own focus() moves the keyboard only once its window has the focus.
       if (focus) frame.focus();
-      postToRenderer(frame, target, editMessage(editing, soloBase, focus));
+      postToRenderer(frame, target, editMessage(editing, soloBase, focus, fromCode));
     };
     send();
     frame.addEventListener("load", send);
     return () => frame.removeEventListener("load", send);
-  }, [available, frame, target, editing, soloBase]);
+  }, [available, frame, target, editing, soloBase, fromCode]);
 
   // ---------- the frame's rescue store ----------
 
@@ -616,6 +641,20 @@ export function useLiveEdit({
   );
 
   /**
+   * Room: the frame's last change on its way to the room (a field's value written as Done or
+   * Publish was pressed, its lease still to come) lands before the checkpoint is taken. The
+   * frame's status is a message on its way too, so it is read after one turn; then this waits
+   * while the frame says `pending`, at most PENDING_WAIT_MS (the change then stays in the draft).
+   */
+  const settleFrame = useCallback(async (): Promise<void> => {
+    await new Promise((r) => setTimeout(r, 0));
+    const until = Date.now() + PENDING_WAIT_MS;
+    while (latest.current.status?.pending === true && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }, []);
+
+  /**
    * Room: publish the shared draft (POST live/checkpoint). With nothing new to publish, the
    * outcome is the version being edited.
    */
@@ -688,7 +727,10 @@ export function useLiveEdit({
         if (tell === "toast") toast(unpublishable, "neutral");
         return { error: unpublishable };
       }
-      if (m === "room") return checkpoint("save", { note, tell });
+      if (m === "room") {
+        await settleFrame();
+        return checkpoint("save", { note, tell });
+      }
       if (m !== "solo") return { error: "Editing on the page is not available." };
       if (savingRef.current) return { error: CHOOSING_BUSY };
       savingRef.current = true;
@@ -704,7 +746,7 @@ export function useLiveEdit({
         setSaving(false);
       }
     },
-    [checkpoint, collect, publishSolo, refuse, unpublishable],
+    [checkpoint, collect, publishSolo, refuse, settleFrame, unpublishable],
   );
   const publish = useCallback(
     async (note?: string) => {
@@ -841,6 +883,7 @@ export function useLiveEdit({
   const start = useCallback(
     (opts?: { focus?: "first" }) => {
       if (!available || signIn) return;
+      if (latest.current.status?.unavailable === "invalid") return;
       focusFirst.current = opts?.focus === "first";
       setSavedVersion(null);
       setRebasedVersion(null);
@@ -850,6 +893,7 @@ export function useLiveEdit({
   );
 
   const done = useCallback(async (): Promise<boolean> => {
+    if (latest.current.mode === "room") await settleFrame();
     const s = latest.current.status;
     const m = latest.current.mode;
     // A block holds text the page cannot write yet: it is not in the draft, so editing stays on
@@ -866,7 +910,7 @@ export function useLiveEdit({
     }
     setEditing(false);
     return true;
-  }, [checkpoint, publishNow]);
+  }, [checkpoint, publishNow, settleFrame]);
 
   const discard = useCallback(async () => {
     const m = latest.current.mode;
@@ -1083,6 +1127,10 @@ export function useLiveEdit({
     available,
     merges,
     signIn,
+    blocked:
+      status?.unavailable === "invalid"
+        ? `This ${noun} has problems an agent needs to fix. Ask an agent to fix them.`
+        : null,
     mode,
     editing,
     phase,

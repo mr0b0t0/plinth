@@ -7,8 +7,8 @@
 // It is offered only when the owner has an agent that can take the request. Where it appears,
 // from this file's items (one place each time):
 // - the bar's Edit slot (owners and editors, at desktop width) for a type people change by asking
-//   (registry `edit: "ask"`: HTML pages, designs and design systems; and an HTML deck, `no_editor`)
-//   and for any type whose editing on the page is off here (`live_off`, with its reason);
+//   (registry `edit: "ask"`: HTML pages and designs; and an HTML deck, `no_editor`) and for any
+//   type whose editing on the page is off here (`live_off`, with its reason);
 // - the ⋯ menu everywhere else it may be used: commenters, phone width, and live types whose
 //   editing is on.
 //

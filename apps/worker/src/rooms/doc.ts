@@ -25,16 +25,18 @@
 // is not, and a draft of every other type is frozen for review whenever the version changed its
 // content. Draft text is never logged.
 //
-// Every type with `edit: "live"` has a draft here (docs, decks and sheets): the type's rules
-// (liveTypes.ts) check each edit and each merge, so a sheet's draft is always valid canonical JSON
-// lines, no text edit changes a deck's structure, and no draft starts like an HTML document. A
-// sheet's rows and columns move with `struct`, applied here and on every socket by the same pure
-// function, only while nobody else holds a lease; a deck's notes and settings do too, while no
-// other lease overlaps the ranges the op touches. A sheet's or a deck's draft is never merged: a
-// version published under it freezes it, and the editors
-// review the whole draft beside it and publish theirs (with its base's files) or discard it. Both
-// choices, and every save and discard, run under one checkpoint lock, so a frozen draft resolves
-// exactly once.
+// Every type with `edit: "live"` has a draft here (docs, decks, sheets and design systems): the
+// type's rules (liveTypes.ts) check each edit and each merge, so a sheet's draft is always valid
+// canonical JSON lines, no text edit changes a deck's structure, a design system's draft is always
+// its canonical line projection (designSystemLive.ts, held here in memory; D1 keeps its storage
+// form), and no draft starts like an HTML document. A sheet's rows and columns move with `struct`,
+// applied here and on every socket by the same pure function, only while nobody else holds a
+// lease; a deck's notes and settings, and a design system's keys (dark values, optional texts,
+// tokens), while no other lease overlaps the ranges the op touches, the other leases moving with
+// their lines. A sheet's, a deck's or a design system's draft is never merged: a version published
+// under it freezes it, and the editors review the whole draft beside it and publish theirs (with
+// its base's files) or discard it. Both choices, and every save and discard, run under one
+// checkpoint lock, so a frozen draft resolves exactly once.
 import {
   type ArtifactTypeDef,
   applyLineEdit,
@@ -471,6 +473,31 @@ export class LiveDoc {
     for (const { ws } of this.host.sockets()) if (ws !== except) this.host.send(ws, frame);
   }
 
+  /**
+   * The client frame being handled and its `id` (docs/spec.md "Editing", the room protocol): set
+   * only while its handler runs, synchronously, so only that frame's direct answers carry `re`.
+   */
+  private answering: { ws: WebSocket; id: number } | null = null;
+
+  /** `frame` as the direct answer to the frame `ws` sent, with its `re` when it had an id. */
+  private withRe<F extends LiveDocServerFrame>(ws: WebSocket, frame: F): F {
+    const a = this.answering;
+    return a && a.ws === ws ? { ...frame, re: a.id } : frame;
+  }
+  /** Sends `ws` the direct answer to its frame. */
+  private answer(ws: WebSocket, frame: LiveDocServerFrame): void {
+    this.host.send(ws, this.withRe(ws, frame));
+  }
+  /** Broadcasts a frame that answers `ws`'s frame: `ws`'s copy carries `re`. */
+  private answerAll(ws: WebSocket, frame: LiveDocServerFrame): void {
+    for (const o of this.host.sockets())
+      this.host.send(o.ws, o.ws === ws ? this.withRe(ws, frame) : frame);
+  }
+  /** Refuses `ws`'s frame with an error that answers it. */
+  private refuse(ws: WebSocket, code: LiveDocErrorCode): void {
+    this.answer(ws, { t: "error", code });
+  }
+
   private sendText(ws: WebSocket, doc: Loaded): void {
     const parts = chunkText(this.text(doc), LIVE_DOC.textChunkBytes);
     parts.forEach((chunk, part) => {
@@ -484,7 +511,7 @@ export class LiveDoc {
 
   private welcome(ws: WebSocket, s: DocSocket, doc: Loaded): void {
     const all = this.host.sockets();
-    this.host.send(ws, {
+    this.answer(ws, {
       t: "welcome",
       v: 1,
       you: { id: s.id, email: s.email, right: s.doc === "write" ? "write" : "watch" },
@@ -558,6 +585,7 @@ export class LiveDoc {
     }
   }
 
+  /** An error that answers no frame (`draft_limit` after a flush). */
   private error(ws: WebSocket, code: LiveDocErrorCode): void {
     this.host.send(ws, { t: "error", code });
   }
@@ -566,6 +594,26 @@ export class LiveDoc {
   async message(ws: WebSocket, s: DocSocket, f: LiveDocClientFrame, artifactId: string) {
     const doc = await this.ensure(artifactId);
     if (!doc) return this.host.gone();
+    // Its direct answers carry its id as `re`; a frame from an older tab has none, and they none.
+    this.answering = f.id === undefined ? null : { ws, id: f.id };
+    try {
+      this.handle(ws, s, doc, f);
+    } finally {
+      this.answering = null;
+    }
+  }
+
+  /** A draft being ended (dropDraft): its frames are refused, so its sockets keep their typing. */
+  private ending: Loaded | null = null;
+
+  private handle(ws: WebSocket, s: DocSocket, doc: Loaded, f: LiveDocClientFrame) {
+    if (this.ending === doc && f.t !== "sync") {
+      // As a frozen draft answers: the client keeps what it typed, and the closed sockets bring
+      // everyone back to the version the draft ended for.
+      if (f.t === "struct") return this.answer(ws, { t: "struct_denied", reason: "frozen" });
+      if (f.t === "release" || f.t === "keep") return this.refuse(ws, "not_held");
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
+    }
     switch (f.t) {
       case "sync":
         return this.welcome(ws, s, doc);
@@ -589,17 +637,17 @@ export class LiveDoc {
   }
 
   private lease(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, start: number, end: number) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "lease_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
     }
-    if (rev !== doc.rev) return this.host.send(ws, { t: "lease_denied", reason: "stale" });
-    if (end > doc.lines.length || start > end) return this.error(ws, "invalid");
+    if (rev !== doc.rev) return this.answer(ws, { t: "lease_denied", reason: "stale" });
+    if (end > doc.lines.length || start > end) return this.refuse(ws, "invalid");
     const want = { start, end };
     for (const o of this.host.sockets()) {
       if (o.ws === ws || !o.s.lease) continue;
       if (rangesOverlap(o.s.lease, want)) {
-        return this.host.send(ws, { t: "lease_denied", reason: "held", by: o.s.email });
+        return this.answer(ws, { t: "lease_denied", reason: "held", by: o.s.email });
       }
     }
     // One lease per socket: taking a block releases the one held before.
@@ -607,22 +655,22 @@ export class LiveDoc {
     s.lease = { id: `l_${randomString(12)}`, start, end, at: Date.now() };
     this.host.save(ws, s);
     if (prev) this.broadcast({ t: "released", lease: prev });
-    this.broadcast({ t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
+    this.answerAll(ws, { t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
   }
 
   private edit(ws: WebSocket, s: DocSocket, doc: Loaded, id: string, seq: number, text: string) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "lease_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
     const l = s.lease;
-    if (!l || l.id !== id) return this.error(ws, "not_held");
+    if (!l || l.id !== id) return this.refuse(ws, "not_held");
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
     }
     const ins = blockLines(text);
     // The type's rules first (a sheet's rows and header), then its size.
     const refused = doc.rules.checkEdit(doc.lines, l.start, l.end - l.start, ins);
-    if (refused) return this.error(ws, refused);
+    if (refused) return this.refuse(ws, refused);
     const next = applyLineEdit(doc.lines, l.start, l.end - l.start, ins);
-    if (doc.rules.tooLarge(joinLines(next))) return this.error(ws, "too_large");
+    if (doc.rules.tooLarge(joinLines(next))) return this.refuse(ws, "too_large");
     const e = { start: l.start, del: l.end - l.start, ins: ins.length };
     doc.lines = next;
     doc.rev += 1;
@@ -640,7 +688,7 @@ export class LiveDoc {
         this.host.save(o.ws, o.s);
       }
     }
-    this.broadcast({
+    this.answerAll(ws, {
       t: "op",
       gen: doc.gen,
       rev: doc.rev,
@@ -655,10 +703,10 @@ export class LiveDoc {
   }
 
   private release(ws: WebSocket, s: DocSocket, doc: Loaded, id: string) {
-    if (!s.lease || s.lease.id !== id) return this.error(ws, "not_held");
+    if (!s.lease || s.lease.id !== id) return this.refuse(ws, "not_held");
     s.lease = null;
     this.host.save(ws, s);
-    this.broadcast({ t: "released", lease: id });
+    this.answerAll(ws, { t: "released", lease: id });
     // A finished block is written straight away.
     if (this.needsFlush) void this.flushNow();
     else this.status(doc);
@@ -670,23 +718,34 @@ export class LiveDoc {
    * A holder that sends neither for LIMITS.liveLeaseIdleS can still be taken over.
    */
   private keep(ws: WebSocket, s: DocSocket, id: string) {
-    if (s.doc !== "write") return;
-    if (!s.lease || s.lease.id !== id) return this.error(ws, "not_held");
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
+    if (!s.lease || s.lease.id !== id) return this.refuse(ws, "not_held");
     s.lease = { ...s.lease, at: Date.now() };
     this.host.save(ws, s);
-    this.host.send(ws, { t: "kept", lease: id });
+    this.answer(ws, { t: "kept", lease: id });
   }
 
   private takeover(ws: WebSocket, s: DocSocket, doc: Loaded, id: string) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "lease_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "lease_denied", reason: "watch" });
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
     }
     const holder = this.holderOf(id);
-    if (!holder?.s.lease) return this.error(ws, "not_held");
-    if (holder.ws === ws) return;
+    if (!holder?.s.lease) return this.refuse(ws, "not_held");
+    // Its own lease: the answer is the lease it holds.
+    if (holder.ws === ws) {
+      const own = holder.s.lease;
+      return this.answer(ws, {
+        t: "leased",
+        lease: own.id,
+        start: own.start,
+        end: own.end,
+        holder: s.id,
+        by: s.email,
+      });
+    }
     if (Date.now() - holder.s.lease.at < LIMITS.liveLeaseIdleS * 1000) {
-      return this.host.send(ws, { t: "lease_denied", reason: "held", by: holder.s.email });
+      return this.answer(ws, { t: "lease_denied", reason: "held", by: holder.s.email });
     }
     const { start, end } = holder.s.lease;
     holder.s.lease = null;
@@ -697,43 +756,44 @@ export class LiveDoc {
     this.host.save(ws, s);
     if (prev) this.broadcast({ t: "released", lease: prev });
     this.broadcast({ t: "released", lease: id });
-    this.broadcast({ t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
+    this.answerAll(ws, { t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
   }
 
   /**
-   * A structural change (a sheet's rows or columns, a deck's notes or settings): a writer's, at the
-   * current rev, of a kind the artifact's type takes, while no other socket's lease overlaps what
-   * the op touches ("all" for a sheet: no other lease at all, so no lease has to move; a deck's
-   * ranges per structOverlaps, and every lease then moves by the op's line map). The sender's own
-   * lease ends first unless the map keeps it; the op is applied with the type's pure function and
-   * broadcast as it came, and every socket applies it to the same lines. The result must be a
-   * draft the type can hold.
+   * A structural change (a sheet's rows or columns, a deck's notes or settings, a design system's
+   * keys): a writer's, at the current rev, of a kind the artifact's type takes, while no other
+   * socket's lease overlaps what the op touches ("all" for a sheet: no other lease at all, so no
+   * lease has to move; a deck's or a design system's ranges per structOverlaps, and every lease then
+   * moves by the op's line map). The sender's own lease ends first unless its type keeps it and the
+   * map keeps it (a deck's: LiveStructRules.keepsSenderLease); the op is applied with the type's
+   * pure function and broadcast as it came, and every socket applies it to the same lines. The
+   * result must be a draft the type can hold.
    */
   private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: LiveStructOp) {
-    if (s.doc !== "write") return this.host.send(ws, { t: "struct_denied", reason: "watch" });
+    if (s.doc !== "write") return this.answer(ws, { t: "struct_denied", reason: "watch" });
     const rules = doc.rules.struct;
-    if (!rules?.kinds.includes(op.op)) return this.error(ws, "invalid");
+    if (!rules?.kinds.includes(op.op)) return this.refuse(ws, "invalid");
     if (doc.conflictVersion !== null) {
-      return this.host.send(ws, { t: "struct_denied", reason: "frozen" });
+      return this.answer(ws, { t: "struct_denied", reason: "frozen" });
     }
-    if (rev !== doc.rev) return this.host.send(ws, { t: "struct_denied", reason: "stale" });
+    if (rev !== doc.rev) return this.answer(ws, { t: "struct_denied", reason: "stale" });
     const touched = rules.touches(doc.lines, op);
     for (const o of this.host.sockets()) {
       const l = o.s.lease;
       if (o.ws === ws || !l) continue;
       if (touched === "all" || touched.some((r) => structOverlaps(r, l))) {
-        return this.host.send(ws, { t: "struct_denied", reason: "held", by: o.s.email });
+        return this.answer(ws, { t: "struct_denied", reason: "held", by: o.s.email });
       }
     }
     // Two parses of the sheet per struct (the op's, then valid()'s check of its canonical result):
     // kept, since struct frames are rare next to edits and the second proves what is stored.
     const applied = rules.apply(doc.lines, op);
-    if ("error" in applied) return this.error(ws, applied.error);
+    if ("error" in applied) return this.refuse(ws, applied.error);
     const next = applied.lines;
     const text = joinLines(next);
-    if (doc.rules.tooLarge(text)) return this.error(ws, "too_large");
-    if (!doc.rules.valid(text)) return this.error(ws, "invalid");
-    // With real ranges (a deck), every other lease moves by the op's line map: none overlaps what
+    if (doc.rules.tooLarge(text)) return this.refuse(ws, "too_large");
+    if (!doc.rules.valid(text)) return this.refuse(ws, "invalid");
+    // With real ranges (a deck, a design system), every other lease moves by the op's line map: none overlaps what
     // the op touched, so each keeps its lines. The sender keeps its own lease the same way when the
     // op did not touch it. Without a map (a sheet, "all"), nobody else holds one.
     const ranges = touched === "all" ? null : touched;
@@ -743,7 +803,7 @@ export class LiveDoc {
         ? mapRange(l, map, doc.lines.length, next.length)
         : null;
     if (s.lease) {
-      const kept = moved(s.lease);
+      const kept = rules.keepsSenderLease ? moved(s.lease) : null;
       if (kept) {
         s.lease = { ...s.lease, ...kept };
         this.host.save(ws, s);
@@ -776,7 +836,9 @@ export class LiveDoc {
     doc.lastBy = s.id;
     doc.lastEmail = s.email;
     doc.lastEditAt = nowIso();
-    this.broadcast({ t: "struct", gen: doc.gen, rev: doc.rev, op, by: s.id });
+    // As it came: the frame schema checked it (a design system's value is any JSON there).
+    const sent = op as Extract<LiveDocServerFrame, { t: "struct" }>["op"];
+    this.answerAll(ws, { t: "struct", gen: doc.gen, rev: doc.rev, op: sent, by: s.id });
     this.scheduleFlush();
   }
 
@@ -1155,13 +1217,20 @@ export class LiveDoc {
 
   /** The draft ends with nothing to keep: its leases, its row and its sockets go. */
   private async dropDraft(doc: Loaded): Promise<void> {
+    // From here no frame changes the draft: one that came while the row is deleted would be
+    // applied, acknowledged and then lost with the draft (the client drops its copy on the ack).
+    this.ending = doc;
     this.revokeLeases("closed");
-    await this.host.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1")
-      .bind(doc.artifactId)
-      .run();
-    if (this.loaded === doc) this.loaded = null;
-    this.needsFlush = false;
-    this.host.closeDocs();
+    try {
+      await this.host.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1")
+        .bind(doc.artifactId)
+        .run();
+      if (this.loaded === doc) this.loaded = null;
+      this.needsFlush = false;
+      this.host.closeDocs();
+    } finally {
+      if (this.ending === doc) this.ending = null;
+    }
   }
 
   /**

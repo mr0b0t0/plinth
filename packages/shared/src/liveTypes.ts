@@ -1,5 +1,6 @@
 // On-page editing (#36) per type: what the room, the renderers and the app check about a live
-// draft of each type whose registry row has `edit: "live"` (docs, decks and sheets). The room enforces
+// draft of each type whose registry row has `edit: "live"` (docs, decks, sheets and design systems,
+// whose draft is a line projection of its JSON: designSystemLive.ts). The room enforces
 // these on every edit, structural change and merge; the renderers use the same rules to check
 // before they send, so a refusal from the room means another socket changed the lines first, or
 // the edit was forged. No zod, so the renderer bundles can import it.
@@ -23,6 +24,14 @@
 // other type is never merged: it is frozen and reviewed whole beside that version.
 import { type ArtifactType, HTML_DOCUMENT_RE } from "./artifactTypes.ts";
 import { LIMITS } from "./constants.ts";
+import {
+  checkDesignSystemEdit,
+  designSystemFromLive,
+  designSystemToLive,
+  liveDesignSystemTooLarge,
+  validDesignSystemDraft,
+} from "./designSystemLive.ts";
+import { applyDesignSystemStruct, DS_STRUCT_KINDS, type DsStructOp } from "./designSystemStruct.ts";
 import type { LiveDocErrorCode } from "./liveDoc.ts";
 import type { LineRange } from "./liveLines.ts";
 import {
@@ -99,12 +108,13 @@ export function liveSheetTooLarge(text: string): boolean {
  */
 export type LineMap = readonly number[];
 
-/** Every live type's structural op: a sheet's rows and columns, a deck's notes and settings. */
-export type LiveStructOp = SheetStructOp | SlidesStructOp;
+/** Every live type's structural op: a sheet's rows and columns, a design system's keys, a deck's notes and settings. */
+export type LiveStructOp = SheetStructOp | DsStructOp | SlidesStructOp;
 
 /**
- * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows; a deck's
- * notes and settings), as the room and the renderers apply them.
+ * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows; a design
+ * system's keys: dark values, optional texts, tokens; a deck's notes and settings), as the room
+ * and the renderers apply them.
  */
 export interface LiveStructRules {
   /** The op kinds this type takes. The room refuses an op of another kind with `invalid`. */
@@ -124,6 +134,12 @@ export interface LiveStructRules {
    * sit in any row).
    */
   touches(lines: readonly string[], op: LiveStructOp): readonly LineRange[] | "all";
+  /**
+   * The sender's own lease survives an op that does not touch it, moved by the line map (a deck's
+   * notes and settings). Otherwise (a sheet, a design system) the room ends it before it applies
+   * the op, and the sender's editor never expects it back.
+   */
+  keepsSenderLease?: boolean;
 }
 
 /** The rules of one live-editable type. */
@@ -333,6 +349,34 @@ const sheetRules: LiveTypeRules = {
   struct: sheetStruct,
 };
 
+const designSystemStruct: LiveStructRules = {
+  kinds: DS_STRUCT_KINDS,
+  apply(lines, op) {
+    const r = applyDesignSystemStruct(lines, op as DsStructOp);
+    return typeof r === "string" ? { error: "invalid" } : { lines: r.lines, map: r.map };
+  },
+  // The one run of lines the op changes (designSystemStruct.ts): a lease outside it moves by the
+  // map; one inside it (a value whose comma the op adds or drops included) refuses the op.
+  touches(lines, op) {
+    const r = applyDesignSystemStruct(lines, op as DsStructOp);
+    return typeof r === "string" ? [] : r.touched;
+  },
+};
+
+// A design system's draft is its line projection (designSystemLive.ts): one JSON value per lease,
+// each edit a whole value written canonically and checked with the publish rules on the whole
+// system, the guidelines as Markdown lines after the JSON. Never merged: a version published
+// meanwhile is compared by projection, and reviewed whole unless it changed nothing the draft holds.
+const designSystemRules: LiveTypeRules = {
+  tooLarge: liveDesignSystemTooLarge,
+  checkEdit: checkDesignSystemEdit,
+  valid: validDesignSystemDraft,
+  merge: "review",
+  toLive: designSystemToLive,
+  fromLive: designSystemFromLive,
+  unpublishable: () => null,
+  struct: designSystemStruct,
+};
 // ---------- slides (slides-text) ----------
 
 /** Whether a deck draft is past LIMITS.maxSlidesBytes or LIMITS.maxLiveDocLines. */
@@ -479,6 +523,7 @@ const slidesStruct: LiveStructRules = {
   },
   // An op that does not apply touches nothing: `apply` refuses it.
   touches: (lines, op) => slidesTouches(lines, op as SlidesStructOp) ?? [],
+  keepsSenderLease: true,
 };
 
 const slidesRules: LiveTypeRules = {
@@ -527,6 +572,7 @@ export const LIVE_TYPE_RULES: Readonly<Partial<Record<ArtifactType, LiveTypeRule
   doc: docRules,
   slides: slidesRules,
   sheet: sheetRules,
+  design_system: designSystemRules,
 };
 
 /** The rules of a type, or null for a type that is not edited on its page. */

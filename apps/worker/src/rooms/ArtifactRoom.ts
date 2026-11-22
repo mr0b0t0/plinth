@@ -740,7 +740,15 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     const rate = this.allow(s);
     if (rate === "close") return this.drop(ws, ROOM_CLOSE.rate, "rate");
     if (rate === "drop") {
-      if (s.kind === "doc") return this.sendDoc(ws, { t: "error", code: "rate_limited" });
+      if (s.kind === "doc") {
+        // It answers that frame: with its id as `re` (docs/spec.md "Editing", the room protocol).
+        const re = docFrameId(message);
+        return this.sendDoc(ws, {
+          t: "error",
+          code: "rate_limited",
+          ...(re === undefined ? {} : { re }),
+        });
+      }
       if (s.kind === "slides") return this.sendSlides(ws, { t: "error", code: "rate_limited" });
       return this.error(ws, "rate_limited");
     }
@@ -826,17 +834,21 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   private async docMessage(ws: WebSocket, s: SocketState, message: string): Promise<void> {
     let parsed: ReturnType<typeof liveDocClientFrameSchema.safeParse>;
+    // Each error here answers the frame: with its id as `re` when it has one.
+    const re = docFrameId(message);
+    const refuse = (code: "invalid" | "unavailable") =>
+      this.sendDoc(ws, { t: "error", code, ...(re === undefined ? {} : { re }) });
     try {
       parsed = liveDocClientFrameSchema.safeParse(JSON.parse(message));
     } catch {
-      return this.sendDoc(ws, { t: "error", code: "invalid" });
+      return refuse("invalid");
     }
-    if (!parsed.success) return this.sendDoc(ws, { t: "error", code: "invalid" });
+    if (!parsed.success) return refuse("invalid");
     try {
       await this.doc.message(ws, s, parsed.data, s.artifactId);
     } catch {
       console.error("live doc message failed");
-      this.sendDoc(ws, { t: "error", code: "unavailable" });
+      refuse("unavailable");
     }
   }
 
@@ -1081,4 +1093,15 @@ function sameDeclaration(caps: ReturnType<typeof versionCapabilities>, s: Socket
     roomDeclaration(caps) ===
     roomDeclaration({ room: true, viewer: s.seeIdentity, roomOpen: s.openTopics })
   );
+}
+
+/** A doc frame's `id` (a whole number), read from its raw text, or undefined. */
+function docFrameId(message: string): number | undefined {
+  try {
+    const f = JSON.parse(message) as unknown;
+    const id = typeof f === "object" && f !== null ? (f as { id?: unknown }).id : undefined;
+    return typeof id === "number" && Number.isSafeInteger(id) && id >= 0 ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
