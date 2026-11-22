@@ -30,8 +30,8 @@ export interface ControlContext {
   signed?: boolean;
   /** Tokens of `type` a value (or a part) may name, for the pickers. */
   targets(type: DsTokenType): string[];
-  /** The person set a new value. */
-  change(value: unknown): void;
+  /** The person set a new value; false when it was refused (not written). */
+  change(value: unknown): unknown;
   /** Ask before a change of form the person may not mean: `run` only on yes. */
   confirm(question: string, yes: string, run: () => void): void;
 }
@@ -415,25 +415,38 @@ const TYPOGRAPHY_PARTS: [string, DsTokenType][] = [
   ["letterSpacing", "dimension"],
 ];
 
+/**
+ * A composite's control. Each part's change writes the whole value from what the control holds
+ * now (`now`, updated on every change), never from the value it was drawn with: a row is not
+ * drawn again while the person is in it, so a second part changed there keeps the first.
+ */
 function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown): HTMLElement {
   const box = ctx.doc.createElement("div");
   box.className = "ds-control ds-control--parts";
   if (type === "shadow") {
     const layers = Array.isArray(value) ? value : [value];
+    const now = [...layers];
     layers.forEach((layer, i) => {
       if (!isObject(layer)) return;
-      const setLayer = (next: Record<string, unknown>) => {
-        const all = layers.map((l, j) => (j === i ? next : l));
-        ctx.change(Array.isArray(value) ? all : next);
+      const setPart = (name: string, v: unknown) => {
+        const next = [...now];
+        next[i] = withKey(now[i] as Record<string, unknown>, name, v);
+        if (ctx.change(Array.isArray(value) ? next : next[i]) !== false)
+          now.splice(0, now.length, ...next);
       };
       for (const [name, t] of SHADOW_PARTS) {
         if (!(name in layer)) continue;
-        box.append(part(ctx, name, t, layer[name], (v) => setLayer(withKey(layer, name, v))));
+        box.append(part(ctx, name, t, layer[name], (v) => setPart(name, v)));
       }
     });
     return box;
   }
   if (!isObject(value)) return box;
+  let now: Record<string, unknown> = value;
+  const setPart = (name: string, v: unknown) => {
+    const next = withKey(now, name, v);
+    if (ctx.change(next) !== false) now = next;
+  };
   const parts: [string, DsTokenType][] =
     type === "border"
       ? [
@@ -445,7 +458,7 @@ function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown
     if (!(name in value)) continue;
     // A line height may be a number or a dimension: it keeps the form it has.
     const pt = name === "lineHeight" && typeof value[name] !== "number" ? "dimension" : t;
-    box.append(part(ctx, name, pt, value[name], (v) => ctx.change(withKey(value, name, v))));
+    box.append(part(ctx, name, pt, value[name], (v) => setPart(name, v)));
   }
   if (type === "border") {
     const styles = [
@@ -465,7 +478,7 @@ function compositeControl(ctx: ControlContext, type: DsTokenType, value: unknown
       styles.map((x) => [x, x] as const),
       typeof value.style === "string" ? value.style : "solid",
     );
-    s.addEventListener("change", () => ctx.change(withKey(value, "style", s.value)));
+    s.addEventListener("change", () => setPart("style", s.value));
     const p = ctx.doc.createElement("div");
     p.className = "ds-part";
     const label = ctx.doc.createElement("span");

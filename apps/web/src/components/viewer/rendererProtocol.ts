@@ -350,6 +350,12 @@ export interface LiveFrameStatus {
    * in the draft, so editing may not end and nothing may be published until it is changed.
    */
   unsavable?: true;
+  /**
+   * The frame holds a change on its way to the room: set on the page, and not in the room's draft
+   * yet (a value waiting for its lease, or sent and not acknowledged). Publish and Done wait for
+   * it, a while, before they take the checkpoint. Absent otherwise.
+   */
+  pending?: true;
 }
 
 /**
@@ -671,6 +677,7 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
     return null;
   }
   if (m.unsavable !== undefined && m.unsavable !== true) return null;
+  if (m.pending !== undefined && m.pending !== true) return null;
   return {
     connected: connected as boolean,
     failed: failed as boolean,
@@ -689,6 +696,7 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
       ? { unavailable: m.unavailable }
       : {}),
     ...(m.unsavable === true ? { unsavable: true as const } : {}),
+    ...(m.pending === true ? { pending: true as const } : {}),
   };
 }
 

@@ -1695,7 +1695,7 @@ system.
   `start_upload`. Each publish from there is the whole next version, so it leaves out what people
   changed on the page and the code lacks (those versions stay in the history); a draft they are
   editing at the time is held for review beside it, and they choose which to keep. Edit mode tells
-  them this, with Ask an agent as the way to change it in the code. It stays until a publish says
+  them this. It stays until a publish says
   otherwise (`editing: "page"` when the person wants people to edit it on the page from now on);
   `get_artifact` shows it as `editing`. `plinth publish` and the GitHub Action send
   `editing: "code"` on every publish, so one CI run sets it back even after an owner chose

@@ -361,15 +361,9 @@ describe("what stays with agents", () => {
     expect(notice.textContent).toContain(
       "This design system is published from code. Its next publish from code won't include changes made here.",
     );
-    // Editing goes on; Ask an agent asks about the whole system, with no anchor.
+    // Editing goes on; the notice has Dismiss only (Ask an agent is in the rows' menus).
     expect(row("color.bg").classList.contains("ds-token--editing")).toBe(true);
-    const ask = [...notice.querySelectorAll("button")].find(
-      (b) => b.textContent === "Ask an agent",
-    );
-    ask?.click();
-    const asked = posted.filter((m) => m.type === "ask").at(-1);
-    expect(asked).toBeTruthy();
-    expect(asked).not.toHaveProperty("anchor");
+    expect([...notice.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Dismiss"]);
   });
 
   it("shows component code only as its rendered preview, and no source anywhere", () => {

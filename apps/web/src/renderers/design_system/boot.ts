@@ -284,6 +284,8 @@ function live(
           ? { unavailable: "invalid" as const }
           : {}),
       ...(editor?.unsavable ? { unsavable: true as const } : {}),
+      // A value or text set here that the room's draft does not hold yet: Publish and Done wait.
+      ...(c && editor?.pending ? { pending: true as const } : {}),
     };
     post({ type: "live", ...s });
   };
@@ -318,8 +320,6 @@ function live(
       });
     },
     publishedText: (key: string) => publishedText(published, key),
-    // About the whole design system: no anchor.
-    askPage: () => post({ type: "ask" }),
     theme,
     drawn: (ds: DesignSystem) => {
       applyFonts(win.document, ds, hooks.fileVersion(), "site");
@@ -382,6 +382,8 @@ function live(
   if (payload.live === "room") {
     client = new LiveDocClient({
       win,
+      // Each lease request is answered once, in order: the editor matches answers to requests.
+      countLeases: true,
       ...(connect ? { connect } : {}),
       // Typed text not in the draft yet keeps a hidden tab's socket, as unflushed text does.
       keepOpen: () => editor?.pending ?? false,
@@ -408,16 +410,22 @@ function live(
         },
         version: (kind, n, info) => {
           // The unpublished changes were discarded: so is everything kept to rescue.
-          if (kind === "reset" && info.why === "discarded") editor?.clearRescues();
+          if (kind === "reset" && info.why === "discarded") {
+            editor?.clearRescues();
+            editor?.clearValues();
+          }
           if (!local) session.version(kind, n, info);
           status();
         },
         error: (code) => {
           if (code === "invalid" || code === "too_large") editor?.error(code);
           // A lease that went before its last frame was answered (a takeover, a `keep` after
-          // it): the editor says what happened already.
-          else if (code === "not_held") return;
-          else editor?.say(ERRORS[code] ?? "Something went wrong with live editing.");
+          // it): the editor says what happened already, and a value's edit that went on a lease
+          // the room had replaced waits to be sent again.
+          else if (code === "not_held") {
+            if (!local) editor?.notHeld();
+            return;
+          } else editor?.say(ERRORS[code] ?? "Something went wrong with live editing.");
         },
         structDenied: (r, by) => {
           if (!local) editor?.structDenied(r, by);

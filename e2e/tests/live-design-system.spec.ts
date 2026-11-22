@@ -221,7 +221,7 @@ test("Rename: Ask an agent on a token row opens the Ask dialog pointing at the t
   }
 });
 
-test("a design system published from code says so when editing starts, and Ask an agent asks about all of it", async ({
+test("a design system published from code says so when editing starts, with Dismiss only", async ({
   page,
 }, info) => {
   await stubGoogleFonts(page);
@@ -240,10 +240,8 @@ test("a design system published from code says so when editing starts, and Ask a
       "Draft saved",
       { timeout: 10_000 },
     );
-    await notice.getByRole("button", { name: "Ask an agent" }).click();
-    const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-    await expect(dialog).toBeVisible();
-    await expect(dialog).not.toContainText("Pointing at");
+    // The notice only tells: Dismiss is its one button (Ask an agent is in the rows' menus).
+    await expect(notice.getByRole("button")).toHaveText(["Dismiss"]);
   } finally {
     await client.close();
   }

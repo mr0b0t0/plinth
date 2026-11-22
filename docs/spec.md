@@ -1262,14 +1262,22 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     agents to replace a removed variable before they copy a newer version in, and to deprecate
     tokens rather than remove them themselves.
   - **A value set on the page is never dropped in the frame.** A token value, the name or a
-    status is written when its field changes, after the room grants its lines. Until then it
-    waits in the frame and counts as unflushed (the app's leave warning and Publish wait for it):
-    edit mode ending keeps the request and lets the lease go right after the write, a change to
-    another value meanwhile waits its turn, a socket that closes asks again on the reconnect, an
-    edit sent but not acknowledged before the socket closed is sent again unless the draft has it,
-    and a `stale` denial asks again. Only a denial the person is told about (someone else holds
-    the value, a newer version waits for review, or the person only watches) or the value being
-    gone ends it.
+    status is written when its field changes, after the room grants its lines. The frame sends a
+    value's lease request only while no other request of its socket is unanswered (the room
+    answers each in order, `leased` or `lease_denied`, and the frame matches each answer to its
+    own request: `LiveDocOptions.countLeases`), so another value's denial is never taken for this
+    one's. Until the room acknowledges the edit, or the draft holds the value, it counts as pending
+    (the status's `unflushed` and `pending`; Publish and Done wait for `pending`, at most 3
+    seconds, before the checkpoint): edit mode ending keeps the request and lets the lease go right
+    after the write; a socket that closes asks again on the reconnect; an edit the room answers
+    `not_held` (its lease replaced first), or one sent but not acknowledged before a drop or a lost
+    lease, is sent again unless the draft holds it; a `stale` denial asks again; a `frozen` one
+    keeps the value until the review ends (the notice says it is not in the draft yet, with Copy),
+    and it is written if the draft is kept, dropped with a discard. Only the room refusing the
+    value (`invalid`, `too_large`: never sent again), someone else holding its lines, or the
+    token being gone ends it, and the notice says so with Copy. A composite's parts (shadow,
+    border, typography) each write the whole value from what the row's fields hold now, never
+    from the value the row was drawn with.
   - **The controls** keep the form a value is stored in: a colour string or the picker's
     `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
     its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
@@ -1323,8 +1331,7 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     When the design system's publisher said its source lives in code (the gate's `from_code`),
     starting edit mode shows one short notice in the frame's status line: "This design system is
     published from code. Its next publish from code won't include changes made here.", with
-    "Ask an agent" (about the whole design system, no anchor) as the way to change it in the code,
-    and Dismiss. Editing is not blocked.
+    Dismiss only (Ask an agent stays in the rows' and components' menus). Editing is not blocked.
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
     (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
@@ -3334,10 +3341,9 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   `ask` with block anchors, and the design system renderer with `token:<path>`, `group:<path>`,
   `component:<id>` and `system:settings` (keys made from the published version only: a path too
   long for an anchor key gives its index in the published version, `token:12`, and a token or
-  group only the draft has is just `token` or `group`, with no words), with no anchor for the
-  whole design system (the published-from-code notice's Ask an agent), and
-  with the block anchors of its formatted texts behind the text's part (`guidelines:block-3`,
-  named in the published version's text as a doc's are); other types don't yet. While the app is in edit mode, an `ask`
+  group only the draft has is just `token` or `group`, with no words), and with the block
+  anchors of its formatted texts behind the text's part (`guidelines:block-3`, named in the
+  published version's text as a doc's are); other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
   refuse, under the rules for a page's own compose ([comments from the

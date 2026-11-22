@@ -631,6 +631,56 @@ describe("a text's edit the room refuses", () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(ws.sent.filter((f) => f.t === "edit" || f.t === "struct")).toHaveLength(1);
   });
+
+  it("a refused op from a row's menu is the op's refusal, not the text's that wrote before it", async () => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
+    const ws = connected();
+    const node = dsNodeAtPath(splitLines(LIVE), ["components", 0, "description"]);
+    if (!node) throw new Error("no node");
+    const sel = "[data-text='component:button:description']";
+    root()
+      .querySelector<HTMLElement>(`${sel} p`)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    ws.frame({
+      t: "leased",
+      lease: "L1",
+      start: node.start,
+      end: node.end,
+      holder: "s1",
+      by: "ada@example.org",
+    });
+    const el = root().querySelector<HTMLElement>(`${sel} [contenteditable='true']`);
+    if (!el) throw new Error("no open block");
+    el.textContent = "Starts an action.";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    const e = lastOf(ws, "edit") as Json;
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 1,
+      lease: "L1",
+      start: node.start,
+      del: node.end - node.start,
+      ins: e.text,
+      by: "s1",
+      seq: e.seq,
+    });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    // A dark value is added from a row's menu, and the room refuses that op.
+    row("color.brand.500").querySelector<HTMLButtonElement>(".plinth-doc__menu-button")?.click();
+    [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-item")]
+      .find((i) => i.textContent === "Add a dark value")
+      ?.click();
+    expect(lastOf(ws, "struct")).toMatchObject({ op: { op: "set_dark" } });
+    ws.frame({ t: "error", code: "invalid" });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    // The page says so itself; the description keeps what it wrote.
+    expect(document.querySelector(".ds-notice")?.textContent).toContain("can't be used here");
+    expect(root().querySelector(sel)?.textContent).toContain("Starts an action.");
+  });
 });
 
 // A token's value is written on `change` and asks for its lines' lease first: until the room grants
@@ -705,7 +755,13 @@ describe("a token value waiting for its lease", () => {
     change("color.bg", "#fafafa");
     await flush();
     expect(lastOf(ws, "lease")).toMatchObject({ t: "lease" });
-    expect(lastLive()).toMatchObject({ unflushed: true });
+    // `pending` tells the app's Publish and Done to wait for it.
+    expect(lastLive()).toMatchObject({ unflushed: true, pending: true });
+    const node = nodeOf(BG);
+    lease(ws, "L1", node.start, node.end);
+    ack(ws, "L1", node, 1);
+    await flush();
+    expect(lastLive()).not.toHaveProperty("pending");
   });
 
   it("edit mode ending keeps its request: the value is sent once the lease comes, then let go", async () => {
@@ -726,26 +782,27 @@ describe("a token value waiting for its lease", () => {
     expect(lastOf(ws, "release")).toEqual({ t: "release", lease: "L1" });
   });
 
-  it("a lease granted after its part let go goes back to the room, and the value waits its turn", async () => {
+  it("an edit the room answers not_held (its lease ended by an op) asks again and is sent", async () => {
     fake();
     const ws = connected();
     const node = nodeOf(BG);
     change("color.bg", "#fafafa");
-    // A dark value is added meanwhile: the op takes the socket's turn.
+    // A dark value is added meanwhile: the op is sent after the value's request.
     row("color.brand.500").querySelector<HTMLButtonElement>(".plinth-doc__menu-button")?.click();
     [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-item")]
       .find((i) => i.textContent === "Add a dark value")
       ?.click();
     const op = lastOf(ws, "struct")?.op;
     expect(op).toMatchObject({ op: "set_dark" });
+    // The room grants the request, then the op ends that lease; the value's edit comes after it.
     lease(ws, "L1", node.start, node.end);
     await flush();
-    expect(lastOf(ws, "release")).toEqual({ t: "release", lease: "L1" });
-    expect(ws.sent.filter((f) => f.t === "edit")).toHaveLength(0);
-    // The room ends that lease, applies the op, and the value asks again where its lines are now.
+    expect(lastOf(ws, "edit")).toMatchObject({ lease: "L1" });
     ws.frame({ t: "released", lease: "L1" });
     ws.frame({ t: "struct", gen: "g1", rev: 1, op, by: "s1" });
+    ws.frame({ t: "error", code: "not_held" });
     await flush();
+    expect(lastLive()).toMatchObject({ unflushed: true });
     const applied = applyDesignSystemStruct(splitLines(LIVE), op as never);
     if (typeof applied === "string") throw new Error(applied);
     const now = nodeIn(applied.lines, BG);
@@ -794,15 +851,23 @@ describe("a token value waiting for its lease", () => {
     });
   });
 
-  it("another token changed while one waits: both values are sent", async () => {
+  it("another token changed while one waits: it asks only after that answer, and both are sent", async () => {
     fake();
     const ws = connected();
     const bg = nodeOf(BG);
     const fg = nodeOf(FG);
     change("color.bg", "#fafafa");
     change("color.fg", "#101010");
-    // The room answers both requests in order: the first lease, then the second in its place.
+    // One request at a time: the second waits for the first's answer.
+    expect(ws.sent.filter((f) => f.t === "lease")).toHaveLength(1);
     lease(ws, "L1", bg.start, bg.end);
+    await flush();
+    expect(lastOf(ws, "edit")).toMatchObject({
+      lease: "L1",
+      text: dsNodeLines(bg, "#fafafa").join("\n"),
+    });
+    expect(lastOf(ws, "lease")).toMatchObject({ start: fg.start, end: fg.end });
+    ack(ws, "L1", bg, 1);
     ws.frame({ t: "released", lease: "L1" });
     lease(ws, "L2", fg.start, fg.end);
     await flush();
@@ -811,18 +876,6 @@ describe("a token value waiting for its lease", () => {
       text: dsNodeLines(fg, "#101010").join("\n"),
     });
     expect(lastLive()).toMatchObject({ unflushed: true });
-    // Once that write is in and its lease let go, the first token asks again and is sent.
-    ack(ws, "L2", fg, 1);
-    vi.advanceTimersByTime(2000);
-    ws.frame({ t: "released", lease: "L2" });
-    await flush();
-    expect(lastOf(ws, "lease")).toMatchObject({ start: bg.start, end: bg.end });
-    lease(ws, "L3", bg.start, bg.end);
-    await flush();
-    expect(lastOf(ws, "edit")).toMatchObject({
-      lease: "L3",
-      text: dsNodeLines(bg, "#fafafa").join("\n"),
-    });
   });
 
   it("an edit sent just before the socket closed is sent again after the reconnect", async () => {

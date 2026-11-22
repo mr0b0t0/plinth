@@ -128,6 +128,12 @@ export interface LiveDocOptions {
    */
   keepOpen?: () => boolean;
   /**
+   * The editor may have several lease requests out at once and matches each answer to its own
+   * request (the room answers each, in order): every `lease_denied` is passed on, not only the
+   * first after a request. Without it, one denial is passed on per round of requests.
+   */
+  countLeases?: boolean;
+  /**
    * Applies a struct frame's op to the lines (a sheet's applySheetStruct); absent for a doc. With
    * a line map (a design system's ops), the other leases move by it; without one (a sheet's), the
    * room applied the op only while nobody else held a lease.
@@ -197,7 +203,8 @@ export class LiveDocClient implements LiveBackend {
   private acks: Ack[] = [];
   /** The room's text of this socket's block as written to D1 (or as it was when leased). */
   private durable: string | null = null;
-  private wantLease = false;
+  /** Lease and takeover requests sent and not answered yet (at most 1 without `countLeases`). */
+  private leaseAsks = 0;
   /** A struct frame sent and not answered yet. */
   private structPending = false;
   /** The seqs of this socket's recent edits the room acknowledged (its own `op`), newest last. */
@@ -305,6 +312,7 @@ export class LiveDocClient implements LiveBackend {
     this.unacked = null;
     this.structPending = false;
     this.keepsAwaiting = 0;
+    this.leaseAsks = 0;
     if (code === ROOM_CLOSE.unauthorized || code === ROOM_CLOSE.gone) {
       this.ended = code === ROOM_CLOSE.gone ? "gone" : "unauthorized";
       this.stopped = true;
@@ -375,8 +383,9 @@ export class LiveDocClient implements LiveBackend {
   /** Ask for the lines [start, end) (start === end: an insert point). */
   lease(range: LineRange): boolean {
     if (this.you?.right !== "write" || this.conflictVersion !== null) return false;
-    this.wantLease = true;
-    return this.send({ t: "lease", rev: this.rev, start: range.start, end: range.end });
+    if (!this.send({ t: "lease", rev: this.rev, start: range.start, end: range.end })) return false;
+    this.asked();
+    return true;
   }
 
   /** Replace the whole leased range with `text`. */
@@ -396,8 +405,17 @@ export class LiveDocClient implements LiveBackend {
   }
 
   takeover(leaseId: string): boolean {
-    this.wantLease = true;
-    return this.send({ t: "takeover", lease: leaseId });
+    if (!this.send({ t: "takeover", lease: leaseId })) return false;
+    this.asked();
+    return true;
+  }
+
+  private asked(): void {
+    this.leaseAsks = this.opts.countLeases ? this.leaseAsks + 1 : 1;
+  }
+  /** A lease request was answered. */
+  private answered(): void {
+    this.leaseAsks = this.opts.countLeases ? Math.max(0, this.leaseAsks - 1) : 0;
   }
 
   get lastSeq(): number {
@@ -489,7 +507,7 @@ export class LiveDocClient implements LiveBackend {
         this.leases.set(f.lease, lease);
         if (f.holder === this.you?.id) {
           this.mine = lease;
-          this.wantLease = false;
+          this.answered();
           this.unacked = null;
           this.acks = [];
           this.durable = joinLines(this.lines.slice(f.start, f.end));
@@ -500,8 +518,8 @@ export class LiveDocClient implements LiveBackend {
         return;
       }
       case "lease_denied":
-        if (!this.wantLease) return;
-        this.wantLease = false;
+        if (this.leaseAsks === 0) return;
+        this.answered();
         {
           L.denied(f.reason, f.by);
           return;
@@ -616,8 +634,12 @@ export class LiveDocClient implements LiveBackend {
           if (f.code === "invalid") this.keepUnsupported = true;
           return;
         }
-        // A refused struct frame is answered with an error too (invalid, too_large).
-        this.structPending = false;
+        // A refused struct frame is answered with an error too (invalid, too_large). Otherwise a
+        // refused edit's answer: it is not waiting to be acknowledged any more.
+        if (this.structPending) this.structPending = false;
+        else if (f.code === "invalid" || f.code === "too_large") {
+          this.unacked = null;
+        }
         L.error(f.code);
         return;
       }

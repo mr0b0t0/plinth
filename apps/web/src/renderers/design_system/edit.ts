@@ -74,8 +74,6 @@ export interface DsEditorHooks {
    * a doc's do (doc/askAnchor.ts), so the agent finds the block in the version it reads.
    */
   publishedText?(key: string): string;
-  /** Ask an agent about the whole design system (no anchor): the published-from-code notice. */
-  askPage?(): void;
   theme(): PreviewTheme;
   /** The site was drawn from the draft: load its fonts (from the draft's base files). */
   drawn?(ds: DesignSystem): void;
@@ -93,6 +91,8 @@ export const WORDS = {
   heldPlain: "Someone else is editing this. Try again when they finish.",
   stale: "The design system changed meanwhile. Try again.",
   frozen: "A newer version was published. Review it to go on.",
+  frozenValue:
+    "A newer version was published. Review it to go on: your change isn't in the draft yet, and goes in if the draft is kept.",
   watch: "You can follow the changes, but not make them here.",
   inUse: (users: string[]) =>
     `Used by ${users.slice(0, 3).join(", ")}${users.length > 3 ? ` and ${users.length - 3} more` : ""}. Change those first.`,
@@ -103,8 +103,6 @@ export const WORDS = {
 } as const;
 
 const NONE: unique symbol = Symbol("none");
-/** A range no lease ever has: a part that asked the room for nothing expects no answer. */
-const NO_LINES: LineRange = { start: -1, end: -1 };
 
 /** One part of the page that may hold the socket's lease. */
 interface LeaseOwner {
@@ -235,8 +233,7 @@ class GuidelinesDoc implements LiveBackend, LeaseOwner {
     this.host.drop(this);
   }
   takeover(id: string): boolean {
-    this.host.take(this, null);
-    return this.b.takeover(id);
+    return this.host.takeover(this, id);
   }
 
   granted(l: ClientLease): void {
@@ -409,7 +406,7 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
     if (!node || (this.held && this.host.owns(this) && this.b.mine)) {
       // Absent (set_text creates it with the first words), or held already: granted here, and no
       // answer from the room is this part's until it asks for the value's line.
-      this.host.take(this, NO_LINES);
+      this.host.take(this);
       this.grant(range);
       return true;
     }
@@ -591,18 +588,22 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
 /**
  * One token value (or the name, a description, a status): leased while it changes, then let go.
  *
- * A value the person set is never dropped in the frame: it waits (`want`) until the room grants
- * its lines, through edit mode ending, another part taking the socket's turn and a reconnect, and
- * an edit sent but not acknowledged when the socket closed is sent again. It counts as pending
- * meanwhile, so the frame reports unflushed changes. Only the room's own answer ends it: a denial,
- * which the person is told about, or the token being gone.
+ * A value the person set is never dropped in the frame. It waits (`want`) until the room grants
+ * its lines: through edit mode ending, other parts' turns (a writer sends no lease request while
+ * another is out, so each answer is matched to its own request), a reconnect and a freeze for
+ * review. Once sent it is kept (`inFlight`) until the room acknowledges it or the draft holds it,
+ * and it waits again when its edit is not taken (`not_held`, a lease lost or a socket closed
+ * first). The room refusing it (`invalid`, `too_large`) or someone else holding its lines ends it,
+ * and the person is told, with the value to copy.
  */
 class ValueWriter implements LeaseOwner {
   private want: unknown = NONE;
-  /** The value last sent, and its socket seq, until the draft has it. */
-  private inFlight: { value: unknown; seq: number | undefined } | null = null;
+  /** The value last sent, its socket seq and the lease it went on, until the room has it. */
+  private inFlight: { value: unknown; seq: number | undefined; lease: string | null } | null = null;
   private held = false;
   private asked = false;
+  /** The person just set it: it may take the socket's lease from a text that holds it. */
+  private eager = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -610,9 +611,9 @@ class ValueWriter implements LeaseOwner {
     readonly path: DsPath,
   ) {}
 
-  /** A value set here that the room does not have yet. */
+  /** A value set here that the room does not have yet: waiting, or sent and not acknowledged. */
   get pending(): boolean {
-    return this.want !== NONE;
+    return this.want !== NONE || this.inFlight !== null;
   }
 
   /** It asked for its lines and waits for the room's answer. */
@@ -631,39 +632,46 @@ class ValueWriter implements LeaseOwner {
       return false;
     }
     this.want = value;
+    this.eager = true;
     this.host.statusSoon();
     return this.go();
   }
 
-  /** Send what waits: on the lease held, or ask for one (once at a time). */
+  /** Send what waits: on the lease held, or ask for one when no other request is out. */
   private go(): boolean {
     if (this.want === NONE) return true;
     const b = this.host.backend;
     if (this.held && b.mine && this.host.owns(this)) return this.send();
     if (this.asked) return true;
-    // Offline: it waits for the room (retry, on the welcome that answers the reconnect).
-    if (!b.connected || !b.ready) return true;
+    // Offline, frozen for review, or another request's answer still to come: it waits (retry).
+    if (!b.connected || !b.ready || b.conflictVersion !== null || this.host.asking) return true;
     const node = this.host.nodeAt(this.path);
     if (!node) return this.gone();
     this.asked = true;
     if (!this.host.ask(this, { start: node.start, end: node.end })) {
-      // Connected, yet the room takes no lease from this socket (watching, or frozen for review).
+      // Connected, yet the room takes no lease from this socket (watching).
       this.asked = false;
-      this.want = NONE;
-      this.host.say(WORDS.notSent);
-      this.host.statusSoon();
+      this.end(WORDS.notSent);
       return false;
     }
     return true;
   }
 
-  /** The token is gone from the draft: the value has nowhere to go, and the person is told. */
-  private gone(): boolean {
+  /** The value goes no further: the person is told, with it to copy. */
+  private end(words: string): void {
+    const v = this.want !== NONE ? this.want : this.inFlight?.value;
     this.want = NONE;
     this.inFlight = null;
-    this.host.say(WORDS.stale);
+    this.eager = false;
+    this.host.drop(this);
+    this.host.say(words, v === undefined ? undefined : this.host.copyAction(v));
     this.host.redrawSoon();
     this.host.statusSoon();
+  }
+
+  /** The token is gone from the draft: the value has nowhere to go. */
+  private gone(): boolean {
+    this.end(WORDS.stale);
     return false;
   }
 
@@ -674,10 +682,12 @@ class ValueWriter implements LeaseOwner {
     if (!node) return this.gone();
     this.host.sent(this);
     const b = this.host.backend;
+    const lease = b.mine?.id ?? null;
     // Not sent (the socket is closing): it stays, and goes after the reconnect.
     if (!b.edit(dsNodeLines(node, want).join("\n"))) return true;
     this.want = NONE;
-    this.inFlight = { value: want, seq: b.lastSeq };
+    this.eager = false;
+    this.inFlight = { value: want, seq: b.lastSeq, lease };
     this.host.statusSoon();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -696,60 +706,112 @@ class ValueWriter implements LeaseOwner {
     this.host.drop(this);
   }
 
-  /** The draft changed: a value sent is done with once the draft has it. */
+  /** The room has the value sent: it acknowledged it, or the draft holds it. */
+  private landed(): boolean {
+    const f = this.inFlight;
+    if (!f) return true;
+    const b = this.host.backend;
+    if (f.seq !== undefined && b.acked?.(f.seq)) return true;
+    return JSON.stringify(dsGet(this.host.system, this.path)) === JSON.stringify(f.value);
+  }
+
+  /** The draft changed: a value sent is done with once the room has it. */
   settle(): void {
+    if (this.inFlight && this.landed()) {
+      this.inFlight = null;
+      this.host.statusSoon();
+    }
+  }
+
+  /** A value sent that the room did not take waits again (unless a newer one does). */
+  private again(): void {
     const f = this.inFlight;
     if (!f) return;
-    const now = dsGet(this.host.system, this.path);
-    if (JSON.stringify(now) === JSON.stringify(f.value)) this.inFlight = null;
+    const landed = this.landed();
+    this.inFlight = null;
+    if (!landed && this.want === NONE) this.want = f.value;
+    this.host.statusSoon();
   }
 
   /**
    * The socket closed: a request it made is never answered, and a value sent that the room did
-   * not acknowledge may not be in the draft. That value waits again (unless a newer one does).
+   * not acknowledge may not be in the draft. That value waits again.
    */
   dropped(): void {
     this.asked = false;
     this.held = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    const f = this.inFlight;
-    this.inFlight = null;
-    const b = this.host.backend;
-    if (f && this.want === NONE && !(f.seq !== undefined && b.acked?.(f.seq))) {
-      this.want = f.value;
-      this.host.statusSoon();
-    }
+    this.again();
     this.host.drop(this);
   }
 
-  /** Send what waits once nothing else on the page holds the socket's lease or waits for one. */
+  /** The room answered `not_held`: an edit that went on a lease the socket no longer has. */
+  notHeld(): void {
+    const f = this.inFlight;
+    if (!f || f.lease === this.host.backend.mine?.id) return;
+    this.held = false;
+    this.again();
+  }
+
+  /** The room refused the value sent (`invalid`, `too_large`): it is never sent again. */
+  refused(words: string): void {
+    const v = this.inFlight?.value;
+    this.inFlight = null;
+    this.host.say(words, v === undefined ? undefined : this.host.copyAction(v));
+    this.host.redrawSoon();
+    this.host.statusSoon();
+  }
+
+  /** The unpublished changes were discarded: so is what waits here. */
+  discard(): void {
+    this.want = NONE;
+    this.inFlight = null;
+    this.eager = false;
+    this.asked = false;
+    this.held = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  /** Its request was answered with a lease it no longer takes (it went back to the room). */
+  passed(): void {
+    this.asked = false;
+  }
+
+  /**
+   * Send what waits once no lease request is out and nothing else is in the way: a text holding
+   * the socket's lease keeps it unless the person just set this value.
+   */
   retry(): void {
     if (this.want === NONE || this.asked) return;
     const b = this.host.backend;
     if (!b.connected || !b.ready || !b.settled || b.structWaiting) return;
-    if (!this.host.owns(this) && !this.host.idle) return;
+    if (b.conflictVersion !== null || this.host.asking) return;
+    if (!this.eager && !this.host.owns(this) && !this.host.idle && !this.host.ownedByValue) return;
     this.go();
   }
 
   granted(): void {
     this.asked = false;
     this.held = true;
+    // Nothing left to write (a discard, or the value ended meanwhile): the lines go back.
     if (this.want !== NONE) this.send();
-    else if (!this.host.editing) this.release();
+    else this.release();
   }
   denied(r: LeaseDenial, by?: string): void {
     this.asked = false;
     this.host.drop(this);
-    if (r === "stale" && this.want !== NONE) {
-      // The draft moved on while it asked: it asks again at the room's new rev.
-      queueMicrotask(() => this.retry());
+    if (this.want === NONE) return;
+    // The draft moved on while it asked: it asks again at the room's new rev (retry).
+    if (r === "stale") return;
+    // Frozen for review: it waits for the review's outcome, and the person sees it meanwhile.
+    if (r === "frozen") {
+      this.host.say(WORDS.frozenValue, this.host.copyAction(this.want));
+      this.host.statusSoon();
       return;
     }
-    this.want = NONE;
-    this.host.say(r === "held" ? (by ? WORDS.held(by) : WORDS.heldPlain) : denialWords(r));
-    this.host.redrawSoon();
-    this.host.statusSoon();
+    this.end(r === "held" ? (by ? WORDS.held(by) : WORDS.heldPlain) : denialWords(r));
   }
   lost(): void {
     this.dropped();
@@ -759,8 +821,7 @@ class ValueWriter implements LeaseOwner {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.held = false;
-    // A request not answered yet is not this part's any more; its value waits for its turn.
-    this.asked = false;
+    // A request not answered yet stays this writer's: its answer comes back to it.
   }
 }
 
@@ -819,8 +880,12 @@ export class DsEditor {
   private seen: readonly string[] | null = null;
   private index: DsLiveNode[] = [];
   private owner: LeaseOwner | null = null;
-  /** The lease request waiting for the room's answer, and the part that made it. */
-  private expect: { owner: LeaseOwner; range: LineRange | null } | null = null;
+  /**
+   * The lease requests sent that the room has not answered, oldest first, and the part that made
+   * each (range null: a takeover). The room answers each in order (leased or lease_denied), so the
+   * first answer is always the first request's.
+   */
+  private asks: { owner: LeaseOwner; range: LineRange | null }[] = [];
   /** The part whose edit or op was sent last: a refusal from the room is about it. */
   private last: LeaseOwner | null = null;
   /** Whether that was a struct op (else an edit). */
@@ -861,6 +926,8 @@ export class DsEditor {
   setBackend(b: SystemBackend): void {
     if (this.owner) this.owner.yield();
     this.owner = null;
+    this.asks = [];
+    for (const w of this.writers.values()) w.passed();
     this.backend = b;
     this.seen = null;
     this.refresh();
@@ -896,24 +963,34 @@ export class DsEditor {
   // ---------- who holds the lease ----------
 
   /**
-   * `o` holds (or asks for) the socket's lease from now: the part that held it before sends what
-   * it has pending and lets go. `range` is what it asks for (null: any, a takeover).
+   * `o` holds the socket's lease from now (one it holds already, or one it asks for): the part
+   * that held it before sends what it has pending and lets go.
    */
-  take(o: LeaseOwner, range: LineRange | null = null): void {
+  take(o: LeaseOwner): void {
     if (this.owner && this.owner !== o) this.owner.yield();
     this.owner = o;
-    this.expect = { owner: o, range };
   }
-  /** `o` asks the room for the lines `range`; its answer goes to `o` only. */
+  /** `o` asks the room for the lines `range`; the answer to this request goes to `o`. */
   ask(o: LeaseOwner, range: LineRange): boolean {
-    this.take(o, range);
+    this.take(o);
+    // In the list before it is sent: the frame alone (local.ts) answers at once.
+    const a = { owner: o, range };
+    this.asks.push(a);
     if (this.backend.lease(range)) return true;
-    this.expect = null;
+    this.asks = this.asks.filter((x) => x !== a);
+    return false;
+  }
+  /** `o` takes over the lease `id`; the answer goes to `o`. */
+  takeover(o: LeaseOwner, id: string): boolean {
+    this.take(o);
+    const a = { owner: o, range: null };
+    this.asks.push(a);
+    if (this.backend.takeover(id)) return true;
+    this.asks = this.asks.filter((x) => x !== a);
     return false;
   }
   drop(o: LeaseOwner): void {
     if (this.owner === o) this.owner = null;
-    if (this.expect?.owner === o) this.expect = null;
   }
   owns(o: LeaseOwner): boolean {
     return this.owner === o;
@@ -922,52 +999,125 @@ export class DsEditor {
     this.last = o;
     this.lastStruct = false;
   }
+  /** A lease request is out, its answer still to come. */
+  get asking(): boolean {
+    return this.asks.length > 0;
+  }
   /** No part holds the socket's lease or waits for one. */
   get idle(): boolean {
-    return this.owner === null && this.expect === null && !(this.backend.structWaiting ?? false);
+    return this.owner === null && this.asks.length === 0 && !(this.backend.structWaiting ?? false);
+  }
+  /** The socket's lease is a value's (held briefly), or nobody's. */
+  get ownedByValue(): boolean {
+    return this.owner === null || this.owner instanceof ValueWriter;
   }
 
   /**
-   * A lease granted to this socket goes to the part that asked for exactly those lines; one asked
-   * for by a part that has since let go (another part asked after it) is not anyone's.
+   * The answer to the oldest request: the lease goes to the part that asked for exactly those
+   * lines if it still holds the socket's turn, or to a value that asked and waits with no request
+   * after it; otherwise it is nobody's, and goes back to the room.
    */
   granted(l: ClientLease): void {
-    const e = this.expect;
-    if (
-      !e ||
-      e.owner !== this.owner ||
-      (e.range && (e.range.start !== l.start || e.range.end !== l.end))
+    const head = this.asks.shift();
+    const fits =
+      head && (head.range === null || (head.range.start === l.start && head.range.end === l.end));
+    if (head && fits && head.owner === this.owner) {
+      this.owner?.granted(l);
+    } else if (
+      head &&
+      fits &&
+      head.owner instanceof ValueWriter &&
+      head.owner.waiting &&
+      this.asks.length === 0 &&
+      this.ownedByValue
     ) {
+      this.take(head.owner);
+      head.owner.granted();
+    } else {
+      if (head?.owner instanceof ValueWriter) head.owner.passed();
       // Nobody here holds it: it goes back to the room, so nobody else sees those lines held.
-      if (this.backend.mine?.id === l.id) this.backend.release();
-      return;
+      if (this.backend.mine?.id === l.id && this.asks.length === 0) this.backend.release();
     }
-    this.expect = null;
-    this.owner?.granted(l);
+    this.kick();
   }
   denied(r: LeaseDenial, by?: string): void {
-    const e = this.expect;
-    this.expect = null;
-    if (e && e.owner === this.owner) this.owner?.denied(r, by);
+    const head = this.asks.shift();
+    if (!head) return;
+    // A value's request is its own however the turn moved on; a text hears only while it asks.
+    if (head.owner instanceof ValueWriter) head.owner.denied(r, by);
+    else if (head.owner === this.owner) head.owner.denied(r, by);
+    this.kick();
   }
   lost(r: LeaseLoss): void {
     this.owner?.lost(r);
   }
   disconnected(): void {
-    // A request the closed socket made is never answered: whoever made it asks again on the
-    // reconnect, and what it was for waits meanwhile.
-    const e = this.expect;
-    this.expect = null;
-    if (e && e.owner instanceof TextValueDoc) e.owner.dropped();
+    // The requests the closed socket made are never answered: whoever made them asks again on
+    // the reconnect, and what each was for waits meanwhile.
+    const asks = this.asks;
+    this.asks = [];
+    for (const a of asks) if (a.owner instanceof TextValueDoc) a.owner.dropped();
     for (const w of this.writers.values()) w.dropped();
     if (this.owner instanceof ValueWriter) this.owner = null;
     for (const t of this.texts.values()) t.editor.disconnected();
+  }
+
+  /** The room answered `not_held`: a value's edit that went on a lease it replaced waits again. */
+  notHeld(): void {
+    for (const w of this.writers.values()) w.notHeld();
+    this.kick();
+  }
+
+  /** The values waiting get their turn, once the current frames are handled. */
+  private kick(): void {
+    queueMicrotask(() => {
+      for (const t of this.texts.values()) if (t.doc instanceof TextValueDoc) t.doc.retry();
+      for (const w of this.writers.values()) w.retry();
+    });
+  }
+
+  /** A notice's action that puts `value` (as the page writes it) on the clipboard. */
+  copyAction(value: unknown): { label: string; run: () => void } {
+    const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    return { label: "Copy", run: () => this.copy(text) };
+  }
+
+  private copy(text: string): void {
+    const fallback = () => {
+      const area = this.doc.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      this.doc.body.append(area);
+      area.select();
+      try {
+        this.doc.execCommand("copy");
+      } catch {
+        // No clipboard here either: the notice stays.
+      }
+      area.remove();
+    };
+    const clip = this.win.navigator.clipboard;
+    if (clip?.writeText) void clip.writeText(text).catch(fallback);
+    else fallback();
+  }
+
+  /** The unpublished changes were discarded: the values waiting are dropped with them. */
+  clearValues(): void {
+    for (const w of this.writers.values()) w.discard();
+    if (this.owner instanceof ValueWriter) this.owner = null;
+    this.statusSoon();
   }
 
   /** The room refused the last edit or op. */
   error(code: string): void {
     const last = this.last;
     this.last = null;
+    if (last instanceof ValueWriter && !this.lastStruct) {
+      last.refused(code === "too_large" ? WORDS.tooLarge : WORDS.invalid);
+      return;
+    }
     if (last instanceof TextValueDoc) last.roomRefused(this.lastStruct ? "struct" : "edit");
     if (last instanceof GuidelinesDoc || last instanceof TextValueDoc) {
       last.editor?.refused(code === "too_large" ? WORDS.tooLarge : WORDS.invalid);
@@ -994,12 +1144,10 @@ export class DsEditor {
   /** Send a struct op for `from` (which lets go of what it holds first). */
   struct(from: LeaseOwner | null, op: DsStructOp): boolean {
     if (this.owner && this.owner !== from) this.owner.yield();
-    // The room ends this socket's lease before it applies the op: no answer is owed to anyone.
-    this.expect = null;
-    if (from) {
-      this.last = from;
-      this.lastStruct = true;
-    }
+    // The room ends this socket's lease before it applies the op. A refusal of it is about this op
+    // (and `from`, when a part sent it), never an earlier edit.
+    this.last = from;
+    this.lastStruct = true;
     if (!this.backend.struct(op)) {
       const local = this.backend as { refusal?: string | null };
       this.say(
@@ -1097,7 +1245,6 @@ export class DsEditor {
         [...this.texts.values()].some((t) => t.doc === o && t.editor.pending);
       if (!keeping) {
         this.owner = null;
-        this.expect = null;
         o?.yield();
         if (this.backend.mine) this.backend.release();
       }
@@ -1109,7 +1256,7 @@ export class DsEditor {
     this.draw();
     // Published from code: once each time edit mode starts, never blocking it.
     if (on && this.fromCode) {
-      this.say(WORDS.fromCode, { label: "Ask an agent", run: () => this.hooks.askPage?.() });
+      this.say(WORDS.fromCode);
     }
     this.statusSoon();
   }
@@ -1308,10 +1455,7 @@ export class DsEditor {
     }
     for (const w of this.writers.values()) w.settle();
     // A text's words and the values the room does not have yet go once the place is free.
-    queueMicrotask(() => {
-      for (const t of this.texts.values()) if (t.doc instanceof TextValueDoc) t.doc.retry();
-      for (const w of this.writers.values()) w.retry();
-    });
+    this.kick();
   }
 
   redrawSoon(): void {

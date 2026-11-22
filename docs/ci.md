@@ -268,8 +268,7 @@ at the time is held for review beside the new version, where the editors choose 
 the Action and `plinth publish` mark the artifact as published from code (`editing: code`), and the
 mark stays until a publish says otherwise. On a design system, people who start editing it on its
 page are then told "This design system is published from code. Its next publish from code won't
-include changes made here.", with Ask an agent as the way to change it in the repository. Editing
-is not blocked. Set the `editing` input (or `--editing page`) to `page` to clear the mark, for an
+include changes made here." Editing is not blocked. Set the `editing` input (or `--editing page`) to `page` to clear the mark, for an
 artifact you publish once and then edit on its page. Every run sends its `editing`, so a CI publish
 without `editing: page` sets the mark again even after an owner chose `page`. A `.csv` or `.xlsx`
 import sends no mark unless `--editing` is given. Every type stores the mark; only design systems

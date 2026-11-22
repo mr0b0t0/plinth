@@ -660,6 +660,43 @@ describe("useLiveEdit", () => {
     expect(calls.some((c) => c.path.endsWith("/live/checkpoint"))).toBe(true);
   });
 
+  it("Done and Publish wait for a value the frame is still sending before the checkpoint", async () => {
+    const seen: number[] = [];
+    stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint")) {
+          seen.push((c.body as { rev: number }).rev);
+          return json({ saved: true, version: { version: 4 } });
+        }
+        return undefined;
+      },
+    });
+    const { result } = hook(gate("room"));
+    act(() => result.current.start());
+    // A token's value is on its way to the room (its lease asked for, not granted yet).
+    fromFrame({ type: "live", ...STATUS, rev: 7, pending: true });
+    let published = false;
+    // Not inside act(): the frame's next status has to reach the hook while this waits.
+    const p = result.current.publish().then(() => {
+      published = true;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(published).toBe(false);
+    expect(seen).toEqual([]);
+    // The room has it now: the checkpoint is taken at the rev that holds it.
+    fromFrame({ type: "live", ...STATUS, rev: 8 });
+    await p;
+    expect(seen).toEqual([8]);
+    fromFrame({ type: "live", ...STATUS, rev: 8, pending: true });
+    const d = result.current.done();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(seen).toEqual([8]);
+    fromFrame({ type: "live", ...STATUS, rev: 9 });
+    await d;
+    expect(seen).toEqual([8, 9]);
+  });
+
   it("publishes nothing while a block holds typing it cannot save: solo, even if the status lags", async () => {
     const onReload = vi.fn();
     const { calls } = stubApi({
