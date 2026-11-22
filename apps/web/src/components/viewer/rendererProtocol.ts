@@ -273,7 +273,7 @@ export interface EditMessage {
   focus?: "first";
   /**
    * Turning editing on for an artifact published from code (gate `from_code`): the frame says
-   * that the next publish from code replaces what is changed on the page. Absent otherwise.
+   * that the next publish from code won't include what is changed on the page. Absent otherwise.
    */
   code?: true;
 }

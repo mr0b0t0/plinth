@@ -103,8 +103,9 @@ export function checkCategory(raw) {
 /**
  * `--editing` as the server takes it (docs/spec.md "Published from code"). A folder or a source
  * file published from here is the artifact's source, so it is "code" unless --editing page says
- * otherwise: the next publish from it replaces what people change on the page, and edit mode tells
- * them. An imported .csv or .xlsx is data to edit on the page: nothing is sent unless asked.
+ * otherwise: the next publish from it is the whole next version, without what people changed on the
+ * page, and edit mode tells them. Every publish sends it, so one run sets "code" again after an
+ * owner chose "page". An imported .csv or .xlsx is data to edit on the page: nothing is sent unless asked.
  */
 export function editingOf(raw, kind) {
   if (raw === undefined) return kind === "import" ? {} : { editing: "code" };

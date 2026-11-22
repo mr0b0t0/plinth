@@ -56,7 +56,7 @@ export const clientUsage = (
       again. --category files it under a project on your dashboard (reuse a name you already
       have; owner only on --id). A PLINTH_TOKEN limited to one artifact updates that artifact.
       A folder or file is marked as published from code (--editing code, the default): people
-      editing it on its page are told the next publish replaces their changes. --editing page
+      editing it on its page are told the next publish won't include their changes. --editing page
       clears that; a .csv or .xlsx import leaves it as it is unless --editing is given.
   ${p} upload <dir> --to <upload_url>      send a folder with a start_upload ticket; the token
                                              comes from PLINTH_UPLOAD_TOKEN only

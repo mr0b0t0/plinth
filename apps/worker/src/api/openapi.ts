@@ -965,7 +965,7 @@ function responseSchemas(): Record<string, Json> {
               const: true,
               description:
                 "With `live` only: the artifact's publisher said its source lives in code, so " +
-                "the next publish from there replaces page edits; edit mode says so",
+                "the next publish from there won't include page edits; edit mode says so",
             },
             no_editor: {
               const: true,
@@ -1498,7 +1498,7 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
       ...enumOf(ARTIFACT_EDITING),
       description:
         'Owners and editors only: "code" when the publisher said its source lives in code (the ' +
-        'next publish from there replaces page edits), else "page"',
+        'next publish from there is the whole next version, without page edits), else "page"',
     };
     detail.properties.capabilities = {
       type: "array",

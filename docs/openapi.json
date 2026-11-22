@@ -2867,7 +2867,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there replaces what people change on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
+            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there is the whole next version, without what people changed on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
           },
           "note": {
             "description": "A note for v1, shown in History (e.g. \"Imported from sales.xlsx\"). Empty: none",
@@ -2967,7 +2967,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there replaces what people change on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
+            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there is the whole next version, without what people changed on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
           },
           "files_from_version": {
             "description": "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. The signed-in app only: a token limited to one artifact gets 403 token_bound, any other bearer token 403 app_only. Not with assets; a version that does not exist or is newer than the current one is 404",
@@ -3262,7 +3262,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there replaces what people change on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
+            "description": "\"code\" when this artifact's source lives in a repository or folder you publish from (the next publish from there is the whole next version, without what people changed on the page, and they are told so); \"page\" when people edit it on its page. Kept until a publish says otherwise; omit it to keep it."
           },
           "copy_files": {
             "minItems": 1,
@@ -3807,7 +3807,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -3960,7 +3960,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4122,7 +4122,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4280,7 +4280,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4437,7 +4437,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4590,7 +4590,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -4743,7 +4743,7 @@
           "editing": {
             "type": "string",
             "enum": ["code", "page"],
-            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there replaces page edits), else \"page\""
+            "description": "Owners and editors only: \"code\" when the publisher said its source lives in code (the next publish from there is the whole next version, without page edits), else \"page\""
           },
           "capabilities": {
             "type": "array",
@@ -5869,7 +5869,7 @@
               "live_off": { "$ref": "#/components/schemas/ViewGateLiveOff" },
               "from_code": {
                 "const": true,
-                "description": "With `live` only: the artifact's publisher said its source lives in code, so the next publish from there replaces page edits; edit mode says so"
+                "description": "With `live` only: the artifact's publisher said its source lives in code, so the next publish from there won't include page edits; edit mode says so"
               },
               "no_editor": {
                 "const": true,

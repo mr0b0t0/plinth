@@ -70,15 +70,16 @@ export const categorySchema = z
   );
 /**
  * Where an artifact is edited (docs/spec.md "Published from code"): "code" when its source lives
- * in a repository or folder you publish from, so the next publish from there replaces what people
- * change on the page; "page" (the default) otherwise. Kept on the artifact until a publish says
+ * in a repository or folder you publish from, so the next publish from there is the whole next
+ * version, without what people changed on the page; "page" (the default) otherwise. Kept on the artifact until a publish says
  * otherwise.
  */
 export const editingSchema = z
   .enum(ARTIFACT_EDITING)
   .describe(
     '"code" when this artifact\'s source lives in a repository or folder you publish from (the next ' +
-      'publish from there replaces what people change on the page, and they are told so); "page" ' +
+      "publish from there is the whole next version, without what people changed on the page, and " +
+      'they are told so); "page" ' +
       "when people edit it on its page. Kept until a publish says otherwise; omit it to keep it.",
   );
 export const htmlSchema = z.string().min(1).describe("Complete HTML document");

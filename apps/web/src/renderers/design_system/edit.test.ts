@@ -350,7 +350,7 @@ describe("what stays with agents", () => {
     expect(ask?.anchor).toEqual({ key: `token:${at}`, text: path });
   });
 
-  it("says once, when editing starts, that a system published from code is replaced from there", () => {
+  it("says once, when editing starts, that a system published from code will not keep page changes in its next publish from code", () => {
     mount(SYSTEM());
     stop = boot(window);
     send({ type: "edit", on: true, base: 3 });
@@ -359,7 +359,7 @@ describe("what stays with agents", () => {
     send({ type: "edit", on: true, base: 3, code: true });
     const notice = document.querySelector(".ds-notice") as HTMLElement;
     expect(notice.textContent).toContain(
-      "This design system is published from code. Changes made here are replaced the next time it is published.",
+      "This design system is published from code. Its next publish from code won't include changes made here.",
     );
     // Editing goes on; Ask an agent asks about the whole system, with no anchor.
     expect(row("color.bg").classList.contains("ds-token--editing")).toBe(true);

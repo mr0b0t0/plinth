@@ -98,6 +98,8 @@ export interface LiveBackend {
   edit(text: string): boolean;
   release(): void;
   takeover(leaseId: string): boolean;
+  /** A struct op this socket sent that the room has not answered yet (room only). */
+  readonly structWaiting?: boolean;
   /** Say the held lease is in use though no edit is sent (the room's `keep`); room only. */
   keep?(): boolean;
   /** The seq of the last edit sent (room only), to ask `acked` about later. */
@@ -217,6 +219,10 @@ export class LiveDocClient implements LiveBackend {
       this.ownStructRev > this.flushedRev ||
       this.acks.some((a) => a.rev > this.flushedRev)
     );
+  }
+
+  get structWaiting(): boolean {
+    return this.structPending;
   }
 
   /** The room's text of this socket's block as of its last ack, for re-taking it. */

@@ -904,10 +904,10 @@ Connections page (New token, **Limit to one artifact**); the guide is `docs/ci.m
 repository. When asked to set this up, write the workflow step with the artifact's id, the token
 from a secret (`${{ secrets.PLINTH_TOKEN }}`), and outputs passed to scripts through `env:`, never
 as `${{ }}` inside a script: they carry the artifact's title, which is untrusted text. The
-Action and `plinth publish` mark what they publish as published from code (`editing: "code"`), so
-a design system tells the people editing it on its page that the next run replaces their changes;
-set the Action's `editing: page` input (or `--editing page`) only when the person wants the page
-to be where it is edited.
+Action and `plinth publish` mark what they publish as published from code (`editing: "code"`) on
+every run, so a design system tells the people editing it on its page that the next run won't
+include their changes; set the Action's `editing: page` input (or `--editing page`) only when the
+person wants the page to be where it is edited.
 
 If `plinth whoami` (or `GET /api/v1/me`, `connection.bound`) says the token is limited to one
 artifact, it can only read that artifact and publish new versions of it: update that one, and

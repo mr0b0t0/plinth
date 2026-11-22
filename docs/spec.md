@@ -1256,7 +1256,20 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     `add_token` (last in an existing group, with `$type` only when the group gives none) and
     `remove_token` (with its dark value; refused while an alias names it or the shared or a
     component's CSS holds its variable, or for a typography token one of its parts' variables
-    such as `--acme-font-body-font-size`, and the page says what uses it).
+    such as `--acme-font-body-font-size`, and the page says what uses it). Pages built on the
+    design system are not checked: a copy of its `tokens.css` installed with `copy_files` or from
+    a default design system keeps the variable until it is copied again, so the craft guide tells
+    agents to replace a removed variable before they copy a newer version in, and to deprecate
+    tokens rather than remove them themselves.
+  - **A value set on the page is never dropped in the frame.** A token value, the name or a
+    status is written when its field changes, after the room grants its lines. Until then it
+    waits in the frame and counts as unflushed (the app's leave warning and Publish wait for it):
+    edit mode ending keeps the request and lets the lease go right after the write, a change to
+    another value meanwhile waits its turn, a socket that closes asks again on the reconnect, an
+    edit sent but not acknowledged before the socket closed is sent again unless the draft has it,
+    and a `stale` denial asks again. Only a denial the person is told about (someone else holds
+    the value, a newer version waits for review, or the person only watches) or the value being
+    gone ends it.
   - **The controls** keep the form a value is stored in: a colour string or the picker's
     `#rrggbb`; an object colour keeps its space and `alpha`, the picked sRGB colour converted to
     its space with the CSS Color 4 matrices (srgb, display-p3, oklab, oklch; components rounded
@@ -1309,7 +1322,7 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   - **Published from code** ([Published from code](#published-from-code-decided-2026-11-21)).
     When the design system's publisher said its source lives in code (the gate's `from_code`),
     starting edit mode shows one short notice in the frame's status line: "This design system is
-    published from code. Changes made here are replaced the next time it is published.", with
+    published from code. Its next publish from code won't include changes made here.", with
     "Ask an agent" (about the whole design system, no anchor) as the way to change it in the code,
     and Dismiss. Editing is not blocked.
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
@@ -3323,8 +3336,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   long for an anchor key gives its index in the published version, `token:12`, and a token or
   group only the draft has is just `token` or `group`, with no words), with no anchor for the
   whole design system (the published-from-code notice's Ask an agent), and
-  with the block anchors of its formatted texts behind the text's part (`guidelines:block-3`);
-  other types don't yet. While the app is in edit mode, an `ask`
+  with the block anchors of its formatted texts behind the text's part (`guidelines:block-3`,
+  named in the published version's text as a doc's are); other types don't yet. While the app is in edit mode, an `ask`
   without the frame's key is dropped like any other editing message; only outside edit mode does a
   keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
   refuse, under the rules for a page's own compose ([comments from the

@@ -68,6 +68,12 @@ export interface DsEditorHooks {
    * only when the published version has those words.
    */
   ask(anchor: DsAskAnchor): void;
+  /**
+   * A formatted text as the published version has it (`guidelines`, `description`,
+   * `component:<id>:description|usage`; "" when it has none): its blocks name an Ask's anchor, as
+   * a doc's do (doc/askAnchor.ts), so the agent finds the block in the version it reads.
+   */
+  publishedText?(key: string): string;
   /** Ask an agent about the whole design system (no anchor): the published-from-code notice. */
   askPage?(): void;
   theme(): PreviewTheme;
@@ -93,7 +99,7 @@ export const WORDS = {
   invalid: "That value can't be used here, so it wasn't kept.",
   tooLarge: "That is more than a design system can hold, so it wasn't kept.",
   fromCode:
-    "This design system is published from code. Changes made here are replaced the next time it is published.",
+    "This design system is published from code. Its next publish from code won't include changes made here.",
 } as const;
 
 const NONE: unique symbol = Symbol("none");
@@ -575,11 +581,26 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
     this.held = false;
     this.asking = false;
   }
+  /** The socket closed before the room answered this part's request: it asks again (retry). */
+  dropped(): void {
+    this.asking = false;
+    this.held = false;
+  }
 }
 
-/** One token value (or the name, a description, a status): leased while it changes, then let go. */
+/**
+ * One token value (or the name, a description, a status): leased while it changes, then let go.
+ *
+ * A value the person set is never dropped in the frame: it waits (`want`) until the room grants
+ * its lines, through edit mode ending, another part taking the socket's turn and a reconnect, and
+ * an edit sent but not acknowledged when the socket closed is sent again. It counts as pending
+ * meanwhile, so the frame reports unflushed changes. Only the room's own answer ends it: a denial,
+ * which the person is told about, or the token being gone.
+ */
 class ValueWriter implements LeaseOwner {
   private want: unknown = NONE;
+  /** The value last sent, and its socket seq, until the draft has it. */
+  private inFlight: { value: unknown; seq: number | undefined } | null = null;
   private held = false;
   private asked = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -589,7 +610,17 @@ class ValueWriter implements LeaseOwner {
     readonly path: DsPath,
   ) {}
 
-  /** Write `value`: checked first; false when it is not sent. */
+  /** A value set here that the room does not have yet. */
+  get pending(): boolean {
+    return this.want !== NONE;
+  }
+
+  /** It asked for its lines and waits for the room's answer. */
+  get waiting(): boolean {
+    return this.asked && this.want !== NONE;
+  }
+
+  /** Write `value`: checked first; false when it is refused here. */
   write(value: unknown): boolean {
     const system = this.host.system;
     if (!system) return false;
@@ -600,35 +631,60 @@ class ValueWriter implements LeaseOwner {
       return false;
     }
     this.want = value;
+    this.host.statusSoon();
+    return this.go();
+  }
+
+  /** Send what waits: on the lease held, or ask for one (once at a time). */
+  private go(): boolean {
+    if (this.want === NONE) return true;
     const b = this.host.backend;
     if (this.held && b.mine && this.host.owns(this)) return this.send();
     if (this.asked) return true;
+    // Offline: it waits for the room (retry, on the welcome that answers the reconnect).
+    if (!b.connected || !b.ready) return true;
     const node = this.host.nodeAt(this.path);
-    if (!node) return false;
+    if (!node) return this.gone();
     this.asked = true;
     if (!this.host.ask(this, { start: node.start, end: node.end })) {
+      // Connected, yet the room takes no lease from this socket (watching, or frozen for review).
       this.asked = false;
       this.want = NONE;
       this.host.say(WORDS.notSent);
+      this.host.statusSoon();
       return false;
     }
     return true;
   }
 
+  /** The token is gone from the draft: the value has nowhere to go, and the person is told. */
+  private gone(): boolean {
+    this.want = NONE;
+    this.inFlight = null;
+    this.host.say(WORDS.stale);
+    this.host.redrawSoon();
+    this.host.statusSoon();
+    return false;
+  }
+
   private send(): boolean {
     const node = this.host.nodeAt(this.path);
     const want = this.want;
-    this.want = NONE;
-    if (!node || want === NONE) return false;
+    if (want === NONE) return true;
+    if (!node) return this.gone();
     this.host.sent(this);
-    if (!this.host.backend.edit(dsNodeLines(node, want).join("\n"))) {
-      this.host.say(WORDS.notSent);
-      this.host.redrawSoon();
-      return false;
-    }
-    // Let go after a quiet moment, so others can change it too.
+    const b = this.host.backend;
+    // Not sent (the socket is closing): it stays, and goes after the reconnect.
+    if (!b.edit(dsNodeLines(node, want).join("\n"))) return true;
+    this.want = NONE;
+    this.inFlight = { value: want, seq: b.lastSeq };
+    this.host.statusSoon();
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.release(), 1500);
+    this.timer = null;
+    // Out of edit mode the write was all it held the lines for.
+    if (!this.host.editing) this.release();
+    // Let go after a quiet moment, so others can change it too.
+    else this.timer = setTimeout(() => this.release(), 1500);
     return true;
   }
 
@@ -640,28 +696,71 @@ class ValueWriter implements LeaseOwner {
     this.host.drop(this);
   }
 
+  /** The draft changed: a value sent is done with once the draft has it. */
+  settle(): void {
+    const f = this.inFlight;
+    if (!f) return;
+    const now = dsGet(this.host.system, this.path);
+    if (JSON.stringify(now) === JSON.stringify(f.value)) this.inFlight = null;
+  }
+
+  /**
+   * The socket closed: a request it made is never answered, and a value sent that the room did
+   * not acknowledge may not be in the draft. That value waits again (unless a newer one does).
+   */
+  dropped(): void {
+    this.asked = false;
+    this.held = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    const f = this.inFlight;
+    this.inFlight = null;
+    const b = this.host.backend;
+    if (f && this.want === NONE && !(f.seq !== undefined && b.acked?.(f.seq))) {
+      this.want = f.value;
+      this.host.statusSoon();
+    }
+    this.host.drop(this);
+  }
+
+  /** Send what waits once nothing else on the page holds the socket's lease or waits for one. */
+  retry(): void {
+    if (this.want === NONE || this.asked) return;
+    const b = this.host.backend;
+    if (!b.connected || !b.ready || !b.settled || b.structWaiting) return;
+    if (!this.host.owns(this) && !this.host.idle) return;
+    this.go();
+  }
+
   granted(): void {
     this.asked = false;
     this.held = true;
-    this.send();
+    if (this.want !== NONE) this.send();
+    else if (!this.host.editing) this.release();
   }
   denied(r: LeaseDenial, by?: string): void {
     this.asked = false;
+    this.host.drop(this);
+    if (r === "stale" && this.want !== NONE) {
+      // The draft moved on while it asked: it asks again at the room's new rev.
+      queueMicrotask(() => this.retry());
+      return;
+    }
     this.want = NONE;
     this.host.say(r === "held" ? (by ? WORDS.held(by) : WORDS.heldPlain) : denialWords(r));
     this.host.redrawSoon();
+    this.host.statusSoon();
   }
   lost(): void {
-    this.held = false;
-    this.asked = false;
+    this.dropped();
   }
   yield(): void {
     if (this.held && this.want !== NONE) this.send();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.held = false;
+    // A request not answered yet is not this part's any more; its value waits for its turn.
     this.asked = false;
-    this.want = NONE;
   }
 }
 
@@ -709,7 +808,7 @@ export class DsEditor {
   editing = false;
   /**
    * Published from code (the app's `edit` message says so, from the gate's `from_code`): starting
-   * edit mode says that the next publish from code replaces the changes made here.
+   * edit mode says that the next publish from code won't include the changes made here.
    */
   fromCode = false;
   backend: SystemBackend;
@@ -825,7 +924,7 @@ export class DsEditor {
   }
   /** No part holds the socket's lease or waits for one. */
   get idle(): boolean {
-    return this.owner === null && this.expect === null;
+    return this.owner === null && this.expect === null && !(this.backend.structWaiting ?? false);
   }
 
   /**
@@ -834,8 +933,15 @@ export class DsEditor {
    */
   granted(l: ClientLease): void {
     const e = this.expect;
-    if (!e || e.owner !== this.owner) return;
-    if (e.range && (e.range.start !== l.start || e.range.end !== l.end)) return;
+    if (
+      !e ||
+      e.owner !== this.owner ||
+      (e.range && (e.range.start !== l.start || e.range.end !== l.end))
+    ) {
+      // Nobody here holds it: it goes back to the room, so nobody else sees those lines held.
+      if (this.backend.mine?.id === l.id) this.backend.release();
+      return;
+    }
     this.expect = null;
     this.owner?.granted(l);
   }
@@ -848,6 +954,13 @@ export class DsEditor {
     this.owner?.lost(r);
   }
   disconnected(): void {
+    // A request the closed socket made is never answered: whoever made it asks again on the
+    // reconnect, and what it was for waits meanwhile.
+    const e = this.expect;
+    this.expect = null;
+    if (e && e.owner instanceof TextValueDoc) e.owner.dropped();
+    for (const w of this.writers.values()) w.dropped();
+    if (this.owner instanceof ValueWriter) this.owner = null;
     for (const t of this.texts.values()) t.editor.disconnected();
   }
 
@@ -969,13 +1082,19 @@ export class DsEditor {
   setEditing(on: boolean): void {
     if (on === this.editing) return;
     if (!on) {
+      // A field being typed in is committed first (its `change`), so its value is written too.
+      const active = this.doc.activeElement as HTMLElement | null;
+      if (active && active !== this.doc.body && this.root.contains(active)) active.blur?.();
       // The texts close their blocks (sending what is pending) while they hold their leases; then
       // whatever else holds the socket's lease sends what it has and the lease is let go.
       for (const t of this.texts.values()) t.editor.setEditing(false);
       const o = this.owner;
       // A text that asked for a lease just now to write what it keeps (its typing, without its
-      // formatting) holds on to that request: its write goes in once the lease comes.
-      const keeping = [...this.texts.values()].some((t) => t.doc === o && t.editor.pending);
+      // formatting), or a value that asked for its lines, holds on to that request: its write goes
+      // in once the lease comes, and the lease is let go after it.
+      const keeping =
+        (o instanceof ValueWriter && o.waiting) ||
+        [...this.texts.values()].some((t) => t.doc === o && t.editor.pending);
       if (!keeping) {
         this.owner = null;
         this.expect = null;
@@ -1001,6 +1120,7 @@ export class DsEditor {
    */
   get pending(): boolean {
     if (this.unplaced.length > 0) return true;
+    if ([...this.writers.values()].some((w) => w.pending)) return true;
     return [...this.texts.values()].some(
       (t) => t.editor.pending || (t.doc instanceof TextValueDoc && t.doc.unsent),
     );
@@ -1186,9 +1306,11 @@ export class DsEditor {
       this.unplaced = [];
       this.offerRescue(items);
     }
-    // A text's words the room does not have yet go once the place is free.
+    for (const w of this.writers.values()) w.settle();
+    // A text's words and the values the room does not have yet go once the place is free.
     queueMicrotask(() => {
       for (const t of this.texts.values()) if (t.doc instanceof TextValueDoc) t.doc.retry();
+      for (const w of this.writers.values()) w.retry();
     });
   }
 
@@ -1248,6 +1370,9 @@ export class DsEditor {
       fileVersion: () => this.hooks.fileVersion(),
       ask: (anchor) =>
         this.hooks.ask({ key: `${prefix}:${anchor.key}`.slice(0, 128), text: anchor.text }),
+      ...(this.hooks.publishedText
+        ? { published: () => this.hooks.publishedText?.(key) ?? "" }
+        : {}),
       empty,
     };
     const editor = new DocEditor(el, this.win, part, hooks);

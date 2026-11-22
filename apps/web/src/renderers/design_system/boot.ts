@@ -201,6 +201,16 @@ function publishedAnchorKey(
     : `${kind}:${at}`;
 }
 
+/** A formatted text of the published version by its key (DsEditorHooks.publishedText). */
+function publishedText(ds: DesignSystem | null, key: string): string {
+  if (!ds) return "";
+  if (key === "guidelines") return ds.guidelines ?? "";
+  if (key === "description") return ds.description ?? "";
+  const m = /^component:(.+):(description|usage)$/.exec(key);
+  const c = m ? ds.components.find((x) => x.id === m[1]) : undefined;
+  return (m && c ? c[m[2] as "description" | "usage"] : null) ?? "";
+}
+
 /** Wires on-page editing. Returns its message handler and how to stop it. */
 function live(
   win: Window,
@@ -307,6 +317,7 @@ function live(
         anchor: { key, text: words.has(anchor.text) ? anchor.text : "" },
       });
     },
+    publishedText: (key: string) => publishedText(published, key),
     // About the whole design system: no anchor.
     askPage: () => post({ type: "ask" }),
     theme,

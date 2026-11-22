@@ -231,7 +231,7 @@ test("a design system published from code says so when editing starts, and Ask a
     await startEditing(page);
     const notice = frameOf(page).locator(".ds-notice");
     await expect(notice).toContainText(
-      "This design system is published from code. Changes made here are replaced the next time it is published.",
+      "This design system is published from code. Its next publish from code won't include changes made here.",
     );
     await shot(page, info, "from-code");
     // Editing is not blocked.

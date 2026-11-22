@@ -499,7 +499,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   until a publish says `"page"`; `get_artifact` returns it to owners and editors. `plinth publish`
   and the GitHub Action (its new `editing` input, `code` by default) set it for you. People who
   start editing such a design system on its page are told that the next publish from code
-  replaces their changes, with Ask an agent; editing is not blocked. Migration
+  won't include their changes, with Ask an agent; editing is not blocked. Migration
   `0023_artifact_editing.sql`.
 
 ## 0.6.0 (2026-11-20)

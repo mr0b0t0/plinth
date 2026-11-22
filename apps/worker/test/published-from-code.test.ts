@@ -152,6 +152,39 @@ describe("editing on publish and update", () => {
     expect(await editingOf(id, owner.auth)).toBe("page");
   });
 
+  it("rides an upload ticket together with copy_files, each to its own column", async () => {
+    const owner = await agent();
+    const logo = "<svg xmlns='http://www.w3.org/2000/svg'/>";
+    const src = await publish(owner.auth, {
+      title: "Source",
+      visibility: "unlisted",
+      assets: [{ path: "img/logo.svg", content: logo }],
+    });
+    expect(src.res.status, JSON.stringify(src.body)).toBe(201);
+    const ticket = await req("POST", "/uploads", owner.auth, {
+      editing: "code",
+      copy_files: [{ artifact: src.body.id, path: "img/logo.svg", to: "brand/logo.svg" }],
+    });
+    expect(ticket.status, JSON.stringify(ticket.body)).toBe(201);
+    const bundle = new Request(ticket.body.upload_url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ticket.body.upload_token}` },
+      body: tar([{ name: "index.html", data: "<!doctype html><title>Page</title><h1>Hi</h1>" }]),
+    });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(bundle, env as never, ctx);
+    await waitOnExecutionContext(ctx);
+    const body = await json(res);
+    expect(res.status, JSON.stringify(body)).toBe(201);
+    expect(await editingOf(body.id, owner.auth)).toBe("code");
+    expect(body.copied_from).toEqual([
+      expect.objectContaining({
+        artifact: src.body.id,
+        files: [{ path: "brand/logo.svg", from: "img/logo.svg" }],
+      }),
+    ]);
+  });
+
   it("may be set by a token limited to the artifact (the GitHub Action's)", async () => {
     const owner = await agent();
     const id = await designSystem(owner);

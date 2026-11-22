@@ -107,7 +107,7 @@ export interface ArtifactDetailBase extends ArtifactSummary {
   live_draft?: LiveDraftMeta | null;
   /**
    * Where it is edited, for owners and editors (docs/spec.md "Published from code"): "code" when
-   * its publisher said its source lives in code, so the next publish from there replaces page
+   * its publisher said its source lives in code, so the next publish from there won't include page
    * edits; "page" otherwise. Absent for everyone else.
    */
   editing?: ArtifactEditing;
@@ -655,7 +655,7 @@ export type ViewGate =
       /**
        * Published from code (docs/spec.md "Published from code"): with `live` only, the artifact's
        * publisher said its source lives in code, so edit mode says that the next publish from
-       * there replaces page edits. Absent otherwise.
+       * there won't include page edits. Absent otherwise.
        */
       from_code?: true;
       /**
