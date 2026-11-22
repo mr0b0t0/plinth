@@ -18,6 +18,7 @@ import {
   typedShellHtml,
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EDIT_DEBOUNCE_MS } from "../doc/edit.ts";
 import { boot } from "./boot.ts";
 import { ASK_TIMEOUT_MS } from "./edit.ts";
 import { FIXTURE } from "./testFixture.ts";
@@ -68,6 +69,8 @@ class Room {
   draftLimit = false;
   /** A draft_limit error whose D1 write finished after the frames already queued. */
   lateError = false;
+  /** Ben holds lines the next struct op touches: it is refused as held (doc.ts struct). */
+  benBlocksStruct = false;
   ws: FakeSocket;
   constructor(ws: FakeSocket, text: string) {
     this.ws = ws;
@@ -160,6 +163,10 @@ class Room {
       case "struct": {
         if (this.frozen !== null) return out.push({ t: "struct_denied", reason: "frozen" });
         if (f.rev !== this.rev) return out.push({ t: "struct_denied", reason: "stale" });
+        if (this.benBlocksStruct) {
+          this.benBlocksStruct = false;
+          return out.push({ t: "struct_denied", reason: "held", by: "ben@example.org" });
+        }
         const r = applyDesignSystemStruct(this.lines, f.op);
         if (typeof r === "string") return out.push({ t: "error", code: "invalid" });
         if (this.mine) {
@@ -887,5 +894,75 @@ describe("round 4: a draft_limit error that arrives while a lease request is out
     expect(notice()).toContain("not kept");
     await settle(room);
     expect(room.value(FG)).toBe("#101010");
+  });
+});
+
+describe("a description's creation refused while the owner is at the draft limit", () => {
+  it("its words are written once the place is free (the refusal is not swallowed by draft_limit)", async () => {
+    const room = await start();
+    room.draftLimit = true;
+    // A value written and let go: its flush answers with draft_limit, after the next frames.
+    change("color.bg", "#fafafa");
+    for (let i = 0; i < 5 && !room.lateError; i++) {
+      await room.pump();
+      vi.advanceTimersByTime(2000);
+      await flush();
+    }
+    expect(room.lateError).toBe(true);
+    // Ada writes the badge's first description; Ben holds lines its creation touches.
+    const place = root().querySelector<HTMLElement>(
+      "[data-text='component:badge:description'] .plinth-doc__placeholder",
+    );
+    place?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const el = root().querySelector<HTMLElement>(
+      "[data-text='component:badge:description'] [contenteditable='true']",
+    );
+    if (!el) throw new Error("no open block");
+    el.textContent = "Marks something new";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await flush();
+    expect(room.ws.sent.at(-1)).toMatchObject({ t: "struct" });
+    room.benBlocksStruct = true;
+    await room.pump(); // draft_limit (no re), then struct_denied held (re)
+    await flush();
+    // Ben lets go; anything that changes the draft gives the text its turn again.
+    await room.benTypesElsewhere();
+    await settle(room);
+    vi.advanceTimersByTime(5000);
+    await settle(room);
+    expect(room.value(["components", 1, "description"])).toBe("Marks something new");
+  });
+});
+
+describe("a description's creation refused (control: no draft limit)", () => {
+  it("its words are written once the place is free (the refusal is not swallowed by draft_limit)", async () => {
+    const room = await start();
+    // A value written and let go: its flush answers with draft_limit, after the next frames.
+    change("color.bg", "#fafafa");
+    await settle(room);
+    // Ada writes the badge's first description; Ben holds lines its creation touches.
+    const place = root().querySelector<HTMLElement>(
+      "[data-text='component:badge:description'] .plinth-doc__placeholder",
+    );
+    place?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const el = root().querySelector<HTMLElement>(
+      "[data-text='component:badge:description'] [contenteditable='true']",
+    );
+    if (!el) throw new Error("no open block");
+    el.textContent = "Marks something new";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await flush();
+    expect(room.ws.sent.at(-1)).toMatchObject({ t: "struct" });
+    room.benBlocksStruct = true;
+    await room.pump(); // draft_limit (no re), then struct_denied held (re)
+    await flush();
+    // Ben lets go; anything that changes the draft gives the text its turn again.
+    await room.benTypesElsewhere();
+    await settle(room);
+    vi.advanceTimersByTime(5000);
+    await settle(room);
+    expect(room.value(["components", 1, "description"])).toBe("Marks something new");
   });
 });

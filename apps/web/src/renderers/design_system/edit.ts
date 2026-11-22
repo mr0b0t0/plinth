@@ -584,10 +584,14 @@ class TextValueDoc implements LiveBackend, LeaseOwner {
     this.held = false;
     this.asking = false;
   }
-  /** The socket closed before the room answered this part's request: it asks again (retry). */
+  /**
+   * The socket closed before the room answered this part's request or its creation: it asks again,
+   * or creates the text again (retry); the welcome's draft says whether the creation landed.
+   */
   dropped(): void {
     this.asking = false;
     this.held = false;
+    this.creating = null;
   }
 }
 
@@ -1123,12 +1127,11 @@ export class DsEditor {
   disconnected(): void {
     // The requests the closed socket made are never answered: whoever made them asks again on
     // the reconnect, and what each was for waits meanwhile.
-    const asks = this.asks;
     this.asks = [];
     this.unowned = null;
     if (this.askTimer) clearTimeout(this.askTimer);
     this.askTimer = null;
-    for (const a of asks) if (a.owner instanceof TextValueDoc) a.owner.dropped();
+    for (const t of this.texts.values()) if (t.doc instanceof TextValueDoc) t.doc.dropped();
     for (const w of this.writers.values()) w.dropped();
     if (this.owner instanceof ValueWriter) this.owner = null;
     for (const t of this.texts.values()) t.editor.disconnected();

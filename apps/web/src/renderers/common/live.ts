@@ -590,8 +590,12 @@ export class LiveDocClient implements LiveBackend {
     }
     switch (f.t) {
       case "welcome": {
-        // The answer to this socket's sync, when it is one.
-        this.answer(f);
+        // The answer to this socket's sync, when it is one. A struct sent before that sync and
+        // still waiting is one whose answer this socket could not apply (or never got): the
+        // welcome's lines settle it. One sent after it is answered after the welcome.
+        const sync = this.answer(f);
+        if (sync) this.due = this.due.filter((d) => d.k !== "struct" || d.id > sync.id);
+        this.structPending = this.due.some((d) => d.k === "struct");
         this.welcome(f);
         return;
       }
@@ -653,13 +657,15 @@ export class LiveDocClient implements LiveBackend {
         this.struct_(f);
         return;
       }
-      case "struct_denied":
-        this.answer(f, (d) => d.k === "struct");
-        if (!this.structPending) return;
-        this.structPending = false;
+      case "struct_denied": {
+        // Matched by its `re` (or, from a room before `re`, by kind while a struct waits).
+        const d = this.answer(f, (x) => x.k === "struct");
+        if (!d && !this.structPending) return;
+        this.structPending = this.due.some((x) => x.k === "struct");
         L.structDenied?.(f.reason, f.by);
         L.status();
         return;
+      }
       case "kept":
         this.answer(f, (d) => d.k === "keep");
         if (this.keepsAwaiting > 0) this.keepsAwaiting -= 1;
@@ -773,8 +779,9 @@ export class LiveDocClient implements LiveBackend {
           if (f.code === "invalid") this.keepUnsupported = true;
           return;
         }
-        // A refused struct frame is answered with an error too (invalid, too_large).
-        if (d?.k === "struct" || (d === null && this.structPending)) this.structPending = false;
+        // A refused struct frame is answered with an error too (invalid, too_large), by its `re`:
+        // an error with none (`draft_limit` after a flush) answers no struct.
+        if (d?.k === "struct") this.structPending = this.due.some((x) => x.k === "struct");
         if (d?.k === "lease") this.answered();
         L.error(
           f.code,
@@ -850,6 +857,12 @@ export class LiveDocClient implements LiveBackend {
   }
 
   private struct_(f: Extract<LiveDocServerFrame, { t: "struct" }>): void {
+    // This socket's own op is answered here whether it applies or a resync follows: the welcome
+    // brings the lines with it.
+    if (f.by === this.you?.id) {
+      this.answer(f, (d) => d.k === "struct");
+      this.structPending = this.due.some((d) => d.k === "struct");
+    }
     const apply = this.opts.applyStruct?.bind(this.opts);
     if (!apply || f.gen !== this.gen || f.rev !== this.rev + 1) {
       this.sync();
@@ -882,8 +895,6 @@ export class LiveDocClient implements LiveBackend {
     this.lastEditAt = new Date().toISOString();
     this.dirty = true;
     if (f.by === this.you?.id) {
-      this.answer(f, (d) => d.k === "struct");
-      this.structPending = false;
       this.ownStructRev = f.rev;
       this.opts.listener.structLanded?.(f.op);
     }

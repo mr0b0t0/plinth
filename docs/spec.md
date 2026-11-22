@@ -670,7 +670,12 @@ page shows the strip and makes the REST calls, and renders no content.
   struct op or a closed socket caused. The client matches answers by `re` only, never by order
   (the room interleaves frames that answer nothing), and treats a frame with no `re` as no answer;
   only from a room deployed before `re` does it take a grant, denial, ack or `kept` by kind. A
-  frame from a tab opened before `id` (none on it) is answered as before, with no `re`. A
+  frame from a tab opened before `id` (none on it) is answered as before, with no `re`. A struct
+  op waits for its own answer only (an error with no `re` never ends it); one whose broadcast this
+  socket cannot apply is settled by the welcome its resync brings, and a closed socket ends them
+  all. While a draft is being ended (an HTML deck published over an unchanged Markdown deck's draft),
+  the room refuses every frame but `sync` as it would a frozen draft's, so nothing is acknowledged
+  and then lost with the draft. A
   design-system frame whose lease request has no answer within 15 seconds reconnects its socket
   (below).
 - **Per-type rules.** The room checks every edit with the type's rules

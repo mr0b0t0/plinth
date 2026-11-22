@@ -249,3 +249,51 @@ describe("sheet socket: struct answers carry re", () => {
     a.ws.close(1000);
   });
 });
+
+describe("a draft being ended (dropDraft)", () => {
+  type DocInternals = {
+    doc: { loaded: unknown; ending: unknown; dropDraft(d: unknown): Promise<void> };
+  };
+
+  it("refuses the frames that come while its row is deleted, with re, so nothing is acked and lost", async () => {
+    const { id, ownerP } = await docSetup();
+    const a = await connectDoc(id, ownerP.cookie);
+    a.send({ t: "lease", rev: 0, start: 0, end: 1, id: 1 });
+    const l = await nextWhere(a, "leased", mine(a));
+    // The window between revoking the leases and the D1 delete finishing.
+    await runInDurableObject(stubFor(id), async (room) => {
+      const r = room as unknown as DocInternals;
+      r.doc.ending = r.doc.loaded;
+    });
+    a.send({ t: "edit", lease: l.lease, seq: 1, text: "# Lost?", id: 2 });
+    expect(await a.nextOf("lease_denied")).toEqual({ t: "lease_denied", reason: "frozen", re: 2 });
+    a.send({ t: "lease", rev: 0, start: 2, end: 3, id: 3 });
+    expect(await a.nextOf("lease_denied")).toEqual({ t: "lease_denied", reason: "frozen", re: 3 });
+    a.send({ t: "struct", rev: 0, op: { op: "trim_start" }, id: 4 });
+    expect(await a.nextOf("struct_denied")).toEqual({
+      t: "struct_denied",
+      reason: "frozen",
+      re: 4,
+    });
+    a.send({ t: "keep", lease: l.lease, id: 5 });
+    expect(await a.nextOf("error")).toEqual({ t: "error", code: "not_held", re: 5 });
+    expect(await stubFor(id).docPeek(id)).toMatchObject({ text: "# Plan\n\nFirst.\n\nSecond.\n" });
+    a.ws.close(1000);
+  });
+
+  it("marks the draft as ending before it awaits the delete, and clears the mark after", async () => {
+    const { id, ownerP } = await docSetup();
+    const a = await connectDoc(id, ownerP.cookie);
+    await runInDurableObject(stubFor(id), async (room) => {
+      const r = room as unknown as DocInternals;
+      const doc = r.doc.loaded;
+      expect(doc).toBeTruthy();
+      const p = r.doc.dropDraft(doc);
+      expect(r.doc.ending).toBe(doc);
+      await p;
+      expect(r.doc.ending).toBeNull();
+      expect(r.doc.loaded).toBeNull();
+    });
+    expect((await a.closed).code).toBeGreaterThan(0);
+  });
+});

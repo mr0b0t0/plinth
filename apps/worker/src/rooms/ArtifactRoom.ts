@@ -1100,7 +1100,7 @@ function docFrameId(message: string): number | undefined {
   try {
     const f = JSON.parse(message) as unknown;
     const id = typeof f === "object" && f !== null ? (f as { id?: unknown }).id : undefined;
-    return typeof id === "number" && Number.isInteger(id) && id >= 0 ? id : undefined;
+    return typeof id === "number" && Number.isSafeInteger(id) && id >= 0 ? id : undefined;
   } catch {
     return undefined;
   }

@@ -909,3 +909,99 @@ describe("round 4: answers matched to frames, against doc.ts's unsolicited and u
     expect(L.calls).toContain("denied:held,ben@example.org");
   });
 });
+
+describe("a struct op waiting while frames with no re arrive", () => {
+  const SHEET = [
+    '{"plinth":"sheet","v":1,"columns":[{"name":"A","type":"text"},{"name":"B","type":"number"}]}',
+    '["x",1]',
+  ].join("\n");
+  it("an own struct this socket cannot apply is settled by the welcome its resync brings", () => {
+    const c = new LiveDocClient({
+      win: window,
+      listener: listener(),
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    c.start();
+    try {
+      welcome(sock(), SHEET);
+      expect(c.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(true);
+      expect(c.structWaiting).toBe(true);
+      const ids = sock().ids;
+      // Its broadcast comes at a rev this socket did not expect: it asks for the draft again.
+      sock().frame({
+        t: "struct",
+        gen: "g1",
+        rev: 9,
+        op: { op: "insert_rows", before: 2, count: 1 },
+        by: "s1",
+        re: ids.filter((x) => x.t === "struct").at(-1)?.id,
+      });
+      const sync = ids.filter((x) => x.t === "sync").at(-1)?.id;
+      expect(sync).toBeTypeOf("number");
+      welcome(sock(), SHEET, { rev: 9, re: sync });
+      expect(c.structWaiting).toBe(false);
+    } finally {
+      c.stop();
+    }
+  });
+
+  it("an error with no re (draft_limit) leaves a struct waiting for its own answer", () => {
+    const c = new LiveDocClient({
+      win: window,
+      listener: listener(),
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    c.start();
+    try {
+      welcome(sock(), SHEET);
+      expect(c.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(true);
+      sock().frame({ t: "error", code: "draft_limit" });
+      expect(c.structWaiting).toBe(true);
+      sock().frame({
+        t: "error",
+        code: "invalid",
+        re: sock()
+          .ids.filter((x) => x.t === "struct")
+          .at(-1)?.id,
+      });
+      expect(c.structWaiting).toBe(false);
+    } finally {
+      c.stop();
+    }
+  });
+  it("a draft_limit (no re) does not swallow the struct's own denial that follows", () => {
+    const l = listener();
+    const denied: string[] = [];
+    l.structDenied = (r, by) => denied.push(`${r}:${by ?? ""}`);
+    const c = new LiveDocClient({
+      win: window,
+      listener: l,
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    c.start();
+    welcome(sock(), SHEET);
+    expect(c.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(true);
+    const id = sock()
+      .ids.filter((x) => x.t === "struct")
+      .at(-1)?.id;
+    expect(id).toBeTypeOf("number");
+    // Someone's flush while the owner is at the draft limit: to every socket, no `re`.
+    sock().frame({ t: "error", code: "draft_limit" });
+    // The room's answer to the struct: Ben holds a row.
+    sock().frame({
+      t: "struct_denied",
+      reason: "held",
+      by: "ben@example.org",
+      ...(id ? { re: id } : {}),
+    });
+    expect(denied).toEqual(["held:ben@example.org"]);
+    expect(c.structWaiting).toBe(false);
+    c.stop();
+  });
+});

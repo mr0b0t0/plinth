@@ -603,7 +603,17 @@ export class LiveDoc {
     }
   }
 
+  /** A draft being ended (dropDraft): its frames are refused, so its sockets keep their typing. */
+  private ending: Loaded | null = null;
+
   private handle(ws: WebSocket, s: DocSocket, doc: Loaded, f: LiveDocClientFrame) {
+    if (this.ending === doc && f.t !== "sync") {
+      // As a frozen draft answers: the client keeps what it typed, and the closed sockets bring
+      // everyone back to the version the draft ended for.
+      if (f.t === "struct") return this.answer(ws, { t: "struct_denied", reason: "frozen" });
+      if (f.t === "release" || f.t === "keep") return this.refuse(ws, "not_held");
+      return this.answer(ws, { t: "lease_denied", reason: "frozen" });
+    }
     switch (f.t) {
       case "sync":
         return this.welcome(ws, s, doc);
@@ -1207,13 +1217,20 @@ export class LiveDoc {
 
   /** The draft ends with nothing to keep: its leases, its row and its sockets go. */
   private async dropDraft(doc: Loaded): Promise<void> {
+    // From here no frame changes the draft: one that came while the row is deleted would be
+    // applied, acknowledged and then lost with the draft (the client drops its copy on the ack).
+    this.ending = doc;
     this.revokeLeases("closed");
-    await this.host.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1")
-      .bind(doc.artifactId)
-      .run();
-    if (this.loaded === doc) this.loaded = null;
-    this.needsFlush = false;
-    this.host.closeDocs();
+    try {
+      await this.host.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1")
+        .bind(doc.artifactId)
+        .run();
+      if (this.loaded === doc) this.loaded = null;
+      this.needsFlush = false;
+      this.host.closeDocs();
+    } finally {
+      if (this.ending === doc) this.ending = null;
+    }
   }
 
   /**

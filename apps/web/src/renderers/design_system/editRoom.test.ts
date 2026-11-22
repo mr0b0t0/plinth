@@ -961,6 +961,30 @@ describe("a token value waiting for its lease", () => {
     expect(ws2.sent.filter((f) => f.t === "lease" || f.t === "edit")).toHaveLength(0);
   });
 
+  it("a new description whose creation the socket took with it is created again after the reconnect", async () => {
+    fake();
+    const ws = connected();
+    root()
+      .querySelector<HTMLElement>(
+        "[data-text='component:badge:description'] .plinth-doc__placeholder",
+      )
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const el = root().querySelector<HTMLElement>(
+      "[data-text='component:badge:description'] [contenteditable='true']",
+    );
+    if (!el) throw new Error("no open block");
+    el.textContent = "Marks something new";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(lastOf(ws, "struct")).toMatchObject({ op: { op: "set_text" } });
+    // The socket drops before the room answered the creation.
+    const ws2 = reconnect(ws);
+    await flush();
+    expect(lastOf(ws2, "struct")).toMatchObject({
+      op: { op: "set_text", path: "components.badge.description", value: "Marks something new" },
+    });
+  });
+
   it("a description's lease asked for before a drop is asked for again after the reconnect", async () => {
     fake();
     const ws = connected();
