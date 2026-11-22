@@ -30,6 +30,7 @@ export const PUBLISH_WARNING_CODES = [
   "slides_setting",
   "slide_empty",
   "slide_dense",
+  "slide_markup",
   "ds_inert_markup",
   "ds_missing_font",
   "ds_no_dark_theme",
@@ -216,6 +217,14 @@ export const LIMITS = {
   maxDataShared: 20,
   /** Bytes of design HTML (design.html) per version of a design artifact. */
   maxDesignBytes: 2 * MB,
+  /**
+   * Files one publish, update or upload copies from other artifacts (copy_files; docs/spec.md
+   * "Copying files from another artifact"), the distinct source versions they come from, and their
+   * bytes in total.
+   */
+  maxCopyFiles: 64,
+  maxCopySources: 4,
+  maxCopyBytes: 32 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
   maxDesignSystemBytes: 1 * MB,
   /** The design system format's limits (packages/shared/src/designSystem.ts). */
@@ -429,6 +438,15 @@ export const DEFAULTS = {
     maxDocBytes: 16 * 1024,
     writesPerViewerPerHour: 300,
     writesPerArtifactPerHour: 2000,
+    /**
+     * A whiteboard's own caps (DATA_BOARD_*), in place of the three above: its blocks, arrows,
+     * sections and tables are documents, so a board holds more and larger ones than a poll.
+     */
+    board: {
+      maxDocsPerArtifact: 2000,
+      maxBytesPerArtifact: 2 * MB,
+      maxDocBytes: 200 * 1024,
+    },
   },
   /** Formula steps one read_sheet call may spend (SHEET_EVAL_BUDGET, 10,000 to 20,000,000). */
   sheetEvalBudget: 200_000,
@@ -512,6 +530,13 @@ export const CONTENT_RESERVED_PREFIX = "/__plinth/";
  * CORS-safelisted, so a cross-origin request needs a preflight, which the content host never answers.
  */
 export const CONTENT_DATA_HEADER = "x-plinth-data";
+
+/**
+ * Header a typed renderer's page sends on its shared-data writes, naming the format it reads and
+ * writes (`db.collection(name, { format })`); a whiteboard's writes without the current one are
+ * refused (whiteboard.ts BOARD_PAGE_FORMAT). It adds nothing to the checks on CONTENT_DATA_HEADER.
+ */
+export const CONTENT_FORMAT_HEADER = "x-plinth-format";
 
 /**
  * Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">,

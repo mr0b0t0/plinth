@@ -4,6 +4,7 @@ import { startUpload } from "../../services/uploads.ts";
 import { MCP_TOOL_ANNOTATIONS, toolName } from "../catalog.ts";
 import {
   CATEGORY_NOTE,
+  COPY_FILES_NOTE,
   categoryShareNote,
   PROJECT_FILES_NOTE,
   UNTRUSTED_NOTE,
@@ -22,7 +23,8 @@ export const registerUploadTools: ToolRegistrar = ({ server, ctx, opaque }) => {
         `at most ${LIMITS.maxTicketAttempts} attempts) and commands.curl, one shell line (bash or zsh) that ` +
         "tars the folder and sends it; the bundle request itself publishes the version and prints the " +
         "result (url, warnings, stored). Omit id for a new artifact (optional type and title; the title " +
-        "defaults to the page's <title>). With id it updates that artifact (with id, category is owner " +
+        "defaults to the page's <title>; a deck folder has slides.md, or deck.json with deck.css and " +
+        "slides/<id>.html for an HTML deck, at its top). With id it updates that artifact (with id, category is owner " +
         "only): base_version, the version you " +
         "read with get_artifact, is required, and a stale base is refused instead of overwriting " +
         "(list_versions gives the current number without the page's files). Run " +
@@ -39,6 +41,7 @@ export const registerUploadTools: ToolRegistrar = ({ server, ctx, opaque }) => {
         "files with what you sent before you call it yours (a collaborator may have published it). " +
         "Call start_upload again (with the same base_version) only when nothing was published. An " +
         "upload never commits twice: sending it again answers upload_used. " +
+        COPY_FILES_NOTE +
         CATEGORY_NOTE +
         categoryShareNote(ctx.config) +
         UPLOAD_NOTE +

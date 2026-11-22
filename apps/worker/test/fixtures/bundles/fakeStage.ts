@@ -111,6 +111,11 @@ export function fakeStage(opts: FakeOptions = {}): { deps: StageDeps; log: FakeL
         addRef() {
           throw new Error("addRef is not used by bundles");
         },
+        async addCopy(path, data) {
+          paths.push(path);
+          bytes += data.byteLength;
+          await bucket.put(prefix + path, data);
+        },
         async finish(o) {
           log.finished.push({ prefix, stripPrefix: o?.stripPrefix });
           const strip = o?.stripPrefix ?? "";

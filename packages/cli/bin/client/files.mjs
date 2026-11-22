@@ -16,6 +16,9 @@ export const SOURCE_FILES = {
   design_system: "system.json",
 };
 
+/** A type's second source file, in another format: an HTML deck's deck.json beside slides.md. */
+export const ALT_SOURCE_FILES = { slides: "deck.json" };
+
 /** One file a publish imports as a sheet (the server converts it): its content_format by extension. */
 export const IMPORT_FORMATS = { ".csv": "csv", ".xlsx": "xlsx" };
 

@@ -161,6 +161,14 @@ describe("RichBlockEditor", () => {
     expect(host.split).toHaveBeenCalledWith(
       { t: "paragraph", c: [text("one")] },
       { t: "paragraph", c: [text("two")] },
+      // The block as it was, so the host can undo the Enter.
+      {
+        before: {
+          model: { t: "paragraph", c: [text("onetwo")] },
+          from: { leaf: 0, offset: 3 },
+          to: { leaf: 0, offset: 3 },
+        },
+      },
     );
   });
 
@@ -176,6 +184,7 @@ describe("RichBlockEditor", () => {
     expect(host.split).toHaveBeenCalledWith(
       { t: "quote", blocks: [{ t: "paragraph", c: [text("a")] }] },
       { t: "paragraph", c: [] },
+      { before: expect.objectContaining({ from: { leaf: 1, offset: 0 } }) },
     );
   });
 
@@ -197,6 +206,7 @@ describe("RichBlockEditor", () => {
         items: [{ blocks: [{ t: "paragraph", c: [text("a")] }] }],
       },
       { t: "paragraph", c: [] },
+      { before: expect.objectContaining({ from: { leaf: 1, offset: 0 } }) },
     );
   });
 
@@ -226,6 +236,154 @@ describe("RichBlockEditor", () => {
     });
     r.editable.dispatchEvent(paste);
     expect(md(r.model)).toBe("## Title one two");
+  });
+
+  const paste = (target: Element, plain: string) => {
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { getData: (t: string) => (t === "text/plain" ? plain : "") },
+    });
+    target.dispatchEvent(e);
+  };
+
+  it("pastes several paragraphs as blocks of their own, around the caret", () => {
+    const { r, host } = make({ t: "paragraph", c: [text("Startend")] });
+    caret(r.editable.firstChild as Node, 5);
+    paste(r.editable, " one\ncontinued\n\n\ntwo\r\n\r\nthree ");
+    expect(host.split).toHaveBeenCalledTimes(1);
+    const [keep, next, more] = host.split.mock.calls[0] as Parameters<RichHost["split"]>;
+    expect(md(keep)).toBe("Start one\ncontinued");
+    expect(more?.between?.map(md)).toEqual(["two"]);
+    expect(md(next as RichBlock)).toBe("three end");
+    // The caret goes after the pasted text, before what followed it.
+    expect(more?.caret).toBe("three ".length);
+    expect(more?.before?.model).toEqual({ t: "paragraph", c: [text("Startend")] });
+  });
+
+  it("pastes several paragraphs into a list as items, and into a quote as paragraphs", () => {
+    const list = make({
+      t: "bullet",
+      marker: "-",
+      tight: true,
+      items: [{ blocks: [{ t: "paragraph", c: [text("ab")] }] }],
+    });
+    caret(list.r.editable.querySelector("p")?.firstChild as Node, 1);
+    paste(list.r.editable, "x\n\ny\n\nz");
+    expect(md(list.r.model)).toBe("- ax\n- y\n- zb");
+    expect(list.host.split).not.toHaveBeenCalled();
+    const quote = make({ t: "quote", blocks: [{ t: "paragraph", c: [text("ab")] }] });
+    caret(quote.r.editable.querySelector("p")?.firstChild as Node, 2);
+    paste(quote.r.editable, "x\n\ny");
+    expect(md(quote.r.model)).toBe("> abx\n>\n> y");
+    // One paragraph stays one, its line breaks soft.
+    const one = make({ t: "paragraph", c: [text("a")] });
+    caret(one.r.editable.firstChild as Node, 1);
+    paste(one.r.editable, "b\nc");
+    expect(md(one.r.model)).toBe("ab\nc");
+    expect(one.host.split).not.toHaveBeenCalled();
+  });
+
+  it("keeps a multi-paragraph paste in a table cell on one line", () => {
+    const { r, host } = make({
+      t: "table",
+      align: [null],
+      head: [[text("h")]],
+      rows: [[[text("c")]]],
+    });
+    const cell = r.editable.querySelectorAll("td, th")[1] as HTMLElement;
+    caret(cell.firstChild as Node, 1);
+    paste(r.editable, "x\n\ny");
+    expect(host.split).not.toHaveBeenCalled();
+    expect(md(r.model)).toBe("| h |\n| --- |\n| cx y |");
+  });
+
+  it("undoes and redoes formatting, Enter in a list, Tab and paste, each whole", () => {
+    const item = (t: string) => ({ blocks: [{ t: "paragraph" as const, c: [text(t)] }] });
+    const { r } = make({
+      t: "bullet",
+      marker: "-",
+      tight: true,
+      items: [item("one"), item("two")],
+    });
+    const undo = () => key(r.editable, "z", { metaKey: true });
+    const redo = () => key(r.editable, "z", { metaKey: true, shiftKey: true });
+    const p = () => r.editable.querySelectorAll("p");
+    // Bold.
+    caret(p()[0]?.firstChild as Node, 0, 3);
+    r.toggle("strong");
+    expect(md(r.model)).toBe("- **one**\n- two");
+    // Tab.
+    caret(p()[1]?.firstChild as Node, 0);
+    key(r.editable, "Tab");
+    expect(md(r.model)).toBe("- **one**\n  - two");
+    // Enter in an item.
+    caret(p()[1]?.firstChild as Node, 1);
+    key(r.editable, "Enter");
+    expect(md(r.model)).toBe("- **one**\n  - t\n  - wo");
+    // Paste.
+    caret(p()[2]?.firstChild as Node, 2);
+    paste(r.editable, "x\n\ny");
+    expect(md(r.model)).toBe("- **one**\n  - t\n  - wox\n  - y");
+    undo();
+    expect(md(r.model)).toBe("- **one**\n  - t\n  - wo");
+    undo();
+    expect(md(r.model)).toBe("- **one**\n  - two");
+    undo();
+    expect(md(r.model)).toBe("- **one**\n- two");
+    undo();
+    expect(md(r.model)).toBe("- one\n- two");
+    redo();
+    redo();
+    expect(md(r.model)).toBe("- **one**\n  - two");
+    // The browser's own history events go the same way.
+    const e = new InputEvent("beforeinput", {
+      inputType: "historyUndo",
+      bubbles: true,
+      cancelable: true,
+    });
+    r.editable.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(md(r.model)).toBe("- **one**\n- two");
+  });
+
+  it("undoes a line break and a link, and asks the host once nothing is left", () => {
+    const { r, host } = make({ t: "paragraph", c: [text("click here")] });
+    const undoHost = vi.fn(() => true);
+    (host as RichHost).undo = undoHost;
+    caret(r.editable.firstChild as Node, 6, 10);
+    key(r.editable, "k", { metaKey: true });
+    const input = r.el.querySelector<HTMLInputElement>('input[aria-label="Link address"]');
+    (input as HTMLInputElement).value = "https://example.com";
+    key(input as HTMLInputElement, "Enter");
+    expect(md(r.model)).toBe("click [here](https://example.com)");
+    caret(r.editable.firstChild as Node, 5);
+    key(r.editable, "Enter", { shiftKey: true });
+    expect(md(r.model)).toBe("click\\\n[here](https://example.com)");
+    key(r.editable, "z", { metaKey: true });
+    expect(md(r.model)).toBe("click [here](https://example.com)");
+    key(r.editable, "z", { metaKey: true });
+    expect(md(r.model)).toBe("click here");
+    expect(undoHost).not.toHaveBeenCalled();
+    key(r.editable, "z", { metaKey: true });
+    expect(undoHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes one undo step of a run of typing", () => {
+    const { r } = make({ t: "paragraph", c: [text("a")] });
+    const t = r.editable.firstChild as Text;
+    const type = (ch: string) => {
+      r.editable.dispatchEvent(
+        new InputEvent("beforeinput", { inputType: "insertText", data: ch, bubbles: true }),
+      );
+      t.data += ch;
+    };
+    type("b");
+    type("c");
+    expect(md(r.model)).toBe("abc");
+    key(r.editable, "z", { metaKey: true });
+    expect(md(r.model)).toBe("a");
+    key(r.editable, "z", { metaKey: true, shiftKey: true });
+    expect(md(r.model)).toBe("abc");
   });
 
   it("drops the browser's own formatting and drops", () => {

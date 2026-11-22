@@ -811,6 +811,27 @@ describe("design", () => {
       { kind: "moved", where: "", what: "Board “C” moved" },
     ]);
   });
+
+  it("lists a fluid height, a new place on the canvas and changed notes", () => {
+    const a = '<!-- artboard name="Site" size="desktop" -->\n<p>Hi</p>';
+    const b = [
+      '<!-- note kind="title" -->',
+      "Web",
+      '<!-- artboard name="Site" size="desktop" height="auto" x="0" y="200" -->',
+      "<p>Hi</p>",
+    ].join("\n");
+    expect(items("design", a, b)).toEqual<ChangeItem[]>([
+      { kind: "changed", where: "", what: "Notes on the canvas changed" },
+      {
+        kind: "changed",
+        where: "Board “Site”",
+        what: "Resized",
+        before: "1440 × 900",
+        after: "1440 × auto",
+      },
+      { kind: "moved", where: "Board “Site”", what: "Moved on the canvas" },
+    ]);
+  });
 });
 
 describe("html", () => {

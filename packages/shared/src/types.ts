@@ -76,6 +76,12 @@ export interface ArtifactSummary {
    * artifacts). Seen by that person only, in the app: null for everyone else and for agents.
    */
   my_category?: string | null;
+  /**
+   * `true` on the design system its owner chose as their default (docs/spec.md "Design systems",
+   * The default design system): agents build slides, designs and pages with it without asking.
+   * Sent only to the owner (never to a token limited to one artifact), and only when true.
+   */
+  default?: true;
 }
 
 export interface AssetInfo {
@@ -104,6 +110,39 @@ export interface ArtifactDetailBase extends ArtifactSummary {
    * none, and for other types.
    */
   design_system?: DesignSystemReference | null;
+  /**
+   * An HTML deck (source deck.json): the text of deck.css and of every slides/<id>.html, so an
+   * agent can change one slide and send the others back by sha256 (each is also in `assets`).
+   * Untrusted, like all artifact text. Absent for other types and for a Markdown deck.
+   */
+  files?: { path: string; content: string }[];
+  /**
+   * The files this version holds that were copied from other artifacts (copy_files), one record
+   * per source version and copy time. `title` and `current_version` only when the caller may view
+   * that source now (null otherwise). Absent when the version holds no copies.
+   */
+  copied_from?: CopiedFrom[];
+}
+
+/**
+ * Files copied from one version of another artifact by one publish (copy_files), as the version
+ * records them: the source's id and version, when, and each file's path here and in the source.
+ */
+export interface CopyRecord {
+  artifact: string;
+  version: number;
+  copied_at: string;
+  files: { path: string; from: string }[];
+}
+
+/** A CopyRecord as get_artifact returns it, with the source as the caller may see it now. */
+export interface CopiedFrom extends Omit<CopyRecord, "artifact" | "files"> {
+  /** The source's id, or null when the caller may not view it now. */
+  artifact: string | null;
+  /** `from`, the file's path in the source, only when the caller may view it now. */
+  files: { path: string; from?: string }[];
+  title: string | null;
+  current_version: number | null;
 }
 
 /** The design system an HTML page says it was built on, as get_artifact returns it. */
@@ -167,6 +206,8 @@ export interface PublishResult {
    * then has the warning board_not_seeded).
    */
   board?: { blocks: number; arrows: number };
+  /** The files this call copied from other artifacts (copy_files). Absent when it copied none. */
+  copied_from?: CopyRecord[];
 }
 
 /** Where an artifact stands in its shared category, for its owner's own results. */
@@ -536,8 +577,12 @@ export interface AppConfig {
 export interface DesignExportOptions {
   id: string;
   version: number;
-  /** The version's artboards, in source order. Names are untrusted text. */
-  boards: { id: string; name: string; width: number; height: number }[];
+  /**
+   * The version's artboards, in source order. Names are untrusted text. A board with
+   * `auto_height` (height="auto") is as tall as its content when it renders; `height` is then its
+   * least height.
+   */
+  boards: { id: string; name: string; width: number; height: number; auto_height?: boolean }[];
   /** The largest PNG, in device pixels (width x height x scale^2). */
   max_pixels: number;
 }
@@ -600,6 +645,11 @@ export type ViewGate =
        * version, and why: the Edit slot shows Ask an agent instead. Never together with `live`.
        */
       live_off?: ViewGateLiveOff;
+      /**
+       * The version shown has no source editor although its type has one: an HTML deck, whose
+       * source is deck.json and its slide files. The menus offer no Edit. Absent otherwise.
+       */
+      no_editor?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -1037,6 +1087,39 @@ export interface DesignSystemComponentRead {
  * get_design_system and GET /artifacts/:ref/design-system. Every text field is untrusted data
  * written by the design system's authors. Parts left out by `include` are absent.
  */
+/** How get_design_system says to install a design system's files into another artifact. */
+export interface DesignSystemInstall {
+  /** The folder the files land in: `ds/<folder>` (the prefix, or the folder asked for). */
+  folder: string;
+  /**
+   * Pass these as copy_files (artifact, path, to, version) to publish or update the artifact.
+   * Only the files the target type (get_design_system's install_for) takes.
+   */
+  copy_files: { artifact: string; path: string; to: string; version: number }[];
+  /** Link these, in order, from the page's head (relative to the version's root). */
+  stylesheets: string[];
+  /**
+   * A deck's `faces`, keyed by family lowercased with spaces as "-": a Google face by its
+   * stylesheet link, an installed font file by its path under the folder. Faces whose file the
+   * target cannot take are left out.
+   */
+  faces: Record<
+    string,
+    { family: string; href?: string; src?: string; weight?: string; style?: string }
+  >;
+  /** What a deck's or canvas's designSystems list keeps for this install. */
+  record: {
+    title: string;
+    /** The folder name under ds/. */
+    namespace: string;
+    /** The design system's id. */
+    artifact: string;
+    version: number;
+    /** When get_design_system answered (RFC 3339); the publish's copied_from has the copy's time. */
+    copiedAt: string;
+  };
+}
+
 export interface DesignSystemRead {
   id: string;
   slug: string;
@@ -1055,6 +1138,16 @@ export interface DesignSystemRead {
   guidelines?: string | null;
   component_css?: string;
   components?: DesignSystemComponentRead[];
+  /**
+   * Every path copy_files can take from this version: system.json, the generated tokens.css,
+   * fonts.css, components.css and tokens.json, and its images and fonts. Absent with problems.
+   */
+  files?: string[];
+  /**
+   * The copy_files entries that install this version into another artifact under
+   * `ds/<prefix>/`, and the stylesheets to link from there. Absent with problems.
+   */
+  install?: DesignSystemInstall;
   /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
   problems: { path: string; message: string }[];
   untrusted: true;

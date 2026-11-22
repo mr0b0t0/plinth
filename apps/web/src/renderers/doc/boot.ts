@@ -14,8 +14,8 @@
 // editing message to the app carries the frame key the app put in the address
 // (common/frameKey.ts), which is taken out of it before anything renders. Blocks are edited as
 // formatted text (edit.ts); "Ask an agent" on a block posts `ask` with a structural anchor
-// ("block-3", "block-3:image") with the block's first words, and the kind of block ("list"), and
-// the app opens its Ask dialog.
+// ("block-3", "block-3:image", "new-2:add-image": askAnchor.ts) with the block's first words, and
+// the kind of block ("list"), and the app opens its Ask dialog.
 //
 // Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
 // { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
@@ -41,14 +41,7 @@ import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
 import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
-import {
-  blockWords,
-  type DocBackend,
-  DocEditor,
-  LocalDoc,
-  REFUSED_EDIT,
-  type RescueReport,
-} from "./edit.ts";
+import { type DocBackend, DocEditor, LocalDoc, type RescueReport } from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
@@ -102,13 +95,26 @@ export function readAppMessage(data: unknown): AppMessage | null {
 }
 
 const ERRORS: Record<string, string> = {
-  invalid: REFUSED_EDIT,
-  too_large: "That is more than a doc can hold. The change was not applied.",
   draft_limit:
     "These edits are live but not kept: the owner has too many docs with unpublished page edits. Publish a version.",
   rate_limited: "Typing too fast for the room. Your text is kept and sent again.",
   unavailable: "Live editing is unavailable right now. Your text is kept on this page.",
 };
+
+/**
+ * What the editor does with an error the room sent this socket. A refused edit (`invalid`: the doc's
+ * rules; `too_large`: its size; `not_held`: its lease went first, a takeover) never just shows a
+ * notice: the editor keeps what was typed, in the open block or parked to copy
+ * (DocEditor.roomRefused). For `not_held` the editor said what happened when the lease went.
+ */
+export function roomError(
+  editor: Pick<DocEditor, "roomRefused" | "notify"> | null,
+  code: string,
+): void {
+  if (code === "invalid" || code === "too_large" || code === "not_held") {
+    editor?.roomRefused(code);
+  } else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
+}
 
 /** Where a change item points in a rendered doc: the heading it names, if any. */
 function docGoto(root: HTMLElement): (item: ChangeItem) => boolean {
@@ -165,19 +171,6 @@ function live(
   /** Solo: the version shown, whose files the draft is drawn with. */
   let soloBase: number | null = null;
 
-  /** The first words of each block of the published version, and of its images' alt text. */
-  let published: Set<string> | null = null;
-  const publishedWords = (): Set<string> => {
-    if (published) return published;
-    const doc = win.document;
-    const shown = sanitizeHtml(renderMarkdown(payload.text), doc);
-    published = new Set(Array.from(shown.childNodes, (n) => blockWords([n])));
-    for (const img of Array.from(shown.querySelectorAll("img"))) {
-      published.add(blockWords([doc.createTextNode(img.alt)]));
-    }
-    return published;
-  };
-
   const poster = appPoster(win, appOrigin, key);
   const post = poster.post;
   const statusNow = () => {
@@ -227,15 +220,13 @@ function live(
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
     // A place the person wants an agent to change (an image, a block shown read-only): the app
-    // opens its Ask dialog. The anchor is a structural key and the block's first words, posted
-    // only when the published version has a block with the same words (so no draft text reaches
-    // the app); `what` is the kind of block, for the dialog's "Pointing at" chip without them.
+    // opens its Ask dialog. The anchor is a structural key naming the block as the published
+    // version has it ("new-…" for one only in the draft, askAnchor.ts) and the block's first words,
+    // which the person sees in the dialog before posting; `what` is the kind of block, for the
+    // dialog's "Pointing at" chip when it has none.
     ask: (anchor: { key: string; text: string }, what: AskWhat) =>
-      post({
-        type: "ask",
-        anchor: { key: anchor.key, text: publishedWords().has(anchor.text) ? anchor.text : "" },
-        what,
-      }),
+      post({ type: "ask", anchor: { key: anchor.key, text: anchor.text }, what }),
+    published: () => payload.text,
   };
   const events = {
     granted: (l: Parameters<DocEditor["granted"]>[0]) => editor?.granted(l),
@@ -301,13 +292,7 @@ function live(
           if (!local) session.version(kind, n, info);
           status();
         },
-        error: (code) => {
-          if (code === "invalid") editor?.refused(REFUSED_EDIT);
-          // A lease that went before its last frame was answered (a takeover): the editor says
-          // what happened already.
-          else if (code === "not_held") return;
-          else editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
-        },
+        error: (code) => roomError(editor, code),
       },
     });
     editor = new DocEditor(root, win, client, hooks, prepare);
@@ -323,7 +308,7 @@ function live(
       editor?.render();
       status();
     } else if (m.type === "rescue") {
-      if (m.items.length > 0) editor?.offerRescue(m.items);
+      if (m.items.length > 0) editor?.offerRescue(m.items, m.copy === true);
       if (m.stored) editor?.rescueStored(m.stored.ids, m.stored.n);
     } else if (m.type === "collect" && local) {
       editor?.flush();

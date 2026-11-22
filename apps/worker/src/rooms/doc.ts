@@ -43,6 +43,7 @@ import {
   type FileChangeSummary,
   type FileEntry,
   fileChanges,
+  isLiveSource,
   isLiveType,
   joinLines,
   LIMITS,
@@ -62,6 +63,7 @@ import {
   structOverlaps,
   summarizeFileChanges,
   typeDef,
+  versionSourcePath,
 } from "@plinth/shared";
 import { type Bindings, getConfig } from "../config.ts";
 import { randomString, sha256Hex } from "../lib/crypto.ts";
@@ -309,7 +311,9 @@ export class LiveDoc {
       `SELECT a.type, a.current_version, a.deleted_at, a.taken_down_at,
               d.base_version, d.content, d.rev, d.conflict_version,
               (SELECT r2_prefix FROM versions
-                WHERE artifact_id = a.id AND number = coalesce(d.base_version, a.current_version)) AS base_prefix
+                WHERE artifact_id = a.id AND number = coalesce(d.base_version, a.current_version)) AS base_prefix,
+              (SELECT manifest FROM versions
+                WHERE artifact_id = a.id AND number = a.current_version) AS current_manifest
          FROM artifacts a LEFT JOIN live_drafts d ON d.artifact_id = a.id
         WHERE a.id = ?1`,
     )
@@ -324,11 +328,16 @@ export class LiveDoc {
         rev: number | null;
         conflict_version: number | null;
         base_prefix: string | null;
+        current_manifest: string | null;
       }>();
     if (!row || row.deleted_at || row.taken_down_at || !row.base_prefix) return null;
     const def = typeDef(row.type);
     const rules = liveRules(row.type);
     if (!isLiveType(def) || !def || !rules) return null;
+    // An HTML deck (deck.json) is never edited on its page: no draft opens on it, and a deck's
+    // draft from before it stays kept, unshown, until a Markdown version is current again.
+    const current = versionSourcePath(def, parseManifest(row.current_manifest ?? "[]"));
+    if (!isLiveSource(def, current)) return null;
     const baseSource = await this.readVersionText(row.base_prefix, def);
     if (baseSource === null) return null;
     // The draft's lines are the type's live form of its source (identity for docs, decks and sheets).

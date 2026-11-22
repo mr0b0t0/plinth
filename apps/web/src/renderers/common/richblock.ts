@@ -5,17 +5,21 @@
 // STRONG/B, EM/I, CODE, A (only the links this file drew or set), S/DEL/STRIKE, BR, text, and
 // atoms (an image or a reference link, drawn from its Markdown by the page's own pipeline and
 // found again by a WeakMap reference). Anything else counts as its text, so nothing a browser
-// inserts can become markup. Paste is plain text only.
+// inserts can become markup. Paste is plain text only; a paste of several paragraphs (text with
+// blank lines) makes a block, list item or quote paragraph of each.
 //
 // Formatting commands, Enter, Tab and Backspace in lists act on the model, which is drawn again
 // with the caret put back where it was. The host checks every model it is handed before it sends
 // anything (verify after edit); a formatting command whose result the serializer cannot express
-// is undone here, with "That formatting can't be kept here.".
+// is undone here, with "That formatting can't be kept here.". Undo and redo (Cmd+Z, Cmd+Shift+Z)
+// are the editor's own, over snapshots of the model: the browser's history cannot undo a change
+// that drew the block again.
 import {
   applyMark,
   inlineLength,
   type LinkMark,
   normalizeBlock,
+  normalizeInline,
   type RichBlock,
   type RichInline,
   type RichListItem,
@@ -34,9 +38,14 @@ export interface RichHost {
   changed(): void;
   /**
    * Enter that ends the block: `keep` stays where the block is, and `next` (null: nothing) goes
-   * into a new block below it, with the caret at its start.
+   * into a new block below it, with the caret at its start (see SplitMore).
    */
-  split(keep: RichBlock, next: RichBlock | null): void;
+  split(keep: RichBlock, next: RichBlock | null, more?: SplitMore): void;
+  /**
+   * Undo with nothing left to undo in the block: the host may undo the step that made it (an
+   * Enter that split a block in two). Whether it did.
+   */
+  undo?(): boolean;
   /** Tab out of the block, to the next one (or the previous one, with Shift). */
   tab(back: boolean): void;
   /** Escape: the block is done. */
@@ -58,10 +67,29 @@ export interface RichHost {
   scale?(): number;
 }
 
+/** More about a split (RichHost.split). */
+export interface SplitMore {
+  /** Blocks that go between `keep` and `next` (the middle paragraphs of a paste). */
+  between?: RichBlock[];
+  /** The caret's offset in `next` (else its start). */
+  caret?: number;
+  /** The block before the split, with the selection it had, so the host can undo it. */
+  before?: { model: RichBlock; from: RichPoint; to: RichPoint };
+}
+
 export const FORMAT_LOST = "That formatting can't be kept here.";
 export const LINK_REFUSED =
   "That address can't be used. Links go to http, https or mailto addresses, a #section, or a path on this site.";
 const MAX_LIST_DEPTH = 3;
+/** Typing within this long of the last keystroke is one undo step. */
+const TYPING_STEP_MS = 1000;
+const UNDO_STEPS = 100;
+
+interface Snapshot {
+  model: RichBlock;
+  from: RichPoint;
+  to: RichPoint;
+}
 
 type ListBlock = Extract<RichBlock, { t: "bullet" | "ordered" }>;
 
@@ -650,6 +678,11 @@ export class RichBlockEditor {
   private shape: RichBlock;
   /** The selection the link field was opened for. */
   private linkRange: { from: RichPoint; to: RichPoint } | null = null;
+  /** Undo and redo: the block as it was before each step, newest last. */
+  private undos: Snapshot[] = [];
+  private redos: Snapshot[] = [];
+  /** When typing last joined the newest undo step (typing within a second is one step). */
+  private typedAt = Number.NEGATIVE_INFINITY;
 
   constructor(
     doc: Document,
@@ -776,9 +809,13 @@ export class RichBlockEditor {
     return readBlock(this.shape, this.content, probes);
   }
 
-  /** Draws `block` in place of the current one, with the caret at `at` (or none). */
-  setModel(block: RichBlock, at?: RichPoint | null): void {
+  /**
+   * Draws `block` in place of the current one, with the caret at `at` (or none). With `undoable`,
+   * Undo puts the current one back (Turn into).
+   */
+  setModel(block: RichBlock, at?: RichPoint | null, undoable = false): void {
     const focused = this.el.contains(this.doc.activeElement);
+    if (undoable) this.remember();
     this.shape = normalizeBlock(clone(block));
     this.draw();
     if (at) this.place(at);
@@ -1074,14 +1111,71 @@ export class RichBlockEditor {
       e.preventDefault();
       return;
     }
+    if (t === "historyUndo" || t === "historyRedo") {
+      e.preventDefault();
+      if (t === "historyUndo") this.undo();
+      else this.redo();
+      return;
+    }
     if (t === "insertParagraph") {
       e.preventDefault();
       this.enter();
     } else if (t === "insertLineBreak") {
       e.preventDefault();
       this.lineBreak();
+    } else if (t.startsWith("insert") || t.startsWith("delete")) {
+      // Typing: one undo step per run of typing, a new one after a pause.
+      const now = Date.now();
+      if (now - this.typedAt > TYPING_STEP_MS) this.remember();
+      this.typedAt = now;
     }
   };
+
+  /** Records the block as it is now as an undo step (before a change), and forgets the redos. */
+  private remember(): void {
+    const s = this.selection();
+    const zero = { leaf: 0, offset: 0 };
+    this.undos.push({ model: clone(this.read([])), from: s?.from ?? zero, to: s?.to ?? zero });
+    if (this.undos.length > UNDO_STEPS) this.undos.shift();
+    this.redos = [];
+    this.typedAt = Number.NEGATIVE_INFINITY;
+  }
+
+  /** Undo: the block as it was before the last step (or the host's step that made the block). */
+  undo(): boolean {
+    const step = this.undos.pop();
+    if (!step) return this.host.undo?.() ?? false;
+    this.redos.push(this.current());
+    this.restore(step);
+    return true;
+  }
+
+  redo(): boolean {
+    const step = this.redos.pop();
+    if (!step) return false;
+    this.undos.push(this.current());
+    this.restore(step);
+    return true;
+  }
+
+  /** Whether there is a step in the block to undo. */
+  get canUndo(): boolean {
+    return this.undos.length > 0;
+  }
+
+  private current(): Snapshot {
+    const s = this.selection();
+    const zero = { leaf: 0, offset: 0 };
+    return { model: clone(this.read([])), from: s?.from ?? zero, to: s?.to ?? zero };
+  }
+
+  private restore(step: Snapshot): void {
+    this.typedAt = Number.NEGATIVE_INFINITY;
+    this.shape = normalizeBlock(clone(step.model));
+    this.draw();
+    this.place(step.from, step.to);
+    this.host.changed();
+  }
 
   private readonly onPaste = (e: ClipboardEvent) => {
     if (e.target === this.linkInput || e.target === this.altInput) return;
@@ -1090,9 +1184,77 @@ export class RichBlockEditor {
     const leaf = this.selection()?.from.leaf ?? 0;
     const kind = leafRefs(this.shape)[leaf]?.kind ?? "flow";
     text = text.replace(/\r\n?/g, "\n");
+    if (kind !== "plain" && this.pasteParagraphs(text)) return;
     if (kind === "line") text = text.replace(/\s*\n\s*/g, " ");
     this.insertText(text);
   };
+
+  /**
+   * A paste of several paragraphs (separated by blank lines): each becomes a block of its own (an
+   * item in a list, a paragraph in a quote), the first joining the text before the caret and the
+   * last the text after it. False when the text is one paragraph, or the block takes no others
+   * (a table cell).
+   */
+  private pasteParagraphs(text: string): boolean {
+    const chunks = text
+      .split(/\n[ \t]*\n/)
+      .map((c) => c.replace(/^\n+|\n+$/g, ""))
+      .filter((c) => c.trim() !== "");
+    if (chunks.length < 2) return false;
+    const s = this.selection();
+    if (!s) return false;
+    const model = this.read([]);
+    if (model.t === "table" || model.t === "code" || model.t === "indented") return false;
+    const leaf = s.from.leaf;
+    const ref = leafRefs(model)[leaf];
+    if (!ref || ref.kind === "plain") return false;
+    const [head] = splitInline(ref.get(), s.from.offset);
+    const tailFrom = s.to.leaf === leaf ? s.to.offset : inlineLength(ref.get());
+    const [, tail] = splitInline(ref.get(), tailFrom);
+    const run = (t: string): RichInline => [{ k: "text", text: t, m: {} }];
+    const first = chunks[0] as string;
+    const last = chunks.at(-1) as string;
+    const middle = chunks.slice(1, -1).map((c): RichBlock => ({ t: "paragraph", c: run(c) }));
+    const lastRun = run(last);
+    // The caret goes right after the pasted text, as the block will be normalized.
+    const after = (c: RichInline) => inlineLength(normalizeInline([...c, ...tail]));
+    const caret = Math.max(0, after(lastRun) - after(run("x")) + 1);
+    const firstPara: RichBlock = { t: "paragraph", c: [...head, ...run(first)] };
+    const lastPara: RichBlock = { t: "paragraph", c: [...lastRun, ...tail] };
+    if (model.t === "paragraph" || model.t === "heading") {
+      this.typedAt = Number.NEGATIVE_INFINITY;
+      this.host.split({ ...model, c: [...head, ...run(first)] }, lastPara, {
+        between: middle,
+        caret,
+        before: { model: clone(model), from: s.from, to: s.to },
+      });
+      return true;
+    }
+    const at = { leaf: leaf + chunks.length - 1, offset: caret };
+    if (model.t === "bullet" || model.t === "ordered") {
+      const found = locateItem(model, leaf);
+      if (!found) return false;
+      const { list, index, item, block } = found;
+      const bi = item.blocks.indexOf(block);
+      list.items.splice(
+        index,
+        1,
+        { blocks: [...item.blocks.slice(0, Math.max(0, bi)), firstPara] },
+        ...middle.map((b) => ({ blocks: [b] })),
+        { blocks: [lastPara, ...item.blocks.slice(bi + 1)] },
+      );
+      this.redraw(model, at);
+      return true;
+    }
+    if (model.t === "quote") {
+      const found = locateFlow(model, leaf);
+      if (!found) return false;
+      found.parent.blocks.splice(found.index, 1, firstPara, ...middle, lastPara);
+      this.redraw(model, at);
+      return true;
+    }
+    return false;
+  }
 
   /** Inserts plain text at the selection, as typing would. */
   insertText(text: string): void {
@@ -1100,6 +1262,7 @@ export class RichBlockEditor {
     if (!sel || sel.rangeCount === 0) return;
     const range = sel.getRangeAt(0);
     if (!this.content.contains(range.startContainer)) return;
+    this.remember();
     range.deleteContents();
     const node = this.doc.createTextNode(text);
     range.insertNode(node);
@@ -1157,6 +1320,13 @@ export class RichBlockEditor {
       return;
     }
     if (!this.content.contains(e.target as Node)) return;
+    if (mod && (e.key.toLowerCase() === "z" || (e.key.toLowerCase() === "y" && e.ctrlKey))) {
+      // The editor's own history (see remember): the browser's cannot undo a redraw.
+      e.preventDefault();
+      if (e.key.toLowerCase() === "z" && !e.shiftKey) this.undo();
+      else this.redo();
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       this.host.escape();
@@ -1233,6 +1403,7 @@ export class RichBlockEditor {
       this.place(s.from, s.to);
       return;
     }
+    this.remember();
     this.shape = after;
     this.draw();
     this.place(s.from, s.to);
@@ -1344,6 +1515,7 @@ export class RichBlockEditor {
       return;
     }
     ref.set([...a, { k: "br" }, ...b]);
+    this.remember();
     this.shape = model;
     this.draw();
     this.place({ leaf: s.from.leaf, offset: s.from.offset + 1 });
@@ -1371,7 +1543,7 @@ export class RichBlockEditor {
     if (model.t === "paragraph" || model.t === "heading") {
       const keep: RichBlock = { ...model, c: head };
       const next: RichBlock = { t: "paragraph", c: tail };
-      this.host.split(keep, next);
+      this.host.split(keep, next, { before: { model: clone(model), from: s.from, to: s.to } });
       return;
     }
     if (model.t === "bullet" || model.t === "ordered") {
@@ -1400,8 +1572,9 @@ export class RichBlockEditor {
       const { parent, index } = at;
       const empty = inlineLength(ref.get()) === 0;
       if (empty && parent === model && index === model.blocks.length - 1) {
+        const before = { model: clone(model), from: s.from, to: s.to };
         model.blocks.splice(index, 1);
-        this.host.split(model, { t: "paragraph", c: [] });
+        this.host.split(model, { t: "paragraph", c: [] }, { before });
         return;
       }
       parent.blocks.splice(index, 1, { t: "paragraph", c: head }, { t: "paragraph", c: tail });
@@ -1417,12 +1590,14 @@ export class RichBlockEditor {
     const { list, index } = at;
     const top = list === model;
     if (top && index === list.items.length - 1) {
+      const point = { leaf, offset: 0 };
+      const before = { model: clone(model), from: point, to: point };
       list.items.splice(index, 1);
       if (list.items.length === 0) {
         this.host.split({ t: "paragraph", c: [] }, null);
         return;
       }
-      this.host.split(model, { t: "paragraph", c: [] });
+      this.host.split(model, { t: "paragraph", c: [] }, { before });
       return;
     }
     if (!top) {
@@ -1497,6 +1672,8 @@ export class RichBlockEditor {
   }
 
   private redraw(model: RichBlock, at: RichPoint): void {
+    // The page still shows the block as it was: that is the undo step.
+    this.remember();
     this.shape = normalizeBlock(model);
     this.draw();
     const refs = leafRefs(this.shape);

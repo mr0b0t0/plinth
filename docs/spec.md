@@ -330,11 +330,11 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
-| `update_artifact(id, html \| content, content_format?, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
-| `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
+| `publish_artifact(title, html \| type+content, assets?, copy_files?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given; `copied_from` when `copy_files` copied files from other artifacts, see [Copying files from another artifact](#copying-files-from-another-artifact-decided-2026-11-21)). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet, `type: "whiteboard"` a board people edit together (its starting blocks and arrows go into shared data, and `board` counts what was written) |
+| `update_artifact(id, html \| content, content_format?, assets?, copy_files?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version; `copy_files` copies files from other artifacts the user can view. `category` is owner only. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?, category?, copy_files?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page or a design that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)), and a version holding copied files gets `copied_from` |
+| `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system`; the owner's default design system has `default: true` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
@@ -345,8 +345,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
-| `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
-| `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
+| `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`merge`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own. A `merge` puts each top-level field of its `data` on the document at that rev (a field set to `null` is removed) and is checked like a `set` |
+| `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples, the `files` `copy_files` can take and the `install` entries that copy them. Read-only; every text field is untrusted |
 | `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
@@ -373,6 +373,22 @@ ones as a plugin, extension, rule file or uploaded skill. All per-harness packag
 that work and came later as one fixed service per artifact: see
 [Shared data and viewer identity](#shared-data-and-viewer-identity). Guide: `docs/agents.md`; design:
 `docs/superpowers/specs/2026-11-14-agent-experience-design.md`.
+
+**Craft guides (decided 2026-11-21).** The skill teaches craft as well as format, so what agents
+make reads and looks as good as Claude's own artifacts. Its "Making it good (craft)" section states
+the rules every type shares (the point first, every number from real data, no filler, change only
+what was asked, no AI tropes, 4.5:1 contrast in every theme, values copied from the real source)
+and points at one guide per artifact type, `integrations/skill/plinth-artifacts/craft/<type>.md`:
+chart and KPI craft for pages and dashboards, writing for docs, the story and slide rhythm for
+decks, column order and types for sheets, placeholders and accessibility for designs, brand book
+and contrast for design systems, and layout and teammate rules for whiteboards. The guides are in
+Plinth's own words and describe only what Plinth does: a Markdown deck has one theme, so the deck
+guide varies the kind of slide where Claude's decks vary their background tones. `pnpm
+integrations` ships the guides beside the skill in every skill folder and appends them to the
+single-file builds (the Cursor rule, the VS Code instructions). The MCP surface stays short:
+`publish_artifact` says the shared rules in a line and names the guides, `update_artifact` says to
+change only what was asked, and the server instructions add one sentence. Tests pin the numbers
+the guides quote (limits, renderer sizes, column types, board colors) to the code.
 
 **Shared data for agents (decided 2026-11-14).** `get_artifact` also returns `capabilities` (what
 the returned version declares) and `data_usage` (`{ docs, bytes }`, or null when there is none or
@@ -916,8 +932,10 @@ Decided 2026-11-14 (issue #1). Design:
 - **The page stays static.** Plinth adds one fixed, generic service per artifact: collections of
   JSON documents, shared by every version, served on the artifact's own content origin at
   `/__plinth/api/v1/`, plus a runtime script at `/__plinth/runtime.js` that defines
-  `window.plinth` (`ready`, `viewer`, `canWrite`, `db.collection(name)` with `list`, `all`, `get`,
-  `add`, `set`, `update`, `delete`, `mine`, `setMine`, `deleteMine`, `onSnapshot`). The CSP's
+  `window.plinth` (`ready`, `viewer`, `canWrite`, `db.collection(name, { format }?)` with `list`,
+  `all`, `get`, `add`, `set`, `update`, `delete`, `mine`, `setMine`, `deleteMine`, `onSnapshot`;
+  `format` is sent as `x-plinth-format` on the collection's writes, for a typed renderer naming
+  the format it reads and writes, which a whiteboard requires). The CSP's
   `connect-src 'self'` already allows it: no CSP change, no CORS, no app cookies on the content
   host.
 - **Declaration.** A page opts in with `<meta name="plinth-capabilities" content="data viewer">`
@@ -966,8 +984,12 @@ Decided 2026-11-14 (issue #1). Design:
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
-  `DATA_WRITES_PER_ARTIFACT_PER_HOUR` (2000). Fixed: 50 collections per artifact, nesting depth 16,
-  200 documents per page, 50 ops per agent call.
+  `DATA_WRITES_PER_ARTIFACT_PER_HOUR` (2000). A whiteboard's data takes its own caps in place of
+  the first, second and fourth: `DATA_BOARD_MAX_DOCS` (2000), `DATA_BOARD_MAX_BYTES` (2 MiB) and
+  `DATA_BOARD_MAX_DOC_BYTES` (200 KiB, from 1 KiB to 1 MiB); the page API reads a request body up
+  to the artifact's own document cap plus 1 KiB, and only once the caller's content pass is
+  checked. Fixed: 50 collections per artifact, nesting depth 16, 200 documents per page, 50 ops
+  per agent call.
 - **Lifecycle.** Data is deleted with the artifact and wiped on takedown (a write already in flight
   cannot bring it back), scrubbed of a person on
   `erase-user`, and kept across new versions and restores. Any grant, visibility or password change
@@ -1120,17 +1142,67 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   font files, which another artifact cannot load), `tokens` with resolved light and dark values,
   `guidelines`, `component_css` and `components`; `include` and `components` trim it. A stored
   version that no longer parses returns its `problems`. Every result says `untrusted: true`.
-- **Building on one.** Pages cannot load another artifact's files: the agent copies the CSS it uses
-  into the page it publishes, and names the design system in the page's head with
-  `<meta name="plinth-design-system" content="<id>@<version>">`. On publish the server checks that
-  reference once, as the publisher: `design_system_outdated` when a newer version exists, and one
+- **Building on one.** Pages never load another artifact's files at runtime. The agent installs
+  the design system instead: it passes `get_design_system`'s `install.copy_files` as `copy_files`
+  to the publish or update, and the server copies the files into the page's version once, as the
+  caller ([Copying files from another artifact](#copying-files-from-another-artifact-decided-2026-11-21));
+  the page links `install.stylesheets`. It may still paste the CSS it uses instead. Either way it
+  names the design system in the page's head with
+  `<meta name="plinth-design-system" content="<id>@<version>">` (a design: in its shared section).
+  On publish the server checks that reference once, as the publisher: `design_system_outdated` when a newer version exists, and one
   `design_system_unavailable` message for every other case (missing, deleted, not viewable, taken
-  down, another type). `get_artifact` on such a page returns
+  down, another type). `get_artifact` on such a page or design returns
   `design_system: { id, title, version, current_version }` when the caller may view the design
   system, or `null`; pages without the meta get no field. The meta is read from the first 256 KB
   before `<body>` in one forward pass, as a browser would read the tag: comments are skipped (an
   unclosed comment or tag runs to the end, so nothing after it counts), and a page that never
   mentions `plinth-design-system` is not scanned at all.
+- **Installing one (decided 2026-11-21).** Every version of a design system serves, besides
+  `system.json` and its images and fonts, four files generated from `system.json` that
+  `copy_files` copies like stored ones (`packages/shared/src/designSystemFiles.ts`): `tokens.css`
+  (the tokens as custom properties, light and dark, as `get_design_system`'s `css`), `fonts.css`
+  (`@font-face` rules for the font files the version stores, by relative path), `components.css`
+  (the shared and component CSS) and `tokens.json` (the resolved tokens in format
+  `plinth.design-system-tokens/1`, with the design system's id and version). Its assets are images
+  and fonts only, so no stored file can take these names. `get_design_system` returns `files`
+  (every path it can copy) and `install`, for the type `install_for` names (default `html`):
+  `folder` (`ds/<folder>`), `copy_files` (each entry with the design system's id, the path, `to`
+  under the folder and the version read: `fonts.css` with the font files when it stores its own,
+  `tokens.css`, `components.css` when it has CSS, `tokens.json`, and every stored file a CSS block
+  names, keeping only what that type's asset rules take, so a design gets no font files,
+  `fonts.css` or `tokens.json` and the list works as given; a deck by its `deck_format`: a
+  Markdown deck, the default, its images, and an HTML deck its `tokens.json`, font files and
+  images, as Claude copies them, never the generated CSS), `stylesheets` to link in that order,
+  `faces` (a deck's `faces` map, keyed by family lowercased with spaces as `-`: a Google face by
+  `href`, an installed font file by `src` under the folder) and `record` (`title`, `namespace`,
+  `artifact`, `version`, `copiedAt`), what a deck's or canvas's `designSystems` list keeps. Every
+  file lands at the same relative path under the folder, so the `url()`s in the CSS still resolve.
+  This is Claude's `project/ds/<folder>/` layout in Plinth's flat file model: a version's files sit
+  at its root, so the folder is `ds/<folder>/`. The folder is the design system's own `prefix`
+  (already `[a-z][a-z0-9]{0,15}`), or, for one that kept the default prefix `ds` (which would give
+  `ds/ds/`), a name made from its title (lowercase, each run of other characters one `-`,
+  `design-system` when that leaves nothing); `folder` on `get_design_system` asks for another name
+  (`[a-z0-9][a-z0-9_-]{0,63}`). Two artifacts' copies never share a folder: a publish that would put
+  files copied from a second artifact into a `ds/<folder>/` that holds another's is refused with
+  `copy_folder_taken` ([Copying files](#copying-files-from-another-artifact-decided-2026-11-21)).
+  `fonts[].portable` is `true` for a Google font and for a font file the version stores (install
+  copies it), `false` for a font file it lacks. An update installs a newer version by copying
+  again: each copy replaces the file at its path.
+- **The default design system (decided 2026-11-21).** A person marks one of their own design
+  systems as the default from its ⋯ menu on the dashboard (Set as default, Remove as default), and
+  its badge reads "Default design system". One per person (`users.default_design_system`), so
+  choosing another replaces it; deleting the design system clears it. `PUT
+  /api/v1/artifacts/:ref/default-design-system` with `{ default: true | false }` sets it: the
+  signed-in owner only (`policy.ts mayChooseDefaultDesignSystem`, then the `manage` action), never
+  an agent or bearer token (403 `app_only`), and only a design system that is not taken down (400
+  `not_design_system` for another type). `list_artifacts` and `get_artifact` mark it
+  `default: true` for its owner only (never for a collaborator or a token limited to one
+  artifact), and not while it is taken down, which no agent could read. Setting or removing it
+  needs no toast: the badge says so. Agents read it from `list_artifacts` with `type: "design_system"` and build slides,
+  designs and pages with it without asking, as Claude does with a default. With none, they use the
+  one the person names, ask when there are several and someone can answer, and otherwise use their
+  own look. An organization default and an explicit "no default" choice are not offered (Plinth has
+  no organizations).
 - **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
   JSON Schema, lists the parser's problems (one short line each, with its path) above the editor,
   keeps the preview at the last draft that parsed (blank while none has), and keeps Save off until there are none. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the
@@ -1141,8 +1213,10 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   `content` (`--id`), sends one with `plinth upload`, and checks `system.json` against the fixed
   1 MB limit before sending. A folder with `index.html` at its top is a page, whatever else it holds.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
-  origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
-  no themes other than `dark`, and no copying of font or image files between artifacts.
+  origins and a content pass for two artifacts; files are copied at publish instead), no script in
+  previews, no on-page or live editing, no themes other than `dark`, no organization default, and
+  no reading of Claude's design-system folder layout (`tokens.json` in list form, `README.md`,
+  `components/*/`), which would need a converter to `system.json`.
 
 ### Slides (decided 2026-11-19)
 
@@ -1309,8 +1383,156 @@ on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
   `leading { on }` and `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified
-  viewers only); transitions, builds, custom themes and fonts, math, diagrams and video are not
-  planned for slides, and a `.pptx` is never imported.
+  viewers only); a Markdown deck gets no transitions, builds, custom themes, fonts or diagrams (an
+  HTML deck has them, below); math and video are not planned for slides, and a `.pptx` is never
+  imported.
+
+#### HTML decks (decided 2026-11-21)
+
+A deck can also be written in Claude's slide format, so a designed deck made for Claude's Slides
+works in Plinth, and an agent that knows that format needs nothing else. It is the same type
+(`slides`), with the same paging, overview, presenter view, audience window, Lead viewers, print,
+thumbnails and `.pptx`. Markdown decks stay the default and are read exactly as before. Plinth
+differs from Claude only where noted.
+
+- **Which format.** A version's source is either `slides.md` (Markdown) or `deck.json` (an HTML
+  deck); the registry row names the second as the type's `altSource`. A sent source whose first
+  character is `{` is `deck.json`; a Markdown deck cannot start with `{`. A folder has one or the
+  other at its top, never both. The stored version says which by the file it holds
+  (`versionSourcePath`), and every check of a stored source reads its format from that file, not
+  its text. An update may switch formats; one from HTML to Markdown with `assets` left out keeps
+  only the images. Restore copies the old version's source, at the old version's path, and its
+  files as they were.
+- **Files.** `content` is `deck.json`: `title`, `order` (slide ids), `sections` (key ->
+  `{description, start}`), `cover`, `size` (`"4:3"`, else 16:9), `faces` and `designSystems`.
+  Claude's `v`, `createdOnFiles`, `lists` and `format` are read and kept. The version's files are
+  `deck.css`, one `slides/<id>.html` per slide (the id is its file name, `[A-Za-z0-9_-]{1,64}`),
+  images and font files anywhere, and a design system's files under `ds/<folder>/`. Paths are
+  from the deck's root, and a Claude deck's leading `project/` (`project/ds/<folder>/fonts/A.woff2`
+  in a face's `src`, an image or a `url()`) is dropped, so a deck written for Claude publishes and
+  looks the same. An image is the version's own file
+  by plain relative path, never Claude's `/_blob/<id>`, `data:` or a URL. A Markdown deck still
+  holds only images.
+- **A slide.** One `<section id>` on a 1920x1080 canvas (1440x1080 at 4:3) with a 128px margin by
+  default. Its last child may be one `<aside>` of plain-text notes (at most 4,000 characters; the
+  rest is cut with a warning). `hidden` skips it, `data-transition` (fade, push, magic) is how it
+  leaves, and `data-section` is kept. Tag defaults are Claude's: h1-h3 at 96, 64 and 44px and 600,
+  text at 32px, no default margins, and a `div` positioned so its pinned children pin to it.
+- **The element allowlist:**
+  - `h1`-`h3`, `p`, `ul`, `ol`, `li`, `br`, `b`, `i`, `u`, `a` (https, http, mailto, `#N`, or
+    `#<slide id>`, which pages to that slide), `span`, `div`, `img`, `table`, `thead`, `tbody`,
+    `tr`, `th` and `td`;
+  - inline `svg`, shown as one picture of its own XML;
+  - `hr`;
+  - Plinth's `x-shape` (`kind`: rect, rounded, ellipse, diamond, four arrows, line), `x-icon`
+    (Claude's 30 icon names, drawn with Phosphor's regular icons), `x-connector` (`x1 y1 x2 y2` in
+    px or % of its box, `route` straight, hv, vh or elbow, heads `end`, `both` or `none`, or a
+    sized flow box drawn corner to corner) and `x-embed`.
+
+  Other HTML tags (header, figure, blockquote, h4, strong, code…) become plain boxes or phrases,
+  with a `slide_markup` warning. Script, `<style>`, frames, objects, forms, inputs and media are
+  refused. An attribute the allowlist does not name is dropped; `on*` and `javascript:` are
+  refused.
+- **Claude's caps,** each refused with its file and line:
+  - 200 boxes a slide (phrases, breaks, rows and cells do not count; a table is one box);
+  - 15 nested `div`s;
+  - 24 pinned children of one box (by `style`, or by a one-class `deck.css` rule);
+  - an `svg` of 52 KB, with no script, handlers, `foreignObject`, images, links, `href` other than
+    `#id`, `url()` other than `url(#id)`, or animated `href`, and only numeric or the XML five
+    entities;
+  - tables of 100 rows by 24 columns, and 4,000 table cells a slide;
+  - 100 inline marks (`b`, `i`, `u`, `a`, `span`, and the phrases read as them) in one text box,
+    counted down to the next box;
+  - 8 embeds a slide, each 16 KB and a direct child of the section;
+  - 20,000 characters of text a slide;
+  - 500 slides.
+
+  Plinth adds byte limits: 256 KB for a slide file, `deck.css` and `deck.json`, and 4 MB for all
+  of the deck's text, checked from the stored sizes before any file is read; and elements nested
+  at most 64 deep. Every refused slide names its file: none is dropped quietly.
+- **CSS.** `deck.css` and every `style` attribute pass the design-system CSS check (no `@import`,
+  `<`, backslash, string URL functions, `expression()`, `behavior` or `-moz-binding`), a quoted
+  string closes on its own line (a browser ends it at a line break), and their `url()`s may name
+  only the version's own files (no `data:`). `:host(...)`, `:host-context`, `::slotted` and
+  `::part` selectors are dropped. In each slide, `:root` and `:host`
+  name its `html`, and `html` and `body` rules apply as in a page. `@media` is read at the slide's
+  size: `all`, `screen`, orientation and px widths and heights apply, `prefers-reduced-motion:
+  no-preference` holds and `reduce` does not. `@font-face` does not load (a warning), and
+  `@property` registers for the whole deck, rebuilt from its checked name, `syntax`, `inherits`
+  and `initial-value` (any other is dropped). Unlike Claude, Plinth does not drop the CSS that
+  Claude's renderer drops (`z-index`, `float`, `clip-path` and so on): it is a browser, so those
+  rules work.
+- **Fonts.** `faces` are Google Fonts `css2` links or font files of the version (a design system's
+  under `ds/<folder>/`). There are at most 4 families, counting each family a link names. A face
+  that breaks a rule is ignored with a warning. No face is the system stack.
+- **Rendering.** Each slide is built from the parsed tree in its own shadow root, with the deck's
+  rules, never from markup ([security](security.md#html-decks)).
+  - Plinth draws shapes (CSS), icons (inline SVG paths) and connectors (an SVG it computes from
+    the laid-out boxes, in the element's `color`, `border-width` and `border-style`).
+  - An embed runs in a nested frame of the fixed loader `/__plinth/frames/slides/embed.html`
+    (allow-scripts only, no network), mounted only while its slide is on stage and for print
+    (which waits up to 3 seconds for each to draw).
+  - The fixed canvas is scaled to fit like a Markdown deck's, and clipped like Claude's. A slide
+    never shrinks its text, and is never marked as overflowing: a box past the edge is the
+    author's choice (a full-bleed picture). Markdown decks keep their overflow mark.
+- **Motion.**
+  - CSS animations play when a slide arrives in the deck view or presenter view's current pane.
+  - `class="fragment"` waits for a click, in `data-fragment-index` order then file order, with
+    reveal.js's `visible` and `current-fragment` classes. Next and previous step through them
+    before the deck moves on, and going back shows the earlier slide whole.
+  - `data-transition` cross-fades, pushes, or moves the pinned boxes that share an `id` on both
+    slides (magic) while the rest fades.
+  - Motion is off (every box at its plain rule) under reduced motion, in the overview, in print,
+    in the `.pptx` and in stills. A still is the shell opened at the top, as only a thumbnail
+    capture opens it.
+  - Every fragment shows in the overview, in print, in stills, in an audience window and while a
+    deck follows a presenter: only slide numbers cross the app and the room. Animated SMIL in an
+    inline `svg` is removed from its still picture.
+- **Viewing.** Paging, `#N`, the overview, presenter view (its own copies of the current and next
+  slide), the audience window, Lead viewers and review mode work as for a Markdown deck. There is
+  no Plinth footer or page number: a counter the section increments starts at its place in the
+  deck, as in Claude's format.
+- **Print and .pptx.** Print and save as PDF print each slide at its canvas size (20x11.25 in at
+  16:9); the handout scales it to the page. The `.pptx` is built from the slides as rendered, at
+  13.333x7.5 in (10x7.5 at 4:3, 144 canvas pixels to the inch):
+  - text boxes with their runs (weight, slant, underline, colour, capitals, the face named);
+  - painted boxes as rectangles, rounded rectangles or ellipses with their fill, opacity and
+    border, and a side's own border as a bar;
+  - `x-shape`s as PowerPoint shapes, and tables as tables;
+  - images, cropped where the screen crops them;
+  - inline `svg`, icons and connectors as pictures;
+  - the notes.
+
+  An embed is left out, and `exported` gains `embeds_skipped`, which the app's toast reports
+  ("1 live embed was left out.").
+- **Agents.**
+  - `get_artifact` returns `source_path: "deck.json"`, the index in `content` and the text of
+    `deck.css` and every slide in `files`, all untrusted.
+  - An update sends the index in `content` and, in `assets`, only what changed, as on Claude:
+    every file of the current version the list leaves out is carried as if sent as
+    `{path, sha256}` (slides, `deck.css`, images, fonts, a design system's files), as Claude keeps a
+    file until it is deleted. Only a slide the new `order` no longer names is left out: a Plinth
+    asset list has no delete, so leaving a slide out of `order` is its delete (with no `order`,
+    every slide file stays). Omitting
+    `assets` keeps every file, as for every type. The version is checked again (carried and
+    reused files read from storage).
+  - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
+    `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
+  - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
+    they ask an agent for changes. Compare lists the index's changes (title, size, fonts, slides
+    added, removed or moved) beside the slide files that changed.
+- **Design systems.** `designSystems` is kept as written (its `namespace`s checked, at most 4), and
+  a face's `src` or an image may name `ds/<folder>/...`. `get_design_system` with `install_for:
+  "slides"` and `deck_format: "html"` lists the system's `tokens.json`, font files and images, as
+  Claude copies them into a deck (no generated CSS); a Markdown deck, the default, gets its
+  images. Nothing in a deck loads another artifact.
+- **Not yet.**
+  - Editing an HTML deck on its page.
+  - Fragment steps in an audience window and for followers (they show every step).
+  - Video (`data-video`).
+  - Claude's inline decks (no `format`, `data-build-in`).
+  - Embeds in the `.pptx` (Claude flattens them to a picture).
+  - A rendered still of an embed in thumbnails and the overview.
 
 ### Comments from the page (decided 2026-11-19)
 
@@ -1743,10 +1965,26 @@ is a new version, which owners and editors can revert by restoring an older one.
   `transparent` or a color name; white by default) and `section` (a section's boards stay
   together on one row when they fit). Presets cover phones and desktops, social posts, IAB ads,
   print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
+  `height="auto"` with a `size` or a `width` makes a fluid page board (Claude's PAGE frames): its
+  document gets no height, the board loader measures its content once it loads and on every
+  change, and the board is that tall, from its least height (the size's height, or 10/16 of the
+  width) up to 8,000 px. `x` and `y` (both or neither, whole CSS px from -100,000 to 100,000)
+  place a board's top-left corner on the canvas (decided 2026-11-21).
   At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
   bad marker is refused with a fix-it message for the first problem and every problem with its
   line in `details.issues`. The title is the shared section's `<title>`, else the first board's
   name. One parser for the Worker and the renderer.
+- **Canvas notes** (decided 2026-11-21). A whole line `<!-- note kind="sticky" -->` or
+  `<!-- note kind="title" -->` starts a note, and the lines up to the next marker are its plain
+  text (blank lines round it dropped, at most 1,000 characters, at most 60 notes). A line is a note
+  marker only when it is one in full: `kind` given as `sticky` or `title`, and only note
+  attributes as `name="value"`. Any other whole-line `<!-- note ... -->` (`<!-- note -->`,
+  `<!-- note the padding -->`) is an ordinary HTML comment in its board, so a design written
+  before notes reads as it did. Attributes are `kind` (required), `x` and `y` (as for a board), `width` (80 to 4,096 px: a sticky's width, 240 by default,
+  or where a title wraps) and a sticky's `color` (`yellow` by default, `gray`, `red`, `orange`,
+  `green`, `teal`, `blue`, `purple`, `pink`). The shell shows the text with `textContent`, so markup
+  in it is never parsed. Notes are not boards: they are not exported, printed, commented on or
+  counted in the 60 boards, and their lines belong to no board.
 - **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
   relative path. Font files and data files (JSON, text) are refused with what to do instead
   (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
@@ -1760,7 +1998,17 @@ is a new version, which owners and editors can revert by restoring an older one.
   out in rows with the board's name over each; the name zooms to its board. Rows are packed for
   the screen: consecutive sections share a row, a wider gap between sections than between boards,
   and the row width is the one at which every board shows at the largest scale, so the first view
-  fills the screen. Fit keeps every board clear of the toolbar at the bottom. Drag, the
+  fills the screen. Boards and notes with `x` and `y` sit exactly there, and the packed rows start
+  under them; a design with neither lays out as before. A title note without them starts a row and
+  heads the boards after it; a sticky without them takes a place in its row like a board. Notes
+  move and zoom with the boards, and their type grows with the design's sizes as written (a design
+  of tall boards has larger notes; a fluid board counts at its least height, so a long page does
+  not enlarge them). A fluid board that grows or shrinks lays the rows out again. While a board is
+  in use the view moves with that board, so it stays still on screen under the pointer; otherwise
+  the view stays where it is unless it is fitting, or still on the board last zoomed to, which it
+  zooms to again. Zooming to a fluid board too tall to read whole shows it at its width from its top. A
+  fluid board not yet mounted shows at its least height, and keeps its measured height while its
+  frame is away. Fit keeps every board clear of the toolbar at the bottom. Drag, the
   wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
   toolbar (Zoom out, the zoom level, which goes to 100%, Zoom in and Fit) and `+`, `-`, `0` (Fit)
   and `1` (100%) zoom between 5% and 400%. After Fit
@@ -1769,8 +2017,24 @@ is a new version, which owners and editors can revert by restoring an older one.
   covered so the canvas can be dragged; Interact, on the label of the board last zoomed to (and on
   a label that is hovered or focused), takes that board's cover off so its links, buttons and
   scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
-  Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  Done; Done, Escape or a click outside puts the cover back. **Prototype flows** (decided
+  2026-11-21): in the board in use, a click on a link whose `href` is exactly `#board=<id>` is not
+  followed; the canvas zooms to that board and puts it in use instead, so people click through a
+  flow. A board not in use cannot move the canvas, and an unknown id does nothing. A flow moves
+  only on a person's click (the shell's `navigator.userActivation.isActive`, which a click in a
+  board frame sets for its ancestors; a browser without the API skips this check) and at most once
+  every 500 ms, so two boards' scripts cannot bounce the canvas between them. At most 24 board frames are alive at once; boards far off screen are placeholders until
   they come back (a board's own state starts again then).
+- **Deep links** (decided 2026-11-21). The app keeps the board on view in its address's fragment,
+  `#board=<id>`, as a deck keeps `#slide=N`: written with `history.replaceState`, never sent to
+  the server, set when the canvas zooms to a board (its name, a flow, the app's `goto`) and taken
+  out after Fit. A reload, a shared link or a new frame (a newer version, review mode) opens on
+  that board; a frame asked for a board its version does not have answers with the board it shows,
+  so a stale `#board=` leaves the address. Writes are at least 250 ms apart, the last board
+  winning, so a frame that reports boards fast cannot flood the browser's history API. The shell says `ready` and `board` with only a board id (or null), to the exact app
+  origin, and the app answers `goto` with one. The app accepts them from the shell's window alone
+  (its origin, or `"null"` under opaque isolation, as for a deck), never from a board, whose window
+  is another.
 - **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
   at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
   document over itself when the renderer posts it: Plinth's base URL (the shown version's own
@@ -1783,7 +2047,9 @@ is a new version, which owners and editors can revert by restoring an older one.
   in-chat preview pass, whose shell no source can name), and the renderer
   frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
   no storage and no access to the shell, the app or another board, and it cannot navigate any of
-  them (links may open a new tab, as on every artifact).
+  them (links may open a new tab, as on every artifact). Besides `ready` and `loaded`, the loader
+  reports a fluid board's content height (`size`) and turns a click on a `#board=<id>` link into
+  `goto`; the renderer reads each only from that board's frame (docs/security.md, Designs).
   The shell's own DOM never holds author markup. A design's files are served with
   `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
   never run script; its `design.html`, which no board loads, is served as text with
@@ -1808,7 +2074,8 @@ is a new version, which owners and editors can revert by restoring an older one.
   `payload_too_large` (with `max_bytes`) once it passes that, and otherwise sends the pieces one
   after the other without joining them; the pixel cap keeps even a PNG that does not compress
   (about 4 bytes a pixel) under it. REST: `GET /api/v1/artifacts/:ref/export/options?version=`
-  lists the version's boards and the pixel cap (`max_pixels`), and
+  lists the version's boards (a fluid board with `auto_height: true` and its least height) and the
+  pixel cap (`max_pixels`), and
   `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=` returns the file as an
   attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view the artifact may export
   it, through the thumbnail's check (the `enter` action: strangers get 404, and a token limited to
@@ -1839,6 +2106,14 @@ is a new version, which owners and editors can revert by restoring an older one.
   without the binding or with `DESIGN_EXPORT` off answers 403 `feature_disabled` and its menu has
   Print instead. Agents have no export tool; the endpoint takes their bearer tokens like the
   thumbnail's. Each export spends Browser Rendering time, which Cloudflare bills per browser hour.
+- **Design systems (decided 2026-11-21).** A design names the design system it was built on as a
+  page does, with `<meta name="plinth-design-system" content="<id>@<version>">` in its shared
+  section (a meta inside an artboard's fragment names nothing): the same publish warnings
+  (`design_system_outdated`, `design_system_unavailable`) and the same `design_system` field in
+  `get_artifact`. It installs one with `copy_files` (`tokens.css`, `components.css` and images
+  under `ds/<prefix>/`, linked from the shared section; never font files, which artboards cannot
+  load). Agents use the person's default design system without asking
+  ([Design systems](#design-systems-decided-2026-11-19)).
 - **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
   (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
   stays the same.
@@ -1848,9 +2123,14 @@ is a new version, which owners and editors can revert by restoring an older one.
 - **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
   sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
   artboard can and cannot load. Design content is untrusted like artifact HTML.
-- **Not yet.** Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode,
-  deep links to one board from the app and an MCP tool that returns a board's picture to the agent
-  are not offered.
+- **Fluid boards in exports and print.** A fluid board prints and exports at its measured height:
+  its page is named for that size once its loader reports it (before it counts as loaded). The
+  app offers a fluid board's PNG at 1x only, since only the render knows its height, and a PNG of
+  one that rendered past the pixel cap is refused after the render with 400 `invalid_input`
+  ("use format=pdf"), the export counted as any other.
+- **Not yet.** Dragging boards on the canvas, hand editing, component props, pages (Claude's
+  several canvases in one design), linking a design system, per-board dark mode and an MCP tool
+  that returns a board's picture to the agent are not offered.
 - **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
   loads the version top level, and a board's requests (an opaque document) fall in another cookie
   partition than the enter's, so for a design the Worker also gives that browser the same capture
@@ -2217,12 +2497,64 @@ its page without a new version each time, and agents add and move blocks with
   with `base_version`, and restore brings old settings back (the history calls it Restore
   settings: the board's blocks and arrows are not in versions and stay as they are).
 - **The board, in shared data.** Two collections, both shared (any permitted writer may move any
-  block): `blocks`, each `{ kind: "note" | "text" | "rect" | "ellipse", x, y, w, h, text,
-  color?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", z? }` (whole numbers; `x` and
-  `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 2,000
+  block): `blocks`, each `{ kind, x, y, w, h, text, color?, z? }` (whole numbers; `x` and `y`
+  within ±1,000,000, `w` and `h` 24 to 4,000, `z` within ±1,000,000, text up to 4,000
   characters), and `arrows`, each `{ from, to, label?, style?: "solid" | "dashed", head?: "end" |
-  "both" | "none" }` (`from` and `to` two different block ids, a label up to 120 characters). Draw
-  order is `z`, then id. An arrow whose block is gone is not drawn and is never deleted on its own.
+  "both" | "none", heads?, fromSide?, toSide?, bends?, color? }` (`from` and `to` two different
+  block ids, a label up to 120 characters). The element set follows Claude's whiteboard (decided
+  2026-11-21), inside format 1: every field it added is optional, so a board written before reads
+  the same.
+  - `kind`: `note`, `text`, a shape (`rect`, `rounded`, `ellipse`, `diamond`, `pill`, `hexagon`,
+    `parallelogram`, `database`, `queue`, `document`, `cloud`, `person`), `container` (a section)
+    or `table`. Every kind has a box (`w`, `h`), unlike Claude's text and tables, so placing, fitting
+    and hit-testing stay one rule.
+  - `color`: `yellow`, `green`, `blue`, `pink`, `purple`, `gray` (theme-aware) or any `#rrggbb`
+    (drawn as written, with white or near-black words, whichever reads); on a `text` the words'
+    colour. A note, shape or section also takes `stroke` (`ink`, a colour name or `#rrggbb`) and
+    `hollow`; those and `text` take `size` (`small` 14, `body` 16, `large` 28, `title` 48, `huge`
+    96; left out, 14 as before), `textAlign` (`left`, `center`, `right`) and `wrap` (`false`: lines
+    do not wrap). Fields a kind does not take are refused.
+  - Text is plain, with inline marks drawn from it as text: `**bold**`, `*italic*`, `***both***`,
+    `` `code` ``, `[label](https://...)` (kept only when the address parses as http or https,
+    opened in a new tab with no opener or referrer, and only when pressed without a drag), never
+    nested; `- ` and `1. ` lines are list items. Nothing is ever parsed as HTML.
+  - A table (`kind: "table"`, no `text`) has `cols` (`{ id: { at, w? } }`, `w` a share of the
+    table's `w`, at least 10), `rows` (`{ id: { at, <col id>: text } }`, the lowest `at` the header,
+    cells up to 1,000 characters, every cell naming a column), `fills?` (by row then column: a
+    colour or `""`), `heat?` (`{ cols }` or `{ rows }`, not both: numbers shaded by value), and
+    `color`, `size` and `textAlign`; at most 40 columns and 500 rows, ids 1 to 40 of
+    `A-Z a-z 0-9 _ -` but never `at`. Columns share `w` by weight, rows share `h` equally.
+  - An arrow with neither side nor `bends` is the straight line between the blocks' centres, as
+    before. With `fromSide` or `toSide` (`top`, `right`, `bottom`, `left`) it runs in right angles
+    from the middle of those sides (a missing one faces the other block). `bends` is Claude's
+    planned route: `["h" | "v", up to 12 whole numbers]`, the legs taking turns, the first half of
+    the numbers (rounded up) measured from the centre of `from` and the rest from `to`; a plan whose
+    first or last corner falls inside its block is drawn as a right-angle route. `heads` is
+    `[from, to]`, each `none`, `arrow` or `circle`, and wins over `head`; `color` takes what `stroke`
+    takes.
+  - Draw order: sections behind everything, then arrows, then every other block by `z`, then id.
+    A board has no `order` list: `z` per block, changed with a `merge`, gives the same control
+    without one document every add would rewrite. An arrow whose block is gone is not drawn and is
+    never deleted on its own.
+  - Pages loaded before this format read a block through an older reader and write it back whole
+    on every move, which would turn a newer block into an empty note, drop a table's cells or cut
+    a long text. So the board's page names the format it reads and writes on every write
+    (`x-plinth-format: whiteboard.2`, `BOARD_PAGE_FORMAT`, through
+    `db.collection(name, { format })`). A page write to a whiteboard that does not name it may
+    still add blocks and arrows, and may change or delete one only when the older reader read it
+    whole (`legacyBoardLoss`: the older keys, kinds and named colours, text up to 2,000
+    characters); otherwise it is refused before anything changes: `401 unauthorized`,
+    `details.reason: "stale_page"`. So tabs open at a deploy keep working on what they can read,
+    and an Undo of a delete re-creates only what they read whole. A 401 is what the older pages
+    already handle by turning read-only with "Your access changed. Reload the page.", so they
+    stop taking edits that could not be saved; the current page shows "Out of date. Reload." for
+    it (the runtime passes the reason on the error and on `plinth:expired`).
+    The format is raised whenever a newer board holds something an older page's reader drops,
+    and `legacyBoardLoss` is then taught what the previous format read. The page's reader
+    (`cleanBlock`, `cleanArrow`) keeps every value a valid block or arrow may hold, so the current
+    page writes back what it read. A page whose runtime is too old to send the header shows the
+    board read-only with the same line. Agents' and the app's writes are not checked this way: an
+    agent's `set` may replace a block whole.
   The server checks every whiteboard write against these shapes, from the page, agents and the
   app; it refuses other collections and personal (`u_`, `~me`) documents. Board edits are not
   versioned (shared data never is); every write is stamped with who made it.
@@ -2260,14 +2592,37 @@ its page without a new version each time, and agents add and move blocks with
   peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
   the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
   save never takes a drop back to where the block started. Text is written at the rev its edit
-  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
-  "Use mine" button that writes theirs over it. A
+  began from: a peer's text saved during the edit is kept, the viewer's text is written at once
+  as a new note beside the block, and the viewer is told and offered a "Use mine" button that
+  writes theirs over it and takes the note away again (unless it was changed meanwhile). A
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
-  and follows on the shared-data poll. Block text is only ever drawn as text.
+  and follows on the shared-data poll. Block text is only ever drawn as text. People get the
+  other kinds through the same controls: a selected shape shows one Shape list (Box, Rounded,
+  Ellipse, Diamond and the rest) and a selected text one Text size list, saved like a colour; a
+  section's title is edited like any text, and dragging a section carries the blocks lying wholly
+  inside it, nested sections included (each saved where it lands; peers see the section move
+  live and its blocks on the save); a double click on a table cell (or Enter on a table) edits
+  that cell, written into its row at the rev the edit began from. A table's rows merge cell by cell: on a conflict the typed cell
+  goes onto the newer rows unless that same cell changed or its row or column was removed, and then
+  the other writer's version stays, the typed text becomes a new note beside the table and the
+  viewer is offered "Use mine", which writes it back (bringing back a removed row or column).
+  Typed text is never dropped: whatever the viewer wrote that cannot go where it was written (a
+  peer's text or cell kept over it, a save that kept conflicting four times, the block or table
+  deleted while they wrote in it) is written as a new note beside the block, or where it was,
+  before the viewer is told, so a message replaced by the next one or a closed tab loses nothing.
+  A save refused or lost for any other reason (offline, the board full, a second rate limit)
+  keeps its typed text the same way. A note that cannot be written either (a rate limit waits
+  once first) is held on the page: "Couldn't save what you wrote. Copy it to keep it.", with the
+  text, Copy and Dismiss, which no other message replaces and which never times out; the next
+  write of the viewer's that goes through, or the board becoming writable again, writes it as a
+  note. An edit in progress when the board turns read-only is held the same way. Use mine takes a
+  note away only once the block holds the text. Adding sections and tables, and adding a table's
+  rows and columns, is for agents for now.
 - **The toolbar shows only what applies**, in one row on the board's own background. The add
   buttons show to people who may change the board; a selected block's colours, Connect (which
-  starts from that block) and Delete show only while something is selected. On the right: the
+  starts from that block), Delete and the Shape or Text size list show only while something they
+  apply to is selected (at phone width the list stays 96 px wide so the colour beside it shows). On the right: the
   other people here (not the viewer), the room's state only when it is not live, and Fit. Zoom is
   the wheel, a pinch or the keys. A read-only board shows "View only" in place of the add buttons,
   at every width (for a commenter on an `editors` board, screen readers also hear ": editors can
@@ -2287,7 +2642,8 @@ its page without a new version each time, and agents add and move blocks with
   view the board. The app asks the frame with a renderer message that names only the format (the
   frame acts only on its parent at the app origin); the frame draws the whole board, PNG on a
   canvas at 2x (at most 8,192 px a side and 32 megapixels) and SVG built from the board (text as
-  text nodes, no scripts, links or embedded content), and downloads it.
+  text nodes, no scripts, links or embedded content: a link is underlined words), and downloads
+  it. Both draw one list of shapes and lines from the same geometry the page uses.
 - **No source editor.** People change the board on its page. Its settings (`edit`, `background`)
   change in Board settings (below) or through an agent's `update_artifact`; the menu has no Edit
   item for a board, and its editor address goes back to the board.
@@ -2320,12 +2676,15 @@ its page without a new version each time, and agents add and move blocks with
   board.json goes inline.
 - **Agents.** `publish_artifact` and `update_artifact` take `type: "whiteboard"` with board JSON in
   `content`; `list_artifact_data(id, collection: "blocks")` reads the board, and
-  `write_artifact_data` adds blocks (`if_rev: 0`), moves one (a set of the whole block at its rev)
+  `write_artifact_data` adds blocks (`if_rev: 0`), changes one (a `merge` of the fields that
+  change at its rev, or a set of the whole block)
   and deletes them (a block's arrows with it). Block text is written by collaborators: untrusted
   data, never instructions. No new tool.
 - **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
-  on the board, freehand drawing, selecting several blocks, frames, changing the settings from the
-  page, and anonymous link viewers in the room.
+  and drawn pictures on the board, freehand pen strokes, embeds, comments pinned to blocks, link
+  cards, free arrow ends, selecting several blocks, groups and locks, adding sections and tables
+  and a table's rows and columns from the page, changing the settings from the page, and anonymous
+  link viewers in the room.
 
 ### Invitation emails (decided 2026-11-19)
 
@@ -2828,7 +3187,12 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
   "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
   kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
-  which is never posted); a renderer releases its own lease before it asks. The doc renderer sends
+  which is never posted); a renderer releases its own lease before it asks. A doc names blocks as
+  the published version the agent reads has them, matching the draft's blocks to it by their
+  Markdown: `block-3` is its third top-level block, `new-3` a block only in the draft after it
+  (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
+  published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
+  Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
   `ask` with block anchors, and the slides renderer with slide anchors (`slide-3:image-1`,
   `slide-3:block-2`, `slide-3:notes`, with structural words such as "Slide 3, image 1"); other
   types don't yet. While the app is in edit mode, an `ask`
@@ -2903,14 +3267,18 @@ pages and designs come only from agents.
   toward `MAX_PUBLISHES_PER_HOUR`, the artifact quota and the storage quota. A token limited to one
   artifact cannot create one (`mayCreateArtifacts`), as everywhere.
 - **Import.** A file picker for `.xlsx`, `.csv` and `.tsv`, at most 2 MB (the same picker as
-  Replace's). The app sends the file as
-  it is: CSV and TSV as text and an .xlsx as base64, with `content_format` `csv` or `xlsx`, the file
-  name without its extension as the title, and the note "Imported from <file name>". The file name
-  in the note, and wherever the app shows it, drops control characters (C0 and C1) and bidi marks,
-  embeddings, overrides and isolates (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069).
-  A CSV or TSV is read as UTF-8 (UTF-16 when it starts with that byte order mark); bytes that are
-  not UTF-8 are read as Windows-1252, which Excel on Windows saves a "CSV" in, so "Café" stays
-  "Café" and is never U+FFFD, and the person is told. The Worker
+  Replace's). The app sends an .xlsx as it is, as base64, and a CSV or TSV as UTF-8 text, with
+  `content_format` `csv` or `xlsx`, the file name without its extension as the title, and the note
+  "Imported from <file name>". The file name in the note, and wherever the app shows it, drops
+  control and format characters (bidi marks, embeddings, overrides and isolates, zero-width
+  characters) and the line and paragraph separators. A CSV or TSV is read as UTF-8, as UTF-16 when
+  it starts with that byte order mark or, without one, when its NUL bytes fall as UTF-16's do
+  (nearly every second byte); NUL bytes otherwise are refused ("<file name> isn't a text file
+  Plinth can read. Save it as CSV UTF-8 and import it again."). Other bytes that are not UTF-8 are
+  read as Windows-1252, which Excel on Windows saves a "CSV" in, so "Café" stays "Café" and is
+  never U+FFFD, and the person is told. A file not in UTF-8 is re-encoded to UTF-8 before it is
+  sent, and one that is then over 2 MB is refused in the app: "<file name> is larger than 2 MB once
+  converted to UTF-8, the most a spreadsheet import takes." The Worker
   converts and checks it exactly as it does for agents (see Imports under
   [Sheets](#sheets-decided-2026-11-19)), and its answer is the one that counts. The sheet then
   opens in edit mode where editing on the page works, and on its page otherwise.
@@ -2986,10 +3354,18 @@ the same leases, room, drafts and Publish as [Editing](#editing).
 - **Reading the page back.** After every input the renderer reads the edited DOM against an
   allowlist (bold, italic, code, strikethrough, line breaks, text, and the links and kept parts it
   drew itself); anything else counts as its text, so nothing a browser inserts becomes markup.
-  Paste is plain text only.
+  Paste is plain text only; a paste of several paragraphs (blank lines between them) makes a block
+  of each, the first joining the text before the caret and the last the text after it (in a list
+  an item of each, in a quote a paragraph of each; a table cell takes it on one line).
+- **Undo.** Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z (Ctrl+Y) undo and redo in the open block: typing (a
+  run of it, until a pause of a second, is one step), formatting, links, line breaks, Enter and
+  Tab in a list or quote, paste and Turn into. Right after an Enter or a multi-paragraph paste,
+  Undo with nothing left in the new block joins the blocks it made back into the one it was,
+  with the caret where it was, unless they changed meanwhile.
 - **Writing it back.** The serializer writes the model as CommonMark with GitHub tables,
-  strikethrough and bare-URL links (the doc's dialect, html off): emphasis as `*…*`, escapes
-  wherever text would start syntax, a `<` at the start of any top-level block as `\<`, lists from
+  strikethrough and bare-URL links (the doc's dialect, html off): emphasis as `*…*`, marks nested
+  as they run (a link inside bold, bold inside italic), escapes wherever text would start syntax,
+  every `<` in text as `\<`, lists from
   their own start number, and code fences lengthened when the code holds one. Reference
   definitions that follow a block stay byte for byte after it. Only the leased block's lines are
   ever replaced, so a block nobody edited keeps its bytes.
@@ -3017,7 +3393,18 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   taken over or the draft changes under it, its text is written without its formatting rather than
   lost: in place of the block, or, when someone else took the block, as a new block below it; when
   there is no lease to write it with (not connected, or a review waits), it is written once there
-  is.
+  is. A send that is refused (the doc is at its size limit: its bytes, or in a room its 50,000
+  lines, checked before sending; in a room, the block is over one frame as sent, JSON-encoded;
+  the socket did not take it; or the room answers `too_large`) is handled the same way: the text
+  stays in the open block with the reason, counts as unsent and `unsavable`, goes to the rescue
+  store (a room) or the kept copy (solo), and is sent again once it fits or the draft is back. An
+  edit the doc's rules refuse (the frame's own check before sending, or the room's `invalid`)
+  puts the block back as the doc has it, but what was typed is kept first, in the rescue store
+  with Copy and Dismiss, and written as a block of its own after a reload. A refusal that arrives
+  after its block closed (`invalid`, `too_large`, or `not_held` after a takeover) keeps what that
+  send wrote the same way, and in a room typing written by itself after its block closed is in
+  the rescue store until the room acknowledges it. A block op over one frame of the room is not
+  sent ("This block is too long to send.").
 - **Nothing typed is lost.** Typing the draft does not hold yet (above) is kept in a rescue store
   until the room acknowledges a write of it (without that acknowledgement it is written again,
   a copy at worst; a discard clears the store; in solo mode items go into the tab's text, which
@@ -3028,9 +3415,14 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   one that still cannot be written stays kept, counts as unsent changes (the page asks before it
   is left, and a hidden tab keeps its socket), and the page says "What you typed couldn't be added
   to the doc yet. It is kept here." with **Copy**, or, for text the app's store could not take (over
-  20 items or 256 KiB), "… It's kept on this page until you reload. Copy it to be safe." The app's
-  store only merges what the frame reports (items in, ids out), so nothing leaves it unnamed. A room's refusal never resets a block holding
-  such typing.
+  20 items or 256 KiB, or longer than one frame of the room), "… It's kept on this page until you
+  reload. Copy it to be safe." The frame offers such text to the app's store again once something
+  leaves it. Next to **Copy** is **Dismiss**, which asks once ("Dismiss drops it for good: copy it
+  first to keep it.") and then drops every kept text, here and in the app's store; it is offered
+  too, with Copy, while the person can no longer write the doc. The app's store only merges what
+  the frame reports (items in, ids out), so nothing leaves it unnamed; the page warns before it is
+  left about the signed-in account's store only (any account's while the session is unknown). A
+  room's refusal never resets a block holding such typing.
 - **Opening a block for editing again.** A block saved with such a character reference opens for
   editing as any other: the fidelity check tries the same written form.
 - **Formatting and the block menu.** A format bar (bold, italic, code, strikethrough, link), shown
@@ -3056,7 +3448,10 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   `.` and `)`, or an indented block that would continue the list above) is not made, and the page
   says why. The same holds for "Turn into" and "Insert below": a new block that would join a block
   next to it or take one in (a numbered list between lists that use both `.` and `)`, or a list
-  right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
+  right above an indented block) is not made, the block stays as it was, and the page says why.
+  Turn into that would drop text, or a table, a divider or an image in the block, is not made
+  either ("That would drop part of this block, so it wasn't changed."); one that changes only
+  white space or formatting is, and Undo puts it back. A block op the doc has no room for, or that cannot be sent, says so and changes
   nothing. A block op or a block to open whose lease request is cut off by a dropped connection is
   not made either, the page says "Not connected. Try again in a moment.", and nothing else waits
   for it; typing that waits for a lease (a block taken again after a reconnect, or typing kept
@@ -3373,7 +3768,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`; in a
   design's artboards, on every instance, only those that load the design's own files) and
-  `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an
+  `slides_setting`, `slide_empty`, `slide_dense` and `slide_markup` (a deck's ignored setting or
+  column marker, an HTML deck's markup that shows differently, an
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
   Markdown shows that the version does not hold, its path resolved as the browser does: before any
   `?` or `#`, percent-decoded, `.` and `..` segments applied, an `<angle bracket>` destination read
@@ -3519,6 +3915,61 @@ files) and big pages without merging chunks, and an update stores only what chan
   `next` the caller can act on.
 - **Forward-only.** Migration 0006 and the new key layout cannot be rolled back past 0.4.0 without
   breaking artifacts updated since (`docs/deploy-checklist.md#6-upgrading-and-rolling-back`).
+
+### Copying files from another artifact (decided 2026-11-21)
+
+A publish, an update or an upload can copy files from other artifacts the caller can view into the
+version it writes, on the server. It is how a deck, a design or a page installs a design system's
+tokens, fonts and images, and it is generic: any file of any artifact type the target type takes.
+It mirrors Claude's `files: {"<path>": {artifact, path}}`. This replaces the earlier rule that no
+files are copied between artifacts.
+
+- **Input.** `copy_files` on `publish_artifact`, `update_artifact`, `start_upload` and their REST
+  mirrors (`POST` and `PUT /api/v1/artifacts`, `POST /api/v1/uploads`): up to 64 entries
+  `{artifact, path, to?, version?}`, from at most 4 source versions and 32 MB in one call.
+  `artifact` is an id, a slug or this instance's app link (`<APP_ORIGIN>/a/<slug>`; a query or
+  fragment is ignored, any other address is 400 `copy_bad_address`); `path` is a file of that
+  version (its source file too) or a file its type generates (a design system's `tokens.css` and
+  the rest); `to` is where the copy lands (default `path`); `version` defaults to the source's
+  current one. Not with `files_from_version`.
+- **The rule.** Each source is read as the caller through the policy module, with the `view`
+  decision minus an admin's review access (`policy.ts decideCopySource`: an admin may look at a
+  reported artifact, never take its files), once, when the publish runs: after the publish rate
+  (and an upload's ticket rate) is counted, so refused copies count too, and before any write; for
+  an upload when the ticket is minted and again, as the ticket's principal, when the bundle
+  commits. A source the caller cannot view is the same 404 as a missing id; a password-protected
+  one needs a grant (agents never send passwords, 403 `password_required`); a taken-down one is 403
+  `taken_down`. A token limited
+  to one artifact cannot copy at all (403 `token_bound`, before any lookup; `mayCopyFiles`). The
+  target needs `edit`, or is a new artifact, as for any publish. The address comes only from the
+  caller's request: the server never copies because a page, a comment or a design system names
+  another artifact.
+- **Paths and types.** `to` is an asset path (no `..`, no `__plinth/`, no reserved path of the
+  target type), the target type's asset rules apply (a design refuses font files with its own
+  message), and the copy keeps its source's content type: a `to` whose ending would serve another
+  type is 400 `copy_type_mismatch`. A `to` given twice is `copy_twice`; one that is also among
+  `assets` is listed twice. A missing source file is 400 `copy_missing_file`. A `ds/<folder>/`
+  that would hold files copied from two different artifacts, one of them copied by this call, is
+  400 `copy_folder_taken` (checked on the version's final files, carried ones included).
+- **What the version holds.** The bytes are written under the target's own prefix, so they count
+  toward its size, its file count and its owner's storage, and they are scanned for publish
+  warnings like any file (they are never reported as sent by the request). An update that sends no
+  `assets` keeps the current files and the copy replaces one at the same path. A bundle's prefix
+  strip never moves a copy. Each copied file's manifest entry records `copied_from`
+  `{artifact, version, path, copied_at}`, kept as the file is carried into later versions, by
+  restores, and when it is sent back as `{path, sha256}`. The publish result has `copied_from`
+  (one record per source version: `artifact`, `version`, `copied_at`, `files` with `path` and
+  `from`), and `get_artifact` returns the same records with the source's `title` and
+  `current_version` when the reader may view the source now. For a reader who may not (and for
+  every source after the first 16, which are not looked up) a record keeps only `version`,
+  `copied_at` and each copy's `path`: `artifact`, `title` and `current_version` are null and
+  `from` is left out.
+- **Why it is safe.** Nothing loads across artifacts when a page is served: the copy is the
+  target's own file, served from the target's origin under the target's CSP, exactly as if the
+  caller had downloaded the file and sent it with `assets`, which the caller could always do since
+  it may view the source. Deleting the source or losing access to it later changes nothing already
+  published. The content host gains no route, no CORS and no pass that spans two artifacts. See
+  `docs/security.md#copies-between-artifacts`.
 
 ## Security and abuse
 

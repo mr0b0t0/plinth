@@ -750,7 +750,7 @@ function codeSpan(text: string, inTable: boolean): string {
 }
 
 /**
- * RichInline content as Markdown lines. RichMarks nest in one fixed order (link, strike, strong, em, code),
+ * RichInline content as Markdown lines. Marks nest as they run (see sync), code innermost,
  * emphasis is always `*…*` (CommonMark reads no intraword underscores as emphasis, so "un" +
  * *believ* + "able" must be `un*believ*able`), and a hard break is `\` at the end of a line.
  */
@@ -839,26 +839,41 @@ function serializeInline(
     else if (k === "em") delimiter("*", false);
     fresh = false;
   };
-  const target = (m: RichMarks): Mark[] => ORDER.filter((k) => k !== "code" && hasMark(m, k));
-  const sync = (m: RichMarks) => {
-    const want = target(m);
+  const isBreak = (s: RichSeg | undefined) =>
+    s !== undefined && (s.k === "br" || (s.k === "text" && s.text === "\n" && !s.m.code));
+  const wants = (m: RichMarks, k: Mark, link: LinkMark | undefined) =>
+    k === "link" ? m.link !== undefined && sameLink(m.link, link) : hasMark(m, k);
+  /** Where a mark that opens at segment `from` ends: the first segment after it without it. */
+  const runEnd = (k: Mark, from: number, link: LinkMark | undefined): number => {
+    let j = from;
+    for (; j < c.length; j++) {
+      const s = c[j] as RichSeg;
+      if (isBreak(s)) continue;
+      if (s.k === "br" || !wants(s.m, k, link)) break;
+    }
+    return j;
+  };
+  // Marks nest as a stack. The open marks the segment still has stay open (the longest run of them
+  // from the outside in); the others close, and the marks it adds open with the one that runs
+  // longest outermost, so "**bold [link](u)**", "**[a](u)**" and "*a **b** c*" are written as
+  // they read. Marks that start and end together nest in ORDER.
+  const sync = (m: RichMarks, from: number) => {
     let keep = 0;
     while (
       keep < open.length &&
-      keep < want.length &&
-      open[keep] === want[keep] &&
-      (open[keep] !== "link" || sameLink(openLink, m.link))
+      wants(m, open[keep] as Mark, open[keep] === "link" ? openLink : undefined)
     ) {
       keep++;
     }
     while (open.length > keep) close(open.pop() as Mark);
-    for (let i = keep; i < want.length; i++) {
-      openMark(want[i] as Mark, m);
-      open.push(want[i] as Mark);
+    const add = ORDER.filter((k) => k !== "code" && hasMark(m, k) && !open.includes(k))
+      .map((k, i) => ({ k, i, end: runEnd(k, from, m.link) }))
+      .sort((a, b) => b.end - a.end || a.i - b.i);
+    for (const { k } of add) {
+      openMark(k, m);
+      open.push(k);
     }
   };
-  const isBreak = (s: RichSeg | undefined) =>
-    s !== undefined && (s.k === "br" || (s.k === "text" && s.text === "\n" && !s.m.code));
   let last: RichMarks = {};
   for (let i = 0; i < c.length; i++) {
     const s = c[i] as RichSeg;
@@ -874,7 +889,7 @@ function serializeInline(
       if (last.em && after.em) common.em = true;
       if (last.strike && after.strike) common.strike = true;
       if (last.link && sameLink(last.link, after.link)) common.link = last.link;
-      sync(common);
+      sync(common, j);
       last = common;
       if (s.k === "br") write("\\");
       lines.push("");
@@ -886,7 +901,7 @@ function serializeInline(
     last = s.m;
     upcoming =
       s.k === "text" && !s.m.code ? String.fromCodePoint(s.text.codePointAt(0) ?? 32) : "`";
-    sync(s.m);
+    sync(s.m, i);
     if (s.k === "atom") {
       write(s.md);
       fresh = false;
@@ -897,7 +912,7 @@ function serializeInline(
       edge = null;
     } else writeText(s.text);
   }
-  sync({});
+  sync({}, c.length);
   return lines;
 }
 
@@ -1003,7 +1018,8 @@ export function serializeBlock(block: RichBlock, d: MarkdownDialect = DOC_DIALEC
 function signature(tokens: readonly MdToken[], out: string[] = []): string[] {
   let text: string | null = null;
   const flush = () => {
-    if (text !== null) out.push(`text:${text}`);
+    // An empty text (markdown-it leaves them where a delimiter was) renders nothing.
+    if (text !== null && text !== "") out.push(`text:${text}`);
     text = null;
   };
   for (const t of tokens) {
@@ -1038,10 +1054,47 @@ function signature(tokens: readonly MdToken[], out: string[] = []): string[] {
       ].join("\u0001"),
     );
     if (t.type === "inline" && t.children) {
-      out.push("(");
-      signature(t.children, out);
-      out.push(")");
+      out.push("(", ...nestFree(signature(t.children)), ")");
     }
+  }
+  flush();
+  return out;
+}
+
+const MARK_TOKENS = new Set(["strong", "em", "s", "link"]);
+
+/** "open" or "close" for a signature entry of a mark's token, else null. */
+function markEdge(entry: string): "open" | "close" | null {
+  const end = entry.indexOf("\u0001");
+  if (end < 0) return null;
+  const type = entry.slice(0, end);
+  const cut = type.lastIndexOf("_");
+  const edge = type.slice(cut + 1);
+  if ((edge !== "open" && edge !== "close") || !MARK_TOKENS.has(type.slice(0, cut))) return null;
+  return edge;
+}
+
+/**
+ * An inline signature with each run of marks that open (or close) together in one order:
+ * "**[a](u)**" and "[**a**](u)" render the same, and the model, a set of marks per run, cannot
+ * tell them apart. Marks that open together and close apart still nest one way only.
+ */
+function nestFree(sig: string[]): string[] {
+  const out: string[] = [];
+  let run: string[] = [];
+  let kind: "open" | "close" | null = null;
+  const flush = () => {
+    out.push(...run.sort());
+    run = [];
+    kind = null;
+  };
+  for (const e of sig) {
+    const k = markEdge(e);
+    if (k !== kind) flush();
+    if (k) {
+      kind = k;
+      run.push(e);
+    } else out.push(e);
   }
   flush();
   return out;
@@ -1245,15 +1298,28 @@ export function recordSources(md: RecordableMarkdown): void {
     if (!rule) throw new Error(`markdown-it has no ${name} rule`);
     const original = rule.fn;
     md.inline.ruler.at(name, (state, silent) => {
+      if (silent) return original(state, silent);
       const start = state.pos;
       const n = state.tokens.length;
-      if (!original(state, silent)) return false;
-      if (silent) return true;
       const image = name === "image";
+      const labelAt = start + (image ? 1 : 0);
+      // The rule finds the label's end itself: note it as it does, rather than parse it twice.
+      // Its first call from `labelAt` is the label (nested calls start further in).
+      const helpers = md.helpers;
+      const parseLinkLabel = helpers.parseLinkLabel;
+      let labelEnd = -1;
+      helpers.parseLinkLabel = (st, from, disableNested) => {
+        const r = parseLinkLabel.call(helpers, st, from, disableNested);
+        if (from === labelAt && labelEnd === -1 && st === state) labelEnd = r;
+        return r;
+      };
+      try {
+        if (!original(state, silent)) return false;
+      } finally {
+        helpers.parseLinkLabel = parseLinkLabel;
+      }
       const labelStart = start + (image ? 2 : 1);
       const end = state.pos;
-      const labelEnd = md.helpers.parseLinkLabel(state, start + (image ? 1 : 0), !image);
-      state.pos = end;
       const tok = state.tokens.slice(n).find((t) => t.type === (image ? "image" : "link_open"));
       if (tok && labelEnd >= labelStart) {
         const meta: SourceMeta = {

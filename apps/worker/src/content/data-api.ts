@@ -13,12 +13,18 @@
 //      navigation;
 //   4. Origin, when sent, exactly this artifact's content origin ("null" refused);
 //   5. availability (opaque isolation or ALLOW_SHARED_DATA off);
-//   6. JSON bodies only, size-capped while reading, strict shapes (no author fields);
-//   7. the artifact, with its current version's declaration;
-//   8. the content pass (cookie for this artifact at its current epoch); a JSON 401, never the
+//   6. the artifact, with its current version's declaration and type;
+//   7. the content pass (cookie for this artifact at its current epoch); a JSON 401, never the
 //      gate redirect;
+//   8. JSON bodies only, size-capped while reading at that type's document cap plus 1 KiB (a
+//      whiteboard's DATA_BOARD_MAX_DOC_BYTES, else DATA_MAX_DOC_BYTES), strict shapes (no author
+//      fields): read only for a caller with a pass, so nobody else learns an artifact's type from
+//      the cap or makes the Worker hold a large body;
 //   9. the declaration (`data`);
-//  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write.
+//  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write; on a
+//      whiteboard, a page write that does not name the current board format in x-plinth-format
+//      may change or delete only what the older reader read whole (a 401 `stale_page` otherwise,
+//      which an older page shows as "reload the page").
 // Bodies and document contents are never logged. Routes are entries of DATA_API_ROUTES, and the
 // dispatcher runs these checks before any handler, so a route cannot skip them.
 //
@@ -30,13 +36,21 @@
 // that declares only `room` has no shared data, and rooms may be on where shared data is off.
 import { waitUntil } from "cloudflare:workers";
 import {
+  BOARD_PAGE_FORMAT,
   CONTENT_DATA_HEADER,
+  CONTENT_FORMAT_HEADER,
   CONTENT_RESERVED_PREFIX,
   dataObjectSchema,
   type PageDoc,
 } from "@plinth/shared";
 import { z } from "zod";
-import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
+import {
+  type Bindings,
+  type Config,
+  contentOrigin,
+  dataLimitsFor,
+  sharedDataActive,
+} from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { type PageClaim, pageDataAccess } from "../policy.ts";
 import { notifyViewers } from "../rooms/notify.ts";
@@ -399,6 +413,18 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
 // ---------- the dispatcher ----------
 
 /**
+ * Whether a write comes from a whiteboard page that does not name the current board format (one
+ * loaded before it). Such a page writes whole blocks back from what its older reader made of them,
+ * so the service lets it change or delete only what that reader read whole (services/data.ts,
+ * whiteboard.ts legacyBoardLoss); the current page names its format on every write.
+ */
+function olderBoardPage(request: Request, target: DataTarget): boolean {
+  return (
+    target.type === "whiteboard" && request.headers.get(CONTENT_FORMAT_HEADER) !== BOARD_PAGE_FORMAT
+  );
+}
+
+/**
  * Keep work alive after the response: the request's own waitUntil (cloudflare:workers), so the
  * content host's dispatch keeps its signature. Outside a request (never in production), the
  * promise simply runs on.
@@ -466,23 +492,23 @@ async function handle(
     throw new ApiError("feature_disabled", "Shared data is not available here", { reason: off });
   }
 
-  // 6. Body.
-  let body: unknown;
-  if (method === "POST" || method === "PUT") {
-    body = await readJsonBody(request, config.data.maxDocBytes + 1024);
-  }
-
-  // 7. Artifact.
+  // 6. Artifact.
   const loaded = await loadTarget(env, artifactId);
   if (!loaded) throw new ApiError("not_found", "Not found");
   const { target } = loaded;
 
-  // 8. Access.
+  // 7. Access.
   const pass = await readContentPass(request, config, loaded);
   if (!pass) {
     throw new ApiError("unauthorized", "Your access expired. Reload the page.", {
       reason: "expired",
     });
+  }
+
+  // 8. Body, up to the artifact's document cap (a whiteboard's is larger) plus 1 KiB.
+  let body: unknown;
+  if (method === "POST" || method === "PUT") {
+    body = await readJsonBody(request, dataLimitsFor(config, target.type).maxDocBytes + 1024);
   }
 
   // 9. Declaration. An in-chat preview (an MCP host's frame, any framer) never reads or writes
@@ -510,7 +536,13 @@ async function handle(
   if (!access.read) throw new ApiError("feature_disabled", "Shared data is not available here");
   const writer: DataWriter | null =
     access.write && claim
-      ? { email: claim.email, role: claim.role, viewerId: claim.viewerId, via: "page" }
+      ? {
+          email: claim.email,
+          role: claim.role,
+          viewerId: claim.viewerId,
+          via: "page",
+          ...(olderBoardPage(request, target) ? { olderBoardPage: true } : {}),
+        }
       : null;
   const res = await route.handler({
     request,

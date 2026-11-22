@@ -19,7 +19,6 @@ import {
   TrashIcon,
 } from "@phosphor-icons/react";
 import {
-  API,
   APP_ROUTES,
   type ChangeList as ChangeListData,
   type FileChangeSummary,
@@ -60,7 +59,6 @@ import {
   useToast,
   VisibilityBadge,
 } from "../components/ui/index.ts";
-import { api } from "../lib/api.ts";
 import {
   CONTRAST_PAIRS,
   type ContrastPair,
@@ -108,13 +106,6 @@ const SAMPLE_FILES: FileChangeSummary = {
   more: 0,
   same: 2,
 };
-
-/** Ends the session, then reloads on the sign-in page so every cached state is dropped. */
-function signOut() {
-  api(API.logout, { method: "POST" })
-    .catch(() => undefined)
-    .finally(() => window.location.assign(APP_ROUTES.login));
-}
 
 interface TokenRow {
   name: string;
@@ -371,7 +362,7 @@ export default function Design() {
   }, []);
 
   return (
-    <AppShell onSignOut={signOut} title="Design system">
+    <AppShell title="Design system">
       {/* Probes: each reads the tokens for one mode, whatever the page mode is. */}
       <div ref={lightRef} data-theme="light" hidden />
       <div ref={darkRef} data-theme="dark" hidden />

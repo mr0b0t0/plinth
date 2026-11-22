@@ -270,21 +270,27 @@ describe("slide numbers", () => {
 });
 
 describe("the slides registry row and shell", () => {
-  it("is Markdown in slides.md with an image-only renderer type that presents", () => {
+  it("is Markdown in slides.md or an HTML deck in deck.json, a renderer type that presents", () => {
     const d = TYPE_REGISTRY.slides;
     expect(typeDef("slides")).toBe(d);
     expect(d).toMatchObject({
       sourcePath: "slides.md",
       sourceField: "content",
       maxSourceBytes: LIMITS.maxSlidesBytes,
-      reservedPaths: ["index.html", "slides.md"],
-      renderer: { script: "slides.js", style: "slides.css" },
+      altSource: { path: "deck.json" },
+      reservedPaths: ["index.html", "slides.md", "deck.json"],
+      renderer: { script: "slides.js", style: "slides.css", frame: "embed.html" },
       edit: "live",
       create: { label: "Slide deck", title: "Untitled deck", content: "# Untitled deck\n" },
       present: true,
     });
     expect(d.assetTypes?.test("image/svg+xml")).toBe(true);
-    expect(d.assetTypes?.test("text/html")).toBe(false);
+    // An HTML deck's slides, rules and fonts; which format may hold which is the version's check.
+    for (const t of ["text/html; charset=utf-8", "text/css", "font/woff2", "application/json"]) {
+      expect(d.assetTypes?.test(t), t).toBe(true);
+    }
+    expect(d.assetTypes?.test("text/javascript")).toBe(false);
+    expect(d.assetTypes?.test("video/mp4")).toBe(false);
     expect(TYPE_REGISTRY.doc.present).toBeUndefined();
     expect(TYPE_REGISTRY.html.present).toBeUndefined();
     expect(LIMITS.maxSlidesBytes).toBe(1024 * 1024);

@@ -49,23 +49,11 @@ export default function AdminReports() {
     document.title = "Reports · Plinth";
   }, []);
 
-  const signOut = async () => {
-    try {
-      await api(API.logout, { method: "POST" });
-    } finally {
-      window.location.assign(APP_ROUTES.home);
-    }
-  };
-
   if (loading) return null;
   if (!me?.is_admin) return <NotFound />;
 
   return (
-    <AppShell
-      onSignOut={signOut}
-      extraNav={[{ label: "Reports", to: APP_ROUTES.adminReports }]}
-      title="Reports"
-    >
+    <AppShell extraNav={[{ label: "Reports", to: APP_ROUTES.adminReports }]} title="Reports">
       <p className="pl-reports__lead">
         Artifacts people reported on this instance. Taking one down stops its link from opening it,
         for everyone, at once.

@@ -137,7 +137,7 @@ describe("MCP endpoint", () => {
       properties: Record<string, unknown>;
     };
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ["base_version", "category", "id", "note", "title", "type"].sort(),
+      ["base_version", "category", "copy_files", "id", "note", "title", "type"].sort(),
     );
     const instructions = client.getInstructions() ?? "";
     expect(instructions).toContain(

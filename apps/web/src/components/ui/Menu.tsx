@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -86,6 +87,7 @@ export function Menu({
   const [active, setActive] = useState(-1);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLElement | null)[]>([]);
   const typeahead = useRef({ text: "", at: 0 });
 
@@ -106,6 +108,21 @@ export function Menu({
   useEffect(() => {
     if (open && active >= 0) focusElement(itemRefs.current[active]);
   }, [open, active]);
+
+  // An aligned list that would run past the screen's edge (a card's menu in a phone's left
+  // column) slides back inside it, keeping a small margin.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!open || !list) return;
+    list.style.translate = "";
+    const margin = 8;
+    const { left, right, width } = list.getBoundingClientRect();
+    if (!width) return;
+    const viewport = document.documentElement.clientWidth;
+    const shift =
+      left < margin ? margin - left : right > viewport - margin ? viewport - margin - right : 0;
+    if (shift) list.style.translate = `${shift}px 0`;
+  }, [open]);
 
   // Click outside closes without stealing focus.
   useEffect(() => {
@@ -232,6 +249,7 @@ export function Menu({
       </button>
       {open && (
         <div
+          ref={listRef}
           id={menuId}
           role="menu"
           aria-labelledby={triggerId}

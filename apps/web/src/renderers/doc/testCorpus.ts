@@ -78,6 +78,15 @@ export const FEATURES: Record<string, string> = {
     "Hard\\",
     "break and ~~struck~~ and `code` and ***both***.",
   ].join("\n"),
+  "nested marks": [
+    "**Bold with [a link](https://example.com/a) inside.**",
+    "",
+    "**[A bold link](https://example.com/b)** and *[an italic one](https://example.com/c)*.",
+    "",
+    "*Italic with **bold** inside*, and [a link with **bold**](https://example.com/d).",
+    "",
+    "- ~~struck with *em*~~",
+  ].join("\n"),
 };
 
 export const CORPUS: Record<string, string> = {

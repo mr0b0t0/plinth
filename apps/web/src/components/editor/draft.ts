@@ -217,7 +217,8 @@ function writeRescue(key: string, items: RescueItem[]): void {
  * MAX_RESCUE_ITEMS and MAX_RESCUE_TOTAL (newest first; one that does not fit leaves what is there
  * as it was), then the ids in `remove` (written or gone, named one by one) leave it. Nothing else
  * takes an item out but clearRescue (a discard) and clearRescueStores (a sign-out). Returns the
- * ids the store holds.
+ * ids the store holds as upserted: an update refused over the caps keeps the item's older text,
+ * so its id is left out, and the frame still offers Copy for it.
  */
 export function mergeRescue(
   userId: string,
@@ -235,14 +236,16 @@ export function mergeRescue(
     for (const i of m.values()) total += i.text.length + (i.ref?.length ?? 0);
     return m.size <= MAX_RESCUE_ITEMS && total <= MAX_RESCUE_TOTAL;
   };
+  const refused = new Set<string>();
   for (const it of [...upsert].reverse()) {
     const next = new Map(byId);
     next.set(it.id, it);
     if (fits(next)) byId.set(it.id, it);
+    else refused.add(it.id);
   }
   for (const id of remove) byId.delete(id);
   writeRescue(key, [...byId.values()]);
-  return [...byId.keys()];
+  return [...byId.keys()].filter((id) => !refused.has(id));
 }
 
 /** Drops this person's store for the artifact: its unpublished changes were discarded. */
@@ -251,18 +254,23 @@ export function clearRescue(userId: string, artifactId: string): void {
 }
 
 /**
- * How many items any account's store for the artifact holds in this tab (for the warning before
- * leaving, which needs no session): what this tab kept is there whoever is signed in now.
+ * How many items the store for the artifact holds in this tab, for the warning before leaving:
+ * `userId`'s store once the session is known (none when no one is signed in), so another
+ * account's store never warns the person here now; while the session is unknown or could not be
+ * read (`undefined`), any account's, as what this tab kept may be theirs.
  */
-export function countRescue(artifactId: string): number {
+export function countRescue(artifactId: string, userId?: string | null): number {
+  if (userId === null) return 0;
   const suffix = `:${artifactId}`;
   const keys = new Set<string>();
-  for (const k of rescueMemory.keys()) if (k.endsWith(suffix)) keys.add(k);
+  const mine = userId === undefined ? null : rescueKey(userId, artifactId);
+  const wanted = (k: string) => (mine ? k === mine : k.endsWith(suffix));
+  for (const k of rescueMemory.keys()) if (wanted(k)) keys.add(k);
   try {
     const s = storage();
     for (let i = 0; s && i < s.length; i++) {
       const k = s.key(i);
-      if (k?.startsWith(RESCUE_PREFIX) && k.endsWith(suffix)) keys.add(k);
+      if (k?.startsWith(RESCUE_PREFIX) && wanted(k)) keys.add(k);
     }
   } catch {
     // storage blocked: memory only

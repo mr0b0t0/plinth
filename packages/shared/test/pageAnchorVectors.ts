@@ -38,6 +38,13 @@ export const PAGE_ANCHOR_VECTORS: { name: string; anchor: unknown; ok: boolean }
   // not valid: control and format characters in a label or a data string
   { name: "a right-to-left override in the label", anchor: { key: "a", text: "a‮b" }, ok: false },
   { name: "a bidi isolate in the label", anchor: { key: "a", text: "a⁦b" }, ok: false },
+  { name: "a line separator in the label", anchor: { key: "a", text: "a\u2028b" }, ok: false },
+  { name: "a paragraph separator in the label", anchor: { key: "a", text: "a\u2029b" }, ok: false },
+  {
+    name: "an emoji joiner in the label",
+    anchor: { key: "a", text: "\u{1F468}\u200D\u{1F469}" },
+    ok: false,
+  },
   { name: "a zero-width space in the label", anchor: { key: "a", text: "a​b" }, ok: false },
   { name: "a zero-width joiner in the label", anchor: { key: "a", text: "a‍b" }, ok: false },
   { name: "a newline in the label", anchor: { key: "a", text: "a\nb" }, ok: false },

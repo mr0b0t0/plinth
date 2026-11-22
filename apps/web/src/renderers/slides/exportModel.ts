@@ -12,8 +12,8 @@ import { isSafeHref } from "../doc/markdown.ts";
 import { SLIDE_LINK_RE, type SlideView } from "./deck.ts";
 import type { Box, Cell, DeckModel, Item, Para, Run, SlideModel } from "./pptxModel.ts";
 
+/** A Markdown deck's canvas pixels per inch: 1280 px is the 13.333 in of a 16:9 file. */
 const PX_PER_INCH = 96;
-const PT_PER_PX = 0.75;
 const HEADING_RE = /^h[1-6]$/;
 /** The web and mail schemes a link in the file may keep. */
 const LINK_RE = /^(https?:|mailto:)/i;
@@ -76,18 +76,18 @@ export function hexColor(css: string): string | null {
   return hex?.[1] ? hex[1].toUpperCase() : null;
 }
 
-const round = (n: number, places = 3) => {
+export const round = (n: number, places = 3) => {
   const f = 10 ** places;
   return Math.round(n * f) / f;
 };
 
-const px = (v: string) => {
+export const px = (v: string) => {
   const n = Number.parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 };
 
 /** What every measure inside one slide needs. */
-interface SlideCtx {
+export interface SlideCtx {
   g: Geometry;
   origin: Rect;
   scale: number;
@@ -95,9 +95,16 @@ interface SlideCtx {
   canvas: { width: number; height: number };
   count: number;
   fallbackColor: string;
+  /** Canvas pixels per inch of the file (96 for a Markdown deck, 144 for an HTML deck's 1920). */
+  ppi: number;
+  /** An HTML deck: a phrase keeps its own colour and underline, as Claude's format has them. */
+  phrases?: boolean;
 }
 
-function boxOf(c: SlideCtx, r: Rect): Box | null {
+/** Points per canvas pixel. */
+const ptPerPx = (c: SlideCtx) => 72 / c.ppi;
+
+export function boxOf(c: SlideCtx, r: Rect): Box | null {
   const x = (r.left - c.origin.left) / c.scale;
   const y = (r.top - c.origin.top) / c.scale;
   let w = r.width / c.scale;
@@ -107,14 +114,14 @@ function boxOf(c: SlideCtx, r: Rect): Box | null {
   w = Math.min(w, c.canvas.width - x);
   h = Math.min(h, c.canvas.height - y);
   return {
-    x: round(x / PX_PER_INCH),
-    y: round(y / PX_PER_INCH),
-    w: round(w / PX_PER_INCH),
-    h: round(h / PX_PER_INCH),
+    x: round(x / c.ppi),
+    y: round(y / c.ppi),
+    w: round(w / c.ppi),
+    h: round(h / c.ppi),
   };
 }
 
-function alignOf(v: string): Para["align"] {
+export function alignOf(v: string): Para["align"] {
   if (v === "center") return "center";
   if (v === "right" || v === "end") return "right";
   return "left";
@@ -139,13 +146,14 @@ interface RunStyle {
   href?: string;
   slide?: number;
   color?: string;
+  underline?: boolean;
 }
 
 /**
  * The inline runs of `el`, split into lines at each <br>. Lists, tables and images inside are
  * skipped (they are their own items or paragraphs). `pre` keeps whitespace and splits at newlines.
  */
-function lines(c: SlideCtx, el: Element, pre = false): Run[][] {
+export function lines(c: SlideCtx, el: Element, pre = false): Run[][] {
   const out: Run[][] = [[]];
   const push = (text: string, s: RunStyle) => {
     const parts = pre ? text.split("\n") : [text.replace(/\s+/g, " ")];
@@ -169,7 +177,20 @@ function lines(c: SlideCtx, el: Element, pre = false): Run[][] {
         if ((out[out.length - 1]?.length ?? 0) > 0) out.push([]);
         walk(e, s);
       } else if (tag === "ul" || tag === "ol" || tag === "table" || tag === "img") continue;
-      else if (tag === "strong" || tag === "b") walk(e, { ...s, bold: true });
+      else if (c.phrases && (tag === "b" || tag === "i" || tag === "u" || tag === "span")) {
+        // An HTML slide's phrase: its weight, slant, underline and colour as computed.
+        const st = c.g.style(e) as CSSStyleDeclaration;
+        const color = hexColor(st.color);
+        walk(e, {
+          ...s,
+          ...(tag === "b" || Number.parseInt(st.fontWeight, 10) >= 600 ? { bold: true } : {}),
+          ...(tag === "i" || st.fontStyle === "italic" ? { italic: true } : {}),
+          ...(tag === "u" || st.textDecorationLine?.includes("underline")
+            ? { underline: true }
+            : {}),
+          ...(color && color !== hexColor(c.g.style(el).color) ? { color } : {}),
+        });
+      } else if (tag === "strong" || tag === "b") walk(e, { ...s, bold: true });
       else if (tag === "em" || tag === "i") walk(e, { ...s, italic: true });
       else if (tag === "del" || tag === "s") walk(e, { ...s, strike: true });
       else if (tag === "code") walk(e, { ...s, code: !pre || s.code });
@@ -203,7 +224,7 @@ function tidy(runs: Run[], pre: boolean): Run[] {
 }
 
 /** Paragraph properties from a block's computed style. */
-function paraOf(c: SlideCtx, el: Element, runs: Run[], o: Partial<Para> = {}): Para {
+export function paraOf(c: SlideCtx, el: Element, runs: Run[], o: Partial<Para> = {}): Para {
   const st = c.g.style(el);
   const size = px(st.fontSize) || 30;
   const lh = px(st.lineHeight);
@@ -211,7 +232,7 @@ function paraOf(c: SlideCtx, el: Element, runs: Run[], o: Partial<Para> = {}): P
     runs,
     level: 0,
     bullet: "none",
-    size: round(size * PT_PER_PX, 1),
+    size: round(size * ptPerPx(c), 1),
     bold: Number.parseInt(st.fontWeight, 10) >= 600,
     align: alignOf(st.textAlign),
     mono: false,
@@ -227,7 +248,7 @@ function paraOf(c: SlideCtx, el: Element, runs: Run[], o: Partial<Para> = {}): P
  * gap the screen shows: an item's top margin, and for a nested list's first item the list's own.
  * The top-level list's margin is outside its box, so its first item has none.
  */
-function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void {
+export function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void {
   const bullet = list.localName === "ol" ? "number" : "disc";
   let first = true;
   for (const li of Array.from(list.children)) {
@@ -237,7 +258,7 @@ function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void
       let margin = "0";
       if (!first) margin = c.g.style(li).marginTop;
       else if (level > 0) margin = c.g.style(list).marginTop;
-      const spaceBefore = round(px(margin) * PT_PER_PX, 1);
+      const spaceBefore = round(px(margin) * ptPerPx(c), 1);
       out.push(paraOf(c, li, runs, { level, bullet, spaceBefore }));
     }
     first = false;
@@ -249,14 +270,20 @@ function listParas(c: SlideCtx, list: Element, level: number, out: Para[]): void
   }
 }
 
-function textItem(c: SlideCtx, el: Element, paras: Para[], items: Item[], oneLine = false): void {
+export function textItem(
+  c: SlideCtx,
+  el: Element,
+  paras: Para[],
+  items: Item[],
+  oneLine = false,
+): void {
   if (paras.length === 0) return;
   const box = boxOf(c, c.g.rect(el));
   if (box) items.push({ kind: "text", box, paras, ...(oneLine ? { oneLine: true as const } : {}) });
 }
 
 /** The rectangle an image is drawn in: its box, or with object-fit contain, the fitted picture. */
-function imageRect(c: SlideCtx, img: HTMLImageElement): Rect {
+export function imageRect(c: SlideCtx, img: HTMLImageElement): Rect {
   const r = c.g.rect(img);
   const nw = img.naturalWidth;
   const nh = img.naturalHeight;
@@ -282,7 +309,7 @@ function imageItems(c: SlideCtx, el: Element, items: Item[]): void {
   }
 }
 
-function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
+export function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   const rows: Cell[][] = [];
   for (const tr of Array.from(table.rows)) {
     rows.push(
@@ -304,11 +331,11 @@ function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   const last = above?.kind === "text" && !above.oneLine ? above.paras.at(-1) : undefined;
   if (last && last.lineHeight > 1) {
     const shift = round(((last.lineHeight - 1) * last.size) / 2 / 72);
-    box.y = round(Math.min(box.y + shift, c.canvas.height / PX_PER_INCH));
+    box.y = round(Math.min(box.y + shift, c.canvas.height / c.ppi));
   }
   const firstRow = table.rows[0];
   const colW = Array.from(firstRow?.cells ?? []).map((cell) =>
-    round(c.g.rect(cell).width / c.scale / PX_PER_INCH),
+    round(c.g.rect(cell).width / c.scale / c.ppi),
   );
   const st = c.g.style(table);
   const td = table.querySelector("td");
@@ -317,14 +344,14 @@ function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   // on screen. Only the vertical one: Arial is wider than the screen's font, so the side padding
   // stays narrow in the file, or a header would wrap in its column. At most half an inch.
   const padded = th ?? td;
-  const padY = padded ? Math.min(0.5, round(px(c.g.style(padded).paddingTop) / PX_PER_INCH)) : 0;
+  const padY = padded ? Math.min(0.5, round(px(c.g.style(padded).paddingTop) / c.ppi)) : 0;
   items.push({
     kind: "table",
     box,
     rows,
     colW,
     ...(padY > 0 ? { padY } : {}),
-    size: round((px(st.fontSize) || 22) * PT_PER_PX, 1),
+    size: round((px(st.fontSize) || 22) * ptPerPx(c), 1),
     color: hexColor(st.color) ?? c.fallbackColor,
     headColor: (th && hexColor(c.g.style(th).color)) ?? hexColor(st.color) ?? c.fallbackColor,
     rule: (td && hexColor(c.g.style(td).borderBottomColor)) ?? "D8DEE4",
@@ -442,7 +469,7 @@ export function slideModel(view: SlideView, count: number, o: ExportModelOptions
   const scale = origin.width > 0 ? origin.width / canvas.width : 1;
   const st = g.style(view.el);
   const fallbackColor = hexColor(st.color) ?? (o.theme === "dark" ? "D6DBE0" : "1F2328");
-  const c: SlideCtx = { g, origin, scale, canvas, count, fallbackColor };
+  const c: SlideCtx = { g, origin, scale, canvas, count, fallbackColor, ppi: PX_PER_INCH };
   const items: Item[] = [];
   blocks(c, view.body, items);
   // The footer and the slide number, which sit on the canvas outside the body, each on one line:

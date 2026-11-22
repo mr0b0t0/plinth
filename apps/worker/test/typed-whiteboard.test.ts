@@ -6,7 +6,7 @@
 // viewer gate and what the content host serves.
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { BOARD_TOPICS, type Role, TYPE_REGISTRY } from "@plinth/shared";
+import { BOARD_PAGE_FORMAT, BOARD_TOPICS, type Role, TYPE_REGISTRY } from "@plinth/shared";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { accessGrants, versions } from "../src/db/schema.ts";
@@ -108,8 +108,18 @@ async function person(id: string, role: Role) {
   return { user, cookie, gate, session: s };
 }
 
-/** A request the way the runtime makes it. */
-function api(id: string, path: string, cookie: string, method = "GET", body?: unknown) {
+/**
+ * A request the way the runtime makes it for the current board page, which names its format on
+ * writes; `format` null leaves it out (a page loaded before it), a string sends that instead.
+ */
+function api(
+  id: string,
+  path: string,
+  cookie: string,
+  method = "GET",
+  body?: unknown,
+  format: string | null = BOARD_PAGE_FORMAT,
+) {
   const headers = new Headers({
     "x-plinth-data": "1",
     "sec-fetch-site": "same-origin",
@@ -118,6 +128,7 @@ function api(id: string, path: string, cookie: string, method = "GET", body?: un
     cookie,
   });
   if (method !== "GET") headers.set("origin", contentOrigin(id));
+  if (method !== "GET" && format !== null) headers.set("x-plinth-format", format);
   if (body !== undefined) headers.set("content-type", "application/json");
   return run(`${contentOrigin(id)}/__plinth/api/v1${path}`, {
     method,
@@ -195,7 +206,9 @@ describe("publishing a whiteboard", () => {
     for (const [collection, { id: docId, ...data }] of all) {
       const row = rows.find((d) => d.doc_id === docId);
       expect(row?.data).toBe(JSON.stringify(data));
-      expect(row?.size_bytes).toBe(measureDoc(parseConfig(), collection, docId, data).size);
+      expect(row?.size_bytes).toBe(
+        measureDoc(parseConfig(), collection, docId, data, "whiteboard").size,
+      );
       expect(row).toMatchObject({
         created_via: "agent",
         created_by_role: "owner",
@@ -332,7 +345,12 @@ describe("refusals", () => {
     const files = spy(env.FILES);
     const ctx = serviceCtxFor(agentPrincipal(a), {
       env: { FILES: files.proxy },
-      config: { data: { ...parseConfig().data, maxDocsPerArtifact: 3 } },
+      config: {
+        data: {
+          ...parseConfig().data,
+          board: { ...parseConfig().data.board, maxDocsPerArtifact: 3 },
+        },
+      },
     });
     const { publishArtifact } = await import("../src/services/artifacts.ts");
     await expect(
@@ -456,7 +474,7 @@ describe("updating and restoring a whiteboard", () => {
     const cfg = parseConfig();
     const measured = BLOCKS.map(({ id: docId, ...data }) => ({
       seed: { collection: "blocks" as const, id: docId, data: data as never },
-      ...measureDoc(cfg, "blocks", docId, data),
+      ...measureDoc(cfg, "blocks", docId, data, "whiteboard"),
     }));
     const base = { id, slug: id, type: "whiteboard", version: 2, warnings: [] } as never;
     const out = await seedBoard(ctx, base, measured);
@@ -473,7 +491,7 @@ describe("updating and restoring a whiteboard", () => {
     const measured = [
       {
         seed: { collection: "blocks" as const, id: "goal", data: block() as never },
-        ...measureDoc(cfg, "blocks", "goal", block()),
+        ...measureDoc(cfg, "blocks", "goal", block(), "whiteboard"),
       },
     ];
     const out = await seedBoard(ctx, { id, warnings: [] } as never, measured);
@@ -739,6 +757,225 @@ describe("the page's data API on a whiteboard", () => {
     expect(res[1]?.error).toMatchObject({ code: "invalid_input" });
     expect(res[2]?.error?.message).toMatch(/only blocks and arrows/);
     expect(res[3]?.error).toMatchObject({ code: "conflict" });
+  });
+
+  it("merges an agent's changed fields at a rev, checks the result, and removes a field set to null", async () => {
+    const { owner, id } = await board();
+    const client = await mcpClient(owner.token);
+    const risk = (await docRows(id)).find((r) => r.doc_id === "risk");
+    const r = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        // Turn the box into a diamond with an outline: nothing else is sent.
+        {
+          op: "merge",
+          collection: "blocks",
+          doc_id: "risk",
+          data: { kind: "diamond", stroke: "#336699", z: 4 },
+          if_rev: risk?.rev,
+        },
+        // At the rev it was read at, a second merge is a conflict.
+        { op: "merge", collection: "blocks", doc_id: "risk", data: { x: 1 }, if_rev: risk?.rev },
+        // A merge whose result is not a block is refused, with its reason.
+        { op: "merge", collection: "blocks", doc_id: "goal", data: { w: 1 }, if_rev: 1 },
+        { op: "merge", collection: "blocks", doc_id: "nope", data: { x: 1 }, if_rev: 1 },
+      ],
+    });
+    expect(r.isError, r.text).toBe(false);
+    const res = r.data.results as { ok: boolean; rev?: number; error?: { code: string } }[];
+    expect(res[0]).toMatchObject({ op: "merge", ok: true });
+    expect(res[1]?.error).toMatchObject({ code: "conflict" });
+    expect(res[2]?.ok).toBe(false);
+    expect(res[3]?.error).toMatchObject({ code: "not_found" });
+    const after = (await docRows(id)).find((row) => row.doc_id === "risk");
+    expect(JSON.parse(after?.data as string)).toEqual({
+      ...BLOCKS[1],
+      id: undefined,
+      kind: "diamond",
+      stroke: "#336699",
+      z: 4,
+    });
+    const goal = (await docRows(id)).find((row) => row.doc_id === "goal");
+    const bad = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        { op: "merge", collection: "blocks", doc_id: "goal", data: { w: 1 }, if_rev: goal?.rev },
+      ],
+    });
+    expect((bad.data.results as { error?: { message: string } }[])[0]?.error?.message).toMatch(
+      /w must be/,
+    );
+    // null removes a field: the note loses its colour.
+    const cleared = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        {
+          op: "merge",
+          collection: "blocks",
+          doc_id: "goal",
+          data: { color: null },
+          if_rev: goal?.rev,
+        },
+      ],
+    });
+    await client.close();
+    expect((cleared.data.results as { ok: boolean }[])[0]?.ok).toBe(true);
+    const goal2 = (await docRows(id)).find((row) => row.doc_id === "goal");
+    expect(JSON.parse(goal2?.data as string)).not.toHaveProperty("color");
+  });
+
+  it("lets a page that names no current board format change only what its older reader read whole; agents may", async () => {
+    const { owner, cookie, id } = await board('{"v":1}');
+    const table = {
+      kind: "table",
+      x: 0,
+      y: 0,
+      w: 240,
+      h: 60,
+      cols: { c1: { at: 1 } },
+      rows: { r1: { at: 1, c1: "Plan" } },
+    };
+    const made = await api(id, "/data/blocks/tb", cookie, "PUT", { data: table, if_rev: 0 });
+    expect(made.status).toBe(201);
+    const rev = (await json(made)).rev as number;
+    const stale = async (res: Response) => {
+      expect(res.status).toBe(401);
+      expect((await json(res)).error).toMatchObject({
+        code: "unauthorized",
+        details: { reason: "stale_page" },
+      });
+    };
+    // An older page's move: its reader made the table an empty note, written whole at the rev.
+    const oldMove = { kind: "note", x: 40, y: 0, w: 240, h: 60, text: "" };
+    for (const format of [null, "whiteboard.1"]) {
+      await stale(
+        await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove, if_rev: rev }, format),
+      );
+      // Its plain set and its delete (whose Undo would re-create the table as an empty note) are
+      // refused alike, before anything changes.
+      await stale(await api(id, "/data/blocks/tb", cookie, "PUT", { data: oldMove }, format));
+      await stale(
+        await api(id, `/data/blocks/tb?if_rev=${rev}`, cookie, "DELETE", undefined, format),
+      );
+    }
+    // A text past the old 2,000-character limit, edited by one character: refused too.
+    const long = { ...block(), text: "x".repeat(3000) };
+    const put = await api(id, "/data/blocks/long", cookie, "PUT", { data: long, if_rev: 0 });
+    expect(put.status).toBe(201);
+    const edited = { ...long, text: `y${"x".repeat(1999)}` };
+    await stale(await api(id, "/data/blocks/long", cookie, "PUT", { data: edited }, null));
+    // An arrow with a side the older reader drops, and a box in #rrggbb.
+    const routed = { from: "tb", to: "long", fromSide: "right" };
+    expect((await api(id, "/data/arrows/ar", cookie, "PUT", { data: routed })).status).toBe(201);
+    await stale(
+      await api(id, "/data/arrows/ar", cookie, "PUT", { data: { from: "tb", to: "long" } }, null),
+    );
+    const hex = { ...block(), kind: "rect", color: "#123456" };
+    expect((await api(id, "/data/blocks/hex", cookie, "PUT", { data: hex })).status).toBe(201);
+    await stale(
+      await api(
+        id,
+        "/data/blocks/hex",
+        cookie,
+        "PUT",
+        { data: { ...hex, color: undefined } },
+        null,
+      ),
+    );
+    const rows = await docRows(id);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "tb")?.data as string)).toEqual(table);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "long")?.data as string)).toEqual(long);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "ar")?.data as string)).toEqual(routed);
+    expect(JSON.parse(rows.find((r) => r.doc_id === "hex")?.data as string)).toEqual(hex);
+    // What the older page reads whole keeps working for it, so open tabs keep working after a
+    // deploy: a new note, its move and edit, its delete, and the Undo that re-creates it.
+    const made2 = await api(id, "/data/blocks", cookie, "POST", { data: block() }, null);
+    expect(made2.status).toBe(201);
+    const n = await json(made2);
+    const moved2 = await api(
+      id,
+      `/data/blocks/${n.id}`,
+      cookie,
+      "PUT",
+      {
+        data: { ...block(), x: 99, text: "typed" },
+        if_rev: n.rev,
+      },
+      null,
+    );
+    expect(moved2.status).toBe(200);
+    const gone = await api(
+      id,
+      `/data/blocks/${n.id}?if_rev=${(await json(moved2)).rev}`,
+      cookie,
+      "DELETE",
+      undefined,
+      null,
+    );
+    expect(gone.status).toBe(204);
+    const undone = await api(
+      id,
+      `/data/blocks/${n.id}`,
+      cookie,
+      "PUT",
+      { data: block(), if_rev: 0 },
+      null,
+    );
+    expect(undone.status).toBe(201);
+    // Reads need no format.
+    expect((await api(id, "/data/blocks/tb", cookie)).status).toBe(200);
+    // The current page's move keeps every field and goes through.
+    const moved = await api(id, "/data/blocks/tb", cookie, "PUT", {
+      data: { ...table, x: 40 },
+      if_rev: rev,
+    });
+    expect(moved.status).toBe(200);
+    // A reader without write access is refused for that, whatever it sends.
+    const viewer = await person(id, "viewer");
+    const vres = await api(id, "/data/blocks", viewer.cookie, "POST", { data: block() }, null);
+    expect(vres.status).toBe(403);
+    // An agent may still replace a block whole, with no format.
+    const client = await mcpClient(owner.token);
+    const r = await tool(client, "write_artifact_data", {
+      id,
+      ops: [
+        {
+          op: "set",
+          collection: "blocks",
+          doc_id: "tb",
+          data: oldMove,
+          if_rev: (await json(moved)).rev,
+        },
+      ],
+    });
+    await client.close();
+    expect((r.data.results as { ok: boolean }[])[0]?.ok).toBe(true);
+  });
+
+  it("reads no body before the content pass: a caller without one gets 401, never 413", async () => {
+    const { id } = await board('{"v":1}');
+    const huge = { data: { ...block(), text: "x".repeat(300_000) } };
+    const res = await api(id, "/data/blocks", "", "POST", huge);
+    expect(res.status).toBe(401);
+  });
+
+  it("holds larger documents than other pages: a table past DATA_MAX_DOC_BYTES fits a board", async () => {
+    const { cookie, id } = await board('{"v":1}');
+    const cols = { c1: { at: 1 }, c2: { at: 2 } };
+    const rows: Record<string, Record<string, string | number>> = {};
+    for (let i = 0; i < 40; i++)
+      rows[`r${i}`] = { at: i, c1: "x".repeat(500), c2: "y".repeat(500) };
+    const table = { kind: "table", x: 0, y: 0, w: 400, h: 400, cols, rows };
+    expect(JSON.stringify(table).length).toBeGreaterThan(parseConfig().data.maxDocBytes);
+    const res = await api(id, "/data/blocks", cookie, "POST", { data: table });
+    expect(res.status, JSON.stringify(await json(res.clone()))).toBe(201);
+    // The page is told the board's caps.
+    const session = await json(await api(id, "/session", cookie));
+    expect(session.limits).toEqual({
+      max_doc_bytes: parseConfig().data.board.maxDocBytes,
+      max_docs: parseConfig().data.board.maxDocsPerArtifact,
+      max_bytes: parseConfig().data.board.maxBytesPerArtifact,
+    });
   });
 });
 

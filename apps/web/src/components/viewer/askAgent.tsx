@@ -7,8 +7,8 @@
 // It is offered only when the owner has an agent that can take the request. Where it appears,
 // from this file's items (one place each time):
 // - the bar's Edit slot (owners and editors, at desktop width) for a type people change by asking
-//   (registry `edit: "ask"`: HTML pages, designs, and decks and design systems until they edit on
-//   the page) and for any type whose editing on the page is off here (`live_off`, with its reason);
+//   (registry `edit: "ask"`: HTML pages, designs and design systems; and an HTML deck, `no_editor`)
+//   and for any type whose editing on the page is off here (`live_off`, with its reason);
 // - the ⋯ menu everywhere else it may be used: commenters, phone width, and live types whose
 //   editing is on.
 //
@@ -19,6 +19,7 @@ import { RobotIcon } from "@phosphor-icons/react";
 import {
   type ClientType,
   type LiveOffReason,
+  PAGE_COMMENT_LIMITS,
   type PageAnchor,
   typeDef,
   type ViewGate,
@@ -108,7 +109,9 @@ export function useAskAgent({
 }): AskAgent {
   const available = (gate.ask?.targets.length ?? 0) > 0;
   const def = typeDef(gate.artifact.type);
-  const inSlot = available && (def?.edit === "ask" || gate.live_off !== undefined);
+  // An HTML deck (`no_editor`) is a deck people change by asking, though Markdown decks edit live.
+  const inSlot =
+    available && (def?.edit === "ask" || gate.live_off !== undefined || gate.no_editor === true);
   const reason = gate.live_off ? LIVE_OFF_TEXT[gate.live_off.reason] : null;
   const [dialogAnchor, setDialogAnchor] = useState<AskAnchor | null>(null);
   const [dialogWhat, setDialogWhat] = useState<AskWhat | null>(null);
@@ -127,17 +130,22 @@ export function useAskAgent({
     }
   }, []);
   const reopen = useRef<ReopenGate | null>(null);
+  const lastAsk = useRef(Number.NEGATIVE_INFINITY);
   const fromFrame = useCallback(
     (anchor: AskAnchor | null, what?: AskWhat) => {
       const l = latest.current;
       if (!l.available || l.blocked || document.visibilityState !== "visible") return;
+      const t = Date.now();
+      // At most one a second, whatever is open: with the comments panel open (nothing to reopen)
+      // each one would point the composer somewhere else and take the focus again.
+      if (t - lastAsk.current < PAGE_COMMENT_LIMITS.composeMinIntervalMs) return;
       // In edit mode it opens the Ask dialog, which is closed whenever nothing blocks; otherwise
       // the comments panel, unless it is open already.
       const closed = l.editing || !l.panelOpen;
-      const t = Date.now();
       reopen.current ??= reopenGate();
       if (reopen.current.refused(t, closed)) return;
       reopen.current.take(t, closed);
+      lastAsk.current = t;
       open(anchor, what);
     },
     [open],

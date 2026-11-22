@@ -3,9 +3,15 @@
 // it draws the snapshots and follows the room's answer. The toolbar shows only what applies, and
 // only the app page that frames the board may ask it for a download. The runtime is captured
 // before anything else, so an element the page adds later cannot stand in for it.
-import { BOARD_LIMITS, boardDocError, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
+import {
+  BOARD_LIMITS,
+  BOARD_PAGE_FORMAT,
+  boardDocError,
+  TYPE_REGISTRY,
+  typedShellHtml,
+} from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boot, EDITORS_ONLY_TEXT, EDITORS_ONLY_WHY } from "./boot.ts";
+import { boot, EDITORS_ONLY_TEXT, EDITORS_ONLY_WHY, OUT_OF_DATE_TEXT } from "./boot.ts";
 import { READ_ONLY_TEXT } from "./sync.ts";
 
 const APP = "https://plinth.example";
@@ -39,20 +45,25 @@ interface Stub {
   roomTouched: () => boolean;
 }
 
-/** A window.plinth whose every data and room method records that it was called. */
+/**
+ * A window.plinth whose every data and room method records that it was called. Its collections
+ * take a format, as the runtime does, unless `oldRuntime` (one from before the option).
+ */
 function stubRuntime(
   session: Record<string, unknown> = signedIn(true),
   docs: Record<string, unknown[]> = {},
+  oldRuntime = false,
 ): Stub {
   const calls: string[] = [];
   let touched = false;
-  const coll = (name: string) => {
+  const coll = (name: string, opts?: { format?: string }) => {
     const m = (op: string, ret: unknown = undefined) =>
       vi.fn(async () => {
         calls.push(`${name}.${op}`);
         return ret;
       });
     return {
+      ...(oldRuntime ? {} : { format: opts?.format ?? null }),
       list: m("list", { docs: [] }),
       all: m("all", []),
       get: m("get", null),
@@ -67,7 +78,7 @@ function stubRuntime(
       }),
     };
   };
-  const collection = vi.fn((name: string) => coll(name));
+  const collection = vi.fn((name: string, opts?: { format?: string }) => coll(name, opts));
   const roomFn = (op: string) =>
     vi.fn(() => {
       calls.push(`room.${op}`);
@@ -276,7 +287,11 @@ describe("whiteboard boot", () => {
     boot(window);
     await flush();
     await flush();
-    expect(stub.collection.mock.calls.map((c) => c[0])).toEqual(["blocks", "arrows"]);
+    // Both collections name the board format, which the server needs on every write.
+    expect(stub.collection.mock.calls).toEqual([
+      ["blocks", { format: BOARD_PAGE_FORMAT }],
+      ["arrows", { format: BOARD_PAGE_FORMAT }],
+    ]);
     const el = document.querySelector(".wb-block");
     expect(el?.textContent).toBe("<b>x</b>");
     expect(el?.querySelector("b")).toBeNull();
@@ -325,6 +340,30 @@ describe("whiteboard boot", () => {
     resolve(signedIn(true));
     await flush();
     await flush();
-    expect(stub.collection).toHaveBeenCalledWith("blocks");
+    expect(stub.collection).toHaveBeenCalledWith("blocks", { format: BOARD_PAGE_FORMAT });
+  });
+
+  it("asks for a reload when the server says the page is older than the board's format", async () => {
+    stubRuntime(signedIn(true), { blocks: [NOTE], arrows: [] });
+    mount('{"v":1}');
+    boot(window);
+    await flush();
+    await flush();
+    window.dispatchEvent(new CustomEvent("plinth:expired", { detail: { reason: "stale_page" } }));
+    expect(banner()).toBe(OUT_OF_DATE_TEXT);
+    expect(document.documentElement.dataset.readonly).toBe("true");
+  });
+
+  it("with a runtime too old to name the format: draws the board, read-only, and asks for a reload", async () => {
+    const stub = stubRuntime(signedIn(true), { blocks: [NOTE], arrows: [] }, true);
+    mount('{"v":1}');
+    boot(window);
+    await flush();
+    await flush();
+    expect(document.querySelector(".wb-block")?.textContent).toBe("Ship v2");
+    expect(banner()).toBe(OUT_OF_DATE_TEXT);
+    expect(document.documentElement.dataset.readonly).toBe("true");
+    expect(shown("Add note")).toBe(false);
+    expect(stub.calls.filter((c) => /\.(add|set|delete)$/.test(c))).toEqual([]);
   });
 });

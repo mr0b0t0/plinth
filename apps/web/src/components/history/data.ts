@@ -80,7 +80,3 @@ export async function restoreVersion(slug: string, n: number, baseVersion: numbe
     body: { base_version: baseVersion },
   });
 }
-
-export async function signOut(): Promise<void> {
-  await api(API.logout, { method: "POST" }).catch(() => undefined);
-}

@@ -7,10 +7,11 @@ import {
   COOKIES,
   type EffectiveRole,
   HOST_COOKIE_PREFIX,
-  isLiveType,
+  isLiveSource,
   REVIEW_MODE_PARAM,
   TTL,
   typeDef,
+  versionSourcePath,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import {
@@ -26,12 +27,14 @@ import { secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { openJson, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
+import { readDeckFiles } from "../services/deckFiles.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
 import { isCountableRequest, recordOpen } from "../services/views.ts";
 import { serveBoardLoader } from "./boardLoader.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { serveDataApi } from "./data-api.ts";
+import { serveEmbedLoader } from "./embedLoader.ts";
 import { servePreviewLoader } from "./preview.ts";
 import { roomSocketSource, serveRoomUpgrade } from "./room.ts";
 import { serveRuntimeScript } from "./runtime.ts";
@@ -464,7 +467,10 @@ function serveTypeFrame(
       framing: gate?.pass.preview ? "any" : "app",
     });
   }
-  return serveBoardLoader(request, config, def, boardLoaderFraming(config, gate.pass));
+  const framing = boardLoaderFraming(config, gate.pass);
+  // A deck's x-embed frames (content/embedLoader.ts); a design's artboards (content/boardLoader.ts).
+  if (!def.opaqueFrames) return serveEmbedLoader(request, config, framing);
+  return serveBoardLoader(request, config, def, framing);
 }
 
 /**
@@ -712,8 +718,11 @@ async function serve(
     // On-page editing (#36): only an owner's or editor's view pass, on the current version's own
     // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
     const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";
+    // A deck's source is slides.md or deck.json (an HTML deck, whose shell also embeds its slides
+    // and which is never edited on its page).
+    const sourcePath = versionSourcePath(def, v.entries);
     const live =
-      isLiveType(def) &&
+      isLiveSource(def, sourcePath) &&
       socket !== undefined &&
       liveEditMode(config, env) === "room" &&
       editor &&
@@ -737,6 +746,15 @@ async function serve(
           ? ("present" as const)
           : ("watch" as const)
         : undefined;
+    const files =
+      def.altSource && sourcePath === def.altSource.path && request.method !== "HEAD"
+        ? await readDeckFiles(
+            env.FILES,
+            artifactId,
+            { number: versionNumber, r2Prefix: v.r2Prefix },
+            v.entries.values(),
+          )
+        : undefined;
     return serveTypedEntry(request, env, config, {
       artifact,
       version,
@@ -745,6 +763,8 @@ async function serve(
       url,
       framing,
       socket,
+      sourcePath,
+      ...(files ? { files } : {}),
       ...(live ? { live } : {}),
       ...(follow ? { follow } : {}),
     });

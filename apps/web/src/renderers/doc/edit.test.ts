@@ -3,10 +3,10 @@
 // back as Markdown by the serializer; Esc gives the block back; Cmd/Ctrl+S goes to the app; blocks
 // other people hold show who holds them; the block menu turns, inserts, moves and deletes blocks;
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
-import { LIMITS } from "@plinth/shared";
+import { LIMITS, PAGE_ANCHOR_UNSAFE_RE, PAGE_COMMENT_LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
-import { readRescueItems } from "../../components/viewer/rendererProtocol.ts";
+import { MAX_RESCUE_ITEM, readRescueItems } from "../../components/viewer/rendererProtocol.ts";
 import type { ClientLease, LeaseDenial, LeaseLoss } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
@@ -22,12 +22,14 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  RESCUE_DISMISS,
   RESCUE_FRAME_ONLY,
   RESCUE_STUCK,
   RESCUE_WAITS,
   type RescueReport,
   TAKEN_KEPT,
   TOO_LONG,
+  TURN_DROPS,
   UNSAVABLE,
   unpadded,
 } from "./edit.ts";
@@ -272,6 +274,28 @@ describe("DocEditor: formatted text", () => {
     expect(local.text).toBe("one \\<b>two\\</b> \\*\\*three\\*\\*");
   });
 
+  it("pastes several paragraphs as blocks of their own, with the caret after the paste", () => {
+    const { local, editor } = setup("Startend\n\nlast");
+    click(root.querySelector("p") as Element);
+    const el = rich(editor).editable;
+    select(el, 5);
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { getData: (t: string) => (t === "text/plain" ? " one\n\ntwo\n\nthree " : "") },
+    });
+    el.dispatchEvent(paste);
+    expect(local.text).toBe("Start one\n\ntwo\n\nthree end\n\nlast");
+    // The last pasted paragraph is open, the caret after it.
+    const r = rich(editor);
+    expect(r.editable.textContent).toBe("three end");
+    expect(r.selection()?.from).toEqual({ leaf: 0, offset: "three ".length });
+    // Undo there takes the paste back whole, as one block, the caret where it was.
+    key(r.editable, "z", { metaKey: true });
+    expect(local.text).toBe("Startend\n\nlast");
+    expect(rich(editor).editable.textContent).toBe("Startend");
+    expect(rich(editor).selection()?.from).toEqual({ leaf: 0, offset: 5 });
+  });
+
   it("keeps a typed URL as text, so it becomes a link when the block renders again", () => {
     const { local, editor } = setup("one");
     click(root.querySelector("p") as Element);
@@ -343,6 +367,61 @@ describe("DocEditor: formatted text", () => {
     typeText(fresh.editable, "three");
     key(fresh.editable, "Escape");
     expect(local.text).toBe("one\n\ntwo\n\nthree\n\nlast");
+  });
+
+  it("Undo right after an Enter takes it back, in the middle, at the end and at the start", () => {
+    const { local, editor } = setup("onetwo\n\nlast");
+    click(root.querySelector("p") as Element);
+    select(rich(editor).editable, 3);
+    key(rich(editor).editable, "Enter");
+    expect(local.text).toBe("one\n\ntwo\n\nlast");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("onetwo\n\nlast");
+    expect(rich(editor).editable.textContent).toBe("onetwo");
+    expect(rich(editor).selection()?.from).toEqual({ leaf: 0, offset: 3 });
+    // At the end: the empty block below closes, and the caret is back at the end.
+    select(rich(editor).editable, 6);
+    key(rich(editor).editable, "Enter");
+    expect(rich(editor).editable.textContent).toBe("");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("onetwo\n\nlast");
+    expect(rich(editor).editable.textContent).toBe("onetwo");
+    expect(rich(editor).selection()?.from).toEqual({ leaf: 0, offset: 6 });
+    // At the start: the empty block above closes.
+    select(rich(editor).editable, 0);
+    key(rich(editor).editable, "Enter");
+    expect(rich(editor).editable.textContent).toBe("");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(rich(editor).editable.textContent).toBe("onetwo");
+    expect(local.text).toBe("onetwo\n\nlast");
+    // Typed into after the Enter, Undo takes the typing back first, then the Enter.
+    select(rich(editor).editable, 3);
+    key(rich(editor).editable, "Enter");
+    const next = rich(editor);
+    next.editable.dispatchEvent(
+      new InputEvent("beforeinput", { inputType: "insertText", data: "X", bubbles: true }),
+    );
+    typeText(next.editable, "Xtwo");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("one\n\nXtwo\n\nlast");
+    key(next.editable, "z", { metaKey: true });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("one\n\ntwo\n\nlast");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("onetwo\n\nlast");
+  });
+
+  it("Undo after an Enter does nothing once the blocks changed meanwhile", () => {
+    const { local, editor } = setup("onetwo\n\nlast");
+    click(root.querySelector("p") as Element);
+    select(rich(editor).editable, 3);
+    key(rich(editor).editable, "Enter");
+    // Someone else's edit changes the block above (solo has no one else: change the lines).
+    local.lines.splice(0, 1, "ONE");
+    key(rich(editor).editable, "z", { metaKey: true });
+    expect(local.text).toBe("ONE\n\ntwo\n\nlast");
+    // The block stays open.
+    expect(rich(editor).editable.textContent).toBe("two");
   });
 
   it("Shift+Enter is a line break inside the block", () => {
@@ -549,13 +628,22 @@ describe("DocEditor: formatted text", () => {
     expect(local.text).toBe("\\<html> basics\n\nmore");
   });
 
-  it("a refusal from the room puts the block back from the room's lines", () => {
-    const { editor } = setup("one\n\ntwo");
+  it("a refused edit puts the block back from the doc's lines, keeping what was typed to copy", () => {
+    const rescue = vi.fn<(r: RescueReport) => void>();
+    const { editor } = setup("one\n\ntwo", { rescue });
     click(root.querySelector("p") as Element);
     typeText(rich(editor).editable, "changed");
     editor.refused(REFUSED_EDIT);
     expect(rich(editor).editable.textContent).toBe("one");
-    expect(document.querySelector('[role="status"]')?.textContent).toContain(REFUSED_EDIT);
+    // Never dropped: parked for the app's store, with Copy and Dismiss, and counted as unsent.
+    expect(rescue).toHaveBeenCalledWith(
+      expect.objectContaining({ upsert: [expect.objectContaining({ text: "changed" })] }),
+    );
+    expect(editor.hasRescue).toBe(true);
+    expect(editor.pending).toBe(true);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(
+      "What you typed couldn't be added to the doc yet.",
+    );
   });
 });
 
@@ -730,6 +818,39 @@ describe("DocEditor: the block menu", () => {
     expect(rich(editor).kind).toBe("code");
     menu("Paragraph", "Turn into");
     expect(local.text).toBe("one two\n\nnext");
+  });
+
+  it("refuses a Turn into that would drop a divider or a table in a quote, and says so", () => {
+    for (const quote of ["> quoted\n>\n> ***", "> quoted\n>\n> | a |\n> | --- |\n> | b |"]) {
+      root.innerHTML = "";
+      const { local, editor } = setup(`${quote}\n\nnext`);
+      click(root.querySelector("blockquote") as Element);
+      menu("Paragraph", "Turn into");
+      expect(document.body.textContent).toContain(TURN_DROPS);
+      expect(local.text).toBe(`${quote}\n\nnext`);
+      expect(rich(editor).kind).toBe("quote");
+      editor.setEditing(false);
+    }
+  });
+
+  it("refuses a Turn into a code block of a paragraph with an image", () => {
+    const { local, editor } = setup("see ![i](a.png)\n\nnext");
+    click(root.querySelector("p") as Element);
+    menu("Code block", "Turn into");
+    expect(document.body.textContent).toContain(TURN_DROPS);
+    expect(local.text).toBe("see ![i](a.png)\n\nnext");
+    expect(rich(editor).kind).toBe("paragraph");
+  });
+
+  it("undoes a Turn into that changed only white space (a code block's indentation)", () => {
+    const { local, editor } = setup("```\nif x:\n    go()\n```\n\nnext");
+    click(root.querySelector("pre") as Element);
+    menu("Paragraph", "Turn into");
+    expect(local.text).toBe("if x:\ngo()\n\nnext");
+    key(rich(editor).editable, "z", { metaKey: true });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe("```\nif x:\n    go()\n```\n\nnext");
+    expect(rich(editor).kind).toBe("code");
   });
 
   it("inserts a block of a kind below, a divider, and a table of a chosen size", () => {
@@ -1198,7 +1319,8 @@ describe("DocEditor: read-only blocks and images", () => {
     setup("one\n\ntwo");
     click(root.querySelectorAll("p")[1] as Element);
     menu("Image", "Insert below");
-    expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "" }, "image");
+    // A new image below the block: not the image a block has, which `block-2:image` would be.
+    expect(ask).toHaveBeenCalledWith({ key: "block-2:add-image", text: "two" }, "paragraph");
   });
 
   it("the menu's top level is five items; Turn into and Insert below open in its place", () => {
@@ -2073,6 +2195,27 @@ describe("DocEditor: a block op, with a room", () => {
   });
 });
 
+describe("Ask anchors", () => {
+  it("name the published block the agent reads, past blocks added above it in the draft", () => {
+    const published = "one\n\n- item\n\n  ```\n  code\n  ```\n\nEnd";
+    const { editor } = setup(`new above\n\n${published}`, { published: () => published });
+    click(root.querySelector("ul") as Element);
+    const bar = root.querySelector(".plinth-doc__blockbar") as HTMLElement;
+    click(
+      [...bar.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
+    );
+    expect(ask).toHaveBeenLastCalledWith({ key: "block-2", text: "item code" }, "list");
+    // A block only in the draft: its draft words, named after the published block above it.
+    click(root.querySelector("p") as Element);
+    menu("Image", "Insert below");
+    expect(ask).toHaveBeenLastCalledWith(
+      { key: "new-0:add-image", text: "new above" },
+      "paragraph",
+    );
+    expect(editor.openEditor).toBeNull();
+  });
+});
+
 describe("blockWords", () => {
   it("reads a list's items apart, with a dot between them, and a table's cells with spaces", () => {
     const host = document.createElement("div");
@@ -2081,6 +2224,30 @@ describe("blockWords", () => {
     expect(blockWords([...host.childNodes])).toBe("Maria: launch post · Ana: emails subject: Hi");
     host.innerHTML = "<table><tr><th>Risk</th><th>Owner</th></tr><tr><td>PSL</td></tr></table>";
     expect(blockWords([...host.childNodes])).toBe("Risk Owner PSL");
+  });
+
+  it("drops what no label may hold, emoji joiners and bidi controls among it", () => {
+    const words = (t: string) => blockWords([document.createTextNode(t)]);
+    // The family emoji's joiners are format characters the server refuses: they go, so the Ask
+    // dialog's anchor is one the server takes.
+    expect(words("👨\u200d👩\u200d👧 Family plan")).toBe("👨👩👧 Family plan");
+    expect(words("a\u202eb\u2066c\u200bd\ufeffe")).toBe("abcde");
+    expect(words("one\u2028two\u2029three\tfour\u0007five")).toBe("one two three fourfive");
+    for (const t of ["👨\u200d👩\u200d👧 Family plan", "x\u202ey"]) {
+      expect(PAGE_ANCHOR_UNSAFE_RE.test(words(t))).toBe(false);
+    }
+  });
+
+  it("cuts at the page anchor's length in UTF-16 units, never inside a surrogate pair", () => {
+    const words = (t: string) => blockWords([document.createTextNode(t)]);
+    const max = PAGE_COMMENT_LIMITS.maxText;
+    // 119 letters and an emoji (two units): the emoji would make 121, so it is left out.
+    expect(words(`${"a".repeat(max - 1)}😀 tail`)).toBe("a".repeat(max - 1));
+    // Emoji all the way: 60 of them fill 120 units exactly.
+    const emoji = words("😀".repeat(100));
+    expect(emoji.length).toBe(max);
+    expect(emoji).toBe("😀".repeat(max / 2));
+    expect(words("é".repeat(200)).length).toBe(max);
   });
 });
 
@@ -2402,10 +2569,27 @@ class FakeRoom {
     this.editor.changed();
     return true;
   }
+  /**
+   * As LiveDocClient: release() only sends the frame, and `mine` goes when the room's `released`
+   * comes back, after the answers to every frame sent before it (released()). Without a test
+   * holding it, that answer comes in a microtask.
+   */
+  private releasing: string[] = [];
+  holdReleased = false;
   release() {
     if (!this.mine) return;
-    this.leases.delete(this.mine.id);
-    this.mine = null;
+    this.releasing.push(this.mine.id);
+    if (!this.holdReleased) queueMicrotask(() => this.released());
+  }
+  /** The room's `released` frames for every release sent so far. */
+  released() {
+    const ids = this.releasing;
+    if (ids.length === 0) return;
+    this.releasing = [];
+    for (const id of ids) {
+      this.leases.delete(id);
+      if (this.mine?.id === id) this.mine = null;
+    }
     this.editor.changed();
   }
   takeover() {
@@ -2553,7 +2737,7 @@ describe("the rescue store", () => {
   it("3. a refusal from the room never resets typing that cannot be written", () => {
     const room = roomSetup("ab\n\nnext");
     stick(room);
-    room.editor.refused(REFUSED_EDIT);
+    room.editor.roomRefused("invalid");
     expect(rich(room.editor).editable.textContent).toBe("abc");
     expect(room.editor.unsavable).toBe(true);
     expect(kept()).toEqual(["abc"]);
@@ -2752,5 +2936,417 @@ describe("the rescue store", () => {
     // Kept by the app after all (a later answer): back to the usual words, or none.
     room.editor.rescueStored([last.upsert[0]?.id as string], last.n);
     expect(notice()).not.toContain(RESCUE_FRAME_ONLY);
+  });
+
+  const noticeButton = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".plinth-doc__notice button")].find(
+      (b) => b.textContent === label,
+    );
+
+  it("keeps an item longer than the app takes on this page, with Copy, and still sends the report", () => {
+    const room = roomSetup("ab\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    const long = "c".repeat(MAX_RESCUE_ITEM + 10);
+    r.editable.innerHTML = `<em>a<strong>b</strong></em><strong>${long}</strong>`;
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    const last = reports.at(-1) as RescueReport;
+    // The report goes without it, so the app reads it (the item alone would void it).
+    expect(last.upsert).toEqual([]);
+    expect(readRescueItems(last.upsert)).toEqual([]);
+    expect(kept()).toEqual([]);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    expect(noticeButton("Copy")).toBeDefined();
+  });
+
+  it("offers an item the app had no room for again once something leaves its store", () => {
+    // The app's store is full of older items (20 of them).
+    const full = Array.from({ length: 20 }, (_, i) => ({ id: `f${i}`, text: "old", near: 0 }));
+    mergeRescue(USER, ART, full, []);
+    const room = roomSetup("ab\n\nnext");
+    room.editor.rescueStored(
+      full.map((i) => i.id),
+      0,
+    );
+    stick(room);
+    expect(kept()).not.toContain("abc");
+    const refused = reports.length;
+    // One of the older ones is written and leaves the store: the app's next answer says so.
+    const ids = mergeRescue(USER, ART, [], ["f0"]);
+    room.editor.rescueStored(ids, reports.at(-1)?.n as number);
+    expect(reports.length).toBe(refused + 1);
+    expect(reports.at(-1)?.upsert.map((i) => i.text)).toEqual(["abc"]);
+    expect(kept()).toContain("abc");
+  });
+
+  it("Dismiss asks once, then drops what was kept, for good, here and in the app's store", () => {
+    const room = roomSetup("ab\n\nnext");
+    answer = false;
+    stick(room);
+    room.editor.rescueStored([], (reports.at(-1) as RescueReport).n);
+    (document.querySelector(".plinth-doc__notice-close") as HTMLButtonElement).click();
+    expect(notice()).toContain(RESCUE_FRAME_ONLY);
+    // The rescue notice's own close is "Close", Dismiss is its action next to Copy.
+    expect(document.querySelector(".plinth-doc__notice-close")?.getAttribute("aria-label")).toBe(
+      "Close",
+    );
+    noticeButton("Dismiss")?.click();
+    expect(notice()).toContain(RESCUE_DISMISS);
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(room.editor.hasRescue).toBe(true);
+    noticeButton("Dismiss")?.click();
+    expect(room.editor.hasRescue).toBe(false);
+    expect(reports.at(-1)).toMatchObject({ upsert: [], written: [], gone: [expect.any(String)] });
+    expect(document.querySelector(".plinth-doc__notice")).toBeNull();
+  });
+
+  it("offers Copy and Dismiss to the person who typed it once they cannot write any more", () => {
+    mergeRescue(USER, ART, [{ id: "r1", text: "Mine", near: 0 }], []);
+    const room = roomSetup("ab\n\nnext");
+    Object.defineProperty(room, "you", {
+      value: { id: "me", email: "ada@example.org", right: "read" },
+    });
+    room.editor.offerRescue(stored());
+    // Never written (no write right), so it would never leave: the notice says so, with Dismiss.
+    expect(room.asked).toBeNull();
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    noticeButton("Dismiss")?.click();
+    noticeButton("Dismiss")?.click();
+    expect(kept()).toEqual([]);
+  });
+
+  it("solo: items offered to copy only are never written again", () => {
+    const { local, editor } = setup("one");
+    editor.offerRescue([{ id: "r1", text: "Already in", near: 0 }], true);
+    expect(local.text).toBe("one");
+    expect(notice()).toContain(RESCUE_STUCK);
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(noticeButton("Dismiss")).toBeDefined();
+  });
+
+  it("solo: typing the doc has no room for stays pending, open and in the kept copy", () => {
+    const filler = "x".repeat(LIMITS.maxDocBytes - 10);
+    const { local, editor } = setup(`one\n\n${filler}`);
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    typeText(r.editable, "one and a lot more words");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`one\n\n${filler}`);
+    expect(notice()).toContain(DOC_FULL);
+    // Not in the doc: it counts as unsent and unsavable (no Publish, Done or collect without it).
+    expect(editor.pending).toBe(true);
+    expect(editor.unsavable).toBe(true);
+    expect(editor.textWithTyping()).toContain("one and a lot more words");
+    // Esc, a click elsewhere or Cmd/Ctrl+S keep the block open with what was typed.
+    key(r.editable, "Escape");
+    expect(editor.openEditor).toBe(r);
+    expect(r.editable.textContent).toBe("one and a lot more words");
+    expect(notice()).toContain(DOC_FULL);
+    // Made to fit, it goes in, and nothing is pending.
+    typeText(r.editable, "one two");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`one two\n\n${filler}`);
+    expect(editor.pending).toBe(false);
+    expect(editor.unsavable).toBe(false);
+  });
+
+  it("solo: a block full of quotes goes in as it is: nothing is sent in a frame to measure", () => {
+    const quotes = '"'.repeat(LIMITS.liveDocFrameBytes / 2);
+    const { local, editor } = setup("one\n\nnext");
+    click(root.querySelector("p") as Element);
+    typeText(rich(editor).editable, quotes);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`${quotes}\n\nnext`);
+    expect(editor.unsavable).toBe(false);
+  });
+
+  it("room: a send that is not taken, or too long for a frame, goes to the rescue store and stays open", () => {
+    const room = roomSetup("ab\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    const edit = room.edit.bind(room);
+    room.edit = () => false;
+    typeText(r.editable, "ab and more");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(notice()).toContain(NOT_SENT);
+    expect(kept()).toEqual(["ab and more"]);
+    expect(room.editor.pending).toBe(true);
+    expect(room.editor.close(true)).toBe(false);
+    expect(room.editor.openEditor).toBe(r);
+    // Taken again: the next send goes in.
+    room.edit = edit;
+    room.editor.flush();
+    expect(room.lines[0]).toBe("ab and more");
+    expect(room.editor.unsavable).toBe(false);
+    // Too long for one frame of the room: kept the same way.
+    const long = "y".repeat(LIMITS.liveDocFrameBytes - 100);
+    typeText(r.editable, long);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(notice()).toContain(TOO_LONG);
+    expect(room.editor.unsavable).toBe(true);
+    expect(kept()).toContain(long);
+    expect(room.editor.close(true)).toBe(false);
+  });
+
+  it("room: an edit the room refuses as invalid keeps what was typed, with Copy, before the block goes back", () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    // The edit goes out but the room never applies it: it answers `invalid`.
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    room.editor.roomRefused("invalid");
+    // The block is the room's again, and the typing is kept, not lost.
+    expect(rich(room.editor).editable.textContent).toBe("Two");
+    expect(kept()).toEqual(["Two typed a lot"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(noticeButton("Dismiss")).toBeDefined();
+    // After a reload it is offered back and written as a block of its own.
+    room.dropEdits = false;
+    const again = reload("Two\n\nnext");
+    expect(again.lines.join("\n")).toContain("Two typed a lot");
+  });
+
+  /** A doc of exactly LIMITS.maxLiveDocLines lines: "ab", then a code block filling the rest. */
+  const fullOfLines = () =>
+    ["ab", "", "```", ...Array.from({ length: LIMITS.maxLiveDocLines - 4 }, () => "x"), "```"].join(
+      "\n",
+    );
+
+  it("room: a line the doc has no room for (its line limit) stays open, pending and kept, unsent", () => {
+    const text = fullOfLines();
+    const room = roomSetup(text);
+    const edit = vi.spyOn(room, "edit");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    select(r.editable, 2);
+    key(r.editable, "Enter", { shiftKey: true });
+    r.editable.append("more");
+    r.editable.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // Never sent for the room to refuse: the frame checks the room's line limit first.
+    expect(edit).not.toHaveBeenCalled();
+    expect(room.text).toBe(text);
+    expect(notice()).toContain(DOC_FULL);
+    expect(room.editor.unsavable).toBe(true);
+    expect(room.editor.pending).toBe(true);
+    expect(kept()).toEqual(["ab\\\nmore"]);
+    expect(room.editor.close(true)).toBe(false);
+    expect(room.editor.openEditor).toBe(r);
+  });
+
+  it("room: a block over one frame once written as JSON is kept as too long, not sent", () => {
+    const room = roomSetup("ab\n\nnext");
+    const edit = vi.spyOn(room, "edit");
+    click(root.querySelector("p") as Element);
+    // Each quote takes two bytes in the frame: under the limit as text, over it as sent.
+    const quotes = '"'.repeat(LIMITS.liveDocFrameBytes / 2);
+    typeText(rich(room.editor).editable, quotes);
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(edit).not.toHaveBeenCalled();
+    expect(notice()).toContain(TOO_LONG);
+    expect(room.editor.unsavable).toBe(true);
+    expect(kept()).toEqual([quotes]);
+  });
+
+  it("room: an edit the room refuses as too large keeps the block open with its typing", () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // The room's own size check (another tab grew the doc meanwhile) answers `too_large`.
+    room.editor.roomRefused("too_large");
+    expect(room.editor.openEditor).toBe(r);
+    expect(r.editable.textContent).toBe("Two typed a lot");
+    expect(notice()).toContain(DOC_FULL);
+    expect(room.editor.unsavable).toBe(true);
+    expect(room.editor.pending).toBe(true);
+    expect(kept()).toEqual(["Two typed a lot"]);
+    // Room again: the next flush sends it, and nothing is kept any more.
+    room.dropEdits = false;
+    room.editor.flush();
+    expect(room.lines[0]).toBe("Two typed a lot");
+    expect(room.editor.unsavable).toBe(false);
+    expect(kept()).toEqual([]);
+  });
+
+  it("room: a block refused as too large, sent again as it closes and refused again, is still kept", async () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    room.editor.roomRefused("too_large");
+    // Esc sends it again and closes the block; the room still has no room for it.
+    key(r.editable, "Escape");
+    room.editor.roomRefused("too_large");
+    await settle();
+    expect(kept()).toEqual(["Two typed a lot"]);
+    expect(room.editor.pending).toBe(true);
+  });
+
+  it("room: typing the doc's rules refuse (an indented code block at the top made <html>) is kept, with Copy", () => {
+    const room = roomSetup("    code\n\nnext");
+    const edit = vi.spyOn(room, "edit");
+    click(root.querySelector("pre") as Element);
+    const code = rich(room.editor).editable.querySelector("code") as HTMLElement;
+    code.textContent = "<html> here";
+    code.dispatchEvent(new Event("input", { bubbles: true }));
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // Refused by the frame's own check, never sent: the block goes back as the doc has it...
+    expect(edit).not.toHaveBeenCalled();
+    expect(room.text).toBe("    code\n\nnext");
+    expect(rich(room.editor).editable.textContent).toBe("code");
+    // ...and what was typed is kept first, parked with Copy and Dismiss.
+    expect(kept()).toEqual(["    <html> here"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(noticeButton("Dismiss")).toBeDefined();
+  });
+
+  it("room: invalid for a closed block's send, answered before the room's released, keeps it with Copy", () => {
+    const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    // Esc sends the typing and releases the lease; the room answers the edit before the release.
+    key(r.editable, "Escape");
+    expect(room.editor.openEditor).toBeNull();
+    expect(room.mine).not.toBeNull();
+    room.editor.roomRefused("invalid");
+    room.released();
+    expect(kept()).toEqual(["Two typed a lot"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    expect(noticeButton("Copy")).toBeDefined();
+    expect(noticeButton("Dismiss")).toBeDefined();
+    // After a reload it is offered back and written as a block of its own.
+    room.dropEdits = false;
+    const again = reload("Two\n\nnext");
+    expect(again.lines.join("\n")).toContain("Two typed a lot");
+  });
+
+  it("room: too_large for a closed block's send, answered before the room's released, keeps it", () => {
+    const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    key(r.editable, "Escape");
+    room.editor.roomRefused("too_large");
+    room.released();
+    expect(kept()).toEqual(["Two typed a lot"]);
+    expect(room.editor.pending).toBe(true);
+  });
+
+  it("room: a send after the pause, then Esc with nothing new, refused before released, is kept", () => {
+    const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    key(r.editable, "Escape");
+    room.editor.roomRefused("invalid");
+    room.released();
+    expect(kept()).toEqual(["Two typed a lot"]);
+  });
+
+  it("room: a split refused before the room's released keeps both halves, as one kept text", () => {
+    const room = roomSetup("Two\n\nnext");
+    room.holdReleased = true;
+    room.auto = false;
+    click(root.querySelector("p") as Element);
+    room.grant();
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two and more");
+    select(r.editable, 3);
+    key(r.editable, "Enter");
+    // The block below asks for its lease; the room answers the split, then the release, first.
+    room.editor.roomRefused("too_large");
+    room.released();
+    expect(kept()).toEqual(["Two\n\nand more"]);
+    expect(room.editor.pending).toBe(true);
+  });
+
+  it("room: a refusal after an accepted send keeps nothing it does not need to", () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    typeText(rich(room.editor).editable, "Two typed");
+    key(rich(room.editor).editable, "Escape");
+    expect(room.lines[0]).toBe("Two typed");
+    // Something else of this socket's is refused later (an op): the block's send was taken.
+    room.editor.roomRefused("invalid");
+    expect(kept()).toEqual([]);
+    expect(room.editor.pending).toBe(false);
+  });
+
+  it("room: a send the room answers not_held (taken over first) is kept once, never again later", async () => {
+    const room = roomSetup("Two\n\nnext");
+    click(root.querySelector("p") as Element);
+    const r = rich(room.editor);
+    room.dropEdits = true;
+    typeText(r.editable, "Two typed a lot");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    // Someone takes the block over; the room then answers the edit with not_held.
+    room.lose("takeover");
+    room.editor.roomRefused("not_held");
+    expect(kept()).toEqual(["Two typed a lot"]);
+    // A later refusal of something else keeps nothing more.
+    room.editor.roomRefused("invalid");
+    await settle();
+    expect(kept()).toEqual(["Two typed a lot"]);
+  });
+
+  it("room: typing a closed cleared block keeps, which the room then refuses, is kept with Copy", async () => {
+    const room = roomSetup("- a\n\nmid\n\n- b");
+    room.auto = false;
+    click(root.querySelector("p") as Element);
+    room.grant();
+    const r = rich(room.editor);
+    // Emptied: its removal (with the list after it) asks for its lease...
+    typeText(r.editable, "");
+    expect(room.asked).not.toBeNull();
+    // ...and is typed into and closed before it is granted.
+    typeText(r.editable, "new");
+    key(r.editable, "Escape");
+    room.grant();
+    await settle();
+    // The removal is in; what was typed goes in by itself, and the room refuses it.
+    expect(room.asked).not.toBeNull();
+    room.dropEdits = true;
+    room.grant();
+    room.editor.roomRefused("too_large");
+    await settle();
+    expect(kept()).toEqual(["new"]);
+    expect(room.editor.pending).toBe(true);
+    expect(notice()).toContain("What you typed couldn't be added to the doc yet.");
+    expect(noticeButton("Copy")).toBeDefined();
+  });
+
+  it("room: a block op over one frame of the room is not sent, and says the block is too long", () => {
+    const q = '"'.repeat(20_000);
+    const room = roomSetup(`a${q}\n\nb${q}`);
+    const edit = vi.spyOn(room, "edit");
+    click(root.querySelector("p") as Element);
+    menu("Move down");
+    // Each block fits in a frame as JSON; the two the move writes again do not.
+    expect(edit).not.toHaveBeenCalled();
+    expect(room.text).toBe(`a${q}\n\nb${q}`);
+    expect(notice()).toContain(TOO_LONG);
   });
 });

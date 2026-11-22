@@ -1,7 +1,8 @@
-// REST mirror of get_design_system. Same service, same policy, same validation as the MCP tool.
+// REST mirror of get_design_system (same service, same policy, same validation as the MCP tool),
+// and the person's choice of a default design system (the app only, no MCP tool).
 import { API, getDesignSystemInput } from "@plinth/shared";
 import { Hono } from "hono";
-import { getDesignSystem } from "../services/designSystems.ts";
+import { getDesignSystem, setDefaultDesignSystem } from "../services/designSystems.ts";
 import { type AppEnv, parseInput, serviceCtx } from "./context.ts";
 
 export const designSystemsApi = new Hono<AppEnv>();
@@ -23,6 +24,15 @@ designSystemsApi.get(API.designSystem, async (c) => {
     version: v === undefined || v === "" ? undefined : Number(v),
     include: list(c.req.query("include")),
     components: list(c.req.query("components")),
+    install_for: c.req.query("install_for") || undefined,
+    deck_format: c.req.query("deck_format") || undefined,
+    folder: c.req.query("folder") || undefined,
   });
   return c.json(await getDesignSystem(serviceCtx(c), input));
+});
+
+// The body is checked after the access decision, so a stranger learns nothing from a bad one.
+designSystemsApi.put(API.defaultDesignSystem, async (c) => {
+  const body: unknown = await c.req.json().catch(() => null);
+  return c.json(await setDefaultDesignSystem(serviceCtx(c), c.req.param("ref"), body));
 });

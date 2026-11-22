@@ -10,6 +10,98 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Doc editing keeps typing the doc refuses.** Three more cases where typed text could be lost on
+  a doc's page now keep it. A block that would take a live doc past its 50,000-line limit, or that
+  the room refuses as too large, stays open with what was typed, as a block past the byte limit
+  already did. Typing the doc's rules refuse (`<html>` typed in an indented code block at the very
+  top) is kept with **Copy** and **Dismiss** before the block goes back. And when the room refuses
+  a block's last change after the block has closed, or someone takes the block over before the
+  change arrives, that change is kept the same way and offered back after a reload.
+
+- **HTML decks in Claude's slide format.** A deck can now be `deck.json`, `deck.css` and one
+  `slides/<id>.html` per slide, as Claude's Slides writes them, beside Markdown decks, which work as
+  before. Plinth checks each slide against Claude's element list and limits at publish. Each slide
+  is shown on its 1920x1080 (or 1440x1080) canvas with its own CSS and fonts, and Plinth draws its
+  shapes, icons and connectors. Fragments, transitions and arrival animations play (off under
+  reduced motion and in print), and live embeds run in a sandboxed frame with no network. Paging,
+  presenter view, the audience window, Lead viewers, print to PDF, thumbnails and Download .pptx
+  all work, and the .pptx keeps text, boxes, shapes and tables editable. Agents read every slide
+  with `get_artifact` and, as on Claude, send only the files they change: the rest of the deck is
+  kept. A deck written for Claude, with its `project/` paths, publishes as it is, and
+  `get_design_system` installs a design system into an HTML deck with `deck_format: "html"`. A
+  sample deck is in `docs/examples/plinth-deck`.
+
+- **Designs: fluid pages, notes, flows and links to one board.** An artboard with `height="auto"`
+  is as tall as its content, so a responsive web page shows whole on the canvas, in print and in
+  exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note kind="sticky" -->`
+  and `<!-- note kind="title" -->` add stickies and titles to the canvas (any other `<!-- note`
+  comment stays part of its board, as before). A link to `#board=<id>`
+  inside a board moves to that board, for clickable prototypes, and the app's address keeps the
+  board on view (`#board=<id>`), so a reload or a shared link opens on it. A flow moves only on a
+  click, a board in use stays still while a page next to it grows, and a link to a board that is
+  gone drops out of the address.
+- **Installing design systems, tightened.** `get_design_system` takes `install_for` and `folder`:
+  its install list holds only what the target type takes (a design gets no fonts or
+  `tokens.json`), and it also gives a deck's `faces` and `designSystems` record. A design system
+  without its own prefix installs under a name from its title instead of `ds/ds/`, and two systems
+  can no longer share a folder. Copies are checked after the publish rate, an admin's review
+  access never lets them copy, and `get_artifact` names a copy's source only to people who can
+  open it. A taken-down default design system is no longer reported as the default.
+
+- **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
+  card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen
+  instead of running past its edge.
+- **Craft guides for agents.** The plinth-artifacts skill now teaches how to make each type of
+  artifact read and look finished, not only what Plinth accepts: one guide per type, for pages and
+  dashboards (chart and KPI craft, summary before detail, every number from the data), docs (lead
+  with the answer, sized to the ask, sources and an as-of date), decks (one idea per slide, heading
+  levels and slide kinds used on purpose), sheets (important columns first, a build order, types,
+  widths and a notes column), designs (placeholders, no AI tropes, contrast, touch targets and real
+  controls), design systems (a brand-book guide, exact values, contrast in every theme) and
+  whiteboards (the idea's shape, a size budget, at most four colors, extending a board without
+  disturbing people's work). The MCP tool descriptions point agents without the skill at them.
+- **Design systems that other artifacts use.** Mark one of your design systems as your default
+  from its menu on the dashboard (**Set as default**); agents then use it for pages, decks and
+  designs without asking. A publish or update can now copy files from another artifact you can
+  view, on the server (`copy_files`), so an agent installs a design system's `tokens.css`,
+  `fonts.css`, `components.css`, `tokens.json`, fonts and images into a page under `ds/<prefix>/`
+  in the same call (`get_design_system` lists the entries to send). The copies become the page's
+  own files and record where they came from. Designs name the design system they were built on,
+  like pages, and get the same outdated warning. Apply migration `0022_design_system_reuse.sql`.
+- **Whiteboards draw what Claude's do.** Boards take Claude's shapes (rounded, diamond, pill,
+  hexagon, parallelogram, database, queue, document, cloud, person), sections that sit behind
+  everything and carry what lies in them, tables with fills and value shading, text sizes and
+  alignment, any `#rrggbb` colour, outlines and hollow shapes, bold, italic, code and safe links in
+  text, and arrows that run in right angles from chosen sides, follow a planned route and end in an
+  arrowhead or a dot. Existing boards look as they did. On the page, a selected shape offers a
+  Shape list and a selected text a Text size list, and a table cell is edited with a double click;
+  PNG and SVG exports draw all of it. Agents change a block with the new `merge` op of
+  `write_artifact_data` (only the fields that change, at a rev), and a board's data has its own,
+  larger limits (`DATA_BOARD_MAX_DOCS`, `DATA_BOARD_MAX_BYTES`, `DATA_BOARD_MAX_DOC_BYTES`).
+  When two people write in the same block at once, someone deletes a block you are writing in,
+  or a save fails, what you wrote is kept as a new note beside it, with Use mine to put it back;
+  if even the note cannot be saved, the page holds your text with Copy until it can. A board tab
+  opened before this release keeps working on the blocks it can read, and turns read-only and
+  asks for a reload instead of saving over newer ones.
+- **Doc editing, Ask and import follow-ups.** Bold, italic, strikethrough and links nest on a
+  doc's page: a link inside bold, bold inside italic and the like open for editing and can be
+  made. Pasting several paragraphs makes a block of each (an item in a list, a paragraph in a
+  quote). Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z undo and redo typing, formatting, links, Enter, list
+  moves, paste and Turn into in the block being edited, and Undo right after an Enter joins the
+  two blocks again. Turn into refuses a change that would drop part of a block (a table or a
+  divider in a quote, an image), and says so. Ask an agent names a doc's block as the version the
+  agent reads has it, even after blocks were added or removed above it; a block not published yet
+  is sent with its words and marked so, and Insert below's Image reads "New image below …". Block
+  words with emoji or invisible characters no longer stop a request from sending. Typing that
+  could not be added to the doc yet can be dismissed from its notice once copied, and a store
+  left by another account no longer warns the next person in the same tab. The Ask dialog's
+  Publish first no longer shows a toast that disagrees with it. A CSV that is too large once
+  converted to UTF-8 says so, and a UTF-16 file without a byte order mark is read as such (or
+  refused with a clear message) instead of filling every cell with NULs. Typing a doc could not
+  take (at its size limit, a block too long, or not sent) stays in its block, unsent, instead of
+  being dropped when the block closes, and an edit the room refuses keeps what was typed, with
+  Copy, before the block goes back.
+
 - **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
   the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
   too (it showed a generic notification), and a lost session asks to sign in again. A request no
@@ -46,9 +138,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   status says "Draft saved", "Publishing…" and "Published as v7", on one line at any width.
   **Discard unpublished changes** is in the ⋯ menu. The strip shows how many others are editing,
   with who and where in a tooltip. A doc's block being edited keeps the page's own type, with no
-  box around it, and a "+" shows only beside the block under the pointer or being edited; on a
-  phone only the "+" above the block being edited and the one at the end show, clear of the text.
-  A page Publish keeps the files of the version the changes were made from
+  box around it. A page Publish keeps the files of the version the changes were made from
   (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
   get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
   always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
@@ -376,32 +466,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   from its permanent version link now shows the new version on the sheet's own link. New appears
   once the list has loaded, so it no longer jumps from the top bar to the empty state, and file
   names in version notes drop control and bidi characters.
-- **Edit docs as formatted text.** On a doc's page, a block opens as formatted text, with a
-  format bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its
-  corner: **Turn into** another kind,
-  **Insert below** (any kind, a divider, a table or an image), **Move up**, **Move down** and
-  **Delete**. No
-  Markdown is shown anywhere; Plinth writes the changes back as Markdown and keeps every block
-  nobody touched byte for byte. A Move, Delete, Turn into or Insert below never runs the blocks
-  around it together, even with no blank lines between them (a list that would join another takes a different bullet or
-  number style, which looks the same), and neither does clearing a block's text, which removes the
-  block the same way at once, so a Publish made while it is still open never has the old text, and what is typed in it meanwhile reaches the doc even when the block is closed first. The menu of a new, still empty block acts on that block. A
-  link can go to any address the page links, spaces and
-  accented letters included. A change the doc cannot take (at its size limit, or while not
-  connected) says so and keeps the block open with what was typed. A block op cut off by a dropped
-  connection says so and leaves editing free, and typing waiting for a lease is asked for again once
-  the draft is back. An image's alt text opens from its menu (**Alt text**), and its **Ask an
-  agent** (or **Insert below**, **Image**) opens the Ask dialog, whose "Pointing at" chip names
-  the block by its first words as published, a list's items apart ("Pointing at “Maria: launch
-  post · Ana…”"), or by its kind when it has none ("Pointing at the image"). The link field opens under the selected text (docked in the block at phone
-  width), and the block menu stays inside the frame. Blocks the
-  page cannot show faithfully as formatted text are shown as they are, with **Ask an agent** and
-  the block menu (Move and Delete). The **+** between blocks is gone: **Insert below** or Enter
-  adds a block. Opening a block moves nothing on the page and hides next to nothing: the format bar
-  shows only for selected text, the block's menu sits on its edge, and heading anchors are hidden
-  while editing. Punctuation typed at the edge of bold, italic or strikethrough is kept, and text
-  the page cannot save as typed stays in its block, which stays open and keeps Publish off until
-  it is changed.
+- **Edit docs as formatted text.** On a doc's page a block opens as formatted text, with a format
+  bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its corner
+  (**Turn into**, **Insert below**, **Move up**, **Move down**, **Delete**). No Markdown is shown
+  anywhere: Plinth writes changes back as Markdown and keeps every untouched block byte for byte.
+  No block op, and no block cleared of its text, runs the blocks around it together. Blocks the
+  page cannot show faithfully are shown as they are, with **Ask an agent**, Move and Delete; an
+  image's **Ask an agent** (or **Insert below**, **Image**) opens the Ask dialog about that place.
+  The **+** between blocks is gone: **Insert below** or Enter adds a block. A change the doc
+  cannot take says so and keeps the block open with what was typed.
 
 - **Edit a deck on its page.** Owners and editors now edit a deck's slide text, speaker notes and
   settings right on its page, as formatted text with no Markdown shown, live with each other like

@@ -1,0 +1,45 @@
+{
+  "v": 5,
+  "title": "Plinth: a home for what your agents make",
+  "lists": "css",
+  "format": { "v": 1, "shared": ["deck.css"] },
+  "cover": "cover",
+  "order": [
+    "cover",
+    "jobs",
+    "types",
+    "gallery",
+    "publish",
+    "versions",
+    "numbers",
+    "feedback",
+    "decks",
+    "statement",
+    "close"
+  ],
+  "sections": {
+    "intro": {
+      "description": "What Plinth is, the jobs it does and the kinds of artifact it holds.",
+      "start": "cover"
+    },
+    "how": {
+      "description": "How a publish works, why versions never change, and how feedback reaches the agent.",
+      "start": "publish"
+    },
+    "decks": { "description": "What a deck on Plinth can do in the room.", "start": "decks" },
+    "close": {
+      "description": "The one idea to remember, and where to get Plinth.",
+      "start": "statement"
+    }
+  },
+  "faces": {
+    "space-grotesk": {
+      "family": "Space Grotesk",
+      "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400..700&display=swap"
+    },
+    "inter": {
+      "family": "Inter",
+      "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+    }
+  }
+}

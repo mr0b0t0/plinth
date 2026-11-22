@@ -25,8 +25,10 @@ export interface Run {
   href?: string;
   /** A link to another slide (a #N link in the Markdown). */
   slide?: number;
-  /** The run's own colour (a link), as RRGGBB. */
+  /** The run's own colour (a link, or an HTML slide's coloured phrase), as RRGGBB. */
   color?: string;
+  /** An HTML slide's underlined phrase. */
+  underline?: boolean;
 }
 
 export interface Para {
@@ -46,6 +48,8 @@ export interface Para {
   lineHeight: number;
   /** Space above the paragraph in points (list items after the first). */
   spaceBefore: number;
+  /** The face the screen uses (an HTML deck's), else the file's Arial. */
+  font?: string;
 }
 
 export interface Cell {
@@ -77,7 +81,39 @@ export type Item =
       rule: string;
     }
   /** `src` is the image's own src: a path to one of the artifact's files, or a data: URL. */
-  | { kind: "image"; box: Box; src: string; alt: string };
+  | {
+      kind: "image";
+      box: Box;
+      src: string;
+      alt: string;
+      /**
+       * The picture fills its box and is cropped (CSS object-fit: cover), not stretched; `ratio`
+       * is its own height over its width.
+       */
+      cover?: { ratio: number };
+    }
+  /** A painted box of an HTML slide, or one of its shapes: an editable PowerPoint shape. */
+  | {
+      kind: "shape";
+      box: Box;
+      shape: ShapeKind;
+      /** RRGGBB and 0 to 100 percent transparent, or null for no fill. */
+      fill: { color: string; transparency: number } | null;
+      line: { color: string; width: number; dash: "solid" | "dash" | "sysDot" } | null;
+      /** A rounded rectangle's corner, 0 to 1 of half its shorter side. */
+      radius?: number;
+    };
+
+export type ShapeKind =
+  | "rect"
+  | "roundRect"
+  | "ellipse"
+  | "diamond"
+  | "rightArrow"
+  | "leftArrow"
+  | "upArrow"
+  | "downArrow"
+  | "line";
 
 export interface SlideModel {
   n: number;

@@ -3,9 +3,19 @@ import { SLIDE_LINK_RE } from "./deck.ts";
 
 export type DeckMode = "deck" | "overview" | "presenter";
 
+/**
+ * Steps within a slide that next and prev take before the deck moves on (an HTML slide's
+ * fragments): each returns true when it took the step. go() never steps.
+ */
+export interface Stepper {
+  next(): boolean;
+  prev(): boolean;
+}
+
 export class DeckController {
   private n = 1;
   private readonly listeners = new Set<(n: number) => void>();
+  private stepper: Stepper | null = null;
 
   constructor(private total: number) {}
 
@@ -25,6 +35,10 @@ export class DeckController {
     for (const l of this.listeners) l(next);
   }
 
+  setStepper(s: Stepper | null): void {
+    this.stepper = s;
+  }
+
   get current(): number {
     return this.n;
   }
@@ -38,10 +52,12 @@ export class DeckController {
   }
 
   next(): void {
+    if (this.stepper?.next()) return;
     this.go(this.n + 1);
   }
 
   prev(): void {
+    if (this.stepper?.prev()) return;
     this.go(this.n - 1);
   }
 

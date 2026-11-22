@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  dataLimitsFor,
   IDENTITY_READERS,
   identityClaimsActive,
   liveEditMode,
@@ -406,6 +407,7 @@ describe("shared data settings", () => {
       maxDocBytes: 16384,
       writesPerViewerPerHour: 300,
       writesPerArtifactPerHour: 2000,
+      board: { maxDocsPerArtifact: 2000, maxBytesPerArtifact: 2097152, maxDocBytes: 204800 },
     });
     expect(sharedDataActive(c)).toBe(true);
   });
@@ -420,6 +422,9 @@ describe("shared data settings", () => {
       DATA_MAX_DOC_BYTES: "1024",
       DATA_WRITES_PER_VIEWER_PER_HOUR: "5",
       DATA_WRITES_PER_ARTIFACT_PER_HOUR: "7",
+      DATA_BOARD_MAX_DOCS: "20",
+      DATA_BOARD_MAX_BYTES: "8192",
+      DATA_BOARD_MAX_DOC_BYTES: "2048",
     });
     expect(c.allowSharedData).toBe(false);
     expect(c.data).toEqual({
@@ -429,12 +434,32 @@ describe("shared data settings", () => {
       maxDocBytes: 1024,
       writesPerViewerPerHour: 5,
       writesPerArtifactPerHour: 7,
+      board: { maxDocsPerArtifact: 20, maxBytesPerArtifact: 8192, maxDocBytes: 2048 },
     });
+    // A whiteboard's data takes the board's caps; every other page the instance's.
+    expect(dataLimitsFor(c, "whiteboard")).toEqual(c.data.board);
+    expect(dataLimitsFor(c, "html").maxDocBytes).toBe(1024);
     expect(sharedDataActive(c)).toBe(false);
     // An empty value (as wrangler.jsonc may list it) keeps the default.
     expect(parseConfig({ ...base, ALLOW_SHARED_DATA: "" }).allowSharedData).toBe(true);
     expect(parseConfig({ ...base, ALLOW_SHARED_DATA: "true" }).allowSharedData).toBe(true);
     expect(parseConfig({ ...base, ALLOW_SHARED_DATA: "0" }).allowSharedData).toBe(false);
+  });
+
+  it("refuse whiteboard limits out of bounds", () => {
+    expect(() => parseConfig({ ...base, DATA_BOARD_MAX_DOC_BYTES: "1023" })).toThrow(
+      /DATA_BOARD_MAX_DOC_BYTES/,
+    );
+    expect(() => parseConfig({ ...base, DATA_BOARD_MAX_DOC_BYTES: "1048577" })).toThrow(
+      /DATA_BOARD_MAX_DOC_BYTES/,
+    );
+    expect(() =>
+      parseConfig({ ...base, DATA_BOARD_MAX_DOC_BYTES: "4096", DATA_BOARD_MAX_BYTES: "2048" }),
+    ).toThrow(/DATA_BOARD_MAX_BYTES/);
+    expect(() => parseConfig({ ...base, DATA_BOARD_MAX_DOCS: "0" })).toThrow(/DATA_BOARD_MAX_DOCS/);
+    // An owner's cap below a board's is allowed: it is checked on each write, like any page's.
+    const small = parseConfig({ ...base, DATA_MAX_BYTES_PER_USER: "1048576" });
+    expect(small.data.board.maxBytesPerArtifact).toBe(2097152);
   });
 
   it("refuse limits out of bounds", () => {

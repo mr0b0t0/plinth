@@ -76,8 +76,18 @@ test("a design renders its boards with their image, prints, and compares as rend
     .toBeGreaterThan(0);
   expect(await home.evaluate(() => window.innerWidth)).toBe(393);
 
+  // The board on view reaches the app's address from the opaque shell, and a reload opens on it.
+  await shell.locator('.plinth-design__label[data-board="ad"] .plinth-design__label-name').click();
+  await expect(page).toHaveURL(/#board=ad$/);
+  await page.reload();
+  await expect(
+    page.frameLocator(CURRENT_FRAME).locator('.plinth-design__label[data-board="ad"][data-active]'),
+  ).toHaveCount(1, { timeout: 15_000 });
+  const reloaded = await (await page.locator(CURRENT_FRAME).elementHandle())?.contentFrame();
+  if (!reloaded) throw new Error("no shell after the reload");
+
   // Print reaches the opaque shell (posted with "*").
-  await shell.evaluate(() => {
+  await reloaded.evaluate(() => {
     const w = window as unknown as { __printed: number };
     w.__printed = 0;
     window.print = () => {
@@ -87,7 +97,7 @@ test("a design renders its boards with their image, prints, and compares as rend
   await page.getByRole("button", { name: "Artifact actions" }).click();
   await page.getByRole("menuitem", { name: "Print or save as PDF" }).click();
   await expect
-    .poll(() => shell.evaluate(() => (window as unknown as { __printed: number }).__printed))
+    .poll(() => reloaded.evaluate(() => (window as unknown as { __printed: number }).__printed))
     .toBe(1);
 
   // An agent's v2, compared as rendered pages (designs have no source view): both versions'

@@ -27,7 +27,12 @@ export function pageStyle(doc: Document): HTMLStyleElement {
 
 /** Resolves once every image has decoded (or failed), or after `timeoutMs`. */
 export async function imagesReady(root: ParentNode, timeoutMs = DECODE_TIMEOUT_MS): Promise<void> {
-  const imgs = Array.from(root.querySelectorAll("img"));
+  // An HTML slide's images are in its shadow root.
+  const hosts = Array.from(root.querySelectorAll(".plinth-slides__slide"));
+  const imgs = [
+    ...Array.from(root.querySelectorAll("img")),
+    ...hosts.flatMap((h) => Array.from(h.shadowRoot?.querySelectorAll("img") ?? [])),
+  ];
   for (const img of imgs) img.loading = "eager";
   const all = Promise.all(
     imgs.map((img) =>
@@ -45,8 +50,11 @@ export async function imagesReady(root: ParentNode, timeoutMs = DECODE_TIMEOUT_M
 export interface PrintOptions {
   notes: boolean;
   canvas: { width: number; height: number };
-  /** Lays every slide out for print and fits it (boot.ts). */
-  prepare: () => void;
+  /**
+   * Lays every slide out for print and fits it (boot.ts); a promise when the deck has more to wait
+   * for (an HTML deck's live embeds drawing their first frame).
+   */
+  prepare: () => void | Promise<void>;
   /** Puts the screen view back after printing. */
   restore: () => void;
 }
@@ -61,7 +69,7 @@ export async function printDeck(win: Window, root: HTMLElement, o: PrintOptions)
   const before = style.textContent ?? "";
   root.setAttribute("data-print", o.notes ? "handout" : "slides");
   await imagesReady(root);
-  o.prepare();
+  await o.prepare();
   style.textContent = pageRule(o.canvas, o.notes);
   const done = () => {
     root.removeAttribute("data-print");

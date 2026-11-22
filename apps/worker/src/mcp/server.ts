@@ -11,6 +11,7 @@ import {
   BOUND_TOKEN_NOTE,
   CATEGORY_INSTRUCTION,
   CATEGORY_SHARE_INSTRUCTION,
+  CRAFT_INSTRUCTION,
   contentNote,
   PLUGIN_NOTE,
   SENSITIVE_INSTRUCTION,
@@ -62,7 +63,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         (ctx.config.allowCategorySharing ? `${CATEGORY_SHARE_INSTRUCTION} ` : "") +
         "Make it a finished page: a short real " +
         "<title>, light and dark color schemes, readable at phone width, scripts only from the CDN " +
-        "allowlist at pinned versions, no requests to other hosts. To change an artifact, read it with " +
+        `allowlist at pinned versions, no requests to other hosts. ${CRAFT_INSTRUCTION} ` +
+        "To change an artifact, read it with " +
         "get_artifact and publish a new version with update_artifact and base_version; never publish a " +
         "copy, and the link stays the same. Change who can view it with set_visibility only when the " +
         "user asks. A page can keep shared data (polls, sign-up sheets, trackers among invited people): " +

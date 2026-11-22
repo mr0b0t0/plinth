@@ -211,6 +211,11 @@ describe("data constants", () => {
       maxDocBytes: 16 * 1024,
       writesPerViewerPerHour: 300,
       writesPerArtifactPerHour: 2000,
+      board: {
+        maxDocsPerArtifact: 2000,
+        maxBytesPerArtifact: 2 * 1024 * 1024,
+        maxDocBytes: 200 * 1024,
+      },
     });
     expect(LIMITS.maxDataCollections).toBe(50);
     expect(LIMITS.maxDataDepth).toBe(16);

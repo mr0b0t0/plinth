@@ -37,6 +37,8 @@ export type SlidesFrameMessage =
       ok: boolean;
       /** Images left out of the file. */
       images_skipped: number;
+      /** An HTML deck's live embeds left out of the file (they run code); absent for none. */
+      embeds_skipped?: number;
       /** The frame's origin is opaque, so it left out every image file. */
       opaque: boolean;
     }
@@ -69,12 +71,18 @@ const READERS: {
     typeof m.images_skipped === "number" &&
     Number.isInteger(m.images_skipped) &&
     m.images_skipped >= 0 &&
-    m.images_skipped <= LIMITS.maxAssetsCeiling
+    m.images_skipped <= LIMITS.maxAssetsCeiling &&
+    (m.embeds_skipped === undefined ||
+      (typeof m.embeds_skipped === "number" &&
+        Number.isInteger(m.embeds_skipped) &&
+        m.embeds_skipped >= 1 &&
+        m.embeds_skipped <= LIMITS.maxSlides * 8))
       ? {
           type: "exported",
           nonce: m.nonce,
           ok: m.ok,
           images_skipped: m.images_skipped,
+          ...(m.embeds_skipped !== undefined ? { embeds_skipped: m.embeds_skipped as number } : {}),
           opaque: m.opaque,
         }
       : null,

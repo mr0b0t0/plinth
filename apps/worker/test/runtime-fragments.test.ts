@@ -1,7 +1,7 @@
 // /__plinth/runtime.js is assembled from fragments (content/runtime/). The assembly replaced one
 // static string without a behaviour change, so the fragments that use no app channel (data, room
 // and people) are pinned. A change that means to alter that script updates the pin here, on
-// purpose: display names and the people fragment (who is viewing) did. Page comments added the app
+// purpose: display names, the people fragment (who is viewing) and a collection's format did. Page comments added the app
 // channel and their own fragment; the channel is also tested on its own. Live views add theirs:
 // pushed data (runtime-behaviour.test.ts) and new versions with carried state
 // (runtime-version.test.ts).
@@ -19,10 +19,11 @@ import { config } from "./helpers.ts";
 /**
  * sha256 and length of the data, room and people fragments assembled without the app channel. At
  * 94ea515, the last commit before the fragments, the script was 409e0c69… (24787 characters);
- * names and plinth.people (whose list carries `total`) changed it to this.
+ * names, plinth.people (whose list carries `total`), a collection's `format` (sent as
+ * x-plinth-format on its writes, for typed renderers) and an expiry's `reason` changed it to this.
  */
-const GOLDEN_SHA256 = "4260a2796435408edeaac010214fd45ddeb68c870569c98396a50f8542790700";
-const GOLDEN_LENGTH = 26611;
+const GOLDEN_SHA256 = "926c017252dd810cad286b372edc0657f60e96bec504509d37ffdccbc3f8a2c0";
+const GOLDEN_LENGTH = 27023;
 
 async function sha256(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));

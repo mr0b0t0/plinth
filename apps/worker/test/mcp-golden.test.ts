@@ -16,7 +16,8 @@
 // list_artifact_data's whiteboard sentence and the instructions' whiteboard sentence, and its
 // default edit setting), and live sheets (the live_draft sentences of the publish notes and
 // get_artifact name sheets as well as docs, and say a sheet's page edits are always reviewed,
-// never merged).
+// never merged), the whiteboard's wider elements (its publish note's element format,
+// list_artifact_data's whiteboard sentence, and write_artifact_data's merge op and its schema).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
@@ -25,8 +26,19 @@
 // update_artifact and start_upload, the sentence that nothing on Plinth chooses local files on the
 // six tools that return what it names (and after UNTRUSTED_NOTE in the instructions, whose bytes
 // stay the same), and sensitive_file in the instructions only.
+// The design canvas (fluid boards, placement, notes, flows and #board= links) adds its sentence to
+// the design publish note.
 // Ask an agent adds list_mentions' sentence on requests sent from the app (the "@agent:other" target
 // for every other client) and the untrusted note's Ask an agent sentence, on every instance.
+// The craft guides add CRAFT_NOTE to publish_artifact, CRAFT_UPDATE_NOTE to update_artifact and
+// CRAFT_INSTRUCTION to the instructions, pointing at the skill's craft/<type>.md.
+// Design systems other types use add copy_files (its input on publish_artifact, update_artifact and
+// start_upload, and their copy note), the default design system (list_artifacts, get_artifact and
+// the instructions' design system sentence), get_design_system's install, and get_artifact's
+// sentence on a design's design_system and copied_from.
+// get_design_system's install_for and folder inputs and its install sentence changed them again.
+// get_design_system's deck_format input, and update_artifact's HTML deck sentence (only what changed
+// is sent; every other file but a slide the new order drops is kept), changed them again.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -77,7 +89,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "b4248a0f8324ca752e356e7dd54321f9c5be172f9ae7342b445aa3e8d85d117c";
+const INSTRUCTIONS = "9f978102edc115fbb7f55b42fee017db4b153e7a46c845148b1f1569ac0ea47c";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -85,7 +97,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "e58551fda8e9ecb422c7cff832d55f2df7a630eef8a1362560c1ad149171cda2",
+      tools: "cc51244b73dcd0a92d22a231969983e6ddb68593f2e8291ce5cdc4e3d66fddb6",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -95,7 +107,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "9fa951273eb62e27a10ee4dfbc897c2f4d4e738caa2172fb80c34e275c2a74b0",
+      tools: "191f4fda5ff515e28bc0d8465988a452591ed418a18d811639ca940a653217f9",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -107,7 +119,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "3c0de5f07a06560ef6eeeb7dd3da7232348943a1ce7b08364f348385e4821063",
+      tools: "4783a7fb4273cda8956bcd5fa25009ad325aa3afcaf3315853de7278da71db1c",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -117,10 +129,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "ef3c4093902c74976e96a484c975516d308f1dfcf2d14af222e5b80536eb3675",
+      tools: "e17873d5d847bdd4074f68106335cde2c8107ee5d93983908983f95c8489024d",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "2a24eb0eedee809683ad4aec0509c0bb0626a4a53ffd5ee771625da43f35a1ee",
+      instructions: "d8268c9a89b929368d3fff8f674899075da782af5e68a15e47b8f9fbd34ffb20",
     });
   });
 });
