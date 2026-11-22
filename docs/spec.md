@@ -1519,8 +1519,13 @@ differs from Claude only where noted.
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
     `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
   - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
-    they ask an agent for changes. Compare lists the index's changes (title, size, fonts, slides
-    added, removed or moved) beside the slide files that changed.
+    they ask an agent for changes (Ask an agent takes the bar's Edit slot, as for an `ask` type).
+    Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
+    gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
+    draft on it, and the frame takes no editing message. A Markdown deck's draft left from before
+    stays kept, unshown, until a Markdown version is current again. Compare lists the index's
+    changes (title, size, fonts, slides added, removed or moved) beside the slide files that
+    changed.
 - **Design systems.** `designSystems` is kept as written (its `namespace`s checked, at most 4), and
   a face's `src` or an image may name `ds/<folder>/...`. `get_design_system` with `install_for:
   "slides"` and `deck_format: "html"` lists the system's `tokens.json`, font files and images, as
@@ -3545,11 +3550,14 @@ deleting slides, and a slide's columns, stay with agents for now.
   the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
   only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
   that repeat it, nor notes on a slide, and a lease granted on the other kind of part is let go
-  unused), nearest to where it was, and of two as near, the one on the slide it was on (by that
-  slide's first line of text outside the block, then its number; two slides may share a title),
-  then the longer text. After a drop, when the room holds exactly what the block last sent where
-  its lease started, the edit landed: the block is taken there and nothing is sent again (never
-  for kept typing written as a new block, which with no answer is always written again). What
+  unused). Two slides may share a title, so the block is found by the lines around it first: when
+  every line above it is as it was when its lease ended, it starts where it did, and when every
+  line below it is, it ends as far from the deck's end as it did (the deck's edge, or only blank
+  lines, places nothing). There the longest of those texts is taken, and the block is not looked
+  for anywhere else. When neither side is as it was, a block counts only on a slide whose first
+  line of text outside it is the one its slide had, with the same lines just above and below it,
+  and only when one place is left; when two are, or none, what was typed goes in as a new block
+  nearby, as below. A copy at worst, never another slide's text written over. What
   was typed since is sent there unless the room's block already reads exactly so. After a drop that
   is the text sent last (it may have arrived without its answer), the text the room acknowledged
   or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.

@@ -9,8 +9,8 @@ import { env } from "cloudflare:workers";
 import { applySlidesStruct, liveRules, parseDeck, splitLines, typeDef } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { slidesHooks } from "../src/services/artifactTypes/slides.ts";
-import { APP, json } from "./helpers.ts";
-import { type Client, connectDoc, type Frame, person, run, setup } from "./room-helpers.ts";
+import { APP, contentOrigin, json } from "./helpers.ts";
+import { type Client, connectDoc, type Frame, person, run, setup, within } from "./room-helpers.ts";
 
 const rooms = () => {
   const ns = env.ROOMS;
@@ -279,5 +279,67 @@ describe("stager parity", () => {
         expect(() => slidesHooks.validate?.(def, text), JSON.stringify(text)).not.toThrow();
       }
     }
+  });
+});
+
+describe("an HTML deck is never edited on its page", () => {
+  const INDEX = JSON.stringify({ title: "Launch", order: ["cover"], cover: "cover" });
+  const htmlDeck = {
+    html: undefined,
+    type: "slides",
+    content: INDEX,
+    assets: [
+      { path: "slides/cover.html", content: '<section id="cover"><h1>Launch</h1></section>' },
+    ],
+  };
+  const gateOf = async (
+    id: string,
+    headers: Record<string, string>,
+    vars?: Record<string, string>,
+  ) => json(await run(`${APP}/api/v1/view/${id}`, { headers }, vars));
+  const shellPayload = async (id: string, cookie: string) => {
+    const res = await run(`${contentOrigin(id)}/`, { headers: { Cookie: cookie } });
+    expect(res.status).toBe(200);
+    const m = /<script type="application\/json" id="__plinth-content">([^<]*)<\/script>/.exec(
+      await res.text(),
+    );
+    return JSON.parse(m?.[1] ?? "null");
+  };
+
+  it("gives its owner and editors no live room, no live_off, no live shell and no draft", async () => {
+    const { id, ownerP } = await setup(undefined, htmlDeck);
+    const ed = await person(id, "editor");
+    for (const p of [ownerP, ed]) {
+      const gate = await gateOf(id, p.session.headers);
+      expect(gate).toMatchObject({ status: "ok", no_editor: true });
+      expect(gate.live).toBeUndefined();
+      // Editing on the page off here says nothing either: an HTML deck is not edited on its page.
+      const off = await gateOf(id, p.session.headers, { ALLOW_LIVE_EDITING: "false" });
+      expect(off.live_off).toBeUndefined();
+      const payload = await shellPayload(id, p.cookie);
+      expect(payload).toMatchObject({ type: "slides", path: "deck.json" });
+      expect(payload.live).toBeUndefined();
+    }
+    // The room opens no draft on it, even for a socket that asks.
+    expect(
+      await within(
+        connectDoc(id, ownerP.cookie).catch(() => "refused"),
+        3000,
+      ),
+    ).not.toEqual(expect.objectContaining({ welcome: expect.anything() }));
+    expect(await peek(id)).toBeUndefined();
+  });
+
+  it("a Markdown deck has them, and loses them once an HTML deck is its current version", async () => {
+    const { id, ownerP, owner } = await deckSetup("# Talk\n");
+    expect((await gateOf(id, ownerP.session.headers)).live).toBeDefined();
+    expect((await shellPayload(id, ownerP.cookie)).live).toBe("room");
+    const put = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: INDEX, assets: htmlDeck.assets, base_version: 1 },
+    });
+    expect(put.status).toBe(200);
+    expect((await gateOf(id, ownerP.session.headers)).live).toBeUndefined();
+    expect((await shellPayload(id, ownerP.cookie)).live).toBeUndefined();
   });
 });

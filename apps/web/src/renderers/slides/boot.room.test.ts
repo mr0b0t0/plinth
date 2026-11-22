@@ -1724,3 +1724,309 @@ describe("typing kept across a reload (the rescue store)", () => {
     ]);
   });
 });
+
+// A block taken again is found by what is around it as it was: the lines above it and below it,
+// unchanged, place it exactly. Only when neither side is unchanged is it looked for by its text,
+// and then only on a slide whose first line outside the block and whose neighbouring lines are
+// what they were, and only when one slide holds it. Otherwise the typing goes in as a new block:
+// a duplicate is acceptable, writing over another slide's text is not.
+describe("taking a block again never writes over another slide's text", () => {
+  const edits = (s: FakeSocket) => s.sent.filter((f) => f.t === "edit");
+  const leases = (s: FakeSocket) => s.sent.filter((f) => f.t === "lease");
+  const type = (host: string, text: string) => {
+    const ed = document.querySelector(`${host} [contenteditable="true"]`);
+    if (!(ed instanceof HTMLElement)) throw new Error("not open");
+    ed.textContent = text;
+    ed.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const SLIDE = ".plinth-slides__open";
+  const NOTES = ".plinth-slides__notepad-edit";
+  const reconnect = (text: string) => {
+    sock("doc").drop();
+    vi.advanceTimersByTime(5000);
+    const s = sock("doc");
+    welcomeDoc(s, text, true, `g${FakeSocket.all.length}`);
+    return s;
+  };
+  const openTitle = (s: FakeSocket, n: number, at: number) => {
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: n });
+    (
+      document.querySelector(`.plinth-slides__frame[data-n="${n}"] .plinth-slides__slide h2`) as
+        | HTMLElement
+        | undefined
+    )?.click();
+    expect(s.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: at, end: at + 1 });
+    s.frame({ t: "leased", lease: "l1", start: at, end: at + 1, holder: YOU.id, by: YOU.email });
+  };
+  /** Grants the last lease asked for on `s` as l2. */
+  const grant = (s: FakeSocket) => {
+    const l = leases(s).at(-1) as { start: number; end: number } | undefined;
+    if (!l) throw new Error("no lease asked for");
+    s.frame({
+      t: "leased",
+      lease: "l2",
+      start: l.start,
+      end: l.end,
+      holder: YOU.id,
+      by: YOU.email,
+    });
+  };
+  const settle = () => vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+
+  /** An agent's version adds a slide on top: the lease goes first, then the merged text. */
+  const rebase = (s: FakeSocket, merged: string) => {
+    s.frame({ t: "lease_lost", lease: "l1", reason: "rebased" });
+    s.frame({ t: "rebased", version: 2, gen: "g1", rev: 5 });
+    s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: merged });
+  };
+
+  it("keeps typing on its own slide after a rebase, with its edit acknowledged", () => {
+    const deck = "## Agenda\n---\n## Agenda";
+    start(deck);
+    const s = sock("doc");
+    welcomeDoc(s, deck, true);
+    openTitle(s, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    s.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l1",
+      start: 2,
+      del: 1,
+      ins: "## Plan",
+      by: YOU.id,
+      seq: 1,
+    });
+    // The room has not written it to D1 yet, so its durable text is still "## Agenda" (line 2).
+    rebase(s, "## X\n---\n## Agenda\n---\n## Plan");
+    expect(leases(s).at(-1)).toEqual({ t: "lease", rev: 5, start: 4, end: 5 });
+    grant(s);
+    type(SLIDE, "Plan B");
+    settle();
+    expect(edits(s).at(-1)).toEqual({ t: "edit", lease: "l2", seq: 2, text: "## Plan B" });
+  });
+
+  it("keeps typing on its own slide after a rebase that came before the acknowledgement", () => {
+    const deck = "## Agenda\n---\n## Agenda";
+    start(deck);
+    const s = sock("doc");
+    welcomeDoc(s, deck, true);
+    openTitle(s, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    rebase(s, "## X\n---\n## Agenda\n---\n## Plan");
+    expect(leases(s).at(-1)).toEqual({ t: "lease", rev: 5, start: 4, end: 5 });
+    grant(s);
+    settle();
+    // The room has "## Plan" there: nothing is written again, and slide 1's "Agenda" is untouched.
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l1", seq: 1, text: "## Plan" }]);
+  });
+
+  it("writes speaker notes into their own slide's notes after a longer slide is added above", () => {
+    const deck = "## A\n\nNote: TBD\n---\n## B\n\nNote: TBD";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    app({ type: "edit", on: true });
+    app({ type: "goto", slide: 2 });
+    (
+      document.querySelector(
+        '.plinth-slides__frame[data-n="2"] .plinth-slides__notepad-body',
+      ) as HTMLElement | null
+    )?.click();
+    expect(first.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 6, end: 7 });
+    first.frame({ t: "leased", lease: "l1", start: 6, end: 7, holder: YOU.id, by: YOU.email });
+    type(NOTES, "TBD by Friday");
+    // Offline, a four-line slide is added on top: slide A's notes are on line 6 now, B's on 10.
+    const s = reconnect("# Cover\n\nmore\n---\n## A\n\nNote: TBD\n---\n## B\n\nNote: TBD");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 10, end: 11 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "Note: TBD by Friday" }]);
+  });
+
+  it("takes a duplicate title again on its own slide after an uneven slide is added above", () => {
+    const deck = "## Agenda\n\nQ1\n---\n## Agenda\n\nQ2";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 4);
+    type(SLIDE, "Agenda (Q2)");
+    const s = reconnect("# Cover\n\nmore\n---\n## Agenda\n\nQ1\n---\n## Agenda\n\nQ2");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 8, end: 9 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 1, text: "## Agenda (Q2)" }]);
+  });
+
+  it("takes a title that landed with no answer again where it is after a slide is added on top", () => {
+    const deck = "## Agenda\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect("## X\n---\n## Agenda\n---\n## Plan");
+    // Line 4, not line 2's "Agenda", which is the other slide's title.
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 4, end: 5 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([]);
+  });
+
+  it("takes a title that landed with no answer again where it is after a slide above is removed", () => {
+    const deck = "## X\n---\n## Agenda\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 3, 4);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect("## Agenda\n---\n## Plan");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 2, end: 3 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([]);
+  });
+
+  it("takes a title again where it is, and sends what was typed after the edit that landed", () => {
+    const deck = "## Agenda\n---\n## Mid\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 1, 0);
+    type(SLIDE, "Plan");
+    settle();
+    type(SLIDE, "Plan B");
+    const s = reconnect("## Plan\n---\n## Mid\n---\n## Agenda");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 0, end: 1 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 2, text: "## Plan B" }]);
+  });
+
+  it("writes an edit that never landed again on its own slide, not slide 3's same title", () => {
+    const deck = "## Agenda\n---\n## Mid\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 1, 0);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect(deck);
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 0, end: 1 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 2, text: "## Plan" }]);
+  });
+
+  it("takes a title that landed again after a slide is added on top", () => {
+    const deck = "## Agenda\n---\n## Mid\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 1, 0);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect("## X\n---\n## Plan\n---\n## Mid\n---\n## Agenda");
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 2, end: 3 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([]);
+  });
+
+  it("never takes another slide that already holds the text sent for an edit that never landed", () => {
+    const deck = "## Plan\n---\n## Agenda";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect(deck);
+    // Slide 2's own "Agenda", not slide 1's "Plan".
+    expect(leases(s)).toEqual([{ t: "lease", rev: 3, start: 2, end: 3 }]);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([{ t: "edit", lease: "l2", seq: 2, text: "## Plan" }]);
+  });
+
+  it("never counts a block moved in from another slide as the edit that landed", () => {
+    const deck = "## Agenda\n---\n## Plan";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 1, 0);
+    type(SLIDE, "Plan");
+    settle();
+    // The edit never landed, and while away a co-editor removed slide 1: slide 2's "Plan" is on
+    // line 0 now. It is not this block, so its lines are never leased: the typing goes in anew.
+    const s = reconnect("## Plan");
+    const asked = leases(s) as { start: number; end: number }[];
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.start).toBe(asked[0]?.end);
+  });
+
+  it("writes typing as a new block when two slides hold its text and nothing tells them apart", () => {
+    const deck = "## Agenda\n---\n## Agenda\n---\n## End";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 2);
+    type(SLIDE, "Plan");
+    // While away a slide is added on top and the last one is renamed: neither side is as it was,
+    // and slides 2 and 3 now both read "Agenda" between two "---" lines.
+    const s = reconnect("## X\n---\n## Agenda\n---\n## Agenda\n---\n## End!");
+    const asked = leases(s) as { start: number; end: number }[];
+    expect(asked).toHaveLength(1);
+    // An insert point, never one of the two "Agenda" titles.
+    expect(asked[0]?.start).toBe(asked[0]?.end);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([
+      expect.objectContaining({ lease: "l2", text: expect.stringContaining("## Plan") }),
+    ]);
+  });
+});
+
+describe("an HTML deck in the frame", () => {
+  it("opens no draft socket and takes no editing message, even with a live payload", () => {
+    const slides = { cover: '<section id="cover"><h1>Launch</h1></section>' };
+    const html = typedShellHtml(TYPE_REGISTRY.slides, {
+      title: "T",
+      text: JSON.stringify({ title: "T", order: Object.keys(slides) }),
+      base: "",
+      appOrigin: APP,
+      path: "deck.json",
+      files: Object.fromEntries(Object.entries(slides).map(([id, h]) => [`slides/${id}.html`, h])),
+      live: "room",
+    });
+    const main = /<main [^>]*><\/main>/.exec(html)?.[0];
+    const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0];
+    if (!main || !data) throw new Error("unexpected shell");
+    document.body.innerHTML = main + data;
+    const win = framedWin();
+    // The HTML deck's runtime reads the address for its embed loader.
+    Object.assign(win, { location: { ...win.location, href: "https://abc.content.example/" } });
+    stop = boot(win, {
+      measure: () => false,
+      connect: (url) => new FakeSocket(url),
+      connectDoc: (url) => new FakeSocket(url) as unknown as WebSocket,
+      still: false,
+    });
+    expect(document.documentElement.getAttribute("data-ready")).toBe("ok");
+    expect(FakeSocket.all.filter((s) => s.url.endsWith("doc"))).toEqual([]);
+    app({ type: "edit", on: true });
+    app({ type: "deck_settings" });
+    expect(FakeSocket.all.filter((s) => s.url.endsWith("doc"))).toEqual([]);
+    expect(document.querySelector("[data-editing]")).toBeNull();
+    expect(document.querySelector('[contenteditable="true"]')).toBeNull();
+    // Nothing editing-related is posted to the app.
+    const types = parent.postMessage.mock.calls.map((c) => (c[0] as { type: string }).type);
+    expect(types).not.toContain("live");
+  });
+});
