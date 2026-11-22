@@ -130,6 +130,8 @@ async function contentOf(page: Page, id: string): Promise<string> {
 async function shoot(page: Page, name: string) {
   const dir = process.env.PLINTH_VISUAL_DIR;
   if (!dir) return;
+  // A dialog's entrance animation ends first, so the shot shows it as people see it.
+  await page.waitForTimeout(400);
   await page.screenshot({ path: `${dir}/${name}-${test.info().project.name}.png` });
 }
 
