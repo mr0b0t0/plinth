@@ -1522,8 +1522,12 @@ differs from Claude only where noted.
     they ask an agent for changes (Ask an agent takes the bar's Edit slot, as for an `ask` type).
     Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
     gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
-    draft on it, and the frame takes no editing message. A Markdown deck's draft left from before
-    stays kept, unshown, until a Markdown version is current again. Compare lists the index's
+    draft on it, and the frame takes no editing message. When an agent publishes an HTML deck over a
+    Markdown deck's open room, a draft with no changes ends (its row goes, its sockets close); one
+    with changes freezes for the review of the people editing it ("vN is an HTML deck, which isn't
+    edited on its page, so your page edits can't be added to it"), where Publish your changes
+    makes their deck the next version and Discard ends the draft. No other socket joins it, and the
+    agent's `live_draft` says the edits are neither merged into nor shown beside its deck. Compare lists the index's
     changes (title, size, fonts, slides added, removed or moved) beside the slide files that
     changed.
 - **Design systems.** `designSystems` is kept as written (its `namespace`s checked, at most 4), and
@@ -3550,14 +3554,19 @@ deleting slides, and a slide's columns, stay with agents for now.
   the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
   only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
   that repeat it, nor notes on a slide, and a lease granted on the other kind of part is let go
-  unused). Two slides may share a title, so the block is found by the lines around it first: when
-  every line above it is as it was when its lease ended, it starts where it did, and when every
-  line below it is, it ends as far from the deck's end as it did (the deck's edge, or only blank
-  lines, places nothing). There the longest of those texts is taken, and the block is not looked
-  for anywhere else. When neither side is as it was, a block counts only on a slide whose first
-  line of text outside it is the one its slide had, with the same lines just above and below it,
-  and only when one place is left; when two are, or none, what was typed goes in as a new block
-  nearby, as below. A copy at worst, never another slide's text written over. What
+  unused). Two slides may share a title, so a block is taken again only where it is certainly
+  this one; otherwise what was typed goes in as a new block nearby, as below. A copy at worst,
+  never another slide's text written over. It is certain when every line of the deck but the
+  block's is as it was when its lease ended, and the block's lines hold one of those texts.
+  Otherwise a block counts only where it is still on its own slide: its slide's first line of text
+  outside it is the one its slide had (when it had one) and the lines just above and below it are
+  the ones it had (a deck's edge, where slides are added, is not compared). It must also hold
+  words only that block could: that first line, text the person wrote (not the words the block had
+  before they typed), or words no other block of the deck held. Where every line above it, or
+  every line below it, is unchanged, only a block at that line counts; else only one may be left.
+  The old words alone prove nothing, since the person's own slide may have been removed and
+  another with the same title moved to its line. A place clicked, with nothing typed yet, is
+  opened where the person sees it under the first rules only. What
   was typed since is sent there unless the room's block already reads exactly so. After a drop that
   is the text sent last (it may have arrived without its answer), the text the room acknowledged
   or the text it last saved (the room restarted meanwhile); after a merge, the acknowledged text.
@@ -3688,7 +3697,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   and an insert point at exactly p. So a person can add notes to one slide while another types on
   another, and every lease elsewhere moves with the op's line map.
 - **Images are agent-only.** Selecting an image offers "Ask an agent" (described "An agent adds
-  or replaces the image.") and "Delete"; a block the formatted editor cannot show faithfully, and
+  or replaces the image."), its one action (no Delete: adding and deleting images stay with
+  agents); a block the formatted editor cannot show faithfully, and
   notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
   can change it."), as a doc's blocks do. That bar sits next to the block at its right edge (an
   image's own edge): just above it, or just below when that covers less of the slide's other

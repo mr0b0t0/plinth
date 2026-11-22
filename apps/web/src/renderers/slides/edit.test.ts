@@ -452,7 +452,7 @@ describe("edit mode's layout", () => {
 });
 
 describe("what is left to an agent", () => {
-  it("offers Ask an agent and Delete on an image, with a structural anchor", () => {
+  it("offers only Ask an agent on an image, with a structural anchor", () => {
     const f = start(SKILL);
     appMessage(f, msg({ type: "goto", slide: 2 }));
     const img = active().querySelector("img") as HTMLImageElement;
@@ -464,7 +464,10 @@ describe("what is left to an agent", () => {
     block.click();
     expect(block.hasAttribute("data-selected")).toBe(true);
     const bar = active().querySelector(".plinth-slides__blockbar") as HTMLElement;
-    const [ask, del] = Array.from(bar.querySelectorAll("button"));
+    // Adding, replacing and deleting images stay with agents: one action, no Delete.
+    const buttons = Array.from(bar.querySelectorAll("button"));
+    expect(buttons.map((b) => b.textContent)).toEqual([DECK_WORDS.ask]);
+    const ask = buttons[0];
     expect(ask?.textContent).toBe(DECK_WORDS.ask);
     expect(ask?.getAttribute("aria-description")).toBe(DECK_WORDS.imageNote);
     ask?.click();
@@ -476,10 +479,7 @@ describe("what is left to an agent", () => {
       anchor: { key: "slide-2:image-1", text: "Slide 2, image 1" },
       what: "image",
     });
-    (img.closest("[data-plinth-edit]") as HTMLElement).click();
-    (active().querySelector(".plinth-slides__blockbar button:last-child") as HTMLElement).click();
-    expect(del?.textContent).toBe(DECK_WORDS.delete);
-    expect(collect(f)).not.toContain("chart.png");
+    expect(collect(f)).toContain("chart.png");
   });
 
   it("shows a block the model cannot hold as it is, with Ask an agent", () => {

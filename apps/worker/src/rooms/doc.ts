@@ -100,6 +100,8 @@ export interface DocHost {
   send(ws: WebSocket, frame: LiveDocServerFrame): void;
   /** The artifact is gone: close every socket. */
   gone(): void;
+  /** The draft ended (an HTML deck became current with nothing to keep): close the doc sockets. */
+  closeDocs(): void;
 }
 
 /** What a checkpoint snapshot sees (services/live.ts). */
@@ -156,6 +158,11 @@ interface Loaded {
   conflictVersion: number | null;
   /** While frozen: the files conflictVersion changed since baseVersion, for the review. */
   conflictFiles: FileChangeSummary | null;
+  /**
+   * Frozen against an HTML deck (a deck whose source is deck.json), which is never edited on its
+   * page: no socket joins, and a discard drops the draft (there is no Markdown to go back to).
+   */
+  html: boolean;
   /** The socket whose edit made the latest rev (for the last-writer autosave). */
   lastBy: string | null;
   /** The email behind the latest edit (updated_by_user). */
@@ -334,15 +341,17 @@ export class LiveDoc {
     const def = typeDef(row.type);
     const rules = liveRules(row.type);
     if (!isLiveType(def) || !def || !rules) return null;
-    // An HTML deck (deck.json) is never edited on its page: no draft opens on it, and a deck's
-    // draft from before it stays kept, unshown, until a Markdown version is current again.
+    const draft = row.content !== null && row.base_version !== null && row.rev !== null;
+    // An HTML deck (deck.json) is never edited on its page: no draft opens on it. A Markdown
+    // deck's draft from before it loads only for its review's choices (Publish yours, Discard);
+    // no socket joins it (connected).
     const current = versionSourcePath(def, parseManifest(row.current_manifest ?? "[]"));
-    if (!isLiveSource(def, current)) return null;
+    const html = !isLiveSource(def, current);
+    if (html && !draft) return null;
     const baseSource = await this.readVersionText(row.base_prefix, def);
     if (baseSource === null) return null;
     // The draft's lines are the type's live form of its source (identity for docs, decks and sheets).
     const baseText = rules.toLive(baseSource);
-    const draft = row.content !== null && row.base_version !== null && row.rev !== null;
     const doc: Loaded = {
       artifactId,
       def,
@@ -356,6 +365,7 @@ export class LiveDoc {
       lines: splitLines(draft ? rules.toLive(row.content as string) : baseText),
       conflictVersion: draft ? row.conflict_version : null,
       conflictFiles: null,
+      html,
       lastBy: null,
       lastEmail: null,
       lastEditAt: null,
@@ -527,6 +537,11 @@ export class LiveDoc {
   async connected(ws: WebSocket, s: DocSocket, artifactId: string): Promise<boolean> {
     const doc = await this.ensure(artifactId);
     if (!doc) return false;
+    // A draft frozen against an HTML deck is kept only for the review of those editing it.
+    if (doc.html && doc.conflictVersion !== null) {
+      await this.releaseIfIdle(doc);
+      return false;
+    }
     this.welcome(ws, s, doc);
     this.status(doc);
     return true;
@@ -977,12 +992,16 @@ export class LiveDoc {
    *   restored the same content), the base moves under the draft's lines as they are (`rebased`,
    *   which also unfreezes a draft frozen against an older version); when it is the draft, the
    *   draft ends (`reset`); anything else freezes it for review.
+   * - An HTML deck (a deck whose source is deck.json), which is never edited on its page: a draft
+   *   with no changes ends, one with changes freezes for its review (outsideHtml).
    * A frozen draft takes no edits; the `conflict` frame says which files `n` changed.
    */
   private async outside(doc: Loaded, n: number, hash: string | null): Promise<void> {
     if (n <= doc.baseVersion) return;
     // Already frozen against this version (or a newer one): nothing new to review.
     if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
+    if (doc.def.altSource && (await this.htmlVersion(doc, n))) return this.outsideHtml(doc, n);
+    if (this.loaded === doc && n > doc.baseVersion) doc.html = false;
     const source = await this.versionSource(doc, n);
     // Its hash, as a pending checkpoint's snapshot holds it (the notify's, or from its source when
     // it came without one: the alarm's catch-up, a load).
@@ -1100,6 +1119,53 @@ export class LiveDoc {
     doc.conflictFiles = files;
     this.revokeLeases("closed");
     this.broadcast({ t: "conflict", version: n, ...(files ? { files } : {}) });
+  }
+
+  /** Whether version n of the draft's artifact is stored in the type's altSource (an HTML deck). */
+  private async htmlVersion(doc: Loaded, n: number): Promise<boolean> {
+    const row = await this.host.env.DB.prepare(
+      "SELECT manifest FROM versions WHERE artifact_id = ?1 AND number = ?2",
+    )
+      .bind(doc.artifactId, n)
+      .first<{ manifest: string }>();
+    return (
+      row !== null &&
+      !isLiveSource(doc.def, versionSourcePath(doc.def, parseManifest(row.manifest)))
+    );
+  }
+
+  /**
+   * Version n is an HTML deck, which is never edited on its page: nothing can be merged onto it or
+   * reset to it. A draft with no changes ends: its leases go, its row goes (it never counts toward
+   * the owner's draft limit) and its sockets close. A draft with changes freezes against n and is
+   * kept for the people editing it, whose review publishes their deck as the next version or
+   * discards it; no other socket joins it (connected).
+   */
+  private async outsideHtml(doc: Loaded, n: number): Promise<void> {
+    if (this.loaded !== doc || n <= doc.baseVersion) return;
+    if (doc.conflictVersion !== null && n <= doc.conflictVersion) return;
+    doc.html = true;
+    if (this.text(doc) === doc.baseText && doc.conflictVersion === null && !this.saving.length) {
+      await this.dropDraft(doc);
+      return;
+    }
+    const files = await this.filesBetween(doc, doc.baseVersion, n);
+    if (this.loaded !== doc || (doc.conflictVersion !== null && n <= doc.conflictVersion)) return;
+    this.freeze(doc, n, files);
+    this.needsFlush = true;
+    await this.flushNow();
+    this.status(doc);
+  }
+
+  /** The draft ends with nothing to keep: its leases, its row and its sockets go. */
+  private async dropDraft(doc: Loaded): Promise<void> {
+    this.revokeLeases("closed");
+    await this.host.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1")
+      .bind(doc.artifactId)
+      .run();
+    if (this.loaded === doc) this.loaded = null;
+    this.needsFlush = false;
+    this.host.closeDocs();
   }
 
   /**
@@ -1416,8 +1482,27 @@ export class LiveDoc {
         .bind(artifactId)
         .first<{ current_version: number }>();
       const text = cur ? await this.versionText(doc, cur.current_version) : null;
+      const html =
+        cur !== null && text === null && (await this.htmlVersion(doc, cur.current_version));
       const after = why();
       if (after) return after;
+      if (html && cur && this.lock === lock && doc.epoch === epoch && doc.baseVersion === base) {
+        if (opts.conflictVersion !== undefined && cur.current_version !== opts.conflictVersion) {
+          return { ok: false, rev: doc.rev, reason: "conflict", version: cur.current_version };
+        }
+        // An HTML deck is current: there is no Markdown to go back to, so the draft ends.
+        this.saving = [];
+        const rev = doc.rev + 1;
+        this.broadcast({
+          t: "reset",
+          version: cur.current_version,
+          gen: doc.gen,
+          rev,
+          why: "discarded",
+        });
+        await this.dropDraft(doc);
+        return { ok: true, rev };
+      }
       if (!cur || text === null || this.lock !== lock) return { ok: false, rev: doc.rev };
       if (doc.epoch !== epoch || doc.baseVersion !== base) {
         // A late save finished, or a version moved the draft, while this read: look again.

@@ -1991,6 +1991,92 @@ describe("taking a block again never writes over another slide's text", () => {
       expect.objectContaining({ lease: "l2", text: expect.stringContaining("## Plan") }),
     ]);
   });
+
+  /** The lease asked for on `s` is an insert point (a new block), never existing lines. */
+  const insertsAnew = (s: FakeSocket) => {
+    const asked = leases(s) as { start: number; end: number }[];
+    expect(asked.length).toBeGreaterThan(0);
+    const l = asked.at(-1);
+    expect(l?.start).toBe(l?.end);
+  };
+
+  it("never takes the next slide's same title at its line after its own slide is removed", () => {
+    // Slide 2 "Agenda / Q1" is retitled; while the socket is down slide 2 goes and slide 3,
+    // "Agenda / Q2", moves up to its line: every line above is unchanged.
+    const deck = "# Intro\n---\n## Agenda\n\nQ1\n---\n## Agenda\n\nQ2";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect("# Intro\n---\n## Agenda\n\nQ2");
+    expect(leases(s)).toHaveLength(1);
+    insertsAnew(s);
+  });
+
+  it("never takes a slide with the same title added right above it at its old line", () => {
+    const deck = "# Intro\n---\n## Agenda\n\nQ1\n---\n# End";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect("# Intro\n---\n## Agenda\n\nNew\n---\n## Agenda\n\nQ1\n---\n# End!");
+    const asked = leases(s) as { start: number; end: number }[];
+    expect(asked).toHaveLength(1);
+    // Its own title, now on line 6 (its slide still reads "Q1"), or a new block: never line 2.
+    expect(asked[0]?.start === asked[0]?.end || asked[0]?.start === 6).toBe(true);
+  });
+
+  it("never takes the one title left when its own slide, one of two with that title, is removed", () => {
+    const deck = "# Intro\n---\n## Agenda\n---\n## Agenda\n---\n# End";
+    start(deck);
+    const first = sock("doc");
+    welcomeDoc(first, deck, false);
+    openTitle(first, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    const s = reconnect("# Intro!\n---\n## Agenda\n---\n# End!");
+    expect(leases(s)).toHaveLength(1);
+    insertsAnew(s);
+  });
+
+  /** An agent's version replaces a clean draft (the room's `reset` after `lease_lost rebased`). */
+  const replaced = (s: FakeSocket, text: string) => {
+    s.frame({ t: "lease_lost", lease: "l1", reason: "rebased" });
+    s.frame({ t: "reset", version: 2, gen: "g1", rev: 4 });
+    s.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: text });
+  };
+
+  it("never writes typing in the debounce over the next slide's title when a version drops its slide", () => {
+    const deck = "# Intro\n---\n## Agenda\n\nQ1\n---\n## Agenda\n\nQ2";
+    start(deck);
+    const s = sock("doc");
+    welcomeDoc(s, deck, false);
+    openTitle(s, 2, 2);
+    type(SLIDE, "Plan");
+    replaced(s, "# Intro\n---\n## Agenda\n\nQ2");
+    insertsAnew(s);
+    grant(s);
+    settle();
+    expect(edits(s)).toEqual([
+      expect.objectContaining({ lease: "l2", text: expect.stringContaining("## Plan") }),
+    ]);
+  });
+
+  it("never writes an unanswered edit over the next slide's title when a version drops its slide", () => {
+    const deck = "# Intro\n---\n## Agenda\n\nQ1\n---\n## Agenda\n\nQ2";
+    start(deck);
+    const s = sock("doc");
+    welcomeDoc(s, deck, false);
+    openTitle(s, 2, 2);
+    type(SLIDE, "Plan");
+    settle();
+    replaced(s, "# Intro\n---\n## Agenda\n\nQ2");
+    insertsAnew(s);
+  });
 });
 
 describe("an HTML deck in the frame", () => {

@@ -22,13 +22,24 @@ export function liveDraftWarning(noun: string, merges: boolean): string {
         "your next change to it.";
 }
 
+/**
+ * live_draft for an HTML deck published over a deck's page edits: an HTML deck is never edited on
+ * its page, so their edits are neither merged nor shown beside it. They stay kept for the people
+ * who made them, who publish them as the next version or discard them.
+ */
+export const HTML_DECK_LIVE_DRAFT =
+  "People were editing this deck on its page. Your version is an HTML deck, which is never " +
+  "edited on its page, so their unpublished edits are not merged into it and are not shown " +
+  "beside it. They are kept for those people: if they publish them, their deck becomes the next " +
+  "version and yours stays in History. No action needed; do not wait or retry. Read it again " +
+  "before your next change to it.";
+
 /** People are editing the artifact on its page: say so, once, with nothing for the agent to do. */
 async function withLiveDraftWarning(
   ctx: Ctx,
   result: PublishResult,
   file: string,
-  noun: string,
-  merges: boolean,
+  message: string,
 ): Promise<PublishResult> {
   let row: unknown = null;
   try {
@@ -46,7 +57,7 @@ async function withLiveDraftWarning(
       {
         code: "live_draft",
         file,
-        message: liveDraftWarning(noun, merges),
+        message,
       },
     ],
   };
@@ -64,12 +75,12 @@ export function liveAfterCommit(noun: string): NonNullable<TypeHooks["afterCommi
       // Best effort; loading the draft rebases it onto the current version.
     }
     if (v.liveCheckpoint || v.restored) return v.result;
+    const html = v.def.altSource !== undefined && v.sourcePath === v.def.altSource.path;
     return withLiveDraftWarning(
       ctx,
       v.result,
-      v.def.sourcePath,
-      noun,
-      liveRules(v.def.id)?.merge === "lines",
+      v.sourcePath,
+      html ? HTML_DECK_LIVE_DRAFT : liveDraftWarning(noun, liveRules(v.def.id)?.merge === "lines"),
     );
   };
 }

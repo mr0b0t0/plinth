@@ -8,6 +8,7 @@
 import { env } from "cloudflare:workers";
 import { applySlidesStruct, liveRules, parseDeck, splitLines, typeDef } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
+import { HTML_DECK_LIVE_DRAFT } from "../src/services/artifactTypes/live.ts";
 import { slidesHooks } from "../src/services/artifactTypes/slides.ts";
 import { APP, contentOrigin, json } from "./helpers.ts";
 import { type Client, connectDoc, type Frame, person, run, setup, within } from "./room-helpers.ts";
@@ -341,5 +342,110 @@ describe("an HTML deck is never edited on its page", () => {
     expect(put.status).toBe(200);
     expect((await gateOf(id, ownerP.session.headers)).live).toBeUndefined();
     expect((await shellPayload(id, ownerP.cookie)).live).toBeUndefined();
+  });
+});
+
+describe("an HTML deck published while a Markdown deck's room is open", () => {
+  const INDEX = JSON.stringify({ title: "Launch", order: ["cover"], cover: "cover" });
+  const ASSETS = [
+    { path: "slides/cover.html", content: '<section id="cover"><h1>Launch</h1></section>' },
+  ];
+  const draftRow = (id: string) =>
+    env.DB.prepare("SELECT conflict_version FROM live_drafts WHERE artifact_id = ?1")
+      .bind(id)
+      .first<{ conflict_version: number | null }>();
+
+  /** A deck with page edits in its room, then an agent's HTML deck as v2. */
+  async function editedThenHtml() {
+    const s = await deckSetup("# Talk\n\nBody\n");
+    const a = await connectDoc(s.id, s.ownerP.cookie);
+    const l = await lease(a, 0, 1);
+    expect(await edit(a, l.lease, "# Talk 2")).toMatchObject({ t: "op" });
+    a.send({ t: "release", lease: l.lease });
+    await a.nextOf("flushed");
+    const put = await call(s.id, s.owner.auth, "", {
+      method: "PUT",
+      body: { content: INDEX, assets: ASSETS, base_version: 1 },
+    });
+    expect(put.status).toBe(200);
+    return { ...s, a, put: await json(put) };
+  }
+
+  it("freezes the draft for its own review: no lease, no edit, no new socket, honest answers", async () => {
+    const { id, ownerP, a, put } = await editedThenHtml();
+    // The agent is told the edits are neither merged nor shown beside an HTML deck.
+    expect(put.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "live_draft",
+        file: "deck.json",
+        message: HTML_DECK_LIVE_DRAFT,
+      }),
+    );
+    expect(await a.nextOf("conflict")).toMatchObject({ t: "conflict", version: 2 });
+    expect(await stubFor(id).docPeek(id)).toMatchObject({
+      text: "# Talk 2\n\nBody\n",
+      base_version: 1,
+      conflict_version: 2,
+    });
+    expect(await draftRow(id)).toEqual({ conflict_version: 2 });
+    expect(await lease(a, 0, 1, 1)).toMatchObject({ t: "lease_denied", reason: "frozen" });
+    const b = await within(
+      connectDoc(id, ownerP.cookie).then(
+        () => "welcome",
+        () => "refused",
+      ),
+      3000,
+    );
+    expect(b).not.toBe("welcome");
+    // Publish outside the review says what happened, never "publish again".
+    const cp = await call(id, ownerP.session.headers, "/live/checkpoint", {
+      body: { base_version: 1, rev: 1, reason: "save" },
+    });
+    expect(cp.status).toBe(409);
+    expect((await json(cp)).error.message).toContain("v2 is an HTML deck");
+    a.ws.close(1000);
+  });
+
+  it("its review publishes the person's deck as the next version, keeping the HTML deck in History", async () => {
+    const { id, ownerP, owner, a } = await editedThenHtml();
+    await a.nextOf("conflict");
+    const cp = await call(id, ownerP.session.headers, "/live/checkpoint", {
+      body: { base_version: 1, rev: 1, reason: "save", conflict_version: 2 },
+    });
+    expect(cp.status, JSON.stringify(await cp.clone().json())).toBe(200);
+    expect(await json(cp)).toMatchObject({ saved: true, version: { version: 3 } });
+    const cur = await json(await call(id, owner.auth, ""));
+    expect(cur.content).toBe("# Talk 2\n\nBody\n");
+    a.ws.close(1000);
+  });
+
+  it("its review's Discard ends the draft: there is no Markdown to go back to", async () => {
+    const { id, ownerP, owner, a } = await editedThenHtml();
+    await a.nextOf("conflict");
+    const res = await run(`${APP}/api/v1/artifacts/${id}/live/draft?rev=1&conflict_version=2`, {
+      method: "DELETE",
+      headers: ownerP.session.headers,
+    });
+    expect(res.status).toBe(204);
+    expect(await a.nextOf("reset")).toMatchObject({ version: 2, why: "discarded" });
+    expect(await draftRow(id)).toBeNull();
+    expect(String((await json(await call(id, owner.auth, ""))).content)).toBe(INDEX);
+  });
+
+  it("a draft with no changes ends: its row and its sockets go, so it never counts as a draft", async () => {
+    const { id, ownerP, owner } = await deckSetup("# Talk\n");
+    const a = await connectDoc(id, ownerP.cookie);
+    const put = await call(id, owner.auth, "", {
+      method: "PUT",
+      body: { content: INDEX, assets: ASSETS, base_version: 1 },
+    });
+    expect(put.status).toBe(200);
+    expect((await json(put)).warnings).not.toContainEqual(
+      expect.objectContaining({ code: "live_draft" }),
+    );
+    // Its socket closes: nobody edits a deck that is not Markdown any more.
+    expect(await within(a.closed, 3000)).toMatchObject({ code: 4404 });
+    expect(await draftRow(id)).toBeNull();
+    expect(await peek(id)).toBeUndefined();
   });
 });

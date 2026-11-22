@@ -119,7 +119,6 @@ export const DECK_WORDS = {
   ask: "Ask an agent",
   readOnly: "This part can't be edited here. An agent can change it.",
   imageNote: "An agent adds or replaces the image.",
-  delete: "Delete",
   notes: (n: number) => `Notes for slide ${n}`,
   addNotes: "Add speaker notes",
   empty: (n: number) => `Slide ${n}, empty`,
@@ -318,6 +317,11 @@ interface Open {
   rescue?: string;
   /** Its slide's first line of text outside its own lines, when granted (Want's `ref`). */
   ref?: string;
+  /**
+   * What the place held before this person typed in it (Want's `was`): text other than this is
+   * words they wrote, which only their own block can hold (placeAgain).
+   */
+  was?: string;
 }
 
 /**
@@ -346,6 +350,8 @@ interface Snap {
   kept?: true;
   /** Open's `ref`. */
   ref?: string;
+  /** Open's `was`. */
+  was?: string;
 }
 
 /**
@@ -395,8 +401,6 @@ interface Want {
     models: RichBlock[];
   };
   focus: "start" | "end";
-  /** The block is emptied as soon as the lease is granted (an image's Delete). */
-  emptyNow?: true;
   /** Its text starts selected, so typing replaces it (New's first title). */
   select?: true;
   /**
@@ -422,6 +426,11 @@ interface Want {
    * has it.
    */
   ref?: string;
+  /**
+   * What the place held before this person typed in it, when known: a text the room may hold of
+   * it that differs is their own words, a text equal to it can be another slide's too (placeAgain).
+   */
+  was?: string;
 }
 
 interface Mark {
@@ -448,15 +457,15 @@ function seenAt(lines: readonly string[], start: number, text: string): Seen | u
 }
 
 /**
- * Where `seen`'s place must be in `lines`, by the lines around it: `start` when every line above
- * it is unchanged, `end` when every line below it is (counted from the deck's end), each null when
- * not, or when that side holds no line of text (the deck's edge, or only blank lines), which places
- * nothing for sure.
+ * Which lines around `seen`'s place are unchanged in `lines`: `above` when every line above it is
+ * (trivially so at the deck's start), `below` when every line below it is, counted from the deck's
+ * end (trivially so at its end). `start` and `end` are where those lines put the place, only when
+ * that side holds a line of text (the deck's edge, or only blank lines, places nothing alone).
  */
 function anchorsOf(
   lines: readonly string[],
   seen: Seen,
-): { start: number | null; end: number | null } {
+): { above: boolean; below: boolean; start: number | null; end: number | null } {
   const was = seen.lines;
   const { start: s, end: e } = seen.range;
   const tail = was.length - e;
@@ -464,19 +473,16 @@ function anchorsOf(
     for (let i = from; i < to; i++) if (!isBlank(was[i])) return true;
     return false;
   };
-  let start: number | null = null;
-  if (s <= lines.length && hasText(0, s)) {
-    let same = true;
-    for (let i = 0; i < s && same; i++) same = was[i] === lines[i];
-    if (same) start = s;
-  }
-  let end: number | null = null;
-  if (tail <= lines.length && hasText(e, was.length)) {
-    let same = true;
-    for (let k = 1; k <= tail && same; k++) same = was[was.length - k] === lines[lines.length - k];
-    if (same) end = lines.length - tail;
-  }
-  return { start, end };
+  let above = s <= lines.length;
+  for (let i = 0; i < s && above; i++) above = was[i] === lines[i];
+  let below = tail <= lines.length;
+  for (let k = 1; k <= tail && below; k++) below = was[was.length - k] === lines[lines.length - k];
+  return {
+    above,
+    below,
+    start: above && hasText(0, s) ? s : null,
+    end: below && hasText(e, was.length) ? lines.length - tail : null,
+  };
 }
 
 /** A place found again: where it starts, the text it holds, and its slide. */
@@ -484,23 +490,29 @@ type Place = { at: number; mark: Mark; slide: RawSlideLayout };
 
 /**
  * Where a place whose lease ended (or whose lines moved before the room read its lease) is now,
- * or null when it cannot be told for sure: then typing goes in as a new block, and a place
- * clicked is not opened. Only places in its own kind of part count (partSlide), each text found
- * only as whole blocks (marksAt).
+ * or null when that is not certain: then typing goes in as a new block, and a place clicked is not
+ * opened. A duplicate is acceptable; another slide's text written over is not. Only places in its
+ * own kind of part count (partSlide), each text found only as whole blocks (marksAt).
  *
- * - When the lines above it, or below it, are as they were (anchorsOf), that places it: of the
- *   texts found there, the longest (the text sent last can be the first lines of the block the
- *   room still holds, its last lines deleted and the edit never landed), then the newest.
- * - Otherwise a block counts only where its slide's first line outside it is the one its slide had
- *   (`ref`) and the lines just above and below it are the ones it had, and only when that leaves
- *   one place: two slides titled "Agenda" with nothing else to tell them apart are never guessed
- *   between, since the wrong one would be written over. An insert point can always be taken (the
- *   nearest): writing there adds text and replaces none.
+ * - Every line above and below it unchanged: the lines between are the place, when they hold one
+ *   of its texts exactly.
+ * - Otherwise a block counts only where it is still the same slide's: its slide's first line
+ *   outside it is the one its slide had (`ref`, when it had one), and the lines just above and
+ *   below it are the ones it had (a deck's edge, which slides are added at, is not checked). And
+ *   typing to write needs words only this place could hold: its slide's first line (`ref`), text
+ *   the person wrote (any text but `was`, what the place held before they typed), or a text that
+ *   no other block held in the lines as they were. The old words alone, two slides titled
+ *   "Agenda", prove nothing: the person's own block may be gone and the other one moved to its
+ *   line. A place clicked, with nothing typed yet, opens where the person sees it without them.
+ * - Where the unchanged lines on one side pin the place, only a block there counts; else only one
+ *   place may be left.
+ * - Failing that, an insert point the room may hold of it (the nearest): writing there adds text
+ *   and replaces none.
  */
 function placeAgain(
   lines: readonly string[],
   layout: DeckLayout,
-  w: Pick<Want, "mark" | "alts" | "seen" | "ref" | "open">,
+  w: Pick<Want, "mark" | "alts" | "seen" | "ref" | "open" | "was" | "resend">,
   near: number,
   edges: () => Set<number>,
 ): Place | null {
@@ -515,26 +527,49 @@ function placeAgain(
   });
   const byLength = (a: Found, b: Found) => b.len - a.len || a.order - b.order;
   const seen = w.seen;
-  if (seen) {
-    const { start, end } = anchorsOf(lines, seen);
-    if (start !== null || end !== null) {
-      const there = all.filter(
-        (c) => (start === null || c.at === start) && (end === null || c.at + c.len === end),
-      );
-      return there.sort(byLength)[0] ?? null;
-    }
+  const pin = seen ? anchorsOf(lines, seen) : null;
+  if (seen && pin?.above && pin.below) {
+    // Nothing but the place changed: the lines between are it.
+    const s = seen.range.start;
+    const e = lines.length - (seen.lines.length - seen.range.end);
+    const exact = all.filter((c) => c.at === s && c.at + c.len === e).sort(byLength)[0];
+    if (exact) return exact;
   }
-  const above = seen ? (seen.lines[seen.range.start - 1] ?? null) : undefined;
-  const below = seen ? (seen.lines[seen.range.end] ?? null) : undefined;
+  const hasRef = w.ref !== undefined && w.ref !== "";
+  const above = seen ? (seen.lines[seen.range.start - 1] ?? null) : null;
+  const below = seen ? (seen.lines[seen.range.end] ?? null) : null;
+  // Whether a text was this place's, and no other block's, in the lines as they were: then the one block
+  // holding it now is this one (unless its own was removed and the same words added meanwhile).
+  const onlyOne = new Map<string, boolean>();
+  const wasOnly = (mark: Mark): boolean => {
+    if (!seen) return false;
+    let v = onlyOne.get(mark.text);
+    if (v === undefined) {
+      const old = seen.lines;
+      const oldLayout = deckLayout(old);
+      const oldEdges = memo(() => blockEdges(old));
+      const len = blockLines(mark.text).length;
+      const at = marksAt(old, mark, oldEdges).filter((p) =>
+        partSlide(oldLayout, { start: p, end: p + len }, w.open.kind),
+      );
+      v = at.length === 1 && at[0] === seen.range.start;
+      onlyOne.set(mark.text, v);
+    }
+    return v;
+  };
   const sure = all.filter((c) => {
     if (c.len === 0) return false;
+    if (pin && pin.start !== null && c.at !== pin.start) return false;
+    if (pin && pin.end !== null && c.at + c.len !== pin.end) return false;
     const range = { start: c.at, end: c.at + c.len };
-    if (w.ref !== undefined && w.ref !== "" && refOutside(lines, c.slide, range) !== w.ref) {
-      return false;
-    }
-    if (above !== undefined && (lines[c.at - 1] ?? null) !== above) return false;
-    if (below !== undefined && (lines[c.at + c.len] ?? null) !== below) return false;
-    return true;
+    const sameRef = hasRef && refOutside(lines, c.slide, range) === w.ref;
+    if (hasRef && !sameRef) return false;
+    if (above !== null && (lines[c.at - 1] ?? null) !== above) return false;
+    if (below !== null && (lines[c.at + c.len] ?? null) !== below) return false;
+    // A place clicked opens where the person sees it, with nothing typed yet: no words to prove.
+    if (!w.resend) return true;
+    const theirWords = w.was !== undefined && c.mark.text !== w.was;
+    return sameRef || theirWords || wasOnly(c.mark);
   });
   if (new Set(sure.map((c) => c.at)).size === 1) return sure.sort(byLength)[0] ?? null;
   const points = all
@@ -846,8 +881,6 @@ export class SlidesEditor {
   private stuck = false;
   /** A trim_start sent before emptying a block, waiting for its answer. */
   private trimming = false;
-  /** The block being emptied is an image's Delete: it closes once its edit is sent. */
-  private deleting = false;
   /** A place closed with its last edit not acknowledged yet (see Closing). */
   private closing: Closing | null = null;
   /** Typed text the draft does not hold yet, by id, mirrored in the app's store. */
@@ -1252,7 +1285,7 @@ export class SlidesEditor {
     if (n === null || !this.editing) return;
     if (this.open || this.want || this.closing || b.mine || this.timer !== null) return;
     if (!b.ready || !b.settled || this.tidying || this.trimming || this.settingsPending) return;
-    if (this.afterStruct || this.deleting) return;
+    if (this.afterStruct) return;
     this.emptyNotes = null;
     const raw = deckLayout(b.lines).slides.find((s) => s.n === n);
     if (!raw?.notes || notesText(b.lines.slice(raw.notes.start, raw.notes.end)) !== "") return;
@@ -1441,6 +1474,9 @@ export class SlidesEditor {
       // The lines as asked on: should they move before the room reads the lease, the place is
       // found again by what is around it.
       seen: { lines, range: ask.range },
+      ...(ask.was === undefined
+        ? { was: joinLines(lines.slice(ask.range.start, ask.range.end)) }
+        : {}),
       tries: 0,
     };
     this.want = w;
@@ -1492,6 +1528,7 @@ export class SlidesEditor {
       ...(w.resend ? { kept: true as const } : {}),
       ...(w.rescue ? { rescue: w.rescue } : {}),
       ...SlidesEditor.refFrom(w),
+      was: w.was ?? joinLines(this.backend.lines.slice(lease.start, lease.end)),
     };
     for (const m of w.open.models) o.editors.push(this.makeEditor(o, m));
     host.append(...o.editors.map((r) => r.el));
@@ -1507,14 +1544,6 @@ export class SlidesEditor {
       // two halves of a split): it is written as it is (without its marks when it cannot be
       // written with them), and nothing opens.
       this.writeKept(o);
-      return;
-    }
-    if (w.emptyNow) {
-      o.sent = null;
-      this.send();
-      // An emptying that first trims the deck sends its edit once the trim lands.
-      if (this.trimming) this.deleting = true;
-      else this.close(true);
       return;
     }
     this.hooks.redraw();
@@ -1900,6 +1929,7 @@ export class SlidesEditor {
       ...(o.rescue ? { rescue: o.rescue } : {}),
       ...(o.kept ? { kept: true as const } : {}),
       ...SlidesEditor.refFrom(o),
+      ...(o.was !== undefined ? { was: o.was } : {}),
     };
   }
 
@@ -2088,6 +2118,7 @@ export class SlidesEditor {
     const extra = {
       closeAfter: true as const,
       ...SlidesEditor.refFrom(s),
+      ...(s.was !== undefined ? { was: s.was } : {}),
       ...(rescue ? { rescue } : {}),
     };
     if (s.kept) {
@@ -2236,6 +2267,7 @@ export class SlidesEditor {
             open: { kind, n, ctx, env, pad, form, models },
             resend: true,
             ...SlidesEditor.refFrom(o),
+            ...(o.was !== undefined ? { was: o.was } : {}),
             ...(seen ? { seen } : {}),
             ...after,
             ...(rescue ? { rescue } : {}),
@@ -2253,7 +2285,12 @@ export class SlidesEditor {
       const { kind, n, ctx, env, pad, form } = o;
       const open = { kind, n, ctx, env, pad, form, models: keptModels };
       const rescue = this.keepRescue(o.rescue, keptModels, o, o.start);
-      const extra = { ...after, ...SlidesEditor.refFrom(o), ...(rescue ? { rescue } : {}) };
+      const extra = {
+        ...after,
+        ...SlidesEditor.refFrom(o),
+        ...(o.was !== undefined ? { was: o.was } : {}),
+        ...(rescue ? { rescue } : {}),
+      };
       // What the room holds of the block: its last acknowledged text (the text at the grant when
       // none was).
       const held = b.ackedText ?? o.sent ?? "";
@@ -2936,10 +2973,6 @@ export class SlidesEditor {
     if (op.op === "trim_start" && this.trimming) {
       this.trimming = false;
       this.send();
-      if (this.deleting) {
-        this.deleting = false;
-        this.close(true);
-      }
       return;
     }
     if (op.op === "set_deck") {
@@ -3055,13 +3088,10 @@ export class SlidesEditor {
     bar.dataset.plinthControl = "";
     if (image) {
       const imgIndex = this.imageIndex(b, v);
+      // Adding, replacing and deleting images stay with agents: Ask an agent is the one action.
       bar.append(
         this.askButton(DECK_WORDS.imageNote, () => this.ask(v, `image-${imgIndex}`, "image")),
       );
-      const del = el(this.doc, "button", "plinth-slides__ask", DECK_WORDS.delete);
-      del.type = "button";
-      del.addEventListener("click", () => this.deleteBlock(b, v));
-      bar.append(del);
     } else {
       bar.append(
         this.askButton(DECK_WORDS.readOnly, () => this.ask(v, `block-${b.index}`, "block")),
@@ -3116,28 +3146,6 @@ export class SlidesEditor {
           ? `Slide ${n}, image ${place.slice(6)}`
           : `Slide ${n}, ${what}`;
     this.hooks.ask({ key: `slide-${n}:${place}`, text: words }, what);
-  }
-
-  /** Deletes a block that is not edited in place (an image): its lease, then zero lines. */
-  private deleteBlock(b: EditBlock, v: EditSlideView): void {
-    this.hideBar();
-    if (!this.writable()) return;
-    this.close(true);
-    this.request({
-      range: { start: b.start, end: b.end },
-      focus: "end",
-      open: {
-        kind: "block",
-        n: v.n,
-        ctx: this.ctxOf(v),
-        env: {},
-        pad: { before: false, after: false },
-        form: notesFormOf(undefined),
-        models: [para()],
-      },
-      // Once granted, the empty paragraph sends zero lines (or the emptying procedure's).
-      emptyNow: true,
-    });
   }
 
   // ---------- deck settings ----------
