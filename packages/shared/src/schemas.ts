@@ -301,6 +301,12 @@ export const getArtifactInput = z.object({
   version: versionNumberSchema.optional(),
 });
 
+/** show_artifact: show an artifact in the conversation, in hosts that render MCP Apps. */
+export const showArtifactInput = z.object({
+  id: artifactRefSchema,
+  version: versionNumberSchema.optional().describe("A version to show instead of the current one."),
+});
+
 /** preview_artifact: the in-chat preview asks for a fresh preview link (MCP Apps, app-only). */
 export const previewArtifactInput = z.object({
   id: artifactRefSchema,

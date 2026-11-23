@@ -1659,7 +1659,8 @@ with `DESIGN_EXPORT` on and the `BROWSER` binding; elsewhere the endpoint answer
 Hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) (T3 Code, Claude,
 ChatGPT, VS Code and others) show a page under a tool call when the tool names a UI resource.
 `publish_artifact`, `update_artifact` and `restore_version` name `ui://plinth/preview.html`, so the
-version just published appears in the agent's thread.
+version just published appears in the agent's thread. `show_artifact` names it too, to show any
+artifact the user can view.
 
 - **The preview page is ours.** `ui://plinth/preview.html` is a fixed page in the Worker
   (`apps/worker/src/mcp/preview.ts`), never user HTML. Its resource metadata lets it frame
@@ -1671,6 +1672,12 @@ version just published appears in the agent's thread.
   one-time enter URL for that version (60 seconds, single use, pinned to `/__plinth/v/<n>/`). A host
   that ignores visibility shows the tool to the model, whose description says not to use it; the
   link it would get shows the model's own user an artifact that user can already read.
+  `show_artifact` returns only the id, title, version and app URL, after the same view check, so
+  showing an artifact puts neither its HTML nor a link into the model's context; the preview then
+  asks `preview_artifact` as above.
+- **Full screen is the host's.** The preview's one button sends `ui/request-display-mode`; the host
+  decides, resizes its own frame and can end it. The artifact frame keeps its sandbox and pass in
+  either mode.
 - **A preview pass is read-only and anonymous.** The enter token carries a preview flag (`p`),
   never with an identity claim or the capture flag; `issueEnterUrl` and `signContentCookie` refuse
   both, and the content host rejects a cookie that has them. The token and the cookie name the

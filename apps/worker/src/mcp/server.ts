@@ -66,7 +66,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         `allowlist at pinned versions, no requests to other hosts. ${CRAFT_INSTRUCTION} ` +
         "To change an artifact, read it with " +
         "get_artifact and publish a new version with update_artifact and base_version; never publish a " +
-        "copy, and the link stays the same. Change who can view it with set_visibility only when the " +
+        "copy, and the link stays the same. When the user asks to see an artifact in this conversation, " +
+        "call show_artifact and give its url too. Change who can view it with set_visibility only when the " +
         "user asks. A page can keep shared data (polls, sign-up sheets, trackers among invited people): " +
         "read it with list_artifact_data and change it with write_artifact_data. " +
         "For a build folder or more than ~1 MB, call start_upload instead of inline assets. " +

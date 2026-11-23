@@ -349,11 +349,15 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples, the `files` `copy_files` can take and the `install` entries that copy them. Read-only; every text field is untrusted |
 | `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
+| `show_artifact(id, version?)` | Read-only, the `view` action: show an artifact the user can view in the conversation (the preview below) when they ask to see one that is already on Plinth. Returns `id`, `title`, `version` and `url`, never the HTML or a preview link; without MCP Apps it is only that link |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
 `restore_version` carry `_meta.ui.resourceUri: "ui://plinth/preview.html"` (MCP Apps, SEP-1865), so
-hosts that support it show the published version under the tool call. The resource is a fixed page
+hosts that support it show the published version under the tool call; `show_artifact` carries it
+too, so an agent can bring back any artifact the user can view (decided 2026-11-23). Where the host
+lists `fullscreen` in its `availableDisplayModes`, the preview has one full screen button
+(`ui/request-display-mode`), which exits it again. The resource is a fixed page
 Plinth wrote; it may frame `<scheme>://*.<CONTENT_HOST>` only. Each render asks `preview_artifact`
 for a fresh link, so no link appears in a result the model reads. The link becomes a preview pass
 on the content host: no identity, no shared data, one version, 10 minutes, and the only pass whose responses

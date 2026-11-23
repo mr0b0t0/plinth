@@ -43,6 +43,8 @@
 // is sent; every other file but a slide the new order drops is kept), changed them again.
 // Published from code adds `editing` to publish_artifact, update_artifact and start_upload; its
 // description says a publish from code is the whole next version, without page edits.
+// show_artifact (shows an artifact under the call in MCP Apps hosts), its sentence in the
+// instructions and the preview's full screen button changed them again.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -86,14 +88,15 @@ const NAMES = [
   "get_artifact_stats",
   "list_artifact_data",
   "write_artifact_data",
+  "show_artifact",
   "preview_artifact",
   "get_design_system",
   "read_sheet",
   "edit_sheet",
 ];
 
-const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "c258516093f6b46995b2eaa6b23b3c78bc2e066dd7d9e51bd46ae0db6f7eb79a";
+const RESOURCES = "78c96b166894144d57e68ef977b2e7e414eab8ea233a9c35c2973cfe3b5bc9a7";
+const INSTRUCTIONS = "20830bac6f039d062d40b37f827ee33c9ab8a5aa9591e59171e03489a5d3b1aa";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -101,9 +104,9 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "99f244200e5c9319c597aa4aa4c14ed1089ae747ba6ae2ba05d172b3815f5537",
+      tools: "3f92d2dcdb4055adaa8bce4f9245f3b5fded3a3326c321322229d1708b483945",
       resources: RESOURCES,
-      preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
+      preview: "86970cd4f2b511fa6d96a9f44ee54a25ba3e3d26f303fc3db16555b9adba8491",
       instructions: INSTRUCTIONS,
     });
   });
@@ -111,9 +114,9 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "519263ce86f49b2995a7cf7355043f7a7cdcde16b0f70bd8e6b557d3b0c2ef35",
+      tools: "41a19bb25bf2f5a1d0a45ddce58d672737421c9f1bd53981df79fa95395ea38c",
       resources: RESOURCES,
-      preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
+      preview: "ca2fef7357c958f9d3b41340f260ff55eed0173e95303860bac71cc03244c69c",
       instructions: INSTRUCTIONS,
     });
   });
@@ -123,9 +126,9 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "7b8b1f263ed2199bb05d628bc777ada96f1bf964a737c7cabe937fc9cea2f5ed",
+      tools: "139b6b6f528f43718c682553094b296badd3932cc429e417213b9fe26bb367bf",
       resources: RESOURCES,
-      preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
+      preview: "ca2fef7357c958f9d3b41340f260ff55eed0173e95303860bac71cc03244c69c",
       instructions: INSTRUCTIONS,
     });
   });
@@ -133,10 +136,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "175ed41385629bd44dd4aa1a713c5bacab93b2302423e41b0c95541a663d1693",
+      tools: "3d6a77ee1b795e26844c98195d76daeb990fe1185765ff4267b9b583722f30c6",
       resources: RESOURCES,
-      preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "56da30e540b1c384cbef4de5c0fb8dd497d1afb03653cd32398b0b9ef1d836e0",
+      preview: "86970cd4f2b511fa6d96a9f44ee54a25ba3e3d26f303fc3db16555b9adba8491",
+      instructions: "b56c72071108dc740f7eafea6ec0f31e433635807a87b688f094fe62045560d5",
     });
   });
 });
