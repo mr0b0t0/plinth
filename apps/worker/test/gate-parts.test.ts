@@ -1,7 +1,7 @@
 // The viewer gate is assembled from gate parts (api/view.ts GATE_PARTS). The wire shape is the
 // same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
 // `page_comments`, then `watch` (live views, live-view.test.ts), then `people`, then `hold` (live
-// views, live-view-update.test.ts), then `ask` (Ask an agent: for everyone who may mention, so for
+// views, live-view-update.test.ts), then `ask` (the agents a comment can mention: for everyone who may mention, so for
 // these owners, whose test token is an `other` connection), then `live_off` (ask-agent.test.ts),
 // then `from_code` (published from code, published-from-code.test.ts), each only when its part
 // has something to say.

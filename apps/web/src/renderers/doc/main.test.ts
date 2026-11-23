@@ -328,7 +328,7 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
-  it("picks a block for a comment while editing, named as Ask names it, without opening it", async () => {
+  it("picks a block for a comment while editing, named as Comment names it, without opening it", async () => {
     mountShell("Intro\n\nSecond paragraph");
     stop = boot(window);
     post({ ...base, type: "edit", on: true });

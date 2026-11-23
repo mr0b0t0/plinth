@@ -936,8 +936,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (editor) editor.setBackend(local);
       else editor = new SlidesEditor(win, local, hooks);
     };
-    // The comments panel's "Point at something" while editing: a slide, a block, an image or the
-    // notes, named as Ask names them.
+    // The comments panel's "Pin to an element" while editing: a slide, a block, an image or the
+    // notes, named as Comment names them.
     const pick = new PagePick(win, {
       placeAt: (t) => (editor?.editing ? editor.placeAt(t) : null),
       post,

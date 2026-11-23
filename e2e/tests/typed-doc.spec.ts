@@ -13,7 +13,6 @@ import { expectEditing, publishChanges, viewAsReader } from "../support/viewer.t
 
 // The frame being shown. A reload keeps the outgoing frame (marked) until the new one loads.
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 const WIDE = { width: 1280, height: 860 };
 
 /** A 1x1 PNG, published as the doc's own image. */
@@ -109,20 +108,6 @@ function watchConsole(page: Page) {
   });
   page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
   return problems;
-}
-
-async function editorReady(page: Page) {
-  await expect(page.locator(".pl-editor .monaco-editor .view-lines").first()).toBeVisible({
-    timeout: 15_000,
-  });
-}
-
-/** Type `text` on new lines at the end of the draft, key by key (Monaco drops keys under load). */
-async function appendLines(page: Page, text: string) {
-  await page.locator(".pl-editor .monaco-editor .view-lines").first().click();
-  await page.keyboard.press("ControlOrMeta+End");
-  await page.keyboard.press("Enter");
-  await page.keyboard.type(text, { delay: 25 });
 }
 
 test.describe("a published doc", () => {
@@ -352,9 +337,7 @@ async function expectLeaksBlocked(frame: Frame) {
 test.describe("the doc shell's script policy", () => {
   test.use({ viewport: WIDE });
 
-  test("blocks inline script and handlers a renderer bug lets through, in the view and the editor preview", async ({
-    page,
-  }) => {
+  test("blocks inline script and handlers a renderer bug lets through", async ({ page }) => {
     test.setTimeout(60_000);
     await page.route(/\/__plinth\/types\/doc\/doc\.js$/, (route) =>
       route.fulfill({
@@ -368,12 +351,6 @@ test.describe("the doc shell's script policy", () => {
       // The published page: the shell's CSP header and its meta copy.
       await page.goto(`/a/${artifact.slug}`);
       await expectLeaksBlocked(await docFrame(page));
-
-      // The editor preview: the loader page was served with the default content CSP (inline
-      // script allowed) and writes the shell into itself; the shell's meta CSP still applies.
-      await page.goto(`/a/${artifact.slug}/edit`);
-      await editorReady(page);
-      await expectLeaksBlocked(await docFrame(page, PREVIEW_FRAME));
     } finally {
       await client.close();
     }
@@ -423,137 +400,6 @@ test.describe("comments on a doc", () => {
       await expect(
         page.getByTestId("comment-pins").getByRole("button", { name: /^Comment 1/ }),
       ).toBeVisible({ timeout: 15_000 });
-    } finally {
-      await client.close();
-    }
-  });
-});
-
-test.describe("editing a doc", () => {
-  test.use({ viewport: WIDE });
-
-  const V1 = `# ${TITLE}\n\nFirst paragraph.\n\n![A tiny square](pixel.png)\n`;
-
-  test("Markdown with a live preview, save as v2, compare, restore v1 as v3", async ({ page }) => {
-    test.setTimeout(90_000);
-    const problems = watchConsole(page);
-    const { artifact, client } = await publishDoc(page, V1);
-    try {
-      await page.goto(`/a/${artifact.slug}/edit`);
-      await expect(page.getByText("Editing v1")).toBeVisible();
-      await editorReady(page);
-      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("Markdown");
-      await expect(
-        page.getByRole("textbox", { name: `Markdown of ${TITLE}.`, exact: false }),
-      ).toHaveCount(1);
-
-      // The preview is the doc's renderer, with the doc's own image.
-      const preview = page.frameLocator(PREVIEW_FRAME);
-      await expect(preview.locator("h1#field-notes")).toContainText(TITLE, { timeout: 15_000 });
-      await expect
-        .poll(() =>
-          preview
-            .locator('img[alt="A tiny square"]')
-            .evaluate((i: HTMLImageElement) => i.naturalWidth),
-        )
-        .toBeGreaterThan(0);
-
-      await appendLines(page, "## Added");
-      await expect(page.getByText("Unsaved changes")).toBeVisible();
-      await expect(preview.locator("h2#added")).toContainText("Added");
-
-      await page.getByLabel("What changed? (optional)").fill("Added a section");
-      await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText("Saved as v2")).toBeVisible();
-      await expect(page.getByText("Editing v2")).toBeVisible();
-
-      const current = await apiGet(page.request, `/artifacts/${artifact.id}`);
-      expect(current.body).toMatchObject({ version: 2, type: "doc", source_path: "content.md" });
-      expect(current.body.content).toBe(`${V1}\n## Added`);
-      expect(current.body.html).toBeUndefined();
-
-      // Compare: the list names the added heading in words, with no Markdown on the page.
-      await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const changes = page.getByRole("region", { name: "Changes" });
-      await expect(changes.getByRole("listitem")).toHaveText([/Heading “Added” added/]);
-      await expect(page.locator("main")).not.toContainText("## Added");
-
-      // Below it, each version through the renderer.
-      const f1 = page.frameLocator(`iframe[title="v1 of ${TITLE}"]`);
-      const f2 = page.frameLocator(`iframe[title="v2 of ${TITLE}"]`);
-      await expect(f1.locator("h1#field-notes")).toContainText(TITLE, { timeout: 15_000 });
-      await expect(f2.locator("h1#field-notes")).toContainText(TITLE, { timeout: 15_000 });
-      await expect(f2.locator("h2#added")).toContainText("Added");
-      await expect(f1.locator("h2#added")).toHaveCount(0);
-
-      // Restore v1: published as v3 with v1's Markdown.
-      await page.goto(`/a/${artifact.slug}/history`);
-      await page
-        .locator('li[data-version="1"]')
-        .getByRole("button", { name: "More actions for v1" })
-        .click();
-      await page.getByRole("menuitem", { name: "Restore v1" }).click();
-      await page
-        .getByRole("dialog", { name: "Restore v1?" })
-        .getByRole("button", { name: "Restore v1" })
-        .click();
-      await expect(page.getByText("Restored v1")).toBeVisible();
-      const restored = await apiGet(page.request, `/artifacts/${artifact.id}`);
-      expect(restored.body).toMatchObject({ version: 3, type: "doc", content: V1 });
-      const got = await tool<{ type: string; content: string; version: number }>(
-        client,
-        "get_artifact",
-        { id: artifact.id },
-      );
-      expect(got.data).toMatchObject({ type: "doc", content: V1, version: 3 });
-      expect(problems).toEqual([]);
-    } finally {
-      await client.close();
-    }
-  });
-
-  test("an agent's update while the editor is open shows the conflict in Markdown", async ({
-    page,
-  }) => {
-    test.setTimeout(60_000);
-    const { artifact, client } = await publishDoc(page, V1);
-    try {
-      await page.goto(`/a/${artifact.slug}/edit`);
-      await editorReady(page);
-      await expect(page.frameLocator(PREVIEW_FRAME).locator("h1#field-notes")).toBeVisible({
-        timeout: 15_000,
-      });
-      await appendLines(page, "## Mine");
-      await expect(page.frameLocator(PREVIEW_FRAME).locator("h2#mine")).toBeVisible();
-
-      const agent = `# ${TITLE}\n\nAgent version of the notes.\n`;
-      const updated = await tool<{ version: number }>(client, "update_artifact", {
-        id: artifact.id,
-        content: agent,
-        base_version: 1,
-        note: "Agent change",
-      });
-      expect(updated.isError, updated.text).toBe(false);
-      expect(updated.data.version).toBe(2);
-
-      await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(
-        page.getByRole("heading", {
-          name: "v2 was published while you were editing (by Work agent)",
-        }),
-      ).toBeVisible();
-      const conflict = page.locator(".pl-conflict");
-      await expect(conflict.locator(".monaco-diff-editor")).toBeVisible();
-      await expect(conflict).toContainText("Agent version of the notes.");
-      await expect(conflict).toContainText("## Mine");
-      // Both sides of the diff are Markdown models.
-      await expect(conflict.locator('[data-mode-id="markdown"]')).toHaveCount(2);
-      await expect(conflict.locator('[data-mode-id="html"]')).toHaveCount(0);
-      await expect(conflict.locator(".pl-conflict__labels")).toContainText("v2, published");
-
-      // Nothing was overwritten.
-      const current = await apiGet(page.request, `/artifacts/${artifact.id}`);
-      expect(current.body).toMatchObject({ version: 2, content: agent });
     } finally {
       await client.close();
     }

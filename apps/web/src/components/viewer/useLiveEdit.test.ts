@@ -660,7 +660,6 @@ describe("useLiveEdit", () => {
     expect(toasts.at(-1)).toBe(
       "Some text on the page can't be saved as typed. Change it to continue.",
     );
-    // Ask's "Publish my changes first" is refused the same way, with the words returned.
     // Once the text can be written, Publish goes out.
     fromFrame({ type: "live", ...STATUS });
     await act(() => result.current.publish());

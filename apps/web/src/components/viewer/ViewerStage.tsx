@@ -11,7 +11,7 @@
 //
 // Owners and editors who may edit on the page (gate.live, signed in, not blocked) get the frame in
 // edit mode from the moment it loads, with no toggle (useLiveEdit). Comments work beside it: the
-// panel opens without leaving edit mode or reloading the frame, and its "Point at something" asks
+// panel opens without leaving edit mode or reloading the frame, and its "Pin to an element" asks
 // the editing frame to pick a place (`pick`), since review mode's bridge would need a reload.
 
 import { FileIcon } from "@phosphor-icons/react";
@@ -229,7 +229,7 @@ export function ViewerStage({
   const editing = live.editing;
   // `?edit` (New and Import): the focus on the frame's first block or cell.
   useEditStart(live);
-  // The comments panel's "Point at something" while editing: the frame picks (useLiveEdit.pick),
+  // The comments panel's "Pin to an element" while editing: the frame picks (useLiveEdit.pick),
   // and the place it names comes back here, numbered so each pick is taken once.
   const [picked, setPicked] = useState<{ n: number; anchor: PageAnchor | null } | null>(null);
   // While editing, comments are about the page the frame loaded: the frame is never reloaded under

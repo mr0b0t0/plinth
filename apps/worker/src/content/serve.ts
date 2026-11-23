@@ -37,7 +37,6 @@ import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { serveDataApi } from "./data-api.ts";
 import { serveEmbedLoader } from "./embedLoader.ts";
-import { servePreviewLoader } from "./preview.ts";
 import { roomSocketSource, serveRoomUpgrade } from "./room.ts";
 import { serveRuntimeScript } from "./runtime.ts";
 import {
@@ -423,7 +422,6 @@ export const RESERVED_PATHS: readonly ReservedPath[] = [
   { path: `${CONTENT_RESERVED_PREFIX}room/`, stage: "own", serve: serveRoomUpgrade },
   { path: `${CONTENT_RESERVED_PREFIX}bridge.js`, stage: "static", serve: serveBridge },
   { path: `${CONTENT_RESERVED_PREFIX}runtime.js`, stage: "static", serve: serveRuntime },
-  { path: `${CONTENT_RESERVED_PREFIX}preview`, stage: "static", serve: servePreview },
   // A typed artifact's renderer files (content/typed.ts).
   { path: `${CONTENT_RESERVED_PREFIX}types/`, stage: "static", serve: serveRenderer },
   // A type's framed page, a design's board loader (content/boardLoader.ts): behind the pass.
@@ -436,10 +434,6 @@ function serveBridge(_r: Request, _e: Bindings, config: Config): Response {
 
 function serveRuntime(_r: Request, _e: Bindings, config: Config): Response {
   return serveRuntimeScript(config);
-}
-
-function servePreview(_r: Request, _e: Bindings, config: Config): Response {
-  return servePreviewLoader(config);
 }
 
 function serveRenderer(

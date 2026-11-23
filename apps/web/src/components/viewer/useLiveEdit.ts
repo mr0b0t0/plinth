@@ -34,7 +34,7 @@
 // over a newer version: a frozen draft (room) or a solo copy older than the current version waits
 // for that review.
 //
-// Comments while editing: the comments panel's "Point at something" asks the frame to pick a place
+// Comments while editing: the comments panel's "Pin to an element" asks the frame to pick a place
 // (`pick`); the frame answers with `picked` and a structural page anchor (or null when cancelled).
 //
 // Phases: idle (not editing, no room), watching (not editing, the frame follows the room),
@@ -228,7 +228,7 @@ export interface LiveEdit {
   canPick: boolean;
   /**
    * Ask the frame to let the person pick a place on the page (true), or stop (false): the comments
-   * panel's "Point at something" while editing. False when the frame cannot be asked.
+   * panel's "Pin to an element" while editing. False when the frame cannot be asked.
    */
   pick(on: boolean): boolean;
 }

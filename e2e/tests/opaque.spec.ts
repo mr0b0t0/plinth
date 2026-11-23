@@ -180,48 +180,6 @@ test("a direct visit to the artifact still goes to the app page", async ({ page 
   });
 });
 
-const TYPED_START =
-  '<!doctype html><html lang="en"><head><title>Doc</title><link rel="stylesheet" href="style.css"></head><body><h1>';
-const TYPED_END = "</h1></body></html>";
-
-async function typeDraft(page: Page, heading: string) {
-  await page.locator(".pl-editor .monaco-editor .view-lines").first().click();
-  const mac = await page.evaluate(() => /Macintosh/.test(navigator.userAgent));
-  await page.keyboard.press(mac ? "Meta+A" : "Control+A");
-  await page.keyboard.press("Delete");
-  await page.keyboard.insertText(TYPED_START);
-  await page.keyboard.type(heading);
-  await page.keyboard.insertText(TYPED_END);
-}
-
-test("the editor's live preview works with an opaque-origin loader", async ({ page }) => {
-  test.setTimeout(60_000);
-  const problems = watchConsole(page);
-  const art = await owner(page, "Opaque editor");
-  await page.goto(`/a/${art.slug}/edit`);
-  await expect(page.locator(".pl-editor .monaco-editor .view-lines").first()).toBeVisible({
-    timeout: 15_000,
-  });
-  const frame = page.locator('iframe[title^="Preview of"]');
-  await expect(frame).toHaveAttribute("sandbox", OPAQUE_FRAME_SANDBOX);
-  const preview = page.frameLocator('iframe[title^="Preview of"]');
-  await expect(preview.locator("h1")).toHaveText("Opaque artifact", { timeout: 15_000 });
-  // The draft's relative assets load with the content cookie, as on the published page.
-  await expect(preview.locator("h1")).toHaveCSS("color", "rgb(1, 2, 3)");
-  expect(await preview.locator("#probe").textContent()).toContain('"origin":"null"');
-
-  await typeDraft(page, "Typed under opaque isolation");
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
-  await expect(preview.locator("h1")).toHaveText("Typed under opaque isolation");
-  await expect(preview.locator("h1")).toHaveCSS("color", "rgb(1, 2, 3)");
-
-  // Twice more: every render is a fresh frame with a fresh nonce.
-  await typeDraft(page, "Second render");
-  await expect(preview.locator("h1")).toHaveText("Second render");
-  await expect(page.locator('iframe[title^="Preview of"]')).toHaveCount(1);
-  expect(problems).toEqual([]);
-});
-
 test("comment pins work through the bridge with an opaque-origin frame", async ({ page }) => {
   test.setTimeout(60_000);
   const art = await owner(page, "Opaque comments");
@@ -335,29 +293,6 @@ test("a doc renders from its embedded content, with its image, and previews in t
     .poll(() => docFrame.evaluate(() => (window as unknown as { __printed: number }).__printed))
     .toBe(1);
 
-  // The editor's preview renders the draft through the same renderer, under an opaque origin.
-  await page.goto(`/a/${art.slug}/edit`);
-  const editor = page.locator(".pl-editor .monaco-editor .view-lines").first();
-  await expect(editor).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('iframe[title^="Preview of"]')).toHaveAttribute(
-    "sandbox",
-    OPAQUE_FRAME_SANDBOX,
-  );
-  const preview = page.frameLocator('iframe[title^="Preview of"]');
-  await expect(preview.locator("h1#opaque-doc")).toContainText("Opaque doc", { timeout: 15_000 });
-  await expect
-    .poll(() =>
-      preview.locator('img[alt="A tiny square"]').evaluate((i: HTMLImageElement) => i.naturalWidth),
-    )
-    .toBeGreaterThan(0);
-  await editor.click();
-  await page.keyboard.press("ControlOrMeta+End");
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("## Typed under opaque isolation", { delay: 25 });
-  await expect(page.getByText("Unsaved changes")).toBeVisible();
-  await expect(preview.locator("h2#typed-under-opaque-isolation")).toContainText(
-    "Typed under opaque isolation",
-  );
   expect(problems).toEqual([]);
 });
 

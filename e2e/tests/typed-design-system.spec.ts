@@ -5,9 +5,9 @@
 // JSON editor with its problems, and the version reference a page built on it carries. The
 // opaque-isolation case is in typed-design-system-opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
-import { apiPut, uniqueEmail } from "../support/api.ts";
+import { uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
-import { ACME, ACME_ASSETS, acmeWith, stubGoogleFonts } from "../support/designSystem.ts";
+import { ACME_ASSETS, acmeWith, stubGoogleFonts } from "../support/designSystem.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 import { viewAsReader } from "../support/viewer.ts";
@@ -181,64 +181,6 @@ test.describe("a published design system", () => {
         await page.evaluate(() => (window as unknown as { __messages: unknown[] }).__messages),
       ).toEqual([]);
       expect(dialogs).toEqual([]);
-    } finally {
-      await client.close();
-    }
-  });
-
-  test("edits the JSON: the preview follows, Save makes v2, and problems block Save", async ({
-    page,
-  }) => {
-    test.setTimeout(90_000);
-    await stubGoogleFonts(page);
-    const { artifact, client, token } = await publishDs(page, JSON.stringify(ACME));
-    try {
-      await page.goto(`/a/${artifact.slug}/edit`);
-      await expect(page.getByText("Editing v1")).toBeVisible();
-      const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
-      await expect(lines).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("Design system JSON");
-
-      // Pasted, as a person replacing the JSON would: typed text would get Monaco's auto-closing.
-      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-      const replaceAll = async (text: string) => {
-        await page.evaluate((t) => navigator.clipboard.writeText(t), text);
-        // The JSON is one line: End, then Shift+Home selects all of it on every platform.
-        await lines.click();
-        await page.keyboard.press("End");
-        await page.keyboard.press("Shift+Home");
-        await page.keyboard.press("ControlOrMeta+V");
-      };
-
-      // A problem shows under the editor with its path, and Save stays off.
-      await replaceAll(JSON.stringify(ACME).replace('"#ffffff"', '"#ffffff; }"'));
-      const notice = page.locator(".pl-editor__problems");
-      await expect(notice).toContainText("tokens.color.bg.$value");
-      await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-      // The server refuses the same JSON when it is sent anyway.
-      const forced = await apiPut(
-        page.request,
-        `/artifacts/${artifact.id}`,
-        { content: JSON.stringify(ACME).replace('"#ffffff"', '"#ffffff; }"'), base_version: 1 },
-        { token },
-      );
-      expect(forced.status).toBe(400);
-      expect(forced.body.error.details.errors[0].path).toBe("tokens.color.bg.$value");
-
-      // A valid change: the preview's site follows, and Save publishes v2.
-      const fixed = JSON.stringify(ACME).replace('"#ffffff"', '"#fafafa"');
-      await replaceAll(fixed);
-      await expect(notice).toHaveCount(0);
-      const preview = page.frameLocator('iframe[title^="Preview of"]');
-      await expect(
-        preview.locator('.ds-token[data-path="color.bg"] .ds-token__values code').first(),
-      ).toHaveText("#fafafa", { timeout: 15_000 });
-      await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText("Saved as v2")).toBeVisible();
-      const got = await tool<{ version: number; content: string }>(client, "get_artifact", {
-        id: artifact.id,
-      });
-      expect(got.data).toMatchObject({ version: 2, content: fixed });
     } finally {
       await client.close();
     }

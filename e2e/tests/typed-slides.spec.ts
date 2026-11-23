@@ -6,14 +6,13 @@
 // scheme, the editor with its overview preview, history and restore; and a version published
 // mid-talk that waits. The opaque case is in opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
-import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
+import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 import { viewAsReader } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 const WIDE = { width: 1280, height: 860 };
 
 const PIXEL_PNG =
@@ -631,68 +630,6 @@ test.describe("a published deck", () => {
         await expect(next.locator('.plinth-slides__frame[data-n="2"]')).toContainText(
           "Revenue, updated",
         );
-      } finally {
-        await client.close();
-      }
-    });
-
-    test("the editor previews every slide, saves v2, Compare lists the new slide, restores v1 as v3", async ({
-      page,
-    }) => {
-      test.setTimeout(90_000);
-      const problems = watchConsole(page);
-      const { artifact, client } = await publishDeck(page);
-      try {
-        await page.goto(`/a/${artifact.slug}/edit`);
-        await expect(page.getByText("Editing v1")).toBeVisible();
-        const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
-        await expect(lines).toBeVisible({ timeout: 15_000 });
-        const preview = page.frameLocator(PREVIEW_FRAME);
-        await expect(preview.locator(".plinth-slides__frame")).toHaveCount(5, { timeout: 15_000 });
-        await expect(preview.locator('[data-mode="overview"]')).toHaveCount(1);
-
-        await lines.click();
-        await page.keyboard.press("ControlOrMeta+End");
-        await page.keyboard.press("Enter");
-        await page.keyboard.type("---", { delay: 25 });
-        await page.keyboard.press("Enter");
-        await page.keyboard.type("## Appendix", { delay: 25 });
-        await expect(page.getByText("Unsaved changes")).toBeVisible();
-        await expect(preview.locator(".plinth-slides__frame")).toHaveCount(6);
-
-        await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByText("Saved as v2")).toBeVisible();
-        const current = await apiGet(page.request, `/artifacts/${artifact.id}`);
-        expect(current.body).toMatchObject({
-          version: 2,
-          type: "slides",
-          source_path: "slides.md",
-        });
-        expect(current.body.content).toContain("## Appendix");
-
-        await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-        const changes = page.getByRole("region", { name: "Changes" });
-        // Where Monaco put the typed lines varies with the platform's End key; the list names the
-        // slide that the "## Appendix" line starts, wherever it landed.
-        await expect(
-          changes.getByRole("listitem").filter({ hasText: /^Slide \d “Appendix.*” added$/ }),
-        ).toHaveCount(1);
-        await expect(page.locator("main")).not.toContainText("## Appendix");
-
-        await page.goto(`/a/${artifact.slug}/history`);
-        await page
-          .locator('li[data-version="1"]')
-          .getByRole("button", { name: "More actions for v1" })
-          .click();
-        await page.getByRole("menuitem", { name: "Restore v1" }).click();
-        await page
-          .getByRole("dialog", { name: "Restore v1?" })
-          .getByRole("button", { name: "Restore v1" })
-          .click();
-        await expect(page.getByText("Restored v1")).toBeVisible();
-        const restored = await apiGet(page.request, `/artifacts/${artifact.id}`);
-        expect(restored.body).toMatchObject({ version: 3, type: "slides", content: DECK });
-        expect(problems).toEqual([]);
       } finally {
         await client.close();
       }

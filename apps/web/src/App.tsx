@@ -1,7 +1,7 @@
 // Route table. Each page file belongs to one workstream; this file only maps paths to pages.
-import { APP_ROUTES } from "@plinth/shared";
+import { APP_ROUTES, route } from "@plinth/shared";
 import { type ComponentType, lazy, Suspense } from "react";
-import { matchPath, useLocation } from "./lib/router.tsx";
+import { matchPath, Redirect, useLocation } from "./lib/router.tsx";
 
 type Page = ComponentType<{ params: Record<string, string> }>;
 
@@ -18,7 +18,6 @@ const Consent = page(() => import("./pages/Consent.tsx"));
 const ArtifactPage = page(() => import("./pages/ArtifactPage.tsx"));
 const History = page(() => import("./pages/History.tsx"));
 const Compare = page(() => import("./pages/Compare.tsx"));
-const Editor = page(() => import("./pages/Editor.tsx"));
 const Settings = page(() => import("./pages/Settings.tsx"));
 const ArtifactStats = page(() => import("./pages/ArtifactStats.tsx"));
 const Open = page(() => import("./pages/Open.tsx"));
@@ -30,6 +29,14 @@ const Design = page(() => import("./pages/Design.tsx"));
 const Legal = page(() => import("./pages/Legal.tsx"));
 const InvitationEmails = page(() => import("./pages/InvitationEmails.tsx"));
 const NotFound = page(() => import("./pages/NotFound.tsx"));
+
+/**
+ * The source editor's old address: people never see source (docs/spec.md "Editing"), so a link
+ * kept from before goes to the artifact's page, where owners and editors edit in place.
+ */
+function EditRedirect({ params }: { params: Record<string, string> }) {
+  return <Redirect to={route(APP_ROUTES.artifact, { slug: params.slug ?? "" })} />;
+}
 
 export const ROUTES: [string, Page][] = [
   [APP_ROUTES.home, Home],
@@ -43,7 +50,7 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.artifactVersion, ArtifactPage],
   [APP_ROUTES.history, History],
   [APP_ROUTES.compare, Compare],
-  [APP_ROUTES.editor, Editor],
+  [APP_ROUTES.editor, EditRedirect],
   [APP_ROUTES.settings, Settings],
   [APP_ROUTES.artifactStats, ArtifactStats],
   [APP_ROUTES.open, Open],

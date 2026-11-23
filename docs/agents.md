@@ -502,7 +502,7 @@ stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram
 - **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
   drawing or a zoom level survives.
 - **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves
-  `{ available: false }` in in-chat previews, the editor preview and direct content links, where
+  `{ available: false }` in in-chat previews and direct content links, where
   `compose` rejects with `unavailable`, and the page must still work.
 - **Agents read the spot.** In `list_comments` and mention tasks a page anchor has `kind: "page"`;
   its `key`, `x`, `y` and `data` say what the thread is about, in the page's own terms
@@ -516,7 +516,7 @@ picked thread's marker highlighted. The skill's
 
 ## Open pages follow new versions
 
-A new version (`update_artifact`, `restore_version`, the source editor, a save on the page) reaches
+A new version (`update_artifact`, `restore_version`, a save on the page) reaches
 every open view of the artifact within seconds: the app page holds a watch socket on the app host
 and re-reads its gate when told ([spec](spec.md#live-views-decided-2026-11-19),
 [security](security.md#live-views)). Agents never hold that socket (a bearer token is refused), and

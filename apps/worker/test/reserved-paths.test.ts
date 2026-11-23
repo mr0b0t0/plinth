@@ -34,7 +34,8 @@ describe("content reserved paths", () => {
     expect(own("/__plinth/apix/v1/session")).toBeUndefined();
     expect(stat("/__plinth/bridge.js")).toBe("/__plinth/bridge.js");
     expect(stat("/__plinth/runtime.js")).toBe("/__plinth/runtime.js");
-    expect(stat("/__plinth/preview")).toBe("/__plinth/preview");
+    // The editor preview loader went with the source editor: no row.
+    expect(stat("/__plinth/preview")).toBeUndefined();
     expect(stat("/__plinth/types/doc/doc.js")).toBe("/__plinth/types/");
     expect(stat("/__plinth/types/")).toBe("/__plinth/types/");
     // A type's framed page is never a static file: only the "pass" row, behind the content pass.

@@ -120,6 +120,14 @@ export const MENTION_AGENT_NAMES = {
 };
 
 /**
+ * The client type an `@name` maps to (MENTION_AGENT_NAMES), or undefined. Own keys only, so a
+ * name such as `constructor` never reads an inherited property as a client type.
+ */
+export function mentionAgentType(name) {
+  return Object.hasOwn(MENTION_AGENT_NAMES, name) ? MENTION_AGENT_NAMES[name] : undefined;
+}
+
+/**
  * The target label of a task that a comment's `request_to` creates, per client type: the mention
  * of that client type (MENTION_AGENT_NAMES).
  */

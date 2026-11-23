@@ -85,13 +85,15 @@ function pageMenu(type: ArtifactSummary["type"]) {
 }
 
 describe("no source for people", () => {
-  it("leaves the source editor out of every page menu, and the dashboard keeps it for a page", () => {
+  it("leaves the source editor out of every page menu and every dashboard menu", () => {
     const design = pageMenu("design");
     expect(design).not.toContain("Edit");
     expect(design).toEqual(expect.arrayContaining(["Settings", "Stats", "Print or save as PDF"]));
     // People never see source on the page: an HTML page is changed by asking an agent.
     expect(pageMenu("html")).not.toContain("Edit");
     expect(labels(artifactMenu(summary, () => {}))).not.toContain("Edit");
-    expect(labels(artifactMenu({ ...summary, type: "html" }, () => {}))).toContain("Edit");
+    for (const type of ["html", "doc", "slides", "design_system"] as const) {
+      expect(labels(artifactMenu({ ...summary, type }, () => {}))).not.toContain("Edit");
+    }
   });
 });

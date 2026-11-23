@@ -1573,7 +1573,7 @@ export class DocEditor {
 
   /**
    * The block at `target` as a comment's place while the person picks one (common/pick.ts): named
-   * as Ask an agent names it (askKey: the published version's block, `new-…` for one only in the
+   * as Comment names it (askKey: the published version's block, `new-…` for one only in the
    * draft), with its first words and its kind. Nothing closes: the open block stays open.
    */
   placeAt(target: Node): PagePlace | null {

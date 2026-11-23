@@ -356,8 +356,8 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DsEditor(root, win, local, hooks);
   };
-  // The comments panel's "Point at something" while editing: a token, a group or a component,
-  // keyed from the published version only, as Ask keys them.
+  // The comments panel's "Pin to an element" while editing: a token, a group or a component,
+  // keyed from the published version only, as Comment keys them.
   const pick = new PagePick(win, {
     placeAt: (t) => {
       const place = editor?.editing ? editor.placeAt(t) : null;

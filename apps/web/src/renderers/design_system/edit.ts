@@ -70,7 +70,7 @@ export interface DsEditorHooks {
   ask(anchor: DsAskAnchor): void;
   /**
    * A formatted text as the published version has it (`guidelines`, `description`,
-   * `component:<id>:description|usage`; "" when it has none): its blocks name an Ask's anchor, as
+   * `component:<id>:description|usage`; "" when it has none): its blocks name a Comment's anchor, as
    * a doc's do (doc/askAnchor.ts), so the agent finds the block in the version it reads.
    */
   publishedText?(key: string): string;

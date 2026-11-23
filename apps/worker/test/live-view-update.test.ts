@@ -95,7 +95,7 @@ describe("the gate's hold field", () => {
     const { a, id, headers } = await owned();
     const g = await gate(headers, id);
     expect(g.hold).toBe(true);
-    // Ask an agent's part comes after it, for everyone who may mention (this owner too).
+    // The gate's `ask` part (the agents a comment can mention) comes after it, for everyone who may mention (this owner too).
     expect(
       Object.keys(g)
         .filter((k) => k !== "ask")

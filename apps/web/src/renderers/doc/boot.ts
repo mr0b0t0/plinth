@@ -257,7 +257,7 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DocEditor(root, win, local, hooks, prepare);
   };
-  // The comments panel's "Point at something" while editing: a block, named as Ask names it.
+  // The comments panel's "Pin to an element" while editing: a block, named as Comment names it.
   const pick = new PagePick(win, {
     placeAt: (t) => (editor?.editing ? editor.placeAt(t) : null),
     post,

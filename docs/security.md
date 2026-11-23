@@ -151,7 +151,7 @@ Agents fetch artifact links as text, so the app host answers them without runnin
 ## Opaque content isolation
 
 `CONTENT_ISOLATION` is `origin` (the default) or `opaque`. With `opaque`, every response from a
-content host, artifact files, the preview loader, the bridge script, redirects and errors alike,
+content host, artifact files, the bridge script, redirects and errors alike,
 adds a CSP `sandbox` directive without `allow-same-origin`:
 
 ```
@@ -194,8 +194,8 @@ What changes for the app and for artifacts:
   and the upgrade is refused before anything else is read. The runtime resolves `plinth.room.ready`
   as `{ available: false, reason: "opaque_isolation" }` without a request, and the CSP names no
   socket. See [Live rooms](#live-rooms).
-- **No editing on the page.** The app could address a frame only by window and `"*"` there, so docs
-  are edited in the source editor only and sheets by agents only (`GET /api/v1/config` says
+- **No editing on the page.** The app could address a frame only by window and `"*"` there, so the
+  page is read-only and agents change it (`GET /api/v1/config` says
   `inline_editing: null`); no editing message is posted to a frame or accepted from one, and no
   version text is posted into a frame. See [Inline editing](#inline-editing).
 - **postMessage.** Messages from an artifact frame arrive with `event.origin === "null"`, and a
@@ -205,11 +205,9 @@ What changes for the app and for artifacts:
   already see in origin mode. The page-comments channel
   ([Comments from the page](#comments-from-the-page)) identifies the frame the same way and posts
   only thread ids, pin numbers, status, anchors (the page's own data, or selectors) and request
-  ids, never comment text, authors or roles. The editor preview posts the unsaved draft, which is private, so it
-  also mounts a new iframe element for every render (a browsing context no earlier draft, popup
-  or `opener` holds a reference to), requires the loader's `ready` to carry a random per-frame
-  nonce the app put in the loader URL's fragment, and posts the draft once per nonce. The frame
-  side keeps checking the app's exact origin, which is a real origin in every mode.
+  ids, never comment text, authors or roles. The frame side keeps checking the app's exact origin,
+  which is a real origin in every mode. (The editor preview, which posted an unsaved draft to a
+  fresh frame per render with a per-frame nonce, went with the source editor on 2026-11-23.)
 
 Residual risks of running the content host on the app's registrable domain, even with opaque
 isolation. They are why the hosted instance serves artifacts from a domain of its own,
@@ -413,10 +411,10 @@ the artifact's own content origin, never on the app host. Design:
   else in that directive: no `unsafe-inline`, no `unsafe-eval`, no CDN hosts. Every other directive
   is identical, including the opaque `sandbox`. The shell repeats the script policy in a
   `<meta http-equiv="Content-Security-Policy" content="script-src 'self'">` as the first element of
-  its `<head>`. That covers the editor preview, where the preview loader (served with the default
-  content CSP) writes the shell with `document.write`: a meta policy is enforced on top of the
-  header policy and also binds a written document. So even if both Markdown passes failed,
-  injected inline script or handlers could not run, in the published page or in the preview.
+  its `<head>`: a meta policy is enforced on top of the header policy and also binds a written
+  document. So even if both Markdown passes failed, injected inline script or handlers could not
+  run. (The editor preview and its loader page, which wrote the shell with `document.write`, were
+  removed with the source editor on 2026-11-23.)
 - **A doc's files run no script.** `content.md` (served raw as `text/markdown` with `nosniff`) and
   a doc's images are served with `script-src 'none'`, so an SVG image opened as a document cannot
   run script on the doc's origin. Renderer files and errors keep the default content CSP.
@@ -671,7 +669,7 @@ version does not load (it would need CORS), and the deck falls back to its stack
 - `get_artifact` returns the slide files' text in `files`, as untrusted as artifact HTML.
 - The shell embeds every slide in its JSON payload. They are read through the version's manifest
   and `fileKey`, so a read never leaves the artifact, and they are escaped as every payload is.
-- The view gate's `no_editor` hides the source editor: people see the deck, and agents change it.
+- People see the deck, never its source (there is no source editor), and agents change it.
 
 ## Design systems
 
@@ -1104,8 +1102,6 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
 - **Merge writes are whole writes.** A `merge` op reads the document, checks its `if_rev`, puts
   the named fields on it and writes the result at that rev through the same guarded update as a
   `set`, so it is checked against the board's shapes and can only conflict, never lose a change.
-- **No editor preview.** A whiteboard has no source editor, so the app never renders a board in
-  the editor's preview frame, which holds the owner's content pass.
 - **Board settings.** Owners and editors change a board's settings in app UI on the app host (the
   owner in the settings page's Board section, an editor in a dialog over the board), never in the
   board's frame: nothing is posted to the frame, and the frame cannot open, read or answer either

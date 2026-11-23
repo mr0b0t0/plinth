@@ -538,8 +538,8 @@ their own (a canvas drawing, slides, a map, a pan-and-zoom diagram, a chart's da
   never `innerHTML`; check that numbers are finite and keys are ones your page knows before using
   them.
 - **Always a fallback.** Guard with `window.plinth?.comments`. `await plinth.comments.ready` never
-  rejects: `{ available, reason }`, where `reason` is `not_framed`, `no_app` (in-chat previews, the
-  editor preview) or `not_declared`. Check it before you offer commenting; `compose` rejects with
+  rejects: `{ available, reason }`, where `reason` is `not_framed`, `no_app` (in-chat previews) or
+  `not_declared`. Check it before you offer commenting; `compose` rejects with
   `unavailable` otherwise. The page must still work when it is unavailable. Opening the comments
   panel on such a page does not reload it, so its state survives. Plinth hides "Pin to an
   element" there, so the page's own `compose` calls are the only way to pin a comment.
@@ -885,7 +885,7 @@ default for quick decks.
   kept from the current version (slides, `deck.css`, images, fonts, a design system's files),
   except a slide the new `order` no longer names. To add a slide, send its file and the index with
   its id in `order`; to remove one, send the index without it. Omitting `assets` keeps every file. People
-  see the deck, never its source, and ask an agent for changes.
+  see the deck, never its source, and ask an agent for changes in a comment (`@claude …`).
 - Fix `slide_markup`, `missing_file` and `slides_setting` warnings before you hand over the link.
 
 ```json

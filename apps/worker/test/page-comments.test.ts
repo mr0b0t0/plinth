@@ -321,7 +321,6 @@ describe("a page that declares only comments", () => {
       "/__plinth/room/",
       "/__plinth/bridge.js",
       "/__plinth/runtime.js",
-      "/__plinth/preview",
       "/__plinth/types/",
       // A design's board loader (type-design), behind the content pass.
       "/__plinth/frames/",

@@ -44,7 +44,7 @@ account.
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
 - On-page editing of HTML artifacts (docs, decks, sheets and design systems are edited on the
-  page; HTML in the source editor).
+  page; an HTML page is changed by asking an agent in a comment).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -450,12 +450,11 @@ Print to PDF). A doc version stores `content.md` and its images. Its page is a f
 that embeds the Markdown as escaped JSON and loads Plinth's renderer from the artifact's own origin
 under `/__plinth/types/doc/`, in every isolation mode; no per-artifact server code, and the CDN
 allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an allowlist and open in
-a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
+a new tab, and the shell's CSP (header and a meta copy, so a written copy of the shell gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The source editor edits the Markdown with a live preview (on the page, people edit a doc as
-formatted text and never see Markdown), and Compare lists what changed between two
-versions block by block, in words. Owners and
+People never see the Markdown: on the page they edit a doc as formatted text, and Compare lists
+what changed between two versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
 renderer connects the doc socket; every other shell is byte for byte as before. The second type
@@ -540,7 +539,7 @@ the count survives.
   cookie attributes, CSP) is the same whether or not it counted.
 - **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
   (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
-  Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
+  Plinth's own paths (`/__plinth/`), thumbnail captures and in-chat
   previews (their tokens refuse `w`), replayed or expired tokens, requests without
   `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
   token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
@@ -569,7 +568,7 @@ the count survives.
   an access-epoch change (any grant, visibility or password change), so the same browser can count
   again sooner after one. A counted enter marks the content cookie it sets with one signed bit
   (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
-  editor who moves between the editor preview, history and the live page counts once, and an
+  editor who moves between history and the live page counts once, and an
   uncounted pass (the preview, history, review mode) never stops a later live open from counting.
   Browsers that drop partitioned cookies count every open.
 - **Storage.** One D1 insert per counted open into `artifact_opens`, written after the response
@@ -622,17 +621,15 @@ the count survives.
 
 ### Editing
 
-- v1: a code editor (Monaco) with live preview in a sandboxed frame. Saving creates a new version
-  with an optional note.
 - Editors are the owner plus anyone granted the editor role.
-- If the current version changed while someone was editing, the save is rejected and they see a
-  diff to merge. No silent overwrites.
-- People never see source code on the artifact page (decided 2026-11-23): the viewer has no
-  source editor item for any type. A doc, a deck, a sheet or a design system is edited on its page
-  (below); an HTML page or a design is changed by asking an agent. Where editing on the page is off
-  (opaque isolation, the path fallback, `ALLOW_LIVE_EDITING=false`) the page is simply read-only.
-  The source editor's route (`/a/:slug/edit`) stays for the dashboard card's "Edit" on an HTML page
-  and for its tests; sheets, designs and whiteboards have no source editor.
+- No silent overwrites: every save names the version it was based on (`base_version`), and one
+  made against a stale version is refused.
+- People never see source code (decided 2026-11-23): there is no source editor. A doc, a deck, a
+  sheet or a design system is edited on its page (below); an HTML page or a design is changed by
+  asking an agent in a comment. Where editing on the page is off (opaque isolation, the path
+  fallback, `ALLOW_LIVE_EDITING=false`) the page is simply read-only. The v1 code editor (Monaco,
+  with a live preview) is gone, with its dashboard "Edit" item; its old address, `/a/:slug/edit`,
+  goes to the artifact's page.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
 the draft's files decided 2026-11-19; design systems decided 2026-11-21; always on, with no Edit
@@ -641,9 +638,9 @@ right on its rendered page, and the other editors with the page open see the cha
 typed. As on a whiteboard, the page simply is editable when it opens: click into text and type,
 and the changes save on their own. There is no Edit toggle, no Done and no "Edit on the page"
 item, for any of these types, at any width. The registry says which types are edited
-this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages are edited in the
-source editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
-the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
+this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages and designs are
+changed by agents only (`edit: "ask"`), an HTML page because its own scripts share the frame's
+origin and could forge edits that the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
 page shows the save status and makes the REST calls, and renders no content.
@@ -726,7 +723,7 @@ page shows the save status and makes the REST calls, and renders no content.
   made while a save runs are kept on top of the new version. A draft that cannot be a version yet
   (a type's `unpublishable` rule: only a deck that shows no slide) is never checkpointed (409
   `live_unpublishable`), and Publish is off, with the reason in its tooltip.
-- **Versions from elsewhere.** When an agent, the source editor, the CLI, REST or a restore
+- **Versions from elsewhere.** When an agent, the CLI, REST or a restore
   publishes a version vN while a draft exists:
   - a draft with no changes moves to vN;
   - a **doc's** draft is merged onto vN line by line when the two changed different lines and the
@@ -1288,11 +1285,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   own look. An organization default and an explicit "no default" choice are not offered (Plinth has
   no organizations).
 - **In the app.** Owners and editors edit a design system on its page (below). Where editing on
-  the page is off (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path fallback), the source
-  editor holds the JSON with Monaco's JSON language and the format's JSON Schema, lists the
-  parser's problems (one short line each, with its path) above the editor, keeps the preview at
-  the last draft that parsed (blank while none has), and keeps Save off until there are none. The
-  dashboard shows a "Design system" badge. To point an agent at one, the person gives it the link
+  the page is off (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path fallback), the page is
+  read-only and agents change it. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the link
   (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
 - **Editing on the page** (decided 2026-11-21; [Editing](#editing) gives the model every live type
   shares: leases, drafts, Publish, the whole-draft review). Owners and editors change values in
@@ -1445,8 +1439,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
 A presentation is a deck: the agent writes Markdown, Plinth renders fixed slides. It is the second
 [typed output](#mcp-interface), after docs, and works like one: `publish_artifact` and
 `update_artifact` take `type: "slides"` with the Markdown in `content`, a version stores
-`slides.md` and its images, and versions, `base_version` conflicts, restore, history and the
-source editor work as for docs. Owners and editors edit a deck's text, speaker notes and settings
+`slides.md` and its images, and versions, `base_version` conflicts, restore and history work as
+for docs. Owners and editors edit a deck's text, speaker notes and settings
 on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
 
 - **Source format.** A line that is exactly `---` (outside fenced code) separates slides; the split
@@ -1477,7 +1471,7 @@ on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
   every view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
   700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
   the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
-  and the editor preview keep it in one column, without the pill. The app keeps the slide in its
+  keeps it in one column, without the pill. The app keeps the slide in its
   URL fragment (`#slide=N`, never sent to the server), so a reload or a shared link opens the same
   slide, and a newer version's frame is sent back to it.
 - **Presenting.** Present is one control in the bar, a menu with two items. "Full screen" puts
@@ -1579,7 +1573,7 @@ on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
   the room may have missed a second later and then at most once a second. Watchers can never fill
   the deck's room: 4 slots of `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (at most half) are kept for
   owners and editors. Anonymous link viewers, in-chat previews,
-  thumbnail captures, review mode, the editor preview and a permanent version link never follow
+  thumbnail captures, review mode and a permanent version link never follow
   or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
   closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
   other pages), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
@@ -1791,7 +1785,7 @@ markers and tell Plinth where to draw its pins.
   sent until the page first uses it.
   - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
     direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
-    in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
+    in-chat preview, history compare, or an old app) and `not_declared`.
   - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
     `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
     `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). An
@@ -2054,8 +2048,8 @@ document through the gate and the shared-data API, with all of their checks.
   served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
   names its own `wss:` origin and nothing else.
 - **Signals.** JSON frames the room builds from integers: `welcome` (the current version),
-  `version` (a version was published: by an agent, the
-  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
+  `version` (a version was published: by an agent, a
+  restore or an on-page checkpoint), `data` (the page's shared data changed:
   a write from the page, an agent or the app, or the owner's "Delete all shared data"; at most one
   per `spread_ms` per artifact: a write in a quiet window sends it at once, and the writes after
   it share one frame at the window's end, so the last write is always followed by one) and
@@ -2384,9 +2378,8 @@ a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a sp
 fifth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
-restore and history work as for docs. People never see the JSON lines: a sheet has no source
-editor (its registry row's `editor` is null), so the app offers no source Edit, the editor's address
-goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
+restore and history work as for docs. People never see the JSON lines: there is no source editor
+(and a sheet's registry row's `editor` is null), the old editor address goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
 added or removed) above the two versions rendered side by side, never a source diff. Cells are
 versioned content, never shared data: every change, an agent's or a person's, is a new version
 anyone can revert. Owners and editors also edit a sheet on its page, live with each other
@@ -3413,7 +3406,7 @@ whoever sends it (only `comment_author_role` says the owner did).
   `"ask"` type, an HTML deck (which has no editor) and a live type whose editing on the page is off
   here (`live_off`) have nothing for editing in the bar: History, Comments, Share and ⋯ (and Present
   for a deck) are the whole bar, and owners ask in a comment. The dashboard card's menu offers
-  nothing either (its "Edit" still opens the source editor for owners and editors).
+  nothing either (it has no "Edit": there is no source editor).
 - **Comment from the page.** A place people cannot change on the page itself (a doc block shown
   read-only, an image, a slide's image or a block it cannot hold, a design system's token or group
   name, a component, its fonts and settings, or the problems of a system the format refuses) has a
@@ -4255,7 +4248,7 @@ options.
 - **App cookies are `__Host-` cookies.** Host-only, `Secure`, `Path=/`, so no other host on a
   shared parent domain can set or overwrite them.
 - **Locked-down responses.** A Content Security Policy on every artifact response, no app cookies
-  on the content domain, and the editor preview runs in a sandboxed iframe.
+  on the content domain, and every frame that renders artifact content is a sandboxed iframe.
 - **Comment text is untrusted input for agents.** A mention is a request from a collaborator, not
   an instruction with the owner's authority. The MCP tool descriptions say so, and agent tokens used
   for mentions are scoped to that one artifact.
@@ -4373,8 +4366,7 @@ options.
 - **License.** MIT.
 - **Naming.** The product name must not contain "Claude" or "Codex". "Works with Claude and Codex"
   in descriptions is fine.
-- **Stack.** TypeScript, Hono on Workers, D1 with Drizzle, R2, a small React front end, Monaco for
-  the editor.
+- **Stack.** TypeScript, Hono on Workers, D1 with Drizzle, R2, a small React front end.
 
 ## Costs
 
@@ -4487,7 +4479,8 @@ for a single user.
    connections.
 4. **Version history UI.** Version list, permanent version URLs, compare, restore.
 5. **Comments and pull mentions.** Threads, element pins, the mention queue and its MCP tools.
-6. **Editor.** Monaco with live preview and conflict handling.
+6. **Editor.** Monaco with live preview and conflict handling (removed 2026-11-23: people edit on
+   the page or ask an agent; see [Editing](#editing)).
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.

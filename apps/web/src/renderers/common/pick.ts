@@ -1,5 +1,5 @@
 // Picking a place on the page for a comment while it is edited on its page: the comments panel's
-// "Point at something" (the app's `pick { on: true }`). Edit mode is always on for owners and
+// "Pin to an element" (the app's `pick { on: true }`). Edit mode is always on for owners and
 // editors, so the review-mode bridge (which reloads the frame) is never used for them; the
 // renderer picks instead, and names the place as its own Ask/Comment controls do (a structural
 // key such as "block-3" or "slide-2:notes" and a short label), never with draft text the person
