@@ -76,8 +76,8 @@ export interface ArtifactTypeDef {
   /**
    * How people change it in the app. "live": owners and editors edit it on its rendered page, live
    * with each other (#36; isLiveType). Only types whose page is Plinth's own renderer: page scripts
-   * in an HTML artifact could forge edits. "ask": people ask an agent, or use the source editor;
-   * its page has no editor of its own. "board": the page is always live through shared data (a
+   * in an HTML artifact could forge edits. "ask": people ask an agent in a comment, or use the
+   * source editor; its page has no editor of its own. "board": the page is always live through shared data (a
    * whiteboard), and its settings are an app dialog.
    */
   edit: "live" | "ask" | "board";

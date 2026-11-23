@@ -2,6 +2,7 @@
 import {
   type ClientType,
   MENTION_AGENT_NAMES,
+  mentionAgentType,
   mentionHandle,
   parseMentions,
   type Scope,
@@ -188,7 +189,7 @@ export function mentionReach(
   const handle = mentionHandle(label);
   // The server matches what parseMentions reads out of "@handle"; anything else is unreachable.
   if (!handle || parseMentions(`@${handle}`)[0] !== handle) return { kind: "none" };
-  const agentType = MENTION_AGENT_NAMES[handle];
+  const agentType = mentionAgentType(handle);
   if (agentType) return { kind: "agent_name", handle, reached: agentType === self.client_type };
   const created = self.created_at;
   let first: MentionCandidate | undefined;
@@ -201,7 +202,7 @@ export function mentionReach(
   }
   if (first) return { kind: "shadowed", handle, by: first.label };
   const also = Object.keys(MENTION_AGENT_NAMES).find(
-    (n) => MENTION_AGENT_NAMES[n] === self.client_type,
+    (n) => mentionAgentType(n) === self.client_type,
   );
   return also ? { kind: "handle", handle, also } : { kind: "handle", handle };
 }
@@ -225,7 +226,7 @@ export function mentionReachText(reach: MentionReach): string | null {
     case "handle":
       return `Mention as @${reach.handle}${reach.also ? ` or @${reach.also}` : ""}.`;
     case "agent_name": {
-      const type = CLIENT_TYPE_LABEL[MENTION_AGENT_NAMES[reach.handle] ?? "other"];
+      const type = CLIENT_TYPE_LABEL[mentionAgentType(reach.handle) ?? "other"];
       return reach.reached
         ? `Mention as @${reach.handle}, with your other ${type} connections.`
         : `@${reach.handle} means your ${type} connections. Pick another name.`;

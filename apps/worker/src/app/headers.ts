@@ -10,7 +10,7 @@ export function appCsp(config: Config): string {
   return [
     "default-src 'self'",
     "script-src 'self'",
-    // Monaco and React inline style attributes.
+    // React inline style attributes.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
@@ -18,7 +18,7 @@ export function appCsp(config: Config): string {
     // count ws: and wss: as 'self'. Never a content host.
     `connect-src 'self' ${config.scheme === "http" ? "ws" : "wss"}://${config.appHost}`,
     `frame-src ${frames}`,
-    "worker-src 'self' blob:",
+    "worker-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",

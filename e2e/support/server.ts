@@ -6,7 +6,8 @@
 //     secrets, passed with --var so a developer's own apps/worker/.dev.vars cannot change the test
 //     setup.
 // With PLINTH_E2E_CONTENT_ISOLATION=opaque it is the second Worker, the one the "opaque" Playwright
-// project uses: CONTENT_ISOLATION=opaque, with its own state directory.
+// project uses: CONTENT_ISOLATION=opaque, with its own state directory. With PLINTH_E2E_ROOMS=false
+// it is the "solo" project's Worker: no live rooms, so editing on the page is solo.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
@@ -15,7 +16,9 @@ import { ROOT, STATE_DIR, WORKER_DIR, WRANGLER } from "./paths.ts";
 
 const PORT = Number(process.env.PLINTH_E2E_PORT ?? 8787);
 const ISOLATION = process.env.PLINTH_E2E_CONTENT_ISOLATION === "opaque" ? "opaque" : "origin";
-const STATE = ISOLATION === "opaque" ? `${STATE_DIR}-opaque` : STATE_DIR;
+const ROOMS = process.env.PLINTH_E2E_ROOMS !== "false";
+const STATE =
+  ISOLATION === "opaque" ? `${STATE_DIR}-opaque` : ROOMS ? STATE_DIR : `${STATE_DIR}-solo`;
 
 export const DEV_VARS: Record<string, string> = {
   ENVIRONMENT: "development",
@@ -40,7 +43,7 @@ export const DEV_VARS: Record<string, string> = {
   // Durable Object binding and its rooms-v1 migration come from apps/worker/wrangler.jsonc, which
   // `wrangler dev` reads in WORKER_DIR. On the opaque server they have no effect: rooms need
   // origin isolation.
-  ALLOW_ROOMS: "true",
+  ALLOW_ROOMS: ROOMS ? "true" : "false",
   ALLOW_LIVE_EDITING: "true",
   // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
   // socket, on both servers (it needs only the ROOMS binding, not origin isolation).

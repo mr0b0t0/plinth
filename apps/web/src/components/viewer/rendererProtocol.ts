@@ -33,15 +33,26 @@
 //   app -> frame: presenting { on }        a deck's frame is full screen (Present) or no longer:
 //                                          meanwhile it shows the published deck, not the room's
 //                                          live draft (presenter view it knows by itself)
+//   app -> frame: saved { nonce }          solo only: the text the frame answered `collect` with
+//                                          (that nonce) is now published: the frame takes it as
+//                                          its base, so a change back to the text it loaded is a
+//                                          change again (carries no text); exact origin only
+//   app -> frame: pick { on }              in edit mode: let the person pick a place on the page
+//                                          for a comment (the comments panel's "Point at
+//                                          something"), or stop; exact origin only
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
 //   frame -> app: resolved { nonce, outcome, version?, rev?, text?, note? }
 //                                          the review's choice: publish, discard or cancelled;
 //                                          version and rev in room mode, text in solo mode
-//   frame -> app: ask { anchor }           "Ask an agent" about a place on the page (a structural
-//                                          key and a short label)
-//   frame -> app: leave                    Esc at the top level of edit mode: focus the strip
+//   frame -> app: ask { anchor }           "Comment" on a place on the page (a structural key and
+//                                          a short label): the app opens the comments panel
+//                                          pinned there (frameComment.ts)
+//   frame -> app: picked { anchor }        the place picked after `pick` (a structural key and a
+//                                          short label, as `ask` has), or null: the person
+//                                          cancelled in the frame
+//   frame -> app: leave                    Esc at the top level of edit mode: focus the bar
 //   frame -> app: shown { n, nonce, ok }   the answer to version: shown in place, or not (the app
 //                                          then loads a fresh frame)
 //
@@ -57,7 +68,7 @@
 // The frame key: for an owner or editor who may edit on the page, the app opens each frame at
 // enter_url + "#plinth-k=<key>" with a fresh random key (withFrameKey). The renderer takes the key
 // out of its address at boot and sends it with every editing message (live, save, draft, resolved,
-// ask in edit mode, leave); the app drops any that does not carry its frame's key.
+// ask in edit mode, picked, leave); the app drops any that does not carry its frame's key.
 //
 // Every kind is a row in a table: APP_MESSAGE_KINDS for app -> frame, FRAME_READERS for
 // frame -> app (each kind's validator). A new kind is additive and keeps version 1: a row, its
@@ -320,6 +331,36 @@ export interface EditMessage {
   code?: true;
 }
 
+/**
+ * In edit mode, let the person pick a place on the page for a comment (on), or stop (off). The
+ * frame answers once with `picked`. It carries no data.
+ */
+export interface PickMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "pick";
+  on: boolean;
+}
+
+export function pickMessage(on: boolean): PickMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "pick", on };
+}
+
+/**
+ * Solo: the text the frame answered the `collect` with this nonce was just published. The frame
+ * makes it the base its `dirty` compares against. It carries no text: the frame kept its answer.
+ */
+export interface SavedMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "saved";
+  nonce: string;
+}
+
+export function savedMessage(nonce: string): SavedMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "saved", nonce };
+}
+
 /** Open the whole-draft review in the frame. */
 export interface ReviewMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
@@ -401,8 +442,8 @@ export interface LiveFrameStatus {
 }
 
 /**
- * What kind of block an `ask` is about, for the Ask dialog's "Pointing at" chip when the anchor has no
- * text (a doc's divider, or the image "Insert below" asks for). Never posted.
+ * What kind of block an `ask` is about, for the comment composer's chip when the anchor has no text
+ * (a doc's divider, or the image "Insert below" asks for). Never posted.
  */
 export const ASK_WHAT = [
   "paragraph",
@@ -508,6 +549,8 @@ export type FrameMessage =
   | { type: "draft"; nonce: string; text: string; unsavable?: true }
   | ({ type: "resolved"; nonce: string } & ReviewChoice)
   | { type: "ask"; anchor: { key: string; text: string } | null; what?: AskWhat }
+  /** The place picked after `pick`, or null when the person cancelled the pick in the frame. */
+  | { type: "picked"; anchor: { key: string; text: string } | null; what?: AskWhat }
   | { type: "leave" }
   | { type: "shown"; n: number; nonce: string; ok: boolean };
 
@@ -670,6 +713,8 @@ export const APP_MESSAGE_KINDS = [
   "rescue",
   "deck_settings",
   "presenting",
+  "pick",
+  "saved",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -688,7 +733,9 @@ export type AppToFrameMessage =
   | ReviewedMessage
   | RescueMessage
   | DeckSettingsMessage
-  | PresentingMessage;
+  | PresentingMessage
+  | PickMessage
+  | SavedMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -704,7 +751,9 @@ export function postToRenderer(
     | ReviewMessage
     | ReviewedMessage
     | RescueMessage
-    | DeckSettingsMessage,
+    | DeckSettingsMessage
+    | PickMessage
+    | SavedMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -770,6 +819,8 @@ export type FrameMessageKind = FrameMessage["type"];
 interface ReadOptions {
   solo: boolean;
   nonce: string | null;
+  /** More `collect` nonces the app waits on (solo: an autosave's and the tab copy's at once). */
+  nonces?: ReadonlySet<string>;
   maxDocBytes?: number;
   /** The nonce of the `version` message the app is waiting on; `shown` is read only for it. */
   shown?: string | null;
@@ -788,6 +839,7 @@ const KEYED: ReadonlySet<FrameMessageKind> = new Set([
   "save",
   "draft",
   "resolved",
+  "picked",
   "leave",
 ]);
 const MAX_WHERE = 80;
@@ -805,15 +857,17 @@ const FRAME_READERS: {
   },
   save: () => ({ type: "save" }),
   draft(m, opts) {
-    if (!opts.solo || !opts.nonce || m.nonce !== opts.nonce || typeof m.text !== "string") {
-      return null;
-    }
+    const nonce = typeof m.nonce === "string" ? m.nonce : null;
+    const asked =
+      nonce !== null &&
+      ((opts.nonce !== null && nonce === opts.nonce) || opts.nonces?.has(nonce) === true);
+    if (!opts.solo || !asked || nonce === null || typeof m.text !== "string") return null;
     const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
     if (m.unsavable !== undefined && m.unsavable !== true) return null;
     return {
       type: "draft",
-      nonce: m.nonce,
+      nonce,
       text: m.text,
       ...(m.unsavable === true ? { unsavable: true as const } : {}),
     };
@@ -869,22 +923,13 @@ const FRAME_READERS: {
   },
   ask(m) {
     if (m.anchor === undefined) return { type: "ask", anchor: null };
-    const a = m.anchor as Record<string, unknown> | null;
-    if (typeof a !== "object" || a === null) return null;
-    const { key, text } = a;
-    if (typeof key !== "string" || !PAGE_ANCHOR_KEY_RE.test(key)) return null;
-    // The same rules the server applies to a page anchor, so a dialog never opens about a label
-    // that would be refused on send.
-    if (
-      typeof text !== "string" ||
-      text.length > PAGE_COMMENT_LIMITS.maxText ||
-      PAGE_ANCHOR_UNSAFE_RE.test(text)
-    ) {
-      return null;
-    }
-    if (m.what === undefined) return { type: "ask", anchor: { key, text } };
-    if (!(ASK_WHAT as readonly unknown[]).includes(m.what)) return null;
-    return { type: "ask", anchor: { key, text }, what: m.what as AskWhat };
+    const place = readPlace(m);
+    return place ? { type: "ask", ...place } : null;
+  },
+  picked(m) {
+    if (m.anchor === null) return { type: "picked", anchor: null };
+    const place = readPlace(m);
+    return place ? { type: "picked", ...place } : null;
   },
   leave: () => ({ type: "leave" }),
   rescue(m) {
@@ -899,6 +944,30 @@ const FRAME_READERS: {
     return { type: "shown", n: m.n, nonce: m.nonce, ok: m.ok };
   },
 };
+
+/**
+ * A place on the page the frame names (`ask`, `picked`): a structural key and a short label, by
+ * the same rules the server applies to a page anchor, so a composer or dialog never shows a label
+ * that would be refused on send; and the kind of block, from a fixed list.
+ */
+function readPlace(
+  m: Record<string, unknown>,
+): { anchor: { key: string; text: string }; what?: AskWhat } | null {
+  const a = m.anchor as Record<string, unknown> | null;
+  if (typeof a !== "object" || a === null) return null;
+  const { key, text } = a;
+  if (typeof key !== "string" || !PAGE_ANCHOR_KEY_RE.test(key)) return null;
+  if (
+    typeof text !== "string" ||
+    text.length > PAGE_COMMENT_LIMITS.maxText ||
+    PAGE_ANCHOR_UNSAFE_RE.test(text)
+  ) {
+    return null;
+  }
+  if (m.what === undefined) return { anchor: { key, text } };
+  if (!(ASK_WHAT as readonly unknown[]).includes(m.what)) return null;
+  return { anchor: { key, text }, what: m.what as AskWhat };
+}
 
 /** Every frame -> app message kind, in table order. */
 export const FRAME_MESSAGE_KINDS = Object.keys(FRAME_READERS) as readonly FrameMessageKind[];
@@ -926,6 +995,7 @@ export function readFrameMessage(
     contentOrigin: string | null;
     solo: boolean;
     nonce: string | null;
+    nonces?: ReadonlySet<string>;
     maxDocBytes?: number;
     shown?: string | null;
     key?: string | null;

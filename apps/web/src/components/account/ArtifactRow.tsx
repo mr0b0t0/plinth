@@ -8,7 +8,6 @@ import {
   FolderSimpleIcon,
   GearIcon,
   LinkSimpleIcon,
-  PencilSimpleIcon,
   StarIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
@@ -49,10 +48,8 @@ export function artifactMenu(
   const items: MenuEntry[] = [
     { label: "Open", icon: ArrowSquareOutIcon, href: route(APP_ROUTES.artifact, slug) },
   ];
-  // A type with no source editor (a sheet or a design) has no Edit: agents change it.
-  if ((a.role === "owner" || a.role === "editor") && typeDef(a.type)?.editor) {
-    items.push({ label: "Edit", icon: PencilSimpleIcon, href: route(APP_ROUTES.editor, slug) });
-  }
+  // No Edit: people never see source. Owners and editors edit a doc, deck, sheet or design
+  // system on its page (Open), and ask an agent in a comment for the rest.
   items.push({
     label: "History",
     icon: ClockCounterClockwiseIcon,

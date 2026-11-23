@@ -18,3 +18,4 @@ e2e/playwright-report/
 # fork if you want to commit it (it holds resource ids, not secrets).
 apps/worker/wrangler.*.jsonc
 packages/cli/runtime/
+e2e/.wrangler-state-solo/

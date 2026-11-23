@@ -595,7 +595,7 @@ function readBlock(shape: RichBlock, content: HTMLElement, probes: Probe[]): Ric
 // ---------- the editor ----------
 
 export interface RichOptions {
-  /** The controls at the block's corner (an image's Ask an agent, the block menu). */
+  /** The controls at the block's corner (an image's Comment, the block menu). */
   extra?: HTMLElement[];
   /** The block's name for assistive technology ("Block 3, paragraph"). */
   label: string;
@@ -663,7 +663,7 @@ export class RichBlockEditor {
   private readonly doc: Document;
   /** The format bar: shown only while text is selected, next to the selection. */
   private readonly toolbar: HTMLElement;
-  /** The block's corner: its menu (and an image's Ask an agent), the rest of the time. */
+  /** The block's corner: its menu (and an image's Comment), the rest of the time. */
   private readonly corner: HTMLElement;
   private readonly linkForm: HTMLElement;
   /** An image's alt text field, opened from its menu in the corner's place. */
@@ -979,7 +979,7 @@ export class RichBlockEditor {
   /** Puts the caret at the start or the end of the block. */
   focus(where: "start" | "end" | RichPoint): void {
     if (this.shape.t === "image") {
-      // Nothing in an image is typed into here: focus goes to its corner (Ask an agent).
+      // Nothing in an image is typed into here: focus goes to its corner (Comment).
       (this.corner.querySelector("button") as HTMLElement | null)?.focus({ preventScroll: true });
       return;
     }

@@ -15,7 +15,7 @@
 // Emptying a block sends zero lines, or one blank line, or first trims a bare opening `---`
 // (deckEmptying), so a slide that loses its last block stays as an empty slide. Blocks the model
 // cannot show faithfully (the fidelity check) and images are not edited in place: selecting one
-// offers "Ask an agent", and an image also "Delete". Images are drawn from the draft's base
+// offers "Comment", and an image also "Delete". Images are drawn from the draft's base
 // version's files (../common/files.ts), which are the files a Publish keeps.
 //
 // Typing the draft does not hold yet is never dropped: it is written again where it can go, kept
@@ -75,6 +75,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
+import type { PagePlace } from "../common/pick.ts";
 import { kindName, RichBlockEditor, type RichHost, type RichPoint } from "../common/richblock.ts";
 import { parseBlocks } from "../doc/blocks.ts";
 import {
@@ -116,9 +117,9 @@ export const DECK_WORDS = {
   tooLong: "This block is too long to send. Split it into smaller blocks.",
   full: "The deck is at its size limit, so that change wasn't made.",
   fullHere: "The deck is at its size limit, so this text isn't in it. Shorten it to continue.",
-  ask: "Ask an agent",
-  readOnly: "This part can't be edited here. An agent can change it.",
-  imageNote: "An agent adds or replaces the image.",
+  ask: "Comment",
+  readOnly: "This part can't be edited here. Mention @claude in a comment to change it.",
+  imageNote: "Mention @claude in a comment to add or replace the image.",
   notes: (n: number) => `Notes for slide ${n}`,
   addNotes: "Add speaker notes",
   empty: (n: number) => `Slide ${n}, empty`,
@@ -154,7 +155,7 @@ export class LocalDeck implements DeckBackend {
   private n = 0;
 
   constructor(
-    readonly baseText: string,
+    public baseText: string,
     private readonly events: {
       granted(l: ClientLease): void;
       changed(): void;
@@ -173,6 +174,14 @@ export class LocalDeck implements DeckBackend {
 
   get dirty(): boolean {
     return this.text !== this.baseText;
+  }
+
+  /**
+   * Solo: this text was just published (the app's `saved`): `dirty` compares against it from now
+   * on, so a change back to the text the frame loaded is a change again.
+   */
+  rebase(text: string): void {
+    this.baseText = text;
   }
 
   lease(range: LineRange): boolean {
@@ -243,7 +252,7 @@ export interface DeckEditorHooks {
   leave(): void;
   /** The version whose files the draft is drawn with (its base), or null for the page's own. */
   fileVersion(): number | null;
-  /** Ask an agent about a place on a slide (the app's Ask dialog). */
+  /** Comment on a place on a slide (the app's comments panel, pinned there). */
   ask(anchor: { key: string; text: string }, what: AskWhat): void;
   /** Draw the deck again from the backend's lines (boot.ts), which then calls decorate. */
   redraw(): void;
@@ -813,7 +822,7 @@ export class SlidesEditor {
   private offered: RescueItem[] = [];
   private views: EditSlideView[] = [];
   private layout: DeckLayout | null = null;
-  /** The bar of a selected block that is not edited in place (Ask an agent, Delete). */
+  /** The bar of a selected block that is not edited in place (Comment, Delete). */
   private bar: HTMLElement | null = null;
   /** The selected block's elements while its bar shows (data-selected). */
   private barNodes: Element[] = [];
@@ -2976,7 +2985,7 @@ export class SlidesEditor {
 
   // ---------- blocks not edited in place ----------
 
-  /** "Ask an agent", described by what an agent would do there. */
+  /** "Comment", described by what an agent would do there. */
   private askButton(note: string, run: () => void): HTMLButtonElement {
     const b = el(this.doc, "button", "plinth-slides__ask", DECK_WORDS.ask);
     b.type = "button";
@@ -3000,7 +3009,7 @@ export class SlidesEditor {
     bar.dataset.plinthControl = "";
     if (image) {
       const imgIndex = this.imageIndex(b, v);
-      // Adding, replacing and deleting images stay with agents: Ask an agent is the one action.
+      // Adding, replacing and deleting images stay with agents: Comment is the one action.
       bar.append(
         this.askButton(DECK_WORDS.imageNote, () => this.ask(v, `image-${imgIndex}`, "image")),
       );
@@ -3046,7 +3055,44 @@ export class SlidesEditor {
     return first ? all.indexOf(first) + 1 : 1;
   }
 
-  /** Ask an agent about a place on slide `v`: a structural key and words, never its text. */
+  /**
+   * The place at `target` for a comment while the person picks one (common/pick.ts): its speaker
+   * notes, an image or a block on a slide, or the slide itself, with the keys and structural words
+   * its Comment controls use, never its text. Nothing closes.
+   */
+  placeAt(target: Node): PagePlace | null {
+    const v = this.views.find((x) => x.notesHost.contains(target) || x.frame.contains(target));
+    if (!v) return null;
+    const n = v.shownN ?? v.n;
+    if (v.notesHost.contains(target)) {
+      return {
+        el: v.notesHost,
+        anchor: { key: `slide-${n}:notes`, text: `Slide ${n}, speaker notes` },
+        what: "block",
+      };
+    }
+    const img = isEl(target) ? target.closest("img") : null;
+    if (img && v.el.contains(img)) {
+      const k = Array.from(v.el.querySelectorAll("img")).indexOf(img) + 1;
+      return {
+        el: img,
+        anchor: { key: `slide-${n}:image-${k}`, text: `Slide ${n}, image ${k}` },
+        what: "image",
+      };
+    }
+    const b = blockAt(target, v.frame);
+    const el = b?.nodes.find(isEl);
+    if (b && el) {
+      return {
+        el,
+        anchor: { key: `slide-${n}:block-${b.index}`, text: `Slide ${n}, block` },
+        what: "block",
+      };
+    }
+    return { el: v.el, anchor: { key: `slide-${n}`, text: `Slide ${n}` } };
+  }
+
+  /** Comment on a place on slide `v`: a structural key and words, never its text. */
   private ask(v: EditSlideView, place: string, what: AskWhat): void {
     this.hideBar();
     this.close(true);

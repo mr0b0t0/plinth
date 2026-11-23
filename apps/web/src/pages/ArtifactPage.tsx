@@ -30,8 +30,10 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const [commentsOpen, setCommentsOpen] = useState(() => search.has("comments"));
   // Review mode (the comment-anchoring bridge) needs a fresh gate and a frame reload. It turns on
   // when comments first open and then stays on, so closing and reopening the panel does not reload
-  // the artifact. Editing on the page and presenting a deck turn it off.
+  // the artifact. Presenting a deck turns it off. A page edited on it never enters it: editing is
+  // always on for owners and editors, and their frame picks places for comments itself.
   const [review, setReview] = useState(commentsOpen);
+  const [editing, setEditing] = useState(false);
   // A page inside the artifact (from a direct content link): opened inside the frame.
   const rawPath = search.get("path");
   const next = rawPath?.startsWith("/") && !rawPath.startsWith("//") ? rawPath : undefined;
@@ -58,7 +60,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // A fresh gate for a newer version waits here until the stage has applied it: in place for a
   // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
   const [pending, setPending] = useState<OkGate | null>(null);
-  // While editing on the page the edit strip says what a newer version did ("v5 was published
+  // While editing on the page the save status says what a newer version did ("v5 was published
   // while you edited", "your changes were kept"), so no toast repeats it.
   const editingRef = useRef(false);
   const show = (gate: OkGate, quiet = false) => {
@@ -156,14 +158,15 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     },
   };
   useEffect(() => {
-    if (commentsOpen && shown && !pageComments) setReview(true);
-  }, [commentsOpen, shown, pageComments]);
-  // Editing on the page and review mode (the comment-anchoring frame) exclude each other.
+    if (commentsOpen && shown && !pageComments && !editing) setReview(true);
+  }, [commentsOpen, shown, pageComments, editing]);
+  // Editing on the page and review mode (the comment-anchoring frame) exclude each other: an
+  // editing frame stays as it is, with the comments panel beside it (a `?comments` link opened by
+  // an editor loads the page once more, without review mode).
   const onEditModeChange = useCallback((on: boolean) => {
     editingRef.current = on;
-    if (!on) return;
-    setCommentsOpen(false);
-    setReview(false);
+    setEditing(on);
+    if (on) setReview(false);
   }, []);
   // Presenting a deck and review mode exclude each other too: review mode shows every slide
   // stacked, so Present leaves it (and closes the panel) before it presents.
@@ -223,7 +226,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       commentsOpen={commentsOpen}
       onToggleComments={() => {
         setCommentsOpen((o) => !o);
-        if (!pageComments) setReview(true);
+        if (!pageComments && !editing) setReview(true);
       }}
       currentHref={route(APP_ROUTES.artifact, { slug })}
       onReload={reload}

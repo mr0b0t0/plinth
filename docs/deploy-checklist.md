@@ -32,7 +32,7 @@ With a content subdomain that is not yet on the Public Suffix List (or not yet i
 and the pinned `tldts`), production runs only with `CONTENT_ISOLATION=opaque`. Every content
 response then carries a CSP `sandbox` without `allow-same-origin`, so artifacts get an opaque
 origin: they cannot set or read cookies, so no cookie tossing onto the parent domain, and they have
-no browser storage. Editor preview and comment pins keep working. What it does not cover
+no browser storage. Comment pins keep working. What it does not cover
 (same-site with the parent domain, a shared renderer process in some browsers, shared Safe
 Browsing reputation) is in [security.md](security.md#opaque-content-isolation).
 

@@ -44,7 +44,7 @@ account.
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
 - On-page editing of HTML artifacts (docs, decks, sheets and design systems are edited on the
-  page; HTML in the source editor).
+  page; an HTML page is changed by asking an agent in a comment).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -339,7 +339,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
 | `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
-| `list_mentions(state?)` | Pending requests addressed to this agent (from `@mentions` and Ask an agent) |
+| `list_mentions(state?)` | Pending requests addressed to this agent (from `@mentions` in comments) |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
 | `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
 | `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
@@ -450,12 +450,11 @@ Print to PDF). A doc version stores `content.md` and its images. Its page is a f
 that embeds the Markdown as escaped JSON and loads Plinth's renderer from the artifact's own origin
 under `/__plinth/types/doc/`, in every isolation mode; no per-artifact server code, and the CDN
 allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an allowlist and open in
-a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
+a new tab, and the shell's CSP (header and a meta copy, so a written copy of the shell gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The source editor edits the Markdown with a live preview (on the page, people edit a doc as
-formatted text and never see Markdown), and Compare lists what changed between two
-versions block by block, in words. Owners and
+People never see the Markdown: on the page they edit a doc as formatted text, and Compare lists
+what changed between two versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
 renderer connects the doc socket; every other shell is byte for byte as before. The second type
@@ -540,7 +539,7 @@ the count survives.
   cookie attributes, CSP) is the same whether or not it counted.
 - **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
   (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
-  Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
+  Plinth's own paths (`/__plinth/`), thumbnail captures and in-chat
   previews (their tokens refuse `w`), replayed or expired tokens, requests without
   `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
   token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
@@ -569,7 +568,7 @@ the count survives.
   an access-epoch change (any grant, visibility or password change), so the same browser can count
   again sooner after one. A counted enter marks the content cookie it sets with one signed bit
   (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
-  editor who moves between the editor preview, history and the live page counts once, and an
+  editor who moves between history and the live page counts once, and an
   uncounted pass (the preview, history, review mode) never stops a later live open from counting.
   Browsers that drop partitioned cookies count every open.
 - **Storage.** One D1 insert per counted open into `artifact_opens`, written after the response
@@ -622,34 +621,38 @@ the count survives.
 
 ### Editing
 
-- v1: a code editor (Monaco) with live preview in a sandboxed frame. Saving creates a new version
-  with an optional note.
 - Editors are the owner plus anyone granted the editor role.
-- If the current version changed while someone was editing, the save is rejected and they see a
-  diff to merge. No silent overwrites.
-- The source editor stays for the types that have one until each type's editing on the page
-  covers what it does. Where a doc or a design system can be edited on its page, the page is its
-  one way in and the viewer offers no source editor item; where it cannot (opaque isolation, the
-  path fallback, `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
-  whiteboards have no source editor.
+- No silent overwrites: every save names the version it was based on (`base_version`), and one
+  made against a stale version is refused.
+- People never see source code (decided 2026-11-23): there is no source editor. A doc, a deck, a
+  sheet or a design system is edited on its page (below); an HTML page or a design is changed by
+  asking an agent in a comment. Where editing on the page is off (opaque isolation, the path
+  fallback, `ALLOW_LIVE_EDITING=false`) the page is simply read-only. The v1 code editor (Monaco,
+  with a live preview) is gone, with its dashboard "Edit" item; its old address, `/a/:slug/edit`,
+  goes to the artifact's page.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
-the draft's files decided 2026-11-19; design systems decided 2026-11-21). Owners and editors
-edit a doc, a deck, a sheet or a design system right on its rendered page, and the other editors
-with the page open see the changes as they are typed. The registry says which types are edited
-this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages are edited in the
-source editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
-the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
+the draft's files decided 2026-11-19; design systems decided 2026-11-21; always on, with no Edit
+toggle, decided 2026-11-23). Owners and editors edit a doc, a deck, a sheet or a design system
+right on its rendered page, and the other editors with the page open see the changes as they are
+typed. As on a whiteboard, the page simply is editable when it opens: click into text and type,
+and the changes save on their own. There is no Edit toggle, no Done and no "Edit on the page"
+item, for any of these types, at any width. The registry says which types are edited
+this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages and designs are
+changed by agents only (`edit: "ask"`), an HTML page because its own scripts share the frame's
+origin and could forge edits that the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
-page shows the strip and makes the REST calls, and renders no content.
+page shows the save status and makes the REST calls, and renders no content.
 
-- **Who.** Owners and editors signed in to an account (policy action `live_edit`). Confirming the
-  code at the gate signs an editor in, so they edit like any signed-in editor. Only an editor with
-  a viewer session (confirmed by code where the address may not sign in, as in single-user mode,
-  or in a session started before codes signed people in) watches the edits and is asked to sign in
-  (`account_required`). Commenters and viewers see versions only. Agents never edit live: they
-  publish versions.
+- **Who.** Owners and editors signed in to an account (policy action `live_edit`), on the current
+  version, get the page in edit mode from the moment it opens. Confirming the code at the gate
+  signs an editor in, so they edit like any signed-in editor. Only an editor with a viewer session
+  (confirmed by code where the address may not sign in, as in single-user mode, or in a session
+  started before codes signed people in) watches the edits and is asked to sign in
+  (`account_required`): one "Sign in to edit" item in the ⋯ menu, at every width. Commenters and
+  viewers see versions only, exactly as before: nothing about editing loads for them. Agents never
+  edit live: they publish versions.
 - **Concurrency.** The artifact's room (its Durable Object, see [Live rooms](#live-rooms)) is the
   only place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
@@ -708,17 +711,22 @@ page shows the strip and makes the REST calls, and renders no content.
   its images from the base version's files (`/__plinth/v/<base>/`), and a design system its fonts
   and its examples' images and CSS files, so the page never shows a file the draft would not
   publish.
-- **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), leaving edit mode (the Edit
-  toggle, or Done at phone width), or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
-  while it is editing; no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version,
-  whoever made it, and an autosave asked for sooner is tried again once that time has passed) turn
-  the draft into the next version, through the ordinary publish path with the draft's
-  `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
+- **Publishing.** Changes publish on their own: an autosave after `LIVE_CHECKPOINT_IDLE_S` of
+  quiet (from the client that made the last edit, other editors 30 s later as a fallback; no
+  sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an
+  autosave asked for sooner is tried again once that time has passed), and leaving the page, which
+  publishes as Done did: closing or reloading the tab (a `pagehide` checkpoint sent with
+  `keepalive`), and going elsewhere in the app, in both modes: a link, the version picker or
+  History waits for the publish before it navigates (a solo copy that cannot be published then is
+  kept in the tab and offered back), and the same viewer moving to another artifact or an older
+  version publishes the room's draft as it goes. Cmd/Ctrl+S (in the app or in the frame) and the ⋯ menu's "Publish
+  changes" publish at once. Each turns the draft into the next version, through the ordinary
+  publish path with the draft's `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
   nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
   made while a save runs are kept on top of the new version. A draft that cannot be a version yet
   (a type's `unpublishable` rule: only a deck that shows no slide) is never checkpointed (409
   `live_unpublishable`), and Publish is off, with the reason in its tooltip.
-- **Versions from elsewhere.** When an agent, the source editor, the CLI, REST or a restore
+- **Versions from elsewhere.** When an agent, the CLI, REST or a restore
   publishes a version vN while a draft exists:
   - a draft with no changes moves to vN;
   - a **doc's** draft is merged onto vN line by line when the two changed different lines and the
@@ -733,17 +741,17 @@ page shows the strip and makes the REST calls, and renders no content.
     anything else freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
-  autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
-  (for several versions since the draft's base: "v6 to v7 were published while you edited"; at
-  phone width "v6 published", so the strip stays one line), with "Review changes" in place of
-  Publish, and the ⋯ menu offers no Discard (the review holds both choices). While editing, the
-  strip carries
-  every newer version's news, so the app shows no "Updated to vN" toast.
+  autosave and leaving the page do not publish it, and the save status says "v6 was published
+  while you edited" (for several versions since the draft's base: "v6 to v7 were published while
+  you edited"; at phone width "v6 published", so the bar stays one line), with "Review changes"
+  beside it, and the ⋯ menu offers neither Publish changes nor Discard (the review holds both
+  choices). While editing, the save status carries every newer version's news, so the app shows
+  no "Updated to vN" toast.
   Nothing is overwritten either way. `get_artifact` tells agents a draft exists (metadata only),
   and `update_artifact` and `edit_sheet` warn `live_draft`.
 - **The whole-draft review.** "Review changes" opens the review inside the frame; while it is
-  open the strip shows its status only (no "Review changes" and no Done), and the review has no
-  heading of its own, since the strip already says what happened. It shows "Your changes" and "v6"
+  open the save status shows its status only (no "Review changes"), and the review has no
+  heading of its own, since the save status already says what happened. It shows "Your changes" and "v6"
   side by side (one at a time, with a "Your changes" and "v6" switch, at phone width), each drawn
   read-only by the type's own renderer against the files it would publish: your changes against
   the base version's files, vN against vN's. Each side grows with its content up to a maximum
@@ -763,8 +771,9 @@ page shows the strip and makes the REST calls, and renders no content.
   with a short bar where blocks were removed, and a sheet's changed cells, by their entered value
   or formula. Each side opens scrolled to its first change when that is out of view (at phone
   width, when the switch first shows it); a sheet's changed column starts right after the row
-  numbers, never beside a cut-off sliver of another. The versions reviewed are every version since the draft's base; the strip and
-  the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
+  numbers, never beside a cut-off sliver of another. The versions reviewed are every version since the draft's base; the save status
+  and the version note name the whole range ("v6 to v7"), and the newer side is the newest
+  version.
   While a version waits for review, the version in the artifact bar is the draft's base.
   The review looks like the app around it (ink primary, bronze for the live state, the app's
   compact buttons) and has no explanatory paragraphs: exactly two choices, and Back:
@@ -795,42 +804,84 @@ page shows the strip and makes the REST calls, and renders no content.
   way: a newer version that undid the one reviewed ("v7 undid the changes of v6. Your changes are
   kept."), a doc version that merged cleanly, or a version equal to the draft.
 - **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
-  page alone; Publish makes a version over `PUT` with the shown version as `base_version` and its
-  files as `files_from_version`; the tab keeps a copy, and after a reload offers to publish it or
-  discard it; a Publish refused because a newer version is current opens the same review, the app
-  naming the version and its file changes from the two versions' file lists, and Publish your
-  changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
+  page alone; a publish makes a version over `PUT` with the version the copy is based on as
+  `base_version` and its files as `files_from_version`; the same autosave as a room's, after
+  `LIVE_CHECKPOINT_IDLE_S` of quiet and no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after this
+  tab's last publish, and Cmd/Ctrl+S or Publish changes, publish the frame's text without reloading
+  the frame: the next publish is based on the version this one made, and the same text is not
+  published twice. After each publish the app tells the frame which of its `collect` answers was
+  published (`saved` with that nonce; no text goes back), and the frame counts its changes from
+  that text, so a change back to the text it loaded is a change again, and a presented deck shows
+  the deck last published. An autosave that fails (no network, 5xx, 429, a frame that did not
+  answer) is tried again up to 5 times, 5 s, 10 s, 20 s… apart, while nothing changes; each
+  `collect` waits for its own answer, so the tab copy never takes an autosave's. The save status
+  says "Unpublished changes, kept in this tab"; the tab keeps a copy every 5 s, and after a reload
+  offers to publish it or discard it; until the person chooses, the page is not in edit mode, so
+  nothing typed can replace that copy. Leaving with changes asks first. A version published
+  elsewhere loads in place of the page when the page has no changes of its own, once the frame
+  has been asked for its text (which flushes a keystroke still in its send delay, whose change
+  report then keeps the page); with changes, the autosave stops (no silent overwrite: every `PUT` carries
+  `base_version`, and a stale one is refused), the save status says a newer version was published,
+  and Review changes opens the same review, the app naming the version and its file changes from
+  the two versions' file lists, and Publish your changes sends the frame's own copy; an autosave
+  refused because a newer version is current says so only there, while Cmd/Ctrl+S or Publish
+  changes opens the review at once; for the copy kept from before a reload, which the frame never
   held, the app sends that copy with the review, and Publish your changes and Discard your changes
-  act on it); under opaque
-  isolation and the path fallback there is no editing on the page: docs and design systems are
-  edited in the source editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
-  off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
-- **On the page.** An Edit toggle in the artifact bar, the one way in (no source editor item
-  beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
-  "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
-  (who and where, "row 12", a structural place, never content, in its tooltip and its accessible
-  name), and Publish (a text button), shown once there is something to publish; when the changes
-  cannot be published yet it stays, off, with the reason in its tooltip. The strip has no menu of
-  its own and no second way out: the Edit toggle turns edit mode off, and only at phone width,
-  where the toggle folds into the ⋯ menu as "Edit on the page", does the strip add Done. Every
-  status has a short form at phone width ("Merged with v5", "Not connected", "Kept in this tab",
-  "v6 published"), so the strip stays one line. "Discard unpublished changes" is in the artifact's
-  ⋯ menu while editing with changes and nothing to review, behind the same confirmation. A doc's
+  act on it); under opaque isolation and the path fallback there is no editing on the page: the
+  page is read-only for everyone (agents change it). `ALLOW_LIVE_EDITING=false` turns it off the
+  same way. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
+- **On the page.** The frame is in edit mode as soon as it has loaded. The artifact bar holds
+  History, Comments, Share and ⋯ (and Present for a deck), exactly as for a viewer; the only
+  editing chrome is a quiet save status beside the version, in muted words, announced politely
+  ("Saving…", "Draft saved", "Publishing…", "Published as v7", "Unpublished changes, kept in this
+  tab", "Not connected, your changes are kept", "v5 was published; your changes were kept"), and
+  nothing at all while there is nothing to say. How many others are editing shows beside it as a
+  count (who and where, "row 12", a structural place, never content, in its tooltip and its
+  accessible name). Every status has a short form at phone width ("Saved", "Unpublished",
+  "Published", "Merged with v5", "Not connected", "v6 published"), so the bar stays one line.
+  While a version waits for review the status holds the one button editing ever adds, "Review
+  changes". The ⋯ menu holds "Publish changes" (the same as Cmd/Ctrl+S) and "Discard unpublished
+  changes" (behind the same confirmation) while there are changes and nothing to review; Publish
+  changes is left out while the changes cannot be a version yet (a deck that shows no slide, or
+  typing the page cannot save), and a publish refused for that says why. There is no Publish
+  button, no strip under the bar and no frame outline for editing. A doc's
   block opens as formatted text, never as Markdown, in the page's own type, size and line height,
   so editing looks like the page
   ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)), and so does a slide's text
   ([Decks on the page](#decks-on-the-page-decided-2026-11-21)); blocks other people hold
   show their email and their text as it arrives. There is no "+" between blocks: "Insert below" in
-  a block's menu, or Enter, adds one. Esc at the
-  top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
-  line when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
+  a block's menu, or Enter, adds one. Esc at the top level of edit mode moves focus to the save
+  status. An owner or editor who is not editing (one who must sign in first) sees one line under
+  the bar when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
   the email on hover), when someone is editing ("Ana is editing"), or when a version needs review;
-  it looks like the strip (a bronze rule, a pencil, one line) and has no buttons, because editing
-  starts only from the Edit toggle, the strip holds Publish and Review changes, and the ⋯ menu
-  Discard. Only the solo copy a tab kept from before a reload, which no frame holds, gets Publish
-  and Discard on that line.
-  Edit mode and comment review mode exclude each other. While the review is open, app
-  notifications keep clear of its choices, and no notification ever covers a dialog's controls.
+  it has a bronze rule, a pencil and one line, and no buttons. The solo copy a tab kept from before
+  a reload, which no frame holds, gets that line with Publish and Discard, and the page stays out
+  of edit mode until one of them is chosen.
+- **Read-only for someone who may edit.** A page the frame cannot edit (a design system with
+  problems only an agent can fix, or one too large to edit on its page, `live.unavailable`) stays
+  read-only for that version, and the save status says why once ("Read-only" at phone width, the
+  whole reason as its name and title): no toast, no button.
+- **Comments while editing.** Comments work beside edit mode, as in Claude: opening the comments
+  panel neither publishes nor leaves edit mode, and never reloads the frame into comment review
+  mode (the bridge's reload would lose the editor's place, and solo edits that live only in the
+  frame). The composer's "Pin to an element" asks the editing frame to pick a place (`pick` on,
+  then `picked` with the frame key): while picking, a press on the page edits nothing; it names the
+  block (a doc), the slide, block, image or notes (a deck) or the token, group or component (a
+  design system) with the same structural page anchor the type's in-frame controls use (`block-3`,
+  `slide-2:notes`, `token:color.bg`), never draft text the person did not see, and Esc cancels
+  (`picked` with null). A sheet's cells have no such names yet, so the pin is not offered for a
+  sheet while it is edited. The app takes `picked` only for a pick it asked for. A pin placed in
+  the composer stays when the draft is published meanwhile: while editing, comments are posted
+  against the version the frame loaded. Element pins drawn by review mode do not show over an
+  editing frame. While the whole-draft review is open, app notifications keep clear of its
+  choices, and no notification ever covers a dialog's controls.
+- **Presenting a deck while editing.** Present stays in the bar at all times. Presenter view, full
+  screen, leading viewers (the deck's Lead viewers toggle, shown in edit mode too), Print and
+  Download .pptx hold edit mode off in the frame while they run and turn it back on after, so
+  they take the deck, not edit mode's raw slides: presenting and leading show the published deck
+  (as the audience and followers see it), and Print and the .pptx the live draft as the deck draws
+  it. While someone else leads the room, a co-editor's edit mode is held off too, so they follow
+  the presenter as a viewer does. The unpublished changes stay in the draft meanwhile.
 - **The frame key.** For an owner or editor who may edit on the page, the app opens each frame
   load at its enter URL with a fresh 32-byte random key in the fragment (`#plinth-k=…`). The
   fragment is never sent to a server, survives the enter redirect and appears in no `Referer`; the
@@ -855,12 +906,12 @@ page shows the strip and makes the REST calls, and renders no content.
   `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
   new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
   agents keep the carry rule.
-- **Ask an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a design
-  system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque
-  isolation and the path fallback) see Ask an agent in the Edit slot, with the reason; HTML pages
-  and designs always do. While editing, Ask an agent
-  opens a dialog that leaves edit mode and the draft as they are. See
-  [Ask an agent](#ask-an-agent-decided-2026-11-19).
+- **Asking an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a
+  design system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or
+  opaque isolation and the path fallback) see the page read-only, as everyone sees an HTML page
+  or a design: they mention an agent in a comment. While editing, a renderer's "Comment" opens the
+  comments panel pinned to its place, and edit mode and the draft stay as they are. See
+  [Asking an agent](#asking-an-agent-decided-2026-11-23).
 
 ### Categories (decided 2026-11-18)
 
@@ -921,7 +972,9 @@ their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)
 ### Comments and agent mentions
 
 Comments are threaded and can be pinned to an element on the page. Mentioning an agent (`@claude`,
-`@codex`, or a connection label) creates a task. Two delivery modes:
+`@codex`, `@agent:other` for every other client, or a connection label) creates a task. It is the
+one way people ask an agent for a change ([Asking an agent](#asking-an-agent-decided-2026-11-23)).
+Two delivery modes:
 
 | Mode | How it works | Who pays for tokens | When |
 | --- | --- | --- | --- |
@@ -936,14 +989,16 @@ node in a diagram): it opens the composer, and the person writes and posts the c
 [Comments from the page](#comments-from-the-page-decided-2026-11-19). Agents read either kind of
 anchor in `list_comments` and in mention tasks, as untrusted data like the comment text.
 
-**Ask an agent** ([below](#ask-an-agent-decided-2026-11-19)) posts an ordinary comment whose target
-travels in a structured field, never as `@name` text: `request_to` on `POST
-/api/v1/artifacts/:ref/comments` is one of the client types (`claude`, `codex` or `other`), accepted
-on a root comment only (400 `invalid_input`, reason `reply`, on a reply). It makes one task for the
-owner's connections of that client type, target label `@claude`, `@codex` or `@agent:other` (`other`
-covers every client that is not Claude or Codex, which no `@name` reaches; the `:` keeps it apart
-from `@agent`, a mention of a connection labelled "Agent"), unless the body already
-names that type. It is refused with 400 `invalid_input`, reason `no_agent`, and nothing is written,
+`@agent:other` covers every client that is not Claude or Codex (ChatGPT, Cursor, Gemini…); the
+`:` keeps it apart from `@agent`, a mention of a connection labelled "Agent", since no handle can
+hold one, and `:other` counts only right after `agent` and as a whole word.
+
+A comment can also name its target in a structured field instead of `@name` text: `request_to` on
+`POST /api/v1/artifacts/:ref/comments` is one of the client types (`claude`, `codex` or `other`),
+accepted on a root comment only (400 `invalid_input`, reason `reply`, on a reply). The app no
+longer sends it (it did for the Ask an agent button, until 2026-11-23); agents and older tabs may.
+It makes one task for the owner's connections of that client type, target label `@claude`,
+`@codex` or `@agent:other`, unless the body already names that type. It is refused with 400 `invalid_input`, reason `no_agent`, and nothing is written,
 when the owner has no connection of that type that can take mentions (not revoked, not limited to
 one artifact, with the `mentions` scope); that check, and the mention right's (403 otherwise),
 come before the comment rate limit, so a refused request does not count against it. An agent's
@@ -1156,13 +1211,13 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   row that scrolls sideways and fades at its edges. Each example shows only its rendered preview,
   never its HTML or CSS. A system the format refuses (one stored before a stricter parser, say)
   shows "This design system has problems an agent needs to fix:" and up to 10 of its problems,
-  each its path and words as text, with "Ask an agent" (an `ask` anchored at `system:problems`)
+  each its path and words as text, with "Comment" (an `ask` anchored at `system:problems`)
   for the owner and editors where they edit with the room; a page whose payload cannot be read
   shows one line, "This design system could not be shown." Such a system is not edited on the
   page: the owner's and editors' frame tells the app so (its status's `unavailable: "invalid"`),
-  the bar's Edit stays off with its reason in its tooltip ("This design system has problems an
-  agent needs to fix. Ask an agent to fix them."), the phone's ⋯ leaves "Edit on the page" out,
-  and Ask an agent is the way in.
+  the page stays read-only for that version, and the save status says why once ("This design
+  system has problems only an agent can fix, so it can't be edited on the page. Mention @claude in
+  a comment to fix them."; "Read-only" at phone width), and a comment is the way in.
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1241,11 +1296,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   own look. An organization default and an explicit "no default" choice are not offered (Plinth has
   no organizations).
 - **In the app.** Owners and editors edit a design system on its page (below). Where editing on
-  the page is off (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path fallback), the source
-  editor holds the JSON with Monaco's JSON language and the format's JSON Schema, lists the
-  parser's problems (one short line each, with its path) above the editor, keeps the preview at
-  the last draft that parsed (blank while none has), and keeps Save off until there are none. The
-  dashboard shows a "Design system" badge. To point an agent at one, the person gives it the link
+  the page is off (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path fallback), the page is
+  read-only and agents change it. The dashboard shows a "Design system" badge. To point an agent at one, the person gives it the link
   (Share's copy link); the agent reads it with `get_design_system`, which takes the slug.
 - **Editing on the page** (decided 2026-11-21; [Editing](#editing) gives the model every live type
   shares: leases, drafts, Publish, the whole-draft review). Owners and editors change values in
@@ -1289,7 +1341,7 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     answer is matched to its own request by `re` (above), so another value's denial is never
     taken for this one's, and a lease granted to a part that let go meanwhile goes back to the
     room, at once or when the newer request is refused. Until the room acknowledges the edit, or the draft holds the value, it counts as pending
-    (the status's `unflushed` and `pending`; Publish and Done wait for `pending`, at most 3
+    (the status's `unflushed` and `pending`; every publish waits for `pending`, at most 3
     seconds, before the checkpoint): edit mode ending keeps the request and lets the lease go right
     after the write; a socket that closes asks again on the reconnect; an edit the room answers
     `not_held` (its lease replaced first), or one sent but not acknowledged before a drop or a lost
@@ -1340,17 +1392,18 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     room's text again, as a doc block's does.
     A component's status stays the pill beside its name and is set from its heading's ⋯
     ("Status", then Stable, Beta or Deprecated). Each token row has one ⋯ (dark value,
-    description, another token, "Rename: Ask an agent", "Remove"), each group row one ⋯ ("Add a
-    token", "Rename: Ask an agent"); on a phone a row's ⋯ is centred on the token's name and a
+    description, another token, "Comment to rename", "Remove"), each group row one ⋯ ("Add a
+    token", "Comment to rename"); on a phone a row's ⋯ is centred on the token's name and a
     group's on its label. "Remove" asks in place, its two buttons always together (on a phone the
     question has its own line). The parts of a shadow, border or typography token are
     labelled in words (Color, X, Y, Blur, Spread; Width, Style; Font, Size, Weight, Line height,
     Letter spacing).
   - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
     components), renaming tokens and groups, types, the fonts, the prefix, the format and the
-    shared CSS. Each has Ask an agent on the page, in the ⋯ it belongs to: a token's or a group's
-    ("Rename: Ask an agent"), a component's ("Ask an agent", after "Status") and the header's,
-    beside the name ("Ask an agent", whose dialog names "Fonts and settings"). In the review both
+    shared CSS. Each has "Comment" on the page, in the ⋯ it belongs to: a token's or a group's
+    ("Comment to rename"), a component's ("Comment", after "Status") and the header's, beside the
+    name ("Comment", pinned to "Fonts and settings"); it opens the comments panel pinned there,
+    where people mention an agent. In the review both
     sides are one height, and each opens with its first change at the top of the side, just under
     its list of changes; on a phone a side's values wrap inside it, with as much room on a row's
     right as on its left. A change in the review that is in a component
@@ -1359,13 +1412,14 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     When the design system's publisher said its source lives in code (the gate's `from_code`),
     starting edit mode shows one short notice in the frame's status line: "This design system is
     published from code. Its next publish from code won't include changes made here.", with
-    Dismiss only (Ask an agent stays in the rows' and components' menus). Editing is not blocked.
+    Dismiss only (Comment stays in the rows' and components' menus). Editing is not blocked.
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
     (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
     whose JSON part would pass 8 MB of text (`LIMITS.maxLiveProjectionChars`, counted before it is
-    written), is not edited on the page: Edit says "This design system is too large to edit on the page", edit
-    mode ends, and Ask an agent is offered.
+    written), is not edited on the page: edit mode ends for that version, and the save status says
+    "This design system is too large to edit on the page. Mention @claude in a comment to change
+    it."
   - **Storage form.** A Publish from the page stores 2-space JSON when it fits 1 MB, and compact
     JSON when it does not, with the guidelines as the last key (none when the draft has no line
     after its JSON part), so it never fails on size where the agent's version fit. An agent's
@@ -1396,8 +1450,8 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
 A presentation is a deck: the agent writes Markdown, Plinth renders fixed slides. It is the second
 [typed output](#mcp-interface), after docs, and works like one: `publish_artifact` and
 `update_artifact` take `type: "slides"` with the Markdown in `content`, a version stores
-`slides.md` and its images, and versions, `base_version` conflicts, restore, history and the
-source editor work as for docs. Owners and editors edit a deck's text, speaker notes and settings
+`slides.md` and its images, and versions, `base_version` conflicts, restore and history work as
+for docs. Owners and editors edit a deck's text, speaker notes and settings
 on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
 
 - **Source format.** A line that is exactly `---` (outside fenced code) separates slides; the split
@@ -1428,7 +1482,7 @@ on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
   every view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
   700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
   the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
-  and the editor preview keep it in one column, without the pill. The app keeps the slide in its
+  keeps it in one column, without the pill. The app keeps the slide in its
   URL fragment (`#slide=N`, never sent to the server), so a reload or a shared link opens the same
   slide, and a newer version's frame is sent back to it.
 - **Presenting.** Present is one control in the bar, a menu with two items. "Full screen" puts
@@ -1530,7 +1584,7 @@ on its page ([Decks on the page](#decks-on-the-page-decided-2026-11-21)).
   the room may have missed a second later and then at most once a second. Watchers can never fill
   the deck's room: 4 slots of `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (at most half) are kept for
   owners and editors. Anonymous link viewers, in-chat previews,
-  thumbnail captures, review mode, the editor preview and a permanent version link never follow
+  thumbnail captures, review mode and a permanent version link never follow
   or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
   closes every socket on the deck (followers see "Your access changed. Reload the page.", as on
   other pages), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
@@ -1691,8 +1745,8 @@ differs from Claude only where noted.
     reused files read from storage).
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
     `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
-  - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
-    they ask an agent for changes (Ask an agent takes the bar's Edit slot, as for an `ask` type).
+  - People see the deck, never its source (no viewer has a source editor item), and they ask an
+    agent for changes in a comment, as for an `ask` type; nothing takes Edit's place.
     Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
     gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
     draft on it, and the frame takes no editing message. When an agent publishes an HTML deck over a
@@ -1701,8 +1755,8 @@ differs from Claude only where noted.
     the review of the people editing it ("vN is an HTML deck, which isn't edited on its page, so
     your page edits can't be added to it"), where Publish your changes makes their deck the next
     version and Discard ends the draft. While such a draft waits, owners and editors still get
-    `live` in the gate and the shell, after a reload too, and only for that review: the bar's Edit
-    shows the strip with Review changes, the frame joins the room without entering edit mode, the
+    `live` in the gate and the shell, after a reload too, and only for that review: the save status
+    shows the version with Review changes from the start, the frame joins the room without entering edit mode, the
     draft is frozen (no lease or edit), and the HTML side of the review is one line ("vN is an HTML
     deck, so it isn't shown beside your changes…") in place of its changes and drawing. The agent's
     `live_draft` says the edits are neither merged into nor shown beside its deck. Compare lists the index's
@@ -1742,7 +1796,7 @@ markers and tell Plinth where to draw its pins.
   sent until the page first uses it.
   - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
     direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
-    in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
+    in-chat preview, history compare, or an old app) and `not_declared`.
   - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
     `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
     `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). An
@@ -2005,8 +2059,8 @@ document through the gate and the shared-data API, with all of their checks.
   served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
   names its own `wss:` origin and nothing else.
 - **Signals.** JSON frames the room builds from integers: `welcome` (the current version),
-  `version` (a version was published: by an agent, the
-  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
+  `version` (a version was published: by an agent, a
+  restore or an on-page checkpoint), `data` (the page's shared data changed:
   a write from the page, an agent or the app, or the owner's "Delete all shared data"; at most one
   per `spread_ms` per artifact: a write in a quiet window sends it at once, and the writes after
   it share one frame at the window's end, so the last write is always followed by one) and
@@ -2022,7 +2076,7 @@ document through the gate and the shared-data API, with all of their checks.
   One such notice shows at a time: a newer version's replaces the last, so versions published in
   a row never stack. While someone edits on the page, or the frame is held (a doc, sheet or design
   system edited on its page, a deck presented), no notice shows: the version picker takes the new number, and
-  the edit strip says what happened.
+  the save status says what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
@@ -2335,14 +2389,13 @@ a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a sp
 fifth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
-restore and history work as for docs. People never see the JSON lines: a sheet has no source
-editor (its registry row's `editor` is null), so the app offers no source Edit, the editor's address
-goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
+restore and history work as for docs. People never see the JSON lines: there is no source editor
+(and a sheet's registry row's `editor` is null), the old editor address goes to the sheet's page, and Compare lists what changed in words (a cell and its two values, rows
 added or removed) above the two versions rendered side by side, never a source diff. Cells are
 versioned content, never shared data: every change, an agent's or a person's, is a new version
 anyone can revert. Owners and editors also edit a sheet on its page, live with each other
-([Live sheets](#live-sheets-decided-2026-11-19)); the Edit toggle there is the only way a person
-edits one.
+([Live sheets](#live-sheets-decided-2026-11-19)), in edit mode from the moment it opens; that
+is the only way a person edits one.
 
 - **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
   and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
@@ -3095,7 +3148,7 @@ agents on one artifact").
 ### Live sheets (decided 2026-11-19)
 
 Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
-([Editing](#editing)): the same Edit toggle, strip, Publish and Discard, the same
+([Editing](#editing)): the same always-on edit mode, save status, Publish changes and Discard, the same
 checkpoints, autosave and modes ("room" with live rooms, "solo" under origin
 isolation without rooms, none under opaque isolation or the path fallback), the same policy action
 `live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
@@ -3233,10 +3286,12 @@ and the whole-draft review is the only way on (below).
   it was: in the column settings or an open cell's field with its selection, in the filter with
   its text, or on the selected cell when a cell had it. It never moves onto a cell from anywhere
   else, since a key typed in a selected cell starts editing it.
-- **One way in.** The Edit toggle (at phone width, "Edit on the page" in the ⋯ menu) is the only
-  way a person edits a sheet: a sheet has no source editor, so the menu has no source item beside
-  it. Where on-page editing is not available (opaque isolation, the path fallback,
-  `ALLOW_LIVE_EDITING=false`), a sheet has no Edit at all, and agents change it.
+- **One way in.** The page itself, in edit mode for owners and editors from the moment it opens,
+  is the only way a person edits a sheet: a sheet has no source editor, and the menu has no edit
+  item. Where on-page editing is not available (opaque isolation, the path fallback,
+  `ALLOW_LIVE_EDITING=false`), the sheet is read-only, and agents change it. "Replace with a
+  file…" is hidden while the page holds unpublished changes or someone else edits it, not merely
+  because the page is open in edit mode.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
 
@@ -3330,112 +3385,95 @@ from discovery tags) stays.
 - **No setting.** Compare is the same on every instance and in both isolation modes; it adds no
   route, no table and no env var.
 
-### Ask an agent (decided 2026-11-19)
+### Asking an agent (decided 2026-11-23)
 
-People change an HTML page or a design by asking an agent, not by editing its code: the person
-points at an element (or a design's board) or describes the change, and the request goes to the
-owner's connected agent as an ordinary mention, through the comments and mentions system. No code is
-shown. A request is untrusted input for the agent: a collaborator's request, with no owner
-authority, whoever sends it (only `comment_author_role` says the owner did).
+People ask the owner's agent for a change the way they ask Claude in its own artifacts: by
+mentioning it in a comment ("@claude make the heading red"), optionally pinned to a place on the
+page. There is no other entry point: no Ask an agent button in the bar, no item in the ⋯ menu
+and no dialog (this replaces the Ask an agent button, request mode and Ask dialog decided
+2026-11-19). The request goes to the owner's connected agent as an ordinary mention, through the comments and
+mentions system ([Comments and agent mentions](#comments-and-agent-mentions)). No code is shown. A
+request is untrusted input for the agent: a collaborator's request, with no owner authority,
+whoever sends it (only `comment_author_role` says the owner did).
 
 - **Who.** Everyone the `mention` action allows: the owner, editors and commenters, those confirmed
-  by code included. Never viewers, never agents. It is offered only when the owner has an agent
-  that can take the request (the gate's `ask.targets` is not empty).
+  by code included. Never viewers, never agents. A commenter reaches the owner's agents exactly as
+  the owner does.
+- **The composer.** The comments panel's composer is the same for everyone: "Add a comment…", the
+  hint "Markdown works. Type @ to ask an agent. Ctrl or ⌘ + Enter sends.", "Pin to an element"
+  (the review-mode pick: an element on an HTML page, a board on a design) and Comment. Typing `@`
+  suggests `@claude` and `@codex` (a robot beside each), and `@agent:other` with the words
+  "ChatGPT, Cursor, Gemini…" when the gate's `ask.targets` lists `other`; reply boxes suggest the
+  same. The comment is posted as written, with its pin; the thread shows each task's state and
+  links the version a done request made.
+- **Every client type has a mention.** `@claude` and `@codex` reach the owner's connections of
+  that client type, and `@agent:other` every connection that is neither (ChatGPT, Cursor,
+  Gemini…). Its `:` keeps it apart from `@agent`, a mention of a connection labelled "Agent", since
+  no connection's handle can hold one; `:other` counts only right after `agent` and as a whole word.
+  The Connections page and the consent screen say so for such a connection ("Mention as
+  @gemini-cli or @agent:other.").
 - **Where.** The registry says how people change each type (`edit`): `"ask"` (HTML pages and
-  designs, and decks until they are edited on the page), `"live"` (docs, sheets and design
-  systems) or `"board"` (whiteboards).
-  - For an `"ask"` type, and for a live type whose editing on the page is off here, owners and
-    editors get Ask an agent in the bar's Edit slot; its description gives the reason when editing
-    is off ("Editing on the page is turned off on this Plinth instance." or "Editing on the page
-    isn't available with this instance's content isolation.").
-  - Everywhere else it may be used, it is an item in the artifact's ⋯ menu: commenters on every
-    type, everyone at phone width, and owners and editors of a live type whose editing is on.
-  - It has no other entry point: the dashboard card's menu does not offer it (its "Edit" still
-    opens the source editor for owners and editors).
-- **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
-  reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). With no thread to show, the panel is only the request form under the title "Ask an
-  agent" and its close button: no filter, count, refresh or empty state, and at phone width the
-  sheet is as tall as the form. With threads, they show above it as usual. The composer has no
-  title of its own (it is named "Ask an agent" for assistive technology) and has the description
-  ("Describe the change…") and one row under it: the agent choice on the left, then "Point at
-  something" (an icon button with that tooltip: the review-mode pick, an element on an HTML page,
-  a board on a design) and Send on the right. While picking it shows one line, "Pick an element",
-  and Cancel (Esc also cancels); at phone width that bar sits under the artifact, not over it,
-  so nothing on the page is left half-covered. The place picked shows as a "Pointing at “…”" chip
-  whose button drops it. It posts a comment with `request_to` against the version on view; a
-  notification then says "Request sent to Claude", as from the Ask dialog, and a panel opened for
-  the request closes (one that was already open stays, with a plain composer). It has no close
-  button of its own: request mode lasts as long as the panel it opened, and once the panel
-  closes, sent or not, the Comments toggle opens a plain composer again.
-- **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
-  review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
-  draft. Focus starts in its description, where typing goes. It opens from the ⋯ item, or from an
-  `ask` message a renderer posts, which opens it about
-  a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural name such
-  as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
-  "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
-  kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
-  which is never posted); a renderer releases its own lease before it asks. A doc names blocks as
-  the published version the agent reads has them, matching the draft's blocks to it by their
-  Markdown: `block-3` is its third top-level block, `new-3` a block only in the draft after it
-  (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
-  published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
-  Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
-  `ask` with block anchors, the slides renderer with slide anchors (`slide-3:image-1`,
-  `slide-3:block-2`, `slide-3:notes`, with structural words such as "Slide 3, image 1"), and the
-  design system renderer with `token:<path>`, `group:<path>`, `component:<id>` and
-  `system:settings` (keys made from the published version only: a path too long for an anchor key
-  gives its index in the published version, `token:12`, and a token or group only the draft has is
-  just `token` or `group`, with no words), and with the block anchors of its formatted texts
-  behind the text's part (`guidelines:block-3`, named in the published version's text as a doc's
-  are); other types don't yet. While the app is in edit mode, an `ask`
-  without the frame's key is dropped like any other editing message; only outside edit mode does a
-  keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
-  refuse, under the rules for a page's own compose ([comments from the
-  page](#comments-from-the-page-decided-2026-11-19)): it is accepted only while the tab is visible and no dialog is
-  open, and one that would open the closed panel or the Ask dialog at most once a second
-  (`PAGE_COMMENT_LIMITS.reopenMinIntervalMs`, shared with the page's compose and open). It has the composer's
-  "Pointing at “…”" chip when the renderer named a place (dropping it makes the request about the
-  whole page), the description, the agent choice as in the composer, and "Publish my changes
-  first"; the footer holds only Cancel and Send. "Publish my changes first" is off by default and
-  shown only when there are unpublished changes ("Otherwise the agent works from v5.", plus, in room mode while others edit,
-  "This also publishes the others' changes."). With it on, the request is posted after the strip's
-  Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
-  cannot be a version yet, a lost session) nothing is posted, the dialog says why in the strip's
-  words and offers "Post without publishing" or Cancel. That Publish is the strip's own, on the
-  same code path, telling its refusal to the dialog instead of as a toast: a lost session reads the
-  gate again and a conflict opens the review, as Publish does. Otherwise the request is posted against the
-  version being edited. After posting, a notification says "Request sent to Claude". At phone
-  width the dialog is a sheet flush with the bottom edge. The agent's
-  answer is a version like any other, handled by the draft's rules.
-- **The agent choice.** The gate's `ask` part (`ask: { targets }`), present for everyone who may
-  mention, lists the distinct client types of the owner's connections that can take mentions (not
-  revoked, not limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other`
-  order. Labels and ids never leave the owner. With one target there is no choice and the button
-  names it ("Send to Claude"). With more, the choice is labelled "Ask" (in the composer, on the
-  row with the point button and Send; in the Ask dialog, under the description): two agents are a
-  segmented control ("Ask Claude | Codex") whose chosen agent is marked as plainly in dark mode as
-  in light, three a select ("Claude", "Codex" and "The owner's other
-  agent"; the owner: "My other agent"). With no target Ask an agent is not
-  offered. A connection revoked between the gate and the post gives `no_agent`: the composer reads
-  the targets again and says "That agent was disconnected. Pick another, or post as a comment.";
-  with none left, its button posts a plain comment ("Post as a comment").
+  designs), `"live"` (docs, sheets, decks and design systems) or `"board"` (whiteboards). An
+  `"ask"` type, an HTML deck (which has no editor) and a live type whose editing on the page is off
+  here (`live_off`) have nothing for editing in the bar: History, Comments, Share and ⋯ (and Present
+  for a deck) are the whole bar, and owners ask in a comment. The dashboard card's menu offers
+  nothing either (it has no "Edit": there is no source editor).
+- **Comment from the page.** A place people cannot change on the page itself (a doc block shown
+  read-only, an image, a slide's image or a block it cannot hold, a design system's token or group
+  name, a component, its fonts and settings, or the problems of a system the format refuses) has a
+  "Comment" control in the frame, described by what an agent would do there ("This part can't be
+  edited here. Mention @claude in a comment to change it." or "Mention @claude in a comment to add
+  or replace the image."); a design system's token and group rows name it "Comment to rename". It
+  posts `ask` with the frame's key and a page anchor (`{ kind: "page", key, text }`), and the app
+  opens the comments panel, as the Comments toggle opens it, with the composer pinned to that
+  place and the focus in it; the person writes the comment. The chip reads "Pinned to “…”" with
+  the anchor's `text`; for an anchor without text, such as a doc's divider, it names the kind of
+  block the message gives in `what`, one of a fixed list ("Pinned to the divider"), which is never
+  posted; "New image below “…”" for a doc's Insert below, Image (`…:add-image`); and "(not
+  published yet)" after a block only in the draft (`new-…`). Remove pin makes the comment about the
+  whole page. A renderer releases its own lease before it posts. The message carries no comment
+  text.
+- **Anchors.** A doc names blocks as the published version the agent reads has them, matching the
+  draft's blocks to it by their Markdown: `block-3` is its third top-level block, `new-3` a block
+  only in the draft after it (`new-0` above the first; its text is the draft's first words), `:image`
+  the image in that block and `:add-image` a new image below it. The slides renderer sends slide
+  anchors (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`, with structural words such as
+  "Slide 3, image 1"), and the design system renderer `token:<path>`, `group:<path>`,
+  `component:<id>`, `system:settings` and `system:problems` (keys made from the published version
+  only: a path too long for an anchor key gives its index in the published version, `token:12`,
+  and a token or group only the draft has is just `token` or `group`, with no words), and the
+  block anchors of its formatted texts behind the text's part (`guidelines:block-3`, named in the
+  published version's text as a doc's are). Other types don't yet.
+- **A hint the app may refuse.** While the app is in edit mode, an `ask` without the frame's key is
+  dropped like any other editing message; outside edit mode a keyless one is taken. Either way it
+  follows the rules for a page's own compose ([comments from the
+  page](#comments-from-the-page-decided-2026-11-19)): it is accepted only while the tab is visible
+  and no dialog is open, at most one a second whatever is open
+  (`PAGE_COMMENT_LIMITS.composeMinIntervalMs`), and one that would open the closed panel at most
+  once a second (`PAGE_COMMENT_LIMITS.reopenMinIntervalMs`, shared with the page's compose and
+  open). In edit mode the panel opens as the Comments toggle opens it there.
+- **`request_to` stays.** `POST /api/v1/artifacts/:ref/comments` still takes `request_to` (see
+  [Comments and agent mentions](#comments-and-agent-mentions)) for agents and tabs opened before
+  this change; the app no longer sends it.
+- **The gate's `ask` part.** `ask: { targets }`, present for everyone who may mention, lists the
+  distinct client types of the owner's connections that can take mentions (not revoked, not
+  limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other` order. Labels
+  and ids never leave the owner. The app reads it only to suggest `@agent:other`.
 - **Editing off.** The gate's `live_off: { reason }` part (`disabled` or `isolation`) is present
   exactly where `live` would be (an owner or editor of a live type on the current version, signed
-  in or confirmed by code) when editing on the page is off, so a gate never has both.
+  in or confirmed by code) when editing on the page is off, so a gate never has both. Nothing in
+  the bar takes Edit's place.
 - **`?edit`.** Where this person cannot edit on the page, `?edit` is dropped from the address and
-  the page opens as usual, with no notice: the bar already offers Ask an agent, with the reason in
-  its description when editing is off. For an editor confirmed by code it focuses "Sign in to
+  the page opens as usual, with no notice. For an editor confirmed by code it focuses "Sign in to
   edit".
 - **Agents.** `list_mentions` and `claim_mention` are unchanged: they match the task's client type
-  against the connection's, so ChatGPT, Cursor and Gemini connections (`other`) receive these
-  requests too. The thread shows the task's state and links the version a done request made.
-- **Opaque isolation.** No editing message is exchanged with a frame whose origin is `"null"`: the
-  Edit slot shows Ask an agent for every live type, with the reason, and requests go through the
-  comments panel. Nothing changes on the content host or in the frames' sandbox.
-- **No setting.** Ask an agent adds no env var, table or route: it is a field on the comment route
-  and two gate parts.
+  against the connection's, so ChatGPT, Cursor and Gemini connections (`other`) receive
+  `@agent:other` requests.
+- **Opaque isolation.** No editing message is exchanged with a frame whose origin is `"null"`, so
+  there is no Comment from the page; people comment in the panel. Nothing changes on the content
+  host or in the frames' sandbox.
+- **No setting.** Asking an agent adds no env var, table or route: it is a mention name, a field on
+  the comment route and two gate parts.
 
 ### New and Import (decided 2026-11-19)
 
@@ -3493,15 +3531,17 @@ pages and designs come only from agents.
   The cause is never code: the Worker's sentence without its "The xlsx file could not be imported:"
   lead and without a closing parenthetical of parser detail ("This is not an .xlsx file."). Agents
   get the whole sentence.
-- **`?edit` starts editing.** On the artifact page, `?edit` for an owner or editor who may edit
-  there (the gate's `live`, without `sign_in`) is dropped from the address and the page opens in
-  edit mode. The app focuses the frame and posts `edit { on: true, focus: "first" }` (again on the
-  frame's load, until the frame reports that it is editing). Once the draft is drawn, the doc
+- **`?edit` puts the focus on the page.** On the artifact page, `?edit` for an owner or editor who
+  may edit there (the gate's `live`, without `sign_in`) is dropped from the address; the page is in
+  edit mode anyway, as it always is for them. The app focuses the frame and posts
+  `edit { on: true, focus: "first" }` (again on the frame's load, until the frame reports that it
+  is editing). Once the draft is drawn, the doc
   renderer opens the first block for typing, a heading in its heading's type and with its text
   selected, so the first keystroke replaces "Untitled document", and the sheet renderer focuses
   cell A2 (A1 when there are no rows). When someone else holds that block,
   or the person cannot write, it only takes the focus and nothing is asked of the room. Every
-  other case of `?edit` is described under [Ask an agent](#ask-an-agent-decided-2026-11-19).
+  other case of `?edit` is described under
+  [Asking an agent](#asking-an-agent-decided-2026-11-23).
 - **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on
   the current version. It is the one way in the app to bring a file into an existing sheet. It opens
   the file picker at once, takes the same files and limits as Import, and confirms the chosen file
@@ -3568,7 +3608,7 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   the doc's reference definitions) and reads back into the same model, and the block defines no
   references itself. A block that fails (a code block in a list item, a quote in a list item, a
   definition inside a quote) is shown read-only. Selected, it is drawn like an open block, with
-  "Ask an agent" (its description says the block can't be edited here) and the block menu at its
+  "Comment" (its description says the block can't be edited here) and the block menu at its
   corner, where an open block has its menu; the menu's Move and Delete move or remove its lines
   byte for byte.
 - **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
@@ -3577,10 +3617,10 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   written ("*重要，*的") is written with the character outside it, or white space inside it, as a
   numeric character reference ("*重要，*&#x7684;"), which renders the same. Typing that still
   cannot be written stays in the block as typed (the keystroke is not undone): the page says
-  "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab, a
-  click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and every
-  way to publish (the strip, Cmd/Ctrl+S in the frame or the app, Done, Ask's "Publish my changes
-  first", autosave) waits until the text changes; the page asks before it is left, and in solo mode
+  "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab and
+  a click elsewhere keep it), the frame reports unsent changes and `unsavable`, and every way to
+  publish (Publish changes, Cmd/Ctrl+S in the frame or the app, leaving the page, autosave) waits
+  until the text changes; the page asks before it is left, and in solo mode
   the tab's kept copy has the text without its formatting. In a room the holder sends `keep` every
   20 s (`LIMITS.liveLeaseKeepS`) while connected, so the lease is not taken over as idle; a holder
   that sends neither edits nor `keep` for 60 s still can be. If edit mode ends anyway, the block is
@@ -3654,13 +3694,13 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   lines would run the blocks around it together is removed at once, by the same one edit as
   "Delete" (the list after it takes another marker), under one lease over its lines and the lines
   that edit writes again. The doc then has what the page shows at every moment, so a Publish,
-  Done or an autosave made while the block is still open never has the old text. The block stays
+  leaving the page or an autosave made while the block is still open never has the old text. The block stays
   open, empty, where it was, and what is typed in it becomes a new block there. When the removal
   is refused (someone holds the lines next to it, the page is not connected, or the doc cannot
   take it), the block stays open with its last text, which is what the doc has, and the page says
   so: "Couldn't remove this block now. Try again.", or why the doc cannot take it. Nothing typed
   in the block while its removal is on its way is lost: it goes into the doc once the removal is
-  in, also when the block is closed first (Esc, Tab, a click on another block or Done), in which
+  in, also when the block is closed first (Esc, Tab or a click on another block), in which
   case the page reports unsent changes until it is; it takes the block's place when the removal is
   refused or lost with a reconnect; and an open block keeps it on screen through a reconnect, as
   any block does. When even that cannot be written, the page says "What you typed in the block you
@@ -3670,20 +3710,21 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   was.
 - **Images are agent-only.** An image block's menu has "Alt text" in place of "Turn into", which
   opens the alt text field at the block's corner (Enter or Esc closes it); the image itself, and
-  adding one, are left to agents through Ask an agent, whose page anchor names the place
+  adding one, are left to agents through "Comment", which opens the comments panel pinned to the
+  place ([Asking an agent](#asking-an-agent-decided-2026-11-23)). Its page anchor names the place
   (`block-3`, or `block-3:image`, never a block number the person would have to count) with the
-  block's first words, or an image's alt text, as its text, so the Ask dialog's "Pointing at" chip
-  reads as the block does, a list's items with " · " between them ("Pointing at “Maria: launch post
-  and pricing page · Ana…”"). The frame posts those
+  block's first words, or an image's alt text, as its text, so the composer's chip reads as the
+  block does, a list's items with " · " between them ("Pinned to “Maria: launch post and pricing
+  page · Ana…”"). The frame posts those
   words only when a block of the published version has the same words, so no draft text reaches
-  the app; otherwise, and for a block with no text, the chip names the kind of block ("Pointing at
-  the list", "Pointing at the image"). An open image block has its
-  own "Ask an agent" for its image at its corner, beside the menu, as a read-only block has, and
+  the app; otherwise, and for a block with no text, the chip names the kind of block ("Pinned to
+  the list", "Pinned to the image"). An open image block has its
+  own "Comment" for its image at its corner, beside the menu, as a read-only block has, and
   its "Insert below" has no "Image" (it would ask the same).
 - **An empty doc** shows "Write something", which starts a new paragraph.
 - **Opening a block moves nothing and hides next to nothing.** An open block keeps its place and
   the page's look: its tint and bronze edge are drawn outside the layout, and its corner (the menu,
-  and Ask an agent where it has one) is a small bar on the block's top right edge, over the gap
+  and Comment where it has one) is a small bar on the block's top right edge, over the gap
   between blocks, or on its bottom edge when the block opens too near the top of the frame. An
   image's alt text field hangs from the same edge over the image. The format bar and the link
   field show only for selected text; the link field opens under that text, inside the block's
@@ -3730,11 +3771,13 @@ deleting slides, and a slide's columns, stay with agents for now.
   full, the typing came too fast) is never taken as written: what it sent is written again in its
   place, both halves together, and the place closes again; refused a second time, or when the deck
   cannot take it, it stays on the page with Copy and is tried again after a reconnect.
-  The slide fits again as text changes. Presenting, full screen and
-  following the presenter wait until editing ends (Present is not offered while editing; Done
-  publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
-  Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
-  neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
+  The slide fits again as text changes. Edit mode is always on for owners and editors, so
+  presenter view, full screen, Print and Download .pptx hold it off in the frame while they run
+  and turn it back on after (Present is in the bar at all times): presenting shows the published
+  deck, and the frame never prints or makes a file from edit mode's slides. While a presenter
+  leads the room (this one, from Lead viewers, or another), edit mode is held off as well, so the
+  deck follows or leads with the published deck's slides; edit mode's raw slide numbers never
+  reach the room. A block open when the connection drops,
   or when the room merges a version into the draft, is taken again once the draft (after a merge,
   the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
   only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
@@ -3758,8 +3801,8 @@ deleting slides, and a slide's columns, stay with agents for now.
 - **Nothing typed is lost**, by the doc editor's rules
   ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)). Typing a slide block or
   the notes cannot write as typed stays as typed, the place stays open, the frame reports unsent
-  changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
-  Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the
+  changes and `unsavable`, and every way to publish (Publish changes, Cmd/Ctrl+S in the frame or
+  the app, leaving the page, autosave) waits until it changes; in solo mode the
   rescue store has it without its formatting, and in a room the holder sends `keep` every 20 s
   while connected. Adding speaker notes and applying deck settings wait too (with the
   same words), since a structural change would take the place's lines from under it. If edit mode ends anyway, it is written without its formatting. Typing the room does
@@ -3787,8 +3830,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   In solo mode the frame's text is the whole draft and no room makes space later, so typing the
   deck at its size limit cannot take counts as `unsavable` too: its block stays open as typed
   (Escape, focus leaving and a click elsewhere leave it open, and the frame says "The deck is at
-  its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S, Done
-  and Ask's "Publish my changes first" wait, the page asks before it is left, and the typing is in
+  its size limit, so this text isn't in it. Shorten it to continue."), Publish changes,
+  Cmd/Ctrl+S and the autosave wait, the page asks before it is left, and the typing is in
   the rescue store. The tab's kept copy stays the deck as written, which can still be published
   from "Unpublished changes from earlier in this tab" after a reload (the typing would put it past
   the size limit), and the rescue store writes the typing back once editing starts again; the
@@ -3798,8 +3841,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   it as a block of its own. Alone, the room's frame limit does not apply to a block: only the
   deck's size limit does. A struct op that removes the lines a solo place holds ends its lease as
   a room's closed draft does, so its typing is written again or kept, never left unleased.
-- **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
-  change, as a doc's frame shows its draft (the published deck while the draft shows none). While
+- **Outside edit mode** (an editor who must sign in first, or edit mode held off while the deck is
+  presented, printed or exported) a deck's frame in room mode shows the draft's visible slides as
+  they change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;
   presenter view; an audience window) and while a presenter leads the room (this one, or one it
   follows), it shows the deck as last published instead: its own version, or the room's draft
@@ -3841,8 +3885,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   `---` first loses it (the op `trim_start`, which only drops empty slides presenting never shows),
   because blank lines under it would read as empty front matter. A slide that loses its last block
   stays, as an empty slide. A draft that shows no slide cannot be published (`unpublishable`
-  `"empty"`): Publish is off with "Write something on a slide to publish", autosave skips it,
-  and Done leaves edit mode with the draft kept.
+  `"empty"`): the ⋯ menu offers no Publish changes, Cmd/Ctrl+S says "Write something on a slide to
+  publish", and autosave and leaving the page skip it, with the draft kept.
 - **Speaker notes** are one part, its marker line included, edited in the panel under the slide
   (named "Notes for slide 3", with no heading shown): one lease from the marker to the slide's last
   line of text. The serializer
@@ -3876,11 +3920,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   point at q when c ≤ q ≤ d; an insertion point p overlaps a line lease `[a, b)` when a < p < b
   and an insert point at exactly p. So a person can add notes to one slide while another types on
   another, and every lease elsewhere moves with the op's line map.
-- **Images are agent-only.** Selecting an image offers "Ask an agent" (described "An agent adds
-  or replaces the image."), its one action (no Delete: adding and deleting images stay with
-  agents); a block the formatted editor cannot show faithfully, and
-  notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
-  can change it."), as a doc's blocks do. That bar sits next to the block at its right edge (an
+- **Images are agent-only.** Selecting an image offers "Comment" (described "Mention @claude in a
+  comment to add or replace the image."), its one action (no Delete: adding and deleting images
+  stay with agents); a block the formatted editor cannot show faithfully, and
+  notes that it cannot, offer "Comment" (described "This part can't be edited here. Mention
+  @claude in a comment to change it."), as a doc's blocks do. It opens the comments panel pinned
+  to the place. That bar sits next to the block at its right edge (an
   image's own edge): just above it, or just below when that covers less of the slide's other
   blocks; the deck's controls step aside while it shows. An image's tint, focus ring and selection
   are drawn on the image itself, not on the slide-wide paragraph around it. Their `ask` anchors are
@@ -4214,7 +4259,7 @@ options.
 - **App cookies are `__Host-` cookies.** Host-only, `Secure`, `Path=/`, so no other host on a
   shared parent domain can set or overwrite them.
 - **Locked-down responses.** A Content Security Policy on every artifact response, no app cookies
-  on the content domain, and the editor preview runs in a sandboxed iframe.
+  on the content domain, and every frame that renders artifact content is a sandboxed iframe.
 - **Comment text is untrusted input for agents.** A mention is a request from a collaborator, not
   an instruction with the owner's authority. The MCP tool descriptions say so, and agent tokens used
   for mentions are scoped to that one artifact.
@@ -4332,8 +4377,7 @@ options.
 - **License.** MIT.
 - **Naming.** The product name must not contain "Claude" or "Codex". "Works with Claude and Codex"
   in descriptions is fine.
-- **Stack.** TypeScript, Hono on Workers, D1 with Drizzle, R2, a small React front end, Monaco for
-  the editor.
+- **Stack.** TypeScript, Hono on Workers, D1 with Drizzle, R2, a small React front end.
 
 ## Costs
 
@@ -4446,7 +4490,8 @@ for a single user.
    connections.
 4. **Version history UI.** Version list, permanent version URLs, compare, restore.
 5. **Comments and pull mentions.** Threads, element pins, the mention queue and its MCP tools.
-6. **Editor.** Monaco with live preview and conflict handling.
+6. **Editor.** Monaco with live preview and conflict handling (removed 2026-11-23: people edit on
+   the page or ask an agent; see [Editing](#editing)).
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.

@@ -33,12 +33,14 @@ import {
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
+  CollectAnswers,
   type EditAppMessage,
   ReviewSession,
   readEditMessage,
 } from "../common/editSession.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient, type LiveDocOptions } from "../common/live.ts";
+import { PagePick } from "../common/pick.ts";
 import { DraftReview } from "../common/review.ts";
 import { blockWords, type RescueReport } from "../doc/edit.ts";
 import { renderMarkdown } from "../doc/markdown.ts";
@@ -306,9 +308,9 @@ function live(
       if (local) return soloBase;
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
-    // A place the person wants an agent to change: the app opens its Ask dialog. The anchor is a
-    // structural key made from the published version only (publishedAnchorKey), with words only
-    // the published version has.
+    // A place the person wants an agent to change: the app opens the comments panel pinned there.
+    // The anchor is a structural key made from the published version only (publishedAnchorKey),
+    // with words only the published version has.
     ask: (anchor: DsAskAnchor) => {
       words ??= publishedWords(win.document, published);
       names ??= publishedNames(published);
@@ -355,6 +357,21 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DsEditor(root, win, local, hooks);
   };
+  const answers = new CollectAnswers();
+  // The comments panel's "Pin to an element" while editing: a token, a group or a component,
+  // keyed from the published version only, as Comment keys them.
+  const pick = new PagePick(win, {
+    placeAt: (t) => {
+      const place = editor?.editing ? editor.placeAt(t) : null;
+      if (!place) return null;
+      const { anchor } = place;
+      words ??= publishedWords(win.document, published);
+      names ??= publishedNames(published);
+      const k = "kind" in anchor ? publishedAnchorKey(names, anchor.kind, anchor.name) : anchor.key;
+      return { el: place.el, anchor: { key: k, text: words.has(anchor.text) ? anchor.text : "" } };
+    },
+    post,
+  });
 
   /** The draft is here: the room's text has arrived, or the frame edits on its own. */
   const draftHere = () => local !== null || (client?.ready ?? false);
@@ -365,7 +382,7 @@ function live(
     if (unavailable) {
       editor?.setEditing(false);
       editor?.say(
-        "This design system is too large to edit on the page. Ask an agent to change it.",
+        "This design system is too large to edit on the page. Mention @claude in a comment to change it.",
       );
     }
     return unavailable;
@@ -461,6 +478,7 @@ function live(
       sizeDue = null;
       unavailable = false;
       if (!m.on) {
+        pick.stop();
         editor?.setEditing(false);
       } else if (!draftHere()) {
         // The room's text is still on its way: edit mode starts (nothing is leased before the text
@@ -483,12 +501,24 @@ function live(
       if (editor?.unsavable) {
         const kept = editor.textWithTyping() ?? local.text;
         post({ type: "draft", nonce: m.nonce, text: rules.fromLive(kept), unsavable: true });
-      } else post({ type: "draft", nonce: m.nonce, text: rules.fromLive(local.text) });
+      } else {
+        answers.keep(m.nonce, local.text);
+        post({ type: "draft", nonce: m.nonce, text: rules.fromLive(local.text) });
+      }
+    } else if (m.type === "saved") {
+      // That system is published now: changes are counted from it (its projection).
+      const text = answers.take(m.nonce);
+      if (text !== null && local) {
+        local.rebase(text);
+        status();
+      }
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);
     } else if (m.type === "reviewed") {
       session.answer(m);
+    } else if (m.type === "pick") {
+      pick.set(m.on && (editor?.editing ?? false));
     }
   };
   return {
@@ -497,6 +527,7 @@ function live(
     status,
     stop: () => {
       client?.stop();
+      pick.stop();
       editor?.setEditing(false);
       review.close();
       poster.stop();

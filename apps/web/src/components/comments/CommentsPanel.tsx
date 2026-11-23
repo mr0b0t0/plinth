@@ -1,8 +1,9 @@
 // The comments panel on the artifact page: threads, replies, resolve, Markdown, anchoring through
 // the review-mode bridge (or, for a page that declares `comments`, anchors the page places itself
-// through usePageComments), pins over the frame, and mention task status. The API decides every
-// permission; the panel shows what the comments list says the caller may do, and still reacts to
-// 401 / 403 on writes.
+// through usePageComments; or the place a renderer's "Comment" named), pins over the frame, and
+// mention task status. People ask an agent here, by mentioning it (@claude): there is no other way
+// in. The API decides every permission; the panel shows what the comments list says the caller may
+// do, and still reacts to 401 / 403 on writes.
 import { ArrowClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import {
   API,
@@ -23,10 +24,10 @@ import {
   SegmentedControl,
   SkeletonText,
   Spinner,
-  showToast,
   Tooltip,
 } from "../ui/index.ts";
-import { askTargetInText } from "./askTargets.ts";
+// Types only.
+import type { AskWhat } from "../viewer/rendererProtocol.ts";
 import {
   type BridgeClient,
   connectBridge,
@@ -40,6 +41,14 @@ import { buildThreads, type CommentFilter, filterThreads, highlightAnchors } fro
 import { PinLayer } from "./PinLayer.tsx";
 import { Thread } from "./Thread.tsx";
 import type { PageCompose, PageComposeResult } from "./usePageComments.ts";
+
+/** A renderer's place to pin the composer to (viewer/frameComment.ts); `n` changes every time. */
+export interface PanelPin {
+  n: number;
+  anchor: PageAnchor | null;
+  /** What kind of block the place is, for the chip of a place with no words. Never posted. */
+  what: AskWhat | null;
+}
 
 export interface CommentsPanelProps {
   artifactId: string;
@@ -80,17 +89,23 @@ export interface CommentsPanelProps {
    */
   openedByPage?: boolean;
   /**
-   * Ask an agent (the gate's `ask`): who a request can go to, and whether the viewer is the owner
-   * (for the names). Absent: this person may not ask, and the panel has no request mode.
+   * The client types of the owner's agents a mention can reach (the gate's `ask.targets`): the
+   * composer suggests `@agent:other` when `other` is one of them.
    */
-  ask?: { targets: ClientType[]; owner: boolean };
+  agents?: readonly ClientType[];
+  /** A renderer's "Comment" named a place: the composer is pinned to it. */
+  pinTo?: PanelPin | null;
   /**
-   * Ask an agent was chosen: the composer switches to request mode. `n` changes every time;
-   * `opened`: the panel was opened for it, so it closes again once the request is sent.
+   * The page is edited on it (always on for owners and editors): its frame is not in review mode,
+   * so no bridge is connected, and "Pin to an element" asks the editing frame to pick a place
+   * (`start`, `stop`). The place it named arrives as `picked`: `n` changes for each, and a null
+   * anchor means the person cancelled in the frame (Esc).
    */
-  request?: { n: number; anchor: PageAnchor | null; opened?: boolean } | null;
-  /** Read the targets again after a request was refused because its agent went away. */
-  onTargetsStale?: () => Promise<ClientType[] | null>;
+  framePick?: {
+    start: () => boolean;
+    stop: () => void;
+    picked: { n: number; anchor: PageAnchor | null } | null;
+  };
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -136,9 +151,9 @@ export function CommentsPanel({
   onActiveChange,
   pageOpen = null,
   openedByPage = false,
-  ask,
-  request = null,
-  onTargetsStale,
+  agents,
+  pinTo = null,
+  framePick,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -149,22 +164,15 @@ export function CommentsPanel({
   const [positions, setPositions] = useState<Map<string, PinPosition>>(() => new Map());
   const [picking, setPicking] = useState(false);
   const [anchor, setAnchor] = useState<PickedAnchor | PageAnchor | null>(null);
+  // What kind of block a renderer's place is (its chip, when it has no words), for that anchor
+  // only: any other anchor set later has none.
+  const [pinWhat, setPinWhat] = useState<{ anchor: PageAnchor; what: AskWhat | null } | null>(null);
+  const anchorWhat = pinWhat && pinWhat.anchor === anchor ? pinWhat.what : null;
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [composeError, setComposeError] = useState<string | undefined>();
   const [blocked, setBlocked] = useState<Blocked>(null);
   const [announcement, setAnnouncement] = useState("");
-  // Ask an agent: the composer in request mode, the agents it can go to, and the one chosen.
-  const [requesting, setRequesting] = useState(false);
-  const [targets, setTargets] = useState<ClientType[]>(ask?.targets ?? []);
-  const [requestTo, setRequestTo] = useState<ClientType | null>(ask?.targets[0] ?? null);
-  const askKey = ask?.targets.join(" ") ?? "";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: askKey stands for ask.targets
-  useEffect(() => {
-    const next = ask?.targets ?? [];
-    setTargets(next);
-    setRequestTo((t) => (t && next.includes(t) ? t : (next[0] ?? null)));
-  }, [askKey]);
 
   const panelRef = useRef<HTMLElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
@@ -266,9 +274,14 @@ export function CommentsPanel({
 
   // ---------- bridge ----------
 
+  // An editing frame picks for itself (framePick); the latest handlers, for the callbacks below.
+  const pickInFrame = framePick !== undefined;
+  const framePickRef = useRef(framePick);
+  framePickRef.current = framePick;
   useEffect(() => {
-    // A page that anchors its own comments has no bridge (the gate never asks for review mode).
-    if (!frame || !contentOrigin || pageOwnsAnchors) return;
+    // A page that anchors its own comments has no bridge (the gate never asks for review mode),
+    // and neither has a page edited on it (its frame is never reloaded into review mode).
+    if (!frame || !contentOrigin || pageOwnsAnchors || pickInFrame) return;
     const handlers = {
       onMessage(msg: FrameMessage) {
         if (msg.type === "ready") {
@@ -297,7 +310,7 @@ export function CommentsPanel({
       client.destroy();
       if (bridgeRef.current === client) bridgeRef.current = null;
     };
-  }, [frame, contentOrigin, opaque, pageOwnsAnchors]);
+  }, [frame, contentOrigin, opaque, pageOwnsAnchors, pickInFrame]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: anchorsKey stands for anchors
   useEffect(() => {
@@ -305,14 +318,38 @@ export function CommentsPanel({
   }, [anchorsKey, frame, contentOrigin, opaque]);
 
   const startPick = () => {
-    if (!bridgeRef.current?.post({ type: "pick:start" })) return;
+    const inFrame = framePickRef.current;
+    if (inFrame ? !inFrame.start() : !bridgeRef.current?.post({ type: "pick:start" })) return;
     setPicking(true);
   };
   const cancelPick = useCallback(() => {
+    framePickRef.current?.stop();
     bridgeRef.current?.post({ type: "pick:stop" });
     setPicking(false);
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
+
+  // The editing frame named the place picked (or the person cancelled there): taken once each.
+  const pickedRef = useRef<number | null>(framePick?.picked?.n ?? null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per pick (`n`)
+  useEffect(() => {
+    const p = framePick?.picked;
+    if (!p || pickedRef.current === p.n) return;
+    pickedRef.current = p.n;
+    if (!pickingRef.current) return;
+    setPicking(false);
+    if (p.anchor) {
+      settlePage({ status: "closed" });
+      setAnchor(p.anchor);
+    }
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [framePick?.picked?.n]);
+  // The frame stops picking when the panel closes, or editing ends meanwhile.
+  useEffect(() => {
+    if (!picking || !pickInFrame) return;
+    const inFrame = framePickRef.current;
+    return () => inFrame?.stop();
+  }, [picking, pickInFrame]);
 
   // Escape anywhere in the app cancels picking (focus may be outside the panel by then).
   useEffect(() => {
@@ -462,20 +499,21 @@ export function CommentsPanel({
     composerRef.current?.focus();
   };
 
-  // Ask an agent was chosen (once per request): request mode, with the place it named, if any.
-  const requestDoneRef = useRef<number | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`)
+  // A renderer's "Comment" (once per place): the composer pinned there, and the focus in it, as
+  // the person clicked it to write. A page request the composer held is replaced.
+  const pinDoneRef = useRef<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per place (`n`)
   useEffect(() => {
-    if (!request || !ask || requestDoneRef.current === request.n) return;
-    requestDoneRef.current = request.n;
-    setRequesting(true);
-    if (request.anchor) {
+    if (!pinTo || pinDoneRef.current === pinTo.n) return;
+    pinDoneRef.current = pinTo.n;
+    if (pinTo.anchor) {
       settlePage({ status: "closed" });
       setPicking(false);
-      setAnchor(request.anchor);
+      setAnchor(pinTo.anchor);
+      setPinWhat({ anchor: pinTo.anchor, what: pinTo.what });
     }
     requestAnimationFrame(() => composerRef.current?.focus());
-  }, [request?.n]);
+  }, [pinTo?.n]);
 
   // ---------- writes ----------
 
@@ -490,18 +528,6 @@ export function CommentsPanel({
         return undefined;
       }
       if (e.status === 429) return "You are commenting too fast. Try again in a while.";
-      if (
-        e.status === 400 &&
-        (e.details as { reason?: string } | undefined)?.reason === "no_agent"
-      ) {
-        // The agent was disconnected since the panel learned of it: read the targets again.
-        void onTargetsStale?.().then((next) => {
-          if (!next) return;
-          setTargets(next);
-          setRequestTo((t) => (t && next.includes(t) ? t : (next[0] ?? null)));
-        });
-        return "That agent was disconnected. Pick another, or post as a comment.";
-      }
       if (e.status === 400) return e.message;
     }
     return "That did not work. Try again.";
@@ -521,8 +547,6 @@ export function CommentsPanel({
     if (!body || sending) return;
     setSending(true);
     setComposeError(undefined);
-    // A request goes to the agent chosen; with no agent to take it, it is a plain comment.
-    const to = requesting && targets.length > 0 ? requestTo : null;
     try {
       const created = await api<CommentInfo>(commentsPath, {
         method: "POST",
@@ -530,32 +554,16 @@ export function CommentsPanel({
           body,
           version_number: version,
           ...(anchor ? { anchor: anchorBody(anchor) } : {}),
-          ...(to ? { request_to: to } : {}),
         },
       });
       setDraft("");
       setAnchor(null);
-      setRequesting(false);
       settlePage({ status: "posted", id: created.id });
-      if (requesting) {
-        // A request is confirmed the way the Ask dialog confirms it: one toast. A panel opened
-        // for the request closes with it.
-        showToast({
-          title: to
-            ? `Request sent to ${askTargetInText(to, ask?.owner === true)}`
-            : "Posted as a comment",
-          tone: "success",
-        });
-        if (request?.opened) {
-          onClose();
-          return;
-        }
-      }
       if (filter === "resolved") setFilter("open");
       focusThreadRef.current = { id: created.id, focus: true };
       setActiveId(created.id);
       afterWrite(created);
-      if (!requesting) announce(`Comment posted.${mentionSummary(created)}`);
+      announce(`Comment posted.${mentionSummary(created)}`);
     } catch (e) {
       setComposeError(writeError(e));
     } finally {
@@ -598,12 +606,6 @@ export function CommentsPanel({
 
   const next = pathname + (search.toString() ? `?${search.toString()}` : "");
   const loginHref = `${APP_ROUTES.login}?next=${encodeURIComponent(next)}`;
-  // Ask an agent with no thread to show: the panel is just the request form, under its title.
-  const requestOnly =
-    requesting &&
-    !picking &&
-    !loadError &&
-    (items === null || (filter === "open" && visible.length === 0));
   const emptyText: Record<CommentFilter, string> = {
     open: threads.length > 0 ? "No open comments." : "No comments yet.",
     resolved: "No resolved comments.",
@@ -617,7 +619,6 @@ export function CommentsPanel({
         className="cm-panel"
         aria-label="Comments"
         data-picking={picking || undefined}
-        data-request-only={requestOnly || undefined}
         onKeyDown={(e) => {
           if (e.key !== "Escape" || e.defaultPrevented) return;
           e.preventDefault();
@@ -628,49 +629,41 @@ export function CommentsPanel({
         <header className="cm-head">
           <div className="cm-head__row">
             <h2 ref={headingRef} tabIndex={-1} className="cm-head__title">
-              {requestOnly ? "Ask an agent" : "Comments"}
+              Comments
             </h2>
-            {items && !requestOnly && (
+            {items && (
               <span className="cm-count" data-testid="comments-count">
                 {openCount}
                 <span className="visually-hidden"> open</span>
               </span>
             )}
             <span className="cm-head__tools">
-              {!requestOnly && (
-                <Tooltip content="Refresh comments">
-                  <IconButton
-                    size="sm"
-                    icon={ArrowClockwiseIcon}
-                    label="Refresh comments"
-                    loading={refreshing}
-                    onClick={() => void load({ manual: true })}
-                  />
-                </Tooltip>
-              )}
+              <Tooltip content="Refresh comments">
+                <IconButton
+                  size="sm"
+                  icon={ArrowClockwiseIcon}
+                  label="Refresh comments"
+                  loading={refreshing}
+                  onClick={() => void load({ manual: true })}
+                />
+              </Tooltip>
               <Tooltip content="Close comments">
                 <IconButton size="sm" icon={XIcon} label="Close comments" onClick={onClose} />
               </Tooltip>
             </span>
           </div>
-          {!requestOnly && (
-            <SegmentedControl
-              label="Show comments"
-              size="sm"
-              options={FILTERS}
-              value={filter}
-              onChange={setFilter}
-              className="cm-filter"
-            />
-          )}
+          <SegmentedControl
+            label="Show comments"
+            size="sm"
+            options={FILTERS}
+            value={filter}
+            onChange={setFilter}
+            className="cm-filter"
+          />
         </header>
 
-        <div
-          className="cm-list"
-          hidden={requestOnly}
-          aria-busy={items === null && !loadError ? true : undefined}
-        >
-          {requestOnly ? null : loadError && items === null ? (
+        <div className="cm-list" aria-busy={items === null && !loadError ? true : undefined}>
+          {loadError && items === null ? (
             <p className="cm-note cm-note--error" role="alert">
               {loadError}
             </p>
@@ -686,7 +679,7 @@ export function CommentsPanel({
               art={<EmptyPlinth size={64} />}
               title={emptyText[filter]}
               description={
-                filter === "open" && threads.length === 0 && !blocked && !requesting
+                filter === "open" && threads.length === 0 && !blocked
                   ? pageOwnsAnchors
                     ? "Start the conversation below, or mention @claude or @codex to ask the owner's agent for a change."
                     : "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
@@ -706,6 +699,7 @@ export function CommentsPanel({
                     onActivate={activate}
                     onReply={reply}
                     onSetStatus={setStatus}
+                    agents={agents}
                   />
                 </li>
               ))}
@@ -725,6 +719,7 @@ export function CommentsPanel({
               value={draft}
               onChange={setDraft}
               anchor={anchor}
+              anchorWhat={anchorWhat}
               onRemoveAnchor={removeAnchor}
               picking={picking}
               canPin={!!frame && !!contentOrigin}
@@ -734,16 +729,7 @@ export function CommentsPanel({
               sending={sending}
               error={composeError}
               textareaRef={composerRef}
-              request={
-                requesting && ask
-                  ? {
-                      targets,
-                      to: requestTo,
-                      onTo: setRequestTo,
-                      owner: ask.owner,
-                    }
-                  : undefined
-              }
+              agents={agents}
             />
           )}
         </footer>

@@ -22,6 +22,13 @@ describe("parseMentions", () => {
   it("ignores emails and trailing dots", () => {
     expect(parseMentions("mail me at a@codex.com or ask @codex.")).toEqual(["codex"]);
   });
+  it("reads @agent:other as one name, and :other after any other name as text", () => {
+    expect(parseMentions("@agent:other tidy this, @Agent:Other. @agent")).toEqual([
+      "agent:other",
+      "agent",
+    ]);
+    expect(parseMentions("@agent:otherwise @work:other @agent.:other")).toEqual(["agent", "work"]);
+  });
   it("normalizes labels into handles", () => {
     expect(mentionHandle("Work Claude")).toBe("work-claude");
   });

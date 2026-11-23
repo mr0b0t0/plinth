@@ -328,6 +328,59 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
+  it("solo: counts changes from the text the app published (`saved`), not the text it loaded", async () => {
+    mountShell("Hello");
+    stop = boot(window);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    const type = async (text: string) => {
+      (root().querySelector("p") as HTMLElement).click();
+      const field = root().querySelector('[contenteditable="true"]') as HTMLElement;
+      field.textContent = text;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      post({ ...base, type: "collect", nonce: NONCE });
+      await Promise.resolve();
+    };
+    await type("Hello world");
+    expect(posted("draft").at(-1)).toMatchObject({ nonce: NONCE, text: "Hello world" });
+    // The app published that text.
+    post({ ...base, type: "saved", nonce: NONCE });
+    await Promise.resolve();
+    expect(posted("live").at(-1)).toMatchObject({ dirty: false });
+    // Deleting " world" is back to the text the frame loaded, and a change from what is published.
+    await type("Hello");
+    expect(posted("live").at(-1)).toMatchObject({ dirty: true });
+    // A `saved` for a collect this frame never answered changes nothing.
+    post({ ...base, type: "saved", nonce: "z".repeat(24) });
+    await Promise.resolve();
+    expect(posted("live").at(-1)).toMatchObject({ dirty: true });
+  });
+
+  it("picks a block for a comment while editing, named as Comment names it, without opening it", async () => {
+    mountShell("Intro\n\nSecond paragraph");
+    stop = boot(window);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    post({ ...base, type: "pick", on: true });
+    const second = root().querySelectorAll("p")[1] as HTMLElement;
+    second.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    second.click();
+    // The block stays as it was drawn: the press went to the pick, not the editor.
+    expect(root().querySelector('[contenteditable="true"]')).toBeNull();
+    expect(posted("picked")).toEqual([
+      {
+        ...base,
+        type: "picked",
+        anchor: { key: "block-2", text: "Second paragraph" },
+        what: "paragraph",
+      },
+    ]);
+    // Once only: the next press edits.
+    second.click();
+    expect(posted("picked")).toHaveLength(1);
+    expect(root().querySelector('[contenteditable="true"]')).toBeTruthy();
+  });
+
   it("asks the app about a block by its place in the published version, and its words", async () => {
     mountShell("Intro\n\n- first item\n\n  ```\n  fenced in a list\n  ```\n\n![Old alt](x.png)");
     stop = boot(window);
@@ -335,7 +388,7 @@ describe("doc renderer on-page editing (#36)", () => {
     await Promise.resolve();
     const askButton = () =>
       [...root().querySelectorAll("button")].find(
-        (b) => b.textContent === "Ask an agent",
+        (b) => b.textContent === "Comment",
       ) as HTMLElement;
     (root().querySelector("ul") as HTMLElement).click();
     askButton().click();

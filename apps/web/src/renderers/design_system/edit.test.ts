@@ -2,7 +2,7 @@
 // grammar-valid values in the form each is stored in; dark values, descriptions and tokens are
 // added and removed with struct ops; a token in use cannot be removed; the guidelines and
 // descriptions are formatted text, never Markdown; a component's status is in its ⋯; renames,
-// component code, fonts and settings are an agent's, with Ask an agent posting a structural anchor;
+// component code, fonts and settings are an agent's, with Comment posting a structural anchor;
 // the draft's files come from its base version; a system too large to edit says so; and each
 // example shows only its rendered preview.
 import {
@@ -290,16 +290,13 @@ describe("keys", () => {
 describe("what stays with agents", () => {
   it("asks an agent to rename a token or a group, change a component, or the fonts and settings", () => {
     editOn();
-    choose(row("color.bg"), "Rename: Ask an agent");
-    choose(
-      root().querySelector('.ds-group[data-group="color"]') as Element,
-      "Rename: Ask an agent",
-    );
-    choose(root().querySelector("#ds-components-button > .ds-menu") as Element, "Ask an agent");
+    choose(row("color.bg"), "Comment to rename");
+    choose(root().querySelector('.ds-group[data-group="color"]') as Element, "Comment to rename");
+    choose(root().querySelector("#ds-components-button > .ds-menu") as Element, "Comment");
     // The header has one ⋯, and no line of fonts and settings.
     const header = root().querySelector(".ds-header") as Element;
     expect(header.querySelectorAll("button:not(.plinth-doc__menu-button)")).toHaveLength(0);
-    choose(header, "Ask an agent");
+    choose(header, "Comment");
     expect(posted.filter((m) => m.type === "ask").map((m) => m.anchor)).toEqual([
       { key: "token:color.bg", text: "color.bg" },
       { key: "group:color", text: "color" },
@@ -317,9 +314,9 @@ describe("what stays with agents", () => {
     form.requestSubmit();
     await tick();
     const added = row("color.acme-rebrand-2027");
-    choose(added, "Rename: Ask an agent");
+    choose(added, "Comment to rename");
     // A published token next to it keeps its name.
-    choose(row("color.bg"), "Rename: Ask an agent");
+    choose(row("color.bg"), "Comment to rename");
     const asks = posted.filter((m) => m.type === "ask");
     expect(asks.map((m) => m.anchor)).toEqual([
       { key: "token", text: "" },
@@ -345,7 +342,7 @@ describe("what stays with agents", () => {
     (form.querySelector("input") as HTMLInputElement).value = "aaa";
     form.requestSubmit();
     await tick();
-    choose(row(path), "Rename: Ask an agent");
+    choose(row(path), "Comment to rename");
     const ask = posted.filter((m) => m.type === "ask").at(-1);
     expect(ask?.anchor).toEqual({ key: `token:${at}`, text: path });
   });
@@ -361,7 +358,7 @@ describe("what stays with agents", () => {
     expect(notice.textContent).toContain(
       "This design system is published from code. Its next publish from code won't include changes made here.",
     );
-    // Editing goes on; the notice has Dismiss only (Ask an agent is in the rows' menus).
+    // Editing goes on; the notice has Dismiss only (Comment is in the rows' menus).
     expect(row("color.bg").classList.contains("ds-token--editing")).toBe(true);
     expect([...notice.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Dismiss"]);
   });

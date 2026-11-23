@@ -588,7 +588,7 @@ export function buildGrid(
           num.append(tag);
         }
         // The tint is the one cue on screen; the row number names the holder for a pointer and a
-        // screen reader (the edit bar lists who is editing).
+        // screen reader (the save status counts who is editing).
         const name = personName(email);
         tag.textContent = `${name} is editing`;
         num.title = `${name} is editing`;

@@ -13,9 +13,9 @@
 // draft is reviewed whole in the frame (common/review.ts) when the app sends `review`. Every
 // editing message to the app carries the frame key the app put in the address
 // (common/frameKey.ts), which is taken out of it before anything renders. Blocks are edited as
-// formatted text (edit.ts); "Ask an agent" on a block posts `ask` with a structural anchor
+// formatted text (edit.ts); "Comment" on a block posts `ask` with a structural anchor
 // ("block-3", "block-3:image", "new-2:add-image": askAnchor.ts) with the block's first words, and
-// the kind of block ("list"), and the app opens its Ask dialog.
+// the kind of block ("list"), and the app opens the comments panel pinned there.
 //
 // Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
 // { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
@@ -32,6 +32,7 @@ import {
 import type { AskWhat, LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
+  CollectAnswers,
   type EditAppMessage,
   NONCE_RE,
   ReviewSession,
@@ -40,6 +41,7 @@ import {
 import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
+import { PagePick } from "../common/pick.ts";
 import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
 import { type DocBackend, DocEditor, LocalDoc, type RescueReport } from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
@@ -220,10 +222,10 @@ function live(
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
     // A place the person wants an agent to change (an image, a block shown read-only): the app
-    // opens its Ask dialog. The anchor is a structural key naming the block as the published
-    // version has it ("new-…" for one only in the draft, askAnchor.ts) and the block's first words,
-    // which the person sees in the dialog before posting; `what` is the kind of block, for the
-    // dialog's "Pointing at" chip when it has none.
+    // opens the comments panel pinned there. The anchor is a structural key naming the block as
+    // the published version has it ("new-…" for one only in the draft, askAnchor.ts) and the
+    // block's first words, which the person sees in the composer before posting; `what` is the
+    // kind of block, for the composer's chip when it has none.
     ask: (anchor: { key: string; text: string }, what: AskWhat) =>
       post({ type: "ask", anchor: { key: anchor.key, text: anchor.text }, what }),
     published: () => payload.text,
@@ -256,6 +258,12 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DocEditor(root, win, local, hooks, prepare);
   };
+  const answers = new CollectAnswers();
+  // The comments panel's "Pin to an element" while editing: a block, named as Comment names it.
+  const pick = new PagePick(win, {
+    placeAt: (t) => (editor?.editing ? editor.placeAt(t) : null),
+    post,
+  });
 
   if (payload.live === "room") {
     client = new LiveDocClient({
@@ -316,12 +324,24 @@ function live(
       // keeps a copy with it, without its formatting.
       const kept = editor?.unsavable ? editor.textWithTyping() : null;
       if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
-      else post({ type: "draft", nonce: m.nonce, text: local.text });
+      else {
+        answers.keep(m.nonce, local.text);
+        post({ type: "draft", nonce: m.nonce, text: local.text });
+      }
+    } else if (m.type === "saved") {
+      // That text is published now: changes are counted from it.
+      const text = answers.take(m.nonce);
+      if (text !== null && local) {
+        local.rebase(text);
+        status();
+      }
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);
     } else if (m.type === "reviewed") {
       session.answer(m);
+    } else if (m.type === "pick") {
+      pick.set(m.on && (editor?.editing ?? false));
     }
   };
   return {
@@ -333,6 +353,7 @@ function live(
     idle: () => !client && !(editor?.editing ?? false) && !(local?.dirty ?? false),
     stop: () => {
       client?.stop();
+      pick.stop();
       editor?.setEditing(false);
       review.close();
       poster.stop();

@@ -1037,8 +1037,8 @@ body {
   display: none;
 }
 
-/* Following and leading wait while editing: the deck counts raw slides then. */
-.plinth-slides[data-editing] .plinth-slides__controls .plinth-slides__lead,
+/* Following waits while editing: the deck counts raw slides then. Lead viewers stays: leading
+   holds edit mode off until it ends (boot.ts `hold`), as presenting does. */
 .plinth-slides[data-editing] .plinth-slides__controls .plinth-slides__follow {
   display: none;
 }

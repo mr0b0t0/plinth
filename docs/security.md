@@ -81,9 +81,9 @@ make a test pass.
 | A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the naming dialogs show the handle a name makes, and the Connections page warns on a connection's row when an older one that can answer mentions takes it (a healthy row shows no handle); a comment written by an agent never creates a task |
 | A forged sheet edit breaks the shared draft | A modified client on the draft socket sends a row the sheet cannot hold, a header with fewer columns, or a struct that moves rows under someone else's open cell | The room checks every row line and header an edit puts in against the sheet's rules in their canonical spelling, re-checks every row when the header changes, applies a struct only from a writer at the current `rev` while nobody else holds a lease, and never merges a version published meanwhile into the draft: it freezes the draft, and a frozen draft is resolved only to itself or to that version exactly ([Live sheets](#live-sheets)) |
 | A version attacks the app through Compare | A version's HTML, Markdown, sheet cells or design-system strings hold `<img onerror>`, `</script>` or a `javascript:` link, and the change list puts them on the app host; or a hostile page makes the list take minutes | The app never renders a version's source: pure describers in `packages/shared/src/changes/` return plain text, which React renders as text nodes; HTML is read by a string scanner with no DOM; the versions render only in their sandboxed frames on the content host; item, excerpt and diff-work caps ([Comparing versions](#comparing-versions)) |
-| A request looks sent to an agent that cannot take it | Ask an agent names Claude while the owner's only Claude token was revoked, is limited to one artifact or lacks `mentions`, so the person waits on a request no agent will ever see | `request_to` is checked against the owner's connections that could claim it (`takesRequests`), and refused with `no_agent` before anything is written; the gate lists only those client types ([Ask an agent](#ask-an-agent)) |
-| A forged `ask` from the frame | A document the frame navigated to, or another window, posts `ask` to open the Ask dialog with an anchor of its choosing | In edit mode `ask` is an editing message: the frame window, the exact content origin and the frame key are checked, and the anchor must be a structural key (`PAGE_ANCHOR_KEY_RE`) and short plain text; at worst it prefills a dialog the person must still write and post ([Ask an agent](#ask-an-agent)) |
-| A request carries the owner's authority it does not have | A commenter's Ask an agent request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Ask an agent](#ask-an-agent)) |
+| A request looks sent to an agent that cannot take it | A `request_to` names Claude while the owner's only Claude token was revoked, is limited to one artifact or lacks `mentions`, so the person waits on a request no agent will ever see | `request_to` is checked against the owner's connections that could claim it (`takesRequests`), and refused with `no_agent` before anything is written; the gate lists only those client types, and a mention's task shows its state in the thread ([Asking an agent](#asking-an-agent)) |
+| A forged `ask` from the frame | A document the frame navigated to, or another window, posts `ask` to pin the comment composer to an anchor of its choosing | In edit mode `ask` is an editing message: the frame window, the exact content origin and the frame key are checked, and the anchor must be a structural key (`PAGE_ANCHOR_KEY_RE`) and short plain text; it carries no comment text, and at worst it pins a composer the person must still write in and post ([Asking an agent](#asking-an-agent)) |
+| A request carries the owner's authority it does not have | A commenter's `@claude` request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Asking an agent](#asking-an-agent)) |
 | A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The Worker's bounded importer converts and checks the file as it is sent, and its refusal comes back as text; the app runs the same bounded importer on the person's own pick only to list what it would leave out, as text, and never blocks on it; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is hidden while page changes exist or someone edits on the page, checked again on Replace; a draft started later is frozen for review against the new version ([New and Import](#new-and-import)) |
 | A viewer steers the audience's decks | Someone with view access to a deck (or a page script elsewhere) sends `goto` frames on the deck's `slides` socket to move everyone's slide, or reads the socket to learn who is watching | Only owners' and editors' sockets carry `present`, stamped by the gate from policy; a `watch` socket may send nothing but `ping` (anything else is `forbidden` and a rate drop); the handshake has the room's hijacking checks; frames carry only slide numbers, the leading socket's random id and, to the leader alone, a count of viewers ([Live rooms](#live-rooms)) |
 | A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
@@ -151,7 +151,7 @@ Agents fetch artifact links as text, so the app host answers them without runnin
 ## Opaque content isolation
 
 `CONTENT_ISOLATION` is `origin` (the default) or `opaque`. With `opaque`, every response from a
-content host, artifact files, the preview loader, the bridge script, redirects and errors alike,
+content host, artifact files, the bridge script, redirects and errors alike,
 adds a CSP `sandbox` directive without `allow-same-origin`:
 
 ```
@@ -194,8 +194,8 @@ What changes for the app and for artifacts:
   and the upgrade is refused before anything else is read. The runtime resolves `plinth.room.ready`
   as `{ available: false, reason: "opaque_isolation" }` without a request, and the CSP names no
   socket. See [Live rooms](#live-rooms).
-- **No editing on the page.** The app could address a frame only by window and `"*"` there, so docs
-  are edited in the source editor only and sheets by agents only (`GET /api/v1/config` says
+- **No editing on the page.** The app could address a frame only by window and `"*"` there, so the
+  page is read-only and agents change it (`GET /api/v1/config` says
   `inline_editing: null`); no editing message is posted to a frame or accepted from one, and no
   version text is posted into a frame. See [Inline editing](#inline-editing).
 - **postMessage.** Messages from an artifact frame arrive with `event.origin === "null"`, and a
@@ -205,11 +205,9 @@ What changes for the app and for artifacts:
   already see in origin mode. The page-comments channel
   ([Comments from the page](#comments-from-the-page)) identifies the frame the same way and posts
   only thread ids, pin numbers, status, anchors (the page's own data, or selectors) and request
-  ids, never comment text, authors or roles. The editor preview posts the unsaved draft, which is private, so it
-  also mounts a new iframe element for every render (a browsing context no earlier draft, popup
-  or `opener` holds a reference to), requires the loader's `ready` to carry a random per-frame
-  nonce the app put in the loader URL's fragment, and posts the draft once per nonce. The frame
-  side keeps checking the app's exact origin, which is a real origin in every mode.
+  ids, never comment text, authors or roles. The frame side keeps checking the app's exact origin,
+  which is a real origin in every mode. (The editor preview, which posted an unsaved draft to a
+  fresh frame per render with a per-frame nonce, went with the source editor on 2026-11-23.)
 
 Residual risks of running the content host on the app's registrable domain, even with opaque
 isolation. They are why the hosted instance serves artifacts from a domain of its own,
@@ -413,10 +411,10 @@ the artifact's own content origin, never on the app host. Design:
   else in that directive: no `unsafe-inline`, no `unsafe-eval`, no CDN hosts. Every other directive
   is identical, including the opaque `sandbox`. The shell repeats the script policy in a
   `<meta http-equiv="Content-Security-Policy" content="script-src 'self'">` as the first element of
-  its `<head>`. That covers the editor preview, where the preview loader (served with the default
-  content CSP) writes the shell with `document.write`: a meta policy is enforced on top of the
-  header policy and also binds a written document. So even if both Markdown passes failed,
-  injected inline script or handlers could not run, in the published page or in the preview.
+  its `<head>`: a meta policy is enforced on top of the header policy and also binds a written
+  document. So even if both Markdown passes failed, injected inline script or handlers could not
+  run. (The editor preview and its loader page, which wrote the shell with `document.write`, were
+  removed with the source editor on 2026-11-23.)
 - **A doc's files run no script.** `content.md` (served raw as `text/markdown` with `nosniff`) and
   a doc's images are served with `script-src 'none'`, so an SVG image opened as a document cannot
   run script on the doc's origin. Renderer files and errors keep the default content CSP.
@@ -671,7 +669,7 @@ version does not load (it would need CORS), and the deck falls back to its stack
 - `get_artifact` returns the slide files' text in `files`, as untrusted as artifact HTML.
 - The shell embeds every slide in its JSON payload. They are read through the version's manifest
   and `fileKey`, so a read never leaves the artifact, and they are escaped as every payload is.
-- The view gate's `no_editor` hides the source editor: people see the deck, and agents change it.
+- People see the deck, never its source (there is no source editor), and agents change it.
 
 ## Design systems
 
@@ -1104,8 +1102,6 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
 - **Merge writes are whole writes.** A `merge` op reads the document, checks its `if_rev`, puts
   the named fields on it and writes the result at that rev through the same guarded update as a
   `set`, so it is checked against the board's shapes and can only conflict, never lose a change.
-- **No editor preview.** A whiteboard has no source editor, so the app never renders a board in
-  the editor's preview frame, which holds the owner's content pass.
 - **Board settings.** Owners and editors change a board's settings in app UI on the app host (the
   owner in the settings page's Board section, an editor in a dialog over the board), never in the
   board's frame: nothing is posted to the frame, and the frame cannot open, read or answer either
@@ -2767,17 +2763,41 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
 ## Inline editing
 
 Owners and editors edit docs, decks, sheets and design systems on their page (spec: "Editing",
-"Editing on the page", "Design systems").
+"Editing on the page", "Design systems"), in edit mode from the moment the page opens (always-on
+editing, 2026-11-23; there is no toggle). Edit mode starts only where the gate has `live` (an
+owner or editor of a live type on the current version, signed in, under origin isolation), so
+commenters and viewers load nothing new.
 Every editing control, and every rendering of draft or version content, runs in Plinth's own
-renderer on the artifact's content origin (`script-src 'self'`); the app page holds the strip and
-makes the REST calls, and renders no content. Nothing new is reachable from a page: no endpoint,
-cookie, CSP, sandbox flag or setting was added, and the content host still sends no CORS header.
+renderer on the artifact's content origin (`script-src 'self'`); the app page holds the save
+status and makes the REST calls, and renders no content. Nothing new is reachable from a page: no
+endpoint, cookie, CSP, sandbox flag or setting was added, and the content host still sends no CORS
+header.
 
 - **The frame boundary.** The app accepts an editing message (`live`, `save`, `draft`, `resolved`,
-  `leave`, and `ask` in edit mode) only from the window of the frame it holds, at the exact content
-  origin, and only with that frame's key; it posts editing messages only to that origin, never
-  `"*"`. Under opaque isolation and the path fallback there is no editing on the page at all, so no
-  frame whose origin is `"null"` is ever trusted with an editing message.
+  `picked`, `leave`, and `ask` in edit mode) only from the window of the frame it holds, at the
+  exact content origin, and only with that frame's key; it posts editing messages (`pick`
+  included) only to that origin, never `"*"`. Under opaque isolation and the path fallback there
+  is no editing on the page at all, so no frame whose origin is `"null"` is ever trusted with an
+  editing message.
+- **Comments beside edit mode.** An editing frame is never reloaded into comment review mode, so
+  the review bridge is never injected next to an editor. The comments panel's "Pin to an element"
+  asks the frame to pick (`pick { on }`, no data); the frame answers once with `picked`: a page
+  anchor's structural key and a short label, checked by the same rules as an `ask` anchor and as
+  the server's page anchors (key pattern, label length, no control or format characters), or
+  null when the person cancelled. The app takes it only while it waits for a pick it asked for,
+  and the person still writes and posts the comment with their own session, as for every anchor.
+  The label is the block's first words as the person sees them (a doc), or structural words (a
+  deck, a design system's published names), never text the person did not see, and it is
+  rendered as text.
+- **Leaving publishes.** In room mode leaving the page (a `pagehide`, or the viewer unmounting)
+  sends the ordinary checkpoint (`reason: "done"`, with `base_version` and `rev`) with `keepalive`,
+  under the session cookie and the CSRF header like every app request; a frozen draft, one that
+  cannot be a version, or typing the page cannot save is never sent, and the server's own checks
+  (stale base, frozen draft, the lock) apply unchanged.
+- **Solo autosave.** A solo copy publishes itself with `PUT`, `base_version` (the version the copy
+  is based on: the shown one, or the one this frame last published) and `files_from_version`, so a
+  newer version from anyone refuses it (409) and nothing is overwritten; the autosave then stops
+  until the person reviews.
 - **The frame key.** For an owner or editor who may edit, the app opens each frame load at its
   enter URL with a fresh 32-byte random key in the fragment (`#plinth-k=…`). A fragment is never
   sent to a server, survives the enter redirect (a `Location` without a fragment keeps it) and
@@ -2796,7 +2816,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   earlier, kept in the app origin's `sessionStorage` under the artifact's id; the frame checks it
   with the type's rules before it renders it read-only, and Publish your changes sends the app's own copy; co-editor emails
   and their places ("row 12", built by the renderer from lease positions, never content) become
-  text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
+  text nodes (the save status's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
 - **The rescue store.** A doc block's, a deck's or a design system's formatted text's typing the
   room's draft does not hold yet (typing that cannot be written as typed, or that a lost lease, a
@@ -2880,53 +2900,54 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   (`live_draft`), never its text, and are told that the people editing review the agent's version
   beside theirs and may publish theirs over it, with the agent's kept in History.
 
-## Ask an agent
+## Asking an agent
 
-People ask the owner's agent for a change instead of editing an HTML page's or a design's code
-(spec: "Ask an agent"). Nothing new is reachable from a page: no content-host endpoint, cookie, CSP,
-sandbox flag or env var was added. A request is a comment with one more field, `request_to`, and it
-reaches agents through the mention queue exactly as an `@claude` mention does.
+People ask the owner's agent for a change by mentioning it in a comment, optionally pinned to a
+place on the page (spec: "Asking an agent"); there is no other entry point. Nothing new is
+reachable from a page: no content-host endpoint, cookie, CSP, sandbox flag or env var was added.
+A request is an ordinary comment whose `@claude`, `@codex` or `@agent:other` reaches agents
+through the mention queue. The comment route still takes `request_to`, the structured form the
+app sent before 2026-11-23, with the checks below.
 
 - **Who may ask.** The `mention` action in `policy.ts`, unchanged: the owner, editors and
   commenters, never viewers. The gate's `ask` part is computed only after `decide(…, "mention")`
-  allows, and never for an agent. On the comment route the same decision runs again, and a
-  `request_to` from someone without it is refused, not posted as a plain comment.
+  allows, and never for an agent. On the comment route the same decision runs again: a mention
+  from someone without it creates no task, and a `request_to` from them is refused, not posted
+  as a plain comment.
 - **Where it may go.** Only to the artifact owner's own connections, matched by client type, as
-  `list_mentions` and `claim_mention` already match (`canActOnMention`). `takesRequests` in
-  `policy.ts` holds the rule a target must meet (not revoked, not limited to one artifact, with the
-  `mentions` scope): the gate lists only the client types that meet it, and a `request_to` without
-  one is refused with `no_agent` before anything is written, so the person is never told a request
-  was sent when no agent can see it. The gate never carries a connection's label or id.
-- **Untrusted, with no owner authority.** The description and the anchor are written by a
+  `list_mentions` and `claim_mention` already match (`canActOnMention`). `@agent:other` is one
+  more agent name, for the `other` client type; it holds a `:`, which no connection's handle can,
+  so it never reaches a connection labelled "Agent" and that connection keeps `@agent`.
+  `takesRequests` in `policy.ts` holds the rule a `request_to` target must meet (not revoked, not
+  limited to one artifact, with the `mentions` scope): the gate lists only the client types that
+  meet it, and a `request_to` without one is refused with `no_agent` before anything is written.
+  The gate never carries a connection's label or id.
+- **Untrusted, with no owner authority.** The comment and its anchor are written by a
   collaborator (or the owner) and are untrusted text for the agent: `list_mentions` and the
   untrusted note say so, and only the server-derived `comment_author_role` says the owner sent it.
-  An agent's own comment never creates a task, `request_to` or not, so agents cannot ask each
+  An agent's own comment never creates a task, mention or `request_to`, so agents cannot ask each
   other in a loop.
-- **The frame boundary.** The edit-mode Ask dialog opens from an `ask` message only with the frame
-  key, from the frame's window at its exact content origin (see [Inline editing](#inline-editing)).
-  While the app is in edit mode a keyless `ask` is dropped, not taken as the outside-edit-mode
-  form, so a document the frame navigated to cannot open the dialog with an anchor it chose.
-  Its anchor is a structural key and a short plain-text label, rendered as text in the dialog, the
-  chip and the thread. The dialog posts nothing on its own: the person writes the request and
-  presses Send. An `ask` that passes these checks is still only a hint: the app takes it while the
-  tab is visible and no dialog is open, and one that would open the closed comments panel or the
-  Ask dialog at most once a second (the reopen limit of comments from the page), so a frame
-  cannot keep reopening what the person closed. The doc renderer sends `ask` with block anchors,
-  the slides renderer with slide anchors and structural words ([Decks on the
-  page](#decks-on-the-page)), and the design system renderer with token, group, component and
-  settings anchors (`token:<path>`, `group:<path>`, `component:<id>`, `system:settings`) and its
-  formatted texts' block anchors behind the text's part; a label is sent only when the published
-  version has the same words (a token's path, a component's name, a block's first words), and a
-  token, group or component key is made from the published version only: by name when it has that
-  name and the name fits a key, by its index in the published version when it does not fit, and
-  as the bare kind (`token`, `group`) for one only the draft has, so no draft name, text or
-  position reaches the app. Other types don't yet. Outside edit mode Ask an agent uses the comments panel and its review-mode
-  bridge, unchanged. Under opaque isolation no editing message is exchanged with a frame whose
-  origin is `"null"`; the bar's Ask an agent and the comments panel need none.
-- **Publish first.** "Publish my changes first" runs the strip's own Publish, on the same code path
-  (the room checkpoint, or the solo `PUT` with `base_version` and `files_from_version`), with every
-  check it has, reporting its refusal to the dialog instead of as a toast; when it does not succeed
-  nothing is posted, so a request never points at a version that does not hold what the person saw.
+- **The frame boundary.** A renderer's "Comment" posts `ask`, taken only from the frame's window
+  at its exact content origin (see [Inline editing](#inline-editing)), and while the app is in
+  edit mode only with the frame key: a keyless `ask` is then dropped, so a document the frame
+  navigated to cannot pin the composer to a place it chose. Its anchor is a structural key and a
+  short plain-text label, rendered as text in the composer's chip and the thread. It carries no
+  comment text and posts nothing: it opens the comments panel with the composer pinned, and the
+  person writes the comment and presses Comment. An `ask` that passes these checks is still only
+  a hint: the app takes it while the tab is visible and no dialog is open, at most one a second,
+  and one that would open the closed comments panel at most once a second (the reopen limit of
+  comments from the page), so a frame cannot keep reopening what the person closed. The doc
+  renderer sends `ask` with block anchors, the slides renderer with slide anchors and structural
+  words ([Decks on the page](#decks-on-the-page)), and the design system renderer with token,
+  group, component and settings anchors (`token:<path>`, `group:<path>`, `component:<id>`,
+  `system:settings`) and its formatted texts' block anchors behind the text's part; a label is
+  sent only when the published version has the same words (a token's path, a component's name, a
+  block's first words), and a token, group or component key is made from the published version
+  only: by name when it has that name and the name fits a key, by its index in the published
+  version when it does not fit, and as the bare kind (`token`, `group`) for one only the draft
+  has, so no draft name, text or position reaches the app. Other types don't yet. Under opaque
+  isolation no editing message is exchanged with a frame whose origin is `"null"`; the comments
+  panel needs none.
 - **Refused before it counts.** A `request_to` that no agent can take (`no_agent`), or from someone
   without the mention right, is refused before the comment rate limit counts it.
 
@@ -2959,7 +2980,7 @@ CSP, sandbox flag or env var was added.
 - **Fidelity before editing, verification after.** A block is editable only when its model,
   written back, renders exactly as the original with the page's own parser and reads back into the
   same model, so the editor cannot turn a block into something that renders differently. A block
-  that fails is read-only (Ask an agent, Move and Delete, byte for byte). Every text the editor
+  that fails is read-only (Comment, Move and Delete, byte for byte). Every text the editor
   sends is read back first and is not sent when it would not round trip; such typing stays in the
   open block and counts as unsent, so it is never dropped without the page saying so, and no
   publish (any of its ways in) goes out without it. The room's `keep` frame only restarts the idle
@@ -2968,18 +2989,18 @@ CSP, sandbox flag or env var was added.
   next to a mark may be written as a numeric character reference, never for ASCII punctuation
   (so never `<`, `&` or `*`), and only when the result reads back as the same model. Untouched
   blocks, and the reference definitions after a block, keep their bytes.
-- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor naming the
+- **Comment from a block.** The renderer's `ask` carries a structural anchor naming the
   block as the published version it was served has it (`block-3`, `block-3:image`,
   `block-3:add-image`; `new-3` for a block only in the draft, after published block 3) and, as its
   text, the block's first words (an image's alt text): at most the page anchor's 120 UTF-16 code
   units, never cutting a character in two, with white space folded and control and format
   characters and the line and paragraph separators stripped (`UNSAFE_TEXT_RE`, the set the server
-  refuses in a page anchor, emoji joiners included), so a dialog never opens about a label the
-  server would refuse. For a block only in the draft those words are the draft's: the person who
-  asks is editing it, sees them in the dialog's chip ("not published yet") and can remove the chip
-  before posting. The app shows them as text, refuses a label with any of those characters, and
+  refuses in a page anchor, emoji joiners included), so the composer is never pinned to a label
+  the server would refuse. For a block only in the draft those words are the draft's: the person who
+  asks is editing it, sees them in the composer's chip ("not published yet") and can remove the
+  pin before posting. The app shows them as text, refuses a label with any of those characters, and
   accepts the message only as an editing message, with the frame key (see
-  [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "Pointing at" chip, is
+  [Asking an agent](#asking-an-agent)). Its `what`, the kind of block for the composer's chip, is
   one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the
   message for any other value, renders it as text, and never posts it.
 
@@ -3024,7 +3045,7 @@ reachable from a page: no endpoint, cookie, CSP, sandbox flag or env var was add
   where no other lease is, and through the structure rule like any edit; what no place takes is
   kept in the frame's memory (never the content origin's storage) and offered to the person to
   copy.
-- **Ask an agent from a slide.** The renderer's `ask` carries a structural anchor
+- **Comment from a slide.** The renderer's `ask` carries a structural anchor
   (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`) and structural words ("Slide 3, image
   1"), never the deck's text, so no draft text reaches the app page.
 - **No HTML parsing in the editor.** As for docs: the editable block is drawn from its model with
@@ -3130,13 +3151,13 @@ flag, env var or MCP tool was added.
   a name like `invoice<U+202E>vsc.xlsx` cannot read as another in History or in the app.
 - **v1's note.** `POST /api/v1/artifacts` takes `note` for v1 (the zod note schema, at most 500
   characters), which History shows as text. MCP's `publish_artifact` does not list it.
-- **`?edit` starts editing only where the gate allows it.** The page starts edit mode from `?edit`
-  only when the gate has `live` (an owner or editor of a live type on the current version, signed
-  in, under origin isolation), as the Edit toggle does. The `focus: "first"` it adds to the `edit`
+- **`?edit` focuses only where the gate allows editing.** The page is in edit mode only when the
+  gate has `live` (an owner or editor of a live type on the current version, signed in, under
+  origin isolation), with or without `?edit`. The `focus: "first"` that `?edit` adds to the `edit`
   message goes to the frame the app holds, at its exact content origin, like every editing message
   ([Inline editing](#inline-editing)); in the frame it only moves focus or asks the room for a
-  lease, which the room checks as it checks a click. A link someone sends with `?edit` opens edit
-  mode for its reader only where they could press Edit themselves, and edits nothing by itself.
+  lease, which the room checks as it checks a click. A link someone sends with `?edit` changes
+  nothing for a reader who cannot edit, and edits nothing by itself.
 
 ## Operator checklist for the content domain
 

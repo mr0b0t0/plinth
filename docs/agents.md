@@ -466,7 +466,8 @@ token values, descriptions, guidelines and component text are edited in place; i
 fonts, settings and names stay with agents. A doc is edited as formatted text, never as Markdown: Plinth writes the
 changes back as Markdown, keeps every block nobody touched byte for byte, and leaves what it
 cannot show faithfully as formatted text (a code block in a list item, say) and images for agents
-to change, through Ask an agent. A deck's slide text, speaker notes and settings are edited the
+to change, through a comment that mentions them ("Comment" on the block opens one pinned there).
+A deck's slide text, speaker notes and settings are edited the
 same way; adding, moving and deleting slides stay with agents. An agent's `update_artifact` (or
 `edit_sheet`) on a doc, deck or sheet being
 edited gets the `live_draft` warning, which needs no action
@@ -501,7 +502,7 @@ stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram
 - **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
   drawing or a zoom level survives.
 - **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves
-  `{ available: false }` in in-chat previews, the editor preview and direct content links, where
+  `{ available: false }` in in-chat previews and direct content links, where
   `compose` rejects with `unavailable`, and the page must still work.
 - **Agents read the spot.** In `list_comments` and mention tasks a page anchor has `kind: "page"`;
   its `key`, `x`, `y` and `data` say what the thread is about, in the page's own terms
@@ -515,7 +516,7 @@ picked thread's marker highlighted. The skill's
 
 ## Open pages follow new versions
 
-A new version (`update_artifact`, `restore_version`, the source editor, a save on the page) reaches
+A new version (`update_artifact`, `restore_version`, a save on the page) reaches
 every open view of the artifact within seconds: the app page holds a watch socket on the app host
 and re-reads its gate when told ([spec](spec.md#live-views-decided-2026-11-19),
 [security](security.md#live-views)). Agents never hold that socket (a bearer token is refused), and
@@ -628,6 +629,7 @@ the Connections page to short names people can type in a comment: `Gemini`, `Cur
 | --- | --- | --- |
 | `@claude` | Every live connection of the owner with client type Claude | One task: the first to `claim_mention` takes it; the others get `conflict` and leave it |
 | `@codex` | Every live Codex connection of the owner | The same |
+| `@agent:other` | Every live connection of the owner that is neither Claude nor Codex (ChatGPT, Cursor, Gemini…) | The same. The comment box suggests it when the owner has such a connection. It never reaches a connection named "Agent", which keeps `@agent` |
 | `@<handle>` | The owner's one connection whose name becomes that handle | The handle is the name lowercased, spaces turned into `-`, other characters dropped (`Claude Code` is `@claude-code`). `claude` and `codex` always mean the client types. When two names make one handle, the older connection gets it. A connection without the "Answer mentions" permission (`mentions` scope) never takes a handle |
 | Anything else | Nobody | Plain text |
 

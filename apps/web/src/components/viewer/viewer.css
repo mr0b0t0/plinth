@@ -113,17 +113,59 @@
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
-/* ---------- Editing a doc on its page (#36) ---------- */
-/* The bronze rule marks the live state: an edit strip under the bar, never a second primary. */
-.pl-viewer__edit[aria-pressed="true"] {
-  background: var(--color-accent-soft);
-  color: var(--color-accent-ink);
+/* ---------- Editing on the page (#36): always on, one quiet line in the bar ---------- */
+/* The save status sits beside the version: muted words, nothing while there is nothing to say. */
+.pl-savestatus {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  margin-left: var(--space-2);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
 }
-/* Off, with its reason in the tooltip (a page only an agent can fix): it keeps the focus. */
-.pl-viewer__edit[aria-disabled="true"] {
-  opacity: 0.45;
+.pl-savestatus:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
-.pl-editbar,
+.pl-savestatus__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pl-savestatus__short {
+  display: none;
+}
+@media (max-width: 30rem) {
+  .pl-savestatus__short {
+    display: inline;
+  }
+  .pl-savestatus__long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+/* How many others are editing; who and where are in its tooltip. */
+.pl-savestatus__editors {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+.pl-savestatus > .pl-button {
+  flex: none;
+}
+/* The one line above the page for owners and editors who are not editing it (sign in to edit). */
 .pl-livenotice {
   display: flex;
   flex-wrap: nowrap;
@@ -136,68 +178,20 @@
   background: var(--color-surface);
   font-size: var(--text-sm);
 }
-.pl-editbar__state,
 .pl-livenotice {
   color: var(--color-accent-ink);
   font-weight: var(--weight-medium);
 }
-.pl-editbar__state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  min-width: 0;
-}
 /* One line at every width: what does not fit ends in an ellipsis. */
-.pl-editbar__status,
 .pl-livenotice__text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pl-editbar__state > svg,
 .pl-livenotice > svg {
   flex: none;
 }
-/* Publish off (the changes cannot be published yet; its tooltip says why): quiet, not a grey
-   block. */
-.pl-editbar__publish[aria-disabled="true"]:not([data-loading]) {
-  border-color: var(--color-border-strong);
-  background: transparent;
-  color: var(--color-ink-faint);
-}
-/* At phone width the strip stays one line: a short status ("v5 published") stands in for the long
-   words, which are still read. */
-.pl-editbar__short {
-  display: none;
-}
-@media (max-width: 30rem) {
-  .pl-editbar__short {
-    display: inline;
-  }
-  .pl-editbar__long {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-  }
-}
-/* How many others are editing; who and where are in its tooltip. */
-.pl-editbar__editors {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  border-radius: var(--radius-sm);
-  color: var(--color-ink-muted);
-  font-variant-numeric: tabular-nums;
-}
-.pl-editbar__typing {
-  color: var(--color-accent-ink);
-}
-.pl-editbar__actions,
 .pl-livenotice__actions {
   display: inline-flex;
   flex: none;
@@ -205,12 +199,11 @@
   gap: var(--space-1-5);
   margin-left: auto;
 }
-/* Every live notice reads as the edit strip does: a bronze rule, a pencil and bronze words. */
+/* A live notice: a bronze rule, a pencil and bronze words. */
 .pl-livenotice {
   gap: var(--space-1-5);
 }
 @media (max-width: 52rem) {
-  .pl-editbar,
   .pl-livenotice {
     padding-inline: var(--space-4);
   }
@@ -507,10 +500,6 @@
   font-variant-numeric: tabular-nums;
 }
 /* Editing a doc on its page (#36): a bronze line along the top of the frame. */
-.pl-viewer--editing .pl-viewer__frame-wrap {
-  box-shadow: inset 0 2px 0 var(--color-accent);
-}
-
 /* ---------- Presenting a deck (the slides type) ---------- */
 /* An audience window paired with its presenter shows the deck alone, on its own stage colour. */
 .pl-viewer--audience .pl-viewer__bar,
@@ -606,20 +595,7 @@
   font-size: var(--text-xs);
 }
 
-/* Ask an agent: the Ask dialog in edit mode (AskDialog.tsx). */
-.pl-ask {
-  display: grid;
-  /* One column that may shrink: a long "Pointing at" chip ellipsizes instead of widening the sheet. */
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-}
-.pl-ask__error {
-  margin: 0;
-  color: var(--color-danger);
-  font-size: var(--text-sm);
-}
-
-/* Narrow screens, picking a place to comment on or to point an agent at: the comments panel is a
+/* Narrow screens, picking a place to comment on: the comments panel is a
    bottom bar (comments.css). The bar sits under the artifact instead of over it, so the artifact
    ends above the bar: nothing of the page (a design's zoom controls, the last lines) is left
    half-covered, and the small print under it is hidden until the pick ends. */
@@ -641,24 +617,5 @@
   }
   .pl-viewer:has(.cm-panel[data-picking]) .pl-viewer__banner {
     display: none;
-  }
-}
-
-/* Narrow screens, Ask an agent with no thread to show: the sheet is as tall as the request form. */
-@media (max-width: 52rem) {
-  .pl-viewer__panel:has(> .cm-panel[data-request-only]) {
-    height: auto;
-  }
-}
-
-/* Phones: the Ask dialog is a sheet flush with the bottom edge, so nothing shows under it. */
-@media (max-width: 30rem) {
-  .pl-dialog-root:has(.pl-ask) {
-    padding-bottom: 0;
-  }
-  .pl-dialog:has(.pl-ask) {
-    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
-    border-bottom: 0;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 }

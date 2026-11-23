@@ -35,7 +35,7 @@ import {
   type TypedPayload,
 } from "@plinth/shared";
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
-import { appPoster, ReviewSession } from "../common/editSession.ts";
+import { appPoster, CollectAnswers, ReviewSession } from "../common/editSession.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient } from "../common/live.ts";
 import {
@@ -329,6 +329,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     let renderQueued = false;
     const backend = (): SheetBackend | null => local ?? (client as SheetBackend | null);
     const poster = appPoster(win, appOrigin, key);
+    const answers = new CollectAnswers();
     const post = poster.post;
     const statusNow = () => {
       queued = false;
@@ -484,7 +485,15 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         status();
       } else if (m.type === "collect" && local) {
         editor?.flush();
+        answers.keep(m.nonce, local.text);
         post({ type: "draft", nonce: m.nonce, text: local.text });
+      } else if (m.type === "saved") {
+        // That text is published now: changes are counted from it.
+        const text = answers.take(m.nonce);
+        if (text !== null && local) {
+          local.rebase(text);
+          status();
+        }
       } else if (m.type === "review") {
         editor?.flush();
         void session.open(m);

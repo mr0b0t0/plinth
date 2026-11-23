@@ -1,7 +1,7 @@
-// Ask an agent under opaque content isolation (docs/spec.md "Ask an agent"): there is no editing on
-// the page, so a doc's owner gets Ask an agent in the Edit slot with the reason, `?edit` lands on
-// the viewer as usual, and a request posted from it reaches the owner's agent. No editing message
-// is ever exchanged with a frame whose origin is "null".
+// Asking an agent under opaque content isolation (docs/spec.md "Asking an agent"): there is no
+// editing on the page, so a doc's owner gets nothing in Edit's place, `?edit` lands on the viewer
+// as usual, and a comment that mentions @claude reaches the owner's agent. No editing message is
+// ever exchanged with a frame whose origin is "null".
 import { expect, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
@@ -10,7 +10,7 @@ import { mcpClient, tool } from "../support/mcp.ts";
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 const REASON = "Editing on the page isn't available with this instance's content isolation.";
 
-test("a doc's owner gets Ask an agent with the reason instead of Edit, and the request reaches Claude", async ({
+test("a doc's owner has no Edit and no Ask an agent, and a comment that mentions @claude reaches Claude", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -34,19 +34,17 @@ test("a doc's owner gets Ask an agent with the reason instead of Edit, and the r
     timeout: 15_000,
   });
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Ask an agent", exact: true })).toHaveCount(0);
   await expect(page.getByRole("status").filter({ hasText: REASON })).toHaveCount(0);
   expect(new URL(page.url()).search).toBe("");
-  const ask = page.getByRole("button", { name: "Ask an agent", exact: true });
-  await ask.hover();
-  await expect(page.getByRole("tooltip").filter({ hasText: REASON })).toBeVisible();
 
-  await ask.click();
+  await page.getByRole("button", { name: "Comments", exact: true }).click();
   const panel = page.getByRole("region", { name: "Comments" });
-  const form = panel.getByRole("form", { name: "Ask an agent" });
-  await form.getByRole("textbox", { name: "What should change?" }).fill("Add a summary");
-  await form.getByRole("button", { name: "Send to Claude" }).click();
-  await expect(page.getByText("Request sent to Claude")).toBeVisible();
-  await expect(panel).toBeHidden();
+  const box = panel.getByRole("textbox", { name: "New comment" });
+  await box.fill("@claude add a summary");
+  await panel.getByRole("button", { name: "Comment", exact: true }).click();
+  const thread = panel.locator("article").filter({ hasText: "add a summary" });
+  await expect(thread.locator('[data-state="pending"]')).toContainText("@claude");
 
   const client = await mcpClient(token, OPAQUE_APP_ORIGIN);
   try {

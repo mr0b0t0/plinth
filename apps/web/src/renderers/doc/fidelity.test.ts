@@ -1,5 +1,5 @@
 // The golden fidelity list (doc-blocks): for every fixture of testCorpus.ts, which blocks the
-// formatted-text editor edits in place, and as what, and which it shows read-only with Ask an agent
+// formatted-text editor edits in place, and as what, and which it shows read-only with Comment
 // because the model cannot hold them or would write them back differently. A change to the model
 // or the serializer that changes this list shows up here. Every block marked editable round trips:
 // its Markdown, written back from its model, renders exactly as the original.

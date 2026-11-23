@@ -18,6 +18,10 @@ export const OPAQUE_PORT = Number(process.env.PLINTH_E2E_OPAQUE_PORT ?? E2E_PORT
 export const OPAQUE_APP_ORIGIN = `http://app.localhost:${OPAQUE_PORT}`;
 export const OPAQUE_CONTENT_HOST = `content.localhost:${OPAQUE_PORT}`;
 
+/** The third Worker, without live rooms: editing on the page is solo ("solo" project). */
+export const SOLO_PORT = Number(process.env.PLINTH_E2E_SOLO_PORT ?? E2E_PORT + 200);
+export const SOLO_APP_ORIGIN = `http://app.localhost:${SOLO_PORT}`;
+
 let counter = 0;
 /** A fresh address for each test, so rate limits and outbox lookups never collide. */
 export function uniqueEmail(prefix = "user"): string {

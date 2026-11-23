@@ -2,13 +2,7 @@
 // pages, and no Source tab at any point, the load included. A page compares the same way: Compare
 // shows no source for any type.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("../components/editor/CodeEditor.tsx", () => ({
-  CodeEditor: (): ReactNode => <textarea aria-label="code" />,
-  CodeDiff: (): ReactNode => <div data-testid="code-diff" />,
-}));
 
 const CONFIG = {
   app_origin: "http://app.localhost:8787",

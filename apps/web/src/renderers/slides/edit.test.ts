@@ -3,7 +3,7 @@
 // their placeholder; a click opens a block as formatted text and typing sends the block written
 // back as Markdown, escaped so it never changes the deck's structure; emptying a slide keeps it as
 // an empty slide (trimming a bare opening --- first); speaker notes are one part in their own
-// panel; images and blocks the model cannot hold offer Ask an agent; deck settings are one
+// panel; images and blocks the model cannot hold offer Comment; deck settings are one
 // set_deck; and the review's deck pane draws each side with its own version's files.
 import {
   LIMITS,
@@ -351,18 +351,53 @@ describe("speaker notes after the deck's start moves", () => {
 });
 
 describe("print and the .pptx while editing", () => {
-  it("wait until editing ends: no print, and the export answers that no file was made", () => {
+  it("hold edit mode off while they run, so they take the deck, and turn it back on after", async () => {
     const f = start(SKILL);
+    const root = () => document.getElementById("__plinth-slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
+    // Print: the deck prints, not edit mode's raw slides; edit mode comes back after the dialog.
     appMessage(f, msg({ type: "print" }));
-    expect(document.getElementById("__plinth-slides")?.hasAttribute("data-print")).toBe(false);
+    expect(root()?.getAttribute("data-print")).toBe("slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+    f.target.dispatchEvent(new Event("afterprint"));
+    expect(root()?.hasAttribute("data-print")).toBe(false);
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
+  });
+
+  it("makes the .pptx from the deck while editing, then edits again", async () => {
+    mount("# One\n---\n# Two");
+    const f = framed();
+    const build = vi.fn<PptxBuilder>(async () => ({ blob: new Blob(["pk"]), imagesSkipped: 0 }));
+    const save = vi.fn();
+    const geometry: Geometry = {
+      rect: (e) =>
+        e.localName === "section"
+          ? { left: 0, top: 0, width: 1280, height: 720 }
+          : { left: 80, top: 64, width: 400, height: 40 },
+      style: (e) => window.getComputedStyle(e),
+    };
+    stop = boot(f.win, {
+      measure: () => false,
+      loadWriter: async () => build,
+      save,
+      opaque: false,
+      geometry,
+    });
+    appMessage(f, msg({ type: "edit", on: true, base: 1 }));
+    const root = () => document.getElementById("__plinth-slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
     appMessage(f, msg({ type: "export", format: "pptx", nonce: NONCE }));
+    expect(root()?.hasAttribute("data-editing")).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(build).toHaveBeenCalledTimes(1);
+    // The deck's two slides, not edit mode's raw ones.
+    expect(build.mock.calls[0]?.[0].slides).toHaveLength(2);
+    expect(save).toHaveBeenCalledTimes(1);
     expect(posts(f).filter((p) => p.type === "exported")).toEqual([
-      expect.objectContaining({ type: "exported", nonce: NONCE, ok: false, images_skipped: 0 }),
+      expect.objectContaining({ type: "exported", nonce: NONCE, ok: true }),
     ]);
-    // Out of edit mode, Print runs again.
-    appMessage(f, msg({ type: "edit", on: false }));
-    appMessage(f, msg({ type: "print" }));
-    expect(document.getElementById("__plinth-slides")?.getAttribute("data-print")).toBe("slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
   });
 
   it("makes no file from edit mode's slides when editing starts while an export waits", async () => {
@@ -419,6 +454,24 @@ describe("presenting alone", () => {
     appMessage(f, msg({ type: "view", mode: "deck" }));
     expect(html.getAttribute("data-count")).toBe("2");
   });
+
+  it("shows the deck this tab published since (solo), not the one the frame loaded", async () => {
+    const f = start("# One\n---\n# Two\n---\n# Three");
+    appMessage(f, msg({ type: "goto", slide: 3 }));
+    (active().querySelector("h1") as HTMLElement).click();
+    typeText("");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    const html = document.documentElement;
+    // The app publishes this text (collect, PUT) and says so: it is the published deck now.
+    collect(f);
+    appMessage(f, msg({ type: "saved", nonce: NONCE }));
+    await Promise.resolve();
+    // A change report says the frame's text is the published one again.
+    expect(lastStatus(f)).toMatchObject({ dirty: false });
+    appMessage(f, msg({ type: "presenting", on: true }));
+    expect(html.getAttribute("data-count")).toBe("2");
+    appMessage(f, msg({ type: "presenting", on: false }));
+  });
 });
 
 describe("edit mode's layout", () => {
@@ -452,7 +505,7 @@ describe("edit mode's layout", () => {
 });
 
 describe("what is left to an agent", () => {
-  it("offers only Ask an agent on an image, with a structural anchor", () => {
+  it("offers only Comment on an image, with a structural anchor", () => {
     const f = start(SKILL);
     appMessage(f, msg({ type: "goto", slide: 2 }));
     const img = active().querySelector("img") as HTMLImageElement;
@@ -482,7 +535,7 @@ describe("what is left to an agent", () => {
     expect(collect(f)).toContain("chart.png");
   });
 
-  it("shows a block the model cannot hold as it is, with Ask an agent", () => {
+  it("shows a block the model cannot hold as it is, with Comment", () => {
     const f = start("# A\n\n    indented code\n");
     const pre = active().querySelector("pre") as HTMLElement;
     expect(pre.getAttribute("data-plinth-edit")).toBe("other");

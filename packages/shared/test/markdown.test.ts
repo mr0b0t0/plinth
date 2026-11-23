@@ -80,6 +80,12 @@ describe("renderMarkdown: formatting", () => {
     );
   });
 
+  it("highlights @agent:other whole, and only the name before :other elsewhere", () => {
+    expect(renderMarkdown("@agent:other and @work:other.")).toBe(
+      '<p><span class="mention">@agent:other</span> and <span class="mention">@work</span>:other.</p>',
+    );
+  });
+
   it("links: markdown links and bare URLs to http, https and mailto", () => {
     expect(renderMarkdown("[docs](https://example.com/a?b=1&c=2)")).toBe(
       `<p><a href="https://example.com/a?b=1&amp;c=2" ${LINK}>docs</a></p>`,

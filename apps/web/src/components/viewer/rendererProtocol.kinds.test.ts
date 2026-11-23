@@ -14,12 +14,14 @@ import {
   leadMessage,
   matchFrameMessage,
   pairedMessage,
+  pickMessage,
   presentingMessage,
   printMessage,
   readFrameMessage,
   rescueMessage,
   reviewedMessage,
   reviewMessage,
+  savedMessage,
   sheetExportMessage,
   versionMessage,
   viewMessage,
@@ -53,6 +55,8 @@ describe("renderer protocol kinds", () => {
       "rescue",
       "deck_settings",
       "presenting",
+      "pick",
+      "saved",
     ]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual([
       "live",
@@ -60,6 +64,7 @@ describe("renderer protocol kinds", () => {
       "draft",
       "resolved",
       "ask",
+      "picked",
       "leave",
       "rescue",
       "shown",
@@ -80,6 +85,8 @@ describe("renderer protocol kinds", () => {
         rescueMessage([]),
         deckSettingsMessage(),
         presentingMessage(true),
+        pickMessage(false),
+        savedMessage("n".repeat(16)),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -99,6 +106,7 @@ describe("renderer protocol kinds", () => {
       rescueMessage([{ id: "r1", text: "Kept", near: 0 }]),
       deckSettingsMessage(),
       presentingMessage(false),
+      pickMessage(true),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
@@ -119,6 +127,7 @@ describe("renderer protocol kinds", () => {
       draft: vi.fn(() => "draft"),
       resolved: vi.fn(() => "resolved"),
       ask: vi.fn(() => "ask"),
+      picked: vi.fn(() => "picked"),
       leave: vi.fn(() => "leave"),
       rescue: vi.fn(() => "rescue"),
       shown: vi.fn(() => "shown"),
@@ -131,5 +140,25 @@ describe("renderer protocol kinds", () => {
     expect(handlers.live).not.toHaveBeenCalled();
     expect(handlers.save).toHaveBeenCalledTimes(1);
     expect(handlers.draft).toHaveBeenCalledWith(messages[1]);
+  });
+
+  it("reads `picked` only with the frame's key, as a place or as null", () => {
+    const key = "k".repeat(43);
+    const read = (data: Record<string, unknown>) => {
+      const { e, opts } = event({ source: "plinth-renderer", v: 1, ...data });
+      return readFrameMessage(e, { ...opts, key });
+    };
+    expect(read({ type: "picked", key, anchor: { key: "block-2", text: "Hi" } })).toEqual({
+      type: "picked",
+      anchor: { key: "block-2", text: "Hi" },
+    });
+    expect(read({ type: "picked", key, anchor: null })).toEqual({ type: "picked", anchor: null });
+    // Without the key, with a key a page anchor may not have, or with a label it may not hold.
+    expect(read({ type: "picked", anchor: { key: "block-2", text: "Hi" } })).toBeNull();
+    expect(read({ type: "picked", key, anchor: { key: "<b>", text: "Hi" } })).toBeNull();
+    expect(read({ type: "picked", key, anchor: { key: "block-2", text: "a\u202eb" } })).toBeNull();
+    expect(
+      read({ type: "picked", key, anchor: { key: "block-2", text: "Hi" }, what: "x" }),
+    ).toBeNull();
   });
 });

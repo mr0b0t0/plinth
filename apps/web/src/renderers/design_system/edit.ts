@@ -14,8 +14,8 @@
 //   that holds them (the guidelines' lines, or one JSON string), so no Markdown is shown;
 // - a component's status, from its ⋯ ("Status").
 // Renaming tokens and groups, component code, fonts, the prefix and the format stay with agents:
-// each has "Ask an agent", which posts `ask` with a structural anchor (token:<path>, group:<path>,
-// component:<id>, system:settings) and the app opens its Ask dialog.
+// each has "Comment", which posts `ask` with a structural anchor (token:<path>, group:<path>,
+// component:<id>, system:settings) and the app opens the comments panel pinned there.
 //
 // One socket holds one lease at a time: whichever part of the page asks for it holds it, and the
 // part that held it before sends what it has pending and lets go first.
@@ -63,14 +63,14 @@ export interface DsEditorHooks {
   /** The version whose files the draft is drawn with (its base), or null for the page's own. */
   fileVersion(): number | null;
   /**
-   * Ask an agent about a place on the page: a fixed key, or a token, group or component by its
+   * Comment on a place on the page: a fixed key, or a token, group or component by its
    * name, which the frame keys from the published version alone (boot.ts). The frame sends `text`
    * only when the published version has those words.
    */
   ask(anchor: DsAskAnchor): void;
   /**
    * A formatted text as the published version has it (`guidelines`, `description`,
-   * `component:<id>:description|usage`; "" when it has none): its blocks name an Ask's anchor, as
+   * `component:<id>:description|usage`; "" when it has none): its blocks name a Comment's anchor, as
    * a doc's do (doc/askAnchor.ts), so the agent finds the block in the version it reads.
    */
   publishedText?(key: string): string;
@@ -125,7 +125,7 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const samePath = (a: DsPath, b: DsPath) => a.length === b.length && a.every((s, i) => s === b[i]);
 
 /**
- * What Ask an agent points at: a fixed key (`system:settings`, a formatted text's block), or a
+ * What Comment points at: a fixed key (`system:settings`, a formatted text's block), or a
  * token, group or component by its name in the draft. The frame keys the named kinds from the
  * published version alone, so a name only the draft has never leaves the frame.
  */
@@ -1843,7 +1843,30 @@ export class DsEditor {
     return this.backend.you?.right === "write" && this.backend.conflictVersion === null;
   }
 
-  /** Ask an agent about a place on the page (the frame keeps draft names and words out). */
+  /**
+   * The place at `target` for a comment while the person picks one (common/pick.ts): a token, a
+   * group or a component, as its Comment controls name them (boot.ts keys them from the published
+   * version). Nothing closes.
+   */
+  placeAt(target: Node): { el: HTMLElement; anchor: DsAskAnchor } | null {
+    const t = target.nodeType === 1 ? (target as Element) : target.parentElement;
+    if (!t || !this.root.contains(t)) return null;
+    const token = t.closest<HTMLElement>(".ds-token[data-path]");
+    const path = token?.dataset.path;
+    if (token && path) return { el: token, anchor: { kind: "token", name: path, text: path } };
+    const group = t.closest<HTMLElement>(".ds-group[data-group]");
+    const g = group?.dataset.group;
+    if (group && g) return { el: group, anchor: { kind: "group", name: g, text: g } };
+    const comp = t.closest<HTMLElement>(".ds-component[data-component]");
+    const id = comp?.dataset.component;
+    if (comp && id) {
+      const name = comp.querySelector("h2")?.textContent?.trim() || id;
+      return { el: comp, anchor: { kind: "component", name: id, text: name } };
+    }
+    return null;
+  }
+
+  /** Comment on a place on the page (the frame keeps draft names and words out). */
   private askAbout(anchor: string | { kind: DsAskKind; name: string }, text: string): void {
     this.hooks.ask(typeof anchor === "string" ? { key: anchor, text } : { ...anchor, text });
   }
@@ -1901,7 +1924,7 @@ export class DsEditor {
         {
           items: [
             {
-              label: "Ask an agent",
+              label: "Comment",
               run: () => this.askAbout("system:settings", "Fonts and settings"),
             },
           ],
@@ -2112,7 +2135,7 @@ export class DsEditor {
       {
         items: [
           {
-            label: "Rename: Ask an agent",
+            label: "Comment to rename",
             run: () => this.askAbout({ kind: "token", name: path }, path),
           },
           {
@@ -2196,7 +2219,7 @@ export class DsEditor {
             ...(group
               ? [
                   {
-                    label: "Rename: Ask an agent",
+                    label: "Comment to rename",
                     run: () => this.askAbout({ kind: "group", name: group }, group),
                   },
                 ]
@@ -2305,7 +2328,7 @@ export class DsEditor {
       return Array.isArray(list) ? list.findIndex((x) => isObject(x) && x.id === id) : -1;
     };
     const statusNow = () => this.parsed?.components.find((x) => x.id === id)?.status ?? c.status;
-    // The status stays the pill beside the name; it and Ask an agent are the heading's one ⋯.
+    // The status stays the pill beside the name; it and Comment are the heading's one ⋯.
     const setStatus = (value: DsComponent["status"]) => {
       const i = at();
       if (i < 0) return;
@@ -2332,7 +2355,7 @@ export class DsEditor {
               })),
             },
             {
-              label: "Ask an agent",
+              label: "Comment",
               run: () => this.askAbout({ kind: "component", name: id }, c.name),
             },
           ],

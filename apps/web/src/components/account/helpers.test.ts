@@ -178,10 +178,12 @@ describe("mentionReach", () => {
     expect(mentionReach("Claude Code", [], self)).toEqual({
       kind: "handle",
       handle: "claude-code",
+      also: "agent:other",
     });
     expect(mentionReach("  Gemini CLI (laptop) ", [], self)).toEqual({
       kind: "handle",
       handle: "gemini-cli-laptop",
+      also: "agent:other",
     });
     expect(mentionReachText({ kind: "handle", handle: "claude-code" })).toBe(
       "Mention as @claude-code.",
@@ -213,6 +215,7 @@ describe("mentionReach", () => {
     expect(mentionReach("Claude Code", [newer], self)).toEqual({
       kind: "handle",
       handle: "claude-code",
+      also: "agent:other",
     });
     const revoked = { ...older, revoked_at: "2026-11-02T00:00:00Z" };
     expect(mentionReach("Claude Code", [revoked], self).kind).toBe("handle");
@@ -263,6 +266,7 @@ describe("mentionReach", () => {
     expect(mentionReach("CI", [], { ...self, scopes: ["artifacts:read", "mentions"] })).toEqual({
       kind: "handle",
       handle: "ci",
+      also: "agent:other",
     });
     // The row and the dialog already show both, so the hints add nothing.
     expect(mentionReachText({ kind: "artifact_only" })).toBeNull();
@@ -275,6 +279,10 @@ describe("mentionReach", () => {
     expect(mentionReachText(claude)).toBe("Mention as @laptop or @claude.");
     expect(mentionReachText(mentionReach("Laptop", [], { ...self, client_type: "codex" }))).toBe(
       "Mention as @laptop or @codex.",
+    );
+    // Every other client (ChatGPT, Cursor, Gemini) is reached by @agent:other too.
+    expect(mentionReachText(mentionReach("Laptop", [], self))).toBe(
+      "Mention as @laptop or @agent:other.",
     );
   });
 

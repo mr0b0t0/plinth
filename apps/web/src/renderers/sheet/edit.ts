@@ -95,7 +95,7 @@ export class LocalSheet implements SheetBackend {
   private n = 0;
 
   constructor(
-    readonly baseText: string,
+    public baseText: string,
     private readonly events: {
       granted(l: ClientLease): void;
       changed(): void;
@@ -111,6 +111,14 @@ export class LocalSheet implements SheetBackend {
 
   get dirty(): boolean {
     return this.text !== this.baseText;
+  }
+
+  /**
+   * Solo: this text was just published (the app's `saved`): `dirty` compares against it from now
+   * on, so a change back to the text the frame loaded is a change again.
+   */
+  rebase(text: string): void {
+    this.baseText = text;
   }
 
   lease(range: LineRange): boolean {
@@ -1070,7 +1078,7 @@ export class SheetEditor {
       return;
     }
     // What was typed since the room's last ack (the last moments before a freeze) is quoted, so
-    // the person can type it again. One line: the edit bar already says the sheet changed.
+    // the person can type it again. One line: the save status already says the sheet changed.
     const unsent = this.unsent(o);
     this.closeField();
     const takeover = reason === "takeover";
@@ -1368,7 +1376,7 @@ export class SheetEditor {
     strong.className = "plinth-sheet__dock-name";
     strong.textContent = name;
     label.append(addr, strong);
-    // A check, not a second "Done" beside the edit bar's: Enter commits too.
+    // A check, not a "Done": Enter commits too.
     const done = d.createElement("button");
     done.type = "button";
     done.className = "plinth-sheet__btn plinth-sheet__dock-save";

@@ -238,12 +238,13 @@ async function altSourceShown(ctx: Ctx, a: ArtifactRow, version: number): Promis
   return versionSourcePath(def, parseManifest(row.manifest)) === def.altSource.path;
 }
 
-// ---------- Ask an agent ----------
+// ---------- asking an agent ----------
 
 /**
- * Who a request from Ask an agent can go to: for everyone who may mention the owner's agents here
- * (policy "mention": the owner, editors and commenters), never for an agent. Only the client types
- * of the owner's connections that can take requests, never their labels.
+ * Which of the owner's agents a mention can reach: for everyone who may mention the owner's agents
+ * here (policy "mention": the owner, editors and commenters), never for an agent. Only the client
+ * types of the owner's connections that can take requests, never their labels. The app suggests
+ * `@agent:other` from it.
  */
 async function gateAsk(ctx: Ctx, a: ArtifactRow): Promise<ViewGateAsk | undefined> {
   if (ctx.principal.kind === "agent") return undefined;
@@ -255,7 +256,7 @@ async function gateAsk(ctx: Ctx, a: ArtifactRow): Promise<ViewGateAsk | undefine
 /**
  * Editing on the page is off, and why: exactly where `live` would be (an owner or editor of a live
  * type on the current version, signed in or confirmed by code) when liveEditMode is null. So a
- * gate never has both, and the Edit slot shows Ask an agent with the reason instead.
+ * gate never has both; people ask an agent in a comment instead.
  */
 async function gateLiveOff(
   ctx: Ctx,

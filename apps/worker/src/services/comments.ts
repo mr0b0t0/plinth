@@ -12,7 +12,7 @@ import {
   type ClientType,
   type CommentInfo,
   type CommentStatus,
-  MENTION_AGENT_NAMES,
+  mentionAgentType,
   mentionHandle,
   pageDisplayName,
   parseMentions,
@@ -255,7 +255,7 @@ export interface NewComment {
   parent_id?: string;
   version_number?: number;
   anchor?: Anchor;
-  /** Ask an agent: the client type this new thread is a request to (root comments only). */
+  /** The client type this new thread is a request to (root comments only), as "@claude" in it. */
   request_to?: ClientType;
 }
 
@@ -280,7 +280,7 @@ export async function insertComment(
 ): Promise<CommentInfo> {
   const author = authorOf(ctx);
 
-  // Ask an agent starts a thread; a reply reaches the agent the thread already names, if any.
+  // `request_to` starts a thread; a reply reaches an agent by mentioning it.
   if (input.request_to && input.parent_id) {
     throw new ApiError("invalid_input", "request_to starts a new thread; leave it out of a reply", {
       field: "request_to",
@@ -337,17 +337,18 @@ export async function insertComment(
  *   request it answers, and agents act with the owner's authority, so letting them mention would
  *   allow reply loops between agents and would let untrusted comment text, repeated by an agent,
  *   turn into a request that looks like it came from the owner.
- * - "@claude" and "@codex" target the owner's connections of that client type.
+ * - "@claude", "@codex" and "@agent:other" (every other client) target the owner's connections of
+ *   that client type.
  * - "@<handle>" targets the artifact owner's non-revoked connection whose label normalizes to that
  *   handle (mentionHandle), leaving out tokens limited to one artifact and connections without
  *   the `mentions` scope (neither could claim the task). Agent names win over a label with the
  *   same handle; if several labels share a handle, the oldest connection is the target. Never
  *   another user's connections.
  * - Anything else stays plain text.
- * - `requestTo` (Ask an agent) targets the owner's connections of that client type, as "@claude"
- *   does, once: a client type the body already names gets no second task. checkRequest has
- *   already refused one that no connection can take, before the comment limit counted it. An
- *   agent's `requestTo` creates no task, like its @mentions.
+ * - `requestTo` (an older way to ask, still taken) targets the owner's connections of that client
+ *   type, as "@claude" does, once: a client type the body already names gets no second task.
+ *   checkRequest has already refused one that no connection can take, before the comment limit
+ *   counted it. An agent's `requestTo` creates no task, like its @mentions.
  */
 async function mentionTasksFor(
   ctx: Ctx,
@@ -373,7 +374,7 @@ async function mentionTasksFor(
     createdAt: comment.createdAt,
   };
   const tasks: MentionTaskRow[] = [];
-  const labelNames = names.filter((n) => !MENTION_AGENT_NAMES[n]);
+  const labelNames = names.filter((n) => !mentionAgentType(n));
   const owned = labelNames.length
     ? (
         await ctx.db
@@ -400,7 +401,7 @@ async function mentionTasksFor(
     : [];
   const seenConnections = new Set<string>();
   for (const name of names) {
-    const clientType = MENTION_AGENT_NAMES[name];
+    const clientType = mentionAgentType(name);
     if (clientType) {
       tasks.push({
         ...base,
@@ -438,7 +439,7 @@ async function mentionTasksFor(
 }
 
 /**
- * A comment's `request_to` (Ask an agent), checked before anything is counted or written: the
+ * A comment's `request_to`, checked before anything is counted or written: the
  * person needs the mention right (else `forbidden`), and the owner a connection of that client
  * type that can take requests (policy.ts takesRequests; else `invalid_input`, reason `no_agent`),
  * so a request is never shown as sent to an agent that cannot receive it. The `mention` decision,
@@ -463,8 +464,8 @@ async function checkRequest(
 }
 
 /**
- * Who Ask an agent can reach on this owner's artifacts: the client types of the owner's
- * connections that can take requests (policy.ts takesRequests), in CLIENT_TYPES order. Only the
+ * Which agents a mention can reach on this owner's artifacts (the gate's `ask`): the client types
+ * of the owner's connections that can take requests (policy.ts takesRequests), in CLIENT_TYPES order. Only the
  * types leave this function, never a label or an id.
  */
 export async function requestTargets(db: Db, ownerId: string): Promise<ClientType[]> {

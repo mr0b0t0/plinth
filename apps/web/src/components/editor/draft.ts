@@ -1,6 +1,7 @@
-// Unsaved drafts in sessionStorage, keyed by artifact id and the version the draft is based on, so
-// a reload (or a crash) does not lose work. Storage can be blocked or full: every access is wrapped,
-// and the editor works without it.
+// What the app keeps in sessionStorage for editing on the page, so a reload (or a crash) does not
+// lose work: the solo copy of the page edits, and the frames' rescue stores. Storage can be blocked
+// or full: every access is wrapped, and editing works without it. (The source editor's drafts went
+// with the source editor, 2026-11-23.)
 
 import {
   MAX_RESCUE_ITEMS,
@@ -8,20 +9,6 @@ import {
   type RescueItem,
   readRescueItems,
 } from "../viewer/rendererProtocol.ts";
-
-const PREFIX = "plinth-draft:";
-
-export interface Draft {
-  html: string;
-  note: string;
-  /** The version the draft was started from. Saving it uses this as base_version. */
-  base: number;
-  saved_at: string;
-}
-
-export function draftKey(artifactId: string, base: number): string {
-  return `${PREFIX}${artifactId}:v${base}`;
-}
 
 function storage(): Storage | null {
   try {
@@ -31,81 +18,8 @@ function storage(): Storage | null {
   }
 }
 
-function parse(raw: string | null, base: number): Draft | null {
-  if (!raw) return null;
-  try {
-    const d = JSON.parse(raw) as Partial<Draft>;
-    if (typeof d.html !== "string") return null;
-    return {
-      html: d.html,
-      note: typeof d.note === "string" ? d.note : "",
-      base,
-      saved_at: typeof d.saved_at === "string" ? d.saved_at : "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function saveDraft(artifactId: string, base: number, html: string, note: string): boolean {
-  const s = storage();
-  if (!s) return false;
-  try {
-    const draft: Draft = { html, note, base, saved_at: new Date().toISOString() };
-    s.setItem(draftKey(artifactId, base), JSON.stringify(draft));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function loadDraft(artifactId: string, base: number): Draft | null {
-  const s = storage();
-  if (!s) return null;
-  try {
-    return parse(s.getItem(draftKey(artifactId, base)), base);
-  } catch {
-    return null;
-  }
-}
-
-/** Every draft kept for this artifact, newest base first. */
-export function listDrafts(artifactId: string): Draft[] {
-  const s = storage();
-  if (!s) return [];
-  const out: Draft[] = [];
-  try {
-    const prefix = `${PREFIX}${artifactId}:v`;
-    for (let i = 0; i < s.length; i++) {
-      const key = s.key(i);
-      if (!key?.startsWith(prefix)) continue;
-      const base = Number(key.slice(prefix.length));
-      if (!Number.isInteger(base) || base < 1) continue;
-      const d = parse(s.getItem(key), base);
-      if (d) out.push(d);
-    }
-  } catch {
-    return out;
-  }
-  return out.sort((a, b) => b.base - a.base);
-}
-
-export function clearDraft(artifactId: string, base: number): void {
-  try {
-    storage()?.removeItem(draftKey(artifactId, base));
-  } catch {
-    // storage blocked: nothing was kept
-  }
-}
-
-/** Remove every draft of this artifact (after a successful save or an explicit discard). */
-export function clearAllDrafts(artifactId: string): void {
-  for (const d of listDrafts(artifactId)) clearDraft(artifactId, d.base);
-}
-
 // ---------- page edits (#36, solo mode: a doc edited on its page without a room) ----------
-// One per artifact, in its own namespace so the source editor's drafts never see it. It holds the
-// text the doc frame last reported, for "Restore unsaved page edits" after a reload.
+// One per artifact, in its own namespace. It holds the text the doc frame last reported, for "Restore unsaved page edits" after a reload.
 
 const PAGE_PREFIX = "plinth-draft:page-edit:";
 
