@@ -1,6 +1,6 @@
 {
   "name": "@mr0b0t0/plinth",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Run Plinth, a home for HTML artifacts that AI agents publish, on your own computer or Cloudflare account",
   "license": "MIT",
   "type": "module",

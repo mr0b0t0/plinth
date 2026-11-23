@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.8.0 (2026-11-23)
+
 - **Show an artifact in the conversation.** Ask your agent to show, open or bring back a page
   that is already on Plinth, and the new `show_artifact` tool puts it under the call as a
   read-only preview, as a publish does. Works in apps that render MCP Apps (T3 Code, ChatGPT,
