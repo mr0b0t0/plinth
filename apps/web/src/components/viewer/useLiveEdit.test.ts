@@ -1250,6 +1250,23 @@ describe("useLiveEdit", () => {
     expect(sentToFrame("pick").at(-1)?.[0]).toMatchObject({ on: false });
   });
 
+  it("offers no pick on an HTML deck, whose frame never edits", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const deck = gate("room");
+    const { result } = renderHook(() =>
+      useLiveEdit({
+        gate: { ...deck, artifact: { ...deck.artifact, type: "slides" }, no_editor: true },
+        frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        frameKey: KEY,
+        onReload: vi.fn(),
+        onPicked: vi.fn(),
+      }),
+    );
+    expect(result.current.canPick).toBe(false);
+  });
+
   it("solo keeps a copy while dirty, and a reload offers it back with its own base and files", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { calls } = stubApi({

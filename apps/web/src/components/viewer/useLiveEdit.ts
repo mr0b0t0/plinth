@@ -1331,7 +1331,8 @@ export function useLiveEdit({
     openReview,
     saveRestore,
     dropRestore,
-    canPick: editing && PICK_TYPES.has(artifact.type),
+    // An HTML deck (`no_editor`) never enters edit mode in its frame, so nothing there can pick.
+    canPick: editing && PICK_TYPES.has(artifact.type) && gate.no_editor !== true,
     pick,
   };
 }
