@@ -6,7 +6,7 @@ version at the same link, so a report, a coverage page or a docs preview stays o
 always shows the latest build.
 
 ```yaml
-- uses: mr0b0t0/plinth/publish@v0.6.0
+- uses: mr0b0t0/plinth/publish@v0.7.0
   with:
     path: dist
     token: ${{ secrets.PLINTH_TOKEN }}

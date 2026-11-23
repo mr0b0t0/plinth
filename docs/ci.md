@@ -34,7 +34,7 @@ artifact stops it.
 The New token dialog lists only artifacts you own or edit. Publish the first version once, then
 make the token for it:
 
-- locally: `npx @mr0b0t0/plinth@0.6.0 publish dist` (it signs you in in the browser and prints the
+- locally: `npx @mr0b0t0/plinth@0.7.0 publish dist` (it signs you in in the browser and prints the
   link), or
 - from CI with an account-wide token from **Connections** (under "Advanced"): without `id`, the
   first run creates a private artifact and the job summary prints its id. Then switch to a token
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v4 # pin by commit SHA in your own workflows
       - run: npm ci && npm test -- --coverage
       - id: plinth
-        uses: mr0b0t0/plinth/publish@v0.6.0
+        uses: mr0b0t0/plinth/publish@v0.7.0
         with:
           path: coverage/lcov-report
           token: ${{ secrets.PLINTH_TOKEN }}
@@ -119,7 +119,7 @@ Tolerating a race (the next run publishes the newer commit):
 ```yaml
       - id: plinth
         continue-on-error: true
-        uses: mr0b0t0/plinth/publish@v0.6.0
+        uses: mr0b0t0/plinth/publish@v0.7.0
         with:
           path: dist
           token: ${{ secrets.PLINTH_TOKEN }}
@@ -189,7 +189,7 @@ publish-report:
   allow_failure:
     exit_codes: [3]                    # another publish raced this one
   script:
-    - npx --yes @mr0b0t0/plinth@0.6.0 publish public --id "$PLINTH_ARTIFACT"
+    - npx --yes @mr0b0t0/plinth@0.7.0 publish public --id "$PLINTH_ARTIFACT"
         --note "$CI_COMMIT_TITLE ($CI_COMMIT_SHORT_SHA)" --json > plinth.json
   artifacts:
     when: always
@@ -224,7 +224,7 @@ fi
 exit "$status"
 ```
 
-Install the CLI once with `npm install -g @mr0b0t0/plinth@0.6.0`, so nothing is downloaded at
+Install the CLI once with `npm install -g @mr0b0t0/plinth@0.7.0`, so nothing is downloaded at
 3 a.m. `|| status=$?` keeps `set -e` from exiting before the exit code is read. With a token
 limited to one artifact, `--id` may be left out.
 

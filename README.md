@@ -100,7 +100,7 @@ read that artifact and publish new versions of it (Connections, **New token**, *
 artifact**):
 
 ```yaml
-- uses: mr0b0t0/plinth/publish@v0.6.0
+- uses: mr0b0t0/plinth/publish@v0.7.0
   with:
     path: dist
     token: ${{ secrets.PLINTH_TOKEN }}

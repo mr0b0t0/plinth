@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.7.0 (2026-11-23)
+
 ### Editing on the page, the way Claude does it
 
 - **Pages are editable when they open.** Owners and editors of a doc, a deck, a sheet or a design

@@ -6,7 +6,7 @@ import { HOSTED_ORIGIN, REPO_URL } from "./harnesses.ts";
 import { ARTIFACT_ID_RE } from "./schemas.ts";
 
 /** The Action, pinned to a release tag (never a moving tag). */
-export const ACTION_REF = "mr0b0t0/plinth/publish@v0.6.0";
+export const ACTION_REF = "mr0b0t0/plinth/publish@v0.7.0";
 
 /** The guide to publishing from CI. */
 export const CI_DOCS_URL = `${REPO_URL}/blob/main/docs/ci.md`;
