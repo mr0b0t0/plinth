@@ -1,5 +1,5 @@
 // Editing a doc on its page, live across editors (#36): the owner and an editor have the doc open
-// in two browser contexts. A block one of them opens shows up held in the other, the text arrives
+// in two browser contexts, both in edit mode from the moment it opens (there is no Edit toggle). A block one of them opens shows up held in the other, the text arrives
 // as it is typed, Publish makes an immutable version, a version an agent publishes meanwhile is
 // merged under the page edits (or frozen for the whole-draft review in the page when it touches the
 // same lines), two editors' choices in the review never both take effect, and a commenter never
@@ -9,6 +9,7 @@ import { type Browser, expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { expectEditing, publishChanges, saveStatus } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 
@@ -70,36 +71,8 @@ async function openAs(browser: Browser, email: string, slug: string, base?: Page
   return page;
 }
 
-/** Turn edit mode on: the toggle, or its item in the ⋯ menu at phone width. */
-async function startEditing(page: Page) {
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
-  await expect(page.getByRole("region", { name: "Editing on the page" })).toBeVisible();
-  await expect(page.frameLocator(CURRENT_FRAME).locator("main.plinth-doc--editing")).toBeVisible();
-}
-
-/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
-async function stopEditing(page: Page) {
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) {
-    // On a wide screen the toggle is the one way in and out: the strip has no Done.
-    await expect(
-      page
-        .getByRole("region", { name: "Editing on the page" })
-        .getByRole("button", { name: "Done" }),
-    ).toHaveCount(0);
-    await toggle.click();
-  } else {
-    await page
-      .getByRole("region", { name: "Editing on the page" })
-      .getByRole("button", { name: "Done" })
-      .click();
-  }
-}
+/** Edit mode is on from the moment the page opens: no toggle, no Done. */
+const startEditing = (page: Page) => expectEditing(page, "main.plinth-doc--editing");
 
 const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
 
@@ -163,23 +136,82 @@ test("two editors on one doc: a held block, typing that arrives live, Publish ma
   await theirs.pressSequentially(" And theirs.");
   await expect(frameOf(page).locator("p", { hasText: "And theirs." })).toBeVisible();
 
-  const results = await new AxeBuilder({ page }).include(".pl-editbar").analyze();
+  const results = await new AxeBuilder({ page }).include(".pl-savestatus").analyze();
   expect(results.violations).toEqual([]);
 
   await field.press("Escape");
   await expect(frameOf(page).locator("p", { hasText: "Typed live." })).toBeVisible();
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
-    "Published as v2",
-  );
+  await expect(saveStatus(page)).toContainText("Draft saved");
+  await publishChanges(page);
+  await expect(saveStatus(page)).toContainText("Published as v2");
   const detail = await apiGet(page.request, `/artifacts/${s.id}`);
   expect(detail.body.current_version).toBe(2);
   expect(detail.body.content).toContain("First paragraph. Typed live.");
   expect(detail.body.content).toContain("Third paragraph. And theirs.");
 
-  await stopEditing(page);
-  await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
+  // Still editing: there is no way out of edit mode, only on with the page.
+  await expect(frameOf(page).locator("main.plinth-doc--editing")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Done" })).toHaveCount(0);
   await other.context().close();
+});
+
+test("leaving the page publishes what was typed: closing the tab makes the version", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page);
+  const tab = await openAs(browser, s.owner, s.slug);
+  await startEditing(tab);
+  await connected(tab);
+  await frameOf(tab).locator("p", { hasText: "Second paragraph." }).click();
+  const field = frameOf(tab).locator('.plinth-doc__open [contenteditable="true"]');
+  await field.press("End");
+  await field.pressSequentially(" Kept on leaving.");
+  await field.press("Escape");
+  await expect(saveStatus(tab)).toContainText("Draft saved");
+  const request = tab.context().request;
+  await tab.close({ runBeforeUnload: false });
+  await expect
+    .poll(async () => (await apiGet(request, `/artifacts/${s.id}`)).body.current_version, {
+      timeout: 15_000,
+    })
+    .toBe(2);
+  const detail = await apiGet(request, `/artifacts/${s.id}`);
+  expect(detail.body.content).toContain("Second paragraph. Kept on leaving.");
+  await tab.context().close();
+});
+
+test("comments open beside edit mode, and a block picked on the page pins the comment", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page);
+  await openAs(browser, s.owner, s.slug, page);
+  await startEditing(page);
+  await connected(page);
+  const frame = page.locator(CURRENT_FRAME);
+  const src = await frame.getAttribute("src");
+  await page.getByRole("button", { name: "Comments" }).click();
+  const panel = page.getByRole("region", { name: "Comments" });
+  await expect(panel).toBeVisible();
+  // The same frame, still editing: no reload into review mode.
+  expect(await page.locator(CURRENT_FRAME).getAttribute("src")).toBe(src);
+  await expect(frameOf(page).locator("main.plinth-doc--editing")).toBeVisible();
+  // Point at something: the editing frame picks a block, without opening it.
+  await panel.getByRole("button", { name: /Pin to an element|Point at something/ }).click();
+  await frameOf(page).locator("p", { hasText: "Third paragraph." }).click();
+  await expect(frameOf(page).locator('[contenteditable="true"]')).toHaveCount(0);
+  await expect(panel).toContainText("Third paragraph.");
+  await panel.getByRole("textbox").fill("Tighten this.");
+  await panel.getByRole("button", { name: "Comment", exact: true }).click();
+  await expect(panel.locator("[data-thread-id]")).toHaveCount(1);
+  const comments = await apiGet(page.request, `/artifacts/${s.id}/comments`);
+  expect(comments.body.items[0].anchor).toMatchObject({ kind: "page", key: "block-4" });
+  // Typing goes on in the page with the panel open.
+  await frameOf(page).locator("p", { hasText: "First paragraph." }).click();
+  await expect(frameOf(page).locator('.plinth-doc__open [contenteditable="true"]')).toBeFocused();
 });
 
 test("an agent's version is merged under the page edits, or frozen for review when it overlaps", async ({
@@ -196,9 +228,7 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   await field.press("End");
   await field.pressSequentially(" Mine.");
   await field.press("Escape");
-  await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
-    "Draft saved",
-  );
+  await expect(saveStatus(page)).toContainText("Draft saved");
 
   const client = await mcpClient(s.token);
   try {
@@ -242,12 +272,12 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   await expect(review).toBeVisible();
   // The strip says what happened, once: the review has no heading repeating it.
   await expect(review.getByRole("heading", { level: 2 })).toHaveCount(0);
-  // While the review is open, the strip shows its status only: the review's Back is the one way
-  // out, so neither "Review changes" nor Done is offered there.
+  // While the review is open, the save status shows its status only: the review's Back is the
+  // one way out, so neither "Review changes" nor Done is offered there.
   await expect(bar.getByRole("button", { name: "Review changes" })).toHaveCount(0);
   await expect(bar.getByRole("button", { name: "Done" })).toHaveCount(0);
   await expect(bar).toContainText("v3 was published while you edited");
-  // The update shows in the strip only: no toast repeats it while editing.
+  // The update shows in the save status only: no toast repeats it while editing.
   await expect(page.getByText("Updated to v3")).toHaveCount(0);
   // The bar names the base the changes were made on, not the version waiting for review, however
   // late the news of it arrives.
@@ -395,6 +425,8 @@ test("a commenter never sees draft text, nor any editing control", async ({ page
   await expect(frameOf(commenter).locator("p", { hasText: "Second paragraph." })).toBeVisible();
   await expect(frameOf(commenter).locator("main")).not.toContainText("Secret draft words");
   await expect(commenter.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  await expect(saveStatus(commenter)).toHaveCount(0);
+  await expect(frameOf(commenter).locator("main.plinth-doc--editing")).toHaveCount(0);
   await expect(commenter.getByText(/Unpublished changes/)).toHaveCount(0);
   await commenter.context().close();
 });

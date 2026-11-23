@@ -181,7 +181,14 @@ describe("Comment from the page", () => {
   afterEach(() => {
     if (restore) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", restore);
   });
+  // An editor who must sign in first is not editing: a keyless "Comment" is a hint the page may
+  // give. Owners and editors who edit (always, from the moment the page opens) are below.
   const docGate = (n = 1) =>
+    gateOf(
+      { artifact: DOC, role: "editor", live: { mode: "room", draft: null, sign_in: true } },
+      n,
+    );
+  const editingGate = (n = 1) =>
     gateOf({ artifact: DOC, role: "editor", live: { mode: "room", draft: null } }, n);
 
   /** Post a renderer message from the frame the page shows now (`key`: the frame's, or none). */
@@ -200,8 +207,8 @@ describe("Comment from the page", () => {
     };
   }
 
-  async function open(extra?: (c: Call) => Response | undefined) {
-    const s = stub((n) => docGate(n), extra);
+  async function open(extra?: (c: Call) => Response | undefined, gate = docGate) {
+    const s = stub((n) => gate(n), extra);
     const ArtifactPage = await loadPage();
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
@@ -325,9 +332,11 @@ describe("Comment from the page", () => {
     expect(await within(panel).findByText("Again")).toBeTruthy();
   });
 
-  it("in edit mode, takes it only with the frame's key, and opens the comments panel pinned there", async () => {
-    const { s, user, post } = await open();
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+  it("in edit mode, takes it only with the frame's key, and opens the comments panel pinned there, still editing", async () => {
+    const { s, user, post } = await open(undefined, editingGate);
+    // Edit mode is on from the start: no toggle to press.
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    const views = s.views();
     post(
       {
         type: "live",
@@ -335,7 +344,7 @@ describe("Comment from the page", () => {
         failed: false,
         editing: true,
         holding: false,
-        dirty: false,
+        dirty: true,
         unflushed: false,
         rev: 7,
         base_version: 3,
@@ -356,6 +365,11 @@ describe("Comment from the page", () => {
     post({ type: "ask", anchor: { key: "block-1", text: "Intro" }, what: "paragraph" }, "frame");
     const panel = await screen.findByRole("region", { name: "Comments" });
     expect(await within(panel).findByText("Intro")).toBeTruthy();
+    // Still editing, with the changes unpublished: nothing was published and the frame was not
+    // read again into review mode.
+    expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
+    expect(s.calls.some((c) => c.path.includes("/live/checkpoint"))).toBe(false);
+    expect(s.views()).toBe(views);
     await user.type(within(panel).getByRole("textbox", { name: "New comment" }), "@claude fix");
     await user.click(within(panel).getByRole("button", { name: "Comment" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
@@ -386,14 +400,17 @@ describe("?edit where this person cannot edit on the page", () => {
     }
   });
 
-  it("focuses Sign in to edit for an editor confirmed by code", async () => {
+  it("focuses the ⋯ menu, which holds Sign in to edit, for an editor confirmed by code", async () => {
     window.history.replaceState(null, "", "/a/garden-plan?edit");
     stub(
       gateOf({ artifact: DOC, role: "editor", live: { mode: "room", draft: null, sign_in: true } }),
     );
     const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    const link = await screen.findByRole("link", { name: "Sign in to edit" });
-    await waitFor(() => expect(document.activeElement).toBe(link));
+    const menu = await screen.findByRole("button", { name: "Artifact actions" });
+    await waitFor(() => expect(document.activeElement).toBe(menu));
+    await user.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Sign in to edit" })).toBeTruthy();
   });
 });

@@ -2767,17 +2767,41 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
 ## Inline editing
 
 Owners and editors edit docs, decks, sheets and design systems on their page (spec: "Editing",
-"Editing on the page", "Design systems").
+"Editing on the page", "Design systems"), in edit mode from the moment the page opens (always-on
+editing, 2026-11-23; there is no toggle). Edit mode starts only where the gate has `live` (an
+owner or editor of a live type on the current version, signed in, under origin isolation), so
+commenters and viewers load nothing new.
 Every editing control, and every rendering of draft or version content, runs in Plinth's own
-renderer on the artifact's content origin (`script-src 'self'`); the app page holds the strip and
-makes the REST calls, and renders no content. Nothing new is reachable from a page: no endpoint,
-cookie, CSP, sandbox flag or setting was added, and the content host still sends no CORS header.
+renderer on the artifact's content origin (`script-src 'self'`); the app page holds the save
+status and makes the REST calls, and renders no content. Nothing new is reachable from a page: no
+endpoint, cookie, CSP, sandbox flag or setting was added, and the content host still sends no CORS
+header.
 
 - **The frame boundary.** The app accepts an editing message (`live`, `save`, `draft`, `resolved`,
-  `leave`, and `ask` in edit mode) only from the window of the frame it holds, at the exact content
-  origin, and only with that frame's key; it posts editing messages only to that origin, never
-  `"*"`. Under opaque isolation and the path fallback there is no editing on the page at all, so no
-  frame whose origin is `"null"` is ever trusted with an editing message.
+  `picked`, `leave`, and `ask` in edit mode) only from the window of the frame it holds, at the
+  exact content origin, and only with that frame's key; it posts editing messages (`pick`
+  included) only to that origin, never `"*"`. Under opaque isolation and the path fallback there
+  is no editing on the page at all, so no frame whose origin is `"null"` is ever trusted with an
+  editing message.
+- **Comments beside edit mode.** An editing frame is never reloaded into comment review mode, so
+  the review bridge is never injected next to an editor. The comments panel's "Pin to an element"
+  asks the frame to pick (`pick { on }`, no data); the frame answers once with `picked`: a page
+  anchor's structural key and a short label, checked by the same rules as an `ask` anchor and as
+  the server's page anchors (key pattern, label length, no control or format characters), or
+  null when the person cancelled. The app takes it only while it waits for a pick it asked for,
+  and the person still writes and posts the comment with their own session, as for every anchor.
+  The label is the block's first words as the person sees them (a doc), or structural words (a
+  deck, a design system's published names), never text the person did not see, and it is
+  rendered as text.
+- **Leaving publishes.** In room mode leaving the page (a `pagehide`, or the viewer unmounting)
+  sends the ordinary checkpoint (`reason: "done"`, with `base_version` and `rev`) with `keepalive`,
+  under the session cookie and the CSRF header like every app request; a frozen draft, one that
+  cannot be a version, or typing the page cannot save is never sent, and the server's own checks
+  (stale base, frozen draft, the lock) apply unchanged.
+- **Solo autosave.** A solo copy publishes itself with `PUT`, `base_version` (the version the copy
+  is based on: the shown one, or the one this frame last published) and `files_from_version`, so a
+  newer version from anyone refuses it (409) and nothing is overwritten; the autosave then stops
+  until the person reviews.
 - **The frame key.** For an owner or editor who may edit, the app opens each frame load at its
   enter URL with a fresh 32-byte random key in the fragment (`#plinth-k=…`). A fragment is never
   sent to a server, survives the enter redirect (a `Location` without a fragment keeps it) and
@@ -2796,7 +2820,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   earlier, kept in the app origin's `sessionStorage` under the artifact's id; the frame checks it
   with the type's rules before it renders it read-only, and Publish your changes sends the app's own copy; co-editor emails
   and their places ("row 12", built by the renderer from lease positions, never content) become
-  text nodes (the strip's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
+  text nodes (the save status's tooltip) and an attribute React sets (its accessible name). No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
 - **The rescue store.** A doc block's, a deck's or a design system's formatted text's typing the
   room's draft does not hold yet (typing that cannot be written as typed, or that a lost lease, a
@@ -3131,13 +3155,13 @@ flag, env var or MCP tool was added.
   a name like `invoice<U+202E>vsc.xlsx` cannot read as another in History or in the app.
 - **v1's note.** `POST /api/v1/artifacts` takes `note` for v1 (the zod note schema, at most 500
   characters), which History shows as text. MCP's `publish_artifact` does not list it.
-- **`?edit` starts editing only where the gate allows it.** The page starts edit mode from `?edit`
-  only when the gate has `live` (an owner or editor of a live type on the current version, signed
-  in, under origin isolation), as the Edit toggle does. The `focus: "first"` it adds to the `edit`
+- **`?edit` focuses only where the gate allows editing.** The page is in edit mode only when the
+  gate has `live` (an owner or editor of a live type on the current version, signed in, under
+  origin isolation), with or without `?edit`. The `focus: "first"` that `?edit` adds to the `edit`
   message goes to the frame the app holds, at its exact content origin, like every editing message
   ([Inline editing](#inline-editing)); in the frame it only moves focus or asks the room for a
-  lease, which the room checks as it checks a click. A link someone sends with `?edit` opens edit
-  mode for its reader only where they could press Edit themselves, and edits nothing by itself.
+  lease, which the room checks as it checks a click. A link someone sends with `?edit` changes
+  nothing for a reader who cannot edit, and edits nothing by itself.
 
 ## Operator checklist for the content domain
 

@@ -10,6 +10,7 @@ import { seedSession } from "../support/db.ts";
 import { ACME, ACME_ASSETS, acmeWith, stubGoogleFonts } from "../support/designSystem.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
+import { viewAsReader } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 const WIDE = { width: 1280, height: 900 };
@@ -83,7 +84,9 @@ test.describe("a published design system", () => {
   }) => {
     const problems = watchConsole(page);
     const fonts = await stubGoogleFonts(page);
-    const { artifact, client } = await publishDs(page);
+    const { artifact, client, token } = await publishDs(page);
+    // As people view it: the owner is always in edit mode.
+    await viewAsReader(page.context(), page.request, artifact.id, token);
     try {
       await page.emulateMedia({ colorScheme: "light" });
       await page.goto(`/a/${artifact.slug}`);

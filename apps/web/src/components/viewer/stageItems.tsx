@@ -1,6 +1,11 @@
 // The viewer's chrome as item lists: the ⋯ menu (MENU_ITEMS), the controls on the right of the bar
-// (BAR_CONTROLS) and the strip of notices under the bar (STRIP_ITEMS). ViewerStage owns the state
-// and builds one StageContext; each item reads it and returns its entries or element, or nothing.
+// (BAR_CONTROLS), the save status beside the version (STATUS_ITEMS) and the strip of notices under
+// the bar (STRIP_ITEMS). ViewerStage owns the state and builds one StageContext; each item reads it
+// and returns its entries or element, or nothing.
+//
+// Editing on the page is always on for owners and editors (decided 2026-11-23): there is no Edit
+// toggle, no Done and no source editor item. The bar holds History, Comments, Share and ⋯ (and
+// Present for a deck); the save status says what happens to the changes.
 //
 // A feature adds its own item function (in its own file) and one line in the list where it
 // belongs. Items for one artifact type go in TYPE_MENU_ITEMS, items for one declared capability in
@@ -26,6 +31,7 @@ import {
   ShareNetworkIcon,
   SunIcon,
   TrashIcon,
+  UploadSimpleIcon,
 } from "@phosphor-icons/react";
 import {
   type AppConfig,
@@ -47,9 +53,8 @@ import {
 } from "../ui/index.ts";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
-import { deckSettings, notWhileEditing, unpublishableReason } from "./deckItems.ts";
+import { deckSettings } from "./deckItems.ts";
 import { designExportDialog, downloadDesign, unlessExports } from "./designItems.tsx";
-import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import {
   postBoardExport,
@@ -57,6 +62,7 @@ import {
   postPrint,
   rendererTargetOrigin,
 } from "./rendererProtocol.ts";
+import { SaveStatus } from "./SaveStatus.tsx";
 import { replaceSheet, replaceSheetDialog } from "./sheetReplaceItems.tsx";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
@@ -64,7 +70,7 @@ import type { ViewUpdate } from "./useViewUpdate.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
-/** Who may open the editor. The editor page and the API check again. */
+/** Who may change the artifact (owners and editors). The API checks again. */
 export const canEdit = (role: OkGate["role"]) => role === "owner" || role === "editor";
 
 /** Everything an item may read or do. Built by ViewerStage on each render. */
@@ -77,7 +83,7 @@ export interface StageContext {
   compact: boolean;
   frame: HTMLIFrameElement | null;
   contentOrigin: string;
-  /** On-page editing (#36). */
+  /** On-page editing (#36), always on for whoever may edit here. */
   live: LiveEdit;
   editing: boolean;
   /** Presenting a deck (usePresentation); inert for every other type. */
@@ -86,7 +92,6 @@ export interface StageContext {
   update: ViewUpdate;
   hrefs: {
     current: string;
-    edit: string;
     history: string;
     report: string;
     settings: string;
@@ -102,15 +107,12 @@ export interface StageContext {
     toggle: () => void;
   };
   refs: {
-    edit: RefObject<HTMLButtonElement | null>;
+    /** The save status, where focus goes on Esc at the top level of the frame. */
     bar: RefObject<HTMLElement | null>;
   };
   theme: { next: Theme; set: (t: Theme) => void };
   actions: {
     openShare: () => void;
-    toggleEditing: () => void;
-    startEditing: () => void;
-    finishEditing: () => void;
     /** After a notice button that may have unmounted with focus in it: move focus on. */
     refocusAfterNotice: () => void;
     /** Fetch a fresh gate (the newest version). */
@@ -145,26 +147,34 @@ const compactShareHistory: MenuItem = (c) =>
       ]
     : [];
 
-/** At phone width the Edit toggle folds in here; while editing, the strip's Done is the way out. */
-const compactEditToggle: MenuItem = (c) =>
-  c.compact && c.live.available && !c.live.signIn && !c.editing && !c.live.blocked
-    ? [{ label: "Edit on the page", icon: PencilSimpleIcon, onSelect: c.actions.toggleEditing }]
-    : [];
-
 /** The dialog's id in STAGE_DIALOGS: the confirmation of discardEdits. */
 export const DISCARD_EDITS_DIALOG = "discard-edits";
 
-/**
- * Discarding the changes made on the page: here, in the menu that already holds the artifact's
- * actions, not in a second menu on the edit strip. Only while editing with something to discard
- * and nothing to review (the review has its own Discard) or publishing.
- */
-const discardEdits: MenuItem = (c) =>
+/** There are changes on the page, and nothing to review (the review has its own choices). */
+const editsWaiting = (c: StageContext) =>
   c.editing &&
-  c.live.status?.dirty &&
+  c.live.unpublished &&
   c.live.phase !== "conflict" &&
   !c.live.saving &&
-  !c.live.reviewing
+  !c.live.reviewing;
+
+/**
+ * Publishing the changes now, rather than after the quiet spell or on leaving the page: the same
+ * as Cmd/Ctrl+S. Only with changes that can be a version (not while typing the page cannot save
+ * waits, or a deck has no slide to show).
+ */
+const publishEdits: MenuItem = (c) =>
+  editsWaiting(c) && c.live.status?.publishable !== false && !c.live.status?.unsavable
+    ? [{ label: "Publish changes", icon: UploadSimpleIcon, onSelect: () => void c.live.publish() }]
+    : [];
+
+/**
+ * Discarding the changes made on the page: here, in the menu that already holds the artifact's
+ * actions. Only while there is something to discard and nothing to review (the review has its own
+ * Discard) or publishing.
+ */
+const discardEdits: MenuItem = (c) =>
+  editsWaiting(c)
     ? [
         {
           label: "Discard unpublished changes",
@@ -175,8 +185,12 @@ const discardEdits: MenuItem = (c) =>
       ]
     : [];
 
-const compactSignInToEdit: MenuItem = (c) =>
-  c.compact && c.live.available && c.live.signIn
+/**
+ * An editor confirmed by code without an account: editing needs one. The one entry, at every
+ * width (the bar holds only History, Comments, Share and ⋯).
+ */
+const signInToEdit: MenuItem = (c) =>
+  c.live.available && c.live.signIn
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
@@ -202,19 +216,6 @@ const discardEditsDialog: StageDialog = {
     />
   ),
 };
-
-/**
- * The source editor, for a type that has one (not a sheet or a design: agents change those) and
- * only where the page cannot be edited in place. Where it can (a doc), the Edit toggle is the one
- * way in, and no source is offered beside it. An HTML deck has none either (`no_editor`).
- */
-const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role) &&
-  typeDef(c.gate.artifact.type)?.editor &&
-  !c.live.available &&
-  !c.gate.no_editor
-    ? [{ label: "Edit", icon: PencilSimpleIcon, href: c.hrefs.edit }]
-    : [];
 
 const settings: MenuItem = (c) =>
   c.gate.role === "owner" ? [{ label: "Settings", icon: GearSixIcon, href: c.hrefs.settings }] : [];
@@ -286,7 +287,7 @@ const downloadBoard: MenuItem = (c) => [
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [notWhileEditing(printTyped), notWhileEditing(downloadPptx), deckSettings],
+  slides: [printTyped, downloadPptx, deckSettings],
   design: [unlessExports(printTyped), downloadDesign],
   sheet: [printTyped, downloadSheet],
   whiteboard: [boardSettings, downloadBoard],
@@ -340,15 +341,14 @@ const switchTheme: MenuItem = (c) => [
 /** The ⋯ menu, top to bottom. One item per line. */
 export const MENU_ITEMS: readonly MenuItem[] = [
   compactShareHistory,
-  compactEditToggle,
-  compactSignInToEdit,
-  editSource,
+  signInToEdit,
   replaceSheet,
   settings,
   stats,
   typeItems,
   capabilityItems,
   report,
+  publishEdits,
   discardEdits,
   separator,
   switchTheme,
@@ -384,46 +384,6 @@ const historyLink: StageNode = (c) =>
     </Tooltip>
   );
 
-const editToggle: StageNode = (c) =>
-  c.live.available &&
-  !c.compact &&
-  !c.live.signIn && (
-    <Tooltip
-      content={c.editing ? "Done editing" : (c.live.blocked ?? "Edit on the page")}
-      placement="bottom"
-    >
-      {/* Off while the page has problems only an agent can fix: still focusable, so its reason
-          (the tooltip) can be read; Ask an agent is the way in. */}
-      <Button
-        ref={c.refs.edit}
-        variant="ghost"
-        icon={PencilSimpleIcon}
-        aria-label="Edit"
-        aria-pressed={c.editing}
-        aria-disabled={c.live.blocked && !c.editing ? true : undefined}
-        className="pl-viewer__edit"
-        onClick={c.live.blocked && !c.editing ? undefined : c.actions.toggleEditing}
-      />
-    </Tooltip>
-  );
-
-const signInToEdit: StageNode = (c) =>
-  c.live.available &&
-  !c.compact &&
-  c.live.signIn && (
-    <Tooltip content="Sign in to edit" placement="bottom">
-      <Link
-        to={c.hrefs.signIn}
-        aria-label="Sign in to edit"
-        className={buttonClassName({ variant: "ghost", iconOnly: true })}
-      >
-        <span className="pl-button__content">
-          <PencilSimpleIcon size={16} aria-hidden="true" />
-        </span>
-      </Link>
-    </Tooltip>
-  );
-
 /**
  * The count sits beside the button, not in it, so the button's name stays exactly its visible
  * label (WCAG 2.5.3); the panel announces the numbers.
@@ -451,12 +411,12 @@ const commentsToggle: StageNode = (c) => {
 };
 
 /**
- * Present a deck: the one bar control for full screen and presenter view (presentEntries). Not
- * while the deck is edited on the page: Done publishes and ends editing first.
+ * Present a deck: the one bar control for full screen and presenter view (presentEntries), at all
+ * times. While the deck is edited on the page the frame holds edit mode off while it presents, and
+ * presents the published deck (renderers/slides/boot.ts).
  */
 const presentButton: StageNode = (c) =>
-  c.present.available &&
-  !c.editing && (
+  c.present.available && (
     <Menu
       label="Present"
       icon={PlayIcon}
@@ -489,13 +449,45 @@ const actionsMenu: StageNode = (c) => (
 /** The controls on the right of the bar, left to right. One control per line. */
 export const BAR_CONTROLS: readonly StageItem[] = [
   { id: "history", render: historyLink },
-  { id: "edit", render: editToggle },
-  { id: "sign-in-to-edit", render: signInToEdit },
   { id: "present", render: presentButton },
   { id: "comments", render: commentsToggle },
   { id: "share", render: shareButton },
   { id: "menu", render: actionsMenu },
 ];
+
+// ---------- the save status, beside the version ----------
+
+/**
+ * What happens to the changes made on the page (SaveStatus): while editing, and for an owner or
+ * editor whose page stays read-only (problems only an agent can fix, too large), the reason, once.
+ */
+const saveStatusLine: StageNode = ({ editing, live, gate, refs }) =>
+  live.mode &&
+  (editing || live.blocked) && (
+    <SaveStatus
+      focusRef={refs.bar}
+      phase={live.phase}
+      mode={live.mode}
+      version={live.status?.base_version || gate.artifact.version}
+      connected={live.status?.connected ?? false}
+      connecting={live.status === null}
+      dirty={live.unpublished}
+      flushed={live.status ? !live.status.unflushed : undefined}
+      saving={live.saving}
+      savedVersion={live.savedVersion}
+      rebasedVersion={live.rebasedVersion}
+      conflictVersion={
+        live.status?.conflict_version ?? live.review?.current ?? live.newerVersion ?? null
+      }
+      editors={live.status?.editors ?? []}
+      onReview={() => void live.openReview()}
+      reviewing={live.reviewing}
+      blocked={live.blocked}
+    />
+  );
+
+/** Beside the version, left to right. One item per line. */
+export const STATUS_ITEMS: readonly StageItem[] = [{ id: "save-status", render: saveStatusLine }];
 
 // ---------- the strip under the bar ----------
 
@@ -514,40 +506,17 @@ const olderVersion: StageNode = ({ gate: { artifact }, hrefs, update }) =>
 
 const dataNotice: StageNode = (c) => <DataNotice gate={c.gate} />;
 
-const editBar: StageNode = ({ editing, live, gate, refs, actions, compact }) =>
-  editing &&
-  live.mode && (
-    <EditBar
-      focusRef={refs.bar}
-      phase={live.phase}
-      mode={live.mode}
-      version={live.status?.base_version || gate.artifact.version}
-      connected={live.status?.connected ?? false}
-      connecting={live.status === null}
-      dirty={live.status?.dirty ?? false}
-      flushed={live.status ? !live.status.unflushed : undefined}
-      saving={live.saving}
-      savedVersion={live.savedVersion}
-      rebasedVersion={live.rebasedVersion}
-      newerVersion={live.newerVersion}
-      conflictVersion={live.status?.conflict_version ?? live.review?.current ?? null}
-      publishable={live.status?.publishable ?? true}
-      unpublishableReason={unpublishableReason(gate.artifact.type)}
-      editors={live.status?.editors ?? []}
-      onPublish={() => void live.publish()}
-      onDone={actions.finishEditing}
-      onReview={() => void live.openReview()}
-      reviewing={live.reviewing}
-      compact={compact}
-    />
-  );
-
+/**
+ * For an owner or editor who is not editing (an editor who must sign in first, a page that stays
+ * read-only): someone's unpublished changes, someone editing, a version waiting for review. While
+ * editing, only a solo copy this tab kept from before a reload, which no frame holds.
+ */
 const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
   live.available &&
-  !editing && (
+  (!editing || (live.restore !== null && !live.unpublished)) && (
     <LiveDraftNotice
-      draft={gate.live?.draft ?? null}
-      status={live.status}
+      draft={editing ? null : (gate.live?.draft ?? null)}
+      status={editing ? null : live.status}
       restore={live.restore}
       onSaveRestore={() => {
         void live.saveRestore().then(actions.refocusAfterNotice);
@@ -583,7 +552,6 @@ const reviewDiscard: StageNode = ({ live }) => (
 export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "older-version", render: olderVersion },
   { id: "data-notice", render: dataNotice },
-  { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
   { id: "review-discard", render: reviewDiscard },
 ];

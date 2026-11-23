@@ -1,11 +1,12 @@
-// One line above a doc or a sheet for its owners and editors while they are not editing it on the
-// page (#36): someone left unpublished changes on the page ("Unpublished changes · Ana, 3 h ago"),
-// someone is editing right now, or a version published meanwhile waits for review beside the
-// unpublished changes. The line only says so, in the edit strip's own look (a bronze rule and a
-// pencil), on one line: the bar's Edit toggle is the one way in, and the edit strip and the ⋯ menu
-// hold Publish, Discard and Review changes. Only a copy this tab kept from before a reload (solo
-// mode), which no frame holds, gets its own Publish and Discard here. Viewers and commenters never
-// get here: the gate gives them no `live`, so they see versions only.
+// One line above a doc, a deck, a sheet or a design system for its owners and editors while they
+// are not editing it on the page (#36; editing is always on otherwise, so this is an editor who
+// must sign in first, or a page that stays read-only): someone left unpublished changes on the
+// page ("Unpublished changes · Ana, 3 h ago"), someone is editing right now, or a version
+// published meanwhile waits for review beside the unpublished changes. The line only says so (a
+// bronze rule and a pencil), on one line, with no buttons. Only a copy this tab kept from before a
+// reload (solo mode), which no frame holds, gets its own Publish and Discard here, also while
+// editing. Viewers and commenters never get here: the gate gives them no `live`, so they see
+// versions only.
 import { PencilSimpleIcon } from "@phosphor-icons/react";
 import type { LiveDraftInfo } from "@plinth/shared";
 import type { PageDraft } from "../editor/draft.ts";

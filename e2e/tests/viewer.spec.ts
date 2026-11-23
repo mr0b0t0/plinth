@@ -218,7 +218,9 @@ test.describe("artifact page", () => {
     await expectExhibit(page, a, marker);
   });
 
-  test("the owner sees visibility, Edit and the sharing settings", async ({ page }) => {
+  test("the owner sees visibility and the sharing settings, and no source editor", async ({
+    page,
+  }) => {
     const marker = unique("owner");
     const a = await publish({ title: "Owner's view", marker });
     await signInApi(page.request, a.owner);
@@ -226,19 +228,16 @@ test.describe("artifact page", () => {
     await expectExhibit(page, a, marker);
     if (isMobile()) {
       await page.getByRole("button", { name: "Artifact actions" }).click();
-      await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveAttribute(
-        "href",
-        `/a/${a.slug}/edit`,
-      );
+      // People never see source: an HTML page is changed by asking an agent.
+      await expect(page.getByRole("menuitem", { name: "Share" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
       await page.getByRole("menuitem", { name: "Share" }).click();
     } else {
       await expect(page.getByText("Visibility:")).toHaveCount(1);
-      // Edit sits in the ⋯ menu at every width; Share stays in the bar on wide screens.
+      // No source editor in the ⋯ menu; Share stays in the bar on wide screens.
       await page.getByRole("button", { name: "Artifact actions" }).click();
-      await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveAttribute(
-        "href",
-        `/a/${a.slug}/edit`,
-      );
+      await expect(page.getByRole("menuitem", { name: "Settings" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Share" }).click();
     }

@@ -1,8 +1,10 @@
-// A deck's ⋯ menu item while it is edited on the page, "Slide setup": the frame opens
-// its settings popover (aspect, theme, page numbers, footer) and writes them with its own struct op
-// over the draft socket, so nothing here touches the deck's text. The item exists only in edit
-// mode, where the frame is at the exact content origin (inline editing runs only under origin
-// isolation); the message carries no data. Also the words the strip uses when a draft cannot be
+// A deck's ⋯ menu item while it is edited on the page (always, for owners and editors), "Slide
+// setup": the frame opens its settings popover (aspect, theme, page numbers, footer) and writes
+// them with its own struct op over the draft socket, so nothing here touches the deck's text. The
+// item exists only in edit mode, where the frame is at the exact content origin (inline editing
+// runs only under origin isolation); the message carries no data. Print and Download .pptx stay
+// in the menu while editing: the frame holds edit mode off while it prints or makes the file
+// (slides/boot.ts). Also the words a refused publish uses when a draft cannot be
 // published yet, per type.
 import { SlidersHorizontalIcon } from "@phosphor-icons/react";
 import type { ArtifactType } from "@plinth/shared";
@@ -32,15 +34,6 @@ export const deckSettings: MenuItem = (c) =>
         },
       ]
     : [];
-
-/**
- * A deck's item that waits until editing ends, as Present does: Print and Download .pptx would
- * take edit mode's slides, empty ones the deck never shows included.
- */
-export const notWhileEditing =
-  (item: MenuItem): MenuItem =>
-  (c) =>
-    c.editing ? [] : item(c);
 
 /** Why a draft of the type cannot be published yet (its rules' `unpublishable`), in its words. */
 const UNPUBLISHABLE: Partial<Record<ArtifactType, string>> = {

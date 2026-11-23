@@ -9,6 +9,7 @@ import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts
 import { seedSession } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
+import { expectEditing, publishChanges, viewAsReader } from "../support/viewer.ts";
 
 // The frame being shown. A reload keeps the outgoing frame (marked) until the new one loads.
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
@@ -78,7 +79,17 @@ async function publishDoc(page: Page, content = DOC, title = TITLE) {
   });
   expect(r.isError, r.text).toBe(false);
   expect(r.data.type).toBe("doc");
-  return { client, artifact: r.data };
+  return { client, artifact: r.data, token };
+}
+
+/**
+ * The doc as people view it: its owner is always in edit mode, so the context is signed in as a
+ * reader it is shared with instead.
+ */
+async function publishDocToRead(page: Page, role: "viewer" | "commenter" = "viewer") {
+  const published = await publishDoc(page);
+  await viewAsReader(page.context(), page.request, published.artifact.id, published.token, role);
+  return published;
 }
 
 /** The Frame object of the artifact frame the viewer is showing, once its doc has rendered. */
@@ -124,7 +135,7 @@ test.describe("a published doc", () => {
       dialogs.push(`${d.type()}: ${d.message()}`);
       void d.dismiss();
     });
-    const { artifact, client } = await publishDoc(page);
+    const { artifact, client } = await publishDocToRead(page);
     const artifactHost = `${artifact.id}.${CONTENT_HOST}`;
     const hosts = new Set<string>();
     page.on("request", (r) => {
@@ -205,7 +216,7 @@ test.describe("a published doc", () => {
   });
 
   test("follows the color scheme, fits a phone, and prints cleanly", async ({ page }) => {
-    const { artifact, client } = await publishDoc(page);
+    const { artifact, client } = await publishDocToRead(page);
     try {
       await page.setViewportSize({ width: 360, height: 740 });
       await page.goto(`/a/${artifact.slug}`);
@@ -375,7 +386,9 @@ test.describe("comments on a doc", () => {
     // desktop layout (comments.spec.ts does not check them on mobile either).
     test.skip(info.project.name === "mobile", "pin placement is checked at desktop widths");
     test.setTimeout(60_000);
-    const { artifact, client } = await publishDoc(page);
+    // A commenter: review mode is for people who are not editing (an editor's page picks for
+    // itself, live-edit.spec.ts).
+    const { artifact, client } = await publishDocToRead(page, "commenter");
     try {
       await page.goto(`/a/${artifact.slug}`);
       await page.getByRole("button", { name: "Comments", exact: true }).click();
@@ -562,16 +575,10 @@ test.describe("editing a doc on its page as formatted text", () => {
     "",
   ].join("\n");
 
-  /** Turns edit mode on: the bar's Edit, or its item in the ⋯ menu at phone width. */
+  /** Edit mode is on from the moment the doc opens (no toggle); wait for the room. */
   async function startEditing(page: Page) {
-    const toggle = page.getByRole("button", { name: "Edit", exact: true });
-    if (await toggle.isVisible()) await toggle.click();
-    else {
-      await page.getByRole("button", { name: "Artifact actions" }).click();
-      await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-    }
+    await expectEditing(page, "main.plinth-doc--editing");
     const bar = page.getByRole("region", { name: "Editing on the page" });
-    await expect(bar).toBeVisible();
     await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
     return bar;
   }
@@ -625,13 +632,28 @@ test.describe("editing a doc on its page as formatted text", () => {
       await page.keyboard.press("Escape");
       await expect(frame.locator('img[alt="A small square"]')).toHaveCount(1);
 
-      // A block the editor cannot show faithfully is read-only, with Comment (tried below, once
-      // the edits are published).
+      // A block the editor cannot show faithfully is read-only, with Comment. With the edits
+      // above still unpublished, Comment opens the comments panel pinned to the block, by its
+      // first words (quoted), never its number, and the page stays in edit mode: nothing is
+      // published and the frame is not reloaded.
+      const src = await page.locator(CURRENT_FRAME).getAttribute("src");
       await frame.locator("ul", { hasText: "An item" }).click();
       const blockbar = frame.locator(".plinth-doc__blockbar");
       const comment = blockbar.getByRole("button", { name: "Comment", exact: true });
       await expect(comment).toHaveAttribute("title", /can't be edited here/);
-      await page.keyboard.press("Escape");
+      await comment.click();
+      const panel = page.getByRole("region", { name: "Comments" });
+      await expect(panel.locator(".cm-anchor-chip q")).toHaveText("An item fenced in a list", {
+        timeout: 10_000,
+      });
+      await expect(panel.getByRole("textbox", { name: "New comment" })).toBeFocused();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(frame.locator("main.plinth-doc--editing")).toBeVisible();
+      expect(await page.locator(CURRENT_FRAME).getAttribute("src")).toBe(src);
+      expect((await apiGet(page.request, `/artifacts/${artifact.id}`)).body.current_version).toBe(
+        1,
+      );
+      await panel.getByRole("button", { name: "Close comments" }).click();
 
       // Nowhere is there Markdown or a source field.
       await expect(frame.locator("textarea")).toHaveCount(0);
@@ -640,7 +662,7 @@ test.describe("editing a doc on its page as formatted text", () => {
       expect(shown).not.toContain("## ");
       expect(shown).not.toContain("![");
 
-      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      await publishChanges(page);
       await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
       const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}`)).body.content as string;
       expect(v2).toContain("First paragraph. **Bold words**");
@@ -648,20 +670,6 @@ test.describe("editing a doc on its page as formatted text", () => {
       expect(v2).toContain("![A small square](pixel.png)");
       // The block nobody edited keeps its bytes.
       expect(v2).toContain(FENCED);
-
-      // Comment on the read-only block opens the comments panel pinned to it, by the block's first
-      // words (quoted), never its number; the person mentions an agent there.
-      await frame.locator("ul", { hasText: "An item" }).click();
-      await frame
-        .locator(".plinth-doc__blockbar")
-        .getByRole("button", { name: "Comment", exact: true })
-        .click();
-      const panel = page.getByRole("region", { name: "Comments" });
-      await expect(panel.locator(".cm-anchor-chip q")).toHaveText("An item fenced in a list", {
-        timeout: 10_000,
-      });
-      await expect(panel.getByRole("textbox", { name: "New comment" })).toBeFocused();
-      await expect(page.getByRole("dialog")).toHaveCount(0);
 
       // Compare lists the changes in words, with no Markdown on the page.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
@@ -708,7 +716,7 @@ test.describe("editing a doc on its page as formatted text", () => {
       await frame.getByRole("menuitem", { name: "Delete" }).click();
       await expect(frame.locator("p", { hasText: "First paragraph." })).toHaveCount(0);
 
-      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      await publishChanges(page);
       await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
       const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}`)).body.content as string;
       expect(v2).toBe(
@@ -748,9 +756,9 @@ test.describe("editing a doc on its page as formatted text", () => {
       await open.press("ControlOrMeta+a");
       await open.press("Backspace");
       await expect(open).toHaveText("");
-      // Publish while the emptied block is still open: the lists stay two, and the paragraph is
-      // not in the version.
-      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      // Publish (Cmd/Ctrl+S in the frame) while the emptied block is still open: the lists stay
+      // two, and the paragraph is not in the version.
+      await open.press("ControlOrMeta+s");
       await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
       const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}`)).body.content as string;
       expect(v2).toBe([`# ${TITLE}`, "", "- one", "", "* two", ""].join("\n"));

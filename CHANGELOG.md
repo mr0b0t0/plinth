@@ -10,6 +10,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Your pages are editable when they open.** Owners and editors of a doc, a deck, a sheet or a
+  design system no longer press Edit: the page is in edit mode from the start, as a whiteboard is,
+  and changes publish on their own (after a quiet spell, or when you leave the page), also on
+  instances without live rooms. The Edit toggle, Done, "Edit on the page" and the edit strip are
+  gone; a quiet status beside the version says "Saving…", "Draft saved" or "Published as v7", and
+  the ⋯ menu has Publish changes and Discard. Comments open beside edit mode, and "Pin to an
+  element" picks a block, slide or token right in the page. Present, Print and Download .pptx work
+  while a deck is edited, and presenting shows the published deck. HTML pages no longer offer the
+  source editor on their page.
+
 - **Ask an agent in a comment.** People ask the owner's agent the way they ask Claude: by
   mentioning it in a comment (`@claude make the heading red`). The separate **Ask an agent**
   button, its ⋯ menu item and the Ask dialog are gone: an HTML page or a design shows History,

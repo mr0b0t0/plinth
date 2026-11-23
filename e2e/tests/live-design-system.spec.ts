@@ -1,5 +1,6 @@
-// Editing a design system on its page (docs/spec.md "Design systems", "Editing"): the owner turns
-// Edit on and changes a token's colour in place, and Publish makes v2, stored as Plinth's 2-space
+// Editing a design system on its page (docs/spec.md "Design systems", "Editing"): the page is in
+// edit mode from the moment it opens, the owner changes a token's colour in place, and Publish
+// changes (the ⋯ menu) makes v2, stored as Plinth's 2-space
 // JSON with that colour; a version an agent publishes meanwhile is never merged: the page edits
 // freeze, and the whole-draft review shows both sites and publishes the page's as they are; a
 // token row's "Comment to rename" opens the comments panel pinned to that token; and a compact
@@ -13,6 +14,7 @@ import { ACME, ACME_ASSETS, stubGoogleFonts } from "../support/designSystem.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { shotsDir } from "../support/shots.ts";
 import { seedToken } from "../support/tokens.ts";
+import { expectEditing, publishChanges } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 const SHOTS = shotsDir("ds-inline");
@@ -45,17 +47,11 @@ const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
 const tokenRow = (page: Page, path: string) =>
   frameOf(page).locator(`.ds-token[data-path="${path}"]`);
 
+/** Edit mode is on from the moment the page opens (no toggle); wait for the room. */
 async function startEditing(page: Page) {
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
+  await expectEditing(page, ".ds-token--editing");
   const bar = page.getByRole("region", { name: "Editing on the page" });
-  await expect(bar).toBeVisible();
   await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
-  await expect(frameOf(page).locator(".ds-token--editing").first()).toBeVisible();
   return bar;
 }
 
@@ -79,9 +75,9 @@ test("a colour changed in place is published as v2, in Plinth's 2-space JSON", a
   const { client, id, slug } = await publishDs(page, JSON.stringify(ACME));
   try {
     await open(page, slug);
-    // View mode shows no controls.
-    await expect(frameOf(page).locator(".ds-token__controls")).toHaveCount(0);
+    // The owner's page is in edit mode at once: the controls are there with no toggle.
     const bar = await startEditing(page);
+    await expect(frameOf(page).locator(".ds-token__controls").first()).toBeVisible();
     // Every example is its rendered preview only: no code anywhere.
     await expect(frameOf(page).locator("pre, textarea")).toHaveCount(0);
     await shot(page, info, "edit-tokens");
@@ -133,7 +129,7 @@ test("a colour changed in place is published as v2, in Plinth's 2-space JSON", a
     await expect(preview.locator("button")).toHaveText("Save", { timeout: 10_000 });
     await expect(preview.locator('img[src="img/logo.png"]')).toHaveCount(0);
     await shot(page, info, "edit-component");
-    await bar.getByRole("button", { name: "Publish", exact: true }).click();
+    await publishChanges(page);
     await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
     const got = await tool<{ version: number; content: string }>(client, "get_artifact", { id });
     expect(got.data.version).toBe(2);
@@ -199,10 +195,14 @@ test("Comment to rename on a token row opens the comments panel pinned to the to
   page,
 }, info) => {
   await stubGoogleFonts(page);
-  const { client, slug } = await publishDs(page, JSON.stringify(ACME));
+  const { client, id, slug } = await publishDs(page, JSON.stringify(ACME));
   try {
     await open(page, slug);
-    await startEditing(page);
+    const bar = await startEditing(page);
+    // An unpublished change first: Comment keeps it, and keeps edit mode.
+    await setColor(page, "color.bg", "#fafafa");
+    await expect(bar).toContainText("Draft saved", { timeout: 10_000 });
+    const src = await page.locator(CURRENT_FRAME).getAttribute("src");
     await tokenRow(page, "color.bg")
       .getByRole("button", { name: /actions$/ })
       .click();
@@ -215,6 +215,14 @@ test("Comment to rename on a token row opens the comments panel pinned to the to
     // Once it has finished opening.
     await page.waitForTimeout(400);
     await shot(page, info, "comment-pinned");
+    // Still editing, with the change unpublished: Comment neither publishes nor reloads the frame.
+    await expect(frameOf(page).locator(".ds-token--editing").first()).toBeVisible();
+    await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
+      "Draft saved",
+    );
+    expect(await page.locator(CURRENT_FRAME).getAttribute("src")).toBe(src);
+    const got = await tool<{ version: number }>(client, "get_artifact", { id });
+    expect(got.data.version).toBe(1);
   } finally {
     await client.close();
   }
@@ -270,7 +278,7 @@ test("a compact system of about 900 KB, changed in place, is published compact",
     const bar = await startEditing(page);
     await setColor(page, "color.bg", "#fafafa");
     await expect(bar).toContainText("Draft saved", { timeout: 15_000 });
-    await bar.getByRole("button", { name: "Publish", exact: true }).click();
+    await publishChanges(page);
     await expect(bar).toContainText("Published as v2", { timeout: 15_000 });
     const got = await tool<{ content: string }>(client, "get_artifact", { id });
     big.tokens.color.bg.$value = "#fafafa";

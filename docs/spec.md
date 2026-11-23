@@ -627,29 +627,35 @@ the count survives.
 - Editors are the owner plus anyone granted the editor role.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
-- The source editor stays for the types that have one until each type's editing on the page
-  covers what it does. Where a doc or a design system can be edited on its page, the page is its
-  one way in and the viewer offers no source editor item; where it cannot (opaque isolation, the
-  path fallback, `ALLOW_LIVE_EDITING=false`), the menu's "Edit" opens the source editor. Sheets, designs and
-  whiteboards have no source editor.
+- People never see source code on the artifact page (decided 2026-11-23): the viewer has no
+  source editor item for any type. A doc, a deck, a sheet or a design system is edited on its page
+  (below); an HTML page or a design is changed by asking an agent. Where editing on the page is off
+  (opaque isolation, the path fallback, `ALLOW_LIVE_EDITING=false`) the page is simply read-only.
+  The source editor's route (`/a/:slug/edit`) stays for the dashboard card's "Edit" on an HTML page
+  and for its tests; sheets, designs and whiteboards have no source editor.
 
 **Editing on the page** (decided 2026-11-18, issue #36; the whole-draft review, the frame key and
-the draft's files decided 2026-11-19; design systems decided 2026-11-21). Owners and editors
-edit a doc, a deck, a sheet or a design system right on its rendered page, and the other editors
-with the page open see the changes as they are typed. The registry says which types are edited
+the draft's files decided 2026-11-19; design systems decided 2026-11-21; always on, with no Edit
+toggle, decided 2026-11-23). Owners and editors edit a doc, a deck, a sheet or a design system
+right on its rendered page, and the other editors with the page open see the changes as they are
+typed. As on a whiteboard, the page simply is editable when it opens: click into text and type,
+and the changes save on their own. There is no Edit toggle, no Done and no "Edit on the page"
+item, for any of these types, at any width. The registry says which types are edited
 this way (`edit: "live"`: docs, decks, sheets and design systems); HTML pages are edited in the
 source editor only and designs by agents only (`edit: "ask"`), because an HTML page's own scripts share the frame's origin and could forge edits that
 the editor's session would then save; a whiteboard is always live on its page through shared data (`edit:
 "board"`), and its settings are an app dialog. Every inline editing control and every rendering of
 draft or version content runs in Plinth's own renderer on the artifact's content origin; the app
-page shows the strip and makes the REST calls, and renders no content.
+page shows the save status and makes the REST calls, and renders no content.
 
-- **Who.** Owners and editors signed in to an account (policy action `live_edit`). Confirming the
-  code at the gate signs an editor in, so they edit like any signed-in editor. Only an editor with
-  a viewer session (confirmed by code where the address may not sign in, as in single-user mode,
-  or in a session started before codes signed people in) watches the edits and is asked to sign in
-  (`account_required`). Commenters and viewers see versions only. Agents never edit live: they
-  publish versions.
+- **Who.** Owners and editors signed in to an account (policy action `live_edit`), on the current
+  version, get the page in edit mode from the moment it opens. Confirming the code at the gate
+  signs an editor in, so they edit like any signed-in editor. Only an editor with a viewer session
+  (confirmed by code where the address may not sign in, as in single-user mode, or in a session
+  started before codes signed people in) watches the edits and is asked to sign in
+  (`account_required`): one "Sign in to edit" item in the ⋯ menu, at every width. Commenters and
+  viewers see versions only, exactly as before: nothing about editing loads for them. Agents never
+  edit live: they publish versions.
 - **Concurrency.** The artifact's room (its Durable Object, see [Live rooms](#live-rooms)) is the
   only place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
@@ -708,12 +714,14 @@ page shows the strip and makes the REST calls, and renders no content.
   its images from the base version's files (`/__plinth/v/<base>/`), and a design system its fonts
   and its examples' images and CSS files, so the page never shows a file the draft would not
   publish.
-- **Publishing.** Publish (Cmd/Ctrl+S, in the app or in the frame), leaving edit mode (the Edit
-  toggle, or Done at phone width), or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet (from the client that made the last edit,
-  while it is editing; no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version,
-  whoever made it, and an autosave asked for sooner is tried again once that time has passed) turn
-  the draft into the next version, through the ordinary publish path with the draft's
-  `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
+- **Publishing.** Changes publish on their own: an autosave after `LIVE_CHECKPOINT_IDLE_S` of
+  quiet (from the client that made the last edit, other editors 30 s later as a fallback; no
+  sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an
+  autosave asked for sooner is tried again once that time has passed), and leaving the page
+  (closing or reloading the tab, a `pagehide` sent with `keepalive`, or going elsewhere in the app),
+  which publishes as Done did. Cmd/Ctrl+S (in the app or in the frame) and the ⋯ menu's "Publish
+  changes" publish at once. Each turns the draft into the next version, through the ordinary
+  publish path with the draft's `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
   nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
   made while a save runs are kept on top of the new version. A draft that cannot be a version yet
   (a type's `unpublishable` rule: only a deck that shows no slide) is never checkpointed (409
@@ -733,17 +741,17 @@ page shows the strip and makes the REST calls, and renders no content.
     anything else freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
-  autosave and leaving edit mode do not publish it, and the strip says "v6 was published while you edited"
-  (for several versions since the draft's base: "v6 to v7 were published while you edited"; at
-  phone width "v6 published", so the strip stays one line), with "Review changes" in place of
-  Publish, and the ⋯ menu offers no Discard (the review holds both choices). While editing, the
-  strip carries
-  every newer version's news, so the app shows no "Updated to vN" toast.
+  autosave and leaving the page do not publish it, and the save status says "v6 was published
+  while you edited" (for several versions since the draft's base: "v6 to v7 were published while
+  you edited"; at phone width "v6 published", so the bar stays one line), with "Review changes"
+  beside it, and the ⋯ menu offers neither Publish changes nor Discard (the review holds both
+  choices). While editing, the save status carries every newer version's news, so the app shows
+  no "Updated to vN" toast.
   Nothing is overwritten either way. `get_artifact` tells agents a draft exists (metadata only),
   and `update_artifact` and `edit_sheet` warn `live_draft`.
 - **The whole-draft review.** "Review changes" opens the review inside the frame; while it is
-  open the strip shows its status only (no "Review changes" and no Done), and the review has no
-  heading of its own, since the strip already says what happened. It shows "Your changes" and "v6"
+  open the save status shows its status only (no "Review changes"), and the review has no
+  heading of its own, since the save status already says what happened. It shows "Your changes" and "v6"
   side by side (one at a time, with a "Your changes" and "v6" switch, at phone width), each drawn
   read-only by the type's own renderer against the files it would publish: your changes against
   the base version's files, vN against vN's. Each side grows with its content up to a maximum
@@ -763,8 +771,9 @@ page shows the strip and makes the REST calls, and renders no content.
   with a short bar where blocks were removed, and a sheet's changed cells, by their entered value
   or formula. Each side opens scrolled to its first change when that is out of view (at phone
   width, when the switch first shows it); a sheet's changed column starts right after the row
-  numbers, never beside a cut-off sliver of another. The versions reviewed are every version since the draft's base; the strip and
-  the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
+  numbers, never beside a cut-off sliver of another. The versions reviewed are every version since the draft's base; the save status
+  and the version note name the whole range ("v6 to v7"), and the newer side is the newest
+  version.
   While a version waits for review, the version in the artifact bar is the draft's base.
   The review looks like the app around it (ink primary, bronze for the live state, the app's
   compact buttons) and has no explanatory paragraphs: exactly two choices, and Back:
@@ -795,42 +804,76 @@ page shows the strip and makes the REST calls, and renders no content.
   way: a newer version that undid the one reviewed ("v7 undid the changes of v6. Your changes are
   kept."), a doc version that merged cleanly, or a version equal to the draft.
 - **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
-  page alone; Publish makes a version over `PUT` with the shown version as `base_version` and its
-  files as `files_from_version`; the tab keeps a copy, and after a reload offers to publish it or
-  discard it; a Publish refused because a newer version is current opens the same review, the app
-  naming the version and its file changes from the two versions' file lists, and Publish your
-  changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
+  page alone; a publish makes a version over `PUT` with the version the copy is based on as
+  `base_version` and its files as `files_from_version`; the same autosave as a room's, after
+  `LIVE_CHECKPOINT_IDLE_S` of quiet and no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after this
+  tab's last publish, and Cmd/Ctrl+S or Publish changes, publish the frame's text without reloading
+  the frame: the next publish is based on the version this one made, and the same text is not
+  published twice. The save status says "Unpublished changes, kept in this tab"; the tab keeps a
+  copy every 5 s, and after a reload offers to publish it or discard it, and leaving with changes
+  asks first. A version published elsewhere loads in place of the page when the page has no
+  changes of its own; with changes, the autosave stops (no silent overwrite: every `PUT` carries
+  `base_version`, and a stale one is refused), the save status says a newer version was published,
+  and Review changes opens the same review, the app naming the version and its file changes from
+  the two versions' file lists, and Publish your changes sends the frame's own copy; an autosave
+  refused because a newer version is current says so only there, while Cmd/Ctrl+S or Publish
+  changes opens the review at once; for the copy kept from before a reload, which the frame never
   held, the app sends that copy with the review, and Publish your changes and Discard your changes
-  act on it); under opaque
-  isolation and the path fallback there is no editing on the page: docs and design systems are
-  edited in the source editor only, and a sheet has no Edit (agents change it). `ALLOW_LIVE_EDITING=false` turns it
-  off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
-- **On the page.** An Edit toggle in the artifact bar, the one way in (no source editor item
-  beside it), turns edit mode on; a strip under the bar says what is happening ("Draft saved",
-  "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), how many others are editing
-  (who and where, "row 12", a structural place, never content, in its tooltip and its accessible
-  name), and Publish (a text button), shown once there is something to publish; when the changes
-  cannot be published yet it stays, off, with the reason in its tooltip. The strip has no menu of
-  its own and no second way out: the Edit toggle turns edit mode off, and only at phone width,
-  where the toggle folds into the ⋯ menu as "Edit on the page", does the strip add Done. Every
-  status has a short form at phone width ("Merged with v5", "Not connected", "Kept in this tab",
-  "v6 published"), so the strip stays one line. "Discard unpublished changes" is in the artifact's
-  ⋯ menu while editing with changes and nothing to review, behind the same confirmation. A doc's
+  act on it); under opaque isolation and the path fallback there is no editing on the page: the
+  page is read-only for everyone (agents change it). `ALLOW_LIVE_EDITING=false` turns it off the
+  same way. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
+- **On the page.** The frame is in edit mode as soon as it has loaded. The artifact bar holds
+  History, Comments, Share and ⋯ (and Present for a deck), exactly as for a viewer; the only
+  editing chrome is a quiet save status beside the version, in muted words, announced politely
+  ("Saving…", "Draft saved", "Publishing…", "Published as v7", "Unpublished changes, kept in this
+  tab", "Not connected, your changes are kept", "v5 was published; your changes were kept"), and
+  nothing at all while there is nothing to say. How many others are editing shows beside it as a
+  count (who and where, "row 12", a structural place, never content, in its tooltip and its
+  accessible name). Every status has a short form at phone width ("Saved", "Unpublished",
+  "Published", "Merged with v5", "Not connected", "v6 published"), so the bar stays one line.
+  While a version waits for review the status holds the one button editing ever adds, "Review
+  changes". The ⋯ menu holds "Publish changes" (the same as Cmd/Ctrl+S) and "Discard unpublished
+  changes" (behind the same confirmation) while there are changes and nothing to review; Publish
+  changes is left out while the changes cannot be a version yet (a deck that shows no slide, or
+  typing the page cannot save), and a publish refused for that says why. There is no Publish
+  button, no strip under the bar and no frame outline for editing. A doc's
   block opens as formatted text, never as Markdown, in the page's own type, size and line height,
   so editing looks like the page
   ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)), and so does a slide's text
   ([Decks on the page](#decks-on-the-page-decided-2026-11-21)); blocks other people hold
   show their email and their text as it arrives. There is no "+" between blocks: "Insert below" in
-  a block's menu, or Enter, adds one. Esc at the
-  top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
-  line when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
+  a block's menu, or Enter, adds one. Esc at the top level of edit mode moves focus to the save
+  status. An owner or editor who is not editing (one who must sign in first) sees one line under
+  the bar when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
   the email on hover), when someone is editing ("Ana is editing"), or when a version needs review;
-  it looks like the strip (a bronze rule, a pencil, one line) and has no buttons, because editing
-  starts only from the Edit toggle, the strip holds Publish and Review changes, and the ⋯ menu
-  Discard. Only the solo copy a tab kept from before a reload, which no frame holds, gets Publish
-  and Discard on that line.
-  Edit mode and comment review mode exclude each other. While the review is open, app
-  notifications keep clear of its choices, and no notification ever covers a dialog's controls.
+  it has a bronze rule, a pencil and one line, and no buttons. The solo copy a tab kept from before
+  a reload, which no frame holds, gets that line with Publish and Discard, also while editing,
+  until the frame's own copy has changes.
+- **Read-only for someone who may edit.** A page the frame cannot edit (a design system with
+  problems only an agent can fix, or one too large to edit on its page, `live.unavailable`) stays
+  read-only for that version, and the save status says why once ("Read-only" at phone width, the
+  whole reason as its name and title): no toast, no button.
+- **Comments while editing.** Comments work beside edit mode, as in Claude: opening the comments
+  panel neither publishes nor leaves edit mode, and never reloads the frame into comment review
+  mode (the bridge's reload would lose the editor's place, and solo edits that live only in the
+  frame). The composer's "Pin to an element" asks the editing frame to pick a place (`pick` on,
+  then `picked` with the frame key): while picking, a press on the page edits nothing; it names the
+  block (a doc), the slide, block, image or notes (a deck) or the token, group or component (a
+  design system) with the same structural page anchor the type's in-frame controls use (`block-3`,
+  `slide-2:notes`, `token:color.bg`), never draft text the person did not see, and Esc cancels
+  (`picked` with null). A sheet's cells have no such names yet, so the pin is not offered for a
+  sheet while it is edited. The app takes `picked` only for a pick it asked for. A pin placed in
+  the composer stays when the draft is published meanwhile: while editing, comments are posted
+  against the version the frame loaded. Element pins drawn by review mode do not show over an
+  editing frame. While the whole-draft review is open, app notifications keep clear of its
+  choices, and no notification ever covers a dialog's controls.
+- **Presenting a deck while editing.** Present stays in the bar at all times. Presenter view, full
+  screen, leading viewers (the deck's Lead viewers toggle, shown in edit mode too), Print and
+  Download .pptx hold edit mode off in the frame while they run and turn it back on after, so
+  they take the deck, not edit mode's raw slides: presenting and leading show the published deck
+  (as the audience and followers see it), and Print and the .pptx the live draft as the deck draws
+  it. While someone else leads the room, a co-editor's edit mode is held off too, so they follow
+  the presenter as a viewer does. The unpublished changes stay in the draft meanwhile.
 - **The frame key.** For an owner or editor who may edit on the page, the app opens each frame
   load at its enter URL with a fresh 32-byte random key in the fragment (`#plinth-k=…`). The
   fragment is never sent to a server, survives the enter redirect and appears in no `Referer`; the
@@ -857,9 +900,10 @@ page shows the strip and makes the REST calls, and renders no content.
   agents keep the carry rule.
 - **Asking an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a
   design system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or
-  opaque isolation and the path fallback) get nothing in Edit's place, as for HTML pages and
-  designs: they mention an agent in a comment. While editing, a renderer's "Comment" opens the
-  comments panel pinned to its place. See [Asking an agent](#asking-an-agent-decided-2026-11-23).
+  opaque isolation and the path fallback) see the page read-only, as everyone sees an HTML page
+  or a design: they mention an agent in a comment. While editing, a renderer's "Comment" opens the
+  comments panel pinned to its place, and edit mode and the draft stay as they are. See
+  [Asking an agent](#asking-an-agent-decided-2026-11-23).
 
 ### Categories (decided 2026-11-18)
 
@@ -1163,9 +1207,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   for the owner and editors where they edit with the room; a page whose payload cannot be read
   shows one line, "This design system could not be shown." Such a system is not edited on the
   page: the owner's and editors' frame tells the app so (its status's `unavailable: "invalid"`),
-  the bar's Edit stays off with its reason in its tooltip ("This design system has problems an
-  agent needs to fix. Mention @claude in a comment to fix them."), the phone's ⋯ leaves "Edit on
-  the page" out, and a comment is the way in.
+  the page stays read-only for that version, and the save status says why once ("This design
+  system has problems only an agent can fix, so it can't be edited on the page. Mention @claude in
+  a comment to fix them."; "Read-only" at phone width), and a comment is the way in.
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1292,7 +1336,7 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     answer is matched to its own request by `re` (above), so another value's denial is never
     taken for this one's, and a lease granted to a part that let go meanwhile goes back to the
     room, at once or when the newer request is refused. Until the room acknowledges the edit, or the draft holds the value, it counts as pending
-    (the status's `unflushed` and `pending`; Publish and Done wait for `pending`, at most 3
+    (the status's `unflushed` and `pending`; every publish waits for `pending`, at most 3
     seconds, before the checkpoint): edit mode ending keeps the request and lets the lease go right
     after the write; a socket that closes asks again on the reconnect; an edit the room answers
     `not_held` (its lease replaced first), or one sent but not acknowledged before a drop or a lost
@@ -1368,8 +1412,9 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
     (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
     whose JSON part would pass 8 MB of text (`LIMITS.maxLiveProjectionChars`, counted before it is
-    written), is not edited on the page: Edit says "This design system is too large to edit on the page", edit
-    mode ends, and the toast offers Comment ("Mention @claude in a comment to change it.").
+    written), is not edited on the page: edit mode ends for that version, and the save status says
+    "This design system is too large to edit on the page. Mention @claude in a comment to change
+    it."
   - **Storage form.** A Publish from the page stores 2-space JSON when it fits 1 MB, and compact
     JSON when it does not, with the guidelines as the last key (none when the draft has no line
     after its JSON part), so it never fails on size where the agent's version fit. An agent's
@@ -1695,8 +1740,8 @@ differs from Claude only where noted.
     reused files read from storage).
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
     `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
-  - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
-    they ask an agent for changes in a comment, as for an `ask` type; nothing takes Edit's place.
+  - People see the deck, never its source (no viewer has a source editor item), and they ask an
+    agent for changes in a comment, as for an `ask` type; nothing takes Edit's place.
     Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
     gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
     draft on it, and the frame takes no editing message. When an agent publishes an HTML deck over a
@@ -1705,8 +1750,8 @@ differs from Claude only where noted.
     the review of the people editing it ("vN is an HTML deck, which isn't edited on its page, so
     your page edits can't be added to it"), where Publish your changes makes their deck the next
     version and Discard ends the draft. While such a draft waits, owners and editors still get
-    `live` in the gate and the shell, after a reload too, and only for that review: the bar's Edit
-    shows the strip with Review changes, the frame joins the room without entering edit mode, the
+    `live` in the gate and the shell, after a reload too, and only for that review: the save status
+    shows the version with Review changes from the start, the frame joins the room without entering edit mode, the
     draft is frozen (no lease or edit), and the HTML side of the review is one line ("vN is an HTML
     deck, so it isn't shown beside your changes…") in place of its changes and drawing. The agent's
     `live_draft` says the edits are neither merged into nor shown beside its deck. Compare lists the index's
@@ -2026,7 +2071,7 @@ document through the gate and the shared-data API, with all of their checks.
   One such notice shows at a time: a newer version's replaces the last, so versions published in
   a row never stack. While someone edits on the page, or the frame is held (a doc, sheet or design
   system edited on its page, a deck presented), no notice shows: the version picker takes the new number, and
-  the edit strip says what happened.
+  the save status says what happened.
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
@@ -2345,8 +2390,8 @@ goes to the sheet's page, and Compare lists what changed in words (a cell and it
 added or removed) above the two versions rendered side by side, never a source diff. Cells are
 versioned content, never shared data: every change, an agent's or a person's, is a new version
 anyone can revert. Owners and editors also edit a sheet on its page, live with each other
-([Live sheets](#live-sheets-decided-2026-11-19)); the Edit toggle there is the only way a person
-edits one.
+([Live sheets](#live-sheets-decided-2026-11-19)), in edit mode from the moment it opens; that
+is the only way a person edits one.
 
 - **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
   and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
@@ -3099,7 +3144,7 @@ agents on one artifact").
 ### Live sheets (decided 2026-11-19)
 
 Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
-([Editing](#editing)): the same Edit toggle, strip, Publish and Discard, the same
+([Editing](#editing)): the same always-on edit mode, save status, Publish changes and Discard, the same
 checkpoints, autosave and modes ("room" with live rooms, "solo" under origin
 isolation without rooms, none under opaque isolation or the path fallback), the same policy action
 `live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
@@ -3237,10 +3282,12 @@ and the whole-draft review is the only way on (below).
   it was: in the column settings or an open cell's field with its selection, in the filter with
   its text, or on the selected cell when a cell had it. It never moves onto a cell from anywhere
   else, since a key typed in a selected cell starts editing it.
-- **One way in.** The Edit toggle (at phone width, "Edit on the page" in the ⋯ menu) is the only
-  way a person edits a sheet: a sheet has no source editor, so the menu has no source item beside
-  it. Where on-page editing is not available (opaque isolation, the path fallback,
-  `ALLOW_LIVE_EDITING=false`), a sheet has no Edit at all, and agents change it.
+- **One way in.** The page itself, in edit mode for owners and editors from the moment it opens,
+  is the only way a person edits a sheet: a sheet has no source editor, and the menu has no edit
+  item. Where on-page editing is not available (opaque isolation, the path fallback,
+  `ALLOW_LIVE_EDITING=false`), the sheet is read-only, and agents change it. "Replace with a
+  file…" is hidden while the page holds unpublished changes or someone else edits it, not merely
+  because the page is open in edit mode.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
 
@@ -3480,10 +3527,11 @@ pages and designs come only from agents.
   The cause is never code: the Worker's sentence without its "The xlsx file could not be imported:"
   lead and without a closing parenthetical of parser detail ("This is not an .xlsx file."). Agents
   get the whole sentence.
-- **`?edit` starts editing.** On the artifact page, `?edit` for an owner or editor who may edit
-  there (the gate's `live`, without `sign_in`) is dropped from the address and the page opens in
-  edit mode. The app focuses the frame and posts `edit { on: true, focus: "first" }` (again on the
-  frame's load, until the frame reports that it is editing). Once the draft is drawn, the doc
+- **`?edit` puts the focus on the page.** On the artifact page, `?edit` for an owner or editor who
+  may edit there (the gate's `live`, without `sign_in`) is dropped from the address; the page is in
+  edit mode anyway, as it always is for them. The app focuses the frame and posts
+  `edit { on: true, focus: "first" }` (again on the frame's load, until the frame reports that it
+  is editing). Once the draft is drawn, the doc
   renderer opens the first block for typing, a heading in its heading's type and with its text
   selected, so the first keystroke replaces "Untitled document", and the sheet renderer focuses
   cell A2 (A1 when there are no rows). When someone else holds that block,
@@ -3565,10 +3613,10 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   written ("*重要，*的") is written with the character outside it, or white space inside it, as a
   numeric character reference ("*重要，*&#x7684;"), which renders the same. Typing that still
   cannot be written stays in the block as typed (the keystroke is not undone): the page says
-  "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab, a
-  click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and every
-  way to publish (the strip, Cmd/Ctrl+S in the frame or the app, Done, autosave) waits until the
-  text changes; the page asks before it is left, and in solo mode
+  "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab and
+  a click elsewhere keep it), the frame reports unsent changes and `unsavable`, and every way to
+  publish (Publish changes, Cmd/Ctrl+S in the frame or the app, leaving the page, autosave) waits
+  until the text changes; the page asks before it is left, and in solo mode
   the tab's kept copy has the text without its formatting. In a room the holder sends `keep` every
   20 s (`LIMITS.liveLeaseKeepS`) while connected, so the lease is not taken over as idle; a holder
   that sends neither edits nor `keep` for 60 s still can be. If edit mode ends anyway, the block is
@@ -3642,13 +3690,13 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   lines would run the blocks around it together is removed at once, by the same one edit as
   "Delete" (the list after it takes another marker), under one lease over its lines and the lines
   that edit writes again. The doc then has what the page shows at every moment, so a Publish,
-  Done or an autosave made while the block is still open never has the old text. The block stays
+  leaving the page or an autosave made while the block is still open never has the old text. The block stays
   open, empty, where it was, and what is typed in it becomes a new block there. When the removal
   is refused (someone holds the lines next to it, the page is not connected, or the doc cannot
   take it), the block stays open with its last text, which is what the doc has, and the page says
   so: "Couldn't remove this block now. Try again.", or why the doc cannot take it. Nothing typed
   in the block while its removal is on its way is lost: it goes into the doc once the removal is
-  in, also when the block is closed first (Esc, Tab, a click on another block or Done), in which
+  in, also when the block is closed first (Esc, Tab or a click on another block), in which
   case the page reports unsent changes until it is; it takes the block's place when the removal is
   refused or lost with a reconnect; and an open block keeps it on screen through a reconnect, as
   any block does. When even that cannot be written, the page says "What you typed in the block you
@@ -3719,11 +3767,13 @@ deleting slides, and a slide's columns, stay with agents for now.
   full, the typing came too fast) is never taken as written: what it sent is written again in its
   place, both halves together, and the place closes again; refused a second time, or when the deck
   cannot take it, it stays on the page with Copy and is tried again after a reconnect.
-  The slide fits again as text changes. Presenting, full screen and
-  following the presenter wait until editing ends (Present is not offered while editing; Done
-  publishes first), and the deck counts raw slides meanwhile, so it neither follows nor leads.
-  Print and Download .pptx wait too: the ⋯ menu leaves them out while editing, and the frame
-  neither prints nor makes a file from edit mode's slides. A block open when the connection drops,
+  The slide fits again as text changes. Edit mode is always on for owners and editors, so
+  presenter view, full screen, Print and Download .pptx hold it off in the frame while they run
+  and turn it back on after (Present is in the bar at all times): presenting shows the published
+  deck, and the frame never prints or makes a file from edit mode's slides. While a presenter
+  leads the room (this one, from Lead viewers, or another), edit mode is held off as well, so the
+  deck follows or leads with the published deck's slides; edit mode's raw slide numbers never
+  reach the room. A block open when the connection drops,
   or when the room merges a version into the draft, is taken again once the draft (after a merge,
   the merged draft) is back, where the draft holds a text the room may have of it as whole blocks,
   only in the kind of part it was typed in (a slide's text is never looked for in speaker notes
@@ -3747,8 +3797,8 @@ deleting slides, and a slide's columns, stay with agents for now.
 - **Nothing typed is lost**, by the doc editor's rules
   ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)). Typing a slide block or
   the notes cannot write as typed stays as typed, the place stays open, the frame reports unsent
-  changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
-  Done, autosave) waits until it changes; in solo mode the
+  changes and `unsavable`, and every way to publish (Publish changes, Cmd/Ctrl+S in the frame or
+  the app, leaving the page, autosave) waits until it changes; in solo mode the
   rescue store has it without its formatting, and in a room the holder sends `keep` every 20 s
   while connected. Adding speaker notes and applying deck settings wait too (with the
   same words), since a structural change would take the place's lines from under it. If edit mode ends anyway, it is written without its formatting. Typing the room does
@@ -3776,8 +3826,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   In solo mode the frame's text is the whole draft and no room makes space later, so typing the
   deck at its size limit cannot take counts as `unsavable` too: its block stays open as typed
   (Escape, focus leaving and a click elsewhere leave it open, and the frame says "The deck is at
-  its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S and
-  Done wait, the page asks before it is left, and the typing is in
+  its size limit, so this text isn't in it. Shorten it to continue."), Publish changes,
+  Cmd/Ctrl+S and the autosave wait, the page asks before it is left, and the typing is in
   the rescue store. The tab's kept copy stays the deck as written, which can still be published
   from "Unpublished changes from earlier in this tab" after a reload (the typing would put it past
   the size limit), and the rescue store writes the typing back once editing starts again; the
@@ -3787,8 +3837,9 @@ deleting slides, and a slide's columns, stay with agents for now.
   it as a block of its own. Alone, the room's frame limit does not apply to a block: only the
   deck's size limit does. A struct op that removes the lines a solo place holds ends its lease as
   a room's closed draft does, so its typing is written again or kept, never left unleased.
-- **Outside edit mode** a deck's frame in room mode shows the draft's visible slides as they
-  change, as a doc's frame shows its draft (the published deck while the draft shows none). While
+- **Outside edit mode** (an editor who must sign in first, or edit mode held off while the deck is
+  presented, printed or exported) a deck's frame in room mode shows the draft's visible slides as
+  they change, as a doc's frame shows its draft (the published deck while the draft shows none). While
   the deck is presented (full screen, which the app tells the frame with `presenting { on }`;
   presenter view; an audience window) and while a presenter leads the room (this one, or one it
   follows), it shows the deck as last published instead: its own version, or the room's draft
@@ -3830,8 +3881,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   `---` first loses it (the op `trim_start`, which only drops empty slides presenting never shows),
   because blank lines under it would read as empty front matter. A slide that loses its last block
   stays, as an empty slide. A draft that shows no slide cannot be published (`unpublishable`
-  `"empty"`): Publish is off with "Write something on a slide to publish", autosave skips it,
-  and Done leaves edit mode with the draft kept.
+  `"empty"`): the ⋯ menu offers no Publish changes, Cmd/Ctrl+S says "Write something on a slide to
+  publish", and autosave and leaving the page skip it, with the draft kept.
 - **Speaker notes** are one part, its marker line included, edited in the panel under the slide
   (named "Notes for slide 3", with no heading shown): one lease from the marker to the slide's last
   line of text. The serializer

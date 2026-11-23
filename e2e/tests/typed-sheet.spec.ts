@@ -311,8 +311,7 @@ test.describe("a published sheet", () => {
       await sheetFrame(page);
       await page.getByRole("button", { name: "Artifact actions" }).click();
       await expect(page.getByRole("menuitem", { name: "Download .csv" })).toBeVisible();
-      // No source Edit. The Edit toggle (at phone width, "Edit on the page" here) is a sheet's one
-      // way into editing.
+      // No source Edit: a sheet is edited on its page, always on for owners and editors.
       await expect(page.getByRole("menuitem", { name: /^Edit( source)?$/ })).toHaveCount(0);
       await page.keyboard.press("Escape");
 

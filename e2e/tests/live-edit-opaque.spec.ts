@@ -44,10 +44,14 @@ test("no on-page editing of a doc, and rooms report opaque_isolation without a r
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
   // No frame key either: nothing on the page is an editing channel.
   expect(await page.locator(CURRENT_FRAME).getAttribute("src")).not.toContain("#plinth-k=");
+  // The page is just read-only: no source editor item (people never see source) and no edit
+  // entry, nor a save status.
   await page.getByRole("button", { name: "Artifact actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Edit", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem").first()).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Edit", exact: true })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Edit on the page" })).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
 
   const roomCalls: string[] = [];
   page.on("request", (r) => {

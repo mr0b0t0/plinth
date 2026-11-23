@@ -101,7 +101,7 @@ describe("ArtifactPage", () => {
     expect(screen.getByRole("link", { name: "Report this artifact" })).toBeTruthy();
   });
 
-  it("gives owners Edit, the visibility badge and the sharing settings", async () => {
+  it("gives owners the visibility badge and the sharing settings, and no source editor", async () => {
     stubApi({
       me: ME,
       handle: (c) => (c.path.startsWith("/view/") ? json(okGate({ role: "owner" })) : undefined),
@@ -110,12 +110,11 @@ describe("ArtifactPage", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Garden plan, version 3");
-    // Edit and Settings live in the ⋯ menu; owners get the breadcrumb back to their artifacts.
+    // Settings live in the ⋯ menu; owners get the breadcrumb back to their artifacts. People
+    // never see source: an HTML page is changed by asking an agent, so there is no Edit.
     expect(screen.getByRole("link", { name: "Artifacts" }).getAttribute("href")).toBe("/dashboard");
     await user.click(screen.getByRole("button", { name: "Artifact actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit" }).getAttribute("href")).toBe(
-      "/a/garden-plan/edit",
-    );
+    expect(screen.queryByRole("menuitem", { name: "Edit" })).toBeNull();
     expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe(
       "/a/garden-plan/settings",
     );
@@ -493,37 +492,27 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
   const docGate = (over: Partial<Extract<ViewGate, { status: "ok" }>> = {}, n = 1) =>
     okGate({ artifact: DOC, role: "editor", live: live(), ...over }, n);
 
-  it("gives owners and editors an Edit toggle, the one way in, and viewers none", async () => {
+  it("edits a doc on its page from the moment it opens, with no toggle; viewers see none of it", async () => {
     stubApi({ me: ME, handle: (c) => (c.path.startsWith("/view/") ? json(docGate()) : undefined) });
     let ArtifactPage = await loadPage();
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    await screen.findByTitle("Plan, version 3");
-    const toggle = screen.getByRole("button", { name: "Edit" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
-    // No source beside it: the menu has no editor item for a doc edited on its page.
-    expect(screen.queryByRole("menuitem", { name: "Edit source" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Edit" })).toBeNull();
-    await user.keyboard("{Escape}");
-    await user.click(toggle);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+    // No Edit toggle, no Done: the save status is the whole edit chrome.
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     // Before the frame reports, the room is still connecting.
     expect(screen.getByRole("region", { name: "Editing on the page" }).textContent).toContain(
       "Connecting…",
     );
-    // Focus moves into the edit bar, and back to the toggle when editing ends.
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole("region", { name: "Editing on the page" }),
-      ),
-    );
-    // The toggle is the way out too: the strip has no Done beside it on a wide screen.
-    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
-    await user.click(toggle);
-    await waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
-    expect(screen.queryByRole("region", { name: "Editing on the page" })).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(toggle));
+    // The frame is told to edit as soon as it loads.
+    expect(frame.className).toContain("pl-viewer-frame");
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    for (const name of ["Edit", "Edit source", "Edit on the page", "Done editing"]) {
+      expect(screen.queryByRole("menuitem", { name })).toBeNull();
+    }
+    await user.keyboard("{Escape}");
     cleanup();
 
     // A commenter's gate has no `live`: no toggle, no notice, the menu keeps no edit item.
@@ -538,6 +527,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Editing on the page" })).toBeNull();
     expect(screen.queryByRole("note")).toBeNull();
   });
 
@@ -547,15 +537,20 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
         c.path.startsWith("/view/") ? json(docGate({ live: live({ sign_in: true }) })) : undefined,
     });
     const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Sign in to edit" }).getAttribute("href")).toBe(
+    expect(screen.queryByRole("region", { name: "Editing on the page" })).toBeNull();
+    // One entry, in the ⋯ menu: the bar holds only History, Comments, Share and ⋯.
+    expect(screen.queryByRole("link", { name: "Sign in to edit" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    expect(screen.getByRole("menuitem", { name: "Sign in to edit" }).getAttribute("href")).toBe(
       "/login?next=%2Fa%2Fgarden-plan",
     );
   });
 
-  it("tells editors about unpublished page changes, and turns comments off while editing", async () => {
+  it("keeps editing with the comments panel open, with no reload into review mode", async () => {
     const draft = {
       base_version: 3,
       dirty: true,
@@ -563,10 +558,14 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       updated_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
       updated_by_email: "bo@example.org",
     };
+    const gates: string[] = [];
     stubApi({
       me: ME,
       handle: (c) => {
-        if (c.path.startsWith("/view/")) return json(docGate({ live: live({ draft }) }));
+        if (c.path.startsWith("/view/")) {
+          gates.push(c.path);
+          return json(docGate({ live: live({ draft }) }));
+        }
         if (c.path.startsWith("/artifacts/art123/comments")) return json({ items: [] });
         return undefined;
       },
@@ -574,34 +573,23 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     const ArtifactPage = await loadPage();
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    await screen.findByTitle("Plan, version 3");
-    expect(screen.getByRole("note").textContent).toBe("Unpublished changes · Bo, 2 h ago");
+    const frame = await screen.findByTitle("Plan, version 3");
+    // Editing: the save status says what happens to the changes; no notice above the page.
+    expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
+    expect(screen.queryByRole("note")).toBeNull();
+    const before = gates.length;
     await user.click(screen.getByRole("button", { name: "Comments" }));
     expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
-    // The notice offers no action of its own: the bar's Edit toggle is the one way in, the edit
-    // strip holds Publish and the ⋯ menu Discard.
-    expect(screen.queryByRole("button", { name: "Continue editing" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Edit" }));
-    // Editing and review mode exclude each other: the panel closes.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
-        "false",
-      ),
-    );
-    expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
-    // Focus is in the edit bar, not on the body.
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole("region", { name: "Editing on the page" }),
-      ),
-    );
+    await screen.findByRole("region", { name: "Comments" });
+    // Still editing, in the same frame: no review-mode gate, no reload.
+    expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
+    expect(gates.slice(before).some((p) => p.includes("review=1"))).toBe(false);
+    expect(screen.getByTitle("Plan, version 3")).toBe(frame);
   });
 
-  it("says the shared draft exists before the room is reachable, with no action of its own", async () => {
+  it("tells an editor who must sign in about unpublished changes, with no action of its own", async () => {
     const draft = {
       base_version: 3,
       dirty: true,
@@ -612,7 +600,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     stubApi({
       me: ME,
       handle: (c) =>
-        c.path.startsWith("/view/") ? json(docGate({ live: live({ draft }) })) : undefined,
+        c.path.startsWith("/view/")
+          ? json(docGate({ live: live({ draft, sign_in: true }) }))
+          : undefined,
     });
     const ArtifactPage = await loadPage();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
@@ -695,7 +685,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
     });
 
-    it("while editing, a newer version raises no toast: the edit strip says it", async () => {
+    it("while editing, a newer version raises no toast: the save status says it", async () => {
       let current = 3;
       let n = 0;
       stubApi({
@@ -708,11 +698,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
             : undefined,
       });
       const ArtifactPage = await loadPage();
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
       roomStatus(frame, true);
-      await user.click(screen.getByRole("button", { name: "Edit" }));
       expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
       current = 4;
       await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
@@ -847,17 +835,16 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       expect(fresh.getAttribute("title")).toBe("Plan, version 3");
     });
 
-    it("solo: opening Comments when the save on Done fails keeps editing and the frame", async () => {
+    it("solo: opening Comments keeps editing and the frame, and publishes nothing", async () => {
       let views = 0;
+      let puts = 0;
       stubApi({
         me: ME,
         handle: (c) => {
           if (c.path.startsWith("/view/"))
             return json(docGate({ live: live({ mode: "solo" }) }, ++views));
           if (c.path.startsWith("/artifacts/art123/comments")) return json({ items: [] });
-          if (c.method === "PUT") {
-            return json({ error: { code: "rate_limited", message: "Too many" } }, 429);
-          }
+          if (c.method === "PUT") puts += 1;
           return undefined;
         },
       });
@@ -865,7 +852,6 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
-      await user.click(screen.getByRole("button", { name: "Edit" }));
       const post = (data: Record<string, unknown>) => {
         const e = new MessageEvent("message", {
           origin: "http://art123.content.localhost:8787",
@@ -893,28 +879,19 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       });
       const viewsBefore = views;
       await user.click(screen.getByRole("button", { name: "Comments" }));
-      const sent = (frame.contentWindow as unknown as { postMessage: ReturnType<typeof vi.fn> })
-        .postMessage.mock.calls;
-      const collect = sent.filter((c) => c[0]?.type === "collect").at(-1);
-      expect(collect).toBeTruthy();
-      post({ type: "draft", nonce: collect?.[0].nonce, text: "# Edited on the page" });
-      await waitFor(() =>
-        expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe(
-          "true",
-        ),
-      );
       await act(async () => {
         await vi.advanceTimersByTimeAsync(50);
       });
-      // The save failed: still editing, the panel stays closed and no review-mode gate reloads
-      // the frame (the unsaved edits live only in it).
-      expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe(
+      // The panel opens beside edit mode: no review-mode gate reloads the frame (the unsaved
+      // edits live only in it), and nothing is published for it.
+      expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
         "true",
       );
-      expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
-        "false",
+      expect(screen.getByRole("region", { name: "Editing on the page" }).textContent).toContain(
+        "Unpublished changes",
       );
       expect(views).toBe(viewsBefore);
+      expect(puts).toBe(0);
       expect(screen.getByTitle("Plan, version 3")).toBe(frame);
     });
   });

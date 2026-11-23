@@ -8,6 +8,7 @@ import { type Browser, expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { expectEditing, publishChanges } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 
@@ -83,37 +84,12 @@ async function rowMenu(page: Page, row: number, item: string) {
   await expect(menu).toBeHidden();
 }
 
+/** Edit mode is on from the moment the sheet opens (no toggle); wait for the room. */
 async function startEditing(page: Page) {
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
+  await expectEditing(page, ".plinth-sheet__page--editing");
   const bar = page.getByRole("region", { name: "Editing on the page" });
-  await expect(bar).toBeVisible();
-  await expect(frameOf(page).locator(".plinth-sheet__page--editing")).toBeVisible();
   await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
   await expect(bar).not.toContainText("Not connected");
-}
-
-/** Turn edit mode off: the toggle, or at phone width (the toggle is in the ⋯ menu) the strip's Done. */
-async function stopEditing(page: Page) {
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) {
-    // On a wide screen the toggle is the one way in and out: the strip has no Done.
-    await expect(
-      page
-        .getByRole("region", { name: "Editing on the page" })
-        .getByRole("button", { name: "Done" }),
-    ).toHaveCount(0);
-    await toggle.click();
-  } else {
-    await page
-      .getByRole("region", { name: "Editing on the page" })
-      .getByRole("button", { name: "Done" })
-      .click();
-  }
 }
 
 test("two editors on one sheet: a held row, typing that arrives live, a row both see, Publish makes v2", async ({
@@ -178,7 +154,7 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(cell(other, "A6")).toHaveText("Total");
   await expect(cell(other, "B6")).toHaveText("37");
 
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await publishChanges(page);
   await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
     "Published as v2",
   );
@@ -192,8 +168,8 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
     '["Plums",2,2]',
     '["Total","=SUM(B2:B5)","=SUM(C2:C5)"]',
   ]);
-  await stopEditing(page);
-  await expect(page.getByRole("region", { name: "Editing on the page" })).toHaveCount(0);
+  // Still editing: there is no way out of edit mode.
+  await expect(frameOf(page).locator(".plinth-sheet__page--editing")).toBeVisible();
   await other.context().close();
 });
 
@@ -206,13 +182,13 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await startEditing(page);
   const bar = page.getByRole("region", { name: "Editing on the page" });
 
-  /** Type `value` into a cell and wait until the strip shows the edit. */
+  /** Type `value` into a cell and wait until the save status shows the edit. */
   async function type(a: string, value: string) {
     await cell(page, a).dblclick();
     const field = fieldOf(page);
     await field.fill(value);
     await field.press("Enter");
-    await expect(bar).toContainText(/Draft saved|Saving draft/);
+    await expect(bar).toContainText(/Draft saved|Saving…/);
   }
 
   /** The agent sets one cell with edit_sheet on `base`. */
@@ -353,7 +329,7 @@ test("column settings, widths, freezing, options and row moves on the page publi
   const bar = page.getByRole("region", { name: "Editing on the page" });
   const frame = frameOf(page);
   const settings = frame.locator(".plinth-sheet__panel");
-  const saved = async () => expect(bar).toContainText(/Draft saved|Saving draft/);
+  const saved = async () => expect(bar).toContainText(/Draft saved|Saving…/);
 
   // Price: no thousands separators.
   await columnMenu(page, "C", "Column settings…");
@@ -412,7 +388,7 @@ test("column settings, widths, freezing, options and row moves on the page publi
   await expect(cell(page, "B4")).toHaveText("8");
   await saved();
 
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await publishChanges(page);
   await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
   const detail = await apiGet(page.request, `/artifacts/${s.id}`);
   const lines = (detail.body.content as string).split("\n");
@@ -462,7 +438,7 @@ test("a cell opens in a docked editor at phone width, and in the cell otherwise"
     // The value shows once: the formula bar steps aside while the dock is open.
     await expect(frame.locator(".plinth-sheet__fx")).toBeHidden();
     await field.fill("12");
-    // One "Done" on the page, the edit bar's: the dock saves with a check.
+    // No "Done" on the page: the dock saves with a check.
     await expect(dock.getByRole("button", { name: "Done" })).toHaveCount(0);
     await dock.getByRole("button", { name: "Save cell" }).click();
     await expect(dock).toHaveCount(0);
@@ -532,7 +508,7 @@ test("an agent's version during a row move or a width change is never merged: th
   // A row swap on the page, an agent's cell meanwhile: Publish your changes keeps the swap.
   await rowMenu(page, 3, "Move row up");
   await expect(cell(page, "A2")).toHaveText("Pears");
-  await expect(bar).toContainText(/Draft saved|Saving draft/);
+  await expect(bar).toContainText(/Draft saved|Saving…/);
   await agentSets("B4", 9, 1);
   await expect(bar).toContainText("v2 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
@@ -555,7 +531,7 @@ test("an agent's version during a row move or a width change is never merged: th
   await page.keyboard.press("Alt+ArrowRight");
   // The width is sent once the keys rest (WIDTH_DEBOUNCE_MS).
   await page.waitForTimeout(800);
-  await expect(bar).toContainText(/Draft saved|Saving draft/, { timeout: 10_000 });
+  await expect(bar).toContainText(/Draft saved|Saving…/, { timeout: 10_000 });
   await agentSets("B4", 4, 3);
   await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();

@@ -15,8 +15,9 @@
 // edit code runs only once the app sends { type: "edit", on: true }. Without `live` that message
 // turns on solo editing of the version's text, which the app saves through its own session after
 // asking for it with `collect`. Edit mode draws every raw slide (editView.ts) and edits slide text,
-// notes and the deck's settings in place (edit.ts); presenting, full screen and following the
-// presenter wait until editing ends. A frozen draft is reviewed whole in the frame
+// notes and the deck's settings in place (edit.ts). The app keeps edit mode on for whoever may edit
+// (always-on editing), so presenting, full screen, printing and the .pptx hold it off while they
+// run and turn it back on after; following the presenter waits. A frozen draft is reviewed whole in the frame
 // (common/review.ts) when the app sends `review`: both decks as slides, side by side. Every
 // editing message to the app carries the frame key the app put in the address
 // (common/frameKey.ts), which is taken out of it before anything renders.
@@ -50,6 +51,7 @@ import {
 import { fetchVersionSource, pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, type LeaseLoss, LiveDocClient } from "../common/live.ts";
+import { PagePick } from "../common/pick.ts";
 import {
   bringIntoPane,
   CHANGED_ATTR,
@@ -338,7 +340,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           deck,
           right: payload.follow,
           // The app remembers the lead, so a frame that replaces this one leads again (`lead`).
-          onLead: (on) => postToApp(win, appOrigin, { type: "leading", on }),
+          onLead: (on) => {
+            postToApp(win, appOrigin, { type: "leading", on });
+            followChanged();
+          },
           // Someone started or stopped leading: the deck shown may switch to or from the draft.
           changed: () => followChanged(),
           ...(opts.connect ? { connect: opts.connect } : {}),
@@ -565,6 +570,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     // Review mode and the editor preview keep every slide in the DOM (comment pins anchor to them),
     // whatever asks for another view. Presenter view waits until editing ends.
     if (fixedOverview || next === mode) return;
+    // Presenter view shows the published deck: edit mode waits until it ends.
+    if (next === "presenter") live?.hold("present", true);
     if (editing && next === "presenter") return;
     const was = mode;
     mode = next;
@@ -574,6 +581,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (mode === "overview") revealSlide(doc, deck.current);
     root?.focus({ preventScroll: true });
     reportView();
+    if (was === "presenter") live?.hold("present", false);
   }
 
   /** The shown slide of edit mode's raw slide `n` (or of the nearest shown one), and back. */
@@ -590,9 +598,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!editing) postToApp(win, appOrigin, { type: "position", slide: n, count: views.length });
   });
 
-  // Print and the .pptx wait until editing ends, as presenting does: edit mode's slides include
-  // empty ones the deck never shows, with their labels and placeholders.
+  // Print and the .pptx take the deck, not edit mode's slides (which include empty ones the deck
+  // never shows, with their labels and placeholders): edit mode is held off until they are done.
   const print = (notes: boolean) => {
+    const held = editing && live !== null;
+    if (held) live?.hold("print", true);
     if (editing) return;
     void printDeck(win, root, {
       notes,
@@ -603,7 +613,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         for (const v of views) fitView(v);
         await htmlRuntime?.embedsDrawn();
       },
-      restore: render,
+      restore: () => {
+        render();
+        if (held) live?.hold("print", false);
+      },
     });
   };
 
@@ -672,8 +685,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   };
 
   const runExport = async (nonce: string) => {
+    // Not from edit mode's raw slides: edit mode is held off while the file is made.
+    const held = editing && answerTo === null && live !== null;
+    if (held) live?.hold("export", true);
     if (editing && answerTo === null) {
-      // Not from edit mode's raw slides (the app offers no download while editing).
       postToApp(win, appOrigin, { type: "exported", nonce, ok: false, images_skipped: 0, opaque });
       return;
     }
@@ -707,6 +722,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       report(false, 0);
     } finally {
       answerTo = null;
+      if (held) live?.hold("export", false);
     }
   };
 
@@ -735,6 +751,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     mode === "presenter" || appPresenting || (follow?.detached ?? false) || (follow?.led ?? false);
 
   function followChanged() {
+    // While a presenter leads the room (this one included) the deck shows the published deck and
+    // follows the lead: edit mode, always on for owners and editors, waits until the lead ends.
+    live?.hold("lead", follow?.led ?? false);
     if (live && !editing) redraw();
   }
 
@@ -917,6 +936,12 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (editor) editor.setBackend(local);
       else editor = new SlidesEditor(win, local, hooks);
     };
+    // The comments panel's "Point at something" while editing: a slide, a block, an image or the
+    // notes, named as Ask names them.
+    const pick = new PagePick(win, {
+      placeAt: (t) => (editor?.editing ? editor.placeAt(t) : null),
+      post,
+    });
 
     if (payload?.live === "room") {
       client = new LiveDocClient({
@@ -977,7 +1002,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       client.start();
     }
 
-    const setEditing = (on: boolean) => {
+    const setEditing = (on: boolean, report = true) => {
       if (on === editing) return;
       if (on) {
         // Presenting and editing exclude each other; following a presenter waits.
@@ -986,28 +1011,42 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         auto = false;
         follow?.pause(true);
         rawOffset = 0;
-      }
+      } else pick.stop();
       editing = on;
       editor?.setEditing(on);
       if (!on) {
         redraw();
         follow?.pause(false, deck.current);
-        reportView();
+        if (report) reportView();
       }
+    };
+    /** What the app asked for (`edit`), and what holds edit mode off meanwhile (`hold`). */
+    let wanted = false;
+    const holds = new Set<string>();
+    /**
+     * Presenting (presenter view, full screen), printing and the .pptx take the deck, not edit
+     * mode's raw slides: edit mode is held off while one runs and comes back once none does.
+     */
+    const hold = (why: string, on: boolean) => {
+      if (on) holds.add(why);
+      else holds.delete(why);
+      setEditing(wanted && holds.size === 0, false);
+      status();
     };
 
     const onMessage = (m: EditAppMessage) => {
       if (m.type === "edit") {
         if (m.base !== undefined) soloBase = m.base;
         // An HTML deck is never edited here: its frame joins the room only so a Markdown deck's
-        // changes from before it can be reviewed (Review changes on the strip).
+        // changes from before it can be reviewed (Review changes in the save status).
         if (htmlDeck) {
           status();
           return;
         }
         if (m.on && (!client || client.failed)) goSolo();
-        setEditing(m.on);
-        if (m.on && m.focus === "first") editor?.focusFirst();
+        wanted = m.on;
+        setEditing(m.on && holds.size === 0);
+        if (m.on && m.focus === "first" && editing) editor?.focusFirst();
         status();
       } else if (m.type === "rescue") {
         // What the app kept from an earlier frame (a reload), and its answers to this one's reports.
@@ -1025,10 +1064,13 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         void session.open(m);
       } else if (m.type === "reviewed") {
         session.answer(m);
+      } else if (m.type === "pick") {
+        pick.set(m.on && editing);
       }
     };
     return {
       onMessage,
+      hold,
       settings: () => editor?.openSettings(),
       save: () => {
         editor?.flush();
@@ -1049,6 +1091,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       },
       stop: () => {
         client?.stop();
+        pick.stop();
         editor?.stop();
         review.close();
         poster.stop();
@@ -1077,6 +1120,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     } else if (m.type === "lead") follow?.resumeLead();
     else if (m.type === "presenting") {
       appPresenting = m.on;
+      // Full screen shows the published deck: edit mode waits until it ends.
+      live?.hold("fullscreen", m.on);
       followChanged();
     } else if (m.type === "view") {
       pick(m.mode);

@@ -268,36 +268,27 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     expect(await screen.findByText("Updated to v4")).toBeTruthy();
   });
 
-  it("keeps a doc's frame when editing began while its renderer fetched the version", async () => {
+  it("never asks an editor's frame to show a newer version, nor swaps it while it holds changes", async () => {
     const s = server({ type: "doc", editor: true });
     const ArtifactPage = await loadPage();
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
     const { sent, fromFrame } = frameWindow(frame);
-    s.current = 4;
-    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
-    const ask = await sentOf(sent, "version");
-    // Before the renderer answers, the viewer edits and the page has unsaved changes.
-    await user.click(screen.getByRole("button", { name: "Edit" }));
     // An editor's frame carries its key in its address; its editing messages carry it too.
     const key = /#plinth-k=([A-Za-z0-9_-]{43})$/.exec(frame.getAttribute("src") ?? "")?.[1];
     expect(key).toBeTruthy();
+    // Editing is on from the start; the page has unsaved changes.
     fromFrame({ source: "plinth-renderer", v: 1, key, ...DIRTY });
-    const n = s.reads.length;
-    // The renderer refuses: it never replaces a draft. The frame must stay too.
-    fromFrame({
-      source: "plinth-renderer",
-      v: 1,
-      type: "shown",
-      n: 4,
-      nonce: ask.nonce,
-      ok: false,
-    });
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
     await vi.advanceTimersByTimeAsync(50);
+    // The frame is held: never told to show v4, never replaced. The save status says why.
+    expect(sent.some(([m]) => m.type === "version")).toBe(false);
     expect(screen.getByTitle("Garden plan, version 3")).toBe(frame);
     expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
-    expect(s.reads.length).toBe(n);
+    expect(screen.getByRole("region", { name: "Editing on the page" }).textContent).toContain(
+      "v4 was published while you edited",
+    );
   });
 
   it("swaps a doc whose renderer could not show the version, or did not answer", async () => {

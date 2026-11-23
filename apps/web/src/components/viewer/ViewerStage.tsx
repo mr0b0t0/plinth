@@ -1,11 +1,18 @@
-// The artifact on view: one 44px bar (breadcrumb, version, access on the left; History,
-// Comments, Share and a ⋯ menu on the right), the artifact in a sandboxed frame filling the rest,
+// The artifact on view: one 44px bar (breadcrumb, version, access and, while the page is edited
+// on it, its save status on the left; History, Comments, Share and a ⋯ menu on the right, and
+// Present for a deck), the artifact in a sandboxed frame filling the rest,
 // an optional comments panel, and a one-line banner naming the platform with a report link
 // (required on every artifact page) and, unless the operator turned it off (SHOW_SOURCE_LINK), a
 // link to Plinth's source. The banner is app chrome: nothing is ever added to the artifact itself.
 //
-// The ⋯ menu, the controls on the right of the bar and the strip under it are item lists
-// (stageItems.tsx): this component holds the state and hands every item one StageContext.
+// The ⋯ menu, the controls on the right of the bar, the save status and the strip under the bar
+// are item lists (stageItems.tsx): this component holds the state and hands every item one
+// StageContext.
+//
+// Owners and editors who may edit on the page (gate.live, signed in, not blocked) get the frame in
+// edit mode from the moment it loads, with no toggle (useLiveEdit). Comments work beside it: the
+// panel opens without leaving edit mode or reloading the frame, and its "Point at something" asks
+// the editing frame to pick a place (`pick`), since review mode's bridge would need a reload.
 
 import { FileIcon } from "@phosphor-icons/react";
 import {
@@ -39,6 +46,7 @@ import { StageFrame } from "./StageFrame.tsx";
 import {
   BAR_CONTROLS,
   STAGE_DIALOGS,
+  STATUS_ITEMS,
   STRIP_ITEMS,
   type StageContext,
   type StageItem,
@@ -66,17 +74,18 @@ export interface ViewerStageProps {
   onToggleComments: () => void;
   /** Link to the current version. */
   currentHref: string;
-  /** Fetch a fresh gate (on-page editing: after a solo save or discard, a lost session). */
+  /** Fetch a fresh gate (on-page editing: after a solo discard or review, a lost session). */
   onReload?: () => void;
   /**
-   * On-page editing turned on or off (#36). Editing and review mode (the comment-anchoring frame)
-   * exclude each other, so the page turns review mode off when editing starts.
+   * On-page editing is on or off (#36): on from the moment the page opens for whoever may edit
+   * here. The comments panel never puts an editing frame in review mode (the comment-anchoring
+   * frame, which needs a reload): the page keeps review mode off while editing.
    */
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
   /**
-   * The edit bar names a version the bar's picker does not show yet (one saved from the page, or
+   * The save status names a version the bar's picker does not show yet (one saved from the page, or
    * published meanwhile): the page reads its gate now, so both name the same version.
    */
   onVersionSeen?: () => void;
@@ -152,7 +161,6 @@ export function ViewerStage({
   const access = VISIBILITY_META[artifact.visibility];
   const AccessIcon = access.icon;
 
-  const editHref = route(APP_ROUTES.editor, { slug });
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
   const settingsHref = route(APP_ROUTES.settings, { slug });
@@ -209,21 +217,38 @@ export function ViewerStage({
     config,
     frameKey,
     onReload: onReload ?? (() => undefined),
-    onLeave: () => barRef.current?.focus(),
+    onLeave: () => (barRef.current ?? actionsButton())?.focus(),
     onAsk: (anchor, what) => commentFromFrame.current(pageAnchorOf(anchor), what),
+    onPicked: (anchor) => {
+      setPicked((p) => ({ n: (p?.n ?? 0) + 1, anchor: anchor ? pageAnchorOf(anchor) : null }));
+    },
     // Unknown while the session loads: the rescue store waits for it.
     // Unknown (undefined) while the session loads or could not be read; null: no one signed in.
     userId: sessionLoading || (sessionFailed && !me) ? undefined : (me?.id ?? null),
   });
   const editing = live.editing;
-  // `?edit` (New and Import): start editing, with the focus on the frame's first block or cell.
+  // `?edit` (New and Import): the focus on the frame's first block or cell.
   useEditStart(live);
+  // The comments panel's "Point at something" while editing: the frame picks (useLiveEdit.pick),
+  // and the place it names comes back here, numbered so each pick is taken once.
+  const [picked, setPicked] = useState<{ n: number; anchor: PageAnchor | null } | null>(null);
+  // While editing, comments are about the page the frame loaded: the frame is never reloaded under
+  // an editor, so a pin placed in the composer stays when the draft is published meanwhile.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one value per frame load
+  const frameVersion = useMemo(() => artifact.version, [frameSrc]);
+  // A solo frame that published its own copy is not reloaded: it shows that version, and the bar
+  // (the picker, "You are viewing") says so, rather than an older version.
+  const own = live.ownVersion;
+  const stageGate: OkGate =
+    own !== null && own > artifact.version
+      ? { ...gate, artifact: { ...artifact, version: own } }
+      : gate;
   // While a version waits for review, the page still shows the changes made on their base: the
   // bar names that base, whenever the room's news of the newer version arrived.
   const shownVersion =
     editing && live.phase === "conflict"
-      ? live.review?.base || live.status?.base_version || artifact.version
-      : artifact.version;
+      ? live.review?.base || live.status?.base_version || stageGate.artifact.version
+      : stageGate.artifact.version;
   // Presenting a deck: the slide, full screen, presenter view and its audience window. Present in
   // review mode leaves review mode first.
   const present = usePresentation({
@@ -278,7 +303,7 @@ export function ViewerStage({
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
-  // The version the edit bar names (saved as, or published meanwhile) and the picker agree.
+  // The version the save status names (saved as, or published meanwhile) and the picker agree.
   const named = Math.max(live.savedVersion ?? 0, live.status?.conflict_version ?? 0);
   useEffect(() => {
     if (!pinned && named > artifact.version) onVersionSeen?.();
@@ -290,23 +315,19 @@ export function ViewerStage({
     onToggleComments();
     requestAnimationFrame(() => toggleRef.current?.focus());
   };
-  // Opening comments while editing finishes editing first; when that save failed (solo edits
-  // exist only in the frame, which review mode would reload), the panel stays closed. True when
-  // the panel opened.
-  const toggleComments = async (): Promise<boolean> => {
-    if (editing && !(await live.done())) return false;
-    onToggleComments();
-    return true;
-  };
+  // Comments open beside edit mode: nothing is published and the frame stays as it is.
+  const toggleComments = () => onToggleComments();
 
-  const editRef = useRef<HTMLButtonElement>(null);
   const headerRef = useRef<HTMLElement>(null);
-  // `?edit` where this person cannot start editing here.
-  useEditArrival(gate, () =>
-    headerRef.current?.querySelector<HTMLElement>('a[aria-label="Sign in to edit"]')?.focus(),
-  );
+  /** The ⋯ button: where focus goes when the control that had it went away. */
+  const actionsButton = () =>
+    headerRef.current?.querySelector<HTMLElement>('button[aria-label="Artifact actions"]') ?? null;
+  // `?edit` where this person cannot start editing here. "Sign in to edit" is in the ⋯ menu: focus
+  // goes to the menu's button.
+  useEditArrival(gate, () => actionsButton()?.focus());
   // "Comment" from the frame: the comments panel, opened as the Comments toggle opens it, with the
-  // composer pinned to the place the renderer named. Forgotten once the panel closes.
+  // composer pinned to the place the renderer named, edit mode staying on. Forgotten once the
+  // panel closes.
   const [pin, setPin] = useState<CommentPin | null>(null);
   const pinCount = useRef(0);
   useEffect(() => {
@@ -316,11 +337,10 @@ export function ViewerStage({
     blocked: shareOpen || dialog !== null,
     panelOpen: commentsOpen,
     open: (anchor, what) => {
-      void (async () => {
-        if (!commentsOpen && !(await toggleComments())) return;
-        pinCount.current += 1;
-        setPin({ n: pinCount.current, anchor, what });
-      })();
+      // The panel opens beside edit mode: nothing is published, the frame is not reloaded.
+      if (!commentsOpen) toggleComments();
+      pinCount.current += 1;
+      setPin({ n: pinCount.current, anchor, what });
     },
   });
   // While the frame shows the whole-draft review, toasts keep clear of its choices.
@@ -329,37 +349,19 @@ export function ViewerStage({
     document.body.classList.add("pl-reviewing");
     return () => document.body.classList.remove("pl-reviewing");
   }, [live.reviewing]);
-  // Where focus goes when editing ends, or when the control that had it went away: the Edit
-  // toggle, or at phone width (no toggle) the actions menu that holds "Edit on the page".
-  const focusEditEntry = () => {
-    const target =
-      editRef.current ??
-      headerRef.current?.querySelector<HTMLElement>('button[aria-label="Artifact actions"]') ??
-      document.getElementById("main");
-    target?.focus();
-  };
-  // A notice button that started editing or saved unmounts with focus in it: move focus on.
-  const refocusIfLost = (to: () => void) => {
+  // A notice button that published or discarded unmounts with focus in it: move focus on, to the
+  // ⋯ button (or the stage).
+  const refocusIfLost = () => {
     requestAnimationFrame(() => {
       const a = document.activeElement;
-      if (!a || a === document.body || !a.isConnected) to();
+      if (a && a !== document.body && a.isConnected) return;
+      (actionsButton() ?? document.getElementById("main"))?.focus();
     });
-  };
-  const finishEditing = async () => {
-    if (await live.done()) requestAnimationFrame(focusEditEntry);
-  };
-  const startEditing = () => {
-    live.start();
-    requestAnimationFrame(() => barRef.current?.focus());
-  };
-  const toggleEditing = () => {
-    if (editing) void finishEditing();
-    else startEditing();
   };
   const signInHref = `${APP_ROUTES.login}?next=${encodeURIComponent(currentHref)}`;
 
   const stage: StageContext = {
-    gate,
+    gate: stageGate,
     pinned,
     config,
     compact,
@@ -371,7 +373,6 @@ export function ViewerStage({
     update,
     hrefs: {
       current: currentHref,
-      edit: editHref,
       history: historyHref,
       report: reportHref,
       settings: settingsHref,
@@ -383,16 +384,13 @@ export function ViewerStage({
       count: openCount,
       toggleRef,
       close: closeComments,
-      toggle: () => void toggleComments(),
+      toggle: toggleComments,
     },
-    refs: { edit: editRef, bar: barRef },
+    refs: { bar: barRef },
     theme: { next: nextTheme, set: setTheme },
     actions: {
       openShare: () => setShareOpen(true),
-      toggleEditing,
-      startEditing,
-      finishEditing: () => void finishEditing(),
-      refocusAfterNotice: () => refocusIfLost(focusEditEntry),
+      refocusAfterNotice: refocusIfLost,
       reload: () => onReload?.(),
       openDialog: setDialog,
     },
@@ -432,6 +430,7 @@ export function ViewerStage({
           <div className="pl-viewer__version">
             <VersionPicker slug={slug} current={artifact.current_version} shown={shownVersion} />
           </div>
+          {renderItems(STATUS_ITEMS, stage)}
           {isOwner && (
             <span className="pl-viewer__access" title={access.description}>
               <AccessIcon size={14} aria-hidden="true" />
@@ -459,7 +458,7 @@ export function ViewerStage({
                 <CommentsPanel
                   artifactId={artifact.id}
                   slug={slug}
-                  version={artifact.version}
+                  version={editing ? frameVersion : artifact.version}
                   frame={frame}
                   contentOrigin={contentOrigin}
                   opaque={config?.content_isolation === "opaque"}
@@ -468,6 +467,11 @@ export function ViewerStage({
                   onItemsChange={setCommentItems}
                   agents={gate.ask?.targets}
                   pinTo={pin}
+                  framePick={
+                    editing && live.canPick
+                      ? { start: () => live.pick(true), stop: () => live.pick(false), picked }
+                      : undefined
+                  }
                   {...pageComments}
                 />
               </div>

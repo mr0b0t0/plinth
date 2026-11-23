@@ -6,6 +6,8 @@
 // following, and "Back to slide N" returns to the owner's slide. A presenter's own audience window follows its presenter window, not the room, so it shows
 // no note while they lead. A lead carries on when a new version or a sharing change replaces the
 // presenter's frame. An anonymous viewer of an unlisted deck opens no socket and sees no note.
+// The owner's deck is in edit mode from the start (always-on editing): Lead viewers holds edit
+// mode off while they lead.
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
 import { apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
@@ -225,7 +227,9 @@ test("a presenter's audience window follows its presenter window and shows no no
   await seedSession(context, owner);
   await page.goto(`/a/${art.slug}`);
   await ready(page);
-  await page.keyboard.press("s");
+  // The owner's deck is in edit mode (always on), where keys type: presenter view from Present.
+  await page.getByRole("button", { name: "Present" }).click();
+  await page.getByRole("menuitem", { name: "Presenter view" }).click();
   await expect(root(page)).toHaveAttribute("data-mode", "presenter");
   const opened = context.waitForEvent("page");
   await page.getByRole("button", { name: "Present" }).click();

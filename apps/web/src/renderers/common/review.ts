@@ -13,8 +13,8 @@
 //   over vN, which stays in History;
 // - "Discard your changes": the app confirms it with its own dialog over the dimmed page, then
 //   the page goes back to vN.
-// Short labels only: the edit strip above the frame says what happened, so the review has no
-// heading of its own; the two panes show the rest. Back is its one way out (the strip shows no
+// Short labels only: the save status in the app's bar says what happened, so the review has no
+// heading of its own; the two panes show the rest. Back is its one way out (the save status shows no
 // Done while it is open), and its styles follow the app's (ink primary, bronze live state).
 // The renderer only asks: it posts the choice to the app (`resolved`), which makes the REST call;
 // the room decides, under its checkpoint lock, and closes every open review with its `reset`.
@@ -341,7 +341,7 @@ export class DraftReview {
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", REVIEW_WORDS.label(from, to));
     root.dataset.show = "mine";
-    // Focus moves to the review itself when it opens (it is named), not to a heading: the strip
+    // Focus moves to the review itself when it opens (it is named), not to a heading: the status
     // above the frame already says what happened.
     root.tabIndex = -1;
 

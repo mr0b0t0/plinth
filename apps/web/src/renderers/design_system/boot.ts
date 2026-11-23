@@ -39,6 +39,7 @@ import {
 } from "../common/editSession.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient, type LiveDocOptions } from "../common/live.ts";
+import { PagePick } from "../common/pick.ts";
 import { DraftReview } from "../common/review.ts";
 import { blockWords, type RescueReport } from "../doc/edit.ts";
 import { renderMarkdown } from "../doc/markdown.ts";
@@ -355,6 +356,20 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DsEditor(root, win, local, hooks);
   };
+  // The comments panel's "Point at something" while editing: a token, a group or a component,
+  // keyed from the published version only, as Ask keys them.
+  const pick = new PagePick(win, {
+    placeAt: (t) => {
+      const place = editor?.editing ? editor.placeAt(t) : null;
+      if (!place) return null;
+      const { anchor } = place;
+      words ??= publishedWords(win.document, published);
+      names ??= publishedNames(published);
+      const k = "kind" in anchor ? publishedAnchorKey(names, anchor.kind, anchor.name) : anchor.key;
+      return { el: place.el, anchor: { key: k, text: words.has(anchor.text) ? anchor.text : "" } };
+    },
+    post,
+  });
 
   /** The draft is here: the room's text has arrived, or the frame edits on its own. */
   const draftHere = () => local !== null || (client?.ready ?? false);
@@ -461,6 +476,7 @@ function live(
       sizeDue = null;
       unavailable = false;
       if (!m.on) {
+        pick.stop();
         editor?.setEditing(false);
       } else if (!draftHere()) {
         // The room's text is still on its way: edit mode starts (nothing is leased before the text
@@ -489,6 +505,8 @@ function live(
       void session.open(m);
     } else if (m.type === "reviewed") {
       session.answer(m);
+    } else if (m.type === "pick") {
+      pick.set(m.on && (editor?.editing ?? false));
     }
   };
   return {
@@ -497,6 +515,7 @@ function live(
     status,
     stop: () => {
       client?.stop();
+      pick.stop();
       editor?.setEditing(false);
       review.close();
       poster.stop();

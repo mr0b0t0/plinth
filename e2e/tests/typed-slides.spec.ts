@@ -10,6 +10,7 @@ import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts
 import { seedSession } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
+import { viewAsReader } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
@@ -88,7 +89,17 @@ async function publishDeck(page: Page, content = DECK) {
   });
   expect(r.isError, r.text).toBe(false);
   expect(r.data.type).toBe("slides");
-  return { client, artifact: r.data };
+  return { client, artifact: r.data, token };
+}
+
+/**
+ * The deck as people view it: its owner is always in edit mode, so the context is signed in as a
+ * reader it is shared with instead.
+ */
+async function publishDeckToRead(page: Page, role: "viewer" | "commenter" = "viewer") {
+  const published = await publishDeck(page);
+  await viewAsReader(page.context(), page.request, published.artifact.id, published.token, role);
+  return published;
 }
 
 async function deckFrame(page: Page, selector = CURRENT_FRAME): Promise<Frame> {
@@ -152,7 +163,7 @@ test.describe("a published deck", () => {
       dialogs.push(d.message());
       void d.dismiss();
     });
-    const { artifact, client } = await publishDeck(page);
+    const { artifact, client } = await publishDeckToRead(page);
     const artifactHost = `${artifact.id}.${CONTENT_HOST}`;
     const hosts = new Set<string>();
     page.on("request", (r) => {
@@ -220,7 +231,7 @@ test.describe("a published deck", () => {
     test.use({ viewport: WIDE });
 
     test("pages with keys, opens deep links, and follows #N links", async ({ page }) => {
-      const { artifact, client } = await publishDeck(page);
+      const { artifact, client } = await publishDeckToRead(page);
       try {
         await page.goto(`/a/${artifact.slug}`);
         const frame = await deckFrame(page);
@@ -306,7 +317,7 @@ test.describe("a published deck", () => {
       page,
     }) => {
       test.setTimeout(60_000);
-      const { artifact, client } = await publishDeck(page);
+      const { artifact, client } = await publishDeckToRead(page, "commenter");
       const current = page.frameLocator(CURRENT_FRAME);
       const comments = page.getByRole("button", { name: "Comments", exact: true });
       const panel = page.getByRole("region", { name: "Comments" });
@@ -360,7 +371,7 @@ test.describe("a published deck", () => {
       context,
     }) => {
       test.setTimeout(60_000);
-      const { artifact, client } = await publishDeck(page);
+      const { artifact, client } = await publishDeckToRead(page);
       try {
         await page.goto(`/a/${artifact.slug}`);
         const frame = await deckFrame(page);

@@ -64,6 +64,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
+import type { PagePlace } from "../common/pick.ts";
 import {
   FORMAT_LOST,
   kindName,
@@ -1568,6 +1569,32 @@ export class DocEditor {
       if (n.nodeType === 1 && rangeOf(n)?.start === start) return [n];
     }
     return null;
+  }
+
+  /**
+   * The block at `target` as a comment's place while the person picks one (common/pick.ts): named
+   * as Ask an agent names it (askKey: the published version's block, `new-…` for one only in the
+   * draft), with its first words and its kind. Nothing closes: the open block stays open.
+   */
+  placeAt(target: Node): PagePlace | null {
+    const top = this.topLevel(target);
+    if (top === null || top === this.placeholder || top.nodeType !== 1) return null;
+    const el = top as HTMLElement;
+    const open = top === this.open?.rich.el ? this.open.rich.model : null;
+    const sel = top === this.selected?.panel ? this.selected : null;
+    let start: number | null;
+    if (open) {
+      const place = this.openPlace(-1);
+      start = "start" in place ? place.start : null;
+    } else start = sel ? sel.start : (rangeOf(top)?.start ?? null);
+    const found = start === null ? null : this.blockAt(start);
+    if (!found) return null;
+    const nodes = sel ? Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar) : [top];
+    const what: AskWhat = open ? whatOfModel(open) : whatOf(nodes);
+    const text = open ? modelWords(this.doc, open) : blockWords(nodes);
+    const draft = joinLines(this.backend.lines);
+    const { key } = askKey(draft, this.hooks.published?.() ?? draft, found.index, null);
+    return { el, anchor: { key, text }, what };
   }
 
   private turn(kind: BlockKind): void {

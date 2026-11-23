@@ -3,13 +3,14 @@
 // the focus on its title or first cell, and Publish makes v2; Import sends an .xlsx that the Worker
 // converts and opens the sheet in edit mode, saying in a toast which sheets it left out; a sheet's
 // "Replace with a file…" confirms (with what the import would change), asks again when an agent
-// published meanwhile, keeps the artifact, is hidden while the page is edited, and on a pinned
-// version link moves to the artifact's own link once replaced.
+// published meanwhile, keeps the artifact, is hidden while the page holds unpublished changes, and
+// on a pinned version link moves to the artifact's own link once replaced. Editing is always on for
+// owners and editors: there is no Edit toggle and no Done.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
-import { CURRENT_FRAME } from "../support/viewer.ts";
+import { CURRENT_FRAME, publishChanges } from "../support/viewer.ts";
 import { xlsxOf } from "../support/xlsx.ts";
 
 const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
@@ -53,7 +54,7 @@ test("New document: v1 'Created in the app' opens in edit mode on its title, and
   await menu.getByRole("menuitem", { name: "Document", exact: true }).click();
 
   await expect(page).toHaveURL(/\/a\/[^/?]+$/);
-  await expect(bar(page)).toBeVisible();
+  await expect(bar(page)).toHaveCount(1);
   // The title opens as formatted text, with no Markdown shown.
   const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
   await expect(field).toHaveText("Untitled document", { timeout: 15_000 });
@@ -70,7 +71,7 @@ test("New document: v1 'Created in the app' opens in edit mode on its title, and
   await page.keyboard.press("Escape");
   await expect(frameOf(page).locator("h1")).toContainText("Trip plan");
   await expect(frameOf(page).locator("p", { hasText: "Day one: the coast." })).toBeVisible();
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await publishChanges(page);
   await expect(bar(page)).toContainText("Published as v2", { timeout: 10_000 });
 
   const slug = slugOf(page);
@@ -95,7 +96,7 @@ test("New sheet opens in edit mode on A2, and typing fills it", async ({ page })
   const menu = await openNew(page);
   await menu.getByRole("menuitem", { name: "Sheet", exact: true }).click();
 
-  await expect(bar(page)).toBeVisible();
+  await expect(bar(page)).toHaveCount(1);
   await expect(cell(page, "A1")).toHaveText(/Column 1/, { timeout: 15_000 });
   await expect(cell(page, "A2")).toBeFocused();
   await page.keyboard.press("A");
@@ -105,7 +106,7 @@ test("New sheet opens in edit mode on A2, and typing fills it", async ({ page })
   await input.fill("Apples");
   await input.press("Enter");
   await expect(cell(page, "A2")).toHaveText("Apples");
-  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await publishChanges(page);
   await expect(bar(page)).toContainText("Published as v2", { timeout: 10_000 });
   const detail = await apiGet(page.request, `/artifacts/${slugOf(page)}`);
   expect((detail.body.content as string).split("\n")[1]).toBe('["Apples"]');
@@ -136,7 +137,7 @@ test("Import an .xlsx: converted by the Worker, opened in edit mode, other sheet
   const toast = page.locator(".pl-toast", { hasText: "Imported Q4_sales.xlsx" });
   await expect(toast).toContainText("Only the first sheet is used; “Q3” and “Notes” are left out.");
   await expect(toast.locator(".pl-toast__action")).toHaveCount(0);
-  await expect(bar(page)).toBeVisible();
+  await expect(bar(page)).toHaveCount(1);
   await expect(cell(page, "B3")).toHaveText("80", { timeout: 15_000 });
   await expect(cell(page, "A2")).toBeFocused();
   const slug = slugOf(page);
@@ -144,11 +145,10 @@ test("Import an .xlsx: converted by the Worker, opened in edit mode, other sheet
   expect(detail.body).toMatchObject({ title: "Q4 sales", type: "sheet", current_version: 1 });
   const versions = await apiGet(page.request, `/artifacts/${slug}/versions`);
   expect(versions.body.items[0].note).toBe("Imported from Q4_sales.xlsx");
-  // The Edit toggle leaves edit mode; at phone width, where the toggle is in the ⋯ menu, Done.
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else await page.getByRole("button", { name: "Done" }).click();
-  await expect(bar(page)).toHaveCount(0);
+  // There is no way out of edit mode: no Edit toggle, no Done.
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Done" })).toHaveCount(0);
+  await expect(frameOf(page).locator(".plinth-sheet__page--editing")).toBeVisible();
 });
 
 test("Import refuses a file it cannot read and says why, creating nothing", async ({ page }) => {
@@ -229,15 +229,13 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and h
   const detail = await apiGet(page.request, `/artifacts/${art.id}`);
   expect(detail.body).toMatchObject({ id: art.id, slug: art.slug, current_version: 3 });
 
-  // While editing on the page, the item is hidden.
+  // While the page holds unpublished changes, the item is hidden.
   await page.keyboard.press("Escape");
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    menu = await openActions(page);
-    await menu.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
-  await expect(bar(page)).toBeVisible();
+  await cell(page, "A2").dblclick();
+  const input = frameOf(page).locator(".plinth-sheet__input");
+  await input.fill("Quinces");
+  await input.press("Enter");
+  await expect(bar(page)).toContainText(/Draft saved|Saving…/, { timeout: 10_000 });
   menu = await openActions(page);
   await expect(menu.getByRole("menuitem").first()).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "Replace with a file…" })).toHaveCount(0);
