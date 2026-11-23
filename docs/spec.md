@@ -714,9 +714,12 @@ page shows the save status and makes the REST calls, and renders no content.
 - **Publishing.** Changes publish on their own: an autosave after `LIVE_CHECKPOINT_IDLE_S` of
   quiet (from the client that made the last edit, other editors 30 s later as a fallback; no
   sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an
-  autosave asked for sooner is tried again once that time has passed), and leaving the page
-  (closing or reloading the tab, a `pagehide` sent with `keepalive`, or going elsewhere in the app),
-  which publishes as Done did. Cmd/Ctrl+S (in the app or in the frame) and the ⋯ menu's "Publish
+  autosave asked for sooner is tried again once that time has passed), and leaving the page, which
+  publishes as Done did: closing or reloading the tab (a `pagehide` checkpoint sent with
+  `keepalive`), and going elsewhere in the app, in both modes: a link, the version picker or
+  History waits for the publish before it navigates (a solo copy that cannot be published then is
+  kept in the tab and offered back), and the same viewer moving to another artifact or an older
+  version publishes the room's draft as it goes. Cmd/Ctrl+S (in the app or in the frame) and the ⋯ menu's "Publish
   changes" publish at once. Each turns the draft into the next version, through the ordinary
   publish path with the draft's `base_version` and its files, and the note "Edited on the page". A draft equal to its base writes
   nothing. Checkpoints count toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits
@@ -806,10 +809,18 @@ page shows the save status and makes the REST calls, and renders no content.
   `LIVE_CHECKPOINT_IDLE_S` of quiet and no sooner than `LIVE_AUTO_CHECKPOINT_MIN_S` after this
   tab's last publish, and Cmd/Ctrl+S or Publish changes, publish the frame's text without reloading
   the frame: the next publish is based on the version this one made, and the same text is not
-  published twice. The save status says "Unpublished changes, kept in this tab"; the tab keeps a
-  copy every 5 s, and after a reload offers to publish it or discard it, and leaving with changes
-  asks first. A version published elsewhere loads in place of the page when the page has no
-  changes of its own; with changes, the autosave stops (no silent overwrite: every `PUT` carries
+  published twice. After each publish the app tells the frame which of its `collect` answers was
+  published (`saved` with that nonce; no text goes back), and the frame counts its changes from
+  that text, so a change back to the text it loaded is a change again, and a presented deck shows
+  the deck last published. An autosave that fails (no network, 5xx, 429, a frame that did not
+  answer) is tried again up to 5 times, 5 s, 10 s, 20 s… apart, while nothing changes; each
+  `collect` waits for its own answer, so the tab copy never takes an autosave's. The save status
+  says "Unpublished changes, kept in this tab"; the tab keeps a copy every 5 s, and after a reload
+  offers to publish it or discard it; until the person chooses, the page is not in edit mode, so
+  nothing typed can replace that copy. Leaving with changes asks first. A version published
+  elsewhere loads in place of the page when the page has no changes of its own, once the frame
+  has been asked for its text (which flushes a keystroke still in its send delay, whose change
+  report then keeps the page); with changes, the autosave stops (no silent overwrite: every `PUT` carries
   `base_version`, and a stale one is refused), the save status says a newer version was published,
   and Review changes opens the same review, the app naming the version and its file changes from
   the two versions' file lists, and Publish your changes sends the frame's own copy; an autosave
@@ -844,8 +855,8 @@ page shows the save status and makes the REST calls, and renders no content.
   the bar when unpublished changes exist ("Unpublished changes · Ana, 3 h ago": a first name, with
   the email on hover), when someone is editing ("Ana is editing"), or when a version needs review;
   it has a bronze rule, a pencil and one line, and no buttons. The solo copy a tab kept from before
-  a reload, which no frame holds, gets that line with Publish and Discard, also while editing,
-  until the frame's own copy has changes.
+  a reload, which no frame holds, gets that line with Publish and Discard, and the page stays out
+  of edit mode until one of them is chosen.
 - **Read-only for someone who may edit.** A page the frame cannot edit (a design system with
   problems only an agent can fix, or one too large to edit on its page, `live.unavailable`) stays
   read-only for that version, and the save status says why once ("Read-only" at phone width, the

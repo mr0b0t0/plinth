@@ -42,6 +42,8 @@ export type EditAppMessage =
   | { type: "reviewed"; nonce: string; result: ReviewResult }
   /** Pick a place on the page for a comment (on), or stop (off): common/pick.ts. */
   | { type: "pick"; on: boolean }
+  /** Solo: the text answered for this `collect` nonce is published: it is the frame's base now. */
+  | { type: "saved"; nonce: string }
   /** Typed text the app kept from an earlier frame's rescue store (doc editing). */
   | {
       type: "rescue";
@@ -116,6 +118,11 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
     };
   }
   if (m.type === "pick" && typeof m.on === "boolean") return { type: "pick", on: m.on };
+  if (m.type === "saved") {
+    return typeof m.nonce === "string" && NONCE_RE.test(m.nonce)
+      ? { type: "saved", nonce: m.nonce }
+      : null;
+  }
   if (m.type === "rescue") {
     const items = readRescueItems(m.items);
     if (!items) return null;
@@ -150,6 +157,29 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
     return { type: "reviewed", nonce: m.nonce, result: m.result as ReviewResult };
   }
   return null;
+}
+
+/**
+ * Solo: the texts this frame answered `collect` with, by nonce (the last few), so the app's
+ * `saved` can name the one it published without sending text back.
+ */
+export class CollectAnswers {
+  private readonly texts = new Map<string, string>();
+
+  keep(nonce: string, text: string): void {
+    this.texts.set(nonce, text);
+    while (this.texts.size > 8) {
+      const oldest = this.texts.keys().next().value as string;
+      this.texts.delete(oldest);
+    }
+  }
+
+  /** The text answered for `nonce`, once; null when this frame did not answer it. */
+  take(nonce: string): string | null {
+    const t = this.texts.get(nonce);
+    this.texts.delete(nonce);
+    return t ?? null;
+  }
 }
 
 /** A poster to the app page at its exact origin, with the frame key on every message. */

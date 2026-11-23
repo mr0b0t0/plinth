@@ -56,6 +56,7 @@ import {
 } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, liveCheckpoint, liveDiscard, liveInfo } from "../../lib/api.ts";
+import { setNavigationGuard } from "../../lib/router.tsx";
 import {
   clearPageDraft,
   clearRescue,
@@ -85,6 +86,7 @@ import {
   rescueMessage,
   reviewedMessage,
   reviewMessage,
+  savedMessage,
 } from "./rendererProtocol.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 
@@ -124,6 +126,12 @@ export const PENDING_WAIT_MS = 3000;
  */
 export const SOLO_KEEP_TRIES = 4;
 export const SOLO_KEEP_RETRY_MS = 1000;
+/**
+ * Solo: an autosave that failed (offline, 5xx, 429, the frame did not answer) is tried again this
+ * many times, the first after SOLO_RETRY_MS, each next one twice as late, while nothing changes.
+ */
+export const SOLO_RETRIES = 5;
+export const SOLO_RETRY_MS = 5000;
 /** Editors whose edit was not the last one autosave this much later. */
 export const AUTOSAVE_FALLBACK_MS = 30_000;
 /** A choice or a discard refused because another one or a save holds the room's lock. */
@@ -306,6 +314,14 @@ export function useLiveEdit({
   const signIn = gate.live?.sign_in === true;
   const [status, setStatus] = useState<LiveFrameStatus | null>(null);
   /**
+   * Solo: page edits this tab kept from before a reload, read at once. While one waits for the
+   * person's choice (Publish or Discard on its notice) the page is not in edit mode, so no typing
+   * can replace the kept copy before it is resolved.
+   */
+  const [restore, setRestore] = useState<PageDraft | null>(() =>
+    gate.live?.mode === "solo" ? loadPageDraft(gate.artifact.id) : null,
+  );
+  /**
    * The frame said this page cannot be edited on it (problems only an agent can fix, or too large):
    * kept for this version, since a frame out of edit mode stops saying "too large" (and a frame
    * loaded again for the same version would only say it again).
@@ -315,7 +331,7 @@ export function useLiveEdit({
   useEffect(() => setBlockedBy(null), [artifact.version]);
   const unavailable = blockedBy ?? status?.unavailable ?? null;
   // Always in edit mode for whoever may edit here: no toggle turns it on or off.
-  const editing = available && !signIn && unavailable === null;
+  const editing = available && !signIn && unavailable === null && restore === null;
   const [saving, setSaving] = useState(false);
   const [savedVersion, setSavedVersion] = useState<number | null>(null);
   const [rebasedVersion, setRebasedVersion] = useState<number | null>(null);
@@ -323,7 +339,6 @@ export function useLiveEdit({
   /** The review's Discard, waiting for the app's confirmation. */
   const [discardAsk, setDiscardAsk] = useState<Resolved | null>(null);
   const [info, setInfo] = useState<LiveInfo | null>(null);
-  const [restore, setRestore] = useState<PageDraft | null>(null);
   /**
    * How many typed texts are kept to rescue for this artifact in this tab (the signed-in account's
    * store, any account's while the session is unknown, and what the frame reported before it was
@@ -396,6 +411,7 @@ export function useLiveEdit({
     soloSaved,
     soloTick,
     soloNewest,
+    soloChanged,
   });
   latest.current = {
     status,
@@ -412,11 +428,13 @@ export function useLiveEdit({
     soloSaved,
     soloTick,
     soloNewest,
+    soloChanged,
   };
-  const collecting = useRef<{
-    nonce: string;
-    resolve: (t: string, unsavable: boolean) => void;
-  } | null>(null);
+  /**
+   * Solo: the `collect`s waiting for the frame's answer, by nonce. Each has its own slot, so the
+   * tab copy taken every few seconds never takes the answer an autosave waits for.
+   */
+  const collecting = useRef(new Map<string, (t: string, unsavable: boolean) => void>());
   const savingRef = useRef(false);
   /** A pick the app asked the frame for (`pick`), waiting for its `picked`. */
   const picking = useRef(false);
@@ -566,7 +584,8 @@ export function useLiveEdit({
         frame,
         contentOrigin: target,
         solo: latest.current.mode === "solo",
-        nonce: collecting.current?.nonce ?? null,
+        nonce: null,
+        nonces: new Set(collecting.current.keys()),
         maxDocBytes: maxBytes,
         key: frameKey,
         review: reviewRef.current?.nonce ?? null,
@@ -601,10 +620,10 @@ export function useLiveEdit({
           void publishRef.current();
         },
         draft({ nonce, text, unsavable }) {
-          const c = collecting.current;
-          if (c?.nonce !== nonce) return;
-          collecting.current = null;
-          c.resolve(text, unsavable === true);
+          const resolve = collecting.current.get(nonce);
+          if (!resolve) return;
+          collecting.current.delete(nonce);
+          resolve(text, unsavable === true);
         },
         resolved(r) {
           onResolvedRef.current(r);
@@ -683,30 +702,32 @@ export function useLiveEdit({
    * Solo: the frame's text. Refused while a block holds typing that cannot be saved as typed,
    * unless `keep` (the kept copy, which then has that typing without its formatting).
    */
-  const collect = useCallback(
-    (opts: { keep?: boolean } = {}): Promise<string> => {
+  const collectAnswer = useCallback(
+    (opts: { keep?: boolean } = {}): Promise<{ text: string; nonce: string }> => {
       return new Promise((resolve, reject) => {
         const nonce = newNonce();
+        const waiting = collecting.current;
         const timer = window.setTimeout(() => {
-          if (collecting.current?.nonce === nonce) collecting.current = null;
+          waiting.delete(nonce);
           reject(new Error("The page did not answer."));
         }, COLLECT_TIMEOUT_MS);
-        collecting.current = {
-          nonce,
-          resolve: (t, unsavable) => {
-            window.clearTimeout(timer);
-            if (unsavable && !opts.keep) reject(new Error(UNSAVABLE));
-            else resolve(t);
-          },
-        };
+        waiting.set(nonce, (t, unsavable) => {
+          window.clearTimeout(timer);
+          if (unsavable && !opts.keep) reject(new Error(UNSAVABLE));
+          else resolve({ text: t, nonce });
+        });
         if (!postToRenderer(frame, target, collectMessage(nonce))) {
           window.clearTimeout(timer);
-          collecting.current = null;
+          waiting.delete(nonce);
           reject(new Error("The page is not ready."));
         }
       });
     },
     [frame, target],
+  );
+  const collect = useCallback(
+    async (opts: { keep?: boolean } = {}): Promise<string> => (await collectAnswer(opts)).text,
+    [collectAnswer],
   );
 
   // ---------- publishing ----------
@@ -729,9 +750,10 @@ export function useLiveEdit({
          * The frame holds this text and goes on editing it (an ordinary publish, an autosave): it
          * is not reloaded, and the next publish is based on the version this one makes. `tick` is
          * the count of change reports the text took in. Otherwise (a review's choice, the copy kept
-         * from before a reload) the page loads the new version.
+         * from before a reload) the page loads the new version. `nonce` is the collect the text
+         * answered: the frame is told it is published (`saved`), and counts changes from it.
          */
-        keep?: { tick: number };
+        keep?: { tick: number; nonce?: string };
       } = {},
     ): Promise<PublishOutcome> => {
       try {
@@ -752,6 +774,8 @@ export function useLiveEdit({
         if (opts.keep) {
           setSoloSaved({ version: r.version, text });
           setSoloSavedTick(opts.keep.tick);
+          // The frame's `dirty` compares against what was published now, not what it loaded.
+          if (opts.keep.nonce) postToRenderer(frame, target, savedMessage(opts.keep.nonce));
         } else latest.current.onReload();
         return { version: r.version };
       } catch (e) {
@@ -765,7 +789,7 @@ export function useLiveEdit({
         );
       }
     },
-    [id, refuse],
+    [id, refuse, frame, target],
   );
 
   /**
@@ -866,18 +890,20 @@ export function useLiveEdit({
       try {
         // The change reports this text takes in: one that comes later means typing after it.
         const tick = latest.current.soloTick;
-        const text = await collect();
+        const { text, nonce } = await collectAnswer();
         // Over the version the copy is based on (the one this frame last published, if any).
         const v = latest.current.soloOver;
         if (latest.current.soloSaved?.text === text) {
-          // The same text as the version this frame last published: nothing new.
+          // The same text as the version this frame last published: nothing new, and the frame
+          // counts changes from it.
           setSoloSavedTick(tick);
+          postToRenderer(frame, target, savedMessage(nonce));
           return { version: v };
         }
         return await publishSolo(text, v, v, {
           note,
           tell,
-          keep: { tick },
+          keep: { tick, nonce },
           ...(tell === "quiet"
             ? { onConflict: (e: ApiRequestError) => setSoloConflict(currentOf(e)) }
             : {}),
@@ -889,7 +915,7 @@ export function useLiveEdit({
         setSaving(false);
       }
     },
-    [checkpoint, collect, publishSolo, refuse, settleFrame, unpublishable],
+    [checkpoint, collectAnswer, publishSolo, refuse, settleFrame, unpublishable, frame, target],
   );
   const publish = useCallback(
     async (note?: string) => {
@@ -1199,22 +1225,63 @@ export function useLiveEdit({
   // LIVE_AUTO_CHECKPOINT_MIN_S after this tab's last publish. Not over a newer version: that waits
   // for the review (Review changes), as a room's frozen draft does.
   const unsavable = status?.unsavable === true;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each change report (soloTick) restarts the quiet spell
+  /** Solo: the autosave that failed for these changes (`tick`), and how many tries it had. */
+  const [soloRetry, setSoloRetry] = useState<{ tick: number; n: number } | null>(null);
+  const autosaveSolo = useCallback(async () => {
+    const tick = latest.current.soloTick;
+    const out = await publishNow(undefined, "quiet");
+    // A refusal for a newer version waits for the review instead (soloNewer); anything else (no
+    // network, 5xx, 429, a frame that did not answer) is tried again, a few times, further apart.
+    if ("error" in out) setSoloRetry((r) => ({ tick, n: (r?.tick === tick ? r.n : 0) + 1 }));
+    else setSoloRetry(null);
+  }, [publishNow]);
+  // Each change report (soloTick) restarts the quiet spell.
   useEffect(() => {
     if (!soloChanged || soloNewer !== null || review || unsavable || !publishable) return;
     if (idleS <= 0) return;
+    const retry = soloRetry?.tick === soloTick ? soloRetry : null;
+    if (retry && retry.n > SOLO_RETRIES) return;
     const since = soloSavedAt.current ? Date.now() - soloSavedAt.current : Number.POSITIVE_INFINITY;
-    const ms = Math.max(idleS * 1000, minS * 1000 - since);
-    const t = window.setTimeout(() => void publishNow(undefined, "quiet"), ms);
+    const ms = retry
+      ? SOLO_RETRY_MS * 2 ** (retry.n - 1)
+      : Math.max(idleS * 1000, minS * 1000 - since);
+    const t = window.setTimeout(() => void autosaveSolo(), ms);
     return () => window.clearTimeout(t);
-  }, [soloChanged, soloNewer, review, unsavable, publishable, idleS, minS, soloTick, publishNow]);
+  }, [
+    soloChanged,
+    soloNewer,
+    review,
+    unsavable,
+    publishable,
+    idleS,
+    minS,
+    soloTick,
+    soloRetry,
+    autosaveSolo,
+  ]);
 
   // Solo: a version published elsewhere while the copy has no changes of its own: the page loads
   // it (nothing is lost). With changes, it waits for the review instead.
   useEffect(() => {
     if (soloNewer === null || soloChanged || review || saving || soloStuck) return;
-    latest.current.onReload();
-  }, [soloNewer, soloChanged, review, saving, soloStuck]);
+    let gone = false;
+    void (async () => {
+      // A keystroke may still wait in the frame's send delay, with the frame saying it is clean:
+      // asking for its text flushes it first, and its change report then arrives before the
+      // reload is decided.
+      try {
+        await collect({ keep: true });
+      } catch {
+        // No answer: nothing the frame holds can be read either way.
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      if (gone || latest.current.soloChanged) return;
+      latest.current.onReload();
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [soloNewer, soloChanged, review, saving, soloStuck, collect]);
 
   // A review the room closed (another editor's choice, a version that unfroze the draft) ends
   // here too; the frame says why.
@@ -1229,14 +1296,22 @@ export function useLiveEdit({
   // Room: leaving the page (closing the tab, going elsewhere in the app) publishes the draft, as
   // Done did: changes made on the page become a version without anyone pressing anything. A frozen
   // draft, one that cannot be a version yet or typing the page cannot save stays as it is.
+  //
+  // The room as it stood at the last render that edited, for a leave that happens once the gate
+  // already moved on (another artifact, an older version: the same viewer instance).
+  const roomSnap = useRef<{ id: string; status: LiveFrameStatus } | null>(null);
+  useEffect(() => {
+    roomSnap.current = mode === "room" && editing && status ? { id, status } : null;
+  });
   const leaveRef = useRef<(keepalive: boolean) => void>(() => undefined);
   leaveRef.current = (keepalive: boolean) => {
-    const s = latest.current.status;
-    if (latest.current.mode !== "room" || !latest.current.editing || !s?.connected) return;
+    const snap = roomSnap.current;
+    const s = snap?.status;
+    if (!snap || !s?.connected) return;
     if (!s.dirty || s.conflict_version !== null || s.publishable === false || s.unsavable) return;
     if (savingRef.current) return;
     void liveCheckpoint(
-      id,
+      snap.id,
       { base_version: s.base_version, rev: s.rev, reason: "done" },
       { keepalive },
     ).catch(() => undefined);
@@ -1246,7 +1321,46 @@ export function useLiveEdit({
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
-  useEffect(() => () => leaveRef.current(false), []);
+  // Leaving the artifact or its current version, in the app: when the viewer goes, and when the
+  // same viewer moves to another artifact or an older version (no `live` then).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the artifact or editing goes
+  useEffect(() => () => leaveRef.current(false), [id, available]);
+
+  // Going elsewhere in the app with navigate() (a link, the version picker, History): the changes
+  // are published first, in both modes; a solo copy that cannot be published is kept in the tab
+  // (offered back on return), so nothing typed is lost to the navigation.
+  const leaveNow = useCallback(async () => {
+    const m = latest.current.mode;
+    const s = latest.current.status;
+    if (m === "room") {
+      if (!s?.connected || !s.dirty || s.conflict_version !== null) return;
+      if (s.publishable === false || s.unsavable) return;
+      await settleFrame();
+      await checkpoint("done", { tell: "quiet" });
+      return;
+    }
+    if (m !== "solo" || (!latest.current.soloChanged && !s?.unsavable)) return;
+    const out = await publishNow(undefined, "quiet");
+    if (!("error" in out)) return;
+    try {
+      const text = await collect({ keep: true });
+      savePageDraft(id, latest.current.soloOver, text);
+    } catch {
+      // The frame did not answer: the last tab copy (every few seconds) stays.
+    }
+  }, [checkpoint, collect, id, publishNow, settleFrame]);
+  useEffect(() => {
+    if (!editing) return;
+    return setNavigationGuard((_to, go) => {
+      const s = latest.current.status;
+      const roomWaits =
+        latest.current.mode === "room" && s?.connected === true && s.dirty && !s.conflict_version;
+      const soloWaits = latest.current.mode === "solo" && latest.current.soloChanged;
+      if (!roomWaits && !soloWaits) return false;
+      void leaveNow().finally(go);
+      return true;
+    });
+  }, [editing, leaveNow]);
 
   const unsaved =
     (mode === "room" && status?.unflushed === true) ||

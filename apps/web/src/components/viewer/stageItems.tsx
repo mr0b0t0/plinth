@@ -508,15 +508,16 @@ const dataNotice: StageNode = (c) => <DataNotice gate={c.gate} />;
 
 /**
  * For an owner or editor who is not editing (an editor who must sign in first, a page that stays
- * read-only): someone's unpublished changes, someone editing, a version waiting for review. While
- * editing, only a solo copy this tab kept from before a reload, which no frame holds.
+ * read-only, or a solo copy this tab kept from before a reload, which waits for Publish or Discard
+ * before the page is editable again): someone's unpublished changes, someone editing, a version
+ * waiting for review, the kept copy.
  */
 const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
   live.available &&
-  (!editing || (live.restore !== null && !live.unpublished)) && (
+  !editing && (
     <LiveDraftNotice
-      draft={editing ? null : (gate.live?.draft ?? null)}
-      status={editing ? null : live.status}
+      draft={gate.live?.draft ?? null}
+      status={live.status}
       restore={live.restore}
       onSaveRestore={() => {
         void live.saveRestore().then(actions.refocusAfterNotice);

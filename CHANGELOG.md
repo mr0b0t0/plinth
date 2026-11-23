@@ -18,7 +18,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the ⋯ menu has Publish changes and Discard. Comments open beside edit mode, a block's Comment
   pins the comment there while you keep editing, and "Pin to an element" picks a block, slide or
   token right in the page. Present, Print and Download .pptx work
-  while a deck is edited, and presenting shows the published deck.
+  while a deck is edited, and presenting shows the published deck. Without live rooms (solo), a
+  change back to the text you opened is still published, a failed autosave is retried, changes
+  are published before you go elsewhere in the app, and a copy kept from before a reload waits for
+  your Publish or Discard before the page is editable again.
 
 - **No source editor.** People never see source code: the source editor, with its "Edit" in the
   artifact's ⋯ menu and on dashboard cards, is gone. Docs, decks, sheets and design systems are

@@ -7,6 +7,11 @@ const OPAQUE_PORT = Number(process.env.PLINTH_E2E_OPAQUE_PORT ?? PORT + 100);
 const OPAQUE_ORIGIN = `http://app.localhost:${OPAQUE_PORT}`;
 /** Tests that need the opaque-isolation Worker; every other project skips them. */
 const OPAQUE_SPECS = /opaque\.spec\.ts$/;
+// A third Worker without live rooms (ALLOW_ROOMS=false): editing on the page is solo there.
+const SOLO_PORT = Number(process.env.PLINTH_E2E_SOLO_PORT ?? PORT + 200);
+const SOLO_ORIGIN = `http://app.localhost:${SOLO_PORT}`;
+/** Tests that need the solo Worker; every other project skips them. */
+const SOLO_SPECS = /solo\.spec\.ts$/;
 
 const server = (port: number, env: Record<string, string> = {}) => ({
   // Builds the web app if needed, wipes the server's state dir, migrates it, runs wrangler dev.
@@ -40,17 +45,17 @@ export default defineConfig({
   projects: [
     {
       name: "light",
-      testIgnore: OPAQUE_SPECS,
+      testIgnore: [OPAQUE_SPECS, SOLO_SPECS],
       use: { ...devices["Desktop Chrome"], colorScheme: "light" },
     },
     {
       name: "dark",
-      testIgnore: OPAQUE_SPECS,
+      testIgnore: [OPAQUE_SPECS, SOLO_SPECS],
       use: { ...devices["Desktop Chrome"], colorScheme: "dark" },
     },
     {
       name: "mobile",
-      testIgnore: OPAQUE_SPECS,
+      testIgnore: [OPAQUE_SPECS, SOLO_SPECS],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 360, height: 740 },
@@ -66,6 +71,16 @@ export default defineConfig({
       testMatch: OPAQUE_SPECS,
       use: { ...devices["Desktop Chrome"], colorScheme: "light", baseURL: OPAQUE_ORIGIN },
     },
+    {
+      // ALLOW_ROOMS=false: editing on the page without live rooms (solo). Chromium only.
+      name: "solo",
+      testMatch: SOLO_SPECS,
+      use: { ...devices["Desktop Chrome"], colorScheme: "light", baseURL: SOLO_ORIGIN },
+    },
   ],
-  webServer: [server(PORT), server(OPAQUE_PORT, { PLINTH_E2E_CONTENT_ISOLATION: "opaque" })],
+  webServer: [
+    server(PORT),
+    server(OPAQUE_PORT, { PLINTH_E2E_CONTENT_ISOLATION: "opaque" }),
+    server(SOLO_PORT, { PLINTH_E2E_ROOMS: "false" }),
+  ],
 });

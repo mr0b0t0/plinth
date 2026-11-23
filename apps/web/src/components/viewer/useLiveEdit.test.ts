@@ -7,10 +7,11 @@
 import { CSRF_HEADER, type ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { navigate } from "../../lib/router.tsx";
 import { loadRescue, savePageDraft } from "../editor/draft.ts";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 import { apiError, CONFIG, json, stubApi } from "./test-utils.ts";
-import { AUTOSAVE_FALLBACK_MS, CHOOSING_BUSY, useLiveEdit } from "./useLiveEdit.ts";
+import { AUTOSAVE_FALLBACK_MS, CHOOSING_BUSY, SOLO_KEEP_MS, useLiveEdit } from "./useLiveEdit.ts";
 
 const toasts = vi.hoisted(() => [] as string[]);
 vi.mock("../ui/index.ts", async (orig) => {
@@ -1139,7 +1140,7 @@ describe("useLiveEdit", () => {
     expect(onReload).not.toHaveBeenCalled();
   });
 
-  it("solo: a version published elsewhere loads when the page has no changes of its own", async () => {
+  it("solo: a version published elsewhere loads when the page has no changes of its own, after asking the frame", async () => {
     stubApi();
     const onReload = vi.fn();
     const g = gate("solo");
@@ -1159,7 +1160,39 @@ describe("useLiveEdit", () => {
     expect(result.current.pause).toBe("hold");
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
     rerender({ g: { ...g, artifact: { ...g.artifact, current_version: 4 } } });
-    expect(onReload).toHaveBeenCalledTimes(1);
+    // First the frame is asked for its text, which flushes a keystroke still in its send delay.
+    expect(onReload).not.toHaveBeenCalled();
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "# Plan" });
+    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1));
+  });
+
+  it("solo: a keystroke the frame was still holding keeps the page when a newer version arrives", async () => {
+    stubApi();
+    const onReload = vi.fn();
+    const g = gate("solo");
+    const { result, rerender } = renderHook(
+      (p: { g: OkGate }) =>
+        useLiveEdit({
+          gate: p.g,
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          frameKey: KEY,
+          onReload,
+        }),
+      { initialProps: { g } },
+    );
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
+    rerender({ g: { ...g, artifact: { ...g.artifact, current_version: 4 } } });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    // The flush the collect caused reports the change, after the draft.
+    fromFrame({ type: "draft", nonce, text: "# Plan, typed" });
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(onReload).not.toHaveBeenCalled();
+    expect(result.current.newerVersion).toBe(4);
+    expect(result.current.phase).toBe("conflict");
   });
 
   it("room: leaving the page publishes the draft, as Done did", async () => {
@@ -1458,5 +1491,212 @@ describe("useLiveEdit", () => {
     expect(onLeave).toHaveBeenCalledTimes(1);
     fromFrame({ type: "leave" }, ORIGIN, null);
     expect(onLeave).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------- the data-loss review of always-on editing (2026-11-23) ----------
+
+describe("useLiveEdit: nothing typed is lost (solo autosave, restores, leaving)", () => {
+  /** The frame answers every collect with `text.now`. */
+  function answerCollects(text: { now: string }) {
+    toFrame.mockImplementation((m: { type?: string; nonce?: string }) => {
+      if (m?.type === "collect") {
+        queueMicrotask(() => fromFrame({ type: "draft", nonce: m.nonce, text: text.now }));
+      }
+    });
+  }
+
+  it("1. solo: tells the frame the text it published, so a change back to the loaded text counts", async () => {
+    stubApi({
+      handle: (c) =>
+        c.method === "PUT"
+          ? json({ id: "art1", version: 4, type: "doc", warnings: [] })
+          : undefined,
+    });
+    const { result } = hook(gate("solo"));
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    let p: Promise<void> = Promise.resolve();
+    act(() => {
+      p = result.current.publish();
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "Hello world" });
+    await act(() => p);
+    // The frame is told which of its answers is published (no text goes back to it).
+    expect(sentToFrame("saved").at(-1)).toEqual([
+      { source: "plinth-renderer", v: 1, type: "saved", nonce },
+      ORIGIN,
+    ]);
+    expect(result.current.unpublished).toBe(false);
+    // Rebased, it reports deleting " world" (back to the loaded "Hello") as a change.
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    expect(result.current.unpublished).toBe(true);
+  });
+
+  it("2. solo: a copy kept from before a reload keeps the page out of edit mode until it is resolved", () => {
+    savePageDraft("art1", 3, "# Kept");
+    stubApi();
+    const { result } = hook(gate("solo"));
+    expect(result.current.restore).toMatchObject({ text: "# Kept", base: 3 });
+    // Not editable: nothing typed can replace the kept copy before the person chooses.
+    expect(result.current.editing).toBe(false);
+    expect(sentToFrame("edit")).toHaveLength(0);
+    act(() => result.current.dropRestore());
+    expect(result.current.restore).toBeNull();
+    expect(result.current.editing).toBe(true);
+    expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ type: "edit", on: true });
+  });
+
+  it("4. room: going elsewhere in the app publishes the draft first, then navigates", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint"))
+          return json({ saved: true, version: { version: 4 } });
+        return undefined;
+      },
+    });
+    hook(gate("room"));
+    fromFrame({ type: "live", ...STATUS });
+    const push = vi.spyOn(window.history, "pushState");
+    act(() => navigate("/a/plan/history"));
+    expect(push).not.toHaveBeenCalled();
+    await waitFor(() => expect(push).toHaveBeenCalledWith(null, "", "/a/plan/history"));
+    const posts = calls.filter((c) => c.path.endsWith("/live/checkpoint"));
+    expect(posts[0]?.body).toMatchObject({ reason: "done", rev: 7 });
+  });
+
+  it("4. room: the same viewer moving to an older version or another artifact publishes the draft", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint"))
+          return json({ saved: true, version: { version: 4 } });
+        return undefined;
+      },
+    });
+    const g = gate("room");
+    const { rerender } = renderHook(
+      (p: { g: OkGate }) =>
+        useLiveEdit({
+          gate: p.g,
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          frameKey: KEY,
+          onReload: vi.fn(),
+        }),
+      { initialProps: { g } },
+    );
+    fromFrame({ type: "live", ...STATUS });
+    // v2 picked: the gate has no `live` for an older version.
+    rerender({ g: { ...g, live: undefined, artifact: { ...g.artifact, version: 2 } } });
+    await waitFor(() =>
+      expect(calls.filter((c) => c.path.endsWith("/live/checkpoint"))).toHaveLength(1),
+    );
+    expect(calls.find((c) => c.path.endsWith("/live/checkpoint"))?.body).toMatchObject({
+      reason: "done",
+      rev: 7,
+    });
+  });
+
+  it("4. solo: going elsewhere in the app publishes the copy first; one it cannot publish is kept", async () => {
+    let fail = false;
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.method === "PUT"
+          ? fail
+            ? apiError(503, "unavailable")
+            : json({ id: "art1", version: 4, type: "doc", warnings: [] })
+          : undefined,
+    });
+    const text = { now: "# Typed" };
+    answerCollects(text);
+    hook(gate("solo"));
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    const push = vi.spyOn(window.history, "pushState");
+    act(() => navigate("/dashboard"));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(calls.filter((c) => c.method === "PUT")[0]?.body).toMatchObject({ content: "# Typed" });
+    cleanup();
+    sessionStorage.clear();
+    push.mockClear();
+    // Refused: the copy goes to the tab, offered back on return.
+    fail = true;
+    text.now = "# Typed, offline";
+    hook(gate("solo"));
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    act(() => navigate("/dashboard"));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(JSON.parse(sessionStorage.getItem("plinth-draft:page-edit:art1") ?? "{}")).toMatchObject(
+      { text: "# Typed, offline", base: 3 },
+    );
+  });
+
+  it("5. solo: a failed autosave is tried again, further apart, while nothing changes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let puts = 0;
+    stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json({ ...INFO, mode: "solo" });
+        if (c.method === "PUT") {
+          puts += 1;
+          return puts < 3
+            ? apiError(503, "unavailable")
+            : json({ id: "art1", version: 4, type: "doc", warnings: [] });
+        }
+        return undefined;
+      },
+    });
+    answerCollects({ now: "# Typed" });
+    const { result } = hook(gate("solo"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_500);
+    });
+    expect(puts).toBe(1);
+    // 5 s later, then 10 s after that.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_200);
+    });
+    expect(puts).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_200);
+    });
+    expect(puts).toBe(3);
+    await waitFor(() => expect(result.current.unpublished).toBe(false));
+  });
+
+  it("5. solo: the tab copy's collect never takes the answer an autosave waits for", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.method === "PUT"
+          ? json({ id: "art1", version: 4, type: "doc", warnings: [] })
+          : undefined,
+    });
+    const { result } = hook(gate("solo"));
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SOLO_KEEP_MS - 1_000);
+    });
+    let p: Promise<void> = Promise.resolve();
+    act(() => {
+      p = result.current.publish();
+    });
+    const publishNonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    // The 5 s tab copy asks too, before the frame answered the publish.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+    });
+    const keepNonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    expect(keepNonce).not.toBe(publishNonce);
+    fromFrame({ type: "draft", nonce: keepNonce, text: "# Copy" });
+    fromFrame({ type: "draft", nonce: publishNonce, text: "# Publish me" });
+    await act(() => p);
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({ content: "# Publish me" });
   });
 });

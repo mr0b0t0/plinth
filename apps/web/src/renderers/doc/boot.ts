@@ -32,6 +32,7 @@ import {
 import type { AskWhat, LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
+  CollectAnswers,
   type EditAppMessage,
   NONCE_RE,
   ReviewSession,
@@ -257,6 +258,7 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DocEditor(root, win, local, hooks, prepare);
   };
+  const answers = new CollectAnswers();
   // The comments panel's "Pin to an element" while editing: a block, named as Comment names it.
   const pick = new PagePick(win, {
     placeAt: (t) => (editor?.editing ? editor.placeAt(t) : null),
@@ -322,7 +324,17 @@ function live(
       // keeps a copy with it, without its formatting.
       const kept = editor?.unsavable ? editor.textWithTyping() : null;
       if (kept !== null) post({ type: "draft", nonce: m.nonce, text: kept, unsavable: true });
-      else post({ type: "draft", nonce: m.nonce, text: local.text });
+      else {
+        answers.keep(m.nonce, local.text);
+        post({ type: "draft", nonce: m.nonce, text: local.text });
+      }
+    } else if (m.type === "saved") {
+      // That text is published now: changes are counted from it.
+      const text = answers.take(m.nonce);
+      if (text !== null && local) {
+        local.rebase(text);
+        status();
+      }
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);

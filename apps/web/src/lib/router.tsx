@@ -16,7 +16,28 @@ function subscribe(l: Listener) {
 
 const snapshot = () => window.location.pathname + window.location.search;
 
+/**
+ * Asked before every navigate(): returns true when it takes the navigation over, and then calls
+ * `go` once it may happen (a page edited on it publishes first). One at a time.
+ */
+export type NavigationGuard = (to: string, go: () => void) => boolean;
+let guard: NavigationGuard | null = null;
+
+/** Set the guard; the function returned removes it (if it is still the one set). */
+export function setNavigationGuard(g: NavigationGuard): () => void {
+  guard = g;
+  return () => {
+    if (guard === g) guard = null;
+  };
+}
+
 export function navigate(to: string, opts: { replace?: boolean } = {}): void {
+  const g = guard;
+  if (g?.(to, () => go(to, opts))) return;
+  go(to, opts);
+}
+
+function go(to: string, opts: { replace?: boolean }): void {
   if (opts.replace) window.history.replaceState(null, "", to);
   else window.history.pushState(null, "", to);
   for (const l of listeners) l();

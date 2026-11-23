@@ -49,7 +49,7 @@ export class LocalSystem implements SystemBackend {
 
   constructor(
     /** The base version's projection. */
-    readonly baseText: string,
+    public baseText: string,
     private readonly events: LocalEvents,
   ) {
     this.lines = splitLines(baseText);
@@ -61,6 +61,14 @@ export class LocalSystem implements SystemBackend {
 
   get dirty(): boolean {
     return this.text !== this.baseText;
+  }
+
+  /**
+   * Solo: this text was just published (the app's `saved`): `dirty` compares against it from now
+   * on, so a change back to the text the frame loaded is a change again.
+   */
+  rebase(text: string): void {
+    this.baseText = text;
   }
 
   lease(range: LineRange): boolean {

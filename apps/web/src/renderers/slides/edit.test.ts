@@ -454,6 +454,24 @@ describe("presenting alone", () => {
     appMessage(f, msg({ type: "view", mode: "deck" }));
     expect(html.getAttribute("data-count")).toBe("2");
   });
+
+  it("shows the deck this tab published since (solo), not the one the frame loaded", async () => {
+    const f = start("# One\n---\n# Two\n---\n# Three");
+    appMessage(f, msg({ type: "goto", slide: 3 }));
+    (active().querySelector("h1") as HTMLElement).click();
+    typeText("");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+    const html = document.documentElement;
+    // The app publishes this text (collect, PUT) and says so: it is the published deck now.
+    collect(f);
+    appMessage(f, msg({ type: "saved", nonce: NONCE }));
+    await Promise.resolve();
+    // A change report says the frame's text is the published one again.
+    expect(lastStatus(f)).toMatchObject({ dirty: false });
+    appMessage(f, msg({ type: "presenting", on: true }));
+    expect(html.getAttribute("data-count")).toBe("2");
+    appMessage(f, msg({ type: "presenting", on: false }));
+  });
 });
 
 describe("edit mode's layout", () => {

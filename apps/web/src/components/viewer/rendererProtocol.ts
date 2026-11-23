@@ -33,6 +33,10 @@
 //   app -> frame: presenting { on }        a deck's frame is full screen (Present) or no longer:
 //                                          meanwhile it shows the published deck, not the room's
 //                                          live draft (presenter view it knows by itself)
+//   app -> frame: saved { nonce }          solo only: the text the frame answered `collect` with
+//                                          (that nonce) is now published: the frame takes it as
+//                                          its base, so a change back to the text it loaded is a
+//                                          change again (carries no text); exact origin only
 //   app -> frame: pick { on }              in edit mode: let the person pick a place on the page
 //                                          for a comment (the comments panel's "Point at
 //                                          something"), or stop; exact origin only
@@ -340,6 +344,21 @@ export interface PickMessage {
 
 export function pickMessage(on: boolean): PickMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "pick", on };
+}
+
+/**
+ * Solo: the text the frame answered the `collect` with this nonce was just published. The frame
+ * makes it the base its `dirty` compares against. It carries no text: the frame kept its answer.
+ */
+export interface SavedMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "saved";
+  nonce: string;
+}
+
+export function savedMessage(nonce: string): SavedMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "saved", nonce };
 }
 
 /** Open the whole-draft review in the frame. */
@@ -695,6 +714,7 @@ export const APP_MESSAGE_KINDS = [
   "deck_settings",
   "presenting",
   "pick",
+  "saved",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -714,7 +734,8 @@ export type AppToFrameMessage =
   | RescueMessage
   | DeckSettingsMessage
   | PresentingMessage
-  | PickMessage;
+  | PickMessage
+  | SavedMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -731,7 +752,8 @@ export function postToRenderer(
     | ReviewedMessage
     | RescueMessage
     | DeckSettingsMessage
-    | PickMessage,
+    | PickMessage
+    | SavedMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -797,6 +819,8 @@ export type FrameMessageKind = FrameMessage["type"];
 interface ReadOptions {
   solo: boolean;
   nonce: string | null;
+  /** More `collect` nonces the app waits on (solo: an autosave's and the tab copy's at once). */
+  nonces?: ReadonlySet<string>;
   maxDocBytes?: number;
   /** The nonce of the `version` message the app is waiting on; `shown` is read only for it. */
   shown?: string | null;
@@ -833,15 +857,17 @@ const FRAME_READERS: {
   },
   save: () => ({ type: "save" }),
   draft(m, opts) {
-    if (!opts.solo || !opts.nonce || m.nonce !== opts.nonce || typeof m.text !== "string") {
-      return null;
-    }
+    const nonce = typeof m.nonce === "string" ? m.nonce : null;
+    const asked =
+      nonce !== null &&
+      ((opts.nonce !== null && nonce === opts.nonce) || opts.nonces?.has(nonce) === true);
+    if (!opts.solo || !asked || nonce === null || typeof m.text !== "string") return null;
     const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
     if (m.unsavable !== undefined && m.unsavable !== true) return null;
     return {
       type: "draft",
-      nonce: m.nonce,
+      nonce,
       text: m.text,
       ...(m.unsavable === true ? { unsavable: true as const } : {}),
     };
@@ -969,6 +995,7 @@ export function readFrameMessage(
     contentOrigin: string | null;
     solo: boolean;
     nonce: string | null;
+    nonces?: ReadonlySet<string>;
     maxDocBytes?: number;
     shown?: string | null;
     key?: string | null;

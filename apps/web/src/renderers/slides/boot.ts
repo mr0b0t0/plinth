@@ -44,6 +44,7 @@ import {
 import type { AskWhat, LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
+  CollectAnswers,
   type EditAppMessage,
   ReviewSession,
   readEditMessage,
@@ -936,6 +937,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (editor) editor.setBackend(local);
       else editor = new SlidesEditor(win, local, hooks);
     };
+    const answers = new CollectAnswers();
     // The comments panel's "Pin to an element" while editing: a slide, a block, an image or the
     // notes, named as Comment names them.
     const pick = new PagePick(win, {
@@ -1058,7 +1060,18 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         // its size limit): the app publishes nothing. Its kept copy is the text as written, which
         // can still be published after a reload; the typing is in the rescue store beside it.
         if (keptBack()) post({ type: "draft", nonce: m.nonce, text: local.text, unsavable: true });
-        else post({ type: "draft", nonce: m.nonce, text: local.text });
+        else {
+          answers.keep(m.nonce, local.text);
+          post({ type: "draft", nonce: m.nonce, text: local.text });
+        }
+      } else if (m.type === "saved") {
+        // That deck is published now: changes are counted from it, and presenting shows it.
+        const text = answers.take(m.nonce);
+        if (text !== null && local) {
+          local.rebase(text);
+          published = text;
+          status();
+        }
       } else if (m.type === "review") {
         editor?.flush();
         void session.open(m);

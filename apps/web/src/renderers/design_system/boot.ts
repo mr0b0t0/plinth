@@ -33,6 +33,7 @@ import {
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
+  CollectAnswers,
   type EditAppMessage,
   ReviewSession,
   readEditMessage,
@@ -356,6 +357,7 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DsEditor(root, win, local, hooks);
   };
+  const answers = new CollectAnswers();
   // The comments panel's "Pin to an element" while editing: a token, a group or a component,
   // keyed from the published version only, as Comment keys them.
   const pick = new PagePick(win, {
@@ -499,7 +501,17 @@ function live(
       if (editor?.unsavable) {
         const kept = editor.textWithTyping() ?? local.text;
         post({ type: "draft", nonce: m.nonce, text: rules.fromLive(kept), unsavable: true });
-      } else post({ type: "draft", nonce: m.nonce, text: rules.fromLive(local.text) });
+      } else {
+        answers.keep(m.nonce, local.text);
+        post({ type: "draft", nonce: m.nonce, text: rules.fromLive(local.text) });
+      }
+    } else if (m.type === "saved") {
+      // That system is published now: changes are counted from it (its projection).
+      const text = answers.take(m.nonce);
+      if (text !== null && local) {
+        local.rebase(text);
+        status();
+      }
     } else if (m.type === "review") {
       editor?.flush();
       void session.open(m);

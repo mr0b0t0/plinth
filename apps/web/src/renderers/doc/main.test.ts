@@ -328,6 +328,34 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
+  it("solo: counts changes from the text the app published (`saved`), not the text it loaded", async () => {
+    mountShell("Hello");
+    stop = boot(window);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    const type = async (text: string) => {
+      (root().querySelector("p") as HTMLElement).click();
+      const field = root().querySelector('[contenteditable="true"]') as HTMLElement;
+      field.textContent = text;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      post({ ...base, type: "collect", nonce: NONCE });
+      await Promise.resolve();
+    };
+    await type("Hello world");
+    expect(posted("draft").at(-1)).toMatchObject({ nonce: NONCE, text: "Hello world" });
+    // The app published that text.
+    post({ ...base, type: "saved", nonce: NONCE });
+    await Promise.resolve();
+    expect(posted("live").at(-1)).toMatchObject({ dirty: false });
+    // Deleting " world" is back to the text the frame loaded, and a change from what is published.
+    await type("Hello");
+    expect(posted("live").at(-1)).toMatchObject({ dirty: true });
+    // A `saved` for a collect this frame never answered changes nothing.
+    post({ ...base, type: "saved", nonce: "z".repeat(24) });
+    await Promise.resolve();
+    expect(posted("live").at(-1)).toMatchObject({ dirty: true });
+  });
+
   it("picks a block for a comment while editing, named as Comment names it, without opening it", async () => {
     mountShell("Intro\n\nSecond paragraph");
     stop = boot(window);

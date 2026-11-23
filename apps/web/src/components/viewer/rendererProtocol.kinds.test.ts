@@ -21,6 +21,7 @@ import {
   rescueMessage,
   reviewedMessage,
   reviewMessage,
+  savedMessage,
   sheetExportMessage,
   versionMessage,
   viewMessage,
@@ -55,6 +56,7 @@ describe("renderer protocol kinds", () => {
       "deck_settings",
       "presenting",
       "pick",
+      "saved",
     ]);
     expect([...FRAME_MESSAGE_KINDS]).toEqual([
       "live",
@@ -84,6 +86,7 @@ describe("renderer protocol kinds", () => {
         deckSettingsMessage(),
         presentingMessage(true),
         pickMessage(false),
+        savedMessage("n".repeat(16)),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
