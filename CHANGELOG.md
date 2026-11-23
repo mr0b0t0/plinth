@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Show an artifact in the conversation.** Ask your agent to show, open or bring back a page
+  that is already on Plinth, and the new `show_artifact` tool puts it under the call as a
+  read-only preview, as a publish does. Works in apps that render MCP Apps (T3 Code, Claude,
+  ChatGPT, VS Code and others); elsewhere the agent gives you its link. Plugin 0.30.0.
+- **Full screen previews.** Where the app offers it, the in-chat preview has a full screen button
+  that fills the window with the page, and returns it to the thread.
+
 ## 0.7.0 (2026-11-23)
 
 ### Editing on the page, the way Claude does it

@@ -86,11 +86,42 @@ export async function previewArtifact(
   };
 }
 
+export interface ShownArtifact {
+  id: string;
+  title: string;
+  version: number;
+  /** The artifact's page in the app: its current page, or the version's when one was asked for. */
+  url: string;
+}
+
+/**
+ * show_artifact: what the model sees when it shows an artifact in the conversation. The host
+ * renders the preview from this result, as it does for a publish; the preview then asks
+ * preview_artifact for its own link. No HTML, and no preview link, reaches the model.
+ */
+export async function showArtifact(
+  ctx: Ctx,
+  ref: string,
+  version?: number,
+): Promise<ShownArtifact> {
+  const { artifact } = await requireArtifact(ctx, ref, "view");
+  const v = await requireVersion(ctx, artifact, version ?? artifact.currentVersion);
+  const path = version === undefined ? `/a/${artifact.slug}` : `/a/${artifact.slug}/v/${v.number}`;
+  return {
+    id: artifact.id,
+    title: artifact.title,
+    version: v.number,
+    url: appUrl(ctx.config, path),
+  };
+}
+
 /**
  * The preview page. Self-contained (hosts give it a strict CSP), and it trusts messages only from
  * its parent. It speaks the MCP Apps postMessage protocol directly: ui/initialize, then waits for
  * the tool result, asks preview_artifact for a link, and frames it. "Open on Plinth" asks the host
- * to open the artifact's page (ui/open-link). The artifact frame gets the instance's sandbox flags
+ * to open the artifact's page (ui/open-link). Where the host offers full screen (its
+ * availableDisplayModes), one icon button asks for it (ui/request-display-mode) and back; the
+ * frame then fills the host's container. The artifact frame gets the instance's sandbox flags
  * (no allow-same-origin under opaque isolation), as in the app.
  */
 export function previewAppHtml(config: Pick<Config, "contentIsolation">): string {
@@ -113,7 +144,16 @@ html, body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 
 .meta { color: var(--muted); white-space: nowrap; }
 button { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 button:hover { border-color: var(--muted); }
+[hidden] { display: none !important; }
+.icon { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
+.icon svg { width: 14px; height: 14px; }
 iframe { display: block; width: 100%; height: 560px; border: 0; background: #ffffff; }
+html.full, html.full body { height: 100%; }
+html.full body { display: flex; flex-direction: column; }
+html.full #stage { flex: 1; min-height: 0; }
+html.full iframe { height: 100%; }
+.shrink, html.full .grow { display: none; }
+html.full .shrink { display: block; }
 .note { margin: 0; padding: 16px 12px; color: var(--muted); }
 </style>
 </head>
@@ -122,6 +162,10 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
   <span class="title" id="title">Plinth</span>
   <span class="meta" id="meta"></span>
   <button type="button" id="open" hidden>Open on Plinth</button>
+  <button type="button" id="full" class="icon" aria-label="Full screen" title="Full screen" hidden>
+    <svg class="grow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5h3.5V6M6 13.5H2.5V10M13.5 2.5 9 7M2.5 13.5 7 9"/></svg>
+    <svg class="shrink" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 6H10V2.5M2.5 10H6v3.5M10 6l4-4M6 10l-4 4"/></svg>
+  </button>
 </div>
 <div id="stage"><p class="note">Waiting for the published page.</p></div>
 <script>
@@ -134,6 +178,7 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
   let nextId = 1;
   let pageUrl = null;
   let started = false;
+  let mode = "inline";
 
   const post = (msg) => window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, msg), "*");
   const request = (method, params) =>
@@ -156,6 +201,26 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
 
   function theme(t) {
     if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  }
+
+  // Full screen where the host offers it: one button, which turns into "exit" while it lasts.
+  function setMode(m) {
+    if (m !== "inline" && m !== "fullscreen") return;
+    mode = m;
+    const full = m === "fullscreen";
+    document.documentElement.classList.toggle("full", full);
+    const label = full ? "Exit full screen" : "Full screen";
+    $("full").setAttribute("aria-label", label);
+    $("full").title = label;
+    resize();
+  }
+
+  function context(c) {
+    if (!c || typeof c !== "object") return;
+    theme(c.theme);
+    if (Array.isArray(c.availableDisplayModes))
+      $("full").hidden = !c.availableDisplayModes.includes("fullscreen");
+    setMode(c.displayMode);
   }
 
   // A tool result: structuredContent when the server sends it, else the JSON text Plinth returns.
@@ -219,14 +284,14 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
       case "ui/notifications/tool-result": {
         const r = parse(m.params);
         if (r && typeof r.id === "string") show(r);
-        else note("Nothing was published.");
+        else note("There is nothing to show.");
         break;
       }
       case "ui/notifications/tool-cancelled":
-        if (!started) note("The publish was cancelled.");
+        if (!started) note("The call was cancelled.");
         break;
       case "ui/notifications/host-context-changed":
-        theme(m.params && m.params.theme);
+        context(m.params);
         break;
       case "ui/resource-teardown":
       case "ping":
@@ -248,13 +313,20 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
     if (pageUrl) request("ui/open-link", { url: pageUrl }).catch(() => {});
   });
 
+  $("full").addEventListener("click", () => {
+    const want = mode === "fullscreen" ? "inline" : "fullscreen";
+    request("ui/request-display-mode", { mode: want })
+      .then((r) => setMode(r && r.mode))
+      .catch(() => {});
+  });
+
   request("ui/initialize", {
-    appCapabilities: {},
+    appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
     appInfo: { name: "plinth-preview", version: "1.0.0" },
     protocolVersion: "2026-01-26",
   })
     .then((r) => {
-      theme(r && r.hostContext && r.hostContext.theme);
+      context(r && r.hostContext);
       notify("ui/notifications/initialized", {});
       resize();
     })

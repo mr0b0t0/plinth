@@ -70,7 +70,7 @@ describe("MCP Apps metadata", () => {
     const { tools } = await client.listTools();
     const meta = (name: string) =>
       tools.find((t) => t.name === name)?._meta as { ui?: Record<string, unknown> } | undefined;
-    for (const name of ["publish_artifact", "update_artifact", "restore_version"])
+    for (const name of ["publish_artifact", "update_artifact", "restore_version", "show_artifact"])
       expect(meta(name)?.ui).toEqual({ resourceUri: PREVIEW_RESOURCE_URI });
     expect(meta("preview_artifact")?.ui).toEqual({
       resourceUri: PREVIEW_RESOURCE_URI,
@@ -101,6 +101,73 @@ describe("MCP Apps metadata", () => {
     // error page.
     expect(c.text).toContain('"securitypolicyviolation"');
     expect(c.text).not.toMatch(/https?:\/\/(?!\*)/);
+  });
+
+  it("offers full screen only where the host lists it, through ui/request-display-mode", async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token);
+    const r = await client.readResource({ uri: PREVIEW_RESOURCE_URI });
+    const text = (r.contents[0] as unknown as { text: string }).text;
+    expect(text).toContain('availableDisplayModes: ["inline", "fullscreen"]');
+    expect(text).toContain('"ui/request-display-mode"');
+    expect(text).toContain('c.availableDisplayModes.includes("fullscreen")');
+    // The button starts hidden: a host that never offers full screen never shows it.
+    expect(text).toMatch(/<button[^>]*id="full"[^>]*hidden>/);
+    // ...and stays hidden: the icon button's own display rule must not override [hidden].
+    expect(text).toContain("[hidden] { display: none !important; }");
+  });
+});
+
+describe("show_artifact", () => {
+  it("returns what the preview needs and the page to give the user, never HTML or a link", async () => {
+    const { client, published } = await publishAndPreview();
+    const shown = await tool(client, "show_artifact", { id: published.slug });
+    expect(shown.isError).toBe(false);
+    expect(shown.data).toEqual({
+      id: published.id,
+      title: "Numbers",
+      version: 1,
+      url: `http://app.localhost:8787/a/${published.slug}`,
+    });
+    expect(shown.text).not.toContain("Private numbers");
+    expect(shown.text).not.toContain("/__plinth/");
+    const updated = await tool(client, "update_artifact", {
+      id: published.id,
+      html: PAGE.replace("Private", "New"),
+      base_version: 1,
+    });
+    expect(updated.isError).toBe(false);
+    const old = await tool(client, "show_artifact", { id: published.id, version: 1 });
+    expect(old.data).toMatchObject({
+      version: 1,
+      url: `http://app.localhost:8787/a/${published.slug}/v/1`,
+    });
+    expect((await tool(client, "show_artifact", { id: published.id })).data.version).toBe(2);
+    expect((await tool(client, "show_artifact", { id: published.id, version: 9 })).isError).toBe(
+      true,
+    );
+  });
+
+  it("refuses an agent that cannot view the artifact, without saying it exists", async () => {
+    const { published } = await publishAndPreview();
+    const stranger = await agent();
+    const r = await tool(await mcpClient(stranger.token), "show_artifact", { id: published.id });
+    expect(r.isError).toBe(true);
+    expect(r.data.error.code).toBe("not_found");
+  });
+
+  it("still answers with the link where previews are off (staging path fallback)", async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token, {
+      STAGING_CONTENT_FALLBACK: "true",
+      CONTENT_ISOLATION: "opaque",
+    });
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === "show_artifact")?._meta).toBeUndefined();
+    const published = await tool(client, "publish_artifact", { title: "Numbers", html: PAGE });
+    const shown = await tool(client, "show_artifact", { id: published.data.id });
+    expect(shown.isError).toBe(false);
+    expect(shown.data.title).toBe("Numbers");
   });
 });
 

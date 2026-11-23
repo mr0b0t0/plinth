@@ -31,6 +31,7 @@ with its thread.
 | `publish_artifact` | Create an artifact: `title`, `html` (or `type: "doc"`, `"slides"`, `"design"`, `"sheet"` or `"whiteboard"` + `content`), optional `assets`, `visibility` and `category` |
 | `start_upload` | Publish or update from a build folder, out of band: one command sends the folder (see "Built sites and big pages") |
 | `get_artifact` | Read an artifact's current (or a given) version before changing it |
+| `show_artifact` | Show an artifact that is already on Plinth in the conversation when the person asks to see it (apps with MCP Apps render it; give the url too) |
 | `update_artifact` | Publish a new version: `id`, `html` or `content` (by the artifact's type), `base_version`, optional `assets`, `note` |
 | `list_artifacts` | Find artifacts by title or category (the person's own and those shared with them); also returns their category names. `type: "design_system"` lists the design systems they can build with (`default: true` marks their default) |
 | `list_versions`, `restore_version` | See history; make an old version current again |

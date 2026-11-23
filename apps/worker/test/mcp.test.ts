@@ -58,6 +58,7 @@ describe("MCP endpoint", () => {
         "resolve_comment",
         "restore_version",
         "set_visibility",
+        "show_artifact",
         "start_upload",
         "update_artifact",
         "write_artifact_data",

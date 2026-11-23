@@ -431,6 +431,8 @@ describe("using a token limited to one artifact", () => {
     const preview = await tool(c, "preview_artifact", { id });
     expect(preview.isError).toBe(false);
     expect((await tool(c, "preview_artifact", { id: other.id })).data.error.code).toBe("not_found");
+    expect((await tool(c, "show_artifact", { id })).isError).toBe(false);
+    expect((await tool(c, "show_artifact", { id: other.id })).data.error.code).toBe("not_found");
     await c.close();
   });
 

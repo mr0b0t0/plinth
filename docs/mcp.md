@@ -793,6 +793,26 @@ Publish an old version's content as the next version. History is never rewritten
 { "id": "q3-revenue-4k2j9x0aq1", "version": 2 }
 ```
 
+### `show_artifact`
+
+Show an artifact in the conversation, for when the person asks to see, open or bring back a page
+that is already on Plinth. Read-only, scope `artifacts:read`, anyone who can view the artifact.
+Clients with MCP Apps render the [in-chat preview](#in-chat-previews) under the call; others see
+only the result. Publishing, updating and restoring show their own version already.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | |
+| `version` | integer, optional | A version to show instead of the current one |
+
+The result is `{ id, title, version, url }`: `url` is the artifact's page, or the version's when
+`version` is given. It carries no HTML (read that with `get_artifact`) and no preview link, so the
+agent gives the person the `url` either way.
+
+```json
+{ "id": "q3-revenue-4k2j9x0aq1" }
+```
+
 ### `set_visibility`
 
 Change who can view. Owner only. Scope `artifacts:write`.
@@ -1150,10 +1170,13 @@ of the whole sheet use `update_artifact` with the JSON lines.
 
 Clients that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) show the version
 an agent just published right under the `publish_artifact`, `update_artifact` or `restore_version`
-call: T3 Code with Claude or Codex, and other hosts that render MCP Apps. Nothing to set up: the
+call: T3 Code with Claude or Codex, and other hosts that render MCP Apps. Ask to see an artifact
+that is already on Plinth ("show me the pricing page") and the agent calls
+[`show_artifact`](#show_artifact), which shows it the same way. Nothing to set up: the
 tools point at Plinth's preview page (`ui://plinth/preview.html`), which asks the app-only
 `preview_artifact` tool for a short-lived link and frames the page from its own content subdomain.
-**Open on Plinth** opens the artifact's page, where sharing and comments live.
+**Open on Plinth** opens the artifact's page, where sharing and comments live. Where the host
+offers full screen (T3 Code does), a button beside it fills the window with the page and back.
 
 A preview is read-only and anonymous: the page shows as a signed-out viewer would see it, and
 shared data is unavailable in it (`reason: "preview"`). Inside a host's sandbox the page usually

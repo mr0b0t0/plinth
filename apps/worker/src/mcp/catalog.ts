@@ -28,6 +28,8 @@ export const MCP_TOOL_SUMMARIES = {
     "For a build folder or a big page: a single-use ticket and a curl command that publishes it as one tar.",
   get_artifact_stats:
     "Who opened the user's artifacts, when, how often and which version (owner only); without an id, a summary.",
+  show_artifact:
+    "Show an artifact in the conversation, in apps that render MCP Apps; elsewhere it returns its link.",
   preview_artifact:
     "Used by Plinth's in-chat preview (MCP Apps hosts) for a short-lived link to show a version; agents never need it.",
   get_design_system:
@@ -86,6 +88,7 @@ export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
   write_artifact_data: writes("Write artifact data", { destructive: true }),
   start_upload: writes("Start upload"),
   get_artifact_stats: reads("Get artifact stats"),
+  show_artifact: reads("Show artifact"),
   preview_artifact: reads("Preview artifact"),
   get_design_system: reads("Get design system"),
   read_sheet: reads("Read sheet"),
