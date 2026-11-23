@@ -3,7 +3,7 @@
 // their placeholder; a click opens a block as formatted text and typing sends the block written
 // back as Markdown, escaped so it never changes the deck's structure; emptying a slide keeps it as
 // an empty slide (trimming a bare opening --- first); speaker notes are one part in their own
-// panel; images and blocks the model cannot hold offer Ask an agent; deck settings are one
+// panel; images and blocks the model cannot hold offer Comment; deck settings are one
 // set_deck; and the review's deck pane draws each side with its own version's files.
 import {
   LIMITS,
@@ -452,7 +452,7 @@ describe("edit mode's layout", () => {
 });
 
 describe("what is left to an agent", () => {
-  it("offers only Ask an agent on an image, with a structural anchor", () => {
+  it("offers only Comment on an image, with a structural anchor", () => {
     const f = start(SKILL);
     appMessage(f, msg({ type: "goto", slide: 2 }));
     const img = active().querySelector("img") as HTMLImageElement;
@@ -482,7 +482,7 @@ describe("what is left to an agent", () => {
     expect(collect(f)).toContain("chart.png");
   });
 
-  it("shows a block the model cannot hold as it is, with Ask an agent", () => {
+  it("shows a block the model cannot hold as it is, with Comment", () => {
     const f = start("# A\n\n    indented code\n");
     const pre = active().querySelector("pre") as HTMLElement;
     expect(pre.getAttribute("data-plinth-edit")).toBe("other");

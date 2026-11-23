@@ -1,7 +1,7 @@
 // `?edit` where the person can edit on the page (New and Import): the page drops the parameter,
 // starts editing, and the edit message asks the frame to focus its first block or cell until the
 // frame says it is editing; a plain Edit never asks for it. Every other `?edit` case is
-// askAgent.tsx's (ArtifactPage.ask.test.tsx).
+// editArrival.ts's (ArtifactPage.frameComment.test.tsx).
 import type { ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,7 +149,7 @@ describe("?edit with editing on the page", () => {
     const off = page(gate({ live: undefined, live_off: { reason: "disabled" } }));
     expect(off.result.current.editing).toBe(false);
     expect(edits()).toHaveLength(0);
-    // askAgent.tsx drops it for these; this hook leaves it alone.
+    // editArrival.ts drops it for these; this hook leaves it alone.
     expect(window.location.search).toBe("?edit");
   });
 });

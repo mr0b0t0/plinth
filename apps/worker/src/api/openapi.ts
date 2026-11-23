@@ -2699,8 +2699,9 @@ function operations(): Operation[] {
       operationId: "createComment",
       summary: "Comment; @mentions of the owner's agents create mention tasks",
       description:
-        "`request_to` (Ask an agent, a new thread only) sends the comment to the owner's " +
-        "connections of that client type as a mention task, `other` included. It is refused with " +
+        "`request_to` (a new thread only) sends the comment to the owner's connections of that " +
+        "client type as a mention task, `other` included, as mentioning `@claude`, `@codex` or " +
+        "`@agent:other` in its body does. It is refused with " +
         "400 and reason `no_agent` when the owner has no connection of that type that can take " +
         "mentions (nothing is written), and with reason `reply` on a reply. An agent's comment " +
         "never creates a task.",
@@ -3320,7 +3321,7 @@ function designExportOperations(): Operation[] {
   ];
 }
 
-// ---------- Ask an agent (docs/spec.md "Ask an agent") ----------
+// ---------- asking an agent (docs/spec.md "Asking an agent") ----------
 
 function askSchemas(): Record<string, Json> {
   return {
@@ -3332,13 +3333,13 @@ function askSchemas(): Record<string, Json> {
           description:
             "The client types of the owner's connections that can take requests (not revoked, " +
             "not limited to one artifact, with the mentions scope), in claude, codex, other " +
-            "order; never a label. Empty: a request is posted as a plain comment",
+            "order; never a label",
         },
       }),
       description:
-        "Ask an agent: present on `ok` for everyone who may mention the owner's agents here " +
-        "(the owner, editors and commenters), never for agents. Send the request as " +
-        "`request_to` on a new comment",
+        "Which of the owner's agents a mention can reach: present on `ok` for everyone who may " +
+        "mention them here (the owner, editors and commenters), never for agents. Ask one with " +
+        "`@claude`, `@codex` or `@agent:other` in a comment (or `request_to` on a new one)",
     },
     ViewGateLiveOff: {
       ...obj({ reason: enumOf(["disabled", "isolation"]) }),

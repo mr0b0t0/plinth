@@ -28,7 +28,7 @@ export interface EditBlock {
   end: number;
   /** The block's Markdown as the deck hands it to Markdown (`\Note:` read as `Note:`). */
   shown: string;
-  /** The block's index in its slide, from 1 (for Ask an agent's anchor). */
+  /** The block's index in its slide, from 1 (for Comment's anchor). */
   index: number;
   /** Its top-level nodes in the slide. */
   nodes: Node[];

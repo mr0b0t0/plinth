@@ -39,8 +39,9 @@
 //   frame -> app: resolved { nonce, outcome, version?, rev?, text?, note? }
 //                                          the review's choice: publish, discard or cancelled;
 //                                          version and rev in room mode, text in solo mode
-//   frame -> app: ask { anchor }           "Ask an agent" about a place on the page (a structural
-//                                          key and a short label)
+//   frame -> app: ask { anchor }           "Comment" on a place on the page (a structural key and
+//                                          a short label): the app opens the comments panel
+//                                          pinned there (frameComment.ts)
 //   frame -> app: leave                    Esc at the top level of edit mode: focus the strip
 //   frame -> app: shown { n, nonce, ok }   the answer to version: shown in place, or not (the app
 //                                          then loads a fresh frame)
@@ -401,8 +402,8 @@ export interface LiveFrameStatus {
 }
 
 /**
- * What kind of block an `ask` is about, for the Ask dialog's "Pointing at" chip when the anchor has no
- * text (a doc's divider, or the image "Insert below" asks for). Never posted.
+ * What kind of block an `ask` is about, for the comment composer's chip when the anchor has no text
+ * (a doc's divider, or the image "Insert below" asks for). Never posted.
  */
 export const ASK_WHAT = [
   "paragraph",

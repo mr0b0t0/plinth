@@ -306,24 +306,25 @@ test("deck settings from the ⋯ menu write the front matter", async ({ page }) 
   );
 });
 
-test("an image offers Ask an agent and opens the Ask dialog with its anchor", async ({ page }) => {
+test("an image offers Comment and opens the comments panel pinned to it", async ({ page }) => {
   test.setTimeout(90_000);
   const s = await setup(page);
   await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
   await startEditing(page);
   await showSlide(page, 2);
   await activeSlide(page).getByRole("button", { name: "Slide 2, image" }).click();
-  // Ask an agent is the image's one action: adding and deleting images stay with agents.
+  // Comment is the image's one action: adding and deleting images stay with agents.
   const bar = frameOf(page).getByRole("group", { name: "Slide 2, image" });
-  await expect(bar.getByRole("button")).toHaveText(["Ask an agent"]);
+  await expect(bar.getByRole("button")).toHaveText(["Comment"]);
   await shoot(page, "image-bar");
-  await frameOf(page).getByRole("button", { name: "Ask an agent", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("Slide 2, image 1");
-  // The description is where typing goes: it has focus, not the chip's Stop pointing.
-  await expect(dialog.getByPlaceholder("Describe the change…")).toBeFocused();
-  await shoot(page, "ask");
+  await frameOf(page).getByRole("button", { name: "Comment", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Comments" });
+  await expect(panel).toBeVisible({ timeout: 10_000 });
+  await expect(panel.locator(".cm-anchor-chip")).toContainText("Slide 2, image 1");
+  // The comment box is where typing goes: it has focus, not the chip's Remove pin.
+  await expect(panel.getByRole("textbox", { name: "New comment" })).toBeFocused();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await shoot(page, "comment");
 });
 
 test("two editors on a deck: one edits a title while the other adds notes; a held part refuses the op", async ({

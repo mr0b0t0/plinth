@@ -642,14 +642,14 @@ export type ViewGate =
        */
       hold?: true;
       /**
-       * Ask an agent (docs/spec.md "Ask an agent"): present for everyone who may mention the
-       * owner's agents here (the owner, editors and commenters, never agents). Its targets may be
-       * empty: the request is then posted as a plain comment.
+       * Which of the owner's agents a mention can reach (docs/spec.md "Asking an agent"): present
+       * for everyone who may mention them here (the owner, editors and commenters, never agents).
+       * The composer suggests `@agent:other` when `other` is among them.
        */
       ask?: ViewGateAsk;
       /**
        * Editing on the page is off for this owner or editor of a live type on the current
-       * version, and why: the Edit slot shows Ask an agent instead. Never together with `live`.
+       * version, and why. Never together with `live`.
        */
       live_off?: ViewGateLiveOff;
       /**
@@ -679,8 +679,8 @@ export interface ViewGateLive {
 }
 
 /**
- * Who a request from Ask an agent can go to: the client types of the owner's connections that can
- * take mentions (not revoked, not limited to one artifact, with the `mentions` scope), in
+ * Which of the owner's agents a mention can reach: the client types of the owner's connections
+ * that can take mentions (not revoked, not limited to one artifact, with the `mentions` scope), in
  * CLIENT_TYPES order. Never a connection's label or id.
  */
 export interface ViewGateAsk {

@@ -1,7 +1,7 @@
 // A request from the artifact frame that would open something the person closed (the comments
-// panel, or the Ask dialog) is accepted at most once per PAGE_COMMENT_LIMITS.reopenMinIntervalMs,
-// so a page cannot keep reopening it. Shared by comments from the page (usePageComments.ts) and
-// Ask an agent from a renderer (askAgent.tsx).
+// panel) is accepted at most once per PAGE_COMMENT_LIMITS.reopenMinIntervalMs, so a page cannot
+// keep reopening it. Shared by comments from the page (usePageComments.ts) and a renderer's
+// "Comment" (viewer/frameComment.ts).
 import { PAGE_COMMENT_LIMITS } from "@plinth/shared";
 
 export interface ReopenGate {

@@ -1471,7 +1471,7 @@
       "post": {
         "operationId": "createComment",
         "summary": "Comment; @mentions of the owner's agents create mention tasks",
-        "description": "`request_to` (Ask an agent, a new thread only) sends the comment to the owner's connections of that client type as a mention task, `other` included. It is refused with 400 and reason `no_agent` when the owner has no connection of that type that can take mentions (nothing is written), and with reason `reply` on a reply. An agent's comment never creates a task.",
+        "description": "`request_to` (a new thread only) sends the comment to the owner's connections of that client type as a mention task, `other` included, as mentioning `@claude`, `@codex` or `@agent:other` in its body does. It is refused with 400 and reason `no_agent` when the owner has no connection of that type that can take mentions (nothing is written), and with reason `reply` on a reply. An agent's comment never creates a task.",
         "tags": ["Comments"],
         "parameters": [
           {
@@ -3197,7 +3197,7 @@
             ]
           },
           "request_to": {
-            "description": "Ask an agent: a new thread's request to the owner's connections of this client type (claude, codex or other). Not on replies",
+            "description": "A new thread's request to the owner's connections of this client type (claude, codex or other), as mentioning them does. Not on replies",
             "type": "string",
             "enum": ["claude", "codex", "other"]
           }
@@ -7565,11 +7565,11 @@
           "targets": {
             "type": "array",
             "items": { "type": "string", "enum": ["claude", "codex", "other"] },
-            "description": "The client types of the owner's connections that can take requests (not revoked, not limited to one artifact, with the mentions scope), in claude, codex, other order; never a label. Empty: a request is posted as a plain comment"
+            "description": "The client types of the owner's connections that can take requests (not revoked, not limited to one artifact, with the mentions scope), in claude, codex, other order; never a label"
           }
         },
         "required": ["targets"],
-        "description": "Ask an agent: present on `ok` for everyone who may mention the owner's agents here (the owner, editors and commenters), never for agents. Send the request as `request_to` on a new comment"
+        "description": "Which of the owner's agents a mention can reach: present on `ok` for everyone who may mention them here (the owner, editors and commenters), never for agents. Ask one with `@claude`, `@codex` or `@agent:other` in a comment (or `request_to` on a new one)"
       },
       "ViewGateLiveOff": {
         "type": "object",

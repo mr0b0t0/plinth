@@ -128,7 +128,7 @@ export interface UseLiveEditOptions {
   userId?: string | null;
   /** Esc at the top level of edit mode in the frame. */
   onLeave?: () => void;
-  /** "Ask an agent" about a place on the page, from the frame (with the kind of block it is). */
+  /** "Comment" on a place on the page, from the frame (with the kind of block it is). */
   onAsk?: (anchor: { key: string; text: string } | null, what?: AskWhat) => void;
 }
 
@@ -479,15 +479,15 @@ export function useLiveEdit({
             setEditing(false);
             showToast({
               title: `This ${noun} is too large to edit on the page`,
-              description: "Ask an agent to make the change.",
+              description: "Mention @claude in a comment to change it.",
               tone: "neutral",
               ...(latest.current.onAsk
-                ? { action: { label: "Ask an agent", onClick: () => latest.current.onAsk?.(null) } }
+                ? { action: { label: "Comment", onClick: () => latest.current.onAsk?.(null) } }
                 : {}),
             });
           }
           // Problems only an agent can fix (a design system the format refuses): the page says so
-          // and offers Ask an agent; Edit stays off (LiveEdit.blocked).
+          // and offers Comment; Edit stays off (LiveEdit.blocked).
           if (next.unavailable === "invalid" && latest.current.editing) setEditing(false);
           setStatus(next);
         },
@@ -1129,7 +1129,7 @@ export function useLiveEdit({
     signIn,
     blocked:
       status?.unavailable === "invalid"
-        ? `This ${noun} has problems an agent needs to fix. Ask an agent to fix them.`
+        ? `This ${noun} has problems an agent needs to fix. Mention @claude in a comment to fix them.`
         : null,
     mode,
     editing,

@@ -1,8 +1,9 @@
-// Ask an agent (docs/spec.md "Ask an agent"): a comment's `request_to` makes a mention task for the
-// owner's connections of one client type, `other` included, and is refused with `no_agent` when no
-// such connection can take it; the gate's `ask` part lists those client types (never labels) for
-// everyone who may mention; the `live_off` part says why editing on the page is off, exactly where
-// `live` would be.
+// Asking an agent (docs/spec.md "Asking an agent"): people ask in a comment, with `@claude`,
+// `@codex` or `@agent:other` (every other client), from the owner, editors and commenters alike. A
+// comment's `request_to`, which agents and older tabs still send, makes the same task for the
+// owner's connections of one client type and is refused with `no_agent` when no such connection can
+// take it; the gate's `ask` part lists those client types (never labels) for everyone who may
+// mention; the `live_off` part says why editing on the page is off, exactly where `live` would be.
 
 import { env } from "cloudflare:workers";
 import type { Role } from "@plinth/shared";
@@ -71,6 +72,59 @@ const gate = async (id: string, headers: Record<string, string>, vars?: Record<s
       ? await fetchWith(vars, `/api/v1/view/${id}`, { headers })
       : await call(`/api/v1/view/${id}`, { headers }),
   );
+
+describe("@agent:other in a comment", () => {
+  it("makes one task for the owner's other connections, from a commenter, in a reply too", async () => {
+    const { owner, id } = await ownerWith();
+    const chatgpt = await createToken(owner.user.id, { clientType: "other", label: "ChatGPT" });
+    // A connection labelled "Agent" is reached by @agent only, never by @agent:other.
+    await createToken(owner.user.id, { clientType: "claude", label: "Agent" });
+    const commenter = await personWith(id, "commenter");
+    const root = await json(
+      await postComment(commenter.session.headers, id, {
+        body: "@agent:other add a footer",
+        anchor: { kind: "page", key: "block-3", text: "Intro" },
+      }),
+    );
+    expect(root.mentions).toEqual([
+      {
+        task_id: expect.any(String),
+        target: "@agent:other",
+        state: "pending",
+        result_version: null,
+      },
+    ]);
+    expect(await tasksOf(root.id)).toEqual([
+      expect.objectContaining({
+        targetClientType: "other",
+        targetConnection: null,
+        targetLabel: "@agent:other",
+      }),
+    ]);
+    const reply = await json(
+      await postComment(commenter.session.headers, id, {
+        body: "@Agent:Other and a header",
+        parent_id: root.id,
+      }),
+    );
+    expect((await tasksOf(reply.id)).map((t) => t.targetLabel)).toEqual(["@agent:other"]);
+
+    const client = await mcpClient(chatgpt.token);
+    const listed = await tool(client, "list_mentions", {});
+    const ids = listed.data.items.map((t: { comment_id: string }) => t.comment_id);
+    expect(ids).toEqual(expect.arrayContaining([root.id, reply.id]));
+    await client.close();
+  });
+
+  it("with request_to other as well makes one task, not two", async () => {
+    const { owner, id, session } = await ownerWith();
+    await createToken(owner.user.id, { clientType: "other" });
+    const c = await json(
+      await postComment(session.headers, id, { body: "@agent:other tidy", request_to: "other" }),
+    );
+    expect((await tasksOf(c.id)).map((t) => t.targetLabel)).toEqual(["@agent:other"]);
+  });
+});
 
 describe("request_to on a new comment", () => {
   for (const clientType of ["claude", "codex", "other"] as const) {

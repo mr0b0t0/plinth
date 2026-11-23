@@ -124,7 +124,7 @@ describe("NewTokenDialog", () => {
     expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
     await user.type(name, "Gemini CLI");
     expect(hint()).toBe(
-      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli.",
+      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli or @agent:other.",
     );
     // Claude and Codex add their client name to the same sentence; the Client field has no hint.
     const clientSelect = screen.getByLabelText("Client");

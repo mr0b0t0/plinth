@@ -122,17 +122,21 @@ export const SCOPES = ["artifacts:read", "artifacts:write", "mentions"] as const
 export type Scope = (typeof SCOPES)[number];
 export const DEFAULT_SCOPES: readonly Scope[] = SCOPES;
 
-/** Agent names that `@name` in a comment maps to a client type. */
+/**
+ * Agent names that `@name` in a comment maps to a client type. `agent:other` covers every client
+ * that is not Claude or Codex (ChatGPT, Cursor, Gemini…). It holds a ":", which no connection's
+ * mention handle can (mentionHandle), so it never reads like a mention of a connection labelled
+ * "Agent" (`@agent`).
+ */
 export const MENTION_AGENT_NAMES: Record<string, ClientType> = {
   claude: "claude",
   codex: "codex",
+  "agent:other": "other",
 };
 
 /**
- * The target label of a task that Ask an agent creates (`request_to`), per client type. `other`
- * covers every client that is not Claude or Codex (ChatGPT, Cursor, Gemini…), which no `@name`
- * reaches. Its label holds a ":", which no connection's mention handle can (mentionHandle), so it
- * never reads like a mention of a connection labelled "Agent" (`@agent`).
+ * The target label of a task that a comment's `request_to` creates, per client type: the mention
+ * of that client type (MENTION_AGENT_NAMES).
  */
 export const REQUEST_TARGET_LABELS: Record<ClientType, string> = {
   claude: "@claude",

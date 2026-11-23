@@ -1,7 +1,7 @@
 // `?edit` on the artifact page for an owner or editor who can edit here (docs/spec.md "New and
 // Import"): the page drops the parameter and opens in edit mode, and the frame is asked, at its
 // exact origin and with its key, to focus its first block. Where this person cannot edit, the
-// notices of ArtifactPage.ask.test.tsx apply instead.
+// notices of ArtifactPage.frameComment.test.tsx apply instead.
 import type { ViewArtifact, ViewGate } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

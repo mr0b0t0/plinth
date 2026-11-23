@@ -382,7 +382,7 @@ describe("boot", () => {
     expect(root().querySelector("button")).toBeNull();
   });
 
-  it("offers Ask an agent on the error page to the owner and editors, posting `ask`", () => {
+  it("offers Comment on the error page to the owner and editors, posting `ask`", () => {
     const text = JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" });
     const html = typedShellHtml(TYPE_REGISTRY.design_system, {
       title: "T",
@@ -404,9 +404,7 @@ describe("boot", () => {
     }) as never);
     try {
       stop = boot(window);
-      const ask = [...root().querySelectorAll("button")].find(
-        (b) => b.textContent === "Ask an agent",
-      );
+      const ask = [...root().querySelectorAll("button")].find((b) => b.textContent === "Comment");
       expect(ask).toBeTruthy();
       ask?.click();
       expect(posted).toContainEqual(

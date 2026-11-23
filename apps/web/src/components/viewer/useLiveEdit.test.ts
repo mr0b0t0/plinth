@@ -166,7 +166,7 @@ describe("useLiveEdit", () => {
     expect(result.current.status?.rev).toBe(7);
   });
 
-  it("leaves edit mode and offers Ask an agent when the frame is too large to edit on the page", () => {
+  it("leaves edit mode and offers Comment when the frame is too large to edit on the page", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const onAsk = vi.fn();
     const { result } = renderHook(() =>
@@ -220,7 +220,7 @@ describe("useLiveEdit", () => {
     expect(result.current.blocked).toBeNull();
     fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "invalid" });
     expect(result.current.blocked).toBe(
-      "This design system has problems an agent needs to fix. Ask an agent to fix them.",
+      "This design system has problems an agent needs to fix. Mention @claude in a comment to fix them.",
     );
     act(() => result.current.start());
     expect(result.current.editing).toBe(false);

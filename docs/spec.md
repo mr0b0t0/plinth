@@ -339,7 +339,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
 | `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
-| `list_mentions(state?)` | Pending requests addressed to this agent (from `@mentions` and Ask an agent) |
+| `list_mentions(state?)` | Pending requests addressed to this agent (from `@mentions` in comments) |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
 | `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
 | `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
@@ -855,12 +855,11 @@ page shows the strip and makes the REST calls, and renders no content.
   `token_bound` and any other bearer token 403 `app_only`, since an old version's files under a
   new source would let a token do part of a restore. MCP's `update_artifact` does not list it, so
   agents keep the carry rule.
-- **Ask an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a design
-  system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or opaque
-  isolation and the path fallback) see Ask an agent in the Edit slot, with the reason; HTML pages
-  and designs always do. While editing, Ask an agent
-  opens a dialog that leaves edit mode and the draft as they are. See
-  [Ask an agent](#ask-an-agent-decided-2026-11-19).
+- **Asking an agent where editing is off.** Owners and editors of a doc, a deck, a sheet or a
+  design system on an instance where editing on the page is off (`ALLOW_LIVE_EDITING=false`, or
+  opaque isolation and the path fallback) get nothing in Edit's place, as for HTML pages and
+  designs: they mention an agent in a comment. While editing, a renderer's "Comment" opens the
+  comments panel pinned to its place. See [Asking an agent](#asking-an-agent-decided-2026-11-23).
 
 ### Categories (decided 2026-11-18)
 
@@ -921,7 +920,9 @@ their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)
 ### Comments and agent mentions
 
 Comments are threaded and can be pinned to an element on the page. Mentioning an agent (`@claude`,
-`@codex`, or a connection label) creates a task. Two delivery modes:
+`@codex`, `@agent:other` for every other client, or a connection label) creates a task. It is the
+one way people ask an agent for a change ([Asking an agent](#asking-an-agent-decided-2026-11-23)).
+Two delivery modes:
 
 | Mode | How it works | Who pays for tokens | When |
 | --- | --- | --- | --- |
@@ -936,14 +937,16 @@ node in a diagram): it opens the composer, and the person writes and posts the c
 [Comments from the page](#comments-from-the-page-decided-2026-11-19). Agents read either kind of
 anchor in `list_comments` and in mention tasks, as untrusted data like the comment text.
 
-**Ask an agent** ([below](#ask-an-agent-decided-2026-11-19)) posts an ordinary comment whose target
-travels in a structured field, never as `@name` text: `request_to` on `POST
-/api/v1/artifacts/:ref/comments` is one of the client types (`claude`, `codex` or `other`), accepted
-on a root comment only (400 `invalid_input`, reason `reply`, on a reply). It makes one task for the
-owner's connections of that client type, target label `@claude`, `@codex` or `@agent:other` (`other`
-covers every client that is not Claude or Codex, which no `@name` reaches; the `:` keeps it apart
-from `@agent`, a mention of a connection labelled "Agent"), unless the body already
-names that type. It is refused with 400 `invalid_input`, reason `no_agent`, and nothing is written,
+`@agent:other` covers every client that is not Claude or Codex (ChatGPT, Cursor, Gemini…); the
+`:` keeps it apart from `@agent`, a mention of a connection labelled "Agent", since no handle can
+hold one, and `:other` counts only right after `agent` and as a whole word.
+
+A comment can also name its target in a structured field instead of `@name` text: `request_to` on
+`POST /api/v1/artifacts/:ref/comments` is one of the client types (`claude`, `codex` or `other`),
+accepted on a root comment only (400 `invalid_input`, reason `reply`, on a reply). The app no
+longer sends it (it did for the Ask an agent button, until 2026-11-23); agents and older tabs may.
+It makes one task for the owner's connections of that client type, target label `@claude`,
+`@codex` or `@agent:other`, unless the body already names that type. It is refused with 400 `invalid_input`, reason `no_agent`, and nothing is written,
 when the owner has no connection of that type that can take mentions (not revoked, not limited to
 one artifact, with the `mentions` scope); that check, and the mention right's (403 otherwise),
 come before the comment rate limit, so a refused request does not count against it. An agent's
@@ -1156,13 +1159,13 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   row that scrolls sideways and fades at its edges. Each example shows only its rendered preview,
   never its HTML or CSS. A system the format refuses (one stored before a stricter parser, say)
   shows "This design system has problems an agent needs to fix:" and up to 10 of its problems,
-  each its path and words as text, with "Ask an agent" (an `ask` anchored at `system:problems`)
+  each its path and words as text, with "Comment" (an `ask` anchored at `system:problems`)
   for the owner and editors where they edit with the room; a page whose payload cannot be read
   shows one line, "This design system could not be shown." Such a system is not edited on the
   page: the owner's and editors' frame tells the app so (its status's `unavailable: "invalid"`),
   the bar's Edit stays off with its reason in its tooltip ("This design system has problems an
-  agent needs to fix. Ask an agent to fix them."), the phone's ⋯ leaves "Edit on the page" out,
-  and Ask an agent is the way in.
+  agent needs to fix. Mention @claude in a comment to fix them."), the phone's ⋯ leaves "Edit on
+  the page" out, and a comment is the way in.
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -1340,17 +1343,18 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     room's text again, as a doc block's does.
     A component's status stays the pill beside its name and is set from its heading's ⋯
     ("Status", then Stable, Beta or Deprecated). Each token row has one ⋯ (dark value,
-    description, another token, "Rename: Ask an agent", "Remove"), each group row one ⋯ ("Add a
-    token", "Rename: Ask an agent"); on a phone a row's ⋯ is centred on the token's name and a
+    description, another token, "Comment to rename", "Remove"), each group row one ⋯ ("Add a
+    token", "Comment to rename"); on a phone a row's ⋯ is centred on the token's name and a
     group's on its label. "Remove" asks in place, its two buttons always together (on a phone the
     question has its own line). The parts of a shadow, border or typography token are
     labelled in words (Color, X, Y, Blur, Spread; Width, Style; Font, Size, Weight, Line height,
     Letter spacing).
   - **What stays with agents.** Component HTML, CSS and examples (and adding or removing
     components), renaming tokens and groups, types, the fonts, the prefix, the format and the
-    shared CSS. Each has Ask an agent on the page, in the ⋯ it belongs to: a token's or a group's
-    ("Rename: Ask an agent"), a component's ("Ask an agent", after "Status") and the header's,
-    beside the name ("Ask an agent", whose dialog names "Fonts and settings"). In the review both
+    shared CSS. Each has "Comment" on the page, in the ⋯ it belongs to: a token's or a group's
+    ("Comment to rename"), a component's ("Comment", after "Status") and the header's, beside the
+    name ("Comment", pinned to "Fonts and settings"); it opens the comments panel pinned there,
+    where people mention an agent. In the review both
     sides are one height, and each opens with its first change at the top of the side, just under
     its list of changes; on a phone a side's values wrap inside it, with as much room on a row's
     right as on its left. A change in the review that is in a component
@@ -1359,13 +1363,13 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
     When the design system's publisher said its source lives in code (the gate's `from_code`),
     starting edit mode shows one short notice in the frame's status line: "This design system is
     published from code. Its next publish from code won't include changes made here.", with
-    Dismiss only (Ask an agent stays in the rows' and components' menus). Editing is not blocked.
+    Dismiss only (Comment stays in the rows' and components' menus). Editing is not blocked.
   - **Size.** The draft's limit is the size its compact JSON would take, counted line by line, at
     most `maxDesignSystemBytes` (1 MB). A projection longer than 200,000 lines
     (`LIMITS.maxLiveProjectionLines`; pretty JSON runs about three times longer than compact), or
     whose JSON part would pass 8 MB of text (`LIMITS.maxLiveProjectionChars`, counted before it is
     written), is not edited on the page: Edit says "This design system is too large to edit on the page", edit
-    mode ends, and Ask an agent is offered.
+    mode ends, and the toast offers Comment ("Mention @claude in a comment to change it.").
   - **Storage form.** A Publish from the page stores 2-space JSON when it fits 1 MB, and compact
     JSON when it does not, with the guidelines as the last key (none when the draft has no line
     after its JSON part), so it never fails on size where the agent's version fit. An agent's
@@ -1692,7 +1696,7 @@ differs from Claude only where noted.
   - Warnings are `slides_setting` (the index), `slide_markup` (markup that shows differently),
     `slide_empty` and `missing_file` (an image, a face's font or a `url()` the version lacks).
   - People see the deck, never its source: the gate's `no_editor` takes Edit out of the menus, and
-    they ask an agent for changes (Ask an agent takes the bar's Edit slot, as for an `ask` type).
+    they ask an agent for changes in a comment, as for an `ask` type; nothing takes Edit's place.
     Editing on the page is a Markdown deck's only: while an HTML deck is the current version the
     gate has neither `live` nor `live_off`, the shell's payload has no `live`, the room opens no
     draft on it, and the frame takes no editing message. When an agent publishes an HTML deck over a
@@ -3330,112 +3334,95 @@ from discovery tags) stays.
 - **No setting.** Compare is the same on every instance and in both isolation modes; it adds no
   route, no table and no env var.
 
-### Ask an agent (decided 2026-11-19)
+### Asking an agent (decided 2026-11-23)
 
-People change an HTML page or a design by asking an agent, not by editing its code: the person
-points at an element (or a design's board) or describes the change, and the request goes to the
-owner's connected agent as an ordinary mention, through the comments and mentions system. No code is
-shown. A request is untrusted input for the agent: a collaborator's request, with no owner
-authority, whoever sends it (only `comment_author_role` says the owner did).
+People ask the owner's agent for a change the way they ask Claude in its own artifacts: by
+mentioning it in a comment ("@claude make the heading red"), optionally pinned to a place on the
+page. There is no other entry point: no Ask an agent button in the bar, no item in the ⋯ menu
+and no dialog (this replaces the Ask an agent button, request mode and Ask dialog decided
+2026-11-19). The request goes to the owner's connected agent as an ordinary mention, through the comments and
+mentions system ([Comments and agent mentions](#comments-and-agent-mentions)). No code is shown. A
+request is untrusted input for the agent: a collaborator's request, with no owner authority,
+whoever sends it (only `comment_author_role` says the owner did).
 
 - **Who.** Everyone the `mention` action allows: the owner, editors and commenters, those confirmed
-  by code included. Never viewers, never agents. It is offered only when the owner has an agent
-  that can take the request (the gate's `ask.targets` is not empty).
+  by code included. Never viewers, never agents. A commenter reaches the owner's agents exactly as
+  the owner does.
+- **The composer.** The comments panel's composer is the same for everyone: "Add a comment…", the
+  hint "Markdown works. Type @ to ask an agent. Ctrl or ⌘ + Enter sends.", "Pin to an element"
+  (the review-mode pick: an element on an HTML page, a board on a design) and Comment. Typing `@`
+  suggests `@claude` and `@codex` (a robot beside each), and `@agent:other` with the words
+  "ChatGPT, Cursor, Gemini…" when the gate's `ask.targets` lists `other`; reply boxes suggest the
+  same. The comment is posted as written, with its pin; the thread shows each task's state and
+  links the version a done request made.
+- **Every client type has a mention.** `@claude` and `@codex` reach the owner's connections of
+  that client type, and `@agent:other` every connection that is neither (ChatGPT, Cursor,
+  Gemini…). Its `:` keeps it apart from `@agent`, a mention of a connection labelled "Agent", since
+  no connection's handle can hold one; `:other` counts only right after `agent` and as a whole word.
+  The Connections page and the consent screen say so for such a connection ("Mention as
+  @gemini-cli or @agent:other.").
 - **Where.** The registry says how people change each type (`edit`): `"ask"` (HTML pages and
-  designs, and decks until they are edited on the page), `"live"` (docs, sheets and design
-  systems) or `"board"` (whiteboards).
-  - For an `"ask"` type, and for a live type whose editing on the page is off here, owners and
-    editors get Ask an agent in the bar's Edit slot; its description gives the reason when editing
-    is off ("Editing on the page is turned off on this Plinth instance." or "Editing on the page
-    isn't available with this instance's content isolation.").
-  - Everywhere else it may be used, it is an item in the artifact's ⋯ menu: commenters on every
-    type, everyone at phone width, and owners and editors of a live type whose editing is on.
-  - It has no other entry point: the dashboard card's menu does not offer it (its "Edit" still
-    opens the source editor for owners and editors).
-- **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
-  reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). With no thread to show, the panel is only the request form under the title "Ask an
-  agent" and its close button: no filter, count, refresh or empty state, and at phone width the
-  sheet is as tall as the form. With threads, they show above it as usual. The composer has no
-  title of its own (it is named "Ask an agent" for assistive technology) and has the description
-  ("Describe the change…") and one row under it: the agent choice on the left, then "Point at
-  something" (an icon button with that tooltip: the review-mode pick, an element on an HTML page,
-  a board on a design) and Send on the right. While picking it shows one line, "Pick an element",
-  and Cancel (Esc also cancels); at phone width that bar sits under the artifact, not over it,
-  so nothing on the page is left half-covered. The place picked shows as a "Pointing at “…”" chip
-  whose button drops it. It posts a comment with `request_to` against the version on view; a
-  notification then says "Request sent to Claude", as from the Ask dialog, and a panel opened for
-  the request closes (one that was already open stays, with a plain composer). It has no close
-  button of its own: request mode lasts as long as the panel it opened, and once the panel
-  closes, sent or not, the Comments toggle opens a plain composer again.
-- **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
-  review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
-  draft. Focus starts in its description, where typing goes. It opens from the ⋯ item, or from an
-  `ask` message a renderer posts, which opens it about
-  a place: the frame's key and a page anchor (`{ kind: "page", key, text }`, a structural name such
-  as `block-3` or `block-3:image`, whose `text`, when there is one, is shown as text in the
-  "Pointing at “…”" chip; for an anchor without text, such as a doc's divider, the chip names the
-  kind of block the message gives in `what`, one of a fixed list, such as "Pointing at the list",
-  which is never posted); a renderer releases its own lease before it asks. A doc names blocks as
-  the published version the agent reads has them, matching the draft's blocks to it by their
-  Markdown: `block-3` is its third top-level block, `new-3` a block only in the draft after it
-  (`new-0` above the first; its text is the draft's first words, and the chip adds "(not
-  published yet)"), `:image` the image in that block and `:add-image` a new image below it, which
-  Insert below's Image asks for (the chip: "New image below “…”"). The doc renderer sends
-  `ask` with block anchors, the slides renderer with slide anchors (`slide-3:image-1`,
-  `slide-3:block-2`, `slide-3:notes`, with structural words such as "Slide 3, image 1"), and the
-  design system renderer with `token:<path>`, `group:<path>`, `component:<id>` and
-  `system:settings` (keys made from the published version only: a path too long for an anchor key
-  gives its index in the published version, `token:12`, and a token or group only the draft has is
-  just `token` or `group`, with no words), and with the block anchors of its formatted texts
-  behind the text's part (`guidelines:block-3`, named in the published version's text as a doc's
-  are); other types don't yet. While the app is in edit mode, an `ask`
-  without the frame's key is dropped like any other editing message; only outside edit mode does a
-  keyless `ask` open the comments panel in request mode. Either way it is a hint the app may
-  refuse, under the rules for a page's own compose ([comments from the
-  page](#comments-from-the-page-decided-2026-11-19)): it is accepted only while the tab is visible and no dialog is
-  open, and one that would open the closed panel or the Ask dialog at most once a second
-  (`PAGE_COMMENT_LIMITS.reopenMinIntervalMs`, shared with the page's compose and open). It has the composer's
-  "Pointing at “…”" chip when the renderer named a place (dropping it makes the request about the
-  whole page), the description, the agent choice as in the composer, and "Publish my changes
-  first"; the footer holds only Cancel and Send. "Publish my changes first" is off by default and
-  shown only when there are unpublished changes ("Otherwise the agent works from v5.", plus, in room mode while others edit,
-  "This also publishes the others' changes."). With it on, the request is posted after the strip's
-  Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
-  cannot be a version yet, a lost session) nothing is posted, the dialog says why in the strip's
-  words and offers "Post without publishing" or Cancel. That Publish is the strip's own, on the
-  same code path, telling its refusal to the dialog instead of as a toast: a lost session reads the
-  gate again and a conflict opens the review, as Publish does. Otherwise the request is posted against the
-  version being edited. After posting, a notification says "Request sent to Claude". At phone
-  width the dialog is a sheet flush with the bottom edge. The agent's
-  answer is a version like any other, handled by the draft's rules.
-- **The agent choice.** The gate's `ask` part (`ask: { targets }`), present for everyone who may
-  mention, lists the distinct client types of the owner's connections that can take mentions (not
-  revoked, not limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other`
-  order. Labels and ids never leave the owner. With one target there is no choice and the button
-  names it ("Send to Claude"). With more, the choice is labelled "Ask" (in the composer, on the
-  row with the point button and Send; in the Ask dialog, under the description): two agents are a
-  segmented control ("Ask Claude | Codex") whose chosen agent is marked as plainly in dark mode as
-  in light, three a select ("Claude", "Codex" and "The owner's other
-  agent"; the owner: "My other agent"). With no target Ask an agent is not
-  offered. A connection revoked between the gate and the post gives `no_agent`: the composer reads
-  the targets again and says "That agent was disconnected. Pick another, or post as a comment.";
-  with none left, its button posts a plain comment ("Post as a comment").
+  designs), `"live"` (docs, sheets, decks and design systems) or `"board"` (whiteboards). An
+  `"ask"` type, an HTML deck (which has no editor) and a live type whose editing on the page is off
+  here (`live_off`) have nothing for editing in the bar: History, Comments, Share and ⋯ (and Present
+  for a deck) are the whole bar, and owners ask in a comment. The dashboard card's menu offers
+  nothing either (its "Edit" still opens the source editor for owners and editors).
+- **Comment from the page.** A place people cannot change on the page itself (a doc block shown
+  read-only, an image, a slide's image or a block it cannot hold, a design system's token or group
+  name, a component, its fonts and settings, or the problems of a system the format refuses) has a
+  "Comment" control in the frame, described by what an agent would do there ("This part can't be
+  edited here. Mention @claude in a comment to change it." or "Mention @claude in a comment to add
+  or replace the image."); a design system's token and group rows name it "Comment to rename". It
+  posts `ask` with the frame's key and a page anchor (`{ kind: "page", key, text }`), and the app
+  opens the comments panel, as the Comments toggle opens it, with the composer pinned to that
+  place and the focus in it; the person writes the comment. The chip reads "Pinned to “…”" with
+  the anchor's `text`; for an anchor without text, such as a doc's divider, it names the kind of
+  block the message gives in `what`, one of a fixed list ("Pinned to the divider"), which is never
+  posted; "New image below “…”" for a doc's Insert below, Image (`…:add-image`); and "(not
+  published yet)" after a block only in the draft (`new-…`). Remove pin makes the comment about the
+  whole page. A renderer releases its own lease before it posts. The message carries no comment
+  text.
+- **Anchors.** A doc names blocks as the published version the agent reads has them, matching the
+  draft's blocks to it by their Markdown: `block-3` is its third top-level block, `new-3` a block
+  only in the draft after it (`new-0` above the first; its text is the draft's first words), `:image`
+  the image in that block and `:add-image` a new image below it. The slides renderer sends slide
+  anchors (`slide-3:image-1`, `slide-3:block-2`, `slide-3:notes`, with structural words such as
+  "Slide 3, image 1"), and the design system renderer `token:<path>`, `group:<path>`,
+  `component:<id>`, `system:settings` and `system:problems` (keys made from the published version
+  only: a path too long for an anchor key gives its index in the published version, `token:12`,
+  and a token or group only the draft has is just `token` or `group`, with no words), and the
+  block anchors of its formatted texts behind the text's part (`guidelines:block-3`, named in the
+  published version's text as a doc's are). Other types don't yet.
+- **A hint the app may refuse.** While the app is in edit mode, an `ask` without the frame's key is
+  dropped like any other editing message; outside edit mode a keyless one is taken. Either way it
+  follows the rules for a page's own compose ([comments from the
+  page](#comments-from-the-page-decided-2026-11-19)): it is accepted only while the tab is visible
+  and no dialog is open, at most one a second whatever is open
+  (`PAGE_COMMENT_LIMITS.composeMinIntervalMs`), and one that would open the closed panel at most
+  once a second (`PAGE_COMMENT_LIMITS.reopenMinIntervalMs`, shared with the page's compose and
+  open). In edit mode the panel opens as the Comments toggle opens it there.
+- **`request_to` stays.** `POST /api/v1/artifacts/:ref/comments` still takes `request_to` (see
+  [Comments and agent mentions](#comments-and-agent-mentions)) for agents and tabs opened before
+  this change; the app no longer sends it.
+- **The gate's `ask` part.** `ask: { targets }`, present for everyone who may mention, lists the
+  distinct client types of the owner's connections that can take mentions (not revoked, not
+  limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other` order. Labels
+  and ids never leave the owner. The app reads it only to suggest `@agent:other`.
 - **Editing off.** The gate's `live_off: { reason }` part (`disabled` or `isolation`) is present
   exactly where `live` would be (an owner or editor of a live type on the current version, signed
-  in or confirmed by code) when editing on the page is off, so a gate never has both.
+  in or confirmed by code) when editing on the page is off, so a gate never has both. Nothing in
+  the bar takes Edit's place.
 - **`?edit`.** Where this person cannot edit on the page, `?edit` is dropped from the address and
-  the page opens as usual, with no notice: the bar already offers Ask an agent, with the reason in
-  its description when editing is off. For an editor confirmed by code it focuses "Sign in to
+  the page opens as usual, with no notice. For an editor confirmed by code it focuses "Sign in to
   edit".
 - **Agents.** `list_mentions` and `claim_mention` are unchanged: they match the task's client type
-  against the connection's, so ChatGPT, Cursor and Gemini connections (`other`) receive these
-  requests too. The thread shows the task's state and links the version a done request made.
-- **Opaque isolation.** No editing message is exchanged with a frame whose origin is `"null"`: the
-  Edit slot shows Ask an agent for every live type, with the reason, and requests go through the
-  comments panel. Nothing changes on the content host or in the frames' sandbox.
-- **No setting.** Ask an agent adds no env var, table or route: it is a field on the comment route
-  and two gate parts.
+  against the connection's, so ChatGPT, Cursor and Gemini connections (`other`) receive
+  `@agent:other` requests.
+- **Opaque isolation.** No editing message is exchanged with a frame whose origin is `"null"`, so
+  there is no Comment from the page; people comment in the panel. Nothing changes on the content
+  host or in the frames' sandbox.
+- **No setting.** Asking an agent adds no env var, table or route: it is a mention name, a field on
+  the comment route and two gate parts.
 
 ### New and Import (decided 2026-11-19)
 
@@ -3501,7 +3488,8 @@ pages and designs come only from agents.
   selected, so the first keystroke replaces "Untitled document", and the sheet renderer focuses
   cell A2 (A1 when there are no rows). When someone else holds that block,
   or the person cannot write, it only takes the focus and nothing is asked of the room. Every
-  other case of `?edit` is described under [Ask an agent](#ask-an-agent-decided-2026-11-19).
+  other case of `?edit` is described under
+  [Asking an agent](#asking-an-agent-decided-2026-11-23).
 - **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on
   the current version. It is the one way in the app to bring a file into an existing sheet. It opens
   the file picker at once, takes the same files and limits as Import, and confirms the chosen file
@@ -3568,7 +3556,7 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   the doc's reference definitions) and reads back into the same model, and the block defines no
   references itself. A block that fails (a code block in a list item, a quote in a list item, a
   definition inside a quote) is shown read-only. Selected, it is drawn like an open block, with
-  "Ask an agent" (its description says the block can't be edited here) and the block menu at its
+  "Comment" (its description says the block can't be edited here) and the block menu at its
   corner, where an open block has its menu; the menu's Move and Delete move or remove its lines
   byte for byte.
 - **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
@@ -3579,8 +3567,8 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   cannot be written stays in the block as typed (the keystroke is not undone): the page says
   "This text can't be saved as typed. Change it to continue.", the block stays open (Esc, Tab, a
   click elsewhere and Done keep it), the frame reports unsent changes and `unsavable`, and every
-  way to publish (the strip, Cmd/Ctrl+S in the frame or the app, Done, Ask's "Publish my changes
-  first", autosave) waits until the text changes; the page asks before it is left, and in solo mode
+  way to publish (the strip, Cmd/Ctrl+S in the frame or the app, Done, autosave) waits until the
+  text changes; the page asks before it is left, and in solo mode
   the tab's kept copy has the text without its formatting. In a room the holder sends `keep` every
   20 s (`LIMITS.liveLeaseKeepS`) while connected, so the lease is not taken over as idle; a holder
   that sends neither edits nor `keep` for 60 s still can be. If edit mode ends anyway, the block is
@@ -3670,20 +3658,21 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   was.
 - **Images are agent-only.** An image block's menu has "Alt text" in place of "Turn into", which
   opens the alt text field at the block's corner (Enter or Esc closes it); the image itself, and
-  adding one, are left to agents through Ask an agent, whose page anchor names the place
+  adding one, are left to agents through "Comment", which opens the comments panel pinned to the
+  place ([Asking an agent](#asking-an-agent-decided-2026-11-23)). Its page anchor names the place
   (`block-3`, or `block-3:image`, never a block number the person would have to count) with the
-  block's first words, or an image's alt text, as its text, so the Ask dialog's "Pointing at" chip
-  reads as the block does, a list's items with " · " between them ("Pointing at “Maria: launch post
-  and pricing page · Ana…”"). The frame posts those
+  block's first words, or an image's alt text, as its text, so the composer's chip reads as the
+  block does, a list's items with " · " between them ("Pinned to “Maria: launch post and pricing
+  page · Ana…”"). The frame posts those
   words only when a block of the published version has the same words, so no draft text reaches
-  the app; otherwise, and for a block with no text, the chip names the kind of block ("Pointing at
-  the list", "Pointing at the image"). An open image block has its
-  own "Ask an agent" for its image at its corner, beside the menu, as a read-only block has, and
+  the app; otherwise, and for a block with no text, the chip names the kind of block ("Pinned to
+  the list", "Pinned to the image"). An open image block has its
+  own "Comment" for its image at its corner, beside the menu, as a read-only block has, and
   its "Insert below" has no "Image" (it would ask the same).
 - **An empty doc** shows "Write something", which starts a new paragraph.
 - **Opening a block moves nothing and hides next to nothing.** An open block keeps its place and
   the page's look: its tint and bronze edge are drawn outside the layout, and its corner (the menu,
-  and Ask an agent where it has one) is a small bar on the block's top right edge, over the gap
+  and Comment where it has one) is a small bar on the block's top right edge, over the gap
   between blocks, or on its bottom edge when the block opens too near the top of the frame. An
   image's alt text field hangs from the same edge over the image. The format bar and the link
   field show only for selected text; the link field opens under that text, inside the block's
@@ -3759,7 +3748,7 @@ deleting slides, and a slide's columns, stay with agents for now.
   ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)). Typing a slide block or
   the notes cannot write as typed stays as typed, the place stays open, the frame reports unsent
   changes and `unsavable`, and every way to publish (the strip, Cmd/Ctrl+S in the frame or the app,
-  Done, Ask's "Publish my changes first", autosave) waits until it changes; in solo mode the
+  Done, autosave) waits until it changes; in solo mode the
   rescue store has it without its formatting, and in a room the holder sends `keep` every 20 s
   while connected. Adding speaker notes and applying deck settings wait too (with the
   same words), since a structural change would take the place's lines from under it. If edit mode ends anyway, it is written without its formatting. Typing the room does
@@ -3787,8 +3776,8 @@ deleting slides, and a slide's columns, stay with agents for now.
   In solo mode the frame's text is the whole draft and no room makes space later, so typing the
   deck at its size limit cannot take counts as `unsavable` too: its block stays open as typed
   (Escape, focus leaving and a click elsewhere leave it open, and the frame says "The deck is at
-  its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S, Done
-  and Ask's "Publish my changes first" wait, the page asks before it is left, and the typing is in
+  its size limit, so this text isn't in it. Shorten it to continue."), Publish, Cmd/Ctrl+S and
+  Done wait, the page asks before it is left, and the typing is in
   the rescue store. The tab's kept copy stays the deck as written, which can still be published
   from "Unpublished changes from earlier in this tab" after a reload (the typing would put it past
   the size limit), and the rescue store writes the typing back once editing starts again; the
@@ -3876,11 +3865,12 @@ deleting slides, and a slide's columns, stay with agents for now.
   point at q when c ≤ q ≤ d; an insertion point p overlaps a line lease `[a, b)` when a < p < b
   and an insert point at exactly p. So a person can add notes to one slide while another types on
   another, and every lease elsewhere moves with the op's line map.
-- **Images are agent-only.** Selecting an image offers "Ask an agent" (described "An agent adds
-  or replaces the image."), its one action (no Delete: adding and deleting images stay with
-  agents); a block the formatted editor cannot show faithfully, and
-  notes that it cannot, offer "Ask an agent" (described "This part can't be edited here. An agent
-  can change it."), as a doc's blocks do. That bar sits next to the block at its right edge (an
+- **Images are agent-only.** Selecting an image offers "Comment" (described "Mention @claude in a
+  comment to add or replace the image."), its one action (no Delete: adding and deleting images
+  stay with agents); a block the formatted editor cannot show faithfully, and
+  notes that it cannot, offer "Comment" (described "This part can't be edited here. Mention
+  @claude in a comment to change it."), as a doc's blocks do. It opens the comments panel pinned
+  to the place. That bar sits next to the block at its right edge (an
   image's own edge): just above it, or just below when that covers less of the slide's other
   blocks; the deck's controls step aside while it shows. An image's tint, focus ring and selection
   are drawn on the image itself, not on the slide-wide paragraph around it. Their `ask` anchors are

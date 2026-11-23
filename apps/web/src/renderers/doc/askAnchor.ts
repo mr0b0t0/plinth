@@ -1,4 +1,4 @@
-// Where an Ask an agent request from a doc points (doc-blocks). The person asks about a block of the
+// Where a doc's "Comment" points (doc-blocks). The person asks about a block of the
 // draft they are editing, but the agent reads the published version, where blocks above may have
 // been added, moved or deleted since. So the key names the published block: the draft's blocks are
 // matched to the published ones by their Markdown (the longest common run, in order), and a draft

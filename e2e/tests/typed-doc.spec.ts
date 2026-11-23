@@ -576,7 +576,7 @@ test.describe("editing a doc on its page as formatted text", () => {
     return bar;
   }
 
-  test("no Markdown is shown: format, turn into, alt text, Ask an agent, publish and compare", async ({
+  test("no Markdown is shown: format, turn into, alt text, Comment, publish and compare", async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -625,17 +625,13 @@ test.describe("editing a doc on its page as formatted text", () => {
       await page.keyboard.press("Escape");
       await expect(frame.locator('img[alt="A small square"]')).toHaveCount(1);
 
-      // A block the editor cannot show faithfully is read-only, with Ask an agent.
+      // A block the editor cannot show faithfully is read-only, with Comment (tried below, once
+      // the edits are published).
       await frame.locator("ul", { hasText: "An item" }).click();
       const blockbar = frame.locator(".plinth-doc__blockbar");
-      const askAgent = blockbar.getByRole("button", { name: "Ask an agent", exact: true });
-      await expect(askAgent).toHaveAttribute("title", /can't be edited here/);
-      await askAgent.click();
-      const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-      // It says which block it is about by the block's first words (quoted), never its number.
-      await expect(dialog.locator(".cm-anchor-chip q")).toHaveText("An item fenced in a list");
-      await dialog.getByRole("button", { name: "Cancel" }).click();
-      await expect(dialog).toHaveCount(0);
+      const comment = blockbar.getByRole("button", { name: "Comment", exact: true });
+      await expect(comment).toHaveAttribute("title", /can't be edited here/);
+      await page.keyboard.press("Escape");
 
       // Nowhere is there Markdown or a source field.
       await expect(frame.locator("textarea")).toHaveCount(0);
@@ -652,6 +648,20 @@ test.describe("editing a doc on its page as formatted text", () => {
       expect(v2).toContain("![A small square](pixel.png)");
       // The block nobody edited keeps its bytes.
       expect(v2).toContain(FENCED);
+
+      // Comment on the read-only block opens the comments panel pinned to it, by the block's first
+      // words (quoted), never its number; the person mentions an agent there.
+      await frame.locator("ul", { hasText: "An item" }).click();
+      await frame
+        .locator(".plinth-doc__blockbar")
+        .getByRole("button", { name: "Comment", exact: true })
+        .click();
+      const panel = page.getByRole("region", { name: "Comments" });
+      await expect(panel.locator(".cm-anchor-chip q")).toHaveText("An item fenced in a list", {
+        timeout: 10_000,
+      });
+      await expect(panel.getByRole("textbox", { name: "New comment" })).toBeFocused();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
 
       // Compare lists the changes in words, with no Markdown on the page.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);

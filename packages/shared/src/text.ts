@@ -5,7 +5,7 @@
  * Characters a short label never shows: control (Cc) and format (Cf: bidi overrides and isolates,
  * zero-width spaces and joiners, the BOM) characters, and the line and paragraph separators
  * (U+2028, U+2029). They can reorder or hide what a label says. One set for every label that comes
- * from someone else's text: Ask an agent's block words, page anchors, picked file names, titles
+ * from someone else's text: a renderer's block words, page anchors, picked file names, titles
  * made from them and sheet names read from a file. A joiner inside an emoji sequence is Cf too and
  * goes like any other ("👨‍👩‍👧" reads as three people): one rule, with no exceptions to get wrong.
  * Global, for `replace` (stripUnsafeText); test with REFUSED_CHARS.

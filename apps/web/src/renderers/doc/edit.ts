@@ -10,12 +10,12 @@
 //
 // Only blocks the model can show faithfully are edited this way: the fidelity check
 // (editableBlock) runs before a lease, and a block that fails it (a construct the model lacks, say
-// a list item holding a code fence) is shown read-only, with "Ask an agent" and the block menu
+// a list item holding a code fence) is shown read-only, with "Comment" and the block menu
 // (its Move and Delete move or remove its lines byte for byte). Untouched blocks keep their bytes:
 // only the leased block's lines are ever replaced, and the reference definitions that follow a
 // block stay as they are. Images are agent-only: an image block's menu has "Alt text", which opens
-// a field at its corner, and its "Ask an agent" asks the app to open its Ask dialog about the
-// image; "Insert below", "Image" asks for a new one.
+// a field at its corner, and its "Comment" asks the app to open the comments panel pinned to the
+// image, where the person asks an agent; "Insert below", "Image" does the same for a new one.
 //
 // Two backends: the room's doc socket (../common/live.ts, "room" mode), or a local copy of the
 // text that only this frame edits ("solo" mode, where the app saves it through its own session).
@@ -94,12 +94,16 @@ const TOOLS = docMarkdownTools();
 /** Why a block was not kept, in the doc's words. */
 export const REFUSED_EDIT =
   "That change would make the doc start like a web page, which a doc can't publish, so it wasn't kept.";
-/** Why a block opens read-only: the description of its "Ask an agent". */
-export const READ_ONLY_NOTE = "This part can't be edited here. An agent can change it.";
-/** The label of the button that asks an agent about a block (an image block: its image). */
-export const ASK_AGENT = "Ask an agent";
-/** The description of an image block's "Ask an agent". */
-export const IMAGE_NOTE = "An agent adds or replaces the image.";
+/** Why a block opens read-only: the description of its "Comment". */
+export const READ_ONLY_NOTE =
+  "This part can't be edited here. Mention @claude in a comment to change it.";
+/**
+ * The label of the button that opens a comment about a block (an image block: its image), where
+ * the person asks an agent for the change.
+ */
+export const ASK_AGENT = "Comment";
+/** The description of an image block's "Comment". */
+export const IMAGE_NOTE = "Mention @claude in a comment to add or replace the image.";
 export const EMPTY_DOC = "Write something";
 /**
  * Why a Move, Delete, Turn into or Insert below was not made: the blocks around it would have
@@ -247,7 +251,7 @@ export class LocalDoc implements DocBackend {
 
 /**
  * A place on the page an agent is asked about (`ask`): a structural key, and the first words of
- * the block for the dialog's "Pointing at" chip (empty for a block with no text).
+ * the block for the comment composer's chip (empty for a block with no text).
  */
 export interface AskAnchor {
   key: string;
@@ -263,8 +267,8 @@ export interface EditorHooks {
   /** The version whose files the draft is drawn with (its base), or null for the page's own. */
   fileVersion?(): number | null;
   /**
-   * Ask an agent about a place in the doc (the app's Ask dialog), with what kind of block it is
-   * for the dialog's "Pointing at" chip.
+   * Comment on a place in the doc (the app's comments panel, pinned there), with what kind of
+   * block it is for the composer's chip.
    */
   ask?(anchor: AskAnchor, what: AskWhat): void;
   /** The published version's text the frame was served, which Ask anchors are named in. */
@@ -294,7 +298,7 @@ const WORD_BREAKS = new Set([
 ]);
 
 /**
- * The first words of a block as the person sees them, for the Ask dialog's "Pointing at" chip: spaces
+ * The first words of a block as the person sees them, for the comment composer's chip: spaces
  * between cells and lines, " · " between a list's items, every run of white space one space,
  * without the characters no label may hold (UNSAFE_TEXT_RE: control and format characters, emoji
  * joiners among them, which the server would refuse), at most the page anchor's length in UTF-16
@@ -337,7 +341,7 @@ export function blockWords(nodes: Node[]): string {
   return out.trimEnd();
 }
 
-/** What a drawn block is, in the Ask dialog's words ("Pointing at the list"), for one with no text. */
+/** What a drawn block is, in the composer chip's words ("Pinned to the list"), for one without text. */
 function whatOf(nodes: Node[]): AskWhat {
   const el = nodes.find((n): n is Element => n.nodeType === 1);
   if (!el) return "block";
@@ -1031,7 +1035,7 @@ export class DocEditor {
   }
 
   /**
-   * The open or selected block's corner (its menu, and Ask an agent where it has one) floats on
+   * The open or selected block's corner (its menu, and Comment where it has one) floats on
    * the block's top edge, so opening it moves nothing and covers next to nothing. When the block
    * opens too near the top of the frame for the corner to be seen there, it sits on the bottom
    * edge instead. Once the caret is placed, the block and its corner are scrolled into view.
@@ -1470,7 +1474,7 @@ export class DocEditor {
       { label: "Divider", run: () => this.insertDivider(start) },
       { label: "Table", table },
     ];
-    // An image block's own "Ask an agent" already asks about an image there.
+    // An image block's own "Comment" already asks about an image there.
     if (model?.t !== "image") {
       insert.push({
         label: "Image",
@@ -1522,9 +1526,9 @@ export class DocEditor {
   }
 
   /**
-   * Ask an agent about block `start` (its image, or a new image below it, with `image`): the app
-   * opens its Ask dialog. The key names the block as the published version has it (askKey), so the
-   * agent finds it in the version it reads; a block only in the draft is named after the published
+   * Comment on block `start` (its image, or a new image below it, with `image`): the app opens the
+   * comments panel pinned there. The key names the block as the published version has it
+   * (askKey), so the agent finds it in the version it reads; a block only in the draft is named after the published
    * block above it, with its draft words.
    */
   private ask(start: number, image: AskImage): void {

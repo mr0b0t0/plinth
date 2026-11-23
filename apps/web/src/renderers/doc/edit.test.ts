@@ -2,7 +2,7 @@
 // with createElement after the page was sanitized; typing is sent at most every 250 ms, written
 // back as Markdown by the serializer; Esc gives the block back; Cmd/Ctrl+S goes to the app; blocks
 // other people hold show who holds them; the block menu turns, inserts, moves and deletes blocks;
-// blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
+// blocks the model cannot show are read-only with Comment; images keep their bytes.
 import { LIMITS, PAGE_ANCHOR_UNSAFE_RE, PAGE_COMMENT_LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRescue, mergeRescue } from "../../components/editor/draft.ts";
@@ -1226,22 +1226,22 @@ describe("DocEditor: the block menu", () => {
 });
 
 describe("DocEditor: read-only blocks and images", () => {
-  it("shows a block the model cannot hold read-only, with Ask an agent, Move and Delete", () => {
+  it("shows a block the model cannot hold read-only, with Comment, Move and Delete", () => {
     const md = "Intro\n\n- item\n\n  ```\n  code\n  ```\n\nEnd";
     const { local, editor } = setup(md);
     click(root.querySelector("ul") as Element);
     // Not opened for editing: it is drawn in a panel like an open block's, with a bar on top of
-    // what can be done, and its Ask an agent says why.
+    // what can be done, and its Comment says why.
     expect(editor.openEditor).toBeNull();
     const panel = root.querySelector(":scope > .plinth-doc__selected") as HTMLElement;
     const bar = panel.firstElementChild as HTMLElement;
     expect(bar.classList.contains("plinth-doc__blockbar")).toBe(true);
     expect(panel.querySelector(":scope > ul")).not.toBeNull();
     const askButton = [...bar.querySelectorAll("button")].find(
-      (b) => b.textContent === "Ask an agent",
+      (b) => b.textContent === "Comment",
     ) as HTMLElement;
     expect(askButton.getAttribute("aria-description")).toBe(READ_ONLY_NOTE);
-    // Two controls only: Ask an agent and the block menu, with no paragraph of text.
+    // Two controls only: Comment and the block menu, with no paragraph of text.
     expect(bar.children).toHaveLength(2);
     click(askButton);
     // A structural key and the block's first words (never its number).
@@ -1276,13 +1276,13 @@ describe("DocEditor: read-only blocks and images", () => {
     click(root.querySelector("p") as Element);
     const r = rich(editor);
     expect(r.kind).toBe("image");
-    // Its corner has what an image's bar has: Ask an agent and the block menu. Focus is on Ask.
+    // Its corner has what an image's bar has: Comment and the block menu. Focus is on Comment.
     const corner = r.el.querySelector(":scope > .plinth-rich__corner") as HTMLElement;
     expect([...corner.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
-      "Ask an agent",
+      "Comment",
       "⋯",
     ]);
-    expect(document.activeElement?.textContent).toBe("Ask an agent");
+    expect(document.activeElement?.textContent).toBe("Comment");
     // The alt text is a field the menu's "Alt text" opens in the corner's place, floating over
     // the page like the corner, so the image keeps the place it had unopened.
     const alt = r.el.querySelector<HTMLInputElement>(".plinth-rich__alt input") as HTMLInputElement;
@@ -1302,15 +1302,13 @@ describe("DocEditor: read-only blocks and images", () => {
     expect((alt.parentElement as HTMLElement).hidden).toBe(true);
     expect(corner.hidden).toBe(false);
     expect(editor.openEditor).toBe(r);
-    // An image block's Insert below has no Image of its own: its Ask an agent is the way in.
+    // An image block's Insert below has no Image of its own: its Comment is the way in.
     const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
     click(button as Element);
     click(menuItem("Insert below"));
     expect(() => menuItem("Image", "Insert below")).toThrow();
     click(button as Element);
-    click(
-      [...r.el.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
-    );
+    click([...r.el.querySelectorAll("button")].find((b) => b.textContent === "Comment") as Element);
     expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "Sales [chart]" }, "image");
     expect(editor.openEditor).toBeNull();
   });
@@ -2201,9 +2199,7 @@ describe("Ask anchors", () => {
     const { editor } = setup(`new above\n\n${published}`, { published: () => published });
     click(root.querySelector("ul") as Element);
     const bar = root.querySelector(".plinth-doc__blockbar") as HTMLElement;
-    click(
-      [...bar.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
-    );
+    click([...bar.querySelectorAll("button")].find((b) => b.textContent === "Comment") as Element);
     expect(ask).toHaveBeenLastCalledWith({ key: "block-2", text: "item code" }, "list");
     // A block only in the draft: its draft words, named after the published block above it.
     click(root.querySelector("p") as Element);

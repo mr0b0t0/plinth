@@ -858,7 +858,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         return client && client.baseVersion > 0 ? client.baseVersion : null;
       },
       // A place the person wants an agent to change (an image, a block shown read-only): the app
-      // opens its Ask dialog. The anchor is a structural key and structural words, never content.
+      // opens the comments panel pinned there. The anchor is a structural key and structural words,
+      // never content.
       ask: (anchor: { key: string; text: string }, what: AskWhat) =>
         post({ type: "ask", anchor, what }),
       redraw,

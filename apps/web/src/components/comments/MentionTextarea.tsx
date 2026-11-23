@@ -1,6 +1,8 @@
-// A Markdown text area with @ suggestions (keyboard navigable) and Ctrl/Cmd+Enter to send.
+// A Markdown text area with @ suggestions (keyboard navigable) and Ctrl/Cmd+Enter to send. Picking
+// an agent here is how people ask one for a change (docs/spec.md "Asking an agent").
 // The suggestion list follows the ARIA listbox pattern with aria-activedescendant on the textbox.
 import { RobotIcon } from "@phosphor-icons/react";
+import { type ClientType, OTHER_AGENT_MENTION } from "@plinth/shared";
 import {
   type KeyboardEvent,
   type RefObject,
@@ -28,7 +30,14 @@ export interface MentionTextareaProps {
   disabled?: boolean;
   textareaRef?: RefObject<HTMLTextAreaElement | null>;
   maxLength?: number;
+  /** The owner's agents a mention can reach (the gate's `ask.targets`), for the suggestions. */
+  agents?: readonly ClientType[];
 }
+
+/** The words beside a suggestion no name explains. */
+const OPTION_HINT: Record<string, string> = {
+  [OTHER_AGENT_MENTION]: "ChatGPT, Cursor, Gemini…",
+};
 
 export function MentionTextarea({
   label,
@@ -43,13 +52,14 @@ export function MentionTextarea({
   disabled,
   textareaRef,
   maxLength,
+  agents,
 }: MentionTextareaProps) {
   const listId = useId();
   const ownRef = useRef<HTMLTextAreaElement | null>(null);
   const ref = textareaRef ?? ownRef;
   const [query, setQuery] = useState<{ start: number; query: string } | null>(null);
   const [active, setActive] = useState(0);
-  const options = query ? mentionOptions(query.query) : [];
+  const options = query ? mentionOptions(query.query, agents) : [];
   const open = options.length > 0;
   const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
 
@@ -164,6 +174,9 @@ export function MentionTextarea({
                 >
                   <RobotIcon size={ICON_SIZE.sm} aria-hidden="true" />
                   <span>@{name}</span>
+                  {OPTION_HINT[name] && (
+                    <span className="cm-mention__hint">{OPTION_HINT[name]}</span>
+                  )}
                 </div>
               ))}
             </div>

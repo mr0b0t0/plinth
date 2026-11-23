@@ -153,7 +153,7 @@ describe("Consent", () => {
     const name = screen.getByLabelText("Name this connection");
     const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
     expect(hint).toBe(
-      "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli.",
+      "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli or @agent:other.",
     );
     // One mention sentence on the form: the Client field adds none, and picking Claude folds
     // @claude into the name's hint.
