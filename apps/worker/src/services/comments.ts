@@ -12,7 +12,7 @@ import {
   type ClientType,
   type CommentInfo,
   type CommentStatus,
-  MENTION_AGENT_NAMES,
+  mentionAgentType,
   mentionHandle,
   pageDisplayName,
   parseMentions,
@@ -374,7 +374,7 @@ async function mentionTasksFor(
     createdAt: comment.createdAt,
   };
   const tasks: MentionTaskRow[] = [];
-  const labelNames = names.filter((n) => !MENTION_AGENT_NAMES[n]);
+  const labelNames = names.filter((n) => !mentionAgentType(n));
   const owned = labelNames.length
     ? (
         await ctx.db
@@ -401,7 +401,7 @@ async function mentionTasksFor(
     : [];
   const seenConnections = new Set<string>();
   for (const name of names) {
-    const clientType = MENTION_AGENT_NAMES[name];
+    const clientType = mentionAgentType(name);
     if (clientType) {
       tasks.push({
         ...base,

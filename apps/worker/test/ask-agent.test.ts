@@ -124,6 +124,14 @@ describe("@agent:other in a comment", () => {
     );
     expect((await tasksOf(c.id)).map((t) => t.targetLabel)).toEqual(["@agent:other"]);
   });
+
+  it("never reads an inherited property as an agent name (@constructor, @toString)", async () => {
+    const { id, session } = await ownerWith();
+    const res = await postComment(session.headers, id, { body: "@constructor and @toString" });
+    expect(res.status).toBe(201);
+    const c = await json(res);
+    expect(await tasksOf(c.id)).toEqual([]);
+  });
 });
 
 describe("request_to on a new comment", () => {
