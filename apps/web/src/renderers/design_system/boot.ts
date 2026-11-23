@@ -306,9 +306,9 @@ function live(
       if (local) return soloBase;
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
-    // A place the person wants an agent to change: the app opens its Ask dialog. The anchor is a
-    // structural key made from the published version only (publishedAnchorKey), with words only
-    // the published version has.
+    // A place the person wants an agent to change: the app opens the comments panel pinned there.
+    // The anchor is a structural key made from the published version only (publishedAnchorKey),
+    // with words only the published version has.
     ask: (anchor: DsAskAnchor) => {
       words ??= publishedWords(win.document, published);
       names ??= publishedNames(published);
@@ -365,7 +365,7 @@ function live(
     if (unavailable) {
       editor?.setEditing(false);
       editor?.say(
-        "This design system is too large to edit on the page. Ask an agent to change it.",
+        "This design system is too large to edit on the page. Mention @claude in a comment to change it.",
       );
     }
     return unavailable;

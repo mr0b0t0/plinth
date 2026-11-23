@@ -66,6 +66,11 @@ describe("mentions", () => {
     expect(mentionOptions("cod")).toEqual(["codex"]);
     expect(mentionOptions("claude")).toEqual([]);
     expect(mentionOptions("x")).toEqual([]);
+    // @agent:other only when the owner has an agent that is not Claude or Codex.
+    expect(mentionOptions("", ["claude"])).toEqual(["claude", "codex"]);
+    expect(mentionOptions("", ["claude", "other"])).toEqual(["claude", "codex", "agent:other"]);
+    expect(mentionOptions("ag", ["other"])).toEqual(["agent:other"]);
+    expect(applyMention("@ag", 3, 0, "agent:other").text).toBe("@agent:other ");
   });
 
   it("replaces the partial token and places the caret after it", () => {

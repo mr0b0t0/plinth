@@ -6,6 +6,8 @@
 // "> " quotes, @mention highlight, and links ([text](url) and bare URLs) to http:, https: and
 // mailto: only. Everything else stays escaped text.
 
+import { mentionName } from "./mentions.ts";
+
 const ESCAPES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -34,7 +36,7 @@ const BARE_URL_RE = /\bhttps?:\/\/(?:[^\s&\0]|&amp;)+/gi;
 const LINK_RE = /\[([^\]\n]+)\]\(([^\s()]+)\)/g;
 
 /** Same token rule as parseMentions in mentions.ts. "&#39;" ends in ";", so @ after it matches. */
-const MENTION_RE = /(^|[^A-Za-z0-9_.@-])@([A-Za-z0-9][A-Za-z0-9_.-]{0,79})/g;
+const MENTION_RE = /(^|[^A-Za-z0-9_.@-])@([A-Za-z0-9][A-Za-z0-9_.-]{0,79})(:other\b)?/gi;
 
 const MAX_QUOTE_DEPTH = 8;
 
@@ -137,10 +139,11 @@ function renderInline(text: string): string {
     return `${park(`<a href="${url}" ${LINK_ATTRS}>${url}</a>`)}${tail}`;
   });
 
-  s = s.replace(MENTION_RE, (_, pre: string, name: string) => {
-    const handle = name.replace(/\.+$/, "");
-    const dots = name.slice(handle.length);
-    return `${pre}${park(`<span class="mention">@${handle}</span>`)}${dots}`;
+  s = s.replace(MENTION_RE, (_, pre: string, name: string, other: string | undefined) => {
+    const token = name + (other ?? "");
+    const { length } = mentionName(name, other);
+    const shown = token.slice(0, length);
+    return `${pre}${park(`<span class="mention">@${shown}</span>`)}${token.slice(length)}`;
   });
 
   s = emphasis(s);

@@ -13,9 +13,9 @@
 // draft is reviewed whole in the frame (common/review.ts) when the app sends `review`. Every
 // editing message to the app carries the frame key the app put in the address
 // (common/frameKey.ts), which is taken out of it before anything renders. Blocks are edited as
-// formatted text (edit.ts); "Ask an agent" on a block posts `ask` with a structural anchor
+// formatted text (edit.ts); "Comment" on a block posts `ask` with a structural anchor
 // ("block-3", "block-3:image", "new-2:add-image": askAnchor.ts) with the block's first words, and
-// the kind of block ("list"), and the app opens its Ask dialog.
+// the kind of block ("list"), and the app opens the comments panel pinned there.
 //
 // Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
 // { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
@@ -220,10 +220,10 @@ function live(
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
     // A place the person wants an agent to change (an image, a block shown read-only): the app
-    // opens its Ask dialog. The anchor is a structural key naming the block as the published
-    // version has it ("new-…" for one only in the draft, askAnchor.ts) and the block's first words,
-    // which the person sees in the dialog before posting; `what` is the kind of block, for the
-    // dialog's "Pointing at" chip when it has none.
+    // opens the comments panel pinned there. The anchor is a structural key naming the block as
+    // the published version has it ("new-…" for one only in the draft, askAnchor.ts) and the
+    // block's first words, which the person sees in the composer before posting; `what` is the
+    // kind of block, for the composer's chip when it has none.
     ask: (anchor: { key: string; text: string }, what: AskWhat) =>
       post({ type: "ask", anchor: { key: anchor.key, text: anchor.text }, what }),
     published: () => payload.text,

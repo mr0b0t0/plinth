@@ -520,8 +520,9 @@ export const MAX_PROBLEMS_SHOWN = 10;
 /**
  * The error state. Without the JSON's problems (no payload, no JSON object), one short line. With
  * them (a system the format refuses), what an agent needs to fix: each problem's path and words as
- * text, and, for the owner and editors (`ask`), "Ask an agent", which asks the app to open its
- * request about the page. The Worker returns the same problems to the agent that tried to publish.
+ * text, and, for the owner and editors (`ask`), "Comment", which asks the app to open the
+ * comments panel about the page, where they mention an agent. The Worker returns the same problems
+ * to the agent that tried to publish.
  */
 export function renderProblems(
   doc: Document,
@@ -551,7 +552,7 @@ export function renderProblems(
   }
   box.append(list);
   if (ask) {
-    const b = el(doc, "button", { type: "button", class: "ds-button" }, "Ask an agent");
+    const b = el(doc, "button", { type: "button", class: "ds-button" }, "Comment");
     b.addEventListener("click", ask);
     box.append(b);
   }

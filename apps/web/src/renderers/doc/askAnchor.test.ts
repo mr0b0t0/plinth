@@ -1,4 +1,4 @@
-// Where an Ask an agent request from a doc points: the block as the published version (the one the
+// Where a doc's "Comment" points: the block as the published version (the one the
 // agent reads) names it, whatever was added, moved or deleted above it in the draft.
 import { describe, expect, it } from "vitest";
 import { askKey, matchBlocks } from "./askAnchor.ts";

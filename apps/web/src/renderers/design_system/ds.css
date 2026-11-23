@@ -712,7 +712,7 @@
   flex: none;
 }
 
-/* A component's ⋯ (status, Ask an agent) at the end of its heading's line; the status stays the
+/* A component's ⋯ (status, Comment) at the end of its heading's line; the status stays the
    pill beside the name. */
 .ds-component--editing {
   position: relative;

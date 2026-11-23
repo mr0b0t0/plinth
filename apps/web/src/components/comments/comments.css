@@ -448,6 +448,11 @@
   background: var(--color-selected);
   color: var(--color-ink);
 }
+.cm-mention__hint {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
 
 /* Narrow screens: while picking, the panel becomes a bottom bar so the artifact can be tapped. */
 @media (max-width: 47.99rem) {
@@ -529,74 +534,4 @@
   min-height: calc(var(--line-ui) * 2 + var(--space-3));
   border-radius: var(--radius-lg);
   background: var(--color-wall);
-}
-
-/* Ask an agent: the composer in request mode (Composer.tsx). One row under the description: the
-   agent choice on the left, the point button and Send on the right. */
-.cm-composer--ask .cm-actions {
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-.cm-actions__send {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  margin-left: auto;
-}
-
-/* The agent choice ("Ask: Claude | Codex"), in the request composer and the Ask dialog alike: its
-   label beside it, and a track whose chosen option is raised, so it reads as a choice and not as
-   more buttons. The floated legend joins the row instead of sitting on the fieldset's border. */
-.cm-ask-to {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.cm-ask-to > .pl-segmented__legend,
-.cm-ask-to > .pl-field__label {
-  float: left;
-  margin: 0;
-  color: var(--color-ink-muted);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-.cm-ask-to .pl-segmented__track {
-  flex-wrap: nowrap;
-  gap: 2px;
-  padding: 2px;
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-sunk);
-}
-.cm-ask-to .pl-segmented__input:checked + .pl-segmented__face {
-  background: var(--color-surface-raised);
-  color: var(--color-ink);
-  box-shadow: 0 0 0 var(--border-width) var(--color-border-strong);
-}
-/* Dark: the raised surface is barely lighter than the track, so the chosen option takes a lifted
-   fill of its own, as plainly marked as in light. */
-[data-theme="dark"] .cm-ask-to .pl-segmented__input:checked + .pl-segmented__face {
-  background: color-mix(in srgb, var(--color-ink) 16%, var(--color-surface-raised));
-  box-shadow: 0 0 0 var(--border-width) var(--color-border-control);
-}
-.cm-ask-to--select {
-  flex-direction: row;
-}
-.cm-ask-to--select .pl-select {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-/* Ask an agent with nothing to show above it (no threads yet): the panel is the request form under
-   its title. No filter, count, refresh or empty state; on a phone the sheet fits the form. */
-.cm-panel[data-request-only] .cm-head {
-  border-bottom: 0;
-}
-.cm-list[hidden] {
-  display: none;
-}
-.cm-panel[data-request-only] .cm-foot {
-  border-top: 0;
 }

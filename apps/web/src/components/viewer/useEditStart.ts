@@ -2,7 +2,7 @@
 // `edit` from the address and starts editing, and the frame, once loaded, puts the focus on its
 // first block or cell (`edit { on: true, focus: "first" }`). New and Import open a new artifact
 // this way. Every other case of `?edit` (editing off here, a commenter, an editor who must sign in
-// first, a viewer) is askAgent.tsx's, which reads the same parameter.
+// first, a viewer) is editArrival.ts's, which reads the same parameter.
 import { useEffect, useRef } from "react";
 import type { LiveEdit } from "./useLiveEdit.ts";
 

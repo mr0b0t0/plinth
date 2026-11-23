@@ -201,7 +201,7 @@ describe("with the room", () => {
     expect(applied.map[end + 1]).toBe(applied.lines.indexOf("}") + 1);
   });
 
-  it("names a guidelines block for Ask an agent as the published version has it", async () => {
+  it("names a guidelines block for Comment as the published version has it", async () => {
     const ws = opened();
     // The room's draft has a paragraph above the published ones.
     const draft = { ...FIXTURE, guidelines: `Draft words first.\n\n${FIXTURE.guidelines}` };

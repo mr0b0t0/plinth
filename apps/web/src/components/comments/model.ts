@@ -1,5 +1,12 @@
 // Pure helpers for the comments panel: threads, filters, pin numbers, dates, @ suggestions.
-import { type Anchor, type CommentInfo, isPageAnchor, PAGE_COMMENT_LIMITS } from "@plinth/shared";
+import {
+  type Anchor,
+  type ClientType,
+  type CommentInfo,
+  isPageAnchor,
+  OTHER_AGENT_MENTION,
+  PAGE_COMMENT_LIMITS,
+} from "@plinth/shared";
 import type { PageThreadItem } from "./pageChannel.ts";
 
 export type CommentFilter = "open" | "resolved" | "all";
@@ -133,6 +140,17 @@ export function fullTime(iso: string): string {
 export const MENTION_SUGGESTIONS = ["claude", "codex"] as const;
 
 /**
+ * The names the text area suggests: @claude and @codex always (a task waits until such an agent
+ * is connected), and @agent:other when the owner has an agent that is neither (the gate's
+ * `ask.targets` lists `other`), since nothing else would tell people that name.
+ */
+export function mentionSuggestions(agents?: readonly ClientType[]): string[] {
+  return agents?.includes("other")
+    ? [...MENTION_SUGGESTIONS, OTHER_AGENT_MENTION]
+    : [...MENTION_SUGGESTIONS];
+}
+
+/**
  * The @-token being typed just before the caret, if any: same token rule as parseMentions.
  * Returns where the "@" is and the partial name after it.
  */
@@ -144,9 +162,9 @@ export function mentionQuery(text: string, caret: number): { start: number; quer
   return { start: caret - query.length - 1, query };
 }
 
-export function mentionOptions(query: string): string[] {
+export function mentionOptions(query: string, agents?: readonly ClientType[]): string[] {
   const q = query.toLowerCase();
-  return MENTION_SUGGESTIONS.filter((n) => n.startsWith(q) && n !== q);
+  return mentionSuggestions(agents).filter((n) => n.startsWith(q) && n !== q);
 }
 
 /** Replace the @-token at `start` (up to the caret) with "@name ". */

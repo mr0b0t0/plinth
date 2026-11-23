@@ -11,8 +11,8 @@ import { FileIcon } from "@phosphor-icons/react";
 import {
   API,
   APP_ROUTES,
-  type ClientType,
   type CommentInfo,
+  type PageAnchor,
   route,
   type ViewGate,
   viewFrameName,
@@ -30,7 +30,8 @@ import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
-import { type AskAnchor, pageAnchorOf, useAskAgent } from "./askAgent.tsx";
+import { useEditArrival } from "./editArrival.ts";
+import { type CommentPin, pageAnchorOf, useFrameComment } from "./frameComment.ts";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { type AskWhat, newFrameKey, withFrameKey } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
@@ -190,8 +191,10 @@ export function ViewerStage({
   // and the app accepts its editing messages only with that key.
   // One key per frame load: a new enter_url is a new load, a refreshed gate for the same frame is
   // not.
-  // Ask an agent from the frame (an in-frame `ask`): answered once the hook below exists.
-  const askFromFrame = useRef<(anchor: AskAnchor | null, what?: AskWhat) => void>(() => undefined);
+  // "Comment" from the frame (an in-frame `ask`): answered once the hook below exists.
+  const commentFromFrame = useRef<(anchor: PageAnchor | null, what?: AskWhat) => void>(
+    () => undefined,
+  );
   const editable = gate.live !== undefined;
   const frameKey = useMemo(
     () => (editable && gate.enter_url ? newFrameKey() : null),
@@ -207,7 +210,7 @@ export function ViewerStage({
     frameKey,
     onReload: onReload ?? (() => undefined),
     onLeave: () => barRef.current?.focus(),
-    onAsk: (anchor, what) => askFromFrame.current(pageAnchorOf(anchor), what),
+    onAsk: (anchor, what) => commentFromFrame.current(pageAnchorOf(anchor), what),
     // Unknown while the session loads: the rescue store waits for it.
     // Unknown (undefined) while the session loads or could not be read; null: no one signed in.
     userId: sessionLoading || (sessionFailed && !me) ? undefined : (me?.id ?? null),
@@ -288,52 +291,38 @@ export function ViewerStage({
     requestAnimationFrame(() => toggleRef.current?.focus());
   };
   // Opening comments while editing finishes editing first; when that save failed (solo edits
-  // exist only in the frame, which review mode would reload), the panel stays closed.
-  const toggleComments = async () => {
-    if (editing && !(await live.done())) return;
+  // exist only in the frame, which review mode would reload), the panel stays closed. True when
+  // the panel opened.
+  const toggleComments = async (): Promise<boolean> => {
+    if (editing && !(await live.done())) return false;
     onToggleComments();
+    return true;
   };
 
   const editRef = useRef<HTMLButtonElement>(null);
   const headerRef = useRef<HTMLElement>(null);
-  // Ask an agent, not editing: the comments panel in request mode, opened if it was closed (one
-  // reload into review mode, which the pick needs). `n` changes for every request. A request
-  // lasts as long as the panel it opened: once the panel closes, Comments opens a plain composer.
-  // A panel opened for the request (`opened`) closes again once it is sent.
-  const [request, setRequest] = useState<{
-    n: number;
-    anchor: AskAnchor | null;
-    opened: boolean;
-  } | null>(null);
-  const requestCount = useRef(0);
+  // `?edit` where this person cannot start editing here.
+  useEditArrival(gate, () =>
+    headerRef.current?.querySelector<HTMLElement>('a[aria-label="Sign in to edit"]')?.focus(),
+  );
+  // "Comment" from the frame: the comments panel, opened as the Comments toggle opens it, with the
+  // composer pinned to the place the renderer named. Forgotten once the panel closes.
+  const [pin, setPin] = useState<CommentPin | null>(null);
+  const pinCount = useRef(0);
   useEffect(() => {
-    if (!commentsOpen) setRequest(null);
+    if (!commentsOpen) setPin(null);
   }, [commentsOpen]);
-  const ask = useAskAgent({
-    gate,
-    editing,
+  commentFromFrame.current = useFrameComment({
     blocked: shareOpen || dialog !== null,
     panelOpen: commentsOpen,
-    openDialog: setDialog,
-    openRequest: (anchor) => {
-      requestCount.current += 1;
-      const n = requestCount.current;
-      setRequest((prev) => ({ n, anchor, opened: !commentsOpen || prev?.opened === true }));
-      if (!commentsOpen) onToggleComments();
+    open: (anchor, what) => {
+      void (async () => {
+        if (!commentsOpen && !(await toggleComments())) return;
+        pinCount.current += 1;
+        setPin({ n: pinCount.current, anchor, what });
+      })();
     },
-    focusSignIn: () =>
-      headerRef.current?.querySelector<HTMLElement>('a[aria-label="Sign in to edit"]')?.focus(),
   });
-  askFromFrame.current = ask.fromFrame;
-  // The agents a request can go to, read again when one went away meanwhile (`no_agent`).
-  const refreshTargets = async (): Promise<ClientType[] | null> => {
-    try {
-      const g = await api<ViewGate>(route(API.view, { ref: artifact.id || slug }));
-      return g.status === "ok" ? (g.ask?.targets ?? []) : null;
-    } catch {
-      return null;
-    }
-  };
   // While the frame shows the whole-draft review, toasts keep clear of its choices.
   useEffect(() => {
     if (!live.reviewing) return;
@@ -380,7 +369,6 @@ export function ViewerStage({
     editing,
     present,
     update,
-    ask,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -478,9 +466,8 @@ export function ViewerStage({
                   onClose={closeComments}
                   onOpenCountChange={setOpenCount}
                   onItemsChange={setCommentItems}
-                  ask={gate.ask ? { targets: gate.ask.targets, owner: isOwner } : undefined}
-                  request={request}
-                  onTargetsStale={refreshTargets}
+                  agents={gate.ask?.targets}
+                  pinTo={pin}
                   {...pageComments}
                 />
               </div>

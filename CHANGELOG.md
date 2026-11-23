@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Ask an agent in a comment.** People ask the owner's agent the way they ask Claude: by
+  mentioning it in a comment (`@claude make the heading red`). The separate **Ask an agent**
+  button, its ⋯ menu item and the Ask dialog are gone: an HTML page or a design shows History,
+  Comments, Share and ⋯ in its bar, nothing more. On a doc, deck or design system, the **Comment** control on a block, image,
+  token or component opens the comments panel pinned to that place. `@agent:other` reaches the
+  owner's agents that are not Claude or Codex (ChatGPT, Cursor, Gemini), and the comment box
+  suggests it when the owner has one. `request_to` on the comments API still works.
+
 - **Design export works again in Browser Rendering.** A PNG or PDF export of a design was
   refused with "the design did not take the export layout": while the export's DevTools session
   was attached (it sets the board cookies), Browser Rendering ignored the page's print media, so

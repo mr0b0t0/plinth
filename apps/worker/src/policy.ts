@@ -930,10 +930,10 @@ export function slidesRoomAccess(claim: PageClaim, type: ArtifactType): RoomAcce
   };
 }
 
-// ---------- Ask an agent (docs/spec.md "Ask an agent") ----------
+// ---------- asking an agent (docs/spec.md "Asking an agent") ----------
 
 /**
- * May this connection of the artifact's owner receive a request from Ask an agent? Only one that
+ * May this connection of the artifact's owner receive a comment's `request_to`? Only one that
  * could claim it (canActOnMention): not revoked, not limited to one artifact, and holding the
  * `mentions` scope. The gate lists the client types of such connections (`ask.targets`), and a
  * comment's `request_to` is refused without one, so a request is never shown as sent to an agent

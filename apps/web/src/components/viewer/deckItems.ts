@@ -2,8 +2,8 @@
 // its settings popover (aspect, theme, page numbers, footer) and writes them with its own struct op
 // over the draft socket, so nothing here touches the deck's text. The item exists only in edit
 // mode, where the frame is at the exact content origin (inline editing runs only under origin
-// isolation); the message carries no data. Also the words the strip and the Ask dialog use when a
-// draft cannot be published yet, per type.
+// isolation); the message carries no data. Also the words the strip uses when a draft cannot be
+// published yet, per type.
 import { SlidersHorizontalIcon } from "@phosphor-icons/react";
 import type { ArtifactType } from "@plinth/shared";
 import { deckSettingsMessage, editTargetOrigin, postToRenderer } from "./rendererProtocol.ts";

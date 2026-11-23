@@ -2,10 +2,10 @@
 // Edit on and changes a token's colour in place, and Publish makes v2, stored as Plinth's 2-space
 // JSON with that colour; a version an agent publishes meanwhile is never merged: the page edits
 // freeze, and the whole-draft review shows both sites and publishes the page's as they are; a
-// token row's "Rename: Ask an agent" opens the Ask dialog pointing at that token; and a compact
+// token row's "Comment to rename" opens the comments panel pinned to that token; and a compact
 // system of about 900 KB, changed in place, is published compact; one published from code says so
 // when editing starts. With PLINTH_E2E_SHOTS set, the
-// edit mode, the menus, the Ask dialog and the review are saved for review in each project.
+// edit mode, the menus, the pinned comment and the review are saved for review in each project.
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { apiGet, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
@@ -93,7 +93,7 @@ test("a colour changed in place is published as v2, in Plinth's 2-space JSON", a
       .click();
     const menu = frameOf(page).getByRole("menu");
     await expect(menu.getByRole("menuitem", { name: "Add a dark value" })).toBeVisible();
-    await expect(menu.getByRole("menuitem", { name: "Rename: Ask an agent" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Comment to rename" })).toBeVisible();
     await shot(page, info, "edit-row-menu");
     await menu.getByRole("menuitem", { name: "Add a dark value" }).click();
     await expect(tokenRow(page, "radius.md").locator(".ds-token__side")).toHaveCount(2);
@@ -195,7 +195,7 @@ test("a version an agent publishes meanwhile is reviewed beside the page's chang
   }
 });
 
-test("Rename: Ask an agent on a token row opens the Ask dialog pointing at the token", async ({
+test("Comment to rename on a token row opens the comments panel pinned to the token", async ({
   page,
 }, info) => {
   await stubGoogleFonts(page);
@@ -206,16 +206,15 @@ test("Rename: Ask an agent on a token row opens the Ask dialog pointing at the t
     await tokenRow(page, "color.bg")
       .getByRole("button", { name: /actions$/ })
       .click();
-    await frameOf(page).getByRole("menuitem", { name: "Rename: Ask an agent" }).click();
-    const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-    await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("color.bg");
+    await frameOf(page).getByRole("menuitem", { name: "Comment to rename" }).click();
+    const panel = page.getByRole("region", { name: "Comments" });
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel.locator(".cm-anchor-chip")).toContainText("color.bg");
+    await expect(panel.getByRole("textbox", { name: "New comment" })).toBeFocused();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     // Once it has finished opening.
     await page.waitForTimeout(400);
-    await shot(page, info, "ask-dialog");
-    await dialog.getByRole("button", { name: "Cancel" }).click();
-    // Still editing.
-    await expect(page.getByRole("region", { name: "Editing on the page" })).toBeVisible();
+    await shot(page, info, "comment-pinned");
   } finally {
     await client.close();
   }
@@ -240,7 +239,7 @@ test("a design system published from code says so when editing starts, with Dism
       "Draft saved",
       { timeout: 10_000 },
     );
-    // The notice only tells: Dismiss is its one button (Ask an agent is in the rows' menus).
+    // The notice only tells: Dismiss is its one button (Comment is in the rows' menus).
     await expect(notice.getByRole("button")).toHaveText(["Dismiss"]);
   } finally {
     await client.close();

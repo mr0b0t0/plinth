@@ -7,11 +7,18 @@ import {
   MapPinIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
-import { APP_ROUTES, type CommentInfo, isPageAnchor, renderMarkdown, route } from "@plinth/shared";
+import {
+  APP_ROUTES,
+  type ClientType,
+  type CommentInfo,
+  isPageAnchor,
+  REQUEST_TARGET_LABELS,
+  renderMarkdown,
+  route,
+} from "@plinth/shared";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "../../lib/router.tsx";
 import { Button, ICON_SIZE } from "../ui/index.ts";
-import { OTHER_AGENT_LABEL } from "./askTargets.ts";
 import { MentionTextarea } from "./MentionTextarea.tsx";
 import { anchorLabel, fullTime, relativeTime, type Thread as ThreadData } from "./model.ts";
 
@@ -29,7 +36,7 @@ export function MentionChip({ mention, slug }: { mention: Mention; slug: string 
         <RobotIcon size={ICON_SIZE.xs} aria-hidden="true" />
       )}
       <span className="cm-chip__target">
-        {target === OTHER_AGENT_LABEL ? "The owner's other agent" : target}
+        {target === REQUEST_TARGET_LABELS.other ? "The owner's other agent" : target}
       </span>
       <span className="cm-chip__state">
         {published ? (
@@ -122,6 +129,8 @@ export interface ThreadProps {
   onActivate: (id: string) => void;
   onReply: (rootId: string, body: string) => Promise<boolean>;
   onSetStatus: (rootId: string, status: "open" | "resolved") => Promise<void>;
+  /** The owner's agents a mention can reach (the gate's `ask.targets`), for the suggestions. */
+  agents?: readonly ClientType[];
 }
 
 export function Thread({
@@ -133,6 +142,7 @@ export function Thread({
   onActivate,
   onReply,
   onSetStatus,
+  agents,
 }: ThreadProps) {
   const { root, replies, pin } = thread;
   const [replying, setReplying] = useState(false);
@@ -222,6 +232,7 @@ export function Thread({
             placeholder="Reply…"
             rows={2}
             textareaRef={replyRef}
+            agents={agents}
           />
           <div className="cm-actions">
             <Button
