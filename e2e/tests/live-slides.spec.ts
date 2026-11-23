@@ -11,6 +11,7 @@ import { type Browser, expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { publishChanges } from "../support/viewer.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 
@@ -94,15 +95,13 @@ async function openAs(browser: Browser, email: string, slug: string, base?: Page
   return page;
 }
 
+/** Edit mode is on from the moment the deck opens (no toggle); wait for the room. */
 async function startEditing(page: Page) {
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
-  await expect(strip(page)).toBeVisible();
-  await expect(frameOf(page).locator(".plinth-slides[data-editing]")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  await expect(strip(page)).toHaveCount(1);
+  await expect(frameOf(page).locator(".plinth-slides[data-editing]")).toHaveCount(1, {
+    timeout: 15_000,
+  });
   await expect(strip(page)).not.toContainText("Connecting", { timeout: 10_000 });
   await expect(strip(page)).not.toContainText("Not connected");
 }
@@ -119,8 +118,16 @@ async function showSlide(page: Page, n: number) {
 }
 
 async function publish(page: Page, version: number) {
-  await strip(page).getByRole("button", { name: "Publish", exact: true }).click();
+  await publishChanges(page);
   await expect(strip(page)).toContainText(`Published as v${version}`, { timeout: 10_000 });
+}
+
+/** The ⋯ menu's labels, closed again. */
+async function menuLabels(page: Page): Promise<string[]> {
+  await page.getByRole("button", { name: "Artifact actions" }).click();
+  const labels = await page.getByRole("menuitem").allTextContents();
+  await page.keyboard.press("Escape");
+  return labels.map((l) => l.trim());
 }
 
 async function contentOf(page: Page, id: string): Promise<string> {
@@ -155,7 +162,7 @@ test("edit a slide title and its notes in place, publish v2; Compare lists it; r
   await page.keyboard.press("End");
   await page.keyboard.type(" and Q1 plan");
   await expect(field).toHaveText("Q4 review and Q1 plan");
-  await expect(strip(page)).toContainText(/Draft saved|Saving draft/);
+  await expect(strip(page)).toContainText(/Draft saved|Saving…/);
   if (test.info().project.name === "mobile") {
     // At phone width the deck's controls show under the notes panel, never over the slide edited.
     const controls = frameOf(page).locator(".plinth-slides__controls");
@@ -187,19 +194,21 @@ test("edit a slide title and its notes in place, publish v2; Compare lists it; r
     ),
   );
 
-  // Leaving edit mode shows v2, and its notes stay notes.
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else await strip(page).getByRole("button", { name: "Done" }).click();
-  await expect(strip(page)).toHaveCount(0);
+  // Present is in the bar while editing: presenter view holds edit mode off and shows the
+  // published deck, v2, with its notes as notes; leaving it edits again.
+  await page.getByRole("button", { name: "Present" }).click();
+  await page.getByRole("menuitem", { name: "Presenter view" }).click();
+  await expect(frameOf(page).locator('#__plinth-slides[data-mode="presenter"]')).toHaveCount(1, {
+    timeout: 10_000,
+  });
   await expect(frameOf(page).locator(".plinth-slides[data-editing]")).toHaveCount(0);
-  await expect(
-    frameOf(page).locator('.plinth-slides__frame[data-n="1"] .plinth-slides__slide h1'),
-  ).toHaveText("Q4 review and Q1 plan", { timeout: 10_000 });
-  await expect(frameOf(page).locator('.plinth-slides__frame[data-n="1"] h1')).toHaveCount(1);
-  await expect(frameOf(page).locator(".plinth-slides__handout").first()).toContainText(
+  await expect(frameOf(page).locator(".plinth-slides__presenter .plinth-slides__notes")).toHaveText(
     "Welcome everyone. Thanks for coming.",
   );
+  await frameOf(page).getByRole("button", { name: "Exit presenter view" }).click();
+  await expect(frameOf(page).locator(".plinth-slides[data-editing]")).toHaveCount(1, {
+    timeout: 10_000,
+  });
 
   await page.goto(`/a/${s.slug}/compare?from=1&to=2`);
   await expect(page.getByRole("region", { name: "Changes" })).toContainText("Title changed");
@@ -230,7 +239,7 @@ test("New deck: backspace the title, see the placeholder and Publish off, type a
     .getByRole("menuitem", { name: "Slide deck" })
     .click();
   await expect(page).toHaveURL(/\/a\/[^/?]+$/);
-  await expect(strip(page)).toBeVisible();
+  await expect(strip(page)).toHaveCount(1);
   const field = openField(page);
   await expect(field).toHaveText("Untitled deck", { timeout: 15_000 });
   await expect(field).toBeFocused();
@@ -240,14 +249,14 @@ test("New deck: backspace the title, see the placeholder and Publish off, type a
   await page.keyboard.press("Escape");
   const placeholder = activeSlide(page).getByRole("button", { name: /Slide 1, empty/ });
   await expect(placeholder).toHaveText("Click to add a title");
-  const publishBtn = strip(page).getByRole("button", { name: "Publish", exact: true });
-  await expect(publishBtn).toHaveAttribute("aria-disabled", "true");
+  // A deck that shows no slide cannot be a version: the ⋯ menu offers no Publish changes.
+  await expect.poll(() => menuLabels(page)).not.toContain("Publish changes");
   await shoot(page, "empty-deck");
   await placeholder.click();
   await expect(openField(page)).toBeFocused();
   await page.keyboard.type("Q1 plan");
-  await expect(publishBtn).not.toHaveAttribute("aria-disabled", "true", { timeout: 10_000 });
   await page.keyboard.press("Escape");
+  await expect.poll(() => menuLabels(page), { timeout: 10_000 }).toContain("Publish changes");
   await publish(page, 2);
   const slug = new URL(page.url()).pathname.split("/")[2] as string;
   expect((await apiGet(page.request, `/artifacts/${slug}`)).body.content).toBe("# Q1 plan\n");
@@ -380,7 +389,7 @@ test("an agent's version during the page edits is never merged: the review shows
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.type(" (rounded)");
   await page.keyboard.press("Escape");
-  await expect(strip(page)).toContainText(/Draft saved|Saving draft/);
+  await expect(strip(page)).toContainText(/Draft saved|Saving…/);
 
   const client = await mcpClient(s.token);
   try {
@@ -441,9 +450,8 @@ const HTML_ASSETS = [
 ];
 
 /**
- * An edit typed on slide 2, then an agent's HTML deck as v2, then a reload: the notice says so, and
- * the bar's Edit (at phone width, the ⋯ menu's) opens the strip with Review changes, where the
- * HTML side is one line.
+ * An edit typed on slide 2, then an agent's HTML deck as v2, then a reload: the save status says
+ * so at once, with Review changes, where the HTML side is one line.
  */
 async function reviewAfterReload(page: Page, s: Setup) {
   await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
@@ -466,13 +474,7 @@ async function reviewAfterReload(page: Page, s: Setup) {
   await expect(frameOf(page).locator('html[data-ready="ok"][data-format="html"]')).toHaveCount(1, {
     timeout: 15_000,
   });
-  await expect(page.getByRole("note")).toContainText("v2 was published over unpublished changes");
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
   await expect(strip(page)).toContainText("v2 was published while you edited", {
     timeout: 10_000,
   });

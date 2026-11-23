@@ -68,11 +68,9 @@ import {
   pairColors,
 } from "../styles/contrast.ts";
 import "../styles/design-page.css";
-import { useMediaQuery } from "../components/editor/useMediaQuery.ts";
-import { EditBar, type EditBarProps } from "../components/viewer/EditBar.tsx";
 import { LiveDraftNotice } from "../components/viewer/LiveDraftNotice.tsx";
 import type { LiveFrameStatus } from "../components/viewer/rendererProtocol.ts";
-import { VIEWER_COMPACT_QUERY } from "../components/viewer/ViewerStage.tsx";
+import { SaveStatus, type SaveStatusProps } from "../components/viewer/SaveStatus.tsx";
 import "../components/viewer/viewer.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
 
@@ -1294,8 +1292,8 @@ function ComponentSpecimens() {
 
 const noop = () => undefined;
 
-const EDIT_STATES: [string, Partial<EditBarProps>][] = [
-  ["Editing", {}],
+const EDIT_STATES: [string, Partial<SaveStatusProps>][] = [
+  ["Nothing to say yet", {}],
   ["Connecting", { connecting: true, connected: false }],
   [
     "Draft saved, with co-editors",
@@ -1317,18 +1315,17 @@ const EDIT_STATES: [string, Partial<EditBarProps>][] = [
   ["A version to review", { dirty: true, phase: "conflict", conflictVersion: 5 }],
   ["Versions to review", { dirty: true, phase: "conflict", conflictVersion: 6 }],
   ["Reviewing", { dirty: true, phase: "conflict", conflictVersion: 5, reviewing: true }],
-  [
-    "Cannot be published yet",
-    {
-      dirty: true,
-      phase: "dirty",
-      publishable: false,
-      unpublishableReason: "These changes can't be published yet.",
-    },
-  ],
+  ["Solo, unpublished changes", { mode: "solo", dirty: true, phase: "solo" }],
   [
     "Solo, a newer version published",
-    { mode: "solo", dirty: true, phase: "solo", newerVersion: 5 },
+    { mode: "solo", dirty: true, phase: "conflict", conflictVersion: 5 },
+  ],
+  [
+    "Read-only for an editor",
+    {
+      blocked:
+        "This design system has problems only an agent can fix, so it can't be edited on the page.",
+    },
   ],
 ];
 
@@ -1348,11 +1345,9 @@ const LIVE_STATUS: LiveFrameStatus = {
   publishable: true,
 };
 
-/** On-page editing (#36): the edit strip and the unpublished-changes line in every state. */
+/** On-page editing (#36): the save status and the unpublished-changes line in every state. */
 function LiveEditSpecimens() {
-  // Done is on the strip only where the bar's Edit toggle folds into the ⋯ menu.
-  const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
-  const bar: EditBarProps = {
+  const bar: SaveStatusProps = {
     phase: "editing",
     mode: "room",
     version: 4,
@@ -1362,20 +1357,20 @@ function LiveEditSpecimens() {
     savedVersion: null,
     rebasedVersion: null,
     editors: [],
-    onPublish: noop,
-    onDone: noop,
     onReview: noop,
-    compact,
   };
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
     <>
-      <Specimen title="Edit bar" note="Under the artifact bar while editing on the page.">
+      <Specimen
+        title="Save status"
+        note="Beside the version in the artifact bar; editing on the page is always on for owners and editors."
+      >
         <div className="ds-stack">
           {EDIT_STATES.map(([label, over]) => (
             <div key={label}>
               <p className="ds-specimen__note">{label}</p>
-              <EditBar {...bar} {...over} label={`Edit bar sample: ${label}`} />
+              <SaveStatus {...bar} {...over} label={`Save status sample: ${label}`} />
             </div>
           ))}
         </div>

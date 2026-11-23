@@ -1,6 +1,6 @@
 // `?edit` where the person can edit on the page (New and Import): the page drops the parameter,
-// starts editing, and the edit message asks the frame to focus its first block or cell until the
-// frame says it is editing; a plain Edit never asks for it. Every other `?edit` case is
+// and the edit message (editing is always on) asks the frame to focus its first block or cell
+// until the frame says it is editing; without `?edit` it never asks for it. Every other `?edit` case is
 // askAgent.tsx's (ArtifactPage.ask.test.tsx).
 import type { ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook } from "@testing-library/react";
@@ -107,7 +107,7 @@ function page(g: OkGate) {
 }
 
 describe("?edit with editing on the page", () => {
-  it("drops the parameter, starts editing and asks the frame to focus its first place", () => {
+  it("drops the parameter and asks the editing frame to focus its first place", () => {
     window.history.replaceState(null, "", "/a/untitled-document?edit&x=1#top");
     const focus = vi.spyOn(frame, "focus");
     const { result } = page(gate());
@@ -132,12 +132,11 @@ describe("?edit with editing on the page", () => {
     expect(edits().at(-1)).toEqual({ source: "plinth-renderer", v: 1, type: "edit", on: true });
   });
 
-  it("does nothing without ?edit, and a plain Edit never asks for the focus", () => {
+  it("without ?edit, edits all the same but never asks for the focus", () => {
     window.history.replaceState(null, "", "/a/untitled-document");
     const { result } = page(gate());
-    expect(result.current.editing).toBe(false);
-    expect(edits()).toHaveLength(0);
-    act(() => result.current.start());
+    expect(result.current.editing).toBe(true);
+    expect(edits()).toHaveLength(1);
     expect(edits().at(-1)).toEqual({ source: "plinth-renderer", v: 1, type: "edit", on: true });
   });
 

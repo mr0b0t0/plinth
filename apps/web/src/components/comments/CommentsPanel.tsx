@@ -91,6 +91,17 @@ export interface CommentsPanelProps {
   request?: { n: number; anchor: PageAnchor | null; opened?: boolean } | null;
   /** Read the targets again after a request was refused because its agent went away. */
   onTargetsStale?: () => Promise<ClientType[] | null>;
+  /**
+   * The page is edited on it (always on for owners and editors): its frame is not in review mode,
+   * so no bridge is connected, and "Point at something" asks the editing frame to pick a place
+   * (`start`, `stop`). The place it named arrives as `picked`: `n` changes for each, and a null
+   * anchor means the person cancelled in the frame (Esc).
+   */
+  framePick?: {
+    start: () => boolean;
+    stop: () => void;
+    picked: { n: number; anchor: PageAnchor | null } | null;
+  };
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -139,6 +150,7 @@ export function CommentsPanel({
   ask,
   request = null,
   onTargetsStale,
+  framePick,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -266,9 +278,14 @@ export function CommentsPanel({
 
   // ---------- bridge ----------
 
+  // An editing frame picks for itself (framePick); the latest handlers, for the callbacks below.
+  const pickInFrame = framePick !== undefined;
+  const framePickRef = useRef(framePick);
+  framePickRef.current = framePick;
   useEffect(() => {
-    // A page that anchors its own comments has no bridge (the gate never asks for review mode).
-    if (!frame || !contentOrigin || pageOwnsAnchors) return;
+    // A page that anchors its own comments has no bridge (the gate never asks for review mode),
+    // and neither has a page edited on it (its frame is never reloaded into review mode).
+    if (!frame || !contentOrigin || pageOwnsAnchors || pickInFrame) return;
     const handlers = {
       onMessage(msg: FrameMessage) {
         if (msg.type === "ready") {
@@ -297,7 +314,7 @@ export function CommentsPanel({
       client.destroy();
       if (bridgeRef.current === client) bridgeRef.current = null;
     };
-  }, [frame, contentOrigin, opaque, pageOwnsAnchors]);
+  }, [frame, contentOrigin, opaque, pageOwnsAnchors, pickInFrame]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: anchorsKey stands for anchors
   useEffect(() => {
@@ -305,14 +322,38 @@ export function CommentsPanel({
   }, [anchorsKey, frame, contentOrigin, opaque]);
 
   const startPick = () => {
-    if (!bridgeRef.current?.post({ type: "pick:start" })) return;
+    const inFrame = framePickRef.current;
+    if (inFrame ? !inFrame.start() : !bridgeRef.current?.post({ type: "pick:start" })) return;
     setPicking(true);
   };
   const cancelPick = useCallback(() => {
+    framePickRef.current?.stop();
     bridgeRef.current?.post({ type: "pick:stop" });
     setPicking(false);
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
+
+  // The editing frame named the place picked (or the person cancelled there): taken once each.
+  const pickedRef = useRef<number | null>(framePick?.picked?.n ?? null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per pick (`n`)
+  useEffect(() => {
+    const p = framePick?.picked;
+    if (!p || pickedRef.current === p.n) return;
+    pickedRef.current = p.n;
+    if (!pickingRef.current) return;
+    setPicking(false);
+    if (p.anchor) {
+      settlePage({ status: "closed" });
+      setAnchor(p.anchor);
+    }
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [framePick?.picked?.n]);
+  // The frame stops picking when the panel closes, or editing ends meanwhile.
+  useEffect(() => {
+    if (!picking || !pickInFrame) return;
+    const inFrame = framePickRef.current;
+    return () => inFrame?.stop();
+  }, [picking, pickInFrame]);
 
   // Escape anywhere in the app cancels picking (focus may be outside the panel by then).
   useEffect(() => {

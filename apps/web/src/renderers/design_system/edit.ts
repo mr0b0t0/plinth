@@ -1843,6 +1843,29 @@ export class DsEditor {
     return this.backend.you?.right === "write" && this.backend.conflictVersion === null;
   }
 
+  /**
+   * The place at `target` for a comment while the person picks one (common/pick.ts): a token, a
+   * group or a component, as Ask an agent names them (boot.ts keys them from the published
+   * version). Nothing closes.
+   */
+  placeAt(target: Node): { el: HTMLElement; anchor: DsAskAnchor } | null {
+    const t = target.nodeType === 1 ? (target as Element) : target.parentElement;
+    if (!t || !this.root.contains(t)) return null;
+    const token = t.closest<HTMLElement>(".ds-token[data-path]");
+    const path = token?.dataset.path;
+    if (token && path) return { el: token, anchor: { kind: "token", name: path, text: path } };
+    const group = t.closest<HTMLElement>(".ds-group[data-group]");
+    const g = group?.dataset.group;
+    if (group && g) return { el: group, anchor: { kind: "group", name: g, text: g } };
+    const comp = t.closest<HTMLElement>(".ds-component[data-component]");
+    const id = comp?.dataset.component;
+    if (comp && id) {
+      const name = comp.querySelector("h2")?.textContent?.trim() || id;
+      return { el: comp, anchor: { kind: "component", name: id, text: name } };
+    }
+    return null;
+  }
+
   /** Ask an agent about a place on the page (the frame keeps draft names and words out). */
   private askAbout(anchor: string | { kind: DsAskKind; name: string }, text: string): void {
     this.hooks.ask(typeof anchor === "string" ? { key: anchor, text } : { ...anchor, text });

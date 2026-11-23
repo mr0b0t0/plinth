@@ -70,6 +70,7 @@ function context(over: {
   draft?: boolean;
   status?: LiveFrameStatus | null;
   editing?: boolean;
+  unpublished?: boolean;
   signIn?: boolean;
   type?: string;
 }) {
@@ -103,7 +104,7 @@ function context(over: {
     },
     pinned: over.pinned ?? false,
     editing: over.editing ?? false,
-    live: { status: over.status ?? null, restore: null },
+    live: { status: over.status ?? null, restore: null, unpublished: over.unpublished ?? false },
     hrefs: { signIn: "/login?next=%2Fa%2Fsales", current: "/a/sales" },
     actions: { openDialog, reload: vi.fn() },
   } as unknown as StageContext;
@@ -119,10 +120,10 @@ function pick(file: File) {
 }
 
 describe("the ⋯ item", () => {
-  it("sits in Edit source's place, for sheets only, with its dialog in the stage", () => {
+  it("sits just before Settings, for sheets only, with its dialog in the stage", () => {
     const at = MENU_ITEMS.indexOf(replaceSheet);
     expect(at).toBeGreaterThan(0);
-    expect(MENU_ITEMS[at - 1]?.name).toBe("editSource");
+    expect(MENU_ITEMS[at + 1]?.name).toBe("settings");
     expect(TYPE_MENU_ITEMS.sheet).not.toContain(replaceSheet);
     expect(replaceSheet(context({ type: "doc" }).c)).toEqual([]);
     expect(STAGE_DIALOGS.map((d) => d.id)).toContain(REPLACE_SHEET_DIALOG);
@@ -180,7 +181,7 @@ describe("the ⋯ item", () => {
     const items = (o: Parameters<typeof context>[0]) => replaceSheet(context(o).c);
     for (const o of [
       { draft: true },
-      { editing: true },
+      { editing: true, unpublished: true },
       { status: { ...STATUS, dirty: true } },
       { status: { ...STATUS, editors: [{ email: "ana@example.org", block: false }] } },
       { status: { ...STATUS, conflict_version: 6 } },
@@ -188,6 +189,8 @@ describe("the ⋯ item", () => {
       expect(items(o), JSON.stringify(o)).toEqual([]);
     }
     expect(items({ status: STATUS })).toHaveLength(1);
+    // Edit mode is always on for owners and editors: with nothing unpublished it blocks nothing.
+    expect(items({ status: STATUS, editing: true })).toHaveLength(1);
   });
 
   it("opens the sign-in step without a picker for an editor confirmed by code", async () => {

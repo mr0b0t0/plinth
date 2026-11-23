@@ -40,6 +40,7 @@ import {
 import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
+import { PagePick } from "../common/pick.ts";
 import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
 import { type DocBackend, DocEditor, LocalDoc, type RescueReport } from "./edit.ts";
 import { pinImages, showVersion } from "./follow.ts";
@@ -256,6 +257,11 @@ function live(
     if (editor) editor.setBackend(local);
     else editor = new DocEditor(root, win, local, hooks, prepare);
   };
+  // The comments panel's "Point at something" while editing: a block, named as Ask names it.
+  const pick = new PagePick(win, {
+    placeAt: (t) => (editor?.editing ? editor.placeAt(t) : null),
+    post,
+  });
 
   if (payload.live === "room") {
     client = new LiveDocClient({
@@ -322,6 +328,8 @@ function live(
       void session.open(m);
     } else if (m.type === "reviewed") {
       session.answer(m);
+    } else if (m.type === "pick") {
+      pick.set(m.on && (editor?.editing ?? false));
     }
   };
   return {
@@ -333,6 +341,7 @@ function live(
     idle: () => !client && !(editor?.editing ?? false) && !(local?.dirty ?? false),
     stop: () => {
       client?.stop();
+      pick.stop();
       editor?.setEditing(false);
       review.close();
       poster.stop();

@@ -40,6 +40,8 @@ export type EditAppMessage =
       text?: string;
     }
   | { type: "reviewed"; nonce: string; result: ReviewResult }
+  /** Pick a place on the page for a comment (on), or stop (off): common/pick.ts. */
+  | { type: "pick"; on: boolean }
   /** Typed text the app kept from an earlier frame's rescue store (doc editing). */
   | {
       type: "rescue";
@@ -113,6 +115,7 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
       ...(m.on && m.code === true ? { code: true as const } : {}),
     };
   }
+  if (m.type === "pick" && typeof m.on === "boolean") return { type: "pick", on: m.on };
   if (m.type === "rescue") {
     const items = readRescueItems(m.items);
     if (!items) return null;

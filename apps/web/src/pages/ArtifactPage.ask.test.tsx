@@ -100,10 +100,10 @@ describe("Ask an agent: not editing", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Garden plan, version 3");
-    // In the bar, so not again in the ⋯ menu; the source editor item stays until it is removed.
+    // In the bar, so not again in the ⋯ menu; no source editor item (people never see source).
     await user.click(screen.getByRole("button", { name: "Artifact actions" }));
     expect(screen.queryByRole("menuitem", { name: "Ask an agent" })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Edit" })).toBeNull();
     await user.keyboard("{Escape}");
 
     await user.click(screen.getByRole("button", { name: "Ask an agent" }));
@@ -356,15 +356,18 @@ describe("Ask an agent where editing on the page is off", () => {
     }
   });
 
-  it("?edit focuses Sign in to edit for an editor confirmed by code", async () => {
+  it("?edit focuses the ⋯ menu, which holds Sign in to edit, for an editor confirmed by code", async () => {
     window.history.replaceState(null, "", "/a/garden-plan?edit");
     stub(
       gateOf({ artifact: DOC, role: "editor", live: { mode: "room", draft: null, sign_in: true } }),
     );
     const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    const link = await screen.findByRole("link", { name: "Sign in to edit" });
-    await waitFor(() => expect(document.activeElement).toBe(link));
+    const menu = await screen.findByRole("button", { name: "Artifact actions" });
+    await waitFor(() => expect(document.activeElement).toBe(menu));
+    await user.click(menu);
+    expect(screen.getByRole("menuitem", { name: "Sign in to edit" })).toBeTruthy();
   });
 });
 
@@ -409,7 +412,7 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
         window.dispatchEvent(e);
       });
     };
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    // Edit mode is on from the start: no toggle to press.
     post({
       type: "live",
       connected: true,
@@ -452,7 +455,7 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Ask an agent" })).toBeNull());
     expect(s.posted).toEqual([{ body: "Tidy", version_number: 3, request_to: "claude" }]);
-    expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Comments" })).toBeNull();
     expect(s.views()).toBe(viewsAtStart);
     expect(screen.getByTitle("Plan, version 3")).toBe(frame);
@@ -601,7 +604,13 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
   });
 
   it("outside edit mode, takes at most one in-frame ask a second, even with the panel open", async () => {
-    stub((n) => docGate(n));
+    // An editor who must sign in first is not editing: a keyless ask is a hint the page may give.
+    stub((n) =>
+      gateOf(
+        { artifact: DOC, role: "editor", live: { mode: "room", draft: null, sign_in: true } },
+        n,
+      ),
+    );
     const ArtifactPage = await loadPage();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
@@ -761,7 +770,6 @@ describe("Ask an agent in edit mode, solo: Publish my changes first", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     frameEl = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
-    await user.click(screen.getByRole("button", { name: "Edit" }));
     postFrom({
       type: "live",
       key: keyOf(frameEl),

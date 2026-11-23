@@ -248,12 +248,7 @@ test("in edit mode the Ask dialog keeps editing, and publishes first only when a
   await page.goto(`/a/${art.slug}`);
   const frame = page.frameLocator(CURRENT_FRAME);
   await expect(frame.locator("h1")).toContainText("Plan", { timeout: 15_000 });
-  const toggle = page.getByRole("button", { name: "Edit", exact: true });
-  if (await toggle.isVisible()) await toggle.click();
-  else {
-    await page.getByRole("button", { name: "Artifact actions" }).click();
-    await page.getByRole("menuitem", { name: "Edit on the page" }).click();
-  }
+  // Edit mode is on from the moment the page opens: no toggle.
   const bar = page.getByRole("region", { name: "Editing on the page" });
   await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
   await frame.locator("p", { hasText: "First paragraph." }).click();

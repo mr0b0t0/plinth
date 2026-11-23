@@ -328,6 +328,31 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(root().querySelector("[contenteditable]")).toBeNull();
   });
 
+  it("picks a block for a comment while editing, named as Ask names it, without opening it", async () => {
+    mountShell("Intro\n\nSecond paragraph");
+    stop = boot(window);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    post({ ...base, type: "pick", on: true });
+    const second = root().querySelectorAll("p")[1] as HTMLElement;
+    second.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    second.click();
+    // The block stays as it was drawn: the press went to the pick, not the editor.
+    expect(root().querySelector('[contenteditable="true"]')).toBeNull();
+    expect(posted("picked")).toEqual([
+      {
+        ...base,
+        type: "picked",
+        anchor: { key: "block-2", text: "Second paragraph" },
+        what: "paragraph",
+      },
+    ]);
+    // Once only: the next press edits.
+    second.click();
+    expect(posted("picked")).toHaveLength(1);
+    expect(root().querySelector('[contenteditable="true"]')).toBeTruthy();
+  });
+
   it("asks the app about a block by its place in the published version, and its words", async () => {
     mountShell("Intro\n\n- first item\n\n  ```\n  fenced in a list\n  ```\n\n![Old alt](x.png)");
     stop = boot(window);

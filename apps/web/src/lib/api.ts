@@ -63,7 +63,13 @@ export function ensureCsrf(): Promise<void> {
 
 export async function api<T>(
   path: string,
-  opts: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  opts: {
+    method?: string;
+    body?: unknown;
+    signal?: AbortSignal;
+    /** The request outlives the page (a publish sent as the page is left). */
+    keepalive?: boolean;
+  } = {},
 ): Promise<T> {
   const method = opts.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -78,6 +84,7 @@ export async function api<T>(
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     credentials: "same-origin",
     signal: opts.signal,
+    ...(opts.keepalive ? { keepalive: true } : {}),
   });
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -153,8 +160,13 @@ export function liveInfo(ref: string, signal?: AbortSignal): Promise<LiveInfo> {
 export function liveCheckpoint(
   ref: string,
   body: LiveCheckpointInput,
+  opts: { keepalive?: boolean } = {},
 ): Promise<LiveCheckpointResult> {
-  return api<LiveCheckpointResult>(route(API.liveCheckpoint, { ref }), { method: "POST", body });
+  return api<LiveCheckpointResult>(route(API.liveCheckpoint, { ref }), {
+    method: "POST",
+    body,
+    ...(opts.keepalive ? { keepalive: true } : {}),
+  });
 }
 
 /**

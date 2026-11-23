@@ -29,9 +29,12 @@ export const REPLACE_BLOCKED = "Publish or discard changes first";
 // stage opens a dialog by id only, and one dialog is open at a time.
 let picked: File | null = null;
 
-/** Unpublished page changes exist, or someone is on the page editing it, or this person is. */
+/**
+ * Unpublished page changes exist, or someone else is on the page editing it. Having the page open
+ * in edit mode, which is always on for owners and editors, does not block it by itself.
+ */
 export function replaceBlocked(c: StageContext): boolean {
-  if (c.editing) return true;
+  if (c.editing && c.live.unpublished) return true;
   const status = c.live.status;
   if ((status?.editors.length ?? 0) > 0) return true;
   return (

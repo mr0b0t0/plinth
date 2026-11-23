@@ -75,6 +75,7 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
+import type { PagePlace } from "../common/pick.ts";
 import { kindName, RichBlockEditor, type RichHost, type RichPoint } from "../common/richblock.ts";
 import { parseBlocks } from "../doc/blocks.ts";
 import {
@@ -3044,6 +3045,43 @@ export class SlidesEditor {
       .flatMap((n) => (isEl(n) ? Array.from(n.querySelectorAll("img")) : []))
       .at(0);
     return first ? all.indexOf(first) + 1 : 1;
+  }
+
+  /**
+   * The place at `target` for a comment while the person picks one (common/pick.ts): its speaker
+   * notes, an image or a block on a slide, or the slide itself, with the keys and structural words
+   * Ask an agent uses, never its text. Nothing closes.
+   */
+  placeAt(target: Node): PagePlace | null {
+    const v = this.views.find((x) => x.notesHost.contains(target) || x.frame.contains(target));
+    if (!v) return null;
+    const n = v.shownN ?? v.n;
+    if (v.notesHost.contains(target)) {
+      return {
+        el: v.notesHost,
+        anchor: { key: `slide-${n}:notes`, text: `Slide ${n}, speaker notes` },
+        what: "block",
+      };
+    }
+    const img = isEl(target) ? target.closest("img") : null;
+    if (img && v.el.contains(img)) {
+      const k = Array.from(v.el.querySelectorAll("img")).indexOf(img) + 1;
+      return {
+        el: img,
+        anchor: { key: `slide-${n}:image-${k}`, text: `Slide ${n}, image ${k}` },
+        what: "image",
+      };
+    }
+    const b = blockAt(target, v.frame);
+    const el = b?.nodes.find(isEl);
+    if (b && el) {
+      return {
+        el,
+        anchor: { key: `slide-${n}:block-${b.index}`, text: `Slide ${n}, block` },
+        what: "block",
+      };
+    }
+    return { el: v.el, anchor: { key: `slide-${n}`, text: `Slide ${n}` } };
   }
 
   /** Ask an agent about a place on slide `v`: a structural key and words, never its text. */

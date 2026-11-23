@@ -351,18 +351,53 @@ describe("speaker notes after the deck's start moves", () => {
 });
 
 describe("print and the .pptx while editing", () => {
-  it("wait until editing ends: no print, and the export answers that no file was made", () => {
+  it("hold edit mode off while they run, so they take the deck, and turn it back on after", async () => {
     const f = start(SKILL);
+    const root = () => document.getElementById("__plinth-slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
+    // Print: the deck prints, not edit mode's raw slides; edit mode comes back after the dialog.
     appMessage(f, msg({ type: "print" }));
-    expect(document.getElementById("__plinth-slides")?.hasAttribute("data-print")).toBe(false);
+    expect(root()?.getAttribute("data-print")).toBe("slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+    f.target.dispatchEvent(new Event("afterprint"));
+    expect(root()?.hasAttribute("data-print")).toBe(false);
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
+  });
+
+  it("makes the .pptx from the deck while editing, then edits again", async () => {
+    mount("# One\n---\n# Two");
+    const f = framed();
+    const build = vi.fn<PptxBuilder>(async () => ({ blob: new Blob(["pk"]), imagesSkipped: 0 }));
+    const save = vi.fn();
+    const geometry: Geometry = {
+      rect: (e) =>
+        e.localName === "section"
+          ? { left: 0, top: 0, width: 1280, height: 720 }
+          : { left: 80, top: 64, width: 400, height: 40 },
+      style: (e) => window.getComputedStyle(e),
+    };
+    stop = boot(f.win, {
+      measure: () => false,
+      loadWriter: async () => build,
+      save,
+      opaque: false,
+      geometry,
+    });
+    appMessage(f, msg({ type: "edit", on: true, base: 1 }));
+    const root = () => document.getElementById("__plinth-slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
     appMessage(f, msg({ type: "export", format: "pptx", nonce: NONCE }));
+    expect(root()?.hasAttribute("data-editing")).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(build).toHaveBeenCalledTimes(1);
+    // The deck's two slides, not edit mode's raw ones.
+    expect(build.mock.calls[0]?.[0].slides).toHaveLength(2);
+    expect(save).toHaveBeenCalledTimes(1);
     expect(posts(f).filter((p) => p.type === "exported")).toEqual([
-      expect.objectContaining({ type: "exported", nonce: NONCE, ok: false, images_skipped: 0 }),
+      expect.objectContaining({ type: "exported", nonce: NONCE, ok: true }),
     ]);
-    // Out of edit mode, Print runs again.
-    appMessage(f, msg({ type: "edit", on: false }));
-    appMessage(f, msg({ type: "print" }));
-    expect(document.getElementById("__plinth-slides")?.getAttribute("data-print")).toBe("slides");
+    expect(root()?.hasAttribute("data-editing")).toBe(true);
   });
 
   it("makes no file from edit mode's slides when editing starts while an export waits", async () => {

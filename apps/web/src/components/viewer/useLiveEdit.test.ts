@@ -1,4 +1,5 @@
-// useLiveEdit: the app side of on-page editing (#36). The frame is a real iframe whose window
+// useLiveEdit: the app side of on-page editing (#36), which is always on for whoever may edit here:
+// the frame is told to edit as soon as the hook has it, with no toggle. The frame is a real iframe whose window
 // stands in for the renderer; its messages are dispatched with that window as their source and
 // carry the frame's key. The whole-draft review runs in the frame: the app only asks it to open
 // (`review`), acts on the person's choice (`resolved`) and answers with what came of it
@@ -144,13 +145,13 @@ const conflict409 = (n: number, reason = "live_conflict", message = `v${n} was p
   json({ error: { code: "conflict", message, details: { current_version: n, reason } } }, 409);
 
 describe("useLiveEdit", () => {
-  it("tells the frame to edit at its exact origin, and follows its status, only with its key", async () => {
+  it("tells the frame to edit at its exact origin at once, and follows its status, only with its key", async () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const { result } = hook(gate("room"));
     expect(result.current.available).toBe(true);
     expect(result.current.mode).toBe("room");
-    expect(sentToFrame("edit")).toHaveLength(0);
-    act(() => result.current.start());
+    // No toggle: edit mode is on from the start.
+    expect(result.current.editing).toBe(true);
     expect(sentToFrame("edit").at(-1)).toEqual([
       { source: "plinth-renderer", v: 1, type: "edit", on: true },
       ORIGIN,
@@ -166,7 +167,7 @@ describe("useLiveEdit", () => {
     expect(result.current.status?.rev).toBe(7);
   });
 
-  it("leaves edit mode and offers Ask an agent when the frame is too large to edit on the page", () => {
+  it("leaves edit mode, with why, when the frame is too large to edit on the page, for this version", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const onAsk = vi.fn();
     const { result } = renderHook(() =>
@@ -180,22 +181,24 @@ describe("useLiveEdit", () => {
         onAsk,
       }),
     );
-    act(() => result.current.start());
     expect(result.current.editing).toBe(true);
     fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "too_large" });
     expect(result.current.editing).toBe(false);
-    expect(toasts.at(-1)).toBe("This doc is too large to edit on the page");
+    expect(result.current.blocked).toBe(
+      "This doc is too large to edit on the page. An agent can make the change.",
+    );
+    // Said once, in the bar's status: no toast.
+    expect(toasts).toHaveLength(0);
     expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ type: "edit", on: false });
-    // Not editing: the same status says nothing again.
-    const before = toasts.length;
-    fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "too_large" });
-    expect(toasts).toHaveLength(before);
+    // Out of edit mode the frame no longer says so: the page stays read-only all the same.
+    fromFrame({ type: "live", ...STATUS, editing: false });
+    expect(result.current.editing).toBe(false);
+    expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ type: "edit", on: false });
   });
 
   it("tells the frame an artifact published from code is, only when the gate says so", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
-    const { result } = hook(gate("room", { from_code: true }));
-    act(() => result.current.start());
+    hook(gate("room", { from_code: true }));
     expect(sentToFrame("edit").at(-1)?.[0]).toEqual({
       source: "plinth-renderer",
       v: 1,
@@ -205,12 +208,11 @@ describe("useLiveEdit", () => {
     });
     cleanup();
     toFrame.mockClear();
-    const plain = hook(gate("room"));
-    act(() => plain.result.current.start());
+    hook(gate("room"));
     expect(sentToFrame("edit").at(-1)?.[0]).not.toHaveProperty("code");
   });
 
-  it("keeps Edit off, with why, while the frame says only an agent can fix the page", () => {
+  it("keeps the page read-only, with why, while the frame says only an agent can fix it", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const { result } = hook(
       gate("room", {
@@ -220,11 +222,10 @@ describe("useLiveEdit", () => {
     expect(result.current.blocked).toBeNull();
     fromFrame({ type: "live", ...STATUS, editing: false, unavailable: "invalid" });
     expect(result.current.blocked).toBe(
-      "This design system has problems an agent needs to fix. Ask an agent to fix them.",
+      "This design system has problems only an agent can fix, so it can't be edited on the page.",
     );
-    act(() => result.current.start());
     expect(result.current.editing).toBe(false);
-    expect(sentToFrame("edit")).toHaveLength(0);
+    expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ type: "edit", on: false });
   });
 
   it("has no on-page editing under opaque isolation", () => {
@@ -240,7 +241,6 @@ describe("useLiveEdit", () => {
       }),
     );
     expect(result.current.available).toBe(false);
-    act(() => result.current.start());
     expect(result.current.editing).toBe(false);
     expect(toFrame).not.toHaveBeenCalled();
   });
@@ -254,8 +254,7 @@ describe("useLiveEdit", () => {
         return undefined;
       },
     });
-    const { result } = hook(gate("room"));
-    act(() => result.current.start());
+    hook(gate("room"));
     await waitFor(() => expect(calls.some((c) => c.path.endsWith("/live"))).toBe(true));
     // Someone else typed last: wait the fallback too.
     fromFrame({ type: "live", ...STATUS, last_by_you: false });
@@ -311,7 +310,6 @@ describe("useLiveEdit", () => {
     });
     const onReload = vi.fn();
     const { result } = hook(gate("room"), onReload);
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS });
     await act(() => result.current.publish("Tidy intro"));
     const post = calls.find((c) => c.method === "POST");
@@ -344,7 +342,6 @@ describe("useLiveEdit", () => {
       },
     });
     const { result } = hook(gate("room"));
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS });
     await act(() => result.current.publish());
     // The room has frozen the draft by now; the frame reports it.
@@ -364,7 +361,6 @@ describe("useLiveEdit", () => {
       handle: (c) => handle(c) ?? (c.path.endsWith("/live") ? json(INFO) : undefined),
     });
     const h = hook(gate("room"), vi.fn(), { userId: "u1" });
-    act(() => h.result.current.start());
     fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
     await act(() => h.result.current.openReview());
     const nonce = sentToFrame("review").at(-1)?.[0].nonce as string;
@@ -487,7 +483,6 @@ describe("useLiveEdit", () => {
     });
     const { result } = hook(gate("solo"), onReload);
     expect(result.current.mode).toBe("solo");
-    act(() => result.current.start());
     // Solo: the frame is told the version it shows, whose files the draft is drawn with.
     expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ on: true, base: 3 });
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: true, rev: 0, base_version: 0 });
@@ -511,7 +506,29 @@ describe("useLiveEdit", () => {
       note: "From the page",
     });
     expect(result.current.savedVersion).toBe(4);
-    expect(onReload).toHaveBeenCalled();
+    // The frame goes on editing its copy: no reload, and the next publish is based on v4.
+    expect(onReload).not.toHaveBeenCalled();
+    expect(result.current.ownVersion).toBe(4);
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true, rev: 0, base_version: 0 });
+    act(() => {
+      saving = result.current.publish();
+    });
+    const again = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce: again, text: "# Edited more" });
+    await act(() => saving);
+    expect(calls.filter((c) => c.method === "PUT").at(-1)?.body).toEqual({
+      content: "# Edited more",
+      base_version: 4,
+      files_from_version: 4,
+    });
+    // The same text as the version this frame made: nothing new to publish.
+    act(() => {
+      saving = result.current.publish();
+    });
+    const same = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce: same, text: "# Edited more" });
+    await act(() => saving);
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(2);
   });
 
   it("solo: a 409 opens the review in the frame with the files from the two versions' lists", async () => {
@@ -547,7 +564,6 @@ describe("useLiveEdit", () => {
       },
     });
     const { result } = hook(gate("solo"), onReload);
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
     let saving: Promise<void> = Promise.resolve();
     act(() => {
@@ -590,7 +606,6 @@ describe("useLiveEdit", () => {
     });
     const onReload = vi.fn();
     const { result } = hook(gate("solo"), onReload);
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
     let saving: Promise<void> = Promise.resolve();
     act(() => {
@@ -610,8 +625,7 @@ describe("useLiveEdit", () => {
 
   it("asks before leaving only while there is unflushed (room) or unpublished (solo) text", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
-    const { result } = hook(gate("room"));
-    act(() => result.current.start());
+    hook(gate("room"));
     const leave = () => {
       const e = new Event("beforeunload", { cancelable: true });
       window.dispatchEvent(e);
@@ -634,7 +648,6 @@ describe("useLiveEdit", () => {
             : undefined,
     });
     const { result } = hook(gate("room"));
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, unflushed: true, publishable: false, unsavable: true });
     await act(() => result.current.publish());
     // The frame's Cmd/Ctrl+S reaches the app as `save`, and the app's own shortcut runs publish.
@@ -653,14 +666,13 @@ describe("useLiveEdit", () => {
         error: "Some text on the page can't be saved as typed. Change it to continue.",
       });
     });
-    expect(await act(() => result.current.done())).toBe(false);
     // Once the text can be written, Publish goes out.
     fromFrame({ type: "live", ...STATUS });
     await act(() => result.current.publish());
     expect(calls.some((c) => c.path.endsWith("/live/checkpoint"))).toBe(true);
   });
 
-  it("Done and Publish wait for a value the frame is still sending before the checkpoint", async () => {
+  it("Publish waits for a value the frame is still sending before the checkpoint", async () => {
     const seen: number[] = [];
     stubApi({
       handle: (c) => {
@@ -673,7 +685,6 @@ describe("useLiveEdit", () => {
       },
     });
     const { result } = hook(gate("room"));
-    act(() => result.current.start());
     // A token's value is on its way to the room (its lease asked for, not granted yet).
     fromFrame({ type: "live", ...STATUS, rev: 7, pending: true });
     let published = false;
@@ -688,13 +699,6 @@ describe("useLiveEdit", () => {
     fromFrame({ type: "live", ...STATUS, rev: 8 });
     await p;
     expect(seen).toEqual([8]);
-    fromFrame({ type: "live", ...STATUS, rev: 8, pending: true });
-    const d = result.current.done();
-    await new Promise((r) => setTimeout(r, 30));
-    expect(seen).toEqual([8]);
-    fromFrame({ type: "live", ...STATUS, rev: 9 });
-    await d;
-    expect(seen).toEqual([8, 9]);
   });
 
   it("publishes nothing while a block holds typing it cannot save: solo, even if the status lags", async () => {
@@ -706,7 +710,6 @@ describe("useLiveEdit", () => {
           : undefined,
     });
     const { result } = hook(gate("solo"), onReload);
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: false, unsavable: true });
     await act(() => result.current.publish());
     expect(sentToFrame("collect")).toHaveLength(0);
@@ -729,8 +732,7 @@ describe("useLiveEdit", () => {
   it("solo: typing a block cannot save asks before leaving, and is kept without its formatting", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     stubApi({ handle: () => undefined });
-    const { result, unmount } = hook(gate("solo"));
-    act(() => result.current.start());
+    const { unmount } = hook(gate("solo"));
     const leave = () => {
       const e = new Event("beforeunload", { cancelable: true });
       window.dispatchEvent(e);
@@ -775,7 +777,6 @@ describe("useLiveEdit", () => {
         userId,
       }),
     );
-    act(() => r.result.current.start());
     // Nothing read, offered or dropped before the session is known.
     expect(sentToFrame("rescue")).toHaveLength(0);
     expect(sessionStorage.getItem(key)).not.toBeNull();
@@ -813,7 +814,6 @@ describe("useLiveEdit", () => {
         userId,
       }),
     );
-    act(() => r.result.current.start());
     fromFrame(up([{ id: "new1", text: "New", near: 0 }]));
     userId = "u1";
     r.rerender();
@@ -828,8 +828,7 @@ describe("useLiveEdit", () => {
     const key = "plinth-draft:page-rescue:u1:art1";
     const old = [{ id: "old1", text: "Old", near: 0 }];
     sessionStorage.setItem(key, JSON.stringify(old));
-    const r = hook(gate("room"), vi.fn(), { userId: "u1" });
-    act(() => r.result.current.start());
+    hook(gate("room"), vi.fn(), { userId: "u1" });
     fromFrame(up([]));
     fromFrame(up([{ id: "new1", text: "New", near: 0 }]));
     fromFrame({ ...up([]), written: ["new1"] });
@@ -841,8 +840,7 @@ describe("useLiveEdit", () => {
 
   it("answers each report with the ids it keeps: what does not fit stays out", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
-    const r = hook(gate("room"), vi.fn(), { userId: "u1" });
-    act(() => r.result.current.start());
+    hook(gate("room"), vi.fn(), { userId: "u1" });
     const chunk = "y".repeat(60 * 1024);
     fromFrame(
       up(
@@ -864,8 +862,7 @@ describe("useLiveEdit", () => {
       JSON.stringify([{ id: "r1", text: "Kept", near: 0 }]),
     );
     // The session never resolved (/me failed): nothing is offered, but leaving still warns.
-    const r = hook(gate("room"), vi.fn(), { userId: undefined });
-    act(() => r.result.current.start());
+    hook(gate("room"), vi.fn(), { userId: undefined });
     expect(sentToFrame("rescue")).toHaveLength(0);
     const e = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(e);
@@ -900,8 +897,7 @@ describe("useLiveEdit", () => {
     const stored = () => (loadRescue("u1", "art1") as unknown[] | null) ?? [];
     // The tab's copy cannot be written (storage full); the rescue store still can.
     failSave.on = true;
-    const { result } = hook(gate("solo"), vi.fn(), { userId: "u1" });
-    act(() => result.current.start());
+    hook(gate("solo"), vi.fn(), { userId: "u1" });
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
     fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
     fromFrame({ ...up([]), written: ["r1"] });
@@ -935,8 +931,7 @@ describe("useLiveEdit", () => {
   it("solo: items the frame wrote into its text are kept in the tab's copy before they leave the store", async () => {
     stubApi({ handle: () => undefined });
     const key = "plinth-draft:page-rescue:u1:art1";
-    const { result } = hook(gate("solo"), vi.fn(), { userId: "u1" });
-    act(() => result.current.start());
+    hook(gate("solo"), vi.fn(), { userId: "u1" });
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
     fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
     // The frame wrote it into its own text: the app takes the text first.
@@ -965,7 +960,6 @@ describe("useLiveEdit", () => {
     });
     const key = "plinth-draft:page-rescue:u1:art1";
     const room = hook(gate("room"), vi.fn(), { userId: "u1" });
-    act(() => room.result.current.start());
     fromFrame({ type: "live", ...STATUS });
     fromFrame(up([{ id: "r1", text: "Kept", near: 0 }]));
     expect(sessionStorage.getItem(key)).not.toBeNull();
@@ -973,7 +967,6 @@ describe("useLiveEdit", () => {
     expect(sessionStorage.getItem(key)).toBeNull();
     room.unmount();
     const solo = hook(gate("solo"), vi.fn(), { userId: "u1" });
-    act(() => solo.result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
     fromFrame(up([{ id: "r2", text: "Kept", near: 0 }]));
     expect(sessionStorage.getItem(key)).not.toBeNull();
@@ -997,7 +990,6 @@ describe("useLiveEdit", () => {
       },
     });
     const { result } = hook(gate("room"));
-    act(() => result.current.start());
     await waitFor(() => expect(calls.some((c) => c.path.endsWith("/live"))).toBe(true));
     fromFrame({ type: "live", ...STATUS });
     const posts = () => calls.filter((c) => c.method === "POST");
@@ -1047,7 +1039,7 @@ describe("useLiveEdit", () => {
     expect(toasts.at(-1)).toBe(CHOOSING_BUSY);
   });
 
-  it("solo Done leaves edit mode only after the publish succeeded", async () => {
+  it("solo: a refused publish keeps editing and the changes, and says why", async () => {
     let fail = true;
     stubApi({
       handle: (c) => {
@@ -1058,27 +1050,210 @@ describe("useLiveEdit", () => {
       },
     });
     const { result } = hook(gate("solo"));
-    act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
-    const finish = async () => {
-      let p: Promise<boolean> = Promise.resolve(false);
+    const publish = async () => {
+      let p: Promise<void> = Promise.resolve();
       act(() => {
-        p = result.current.done();
+        p = result.current.publish();
       });
       const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
       fromFrame({ type: "draft", nonce, text: "# Edited" });
-      let out = false;
-      await act(async () => {
-        out = await p;
-      });
-      return out;
+      await act(() => p);
     };
-    expect(await finish()).toBe(false);
+    await publish();
     expect(result.current.editing).toBe(true);
+    expect(result.current.unpublished).toBe(true);
     expect(toasts.at(-1)).toBe("Hourly version limit reached. Your changes stay as a draft.");
     fail = false;
-    expect(await finish()).toBe(true);
-    expect(result.current.editing).toBe(false);
+    await publish();
+    expect(result.current.editing).toBe(true);
+    expect(result.current.unpublished).toBe(false);
+    expect(result.current.savedVersion).toBe(4);
+  });
+
+  it("solo: autosaves after the quiet spell over the version it last made, never over a newer one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let version = 4;
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json({ ...INFO, mode: "solo" });
+        if (c.method === "PUT") {
+          const v = version;
+          version += 1;
+          return v === 6
+            ? conflict409(6, "")
+            : json({ id: "art1", version: v, type: "doc", warnings: [] });
+        }
+        return undefined;
+      },
+    });
+    // The frame answers every collect (the tab's copy every 5 s, and the publish) with its text.
+    const text = { now: "# One" };
+    toFrame.mockImplementation((m: { type?: string; nonce?: string }) => {
+      if (m?.type === "collect") {
+        queueMicrotask(() => fromFrame({ type: "draft", nonce: m.nonce, text: text.now }));
+      }
+    });
+    const onReload = vi.fn();
+    const { result } = hook(gate("solo"), onReload);
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/live"))).toBe(true));
+    const puts = () => calls.filter((c) => c.method === "PUT");
+    // A change report starts the quiet spell; the copy publishes itself when it ends.
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(119_000);
+    });
+    expect(puts()).toHaveLength(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]?.body).toEqual({ content: "# One", base_version: 3, files_from_version: 3 });
+    await waitFor(() => expect(result.current.ownVersion).toBe(4));
+    expect(result.current.unpublished).toBe(false);
+    expect(onReload).not.toHaveBeenCalled();
+    // More typing: the next autosave keeps LIVE_AUTO_CHECKPOINT_MIN_S after the last one.
+    text.now = "# Two";
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    expect(result.current.unpublished).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    expect(puts()).toHaveLength(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(310_000);
+    });
+    await waitFor(() => expect(puts()).toHaveLength(2));
+    expect(puts()[1]?.body).toEqual({ content: "# Two", base_version: 4, files_from_version: 4 });
+    // A newer version refused the next one: no toast, no review opened by itself, no reload; the
+    // status says so, and the autosave waits for the review.
+    text.now = "# Three";
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(610_000);
+    });
+    await waitFor(() => expect(puts()).toHaveLength(3));
+    await waitFor(() => expect(result.current.newerVersion).toBe(6));
+    expect(result.current.phase).toBe("conflict");
+    expect(toasts).toHaveLength(0);
+    expect(sentToFrame("review")).toHaveLength(0);
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700_000);
+    });
+    expect(puts()).toHaveLength(3);
+    expect(onReload).not.toHaveBeenCalled();
+  });
+
+  it("solo: a version published elsewhere loads when the page has no changes of its own", async () => {
+    stubApi();
+    const onReload = vi.fn();
+    const g = gate("solo");
+    const { result, rerender } = renderHook(
+      (p: { g: OkGate }) =>
+        useLiveEdit({
+          gate: p.g,
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          frameKey: KEY,
+          onReload,
+        }),
+      { initialProps: { g } },
+    );
+    // The frame is held while editing (never swapped under the editor).
+    expect(result.current.pause).toBe("hold");
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: false });
+    rerender({ g: { ...g, artifact: { ...g.artifact, current_version: 4 } } });
+    expect(onReload).toHaveBeenCalledTimes(1);
+  });
+
+  it("room: leaving the page publishes the draft, as Done did", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint"))
+          return json({ saved: true, version: { version: 4 } });
+        return undefined;
+      },
+    });
+    const { unmount } = hook(gate("room"));
+    fromFrame({ type: "live", ...STATUS });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    const posts = () => calls.filter((c) => c.path.endsWith("/live/checkpoint"));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(posts()[0]?.body).toEqual({ base_version: 3, rev: 7, reason: "done" });
+    // A frozen draft is left as it is.
+    fromFrame({ type: "live", ...STATUS, rev: 8, conflict_version: 4 });
+    unmount();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("room: going elsewhere in the app publishes the draft too", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint"))
+          return json({ saved: true, version: { version: 4 } });
+        return undefined;
+      },
+    });
+    const { unmount } = hook(gate("room"));
+    fromFrame({ type: "live", ...STATUS });
+    unmount();
+    await waitFor(() =>
+      expect(calls.filter((c) => c.path.endsWith("/live/checkpoint"))).toHaveLength(1),
+    );
+  });
+
+  it("asks the frame to pick a place, and takes its answer only for a pick it asked for", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const onPicked = vi.fn();
+    const { result } = renderHook(() =>
+      useLiveEdit({
+        gate: gate("room"),
+        frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        frameKey: KEY,
+        onReload: vi.fn(),
+        onPicked,
+      }),
+    );
+    expect(result.current.canPick).toBe(true);
+    // Not asked for: dropped.
+    fromFrame({ type: "picked", anchor: { key: "block-1", text: "Hi" } });
+    expect(onPicked).not.toHaveBeenCalled();
+    act(() => {
+      expect(result.current.pick(true)).toBe(true);
+    });
+    expect(sentToFrame("pick").at(-1)).toEqual([
+      { source: "plinth-renderer", v: 1, type: "pick", on: true },
+      ORIGIN,
+    ]);
+    // Without the frame's key: dropped.
+    fromFrame({ type: "picked", anchor: { key: "block-1", text: "Hi" } }, ORIGIN, null);
+    expect(onPicked).not.toHaveBeenCalled();
+    fromFrame({ type: "picked", anchor: { key: "block-1", text: "Hi" }, what: "paragraph" });
+    expect(onPicked).toHaveBeenCalledWith({ key: "block-1", text: "Hi" }, "paragraph");
+    // Taken once.
+    fromFrame({ type: "picked", anchor: { key: "block-2", text: "Again" } });
+    expect(onPicked).toHaveBeenCalledTimes(1);
+    // A cancelled pick in the frame comes back as null.
+    act(() => {
+      result.current.pick(true);
+    });
+    fromFrame({ type: "picked", anchor: null });
+    expect(onPicked).toHaveBeenLastCalledWith(null, undefined);
+    // Stopping tells the frame only when a pick is on.
+    act(() => {
+      result.current.pick(true);
+      result.current.pick(false);
+    });
+    expect(sentToFrame("pick").at(-1)?.[0]).toMatchObject({ on: false });
   });
 
   it("solo keeps a copy while dirty, and a reload offers it back with its own base and files", async () => {
@@ -1090,7 +1265,6 @@ describe("useLiveEdit", () => {
           : undefined,
     });
     const first = hook(gate("solo"));
-    act(() => first.result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_100);
@@ -1220,7 +1394,7 @@ describe("useLiveEdit", () => {
     const later = gate("solo");
     later.artifact = { ...later.artifact, version: 4, current_version: 4 };
 
-    // 1. The notice's Discard: nothing is offered on the next Edit, and leaving does not warn.
+    // 1. The notice's Discard: nothing is offered to the next frame, and leaving does not warn.
     savePageDraft("art1", 3, "# Kept");
     sessionStorage.setItem(key, JSON.stringify(kept));
     const notice = hook(later, vi.fn(), { userId: "u1" });
@@ -1230,9 +1404,10 @@ describe("useLiveEdit", () => {
     const leave = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(leave);
     expect(leave.defaultPrevented).toBe(false);
-    act(() => notice.result.current.start());
-    expect(sentToFrame("rescue")).toHaveLength(0);
     notice.unmount();
+    toFrame.mockClear();
+    hook(later, vi.fn(), { userId: "u1" }).unmount();
+    expect(sentToFrame("rescue")).toHaveLength(0);
 
     // 2. The kept copy's review (a newer version is current), then Discard.
     savePageDraft("art1", 3, "# Kept");
@@ -1250,7 +1425,6 @@ describe("useLiveEdit", () => {
     toFrame.mockClear();
     sessionStorage.setItem(key, JSON.stringify(kept));
     const own = hook(gate("solo"), vi.fn(), { userId: "u1" });
-    act(() => own.result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
     let saving: Promise<void> = Promise.resolve();
     act(() => {
@@ -1268,8 +1442,7 @@ describe("useLiveEdit", () => {
   it("Esc at the top level of the frame moves focus to the strip", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const onLeave = vi.fn();
-    const { result } = hook(gate("room"), vi.fn(), { onLeave });
-    act(() => result.current.start());
+    hook(gate("room"), vi.fn(), { onLeave });
     fromFrame({ type: "leave" });
     expect(onLeave).toHaveBeenCalledTimes(1);
     fromFrame({ type: "leave" }, ORIGIN, null);
