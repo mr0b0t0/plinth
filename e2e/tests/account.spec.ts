@@ -405,21 +405,24 @@ test("a card's open actions menu covers the cards below it and stays on screen",
     .click();
   const list = page.getByRole("menu");
   await expect(list).toBeVisible();
-  // Every other card's actions button the open list lies over is painted under it.
   const box = await list.boundingBox();
   if (!box) throw new Error("menu has no box");
   // On a phone the left column's menu stays on screen instead of running past its edge.
   const width = page.viewportSize()?.width ?? 0;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(width);
+  // Every other card the open list lies over is painted under it (where they overlap).
   let covered = 0;
-  for (const button of await page.locator(".pl-dash__card .pl-dash__menu > .pl-button").all()) {
-    if ((await button.getAttribute("aria-expanded")) === "true") continue;
-    const b = await button.boundingBox();
+  for (const card of (await cards.all()).slice(1)) {
+    const b = await card.boundingBox();
     if (!b) continue;
-    const x = b.x + b.width / 2;
-    const y = b.y + b.height / 2;
-    if (x < box.x || x > box.x + box.width || y < box.y || y > box.y + box.height) continue;
+    const left = Math.max(b.x, box.x);
+    const right = Math.min(b.x + b.width, box.x + box.width);
+    const top = Math.max(b.y, box.y);
+    const bottom = Math.min(b.y + b.height, box.y + box.height);
+    if (right - left < 4 || bottom - top < 4) continue;
+    const x = (left + right) / 2;
+    const y = (top + bottom) / 2;
     covered++;
     const onTop = await page.evaluate(
       ([px, py]) =>
