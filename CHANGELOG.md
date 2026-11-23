@@ -10,551 +10,133 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **Your pages are editable when they open.** Owners and editors of a doc, a deck, a sheet or a
-  design system no longer press Edit: the page is in edit mode from the start, as a whiteboard is,
-  and changes publish on their own (after a quiet spell, or when you leave the page), also on
-  instances without live rooms. The Edit toggle, Done, "Edit on the page" and the edit strip are
-  gone; a quiet status beside the version says "Saving…", "Draft saved" or "Published as v7", and
-  the ⋯ menu has Publish changes and Discard. Comments open beside edit mode, a block's Comment
-  pins the comment there while you keep editing, and "Pin to an element" picks a block, slide or
-  token right in the page. Present, Print and Download .pptx work
-  while a deck is edited, and presenting shows the published deck. Without live rooms (solo), a
-  change back to the text you opened is still published, a failed autosave is retried, changes
-  are published before you go elsewhere in the app, and a copy kept from before a reload waits for
-  your Publish or Discard before the page is editable again.
+### Editing on the page, the way Claude does it
 
-- **No source editor.** People never see source code: the source editor, with its "Edit" in the
-  artifact's ⋯ menu and on dashboard cards, is gone. Docs, decks, sheets and design systems are
-  edited on their page; HTML pages and designs are changed by mentioning an agent in a comment. Old
-  `/a/…/edit` links open the artifact's page.
+- **Pages are editable when they open.** Owners and editors of a doc, a deck, a sheet or a design
+  system edit right on the page, with no Edit button or Done. Changes publish on their own, after
+  a quiet spell or when you leave the page, also on instances without live rooms. A quiet status
+  beside the version says "Saving…", "Draft saved" or "Published as v7", and the ⋯ menu has
+  Publish changes (Cmd/Ctrl+S) and Discard. Nothing typed is lost: undoing back to the text you
+  opened, a failed autosave, leaving for another page in the app and a copy kept from before a
+  reload are all handled.
+- **Docs as formatted text.** A block opens as formatted text with a format bar (bold, italic,
+  code, strikethrough, link, nested in any order) and a block menu (Turn into, Insert below, Move,
+  Delete). No Markdown is shown, untouched blocks keep their bytes, and undo, redo and paste work
+  per block.
+- **Decks on the page.** Slide text, speaker notes and Slide setup (aspect, theme, page numbers,
+  footer) are edited in place. Typed text never changes a deck's structure. Present, Print and
+  Download .pptx work while a deck is edited, and presenting shows the published deck.
+- **Sheets on the page.** Cells, rows and columns are edited in the grid, live with other editors:
+  paste from a spreadsheet, move rows, freeze and resize columns, column types and formats, and
+  select options. Formulas keep pointing at the right cells when rows move. On a phone, a cell
+  opens in an editor docked at the bottom.
+- **Design systems on the page.** Token values in light and dark, descriptions, adding and
+  removing tokens, the name, guidelines and component text are edited in place, never as JSON.
+  Renames, component code, fonts and settings stay with agents.
+- **A newer version is reviewed, never merged.** When a version is published while people have
+  unpublished changes, Review changes shows both side by side with what each changed, and offers
+  Publish your changes or Discard your changes. Exactly one choice takes effect when two editors
+  choose at once.
+- **New and Import.** New on the dashboard starts a blank doc, sheet or deck, ready to edit, or
+  imports an .xlsx, .csv or .tsv file as a sheet. Replace with a file… makes a sheet's next version
+  from a file. Both say what a file loses (other sheets, formulas, long column names, encoding).
+- **Compare says what changed, in words.** History lists changes the way the page shows them
+  ("Under “Pricing”: paragraph changed", "Slide 4 moved to 2", "B7 changed: 12 → 14"), with the
+  two versions rendered side by side.
+- **No source editor.** People never see source code. The source editor and its Edit entries are
+  gone, and old `/a/…/edit` links open the artifact. HTML pages and designs are changed by asking
+  an agent.
 
-- **Ask an agent in a comment.** People ask the owner's agent the way they ask Claude: by
-  mentioning it in a comment (`@claude make the heading red`). The separate **Ask an agent**
-  button, its ⋯ menu item and the Ask dialog are gone: an HTML page or a design shows History,
-  Comments, Share and ⋯ in its bar, nothing more. On a doc, deck or design system, the **Comment** control on a block, image,
-  token or component opens the comments panel pinned to that place. `@agent:other` reaches the
-  owner's agents that are not Claude or Codex (ChatGPT, Cursor, Gemini), and the comment box
-  suggests it when the owner has one. `request_to` on the comments API still works.
+### Asking agents
 
-- **Design export works again in Browser Rendering.** A PNG or PDF export of a design was
-  refused with "the design did not take the export layout": while the export's DevTools session
-  was attached (it sets the board cookies), Browser Rendering ignored the page's print media, so
-  the design opened on its canvas instead of its export layout. The export now sets print and
-  screen media through that same session.
+- **Ask an agent in a comment.** Mention it, the way you ask Claude: `@claude make the heading
+  red`, `@codex`, or `@agent:other` for the owner's other agents (ChatGPT, Cursor, Gemini). The
+  comment box suggests them. A block's, image's, token's or component's Comment pins the comment
+  to that place while you keep editing. The bar holds only History, Comments, Share and ⋯, plus
+  Present on a deck. `request_to` on `POST /api/v1/artifacts/:ref/comments` still works.
+- **A mention skips connections that cannot answer it**, and the rename, new-token and consent
+  dialogs show the handle a name is mentioned by as you type. A comment that mentions
+  `@constructor` or `@toString` no longer reads a built-in property as an agent name.
+- **Craft guides for agents.** The plinth-artifacts skill teaches how to make each type read and
+  look finished: pages and dashboards, docs, decks, sheets, designs, design systems and
+  whiteboards.
+- **Project files for a page.** Agents have a recipe for pages that show files the user chose
+  (log viewers, CSV explorers, code tours). Only the user in the session chooses the files, never a
+  mention. Files Plinth would run are sent as plain text.
+- **`sensitive_file` warning.** A publish that sends a file whose name usually holds secrets
+  (`.env`, `*.pem`, `id_rsa`, `credentials.json`, `.envrc`, `*.tfvars` and more) lists
+  `sensitive_file` first, so the agent stops and asks.
+- **Published from code.** `editing: "code"` marks an artifact whose source lives in a
+  repository. `plinth publish` and the GitHub Action set it, and people editing it on the page are
+  told the next publish from code won't include their changes.
+- **Shorter MCP tool descriptions**, by about 950 tokens.
 
-- **Doc editing keeps typing the doc refuses.** Three more cases where typed text could be lost on
-  a doc's page now keep it. A block that would take a live doc past its 50,000-line limit, or that
-  the room refuses as too large, stays open with what was typed, as a block past the byte limit
-  already did. Typing the doc's rules refuse (`<html>` typed in an indented code block at the very
-  top) is kept with **Copy** and **Dismiss** before the block goes back. And when the room refuses
-  a block's last change after the block has closed, or someone takes the block over before the
-  change arrives, that change is kept the same way and offered back after a reload.
+### New artifact types and formats
 
-- **HTML decks in Claude's slide format.** A deck can now be `deck.json`, `deck.css` and one
-  `slides/<id>.html` per slide, as Claude's Slides writes them, beside Markdown decks, which work as
-  before. Plinth checks each slide against Claude's element list and limits at publish. Each slide
-  is shown on its 1920x1080 (or 1440x1080) canvas with its own CSS and fonts, and Plinth draws its
-  shapes, icons and connectors. Fragments, transitions and arrival animations play (off under
-  reduced motion and in print), and live embeds run in a sandboxed frame with no network. Paging,
-  presenter view, the audience window, Lead viewers, print to PDF, thumbnails and Download .pptx
-  all work, and the .pptx keeps text, boxes, shapes and tables editable. Agents read every slide
-  with `get_artifact` and, as on Claude, send only the files they change: the rest of the deck is
-  kept. A deck written for Claude, with its `project/` paths, publishes as it is, and
-  `get_design_system` installs a design system into an HTML deck with `deck_format: "html"`. A
-  sample deck is in `docs/examples/plinth-deck`.
+- **Sheets** (`type: "sheet"`): typed columns, more than 70 Excel functions computed by Plinth,
+  sort, filter, a formula bar and CSV or .xlsx download. Agents use `read_sheet` and `edit_sheet`,
+  and a CSV or .xlsx file publishes as a sheet.
+- **Designs** (`type: "design"`): artboards at fixed sizes (phones, desktops, social posts, ads,
+  print) on a canvas you pan and zoom. Each board renders alone with an opaque origin. Boards can
+  be fluid, placed with `x` and `y`, annotated with stickies and titles, and linked for clickable
+  prototypes. On instances with Browser Rendering, Download .png and .pdf are rendered by the
+  server.
+- **Whiteboards** (`type: "whiteboard"`): notes, text, shapes, sections, tables and routed arrows
+  that people edit together with live cursors, matching what Claude's boards draw. They download
+  as PNG or SVG and have a Settings dialog for the background and who may edit.
+- **HTML decks in Claude's slide format**: `deck.json`, `deck.css` and `slides/<id>.html`, checked
+  against Claude's element list. They support fragments, transitions, presenter view, Lead
+  viewers, print and an editable .pptx, beside Markdown decks.
+- **Design systems other artifacts use.** Set one as your default and agents build with it.
+  `copy_files` and `get_design_system`'s install list copy its tokens, fonts and components into a
+  page, deck or design on the server.
+- **Download a deck as .pptx**, built in the browser, with text, tables, images and speaker notes
+  kept editable.
 
-- **Designs: fluid pages, notes, flows and links to one board.** An artboard with `height="auto"`
-  is as tall as its content, so a responsive web page shows whole on the canvas, in print and in
-  exports. Boards can be placed with `x` and `y` (rows stay the default), and `<!-- note kind="sticky" -->`
-  and `<!-- note kind="title" -->` add stickies and titles to the canvas (any other `<!-- note`
-  comment stays part of its board, as before). A link to `#board=<id>`
-  inside a board moves to that board, for clickable prototypes, and the app's address keeps the
-  board on view (`#board=<id>`), so a reload or a shared link opens on it. A flow moves only on a
-  click, a board in use stays still while a page next to it grows, and a link to a board that is
-  gone drops out of the address.
-- **Installing design systems, tightened.** `get_design_system` takes `install_for` and `folder`:
-  its install list holds only what the target type takes (a design gets no fonts or
-  `tokens.json`), and it also gives a deck's `faces` and `designSystems` record. A design system
-  without its own prefix installs under a name from its title instead of `ds/ds/`, and two systems
-  can no longer share a folder. Copies are checked after the publish rate, an admin's review
-  access never lets them copy, and `get_artifact` names a copy's source only to people who can
-  open it. A taken-down default design system is no longer reported as the default.
+### Sharing and viewing
 
-- **Dashboard card menus.** An open card's actions menu now covers the cards below it (the next
-  card's `⋯` button showed through it), and on a phone a left-column card's menu stays on screen
-  instead of running past its edge.
-- **Craft guides for agents.** The plinth-artifacts skill now teaches how to make each type of
-  artifact read and look finished, not only what Plinth accepts: one guide per type, for pages and
-  dashboards (chart and KPI craft, summary before detail, every number from the data), docs (lead
-  with the answer, sized to the ask, sources and an as-of date), decks (one idea per slide, heading
-  levels and slide kinds used on purpose), sheets (important columns first, a build order, types,
-  widths and a notes column), designs (placeholders, no AI tropes, contrast, touch targets and real
-  controls), design systems (a brand-book guide, exact values, contrast in every theme) and
-  whiteboards (the idea's shape, a size budget, at most four colors, extending a board without
-  disturbing people's work). The MCP tool descriptions point agents without the skill at them.
-- **Design systems that other artifacts use.** Mark one of your design systems as your default
-  from its menu on the dashboard (**Set as default**); agents then use it for pages, decks and
-  designs without asking. A publish or update can now copy files from another artifact you can
-  view, on the server (`copy_files`), so an agent installs a design system's `tokens.css`,
-  `fonts.css`, `components.css`, `tokens.json`, fonts and images into a page under `ds/<prefix>/`
-  in the same call (`get_design_system` lists the entries to send). The copies become the page's
-  own files and record where they came from. Designs name the design system they were built on,
-  like pages, and get the same outdated warning. Apply migration `0022_design_system_reuse.sql`.
-- **Whiteboards draw what Claude's do.** Boards take Claude's shapes (rounded, diamond, pill,
-  hexagon, parallelogram, database, queue, document, cloud, person), sections that sit behind
-  everything and carry what lies in them, tables with fills and value shading, text sizes and
-  alignment, any `#rrggbb` colour, outlines and hollow shapes, bold, italic, code and safe links in
-  text, and arrows that run in right angles from chosen sides, follow a planned route and end in an
-  arrowhead or a dot. Existing boards look as they did. On the page, a selected shape offers a
-  Shape list and a selected text a Text size list, and a table cell is edited with a double click;
-  PNG and SVG exports draw all of it. Agents change a block with the new `merge` op of
-  `write_artifact_data` (only the fields that change, at a rev), and a board's data has its own,
-  larger limits (`DATA_BOARD_MAX_DOCS`, `DATA_BOARD_MAX_BYTES`, `DATA_BOARD_MAX_DOC_BYTES`).
-  When two people write in the same block at once, someone deletes a block you are writing in,
-  or a save fails, what you wrote is kept as a new note beside it, with Use mine to put it back;
-  if even the note cannot be saved, the page holds your text with Copy until it can. A board tab
-  opened before this release keeps working on the blocks it can read, and turns read-only and
-  asks for a reload instead of saving over newer ones.
-- **Doc editing, Ask and import follow-ups.** Bold, italic, strikethrough and links nest on a
-  doc's page: a link inside bold, bold inside italic and the like open for editing and can be
-  made. Pasting several paragraphs makes a block of each (an item in a list, a paragraph in a
-  quote). Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z undo and redo typing, formatting, links, Enter, list
-  moves, paste and Turn into in the block being edited, and Undo right after an Enter joins the
-  two blocks again. Turn into refuses a change that would drop part of a block (a table or a
-  divider in a quote, an image), and says so. Ask an agent names a doc's block as the version the
-  agent reads has it, even after blocks were added or removed above it; a block not published yet
-  is sent with its words and marked so, and Insert below's Image reads "New image below …". Block
-  words with emoji or invisible characters no longer stop a request from sending. Typing that
-  could not be added to the doc yet can be dismissed from its notice once copied, and a store
-  left by another account no longer warns the next person in the same tab. The Ask dialog's
-  Publish first no longer shows a toast that disagrees with it. A CSV that is too large once
-  converted to UTF-8 says so, and a UTF-16 file without a byte order mark is read as such (or
-  refused with a clear message) instead of filling every cell with NULs. Typing a doc could not
-  take (at its size limit, a block too long, or not sent) stays in its block, unsent, instead of
-  being dropped when the block closes, and an edit the room refuses keeps what was typed, with
-  Copy, before the block goes back.
+- **People you share with get an account** when they confirm the emailed code, so what's shared
+  with them shows on their dashboard.
+- **Email people when you share with them**, with daily limits and a one-click opt-out.
+- **Share a whole category** with people, and file artifacts shared with you under categories of
+  your own. Filing never shares: the owner reviews each artifact first.
+- **Names and the people list.** Set your name, and pages that show who is viewing use it. An
+  owner's comments and versions carry an "Owner" mark.
+- **Open pages follow new versions within seconds**, over one WebSocket that carries only version
+  numbers and change signals. Docs update in place and keep your place, and a page can hold an
+  update while you use it.
+- **Follow the presenter.** Lead viewers keeps everyone a deck is shared with on the presenter's
+  slide.
+- **Dashboard**: thumbnails in the list view, cards of one height, and card menus that stay on
+  screen.
 
-- **Ask an agent and sheet editing fixes.** "Publish my changes first" in the Ask dialog now runs
-  the same Publish as the edit strip: a version published meanwhile opens the review in solo mode
-  too (it showed a generic notification), and a lost session asks to sign in again. A request no
-  agent can take no longer counts against the hourly comment limit. Requests for clients other
-  than Claude and Codex are labelled `@agent:other`, so they never read like a mention of a
-  connection named "Agent". The renderer's `ask` message is limited like a page's own comment
-  requests (no dialog open, the tab visible, at most one reopen a second), and the docs no longer
-  promise page anchors that no renderer sends yet. On a sheet's page, tapping the docked check on
-  a phone keeps a value it cannot save instead of dropping it, the cell field stays put (and the
-  keyboard open) when someone else's change redraws the grid, an option's hidden arrows can't be
-  tapped, Move row up and down are off while a sort is on, and while a filter hides rows a row
-  moves past them to the next row shown.
+### Fixes
 
-- **Review a newer version in the page itself.** When a version is published while people have
-  unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
-  the review inside the page: their changes and the new version (or every version since, named as
-  "v6 to v7") side by side, each with its own images, with what each changed, files included, and
-  two choices. Each side marks the blocks or cells it changed and opens at its first change, and
-  its list names each change once ("Paragraph changed", "Qty, row 3") with only the words or
-  values that changed, as the page shows them. **Publish your changes** publishes them as they are,
-  with the files they were made with, as the next version (the other stays in History); **Discard
-  your changes** asks first, in the app's own confirmation; **Back** leaves the review. It looks like the rest of the app. The
-  strip offers only **Review changes** while a version waits (and only its status while the
-  review is open, without an "Updated to" notification beside it), and the line shown to people
-  who are not editing is one short line of text in the strip's look ("Unpublished changes · Ana,
-  3 h ago"): the Edit toggle is the one way in. Both choices are safe against
-  another editor choosing at the same moment: exactly one takes effect, and every other open
-  review closes saying what happened. No source is shown. Changes
-  the tab kept from before a reload are reviewed the same way when a newer version is current.
-- **Publish on the page.** A doc that can be edited on its page no longer offers **Edit source**
-  in its menu: the Edit toggle is the one way in and out (on a phone, **Edit on the page** in the
-  ⋯ menu, and **Done** on the strip). The edit strip has one action, **Publish**, once there is
-  something to publish (when the changes can't be published yet, its tooltip says why), and its
-  status says "Draft saved", "Publishing…" and "Published as v7", on one line at any width.
-  **Discard unpublished changes** is in the ⋯ menu. The strip shows how many others are editing,
-  with who and where in a tooltip. A doc's block being edited keeps the page's own type, with no
-  box around it. A page Publish keeps the files of the version the changes were made from
-  (`files_from_version` on `PUT /api/v1/artifacts/:ref`, from the signed-in app only; bearer tokens
-  get 403). The review's choices stay off while a newer version it is moving to loads, so a choice
-  always names the version on screen. `GET /api/v1/artifacts/:ref/live/draft`
-  is removed, and `GET /api/v1/config` says whether editing on the page is on (`inline_editing`).
-- **A doc never starts like a web page by accident.** Typing `<html>` at the start of a block is
-  kept as text, so the doc can still be published.
-- Notifications no longer cover a dialog's buttons, and a pointer resting on one no longer keeps
-  it on screen for good.
-- **Leading a deck is steadier.** A presenter whose connection drops keeps the lead when it comes
-  back, instead of turning Lead viewers off and following its own old connection. Paging quickly (a held arrow key) always leaves
-  followers on the presenter's last slide. A deck's room keeps 4 of its slots for owners and
-  editors, so viewers' tabs can never lock the presenter out. Opening another deck in the same tab
-  no longer leads that deck's viewers.
-- **A held page stays held after you switch apps.** A page that declares `hold` was replaced by a
-  new version once its window lost focus, so text you were typing before switching to another app
-  or tab could be lost; it now waits for Update as long as focus is still in the page. State a page
-  handed to the next version is read only by that version's frame: a reload of the old page in the
-  meantime no longer picks it up (unless the page renamed its window: then it carries as before).
-- **Project files for a page.** Agents now have a recipe for pages that show files from a project
-  (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
-  `files/` and read them by relative URL; a refresh is a new version. Only the user in the session
-  chooses the files: a mention, even from the owner, never makes the agent read one, and agents can
-  remember the user's choice in a local `.plinth-files.json` that is never published or committed.
-  Project files that Plinth would serve as a page or code (`.html`, `.svg`, `.js`, `.css`…) go up
-  with `.txt` added, so opening one never runs it, or are embedded in the page as JSON with every
-  `<` escaped, so a `</script>` in the file cannot end the block. A big refresh through an upload
-  or the CLI holds the page and every file it keeps. Update the plugin for the agent's project
-  files rules. Plugin 0.26.0.
-- **A `sensitive_file` publish warning.** A publish, update or upload that sends a file whose name
-  usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`), or a `.plinth-files.json`
-  record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
-  It checks names only, never blocks, and is not reported for files carried forward, reused by
-  hash or restored.
-- **`sensitive_file` knows more names**: `.envrc`, `.pgpass`, `*.p8`, `*.ppk`, `*.tfvars`, files
-  under `.kube/`, and `.docker/config.json`.
-- **Shorter MCP tool descriptions.** The sentence that nothing on Plinth chooses local files is on
-  the tools that return artifact files, versions, comments, mentions or shared data instead of on
-  every tool, which takes about 3,750 characters (some 950 tokens) off what an agent loads. The
-  project files rules stay on each tool that publishes files.
-- **Project files: safer types, and a marked list.** Agents add `.txt` to page and code files in
-  any letter case (`App.HTML` too), send project files only as plain text, and, when they offer
-  files taken from the artifact, mark each one the user has not chosen before and say who added
-  it.
-- **Pages for clients and approvers, and several agents on one artifact.** Three finished example
-  pages for people outside your team, who confirm their email by code with no account: an approval
-  sign-off, a client intake form and a client checklist (`docs/examples/`). What your side decides
-  stays in the page's versions; what they contribute is shared data stamped with who wrote it, and
-  the pages count only what those stamps vouch for. A new guide covers Claude, Codex, Gemini CLI,
-  Cursor and scripts working on one artifact: which mention reaches which agent, hand-offs,
-  conflicts and who did what. The rename, new-token and consent dialogs show the handle a name
-  is mentioned by as you type (`Claude Code` is `@claude-code`), and the Connections page warns on
-  a connection's row when a name cannot be reached.
-- **A mention skips connections that cannot answer it.** `@<handle>` no longer goes to a
-  connection without the "Answer mentions" permission, where it would wait for ever; a newer one
-  with the same handle that can answer gets it, and the Connections page warns accordingly.
-- **A clearer hint for names no mention can reach.** The rename and new-token dialogs now say
-  "start and end the name with a Latin letter or digit", which also covers names in other scripts
-  and names ending in a dot.
-- **The intake example shows who changed an answer.** Answers the owner or an editor changed say
-  "Changed by" with their email and role on the response's date line, and a question whose id is
-  `constructor` or another built-in name no longer shows a stray answer.
-- **The approval example keeps your own decision current.** "You approved · Withdraw" follows the
-  shared data, so it updates when the owner or an editor changes or deletes your sign-off, without
-  a reload. Who changed a sign-off now joins its decision and date line ("· Changed by" with the
-  email, and the role when there is one), as on the intake page.
-- **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
-  (shared data, rooms, page comments) no longer gets a publish warning it could not fix.
-- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
-  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
-  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
-  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
-  shows in full on hover. On phones the category moves from beside the title to a row's second
-  line, and on a card it takes the place of "You".
-- **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
-  PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
-  lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
-  The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
-  On instances with opaque content isolation the file leaves out the deck's image files, and says
-  so. Plugin 0.23.0.
-- **.pptx: images four at a time.** The download reads and draws at most four of a deck's images
-  at once, so a deck with hundreds of them no longer risks a phone's tab, and an image the browser
-  cannot draw is counted among those left out.
-- **.pptx: space above tables.** A table right under a list or a paragraph keeps the gap the slide
-  shows, instead of sitting against the last line.
-- **.pptx: an interrupted download says what to do.** When a newer version replaces the deck while
-  the file is made, the notice says to download it again if no file was saved.
-- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
-  agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
-  vN" notice at a time, however many versions arrive in a row), and pages that keep
-  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
-  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
-  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
-  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
-  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
-  pushes, half for the people an artifact is shared with and half for everyone else, so a link
-  viewer can never tell from the socket whether the owner or a collaborator has the page open.
-  After a deploy, open pages reconnect spread over 10 seconds, and a busy shared page sends its
-  views at most one "data changed" signal per spread (2 s at the default). A
-  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.24.0: the agent's rule
-  never to tell people to reload.
-- **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
-  posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
-  `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
-  IAB ads, print and slides. Plinth lays the boards out on a canvas you pan and zoom, in rows
-  packed to fill the screen (Fit, 100%, a board's name zooms to it), renders each one alone at its
-  exact size in its own frame with an opaque origin, so its scripts, styles and images run without
-  reaching the page or each other, lets you interact with one board, pins comments to boards, and
-  prints or saves the design as PDF one board per page. People see the design, never its source:
-  agents change it, and History compares its versions as rendered pages. The Plinth CLI publishes
-  a folder with `design.html` at its top as a design. Thumbnails show each board
-  with its own images and styles. Update the plugin for the agent's design rules. Plugin 0.25.0.
-- **Sheets.** Agents can publish a table people sort, filter, calculate with or download (`type:
-  "sheet"`): JSON lines with typed columns (text, number with currency or percent formats, date,
-  checkbox, select, link) and Excel formulas (SUM, IF, VLOOKUP, XLOOKUP and 67 more) that Plinth
-  computes itself. The page has a frozen header, sort, a filter, a formula bar, print, light and
-  dark, and phone width, and anyone who can view it downloads it as CSV or Excel (.xlsx) built in
-  the browser. Agents read computed values with `read_sheet` and change cells, rows and columns
-  with `edit_sheet`, one version per call; people never see the JSON lines (no source editor or
-  source diff: Compare shows the versions rendered). A CSV or .xlsx file can be published as a
-  sheet (`content_format` or `plinth publish data.csv`); ids, phone numbers and leading zeros stay
-  text, and a semicolon-separated file reads decimal commas. A downloaded CSV quotes every text
-  value, so Excel in a semicolon locale never splits a cell into a formula.
-  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Plugin 0.26.0.
-- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
-  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
-  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
-  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
-  line under the bar tells every invited viewer. On such a page their agents get the same list in
-  `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
-  page. The list and the owner's sharing settings name a person once they have commented, entered
-  something or published a version there, so adding an address never reveals whether it has an
-  account. Names are display text: no `@`, no invisible or blank-only characters, never a role;
-  the owner's own comments and versions carry a quiet "Owner" mark (`is_owner`), so a name chosen
-  to look like the owner's visibly lacks it. Once a token limited to one artifact has
-  published a version of a page, that page lists nobody. Plugin 0.27.0.
-- **Your own categories for artifacts shared with you, and sharing a whole category.** On the
-  dashboard, "Move to category…" now files an artifact someone shared with you under a category of
-  your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
-  one of their categories with people (viewer or commenter) under a title, the category's name
-  unless they change it: the people get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
-  once. Filing an artifact under a shared category never shares it: it waits for the owner's review
-  (one "to review" line on the dashboard), and the owner's agent is told so
-  (`category_share.state: "pending"` with a review link). Un-ticking an artifact takes it away from
-  the category's people even when a new version was published while the dialog was open, and a
-  taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it
-  off. A token limited to one artifact never sees or manages category sharing: it holds no role
-  through a category grant, and the share, portal and personal-category routes answer it 403
-  `token_bound`. On a page that lists who has access, the owner and editors see the category's
-  people too, each once at their highest role. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
-- **People you share with get an account.** Confirming the emailed code at an artifact's gate or
-  a shared collection now signs the person in to Plinth with that address, creating their account
-  the first time, as the owner's own code already did. What is shared with them then shows under
-  Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
-  on its page. The gate and the shared category's page say "Sign in", the email and the privacy
-  notice say that an account is created, and someone already signed in is told instead that
-  confirming another address switches them to it. The privacy notice says their opens are
-  recorded as a signed-in person's.
-  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning to type the code
-  only into Plinth's own sign-in form and never to give it to anyone before it shows the title or name the sharer wrote (on one line, so neither can
-  add lines of its own), and wrong guesses at it count against the same per-address limit as the
-  sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
-  a viewer session without an account, and viewer sessions started earlier keep working until
-  they expire. Plugin 0.29.0.
-- **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
-  people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
-  everyone it lets edit (editors by default, or commenters too when its settings say so) moves, resizes, writes on,
-  colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
-  read-only. When two people (or a person and an agent) change one block at once, each keeps the
-  fields they changed; where both changed the same one, the first save stands and the other person
-  is told (for text, with a button to put theirs back). Pan and zoom with the mouse, a trackpad,
-  touch or the keyboard, and download the board as PNG or SVG from the ⋯ menu. The toolbar shows
-  only what applies, in one row: the add buttons for people who may edit, a block's colours,
-  Connect and Delete while it is selected, and who else is here. A version holds only the board's
-  settings (`board.json`), and a new board can start with a list of blocks and arrows, written
-  once into its shared data; the history's restore on a board is Restore settings. Agents read the board with `list_artifact_data` and add or move
-  blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
-  lists which types an instance publishes (`artifact_types`). Plugin: when and how agents
-  publish and change whiteboards.
-- **Board settings for whiteboards.** Owners and editors change a board's background (dots, grid
-  or plain) and who can change it (editors only, or commenters and editors) without typing
-  anything: from **Settings** in the board's ⋯ menu, which is the settings page's new Board section
-  for the owner and a small dialog over the board for an editor. Each save is a new version; if
-  someone published a newer one meanwhile, nothing is overwritten: the newer settings are shown
-  and the board loads that version. Any other refusal shows its own message. The skill tells
-  agents to read a board's settings again before changing them, since people change them too.
-- **Email people when you share with them.** Adding someone to an artifact's People, or to a
-  shared category, with **Notify people** ticked (the default) emails them that you shared it with
-  them, with the title, their role and the link. Only people the change adds are emailed, at most once a
-  day per artifact, within daily limits per owner (20, `INVITATION_EMAILS_PER_OWNER_PER_DAY`),
-  per owner and recipient (3), per recipient (10) and for the whole instance (1000,
-  `INVITATION_EMAILS_PER_DAY`; `0` turns invitation emails off), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
-  endpoints take `notify` (default `false`): agents email people only when asked, and the result's
-  `invitations` says who was emailed and who was not, and why. A change's emails go to the provider
-  in one batch request (Resend) or one at a time, never all at once, so they stay within its
-  request rate and leave room for sign-in codes; one the provider refuses can be sent again by
-  adding the person again. Each email's footer and `List-Unsubscribe` header link
-  `/invitation-emails`, where the recipient signs in and turns invitation emails to their address
-  off (or back on); owners who share with them are told `opted_out`, and the access still applies.
-  The opt-out and the per-address limits cover the inbox, so `bo+x@gmail.com` and `b.o@gmail.com`
-  count as `bo@gmail.com`, and an `opted_out` answer costs the owner one of their daily
-  invitations, as an email would.
-  Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
-  them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
-  Migration `0021_invitation_opt_outs.sql`.
-- **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
-  sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
-  Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
-  spreadsheet fills the rows they cover. Row and Column menus in the sheet's bar insert and delete
-  rows and columns and change a column's name, type and format. The others editing see each change
-  as it is typed, and rows someone holds are tinted. Save version (or a pause) makes the next
-  version, as for docs. The Edit toggle is the only way to edit a sheet: there is still no source
-  editor. A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged
-  into the page edits: editing pauses, and the editors review both sheets side by side, with the
-  cells each side changed marked, and choose **Publish mine** (the page edits become the next
-  version, and the other stays in the history) or **Discard mine** (pressed twice: it turns into
-  "Discard for everyone"). When two people change rows at once, each change lands on the row it was
-  made on, or is dropped with a note when that row is gone. While one editor publishes or discards,
-  a second choice or a Discard from someone else waits with a note instead of undoing it, for docs
-  too. A save that takes longer than 30 seconds keeps the edits made while it ran, for docs too,
-  and never sends them to review against its own version. While a doc or sheet is edited on its
-  page, a version published meanwhile no longer shows an "Updated to" notice (the strip says it,
-  and the version picker follows), and at phone width the edit strip keeps to one line. Numbers
-  are typed in your locale. Follows `ALLOW_LIVE_EDITING`. The agent's sheet rules say a
-  `live_draft` on a sheet needs no action.
-- **Compare says what changed, in words.** History's Compare page no longer shows a source diff.
-  It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
-  paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
-  "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
-  the files added, removed or replaced. A page restyled with nothing else changed says "Layout or
-  formatting changed". A heading, paragraph, slide or row added before another reads as added,
-  not as the next one renamed or changed: blocks pair by the words they share, never by their
-  place alone, so a paragraph rewritten with none of its words kept reads as removed and added. Items come in the order the page reads, a changed list names only the item that
-  changed, and a sheet total that only recomputed for an added row is left out. A large edit the
-  diff gives up on still lists only the blocks that changed, a block added or removed in it
-  included, and two same-titled slides edited in
-  place are not listed as moved. Every type
-  compares this way, designs included, and a whiteboard lists its settings in the Board settings
-  dialog's words ("Background: Dots → Grid", "Who can change the board: Editors only → Commenters
-  and editors"), with History's "Restore settings" unchanged. The two
-  versions are still rendered side by side below the list, one at a time with a Before and After
-  switch on a phone. Older links with `view=source` open the same page. Agents still read and write
-  source as before.
-- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
-  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
-  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
-  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
-  is still a page.
-- **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
-  not reloaded, the heading you were reading stays where it was, and an image the new version
-  changed under the same name shows the new file. A page that loads
-  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
-  sub-page the new version no longer has opens at its root instead), and can hand state to the
-  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
-  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: a
-  "v5 is available" toast offers Update instead. Every other page is replaced at once, as before.
-  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
-- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
-  controls or presenter view, and the people the deck is shared with who have it open follow their
-  slide, shown as "Following" in the deck's controls; paging by hand pauses it until
-  they choose "Back to slide N". Someone who opens the deck mid-talk lands on the presenter's
-  slide. Only slide numbers travel, over the deck's live room; nobody sees who else is watching.
-  It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;
-  `ALLOW_SLIDES_FOLLOW=false` turns it off. Link viewers without an identity do not follow. The lead carries on when an agent
-  publishes a new version or the owner changes who the deck is shared with.
-- **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
-  artifact menu has **Download .png** (the one artboard at once, or pick one when there are more;
-  2x where it fits, else 1x, transparent where the board is) and **Download .pdf** (every board,
-  each on a page of its own size) in place of Print or save as PDF, rendered by the server from
-  the version on screen with the same safety as thumbnails. Anyone who may view the design can
-  export it, except a token limited to one artifact (`token_bound`, as for thumbnails), up to 30
-  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed out, per network), 20 times an hour
-  per design for everyone but its owner and editors (`DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR`) and
-  120 times an hour for the whole instance (`DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`), which bounds
-  the operator's browser time; at most two render at once across the instance, and
-  `DESIGN_EXPORT=false` turns it off. A PNG is at most 4,000,000 pixels (a board of up to
-  1,000,000 px at 2x, a 1080x1080 or 1920x1080 one at 1x only) and any file at most 24 MB, so one
-  export cannot run the Worker out of memory. Scripts and agents use
-  `GET /api/v1/artifacts/<id>/export?format=png&board=<id>&scale=1|2` or `?format=pdf` (every
-  board, or `&board=<id>`), with `/export/options` listing the boards. Without the binding nothing
-  changes: Print or save as PDF stays.
-- **Thumbnail capture failures are logged without URLs**, so a capture's one-time enter token
-  never reaches the Worker's logs.
-- **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
-  agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width)
-  opens the comments panel in request mode, where they point at an element or a board, describe
-  the change and, when the owner has more than one, pick the agent: Claude, Codex, or any other
-  connected client such as ChatGPT, Cursor or Gemini. It reaches that agent as a mention, and is
-  offered only when the owner has an agent that can take it. While editing a doc or a
-  sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
-  **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
-  shows Ask an agent with the reason. A toast confirms a sent request.
-  `POST /api/v1/artifacts/:ref/comments` takes `request_to`
-  (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
-  request can go to (`ask`) and why editing is off (`live_off`).
-- **Picking an element at phone width.** While a comment or a request picks an element, the
-  comments sheet shrinks to its bottom bar, which sits under the artifact instead of covering it.
-- **Sheet columns and row order on the page.** In a sheet's edit mode the bar's Row menu also
-  moves the selected row up or down (Alt+Shift+Up and Down do too), and the Column menu freezes the
-  columns up to the selected one or unfreezes them. A moved row keeps every formula pointing at the
-  cells it meant, and a total moved next to its range never adds itself. Drag a header's edge (or
-  press Alt+Left and Alt+Right on it) to change a column's width. The column settings add thousands
-  separators, and a select column's options as a list to rename, reorder, add to (type it and press
-  Enter) and remove from; renaming an option renames it in the cells that hold it, and an option a
-  cell holds cannot be removed. The settings follow their column while someone else inserts or
-  deletes one before it, and close only once the change is sent. At phone width a cell opens in an
-  editor docked at the bottom of the page, under its address and the column's name, saved with
-  Enter or its check button, and the settings are a sheet across the bottom. Focus and the
-  selection have one ring colour, the app's. The grid is a proper grid for keyboards and screen
-  readers: one tab stop, the arrows, Home and End, and cells someone else is editing say so. When
-  someone else's change redraws the grid, the focus stays where you were typing (the column
-  settings, the filter or a cell).
-- **New and Import.** **New** on the dashboard starts a blank document or sheet that opens
-  straight in edit mode, with the focus on its title or first cell (where editing on the page is
-  on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
-  for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
-  file and keeps the link, sharing and comments; it asks again when a newer version was published
-  meanwhile, is hidden while there are unpublished changes on the page, and asks a person confirmed
-  by email code without an account to sign in first. HTML pages and designs still come only from
-  agents. `POST /api/v1/artifacts` takes `note` for the first version.
-- **Import and Replace say what a file loses.** Before a sheet is replaced, and in a toast after an
-  import, the app says when only the first sheet of an .xlsx is used (naming the others), how many
-  formulas become plain values, how many column names are cut to 100 characters, and when a CSV
-  was not UTF-8. Such a CSV is now read as Windows-1252, as Excel on Windows saves it, so "Café"
-  no longer arrives as "Caf�"; UTF-16 files with a byte order mark are read too. Replacing a sheet
-  from its permanent version link now shows the new version on the sheet's own link. New appears
-  once the list has loaded, so it no longer jumps from the top bar to the empty state, and file
-  names in version notes drop control and bidi characters.
-- **Edit docs as formatted text.** On a doc's page a block opens as formatted text, with a format
-  bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its corner
-  (**Turn into**, **Insert below**, **Move up**, **Move down**, **Delete**). No Markdown is shown
-  anywhere: Plinth writes changes back as Markdown and keeps every untouched block byte for byte.
-  No block op, and no block cleared of its text, runs the blocks around it together. Blocks the
-  page cannot show faithfully are shown as they are, with **Ask an agent**, Move and Delete; an
-  image's **Ask an agent** (or **Insert below**, **Image**) opens the Ask dialog about that place.
-  The **+** between blocks is gone: **Insert below** or Enter adds a block. A change the doc
-  cannot take says so and keeps the block open with what was typed.
+- Design export works in Browser Rendering again.
+- More cases where typing on a doc or deck could be lost now keep the text, with Copy and Dismiss.
+- A page that declares `hold` stays held after you switch apps.
+- Notifications no longer cover a dialog's buttons.
+- No `root_absolute` warning for pages that load `/__plinth/runtime.js`.
+- Thumbnail capture failures are logged without URLs.
 
-- **Edit a deck on its page.** Owners and editors now edit a deck's slide text, speaker notes and
-  settings right on its page, as formatted text with no Markdown shown, live with each other like
-  docs and sheets. Edit mode shows every slide, empty ones included ("Click to add a title"), with
-  the slide's notes in a panel under it (emptying the notes removes them); **Slide setup** in the
-  ⋯ menu sets the aspect, theme, page numbers and footer. Whatever is typed
-  stays text: a `---`, `Note:` or `Date: 3 March` never splits a slide, eats its notes or becomes a
-  setting, and the room refuses any edit that would change the deck's structure. Images, and
-  blocks the editor cannot show as they are, offer **Ask an agent**. A deck whose every slide was
-  emptied cannot be published until it has text again, and a version published while people edit
-  a deck is reviewed beside their changes, never merged. **New** on the dashboard offers a blank
-  slide deck. Outside edit mode the deck shows the live draft, but while it is presented (full
-  screen, presenter view) or someone leads viewers, it shows the published deck, so nobody's
-  half-typed text reaches the audience and every follower is on the presenter's slide. Print and
-  Download .pptx wait until editing ends, as Present does. Nothing typed in a deck is lost when a
-  lease ends or a block closes, even with the deck at its size limit: text the room does not have
-  yet goes back in (below the block when someone took it over, in its place after a review), what
-  cannot go in yet stays on the page with **Copy**, and after a reload it goes back into the slide
-  or the speaker notes it was typed in. Editing alone (without live rooms), text a full deck
-  cannot take stays in its block, and Publish and Done wait until it is shortened; the copy kept
-  for a reload can still be published, and the text comes back when editing starts again.
-  Discarding that copy, or the changes in a review, discards the text too.
+### For self-hosters
 
-- **Edit design systems on their page.** Owners and editors turn on Edit and change a design
-  system in place, live with each other: token values in light and dark (a colour's own sample is
-  its picker, beside a text field; numbers with units, weights, font families and each part of a
-  shadow, border or typography token, always in the form the value is stored in), another token
-  instead of a value, dark values, descriptions, adding and removing tokens (a token something
-  still uses stays, and the page says what uses it), the name, and the description, guidelines
-  and each component's description and usage as formatted text, never JSON or Markdown, and a
-  component's status from its ⋯.
-  Renames, component code, fonts and settings stay with agents, with Ask an agent on each. A
-  version an agent publishes meanwhile is reviewed beside the page's changes, each side with its
-  own fonts and images. A Publish from the page stores 2-space JSON, or compact JSON for the
-  largest systems, with the guidelines last; an agent's own publishes keep their bytes. A system
-  that no longer parses lists what an agent needs to fix, and its Edit stays off with that reason,
-  so Ask an agent is the way in. A design system may nest objects and
-  arrays at most 32 levels deep (`$extensions` included); a publish past that is refused. Typing
-  in its formatted texts keeps the doc's rules: text the page cannot save as typed stays in its
-  block, keeps Publish off and is kept until the draft has it, across a takeover or a reload.
-
-- **Published from code.** `publish_artifact`, `update_artifact` and `start_upload` take
-  `editing: "code"` for an artifact whose source lives in a repository you publish from, kept
-  until a publish says `"page"`; `get_artifact` returns it to owners and editors. `plinth publish`
-  and the GitHub Action (its new `editing` input, `code` by default) set it for you. People who
-  start editing such a design system on its page are told that the next publish from code
-  won't include their changes; editing is not blocked. Migration
-  `0023_artifact_editing.sql`.
+- **Migrations**: `0013_category_sharing.sql`, `0021_invitation_opt_outs.sql`,
+  `0022_design_system_reuse.sql` and `0023_artifact_editing.sql`. Apply them before deploying the
+  Worker.
+- **New settings**: `ALLOW_LIVE_VIEWS`, `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`,
+  `ALLOW_SLIDES_FOLLOW`, `ALLOW_CATEGORY_SHARING`, `INVITATION_EMAILS_PER_OWNER_PER_DAY`,
+  `INVITATION_EMAILS_PER_DAY`, `SHEET_EVAL_BUDGET`, `DESIGN_EXPORT`, `DESIGN_EXPORTS_PER_HOUR`,
+  `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR`, `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`,
+  `DATA_BOARD_MAX_DOCS`, `DATA_BOARD_MAX_BYTES` and `DATA_BOARD_MAX_DOC_BYTES`.
+- A reverse proxy must pass WebSocket upgrades on the app host as well as the content host.
+- Whiteboards need shared data and origin isolation. Design export needs a Browser Rendering
+  binding; without one, Print or save as PDF stays.
+- The source editor and its `monaco-editor` dependency are gone, and the app's CSP no longer
+  allows `blob:` workers.
+- API: `GET /api/v1/artifacts/:ref/live/draft` is removed. `GET /api/v1/config` adds
+  `inline_editing` and `artifact_types`.
+- Update the agent plugin to 0.29.0 for the agents' rules on every new type.
 
 ## 0.6.0 (2026-11-20)
 
