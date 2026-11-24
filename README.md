@@ -17,6 +17,9 @@ staged.</sub>
 [![CI](https://github.com/mr0b0t0/plinth/actions/workflows/ci.yml/badge.svg)](https://github.com/mr0b0t0/plinth/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@mr0b0t0/plinth)](https://www.npmjs.com/package/@mr0b0t0/plinth)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![mr0b0t0/plinth MCP server](https://glama.ai/mcp/servers/mr0b0t0/plinth/badges/score.svg)](https://glama.ai/mcp/servers/mr0b0t0/plinth)
+[![Plinth MCP server on mcprush](https://mcprush.com/badge/mr0b0t0-plinth-mcp/compact.svg)](https://mcprush.com/to/mr0b0t0-plinth-mcp?ref=badge)
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/mr0b0t0/plinth)
 
 > **Beta.** Plinth is before 1.0: the MCP tools and the REST API may still change between minor
 > versions, and every change is listed in the [changelog](CHANGELOG.md).
