@@ -2,30 +2,31 @@
   position: relative;
   display: inline-block;
 }
+/*
+ * Fixed to the viewport, never in the page's flow or scroll area: menuPlacement.ts sets top, left
+ * and (when it must scroll) max-height from the trigger's box. It is a manual popover, shown in
+ * the top layer; these rules replace the browser's popover defaults (inset, margin, colors).
+ */
 .pl-menu__list {
-  position: absolute;
-  top: calc(100% + var(--space-1));
+  position: fixed;
+  inset: auto;
+  top: 0;
+  left: 0;
   z-index: var(--z-menu);
   width: max-content;
+  height: auto;
   min-width: 11rem;
   max-width: min(20rem, calc(100vw - var(--space-8)));
+  margin: 0;
   padding: var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: var(--border-width) solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   background: var(--color-surface-raised);
+  color: var(--color-ink);
   box-shadow: var(--shadow-md);
   animation: pl-menu-in var(--duration-fast) var(--ease-out);
-}
-.pl-menu__list--start {
-  left: 0;
-}
-.pl-menu__list--end {
-  right: 0;
-}
-/* Opens upwards (a trigger at the bottom of the screen, like the account row). */
-.pl-menu--up .pl-menu__list {
-  top: auto;
-  bottom: calc(100% + var(--space-1));
 }
 .pl-menu__header {
   padding: var(--space-1) var(--space-2) var(--space-2);

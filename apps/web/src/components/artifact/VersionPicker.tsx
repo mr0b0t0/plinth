@@ -35,6 +35,7 @@ import {
 import "../history/picker.css";
 import { focusElement } from "../ui/focus.ts";
 import { type ButtonSize, buttonClassName, ICON_SIZE, Spinner } from "../ui/index.ts";
+import { useMenuPlacement } from "../ui/menuPlacement.ts";
 
 export interface VersionPickerProps {
   slug: string;
@@ -135,6 +136,9 @@ export function VersionPicker({
     setActive(-1);
     if (restoreFocus) focusElement(triggerRef.current);
   };
+
+  // Fixed to the viewport next to the trigger, so opening never resizes or shifts the page.
+  useMenuPlacement(open, triggerRef, listRef, { align, placement: "down" });
 
   // Focus follows the active item; keep it in view inside the scrolling list.
   useEffect(() => {
@@ -254,6 +258,7 @@ export function VersionPicker({
           aria-labelledby={triggerId}
           aria-busy={!versions || undefined}
           tabIndex={-1}
+          popover="manual"
           className={`pl-menu__list pl-menu__list--${align} hx-picker__list`}
           onKeyDown={onMenuKey}
         >

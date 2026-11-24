@@ -5,7 +5,6 @@ import {
   type ReactNode,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -13,6 +12,7 @@ import { navigate } from "../../lib/router.tsx";
 import { type ButtonSize, type ButtonVariant, buttonClassName } from "./Button.tsx";
 import { focusElement } from "./focus.ts";
 import { ICON_SIZE, type Icon } from "./icons.tsx";
+import { useMenuPlacement } from "./menuPlacement.ts";
 import "./menu.css";
 
 export type MenuEntry =
@@ -109,20 +109,8 @@ export function Menu({
     if (open && active >= 0) focusElement(itemRefs.current[active]);
   }, [open, active]);
 
-  // An aligned list that would run past the screen's edge (a card's menu in a phone's left
-  // column) slides back inside it, keeping a small margin.
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!open || !list) return;
-    list.style.translate = "";
-    const margin = 8;
-    const { left, right, width } = list.getBoundingClientRect();
-    if (!width) return;
-    const viewport = document.documentElement.clientWidth;
-    const shift =
-      left < margin ? margin - left : right > viewport - margin ? viewport - margin - right : 0;
-    if (shift) list.style.translate = `${shift}px 0`;
-  }, [open]);
+  // Fixed to the viewport next to the trigger, so opening never resizes or shifts the page.
+  useMenuPlacement(open, triggerRef, listRef, { align, placement });
 
   // Click outside closes without stealing focus.
   useEffect(() => {
@@ -225,10 +213,7 @@ export function Menu({
   const hasIcons = items.some((e) => isItem(e) && e.icon);
 
   return (
-    <div
-      ref={wrapRef}
-      className={`pl-menu${placement === "up" ? " pl-menu--up" : ""}${className ? ` ${className}` : ""}`}
-    >
+    <div ref={wrapRef} className={`pl-menu${className ? ` ${className}` : ""}`}>
       <button
         ref={triggerRef}
         id={triggerId}
@@ -253,6 +238,7 @@ export function Menu({
           id={menuId}
           role="menu"
           aria-labelledby={triggerId}
+          popover="manual"
           className={`pl-menu__list pl-menu__list--${align}`}
           onKeyDown={onMenuKey}
         >

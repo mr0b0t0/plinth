@@ -486,18 +486,9 @@
     height: auto;
     min-height: var(--topbar-height);
     padding-block: var(--space-1);
-    position: relative;
   }
   .pl-dash-bar__category > .pl-button {
     max-width: 10rem;
-  }
-  /* The category list opens from the bar's left edge, under the bar, so a long name cannot push
-     it past the right edge of a phone screen. */
-  .pl-dash-bar__category.pl-menu {
-    position: static;
-  }
-  .pl-dash-bar__category .pl-menu__list {
-    left: 0;
   }
   .pl-dash__head {
     display: none;

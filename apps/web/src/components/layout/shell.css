@@ -198,11 +198,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* At least as wide as the account row (menuPlacement.ts sets the variable); a long address wraps
+   in the header. */
 .pl-account .pl-menu__list {
-  left: 0;
-  right: 0;
-  max-width: none;
-  min-width: 0;
+  min-width: var(--pl-menu-anchor-width, 0);
 }
 .pl-account__caption {
   display: block;
