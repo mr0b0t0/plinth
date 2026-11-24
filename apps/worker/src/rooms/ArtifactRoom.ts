@@ -325,6 +325,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       closeDocs: () => {
         for (const { ws } of this.sockets("doc")) this.drop(ws, ROOM_CLOSE.gone, "no draft");
       },
+      resync: (ws) => this.drop(ws, ROOM_CLOSE.resync, "resync"),
     });
     this.slides = new SlidesChannel<SocketState>({
       sockets: () => this.sockets("slides"),

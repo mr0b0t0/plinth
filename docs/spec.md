@@ -661,8 +661,17 @@ page shows the save status and makes the REST calls, and renders no content.
   only place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the
   room enforces, so two people never edit the same lines. Each edit replaces the leased range
   whole, so no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a
-  client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A
-  lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc or deck
+  client that misses one (or sees a new `gen` after the room reloaded) asks for the draft again.
+  A room that reloads its draft while sockets are still open (a hibernation wake) goes on with
+  the `gen` and `rev` those sockets were shown only when the lines it loaded are exactly the lines
+  they saw, on the same base and freeze (it records them when it loads and after each flush). Any
+  other reload (a version published while the room slept, edits lost with an eviction) ends those
+  sockets' leases and closes them (4412, `resync`): each reconnects and takes the draft again, and
+  no lease, edit or op worked out from the old lines is applied to the new ones. A block open
+  through that, or through a version the room merged, is taken again where the new lines hold
+  it; one whose text the new lines no longer hold, with nothing typed in it that the room did not
+  already have, closes ("This part of the doc changed meanwhile, so it was closed.") rather than
+  being written back as a new block. A lease idle for 60 s can be taken over; an edit, or a `keep` frame from its holder (a doc or deck
   block, or a design system's formatted text, holding typing it cannot write yet), starts that
   minute again.
 - **Answers are matched by id** (decided 2026-11-22). The client puts its own number, `id`, on

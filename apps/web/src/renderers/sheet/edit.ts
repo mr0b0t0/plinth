@@ -207,6 +207,8 @@ type Want =
       keep?: string;
       /** The row's line as the room last had it, to find the row again. */
       line: string;
+      /** Other lines the room may have of the row, tried after `line` (see lost()). */
+      also?: string[];
       /** The header line then: a row is found again only under the same columns. */
       head: string;
       tries: number;
@@ -1054,9 +1056,11 @@ export class SheetEditor {
       return { ...w, range, head, tries: w.tries + 1 };
     }
     if (w.row === 1) return { ...w, line: head, head, tries: w.tries + 1 };
-    const at = locateBlock(lines, w.line, w.row - 1);
-    if (at < 1) return null;
-    return { ...w, row: at + 1, head, tries: w.tries + 1 };
+    for (const line of [w.line, ...(w.also ?? [])]) {
+      const at = locateBlock(lines, line, w.row - 1);
+      if (at >= 1) return { ...w, line, row: at + 1, head, tries: w.tries + 1 };
+    }
+    return null;
   }
 
   lost(reason: LeaseLoss): void {
@@ -1064,14 +1068,22 @@ export class SheetEditor {
     this.cancelTimer();
     if (!o || !this.editing) return;
     if (reason === "reconnect" || reason === "rebased") {
-      // Keep the text, find the row again once the draft is back, and take it again.
-      const line = reason === "reconnect" ? this.backend.durableText : this.backend.ackedText;
+      // Keep the text, find the row again once the draft is back, and take it again. It is
+      // looked for by each line the room may have of it: after a merge, the line it acked; after
+      // a dropped socket, the line acked (the room kept running) or the line last written to D1
+      // (the room was evicted meanwhile).
+      const b = this.backend;
+      const lines = (reason === "reconnect" ? [b.ackedText, b.durableText] : [b.ackedText])
+        .filter((l): l is string => l !== null)
+        .filter((l, i, all) => all.indexOf(l) === i);
+      const [line = o.original, ...also] = lines;
       this.want = {
         kind: "cell",
         row: o.row,
         col: o.col,
         keep: o.field.value,
-        line: line ?? o.original,
+        line,
+        ...(also.length > 0 ? { also } : {}),
         head: o.head,
         tries: 0,
       };
@@ -1106,7 +1118,16 @@ export class SheetEditor {
   changed(): void {
     const w = this.want;
     const b = this.backend;
-    if (w?.kind === "cell" && w.keep !== undefined && !b.mine && b.connected && b.settled) {
+    // Once per want: a row asked for again waits for its answer (tries counts the asks), and is
+    // not looked for a second time meanwhile by a later change report.
+    if (
+      w?.kind === "cell" &&
+      w.keep !== undefined &&
+      w.tries === 0 &&
+      !b.mine &&
+      b.connected &&
+      b.settled
+    ) {
       this.want = null;
       const next = w.tries < STALE_RETRIES ? this.relocate(w) : null;
       if (next?.kind !== "cell") {
@@ -1236,6 +1257,9 @@ export class SheetEditor {
     this.timer = setTimeout(() => {
       this.timer = null;
       this.send();
+      // Whatever the send did: a value that leaves the row line as it was sends nothing and hears
+      // nothing back, and the save status would go on saying the typing is on its way.
+      this.hooks.status();
     }, ms);
     this.hooks.status();
   }

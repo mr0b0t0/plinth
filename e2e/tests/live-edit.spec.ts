@@ -252,6 +252,66 @@ test("a table cell typed into just before the socket drops is kept once, never a
   expect(detail.body.content).not.toContain("| Apples red | 3 |");
 });
 
+test("an agent's version that moves or removes an open table: typing follows the table, an untouched one is never written back", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page, TABLE_DOC);
+  await openAs(browser, s.owner, s.slug, page);
+  await startEditing(page);
+  await connected(page);
+  const openCell = async () => {
+    await frameOf(page).locator("td", { hasText: "Apples" }).click();
+    const cell = frameOf(page).locator('.plinth-doc__open td[contenteditable="true"]').first();
+    await expect(cell).toBeFocused();
+    return cell;
+  };
+  const client = await mcpClient(s.token);
+  try {
+    // The table is open, nothing typed yet, when the agent adds two paragraphs above it.
+    let cell = await openCell();
+    const moved = TABLE_DOC.replace(
+      "Intro.\n",
+      "Intro.\n\nThe agent's first.\n\nThe agent's second.\n",
+    );
+    const v2 = await tool(client, "update_artifact", { id: s.id, content: moved, base_version: 1 });
+    expect(v2.isError, v2.text).toBe(false);
+    await expect(frameOf(page).locator("p", { hasText: "The agent's second." })).toBeVisible({
+      timeout: 10_000,
+    });
+    // Typing goes into the table where it is now, never over the agent's paragraphs.
+    cell = frameOf(page).locator('.plinth-doc__open td[contenteditable="true"]').first();
+    if ((await cell.count()) === 0) cell = await openCell();
+    await cell.press("End");
+    await cell.pressSequentially(" red");
+    await cell.press("Escape");
+    await publishChanges(page);
+    await expect(saveStatus(page)).toContainText("Published as v3");
+    let detail = await apiGet(page.request, `/artifacts/${s.id}`);
+    expect(detail.body.content).toBe(moved.replace("| Apples | 3 |", "| Apples red | 3 |"));
+
+    // Open again, untouched, when the agent rewrites the doc without the table.
+    await openCell();
+    const gone = "# Plan\n\nRewritten by the agent.\n\nAfter.\n";
+    const v4 = await tool(client, "update_artifact", { id: s.id, content: gone, base_version: 3 });
+    expect(v4.isError, v4.text).toBe(false);
+    await expect(frameOf(page).locator("p", { hasText: "Rewritten by the agent." })).toBeVisible({
+      timeout: 10_000,
+    });
+    // The old table is not put back as a new block: the page is the agent's version.
+    await expect(frameOf(page).locator("table")).toHaveCount(0);
+    await page.waitForTimeout(1000);
+    await expect(frameOf(page).locator("table")).toHaveCount(0);
+    detail = await apiGet(page.request, `/artifacts/${s.id}`);
+    expect(detail.body.current_version).toBe(4);
+    const live = await apiGet(page.request, `/artifacts/${s.id}/live`);
+    expect(live.body.draft?.dirty ?? false).toBe(false);
+  } finally {
+    await client.close();
+  }
+});
+
 test("leaving the page publishes what was typed: closing the tab makes the version", async ({
   page,
   browser,

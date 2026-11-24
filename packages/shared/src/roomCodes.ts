@@ -32,7 +32,7 @@ export type RoomSlidesRight = "none" | "present" | "watch";
 /**
  * Close codes a room sends (the 4000-4999 range is the application's). The client reacts to each:
  * 4401 re-checks access and fires `plinth:expired`, 4410 reconnects so the gate re-reads the
- * declaration, the others stop retrying.
+ * declaration, 4412 reconnects so a doc socket takes the draft again, the others stop retrying.
  */
 export const ROOM_CLOSE = {
   invalid: 4400,
@@ -45,6 +45,12 @@ export const ROOM_CLOSE = {
   full: 4409,
   /** The current version changed what it declares about rooms. */
   redeclared: 4410,
+  /**
+   * A doc socket: the room reloaded the draft and its lines are not the ones this socket was
+   * shown (a version published while the room slept). The socket reconnects and takes the draft
+   * again; nothing it sent from the old lines is applied.
+   */
+  resync: 4412,
   /** Too many messages over the rate, even after the error replies. */
   rate: 4429,
 } as const;

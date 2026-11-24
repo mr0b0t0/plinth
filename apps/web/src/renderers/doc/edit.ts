@@ -124,6 +124,8 @@ export const TOO_LONG = "This block is too long to send. Split it into smaller b
 const STILL_MAKING = "One moment: the last change is still being made.";
 /** Why a block op was not made: the lines it needed changed after it was asked for. */
 const CHANGED_MEANWHILE = "The doc changed meanwhile. Try again.";
+/** An open block a newer version replaced, with nothing typed in it to keep (retake). */
+export const BLOCK_REPLACED = "This part of the doc changed meanwhile, so it was closed.";
 /**
  * Why a cleared block was not removed (removeCleared): its lease or its edit was refused. The block
  * stays open with its last text, which is what the doc has.
@@ -432,6 +434,8 @@ interface Want extends LineRange {
   text: string;
   /** Other texts the block may have in the draft, tried after `text` (see lost()). */
   also?: string[];
+  /** `keep` is what the room already had of the block: nothing to write back if it is gone. */
+  untyped?: true;
   insert: boolean;
   /** Text to keep and send once granted (a block re-taken after a reconnect). */
   keep?: string;
@@ -2305,6 +2309,16 @@ export class DocEditor {
       if (at >= 0) text = other;
     }
     const n = text === "" ? 0 : text.split("\n").length;
+    if (at < 0 && w.untyped && w.keep !== undefined) {
+      // Gone from the draft (a version replaced or moved it), with nothing typed in it to keep:
+      // the block closes, and the page shows the doc as it is now.
+      this.dropOpen();
+      this.held = null;
+      this.render();
+      this.showNotice(BLOCK_REPLACED);
+      this.hooks.status();
+      return;
+    }
     if (at < 0) {
       // Its text is gone from the draft (someone changed it): put it back as a new block.
       const near = Math.min(w.start, b.lines.length);
@@ -2423,13 +2437,21 @@ export class DocEditor {
         .filter((t): t is string => t !== null)
         .filter((t, i, all) => all.indexOf(t) === i);
       const text = texts[0] ?? "";
+      const keep = this.currentText() ?? "";
+      // Nothing typed in it that the room does not have for good: the text written to D1, or,
+      // after a merge, the text it acknowledged (the draft it merged holds it). Should the new
+      // lines have no such block any more (a version replaced or moved it), there is nothing to
+      // write back: the block closes rather than putting the old text in as a new block.
+      const had = (t: string | null) => t !== null && (t === keep || t === padded(keep, this.pad));
+      const untyped = had(b.durableText) || (reason === "rebased" && had(b.ackedText));
       this.want = {
         start: held.start,
         end: held.end,
         text,
         ...(texts.length > 1 ? { also: texts.slice(1) } : {}),
         insert: text === "",
-        keep: this.currentText() ?? "",
+        keep,
+        ...(untyped ? { untyped: true as const } : {}),
         tries: 0,
       };
       return;

@@ -4,7 +4,7 @@
 import { RENDERER_MESSAGE_SOURCE, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
-import { EDIT_DEBOUNCE_MS } from "./edit.ts";
+import { BLOCK_REPLACED, EDIT_DEBOUNCE_MS } from "./edit.ts";
 
 const APP = "https://plinth.example.com";
 const base = { source: RENDERER_MESSAGE_SOURCE, v: 1 };
@@ -48,21 +48,21 @@ function sent(i: number, t: string): Record<string, unknown>[] {
   return (sockets[i]?.sent ?? []).map((s) => JSON.parse(s)).filter((f) => f.t === t);
 }
 
-function welcome(i: number, text: string, rev: number, flushed: number): void {
+function welcome(i: number, text: string, rev: number, flushed: number, gen = "g", base = 1): void {
   frame(i, {
     t: "welcome",
     v: 1,
     you: { id: `s${i}`, email: "ada@example.org", right: "write" },
-    gen: "g",
+    gen,
     rev,
-    base_version: 1,
+    base_version: base,
     flushed_rev: flushed,
     conflict_version: null,
     last_by_you: false,
     leases: [],
     peers: [],
   });
-  frame(i, { t: "text", gen: "g", part: 0, of: 1, chunk: text });
+  frame(i, { t: "text", gen, part: 0, of: 1, chunk: text });
 }
 
 /** The room's answer to socket `i`'s last edit: its `op`, at rev `rev`. */
@@ -273,5 +273,108 @@ describe("doc renderer in a room: an open block after the socket drops", () => {
         expect(root().textContent?.split(`${words} edited`)).toHaveLength(2);
       });
     }
+  }
+});
+
+describe("doc renderer in a room: an open block when a newer version replaces the lines", () => {
+  const TABLE = "| Name | Qty |\n| --- | --- |\n| Apples | 3 |";
+  const V1 = `# Plan\n\nIntro.\n\n${TABLE}\n\nAfter.`;
+  // The agent's version adds two paragraphs above the table: its lines move down by four.
+  const MOVED = `# Plan\n\nIntro.\n\nA new paragraph.\n\nAnother one.\n\n${TABLE}\n\nAfter.`;
+  // The agent's version rewrites the doc: the table is gone.
+  const GONE = "# Plan\n\nIntro.\n\nA new paragraph.\n\nAnother one.\n\nAfter.";
+
+  async function openTable(): Promise<void> {
+    welcome(0, V1, 1, 1);
+    post({ ...base, type: "edit", on: true });
+    (root().querySelector("td") as HTMLElement).click();
+    grant(0, "l1");
+    await Promise.resolve();
+    expect(root().querySelector(".plinth-doc__open")).not.toBeNull();
+  }
+
+  /** The room replaced a clean draft with `text` (an agent's version), as it sends it. */
+  function rebasedTo(text: string): void {
+    frame(0, { t: "lease_lost", lease: "l1", reason: "rebased" });
+    frame(0, { t: "reset", version: 2, gen: "g", rev: 2 });
+    frame(0, { t: "text", gen: "g", part: 0, of: 1, chunk: text });
+    // Asked for on the lines before the version, with their rev: the room says stale.
+    const asked = sent(0, "lease").at(-1) as { id: number; rev: number };
+    if (asked.rev === 1) frame(0, { t: "lease_denied", reason: "stale", re: asked.id });
+  }
+
+  /** The room reloaded on `text` while it slept, and closed the socket (4412) to resync it. */
+  function resyncedTo(text: string): void {
+    sockets[0]?.onclose?.({ code: 4412 });
+    vi.advanceTimersByTime(60_000);
+    expect(sockets).toHaveLength(2);
+    welcome(1, text, 0, 0, "g2", 2);
+  }
+
+  const lastLease = () => [...sent(0, "lease"), ...sent(1, "lease")].at(-1);
+
+  for (const [how, move] of [
+    ["merged by the room", rebasedTo],
+    ["loaded while the room slept", resyncedTo],
+  ] as const) {
+    it(`takes the table again where it moved to (${how})`, async () => {
+      await openTable();
+      move(MOVED);
+      await Promise.resolve();
+      // The table's own lines in the new version, 8 to 10, never v1's 4 to 6.
+      expect(lastLease()).toMatchObject({ start: 8, end: 11 });
+    });
+
+    it(`closes the table, untouched, when the version removed it, never writing it back (${how})`, async () => {
+      await openTable();
+      move(GONE);
+      await Promise.resolve();
+      vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      // No insert point asked for, and nothing sent: the old table is not put back.
+      expect(lastLease()).toMatchObject({ start: 4, end: 7 });
+      expect([...sent(0, "edit"), ...sent(1, "edit")]).toEqual([]);
+      expect(root().querySelector(".plinth-doc__open")).toBeNull();
+      expect(root().querySelector("table")).toBeNull();
+      expect(document.body.textContent).toContain(BLOCK_REPLACED);
+    });
+
+    it(`keeps what was typed in the table as a block of its own when the version removed it (${how})`, async () => {
+      await openTable();
+      retype(root().querySelector(".plinth-doc__open") as HTMLElement, "Apples", "Apples red");
+      // Typed, and still in the send delay when the lines change.
+      move(GONE);
+      await Promise.resolve();
+      const asked = lastLease() as { start: number; end: number };
+      // An insert point near where it was: the typing is never lost.
+      expect(asked.end).toBe(asked.start);
+    });
+  }
+});
+
+describe("doc renderer in a room: other blocks a newer version removes while open", () => {
+  const kinds: [string, string, string][] = [
+    ["a paragraph", "Intro.\n\nMiddle.\n\nAfter.", "p:nth-of-type(2)"],
+    ["a list", "Intro.\n\n- one\n- two\n\nAfter.", "ul"],
+    ["a quote", "Intro.\n\n> quoted\n\nAfter.", "blockquote"],
+    ["a code block", "Intro.\n\n```\ncode\n```\n\nAfter.", "pre"],
+  ];
+  for (const [name, text, selector] of kinds) {
+    it(`closes ${name}, untouched, rather than writing it back`, async () => {
+      welcome(0, text, 1, 1);
+      post({ ...base, type: "edit", on: true });
+      (root().querySelector(selector) as HTMLElement).click();
+      grant(0, "l1");
+      await Promise.resolve();
+      expect(root().querySelector(".plinth-doc__open")).not.toBeNull();
+      sockets[0]?.onclose?.({ code: 4412 });
+      vi.advanceTimersByTime(60_000);
+      welcome(1, "Intro.\n\nRewritten.\n\nAfter.", 0, 0, "g2", 2);
+      await Promise.resolve();
+      vi.advanceTimersByTime(EDIT_DEBOUNCE_MS + 1);
+      expect(sent(1, "lease")).toEqual([]);
+      expect(sent(1, "edit")).toEqual([]);
+      expect(root().querySelector(".plinth-doc__open")).toBeNull();
+      expect(root().textContent).toContain("Rewritten.");
+    });
   }
 });
